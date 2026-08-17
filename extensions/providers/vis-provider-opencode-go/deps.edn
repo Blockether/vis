@@ -1,33 +1,25 @@
+;; OpenCode Go (https://opencode.ai/go) — a flat-rate subscription gateway serving
+;; open-source coding models from one endpoint over TWO wire dialects. Vis surfaces
+;; them as a SINGLE provider (`:opencode-go`) that routes each model to the right
+;; wire: OpenAI chat /chat/completions (svar default) for GLM, Kimi, DeepSeek, MiMo
+;; and Hy3, Anthropic Messages /messages for MiniMax and Qwen. One static API key
+;; (`OPENCODE_API_KEY`), one base URL, and the per-model `:api-style` override is the
+;; only thing that selects the wire. Self-registers with `com.blockether.vis.core`
+;; at namespace load via the unified `META-INF/vis-extension/vis.edn` manifest.
 {:paths ["src" "resources"]
- ;; OpenCode Go (https://opencode.ai/go) — a flat-rate ($10/mo) subscription
- ;; gateway serving open-source coding models from one endpoint over TWO wire
- ;; dialects. Vis surfaces them as a SINGLE provider (`:opencode-go`) that
- ;; routes each model to the correct wire automatically:
- ;;   - OpenAI chat /chat/completions (svar default)     — GLM, Kimi, DeepSeek, MiMo, Hy3
- ;;   - Anthropic Messages /messages (:api-style override) — MiniMax, Qwen
- ;; One static API key (`OPENCODE_API_KEY`), one base URL; the per-model
- ;; `:api-style` override is the only thing that selects the wire.
- ;;
- ;; Self-registers with `com.blockether.vis.core` at namespace load via the
- ;; unified `META-INF/vis-extension/vis.edn` manifest.
- ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
- ;; from a :local/root dep's deps.edn, so this extension has to repeat the
- ;; JitPack repo it inherits through com.blockether/vis -> the voice
- ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
+ ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
+ ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
- :deps
- {org.clojure/clojure   {:mvn/version "1.12.5"}
-  ;; vis owns the extension/provider registries.
-  com.blockether/vis    {:local/root "../../.."}
-  ;; JSON for the persisted auth file (charred is already on the runtime
-  ;; classpath via vis itself).
-  com.cnuernber/charred {:mvn/version "1.041"}
-  ;; HTTP client for the live `/usage` quota endpoint (see limits.clj).
-  org.babashka/http-client {:mvn/version "0.4.24"}
-  com.taoensso/telemere {:mvn/version "1.2.1"}}
-
- :aliases
- {:test
-  {:extra-paths ["test"]
-   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+        ;; vis owns the extension/provider registries.
+        com.blockether/vis {:local/root "../../.."}
+        ;; JSON for the persisted auth file (charred is already on the runtime
+        ;; classpath via vis itself).
+        com.cnuernber/charred {:mvn/version "1.041"}
+        com.taoensso/telemere {:mvn/version "1.2.1"}
+        ;; HTTP client for the live `/usage` quota endpoint (see limits.clj).
+        org.babashka/http-client {:mvn/version "0.4.24"}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main" "test"]}}}

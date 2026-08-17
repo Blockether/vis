@@ -1,7 +1,139 @@
-{:aliases
- {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
-  :bench-micro {:extra-deps {criterium/criterium {:mvn/version "0.4.6"}
-                             io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}}
+;; Vis' AGGREGATE build: the engine plus every extension on ONE classpath. Each
+;; extension under `extensions/` is its own deps.edn project, linked in here as a
+;; :local/root dep. Nothing formats this file — `clojure -M:format` skips .edn on
+;; purpose — so the order is hand-kept: this tree's own projects first, then
+;; third-party coordinates alphabetically, then aliases alphabetically.
+{;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
+ ;; distributable `vis` Python module (the one PyPI ships as `vis-agent`), which the
+ ;; engine slurps off the classpath as `vis/__init__.py` and execs into every
+ ;; extension context. One file, both distributions.
+ :paths ["src" "resources" "packages/vis-agent/src"]
+
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
+ ;; :local/root dep's deps.edn, so the JitPack repo the voice extension declares has
+ ;; to be repeated here for the aggregate build to resolve com.github.k2-fsa.sherpa-onnx.
+ :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
+
+ :deps
+ {;; The extension CONTRACT, published on its own so an extension — or a tool in
+  ;; somebody else's repository — can read what the host offers without depending on
+  ;; the engine. It carries `resources/vis-contract/*.edn`, so the engine reads its
+  ;; own contract off this dependency's classpath.
+  com.blockether/vis-contract {:local/root "packages/vis-contract"}
+
+  com.blockether/vis-channel-tui {:local/root "extensions/channels/vis-channel-tui"}
+  com.blockether/vis-foundation-bridge {:local/root "extensions/common/vis-foundation-bridge"}
+  com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
+  com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
+  com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
+  com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
+  com.blockether/vis-language-typescript-bun {:local/root "extensions/languages/vis-language-typescript-bun"}
+  com.blockether/vis-persistance-sqlite {:local/root "extensions/persistance/vis-persistance-sqlite"}
+  com.blockether/vis-provider-alibaba {:local/root "extensions/providers/vis-provider-alibaba"}
+  com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
+  com.blockether/vis-provider-github-copilot {:local/root "extensions/providers/vis-provider-github-copilot"}
+  com.blockether/vis-provider-openai-codex {:local/root "extensions/providers/vis-provider-openai-codex"}
+  com.blockether/vis-provider-opencode-go {:local/root "extensions/providers/vis-provider-opencode-go"}
+  com.blockether/vis-provider-openrouter {:local/root "extensions/providers/vis-provider-openrouter"}
+  com.blockether/vis-provider-standard {:local/root "extensions/providers/vis-provider-standard"}
+  com.blockether/vis-provider-zai {:local/root "extensions/providers/vis-provider-zai"}
+
+  ;; --- third party -----------------------------------------------------------
+  babashka/fs {:mvn/version "0.5.34"}
+  babashka/process {:mvn/version "0.6.25"}
+  com.blockether/anomaly {:mvn/version "1.0.1"}
+  com.blockether/fff {:mvn/version "0.12.4"}
+  ;; Imaging WITHOUT `java.desktop`: decode/encode, transforms, vector drawing, text,
+  ;; SVG rasterisation and plotting, in-process over a first-party Rust cdylib (image
+  ;; + resvg/tiny-skia) through the JDK Foreign Function & Memory API. This replaced
+  ;; AWT/Java2D/ImageIO/jsvg everywhere in vis, so there is no headless bootstrap, no
+  ;; fontconfig, and SVG rasterisation works in the macOS binary; fonts are embedded
+  ;; in the cdylib (four Noto faces). `java.desktop` is still LOADED, and that is
+  ;; fine: mic capture uses `javax.sound.sampled` (the JDK's only microphone API) and
+  ;; next.jdbc's `clojure.java.data` uses `java.beans.Introspector`.
+  com.blockether/imaging {:mvn/version "0.1.9"}
+  ;; Parinfer for Clojure source in pure Java — Blockether's linear-time rewrite of
+  ;; parinferish 0.8.0 — carrying `com.blockether.parinferish.balance`, the rule that
+  ;; decides whether a language pack's delimiter repair may be written back to a file.
+  com.blockether/parinferish {:mvn/version "0.1.0"}
+  com.blockether/rift {:mvn/version "0.0.10-11"}
+  com.blockether/ruff {:mvn/version "0.3.5"}
+  com.blockether/svar {:mvn/version "0.7.123"}
+  ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
+  ;; mistakes bare upstream versions for newer).
+  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
+  com.cnuernber/charred {:mvn/version "1.041"}
+  ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.
+  com.github.mwiede/jsch {:mvn/version "2.28.5"}
+  com.google.zxing/core {:mvn/version "3.5.4"}
+  ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
+  com.taoensso/nippy {:mvn/version "3.8.0"}
+  com.taoensso/telemere {:mvn/version "1.2.1"}
+  ;; Version MUST match com.taoensso/telemere.
+  com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}
+  ;; Trove is the logging FACADE svar (and any other Blockether library) emits
+  ;; through; `config/route-svar-logs!` picks Telemere as its backend the way Trove's
+  ;; README documents (`set-log-fn!` + `taoensso.trove.telemere/get-log-fn`). Vis
+  ;; requires those two namespaces directly, so the coordinate is DIRECT here and not
+  ;; inherited from svar's transitive tree.
+  com.taoensso/trove {:mvn/version "1.1.0"}
+  io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
+  io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
+  metosin/malli {:mvn/version "0.20.1"}
+  metosin/reitit-ring {:mvn/version "0.10.1"}
+  ;; Latest published Vectorz pair; compatibility registration is deferred until the
+  ;; first Nippy encode/decode call.
+  net.mikera/core.matrix {:mvn/version "0.63.0"}
+  net.mikera/vectorz-clj {:mvn/version "0.48.0"}
+  ;; Apache MINA SSHD server backing the paramiko shim's `Transport.start_server`
+  ;; (reverse port-forwarding); JSch above is client-only.
+  org.apache.sshd/sshd-core {:mvn/version "2.15.0"}
+  org.babashka/http-client {:mvn/version "0.4.24"}
+  ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session) —
+  ;; HTTPS verb/path enforcement for jailed shell children. No system provider is
+  ;; registered; bcpkix builders use the default JCA signer (native-image friendly).
+  org.bouncycastle/bcpkix-jdk18on {:mvn/version "1.85"}
+  org.bouncycastle/bcprov-jdk18on {:mvn/version "1.85"}
+  ;; Clojure ITSELF is pinned here, and must stay pinned. The source runtime is
+  ;; `clojure -M:vis` on whatever Clojure CLI the user happens to have, and the CLI
+  ;; install's own deps.edn declares org.clojure/clojure as a TOP-LEVEL dep — so on an
+  ;; older CLI that default (1.11.x) beat the 1.12.5 the extensions pin transitively,
+  ;; and the engine did not compile at all: qualified methods as values
+  ;; (`System/getenv`) are Clojure 1.12 syntax.
+  org.clojure/clojure {:mvn/version "1.12.5"}
+  org.clojure/core.memoize {:mvn/version "1.2.281"}
+  ;; Runtime downloader for the per-platform FFM native jars (fff/ruff/imaging/
+  ;; tree-sitter) on the plain-JVM path — never used by the native binary. EXCLUDE the
+  ;; S3 transporter: it exists only for `s3://` maven repos (vis has none) and it is
+  ;; the sole reason com.cognitect.aws/{api,s3,endpoints} + their slf4j/jackson tail
+  ;; get resolved, downloaded and logged during every cold CI native build — and they
+  ;; are not native-image-safe.
+  org.clojure/tools.deps {:exclusions [org.clojure/tools.deps.maven-s3-transporter]
+                          :mvn/version "0.31.1638"}
+  org.commonmark/commonmark {:mvn/version "0.29.0"}
+  org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
+  org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
+  ;; CVE pins: ring-jetty-adapter (below) still resolves Jetty 12.1.8, which carries
+  ;; CVE-2026-10050/10051/8384/6790. Declaring the two Jetty roots here (top dep wins
+  ;; in tools.deps) lifts the whole Jetty tree to 12.1.11. Drop these once ring ships
+  ;; a release that resolves >= 12.1.11 on its own.
+  org.eclipse.jetty.ee9/jetty-ee9-servlet {:mvn/version "12.1.11"}
+  org.eclipse.jetty/jetty-server {:mvn/version "12.1.11"}
+  org.flatland/ordered {:mvn/version "1.15.12"}
+  ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together with
+  ;; the setup-graalvm-25 action's pinned version.
+  org.graalvm.polyglot/polyglot {:mvn/version "25.1.3"}
+  org.graalvm.python/python-language {:mvn/version "25.1.3"}
+  org.graalvm.python/python-resources {:mvn/version "25.1.3"}
+  org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
+  org.yamlstar/yamlstar {:mvn/version "0.1.17"}
+  ring/ring-core {:mvn/version "1.15.5"}
+  ring/ring-jetty-adapter {:mvn/version "1.15.5"}}
+
+ :aliases
+ {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}}
+         :main-opts ["-m" "antq.core"]}
+
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                  org.apache.commons/commons-compress {:mvn/version "1.28.0"}
                  slipset/deps-deploy {:mvn/version "0.2.5"}}
@@ -9,245 +141,113 @@
           ;; (tools.deps pulls slf4j-nop). WARN verbosity silences it.
           :jvm-opts ["-Dslf4j.internal.verbosity=WARN"]
           :ns-default build}
+
   :clj-watson {:main-opts ["-m" "clj-watson.cli"]
                :replace-deps {io.github.clj-holmes/clj-watson
-                              {:git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"
-                               :git/tag "v6.1.0"}}}
+                              {:git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3" :git/tag "v6.1.0"}}}
+
   ;; Regenerate the companion's STATIC theme assets from `theme.clj`. Themes are
   ;; data, not a gateway service: `apps/vis-companion` ships the rendered CSS.
-  :companion-themes {:extra-paths ["dev"]
-                     :exec-fn com.blockether.vis.dev.companion-themes/write!}
+  :companion-themes {:exec-fn com.blockether.vis.dev.companion-themes/write!
+                     :extra-paths ["dev"]}
+
   :format {:deps {io.github.enajski/codestyle {:git/sha "158c94789dd284946c20148a527e655a3e97ec95"
                                                :git/url "https://github.com/enajski/codestyle.git"}}
            :main-opts ["-m" "codestyle.advanced-format"]}
+
   :lint {:deps {io.github.enajski/codestyle {:git/sha "158c94789dd284946c20148a527e655a3e97ec95"
                                              :git/url "https://github.com/enajski/codestyle.git"}}
          :main-opts ["-m" "codestyle.lint"]}
+
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
+
+  ;; The whole-repo suite. The two path lists below carry the same test roots and
+  ;; must stay in step: :extra-paths puts them on the CLASSPATH, the bare paths
+  ;; after `lazytest.main` are what lazytest WALKS (`dev` is classpath-only). The
+  ;; alias has to keep mainng lazytest.main — `run_tests` appends its own selector
+  ;; flags (--namespace / --var) to `clojure -M:test`.
   :test
-  {:extra-deps {criterium/criterium {:mvn/version "0.4.6"}
-                io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-   :extra-paths
-   ["test" "dev" "extensions/persistance/vis-persistance-sqlite/test"
-    "extensions/providers/vis-provider-github-copilot/test"
-    "extensions/providers/vis-provider-openai-codex/test"
-     "extensions/providers/vis-provider-anthropic/test" "extensions/providers/vis-provider-zai/test"
-     "extensions/providers/vis-provider-alibaba/test"
-    "extensions/providers/vis-provider-openrouter/test"
-    "extensions/providers/vis-provider-opencode-go/test"
-    "extensions/providers/vis-provider-standard/test" "extensions/channels/vis-channel-tui/test"
-    "extensions/common/vis-foundation-bridge/test" "extensions/common/vis-foundation-search/test"
-    "extensions/common/vis-foundation-voice/test" "extensions/languages/vis-language-clojure/test"
-    "extensions/languages/vis-language-python/test"
-    "extensions/languages/vis-language-typescript-bun/test"]
+  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :extra-paths ["test"
+                 "dev"
+                 "extensions/channels/vis-channel-tui/test"
+                 "extensions/common/vis-foundation-bridge/test"
+                 "extensions/common/vis-foundation-search/test"
+                 "extensions/common/vis-foundation-voice/test"
+                 "extensions/languages/vis-language-clojure/test"
+                 "extensions/languages/vis-language-python/test"
+                 "extensions/languages/vis-language-typescript-bun/test"
+                 "extensions/persistance/vis-persistance-sqlite/test"
+                 "extensions/providers/vis-provider-alibaba/test"
+                 "extensions/providers/vis-provider-anthropic/test"
+                 "extensions/providers/vis-provider-github-copilot/test"
+                 "extensions/providers/vis-provider-openai-codex/test"
+                 "extensions/providers/vis-provider-opencode-go/test"
+                 "extensions/providers/vis-provider-openrouter/test"
+                 "extensions/providers/vis-provider-standard/test"
+                 "extensions/providers/vis-provider-zai/test"]
    :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
               "-Dvis.drafts.dir=target/vis-drafts-test"]
+   ;; --hook refuses non-loopback HTTP for the whole run: see
+   ;; com.blockether.vis.test-network-guard.
    :main-opts ["-m" "lazytest.main"
-               ;; Refuse non-loopback HTTP for the whole run: see
-               ;; com.blockether.vis.test-network-guard.
                "--hook" "com.blockether.vis.test-network-guard/no-network"
-               "--dir" "test" "--dir"
-               "extensions/persistance/vis-persistance-sqlite/test" "--dir"
-               "extensions/providers/vis-provider-github-copilot/test" "--dir"
-               "extensions/providers/vis-provider-openai-codex/test" "--dir"
-               "extensions/providers/vis-provider-anthropic/test" "--dir"
-                "extensions/providers/vis-provider-zai/test" "--dir"
-                "extensions/providers/vis-provider-alibaba/test" "--dir"
-               "extensions/providers/vis-provider-openrouter/test" "--dir"
-               "extensions/providers/vis-provider-opencode-go/test" "--dir"
-               "extensions/providers/vis-provider-standard/test" "--dir"
-               "extensions/channels/vis-channel-tui/test" "--dir"
-               "extensions/common/vis-foundation-bridge/test" "--dir"
-               "extensions/common/vis-foundation-search/test" "--dir"
-               "extensions/common/vis-foundation-voice/test" "--dir"
-               "extensions/languages/vis-language-clojure/test" "--dir"
-               "extensions/languages/vis-language-python/test" "--dir"
-               "extensions/languages/vis-language-typescript-bun/test"]}
-  ;; The NATIVE BINARY's own suite (test-native/): what only `target/vis` can
-  ;; answer — the TUI's first frame on a pty, a whole one-shot agent turn, the
-  ;; provider extensions linked into it. A SEPARATE alias because it needs a
-  ;; ~20-minute `clojure -T:build native` first, and because it must fail loudly
-  ;; when the binary is missing instead of skipping inside the default suite.
+               "test"
+               "extensions/channels/vis-channel-tui/test"
+               "extensions/common/vis-foundation-bridge/test"
+               "extensions/common/vis-foundation-search/test"
+               "extensions/common/vis-foundation-voice/test"
+               "extensions/languages/vis-language-clojure/test"
+               "extensions/languages/vis-language-python/test"
+               "extensions/languages/vis-language-typescript-bun/test"
+               "extensions/persistance/vis-persistance-sqlite/test"
+               "extensions/providers/vis-provider-alibaba/test"
+               "extensions/providers/vis-provider-anthropic/test"
+               "extensions/providers/vis-provider-github-copilot/test"
+               "extensions/providers/vis-provider-openai-codex/test"
+               "extensions/providers/vis-provider-opencode-go/test"
+               "extensions/providers/vis-provider-openrouter/test"
+               "extensions/providers/vis-provider-standard/test"
+               "extensions/providers/vis-provider-zai/test"]}
+
+  ;; The NATIVE BINARY's own suite (test-native/): what only `target/vis` can answer
+  ;; — the TUI's first frame on a pty, a whole one-shot agent turn, the provider
+  ;; extensions linked into it. A SEPARATE alias because it needs a ~20-minute
+  ;; `clojure -T:build native` first, and because it must fail loudly when the binary
+  ;; is missing instead of skipping inside the default suite:
   ;;   clojure -T:build native && clojure -M:test-native
-  ;; No network hook: its only socket is the loopback provider stub it serves
-  ;; itself, and the binary under test is a separate process the hook cannot see.
-  :test-native
-  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-   :extra-paths ["test-native"]
-   ;; The pty the TUI test spawns the binary on is Panama FFM into libc
-   ;; (internal.foundation.pty), so this run needs the same native-access grants
-   ;; every other Vis JVM gets.
-   :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
-              "--enable-preview" "--sun-misc-unsafe-memory-access=allow"]
-   :main-opts ["-m" "lazytest.main" "--dir" "test-native"]}
+  ;; No network hook: its only socket is the loopback provider stub it serves itself,
+  ;; and the binary under test is a separate process the hook cannot see. The pty it
+  ;; spawns that binary on is Panama FFM into libc (internal.foundation.pty), so this
+  ;; run needs the same native-access grants every other Vis JVM gets.
+  :test-native {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                :extra-paths ["test-native"]
+                :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
+                           "--enable-preview" "--sun-misc-unsafe-memory-access=allow"]
+                :main-opts ["-m" "lazytest.main" "test-native"]}
+
+  ;; The TUI/gateway JVM. Past the native-access grants every Vis JVM needs, these
+  ;; flags exist to keep IDLE RSS down: the live heap is small, but G1 over-commits
+  ;; and never hands the pages back on its own.
+  ;;   periodic GC + free ratios — make G1 shrink committed toward the live set and
+  ;;     uncommit to the OS; it re-commits smoothly under load. Each timer-driven
+  ;;     cycle costs a small CPU blip that a too-short period shows up as a recurring
+  ;;     idle CPU "jump", so 60s: still shrinking, blips ~6x rarer than the old 10s.
+  ;;   -Xmx5g — a FIXED ceiling. The MaxRAMPercentage=75 that used to sit here scaled
+  ;;     with the HOST (~27 GiB on a 48 GB machine), which silently disarmed the free
+  ;;     ratios above and put the engine's own pressure gates (VIS_ENV_HEAP_BUDGET_MB
+  ;;     2048, VIS_ENV_RSS_BUDGET_MB 3072, VIS_ENV_HEAP_WATERMARK_PCT 85 in
+  ;;     internal.loop) out of reach — 85% of 27 GiB is never hit. 5g is the same
+  ;;     number on every machine size, above GraalPy/Truffle warmup plus a long
+  ;;     transcript and below anything that should be called a leak.
+  ;;   string dedup — a concurrent G1 pass folding byte-identical LONG-LIVED strings
+  ;;     (the retained transcript text) onto ONE backing array. It targets survivors,
+  ;;     not per-render churn, so the win is lower retained heap, not fewer GCs.
   :vis {:jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                    "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
-                   ;; The TUI's live heap is small, but G1 over-commits and
-                   ;; never hands the pages back, so idle RSS balloons. A
-                   ;; periodic idle GC + tight free-ratios make G1 shrink
-                   ;; committed toward the live set and uncommit to the OS;
-                   ;; it re-commits smoothly under load. The interval is a
-                   ;; tradeoff: each timer-driven concurrent cycle costs a
-                   ;; small CPU blip, so a too-short period shows up as a
-                   ;; recurring idle CPU "jump". 60s keeps idle RSS shrinking
-                   ;; while making those blips ~6x rarer than the old 10s.
                    "-XX:+G1PeriodicGCInvokesConcurrent" "-XX:G1PeriodicGCInterval=60000"
                    "-XX:MinHeapFreeRatio=10" "-XX:MaxHeapFreeRatio=25"
-                   ;; Pin the heap CEILING explicitly at 5 GiB. Without an
-                   ;; -Xmx the JVM picks an ergonomic MaxHeapSize, and the
-                   ;; MaxRAMPercentage=75 that used to sit here made that
-                   ;; ceiling scale with the HOST: ~27 GiB on a 48 GB machine.
-                   ;; A ceiling that large silently disarms the free-ratio
-                   ;; flags above for the GATEWAY — with ~3 GiB live G1 feels
-                   ;; no pressure, uncommits nothing, and idle RSS parks near
-                   ;; 5 GB — and it puts the engine's own pressure gates
-                   ;; (VIS_ENV_HEAP_BUDGET_MB 2048, VIS_ENV_RSS_BUDGET_MB
-                   ;; 3072, VIS_ENV_HEAP_WATERMARK_PCT 85 in
-                   ;; internal.loop) out of reach: 85% of 27 GiB is never hit.
-                   ;; 5g is the same number on every machine size, comfortably
-                   ;; above GraalPy/Truffle warmup plus a long transcript and
-                   ;; below anything that should be called a leak, so those
-                   ;; gates fire and the periodic GC has something to shrink.
                    "-Xmx5g"
-                   ;; String dedup runs a concurrent G1 pass that folds
-                   ;; byte-identical LONG-LIVED strings (the retained transcript
-                   ;; text kept across renders) onto ONE shared backing array,
-                   ;; shrinking the retained live set / RSS. Note: it targets
-                   ;; survivor strings, not the short-lived per-render churn
-                   ;; (those die young, before the dedup age threshold), so its
-                   ;; win is lower retained heap, not fewer GCs. G1 is JDK 21's
-                   ;; default GC, so this is active without an explicit
-                   ;; -XX:+UseG1GC.
                    "-XX:+UseStringDeduplication"]
-        :main-opts ["-m" "com.blockether.vis.core"]}}
- ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
- ;; from a :local/root dep's deps.edn, so the JitPack repo the voice extension
- ;; declares has to be repeated here for the aggregate build to resolve
- ;; com.github.k2-fsa.sherpa-onnx.
- :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
- :deps
- {;; The extension CONTRACT, published on its own so an extension — or a tool in
-  ;; somebody else's repository — can read what the host offers without depending
-  ;; on the engine. It carries `resources/vis-contract/*.edn`, so the engine reads
-  ;; its own contract off this dependency's classpath.
-  com.blockether/vis-contract {:local/root "packages/vis-contract"}
-  com.blockether/vis-persistance-sqlite {:local/root
-                                         "extensions/persistance/vis-persistance-sqlite"}
-  com.blockether/vis-provider-github-copilot {:local/root
-                                              "extensions/providers/vis-provider-github-copilot"}
-  com.blockether/vis-provider-openai-codex {:local/root
-                                            "extensions/providers/vis-provider-openai-codex"}
-  com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
-   com.blockether/vis-provider-zai {:local/root "extensions/providers/vis-provider-zai"}
-   com.blockether/vis-provider-alibaba {:local/root "extensions/providers/vis-provider-alibaba"}
-  com.blockether/vis-provider-openrouter {:local/root
-                                          "extensions/providers/vis-provider-openrouter"}
-  com.blockether/vis-provider-opencode-go {:local/root
-                                           "extensions/providers/vis-provider-opencode-go"}
-  com.blockether/vis-provider-standard {:local/root "extensions/providers/vis-provider-standard"}
-  com.blockether/vis-channel-tui {:local/root "extensions/channels/vis-channel-tui"}
-  com.blockether/vis-foundation-bridge {:local/root "extensions/common/vis-foundation-bridge"}
-  com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
-  com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
-  com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
-  com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
-  com.blockether/vis-language-typescript-bun {:local/root
-                                              "extensions/languages/vis-language-typescript-bun"}
-  com.blockether/rift {:mvn/version "0.0.10-11"}
-  com.blockether/svar {:mvn/version "0.7.123"}
-  com.blockether/anomaly {:mvn/version "1.0.1"}
-  ;; Runtime downloader for the per-platform FFM native jars (fff/ruff/imaging/
-  ;; tree-sitter) on the plain-JVM path — never used by the native binary.
-  ;; EXCLUDE the S3 transporter: it exists only for `s3://` maven repos (vis has
-  ;; none) and it is the sole reason com.cognitect.aws/{api,s3,endpoints} + their
-  ;; slf4j/jackson tail get resolved, downloaded and logged during every cold CI
-  ;; native build — and they are not native-image-safe.
-  org.clojure/tools.deps {:exclusions [org.clojure/tools.deps.maven-s3-transporter]
-                          :mvn/version "0.31.1638"}
-  org.commonmark/commonmark {:mvn/version "0.29.0"}
-  org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
-  org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
-  org.babashka/http-client {:mvn/version "0.4.24"}
-  babashka/process {:mvn/version "0.6.25"}
-  babashka/fs {:mvn/version "0.5.34"}
-  io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
-  ;; Imaging WITHOUT `java.desktop`: decode/encode, transforms, vector drawing,
-  ;; text, SVG rasterisation and plotting, in-process over a first-party Rust
-  ;; cdylib (image + resvg/tiny-skia) through the JDK Foreign Function & Memory
-  ;; API. This is what replaced AWT/Java2D/ImageIO/jsvg everywhere in vis — no
-  ;; vis code touches `java.awt`/`javax.imageio` any more, so there is no
-  ;; headless bootstrap, no fontconfig, and SVG rasterisation finally works in
-  ;; the macOS binary. Fonts are embedded in the cdylib (four Noto faces).
-  ;; `java.desktop` itself is still loaded, and that is FINE: mic capture uses
-  ;; `javax.sound.sampled` (the JDK's only microphone API), while next.jdbc's
-  ;; `clojure.java.data` uses `java.beans.Introspector`.
-  com.blockether/imaging {:mvn/version "0.1.9"}
-  ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
-  ;; mistakes bare upstream versions for newer).
-  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
-  com.blockether/ruff {:mvn/version "0.3.5"}
-  ;; Parinfer for Clojure source in pure Java — Blockether's linear-time rewrite of
-  ;; parinferish 0.8.0 — carrying `com.blockether.parinferish.balance`, the rule that
-  ;; decides whether a language pack's delimiter repair may be written back to a file.
-  com.blockether/parinferish {:mvn/version "0.1.0"}
-  org.clojure/core.memoize {:mvn/version "1.2.281"}
-  ;; Clojure ITSELF is pinned here, and must stay pinned. The source runtime is
-  ;; `clojure -M:vis` on whatever Clojure CLI the user happens to have, and the
-  ;; CLI install's own deps.edn declares org.clojure/clojure as a TOP-LEVEL dep —
-  ;; so on an older CLI that default (1.11.x) beat the 1.12.5 the extensions pin
-  ;; transitively, and the engine did not compile at all: qualified methods as
-  ;; values (`System/getenv`) are Clojure 1.12 syntax.
-  org.clojure/clojure {:mvn/version "1.12.5"}
-  com.blockether/fff {:mvn/version "0.12.4"}
-  com.taoensso/telemere {:mvn/version "1.2.1"}
-  ;; Version MUST match com.taoensso/telemere.
-  com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}
-  ;; Trove is the logging FACADE svar (and any other Blockether library) emits
-  ;; through; `config/route-svar-logs!` picks Telemere as its backend the way
-  ;; Trove's README documents (`set-log-fn!` + `taoensso.trove.telemere/get-log-fn`).
-  ;; Vis requires those two namespaces directly, so the coordinate is DIRECT here
-  ;; and not inherited from svar's transitive tree.
-  com.taoensso/trove {:mvn/version "1.1.0"}
-  io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
-  metosin/malli {:mvn/version "0.20.1"}
-  ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together
-  ;; with the setup-graalvm-25 action's pinned version.
-  org.graalvm.polyglot/polyglot {:mvn/version "25.1.3"}
-  org.graalvm.python/python-language {:mvn/version "25.1.3"}
-  org.graalvm.python/python-resources {:mvn/version "25.1.3"}
-  org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
-  com.cnuernber/charred {:mvn/version "1.041"}
-  org.flatland/ordered {:mvn/version "1.15.12"}
-  org.yamlstar/yamlstar {:mvn/version "0.1.17"}
-  ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
-  com.taoensso/nippy {:mvn/version "3.8.0"}
-  ;; Latest published Vectorz pair; compatibility registration is deferred until
-  ;; the first Nippy encode/decode call.
-  net.mikera/core.matrix {:mvn/version "0.63.0"}
-  net.mikera/vectorz-clj {:mvn/version "0.48.0"}
-  ring/ring-core {:mvn/version "1.15.5"}
-  ring/ring-jetty-adapter {:mvn/version "1.15.5"}
-  ;; CVE pins: ring-jetty-adapter 1.15.5 still resolves Jetty 12.1.8, which carries
-  ;; CVE-2026-10050/10051/8384/6790. Declaring the two Jetty roots here (top dep wins
-  ;; in tools.deps) lifts the whole Jetty tree to 12.1.11. Drop these once ring ships
-  ;; a release that resolves >= 12.1.11 on its own.
-  org.eclipse.jetty/jetty-server {:mvn/version "12.1.11"}
-  org.eclipse.jetty.ee9/jetty-ee9-servlet {:mvn/version "12.1.11"}
-  metosin/reitit-ring {:mvn/version "0.10.1"}
-  com.google.zxing/core {:mvn/version "3.5.4"}
-  ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.
-  com.github.mwiede/jsch {:mvn/version "2.28.5"}
-  ;; Apache MINA SSHD server backing the paramiko shim's `Transport.start_server`
-  ;; (reverse port-forwarding); JSch above is client-only.
-  org.apache.sshd/sshd-core {:mvn/version "2.15.0"}
-  ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session)
-  ;; — HTTPS verb/path enforcement for jailed shell children. No system provider is
-  ;; registered; bcpkix builders use the default JCA signer (native-image friendly).
-  org.bouncycastle/bcprov-jdk18on {:mvn/version "1.85"}
-  org.bouncycastle/bcpkix-jdk18on {:mvn/version "1.85"}}
- ;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
- ;; distributable `vis` Python module (the one PyPI ships as `vis-agent`), which
- ;; the engine slurps off the classpath as `vis/__init__.py` and execs into every
- ;; extension context. One file, both distributions.
- :paths ["src" "resources" "packages/vis-agent/src"]}
+        :main-opts ["-m" "com.blockether.vis.core"]}}}

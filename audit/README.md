@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 69 unique, across 16 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 68 unique, across 18 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~146 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -205,7 +205,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `com.taoensso/trove` | `1.1.0` | EPL-1.0 | 17 KB | 3rd-party |
-| `criterium/criterium` | `0.4.6` | EPL-1.0 | 21 KB | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
 | `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
 | `io.github.noahtheduke/lazytest` | `2.0.0` | EPL-1.0 | 46 KB | 3rd-party |
@@ -275,7 +274,7 @@ _Clojure language pack (format/lint/structural edits)._
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.1` | Apache-2.0 | 95 KB | 3rd-party |
 | `dev.weavejester/cljfmt` | `0.16.5` | EPL-1.0 | 20 KB | 3rd-party |
 | `nrepl/nrepl` | `1.7.0` | EPL-1.0 | 103 KB | 3rd-party |
-| `zprint/zprint` | `1.3.0` | MIT | 228 KB | 3rd-party |
+| `zprint/zprint` | `1.2.9` | MIT | 220 KB | 3rd-party |
 
 ### `vis-persistance-sqlite` extension
 
@@ -299,7 +298,7 @@ _Durable session store (SQLite + Flyway migrations)._
 
 | License | Count |
 |---|---|
-| EPL-1.0 | 21 |
+| EPL-1.0 | 20 |
 | Apache-2.0 | 15 |
 | MIT | 14 |
 | EPL-2.0 | 5 |

@@ -1,35 +1,27 @@
+;; Z.ai (ZhipuAI) provider — BOTH Z.ai endpoints in one classpath plug-in:
+;;   `:zai-coding-plan` -> coding-plan subscription
+;;   `:zai`             -> pay-as-you-go / "Pass" gateway
+;; They share the GLM model family (`glm-5-turbo`, `glm-5.1`, `glm-4.7`, ...) but
+;; bill against different quotas, so users typically hold one API key per plan: one
+;; namespace registers both `:provider/id`s with their own
+;; auth/get-token/status/logout fns over a shared on-disk auth file
+;; (`~/.vis/zai-auth.json`) keyed by plan. Self-registers with
+;; `com.blockether.vis.core` at namespace load via the unified
+;; `META-INF/vis-extension/vis.edn`.
 {:paths ["src" "resources"]
- ;; Z.ai (ZhipuAI) provider - covers BOTH Z.ai endpoints in one
- ;; classpath plug-in:
- ;;   - `:zai-coding-plan` -> coding-plan subscription
- ;;   - `:zai`        -> pay-as-you-go / "Pass" gateway
- ;; The two endpoints share the GLM model family (`glm-5-turbo`,
- ;; `glm-5.1`, `glm-4.7`, ...) but bill against different quotas, so
- ;; users typically have one API key per plan. This extension ships a
- ;; single namespace that registers both `:provider/id`s with their
- ;; own auth/get-token/status/logout fns and a shared on-disk auth
- ;; file (`~/.vis/zai-auth.json`) keyed by plan.
- ;;
- ;; Self-registers with `com.blockether.vis.core` at namespace load
- ;; via the unified `META-INF/vis-extension/vis.edn`.
- ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
- ;; from a :local/root dep's deps.edn, so this extension has to repeat the
- ;; JitPack repo it inherits through com.blockether/vis -> the voice
- ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
+ ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
+ ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
- :deps
- {org.clojure/clojure   {:mvn/version "1.12.5"}
-  ;; vis owns the extension/provider registries.
-  com.blockether/vis    {:local/root "../../.."}
-  ;; JSON for the persisted auth file and Coding Plan quota responses
-  ;; (charred is already on the runtime classpath via vis itself).
-  com.cnuernber/charred {:mvn/version "1.041"}
-  ;; Live Coding Plan quota probe.
-  org.babashka/http-client {:mvn/version "0.4.24"}
-  com.taoensso/telemere {:mvn/version "1.2.1"}}
-
- :aliases
- {:test
-  {:extra-paths ["test"]
-   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+        ;; vis owns the extension/provider registries.
+        com.blockether/vis {:local/root "../../.."}
+        ;; JSON for the persisted auth file and Coding Plan quota responses (charred
+        ;; is already on the runtime classpath via vis itself).
+        com.cnuernber/charred {:mvn/version "1.041"}
+        com.taoensso/telemere {:mvn/version "1.2.1"}
+        ;; Live Coding Plan quota probe.
+        org.babashka/http-client {:mvn/version "0.4.24"}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main" "test"]}}}

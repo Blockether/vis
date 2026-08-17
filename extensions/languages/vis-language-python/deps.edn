@@ -1,16 +1,15 @@
-;; vis-language-python
-;;
-;; Python language pack for Vis. Activates ONLY when the workspace looks like a
-;; Python project (pyproject.toml / setup.py / requirements.txt / *.py). Adds a
-;; MANAGED Python REPL behind the generic language facade
-;; (repl / repl_eval / repl_status / repl_stop), picking a project-aware
-;; interpreter (uv / poetry / .venv / python3) the same way the Clojure pack
-;; picks deps.edn / lein / bb. The REPL is a subprocess running a tiny line-framed
-;; eval server; charred (JSON) rides in transitively from vis core.
+;; Python language pack. Activates ONLY when the workspace looks like a Python
+;; project (pyproject.toml / setup.py / requirements.txt / *.py). Adds a MANAGED
+;; Python REPL behind the generic language facade (repl / repl_eval / repl_status /
+;; repl_stop), picking a project-aware interpreter (uv / poetry / .venv / python3)
+;; the way the Clojure pack picks deps.edn / lein / bb. The REPL is a subprocess
+;; running a tiny line-framed eval server; charred (JSON) rides in from vis core.
 {:paths ["src" "resources"]
- ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
- ;; from a :local/root dep's deps.edn, so this extension has to repeat the
- ;; JitPack repo it inherits through com.blockether/vis -> the voice
- ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
+ ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
+ ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
- :deps  {com.blockether/vis {:local/root "../../.."}}}
+ :deps {com.blockether/vis {:local/root "../../.."}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main" "test"]}}}

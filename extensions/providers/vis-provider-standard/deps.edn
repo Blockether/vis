@@ -1,13 +1,11 @@
-;; Standard provider presets. Each provider namespace registers exactly
-;; one Vis extension/provider entry; shared package only avoids seven tiny jars.
+;; Standard provider presets. Each provider namespace registers exactly one Vis
+;; extension/provider entry; the shared package only avoids seven tiny jars.
 {:paths ["src" "resources"]
- ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
- ;; from a :local/root dep's deps.edn, so this extension has to repeat the
- ;; JitPack repo it inherits through com.blockether/vis -> the voice
- ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
+ ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
+ ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {com.blockether/vis {:local/root "../../.."}}
- :aliases
- {:test {:extra-paths ["test"]
-         :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-         :main-opts ["-m" "lazytest.main" "--dir" "test"]}}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main" "test"]}}}

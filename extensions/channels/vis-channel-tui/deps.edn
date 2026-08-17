@@ -1,110 +1,83 @@
+;; TUI channel — the Lanterna chat UI, an OPTIONAL package: nothing requires its
+;; namespaces, the CLI dispatcher resolves
+;; `com.blockether.vis.ext.channel-tui.screen/run-chat!` lazily through
+;; `requiring-resolve`, so omitting this jar leaves the rest of vis usable.
 {:paths ["src" "resources"]
- ;; TUI channel - Lanterna-based chat UI. Optional channel package.
- ;;
- ;; Depends on vis-sdk for the runtime (sessions, env, turns, db).
- ;; vis-runtime never requires this namespace directly - the CLI dispatcher
- ;; resolves `com.blockether.vis.ext.channel-tui.screen/run-chat!` lazily
- ;; via `requiring-resolve`, so omitting this jar still leaves the rest
- ;; of vis usable.
- ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
- ;; from a :local/root dep's deps.edn, so this extension has to repeat the
- ;; JitPack repo it inherits through com.blockether/vis -> the voice
- ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
+ ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
+ ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis {:local/root "../../.."}
         com.taoensso/telemere {:mvn/version "1.2.1"}
-        ;; Blockether fork of mabe02/lanterna 3.1.5 — STANDARD Unicode widths, so
-        ;; lanterna's column model matches what the terminal paints (mismatch shoves
-        ;; following cells / borders out of alignment). Patches on top of 3.1.5:
+        ;; Blockether fork of mabe02/lanterna 3.1.5 — a DROP-IN replacement in the same
+        ;; com.googlecode.lanterna.* package, retired when upstream ships equivalents.
+        ;; Its subject is STANDARD Unicode widths: lanterna's column model has to match
+        ;; what the terminal paints, or every following cell and border slides.
         ;;   1. PR #625 cherry-pick — grapheme-aware emoji rendering in
         ;;      StreamBasedTerminal/AbstractTextGraphics putString.
-        ;;   2. BMP `Emoji_Presentation=Yes` glyphs (✅ ⭐ ⚡ ❌ ✨ ☔ ☕ ⏰ …) and
-        ;;      genuine astral/surrogate emoji (🏷️ 😊 👀) → 2 columns.
-        ;;   3. VS-16 (emoji presentation) graphemes are WIDE — ⚠️ ❤️ ☑️ 🏷️ count as
-        ;;      2 columns, matching how the target terminals paint emoji-presentation
-        ;;      sequences. This is independent of the BARE base glyph: a bare ⚠ / ● / ▶
-        ;;      (no VS-16) is text/geometric presentation and stays 1 column (patch #5).
-        ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
-        ;;   5. Geometric / symbol glyphs ● ○ ◯ ◎ ◐ ◑ (status dots), ▶ ◀ (media
-        ;;      triangles), ⚠ (warning sign) are ONE column (standard width). They were
-        ;;      briefly force-widened; that mis-aligned e.g. a focused tab's `● ` prefix
-        ;;      (its trailing │ slid one column left). Disclosure chevrons ▸ ▾ already
-        ;;      narrow (EAW=N).
-        ;;   6. East-Asian-Ambiguous (EAW=A) punctuation/letters (· — … λ “” • ™, Greek,
-        ;;      Cyrillic) are NARROW by default (modern terminals); opt into wide with
-        ;;      the JVM flag `-Dlanterna.eastAsianAmbiguousWide=true`.
-        ;;   7. East-Asian Wide/Fullwidth (EAW=W/F) table from Unicode 15.1 for W/F
-        ;;      symbols OUTSIDE the CJK blocks (〈〉, Yi, Bopomofo, CJK compat/vertical)
-        ;;      that isCharCJK missed → 2 columns. One shared source for display-width
-        ;;      and the paint. Chrome (box/block/geometric/arrows) stays single-width.
+        ;;   2. BMP `Emoji_Presentation=Yes` glyphs (✅ ⭐ ⚡ ❌ ⏰ …) and genuine
+        ;;      astral/surrogate emoji (🏷️ 😊 👀) are 2 columns.
+        ;;   3. VS-16 (emoji presentation) graphemes — ⚠️ ❤️ ☑️ — are WIDE, whatever the
+        ;;      BARE base glyph does.
+        ;;   4. VS-15 (text presentation) graphemes (☑︎) stay single-width.
+        ;;   5. Geometric/symbol glyphs without VS-16 — ● ○ ◯ ◎ ◐ ◑ status dots, ▶ ◀
+        ;;      media triangles, ⚠ — are ONE column; force-widening them once slid a
+        ;;      focused tab's `● ` prefix (and its trailing │) a column left. Disclosure
+        ;;      chevrons ▸ ▾ were already narrow (EAW=N).
+        ;;   6. East-Asian-Ambiguous (EAW=A) punctuation and letters (· — … λ “” • ™,
+        ;;      Greek, Cyrillic) are NARROW, as modern terminals paint them; opt into
+        ;;      wide with -Dlanterna.eastAsianAmbiguousWide=true.
+        ;;   7. Unicode 15.1 EAW=W/F table for the wide symbols OUTSIDE the CJK blocks
+        ;;      (〈〉, Yi, Bopomofo, CJK compat/vertical) that isCharCJK missed — one
+        ;;      shared source for display width and the paint. Box/block/geometric
+        ;;      chrome and arrows stay single-width.
         ;;   8. Control chars degrade to a space instead of throwing on the render thread.
-        ;;   9. Scroll-ghost fix: refreshByDelta skips a wide glyph's trailing half-cell
-        ;;      (the 2-cell glyph covers it), but when content scrolls out from under a
-        ;;      wide char that skipped column kept a stale half-glyph — a "floating"
-        ;;      ghost ONLY on emoji/CJK rows. Now the wide char is re-emitted whenever its
-        ;;      trailing cell changed, repainting over the ghost.
-        ;;  10. Text-flow utilities (TerminalTextUtils, grapheme/EAW-aware, plain text):
-        ;;      displayWidth / wordWrap / justify / justifyLine, and `foldColumns` — a
-        ;;      terminal-style SOFT WRAP (char-fold that preserves whitespace/alignment,
-        ;;      unlike word-wrap) used by the TUI to fold pathologically wide single
-        ;;      lines (one-line commit-message args, wide clj_eval values) at the bubble
-        ;;      edge instead of clipping them.
-        ;;  11. Apple Terminal.app width mode (vis.19): Terminal.app IGNORES the VS-16
-        ;;      (U+FE0F) emoji-presentation selector and paints the base glyph at its
-        ;;      TEXT width — ⚠️ ✔️ ☑️ ▶️ ⏺️ ❤️ = ONE column there, vs TWO on
-        ;;      iTerm2/Ghostty/Kitty/tmux. Trusting the two-column model on Terminal.app
-        ;;      over-advanced the cursor, merging following text into the icon and
-        ;;      leaving scroll ghosts. Auto-detected from TERM_PROGRAM=Apple_Terminal
-        ;;      (off inside tmux); force with -Dlanterna.appleTerminalWidths=true|false.
-        ;;  12. Inline terminal images (vis.23): com.googlecode.lanterna.terminal.image.TerminalImage
-        ;;      — Kitty graphics protocol / iTerm2 inline images, graphics-capability
-        ;;      detection (isGraphicalTerminal → graphical vs non-graphical terminal),
-        ;;      pixel-dimension sniffing, cell-box sizing, escape encoding. vis's
-        ;;      channel-tui.terminal-image is now a thin adapter over it.
-        ;;  13. Terminal chrome rule builders (vis.28): TerminalTextUtils/repeat,
-        ;;      joinedLine, and boxedLine build `─`, `──┬──`, and `┌──┐` strings in
-        ;;      Java StringBuilder code so TUI tables/dialog separators don't rebuild
-        ;;      hot chrome through Clojure seq helpers every paint.
-        ;;  14. Native TTY control (vis.36): com.googlecode.lanterna.terminal.ansi.TTYDeviceControl
-        ;;      — termios + ioctl(TIOCGWINSZ) through the java.lang.foreign (FFM) API. Since
-        ;;      vis.37 the fork is compiled at release 25 with NO multi-release layering: FFM is
-        ;;      the only implementation, matching vis's own GraalVM CE 25 baseline. UnixTerminal
-        ;;      no longer forks /bin/stty six times per acquire/restore, and the window size
-        ;;      comes from ONE ioctl instead of the ANSI "park the cursor at 5000,5000 and parse
-        ;;      the reply" round-trip (which silently degrades to 80x24). Every call falls back
-        ;;      to stty on failure; force the old path with
-        ;;      -Dcom.googlecode.lanterna.terminal.UnixTerminal.nativeTTY=false.
-        ;;      Needs --enable-native-access=ALL-UNNAMED on the JVM (see the root deps.edn
-        ;;      aliases) and, in the native image, the foreign downcall descriptors registered
-        ;;      by com.blockether.vis.internal.nativeimage's Feature.
-        ;;  15. No Swing/AWT terminal emulator (vis.38): the whole
-        ;;      com.googlecode.lanterna.terminal.swing package (SwingTerminalFrame,
-        ;;      AWTTerminalFrame, the emulator palettes/font configs — 17 classes) is
-        ;;      DELETED, and DefaultTerminalFactory only ever builds a text terminal
-        ;;      (its emulator switches are kept as no-ops). vis never opens a GUI window;
-        ;;      this removes any path by which AWT/Swing could become reachable from the
+        ;;   9. Scroll-ghost fix: refreshByDelta skips a wide glyph's trailing half-cell,
+        ;;      but content scrolling out from under it left a stale half-glyph on
+        ;;      emoji/CJK rows — the wide char is now re-emitted whenever that trailing
+        ;;      cell changed.
+        ;;  10. Grapheme/EAW-aware text flow in TerminalTextUtils: displayWidth,
+        ;;      wordWrap, justify, justifyLine and `foldColumns` — a terminal-style SOFT
+        ;;      wrap (char fold that preserves whitespace and alignment) the TUI folds
+        ;;      pathologically wide single lines with instead of clipping them.
+        ;;  11. Apple Terminal.app IGNORES VS-16 and paints the base glyph at TEXT width
+        ;;      (⚠️ ✔️ ☑️ ▶️ ❤️ = ONE column there, TWO on iTerm2/Ghostty/Kitty/tmux), so
+        ;;      trusting the two-column model over-advanced the cursor and left ghosts.
+        ;;      Auto-detected from TERM_PROGRAM=Apple_Terminal (off inside tmux); force
+        ;;      with -Dlanterna.appleTerminalWidths=true|false.
+        ;;  12. Inline images in terminal.image.TerminalImage — Kitty graphics protocol /
+        ;;      iTerm2 inline images, capability detection, pixel-dimension sniffing,
+        ;;      cell-box sizing, escape encoding. channel-tui.terminal-image is a thin
+        ;;      adapter over it.
+        ;;  13. Terminal chrome builders (TerminalTextUtils/repeat, joinedLine,
+        ;;      boxedLine) build `─`, `──┬──` and `┌──┐` in StringBuilder code so hot
+        ;;      table/dialog chrome is not rebuilt through Clojure seqs every paint.
+        ;;  14. Native TTY control in ansi.TTYDeviceControl — termios + ioctl(TIOCGWINSZ)
+        ;;      through the java.lang.foreign (FFM) API, compiled at release 25 with no
+        ;;      multi-release layering. UnixTerminal no longer forks /bin/stty six times
+        ;;      per acquire/restore, and the window size comes from ONE ioctl instead of
+        ;;      the ANSI cursor-parking round-trip that silently degrades to 80x24. Every
+        ;;      call falls back to stty; force the old path with
+        ;;      -Dcom.googlecode.lanterna.terminal.UnixTerminal.nativeTTY=false. Needs
+        ;;      --enable-native-access=ALL-UNNAMED (see the root deps.edn aliases) and,
+        ;;      in the native image, the downcall descriptors
+        ;;      com.blockether.vis.internal.nativeimage registers.
+        ;;  15. No Swing/AWT emulator: the whole terminal.swing package (17 classes) is
+        ;;      DELETED and DefaultTerminalFactory only ever builds a text terminal (its
+        ;;      emulator switches are no-ops), so nothing can make AWT reachable from the
         ;;      TUI in the native image.
-        ;;  16. ZERO java.desktop (vis.39): the last two AWT users are gone —
-        ;;      TerminalImage's ImageIO/Graphics2D PNG transcode (now done in Clojure
-        ;;      over com.blockether/imaging, which is why the class exposes
-        ;;      cellWidth/cellHeight) and TextColor's deprecated `toColor()`
-        ;;      java.awt.Color helper. `requires static java.desktop` is dropped from
-        ;;      module-info, and the jar contains no java/awt or javax/swing reference
-        ;;      at all — vis's native image no longer needs the java.desktop module.
-        ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
-        ;; Retire when upstream ships equivalent fixes.
+        ;;  16. ZERO java.desktop: TerminalImage's ImageIO/Graphics2D PNG transcode (now
+        ;;      done in Clojure over com.blockether/imaging, which is why the class
+        ;;      exposes cellWidth/cellHeight) and TextColor's deprecated `toColor()` are
+        ;;      gone, `requires static java.desktop` is dropped from module-info, and the
+        ;;      jar carries no java/awt or javax/swing reference at all.
         com.blockether/lanterna {:mvn/version "3.1.5-vis.42"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
-        ;; (channel-tui.cinema). CORE ONLY: frames are rendered by
-        ;; com.blockether/imaging and handed over as jcodec RGB `Picture`s, so the
-        ;; java.desktop-bound `jcodec-javase` (AWTSequenceEncoder/AWTUtil) is gone.
-        ;; No native deps. Only pulled in when the TUI jar is present.
+        ;; (channel-tui.cinema). CORE ONLY: com.blockether/imaging renders the frames
+        ;; and hands them over as jcodec RGB `Picture`s, so the java.desktop-bound
+        ;; `jcodec-javase` (AWTSequenceEncoder/AWTUtil) is gone. No native deps.
         org.jcodec/jcodec {:mvn/version "0.2.5"}}
- :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-                               ;; Used by `render_bench_test.clj` for the inline
-                               ;; Markdown hot-path microbenchmarks. Test-only;
-                               ;; never reaches the runtime jar.
-                               criterium/criterium {:mvn/version "0.4.6"}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
                   :extra-paths ["test"]
-                  :main-opts ["-m" "lazytest.main"]}}}
+                  :main-opts ["-m" "lazytest.main" "test"]}}}

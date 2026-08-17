@@ -1,25 +1,19 @@
+;; GitHub Copilot OAuth provider — device-flow authentication + token lifecycle.
+;; Self-registers with `com.blockether.vis.core` at namespace load via the unified
+;; `META-INF/vis-extension/vis.edn`.
 {:paths ["src" "resources"]
- ;; GitHub Copilot OAuth provider - device-flow authentication +
- ;; token lifecycle. Self-registers with `com.blockether.vis.core`
- ;; at namespace load via the unified `META-INF/vis-extension/vis.edn`.
- ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
- ;; from a :local/root dep's deps.edn, so this extension has to repeat the
- ;; JitPack repo it inherits through com.blockether/vis -> the voice
- ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
+ ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
+ ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
- :deps
- {org.clojure/clojure       {:mvn/version "1.12.5"}
-  ;; vis-sdk owns the extension and provider registries; vis-runtime
-  ;; transitively pulls it via the dep below.
-  com.blockether/vis    {:local/root "../../.."}
-  ;; HTTP client for the device-flow + token-exchange calls.
-  org.babashka/http-client  {:mvn/version "0.4.24"}
-  ;; JSON parsing for the OAuth + token-exchange responses.
-  com.cnuernber/charred     {:mvn/version "1.041"}
-  com.taoensso/telemere     {:mvn/version "1.2.1"}}
-
- :aliases
- {:test
-  {:extra-paths ["test"]
-   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+        ;; vis owns the extension/provider registries.
+        com.blockether/vis {:local/root "../../.."}
+        ;; JSON for the OAuth + token-exchange responses.
+        com.cnuernber/charred {:mvn/version "1.041"}
+        com.taoensso/telemere {:mvn/version "1.2.1"}
+        ;; HTTP client for the device-flow + token-exchange calls.
+        org.babashka/http-client {:mvn/version "0.4.24"}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+                  :extra-paths ["test"]
+                  :main-opts ["-m" "lazytest.main" "test"]}}}
