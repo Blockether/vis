@@ -203,14 +203,13 @@ def run_one(job):
                 detail.append(f"tool {t!r} not used")
 
         used_patch = "patch" in toolset
-        path = (
-            "patch"
-            if "patch" in toolset
-            else (
-                "repl" if (toolset & {"repl_eval", "repl_start"}) else "cat-only"
-            )
-        )
-        if path in ("cat-only", "??") or errs or not (done and correct):
+        if used_patch:
+            path = "patch"
+        elif toolset & {"repl_eval", "repl_start"}:
+            path = "repl"
+        else:
+            path = "cat-only"
+        if path == "cat-only" or errs or not (done and correct):
             detail.append(
                 "tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset))
             )
