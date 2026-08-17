@@ -872,6 +872,28 @@ await patch({'path': css})" "t1/i1")]
        (:python-context (ep/create-python-context {'echo (fn [x]
                                                            (str "<" x ">"))
                                                    (symbol "__vis_par__") par
+                                                   (symbol "__vis_par_isolated__") par-isolated})))
+
+     par-threaded
+     ;; The sequential stand-in above cannot express a RENDEZVOUS: a lock, an
+     ;; event, a queue or a barrier only means anything when two gather children
+     ;; settle AT THE SAME TIME, which is exactly what production's bounded
+     ;; platform pool does. One host thread per thunk, failures unwrapped so a
+     ;; child's exception reaches gather as itself.
+     (fn [& thunks]
+       (let
+         [running (mapv (fn [t]
+                          (future (call t)))
+                        (normalize-thunks thunks))]
+         (mapv (fn [f]
+                 (try @f (catch java.util.concurrent.ExecutionException e (throw (.getCause e)))))
+               running)))
+
+     mk-threaded
+     (fn []
+       (:python-context (ep/create-python-context {'echo (fn [x]
+                                                           (str "<" x ">"))
+                                                   (symbol "__vis_par__") par-threaded
                                                    (symbol "__vis_par_isolated__") par-isolated})))]
 
     (it
@@ -1028,7 +1050,145 @@ await patch({'path': css})" "t1/i1")]
 
           (expect (some? (:error r)))
           (expect (not (clojure.string/includes? blob "PosixSupport")))
-          (expect (clojure.string/includes? blob "socket"))))))
+          (expect (clojure.string/includes? blob "socket"))))
+    (it
+      "queues, locks, semaphores, conditions, futures and Runner compose"
+      (let
+        [r
+         (ep/run-python-block
+           (mk)
+           (str
+             "import asyncio\n" "\n"
+             "\n" "async def main():\n"
+             "    q = asyncio.Queue(maxsize=1)\n" "    q.put_nowait('a')\n"
+             "    try:\n" "        q.put_nowait('b')\n"
+             "        return 'no QueueFull'\n" "    except asyncio.QueueFull:\n"
+             "        pass\n" "    assert q.get_nowait() == 'a'\n"
+             "    try:\n" "        q.get_nowait()\n"
+             "        return 'no QueueEmpty'\n" "    except asyncio.QueueEmpty:\n"
+             "        pass\n" "    lifo = asyncio.LifoQueue()\n"
+             "    pq = asyncio.PriorityQueue()\n" "    for i in (1, 2, 3):\n"
+             "        lifo.put_nowait(i)\n" "    for i in (3, 1, 2):\n"
+             "        pq.put_nowait(i)\n"
+             "    assert [lifo.get_nowait() for _ in range(3)] == [3, 2, 1]\n"
+             "    assert [pq.get_nowait() for _ in range(3)] == [1, 2, 3]\n"
+             "    lock = asyncio.Lock()\n"
+             "    async with lock:\n" "        assert lock.locked()\n"
+             "    assert not lock.locked()\n" "    sem = asyncio.Semaphore(1)\n"
+             "    async with sem:\n" "        assert sem.locked()\n"
+             "    assert not sem.locked()\n" "    cond = asyncio.Condition()\n"
+             "    async with cond:\n" "        assert cond.locked()\n"
+             "    assert not cond.locked()\n" "    async with asyncio.timeout(5):\n"
+             "        await asyncio.sleep(0)\n" "    loop = asyncio.get_event_loop()\n"
+             "    assert await loop.run_in_executor(None, lambda v: v * 2, 21) == 42\n"
+             "    fut = loop.create_future()\n"
+             "    fut.set_result('handed')\n" "    assert await fut == 'handed' and fut.done()\n"
+             "    assert asyncio.run_coroutine_threadsafe(asyncio.sleep(0, 'safe')).result() == 'safe'\n"
+             "    with asyncio.Runner() as runner:\n"
+             "        assert runner.run(asyncio.sleep(0, 'runner')) == 'runner'\n"
+             "    jq = asyncio.Queue()\n"
+             "    await jq.put('last')\n" "    assert await jq.get() == 'last'\n"
+             "    jq.task_done()\n" "    await jq.join()\n"
+             "    return 'primitives-ok'\n" "\n"
+             "\n" "print(asyncio.run(main()))")
+           "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "primitives-ok" (clojure.string/trim (str (:stdout r)))))))
+    (it
+      "wait_for bounds the wait ITSELF instead of noticing the deadline afterwards"
+      (let
+        [started
+         (System/nanoTime)
+
+         r
+         (ep/run-python-block
+           (mk)
+           (str "import asyncio, time\n" "\n"
+                "\n" "async def main():\n"
+                "    started = time.monotonic()\n" "    q = asyncio.Queue()\n"
+                "    try:\n" "        await asyncio.wait_for(q.get(), 0.1)\n"
+                "        return 'queue never timed out'\n" "    except TimeoutError:\n"
+                "        pass\n" "    event = asyncio.Event()\n"
+                "    try:\n" "        await asyncio.wait_for(event.wait(), 0.1)\n"
+                "        return 'event never timed out'\n" "    except TimeoutError:\n"
+                "        pass\n" "    try:\n"
+                "        await asyncio.wait_for(asyncio.sleep(30), 0.1)\n"
+                "        return 'sleep never timed out'\n"
+                "    except TimeoutError:\n" "        pass\n"
+                "    return 'bounded', time.monotonic() - started < 5.0\n" "\n"
+                "\n" "print(asyncio.run(main()))")
+           "t1/i1")
+
+         elapsed-ms
+         (/ (- (System/nanoTime) started) 1000000.0)]
+
+        (expect (nil? (:error r)))
+        (expect (= "('bounded', True)" (clojure.string/trim (str (:stdout r)))))
+        ;; The last case gives `sleep(30)` a 0.1 s budget: before `wait_for`
+        ;; pushed the deadline into the wait, the block sat there for half a
+        ;; minute and only THEN reported that it had taken too long.
+        (expect (< elapsed-ms 15000.0))))
+    ;; `handoff` is bound by a TOP-LEVEL statement on purpose: an awaitable
+    ;; placeholder used to be DRIVEN by the statement auto-settle right there, so
+    ;; the block hung forever on a value only a sibling thread could ever set.
+    (it
+      "synchronization primitives rendezvous across concurrently settled gather children"
+      (let
+        [r
+         (ep/run-python-block
+           (mk-threaded)
+           (str
+             "import asyncio\n" "\n"
+             "lock = asyncio.Lock()\n" "event = asyncio.Event()\n"
+             "queue = asyncio.Queue(maxsize=1)\n" "barrier = asyncio.Barrier(2)\n"
+             "handoff = asyncio.Future()\n" "order = []\n"
+             "\n" "\n"
+             "async def critical(tag):\n" "    async with lock:\n"
+             "        order.append('in' + tag)\n" "        await asyncio.sleep(0.05)\n"
+             "        order.append('out' + tag)\n" "    return tag\n"
+             "\n" "\n"
+             "async def waiter():\n" "    await event.wait()\n"
+             "    return 'released'\n" "\n"
+             "\n" "async def setter():\n"
+             "    await asyncio.sleep(0.05)\n" "    event.set()\n"
+             "    return 'set'\n" "\n"
+             "\n" "async def producer():\n"
+             "    for i in range(3):\n" "        await queue.put(i)\n"
+             "    handoff.set_result('handed over')\n" "    return 'produced'\n"
+             "\n" "\n"
+             "async def consumer():\n" "    got = []\n"
+             "    for _ in range(3):\n" "        got.append(await queue.get())\n"
+             "        queue.task_done()\n" "    await queue.join()\n"
+             "    return got\n" "\n"
+             "\n" "async def rendezvous(tag):\n"
+             "    await barrier.wait()\n" "    return 'past ' + tag\n"
+             "\n" "\n"
+             "async def main():\n"
+             "    values = await asyncio.gather(critical('a'), critical('b'), waiter(), setter(),\n"
+             "                                  producer(), consumer(), rendezvous('x'), rendezvous('y'),\n"
+             "                                  asyncio.wait_for(handoff, 5))\n"
+             "    assert order in (['ina', 'outa', 'inb', 'outb'], ['inb', 'outb', 'ina', 'outa']), order\n"
+             "    ranked = []\n"
+             "    for slot in asyncio.as_completed([asyncio.sleep(0.2, 'slow'), asyncio.sleep(0.01, 'fast')]):\n"
+             "        ranked.append(await slot)\n"
+             "    return values[2], values[4], values[5], values[8], ranked\n" "\n"
+             "\n" "print(asyncio.run(main()))")
+           "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "('released', 'produced', [0, 1, 2], 'handed over', ['fast', 'slow'])"
+                   (clojure.string/trim (str (:stdout r)))))))
+    (it "an event-loop-only name refuses BY NAME and leaves hasattr answering"
+        (let
+          [r (ep/run-python-block
+               (mk)
+               (str "import asyncio\n" "\n"
+                    "try:\n" "    asyncio.open_connection\n"
+                    "    print('not refused')\n" "except AttributeError as exc:\n"
+                    "    print('requests' in str(exc), hasattr(asyncio, 'start_server'),\n"
+                    "          hasattr(asyncio, 'Queue'), hasattr(asyncio, 'to_thread'))")
+               "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "True False True True" (clojure.string/trim (str (:stdout r)))))))))
 
 ;; Regression, issue #141: `import ssl` (and `select` / `selectors`) was DELETED
 ;; from the block by the import preprocessor, so the stdlib escape hatch for an
@@ -1231,7 +1391,7 @@ await patch({'path': css})" "t1/i1")]
 (defdescribe
   sandbox-denial-hint-test
   "A sandbox capability denial (filesystem / native / process) maps to an
-   ACTIONABLE hint steering to grep / struct_index / repl_eval — not the opaque PermissionError /
+   ACTIONABLE hint steering to grep / cat / repl_eval — not the opaque PermissionError /
    `SecurityException: Operation is not allowed for:` the model kept hitting when
    it reached for importlib.exec_module / open() on a project file."
   (let

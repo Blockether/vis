@@ -844,7 +844,7 @@ def __vis_exec_call__(c):
         # callables are foreign ProxyExecutables that accept ONLY positional args, so
         # `c.fn(*a, **k)` would raise `__call__() got an unexpected keyword argument`.
         # vis tools already take a trailing opts dict — `find("x", paths=[...])`,
-        # `rg(query="x")`, `struct_patch(op="delete", target="foo")` — so folding
+        # `rg(query="x")`, `run_tests(language="python")` — so folding
         # kwargs to one dict matches their contract (all-kwargs collapses to a spec map).
         # Flush what the block wrote through a still-open handle FIRST: a tool
         # that reads a just-written file (`git commit -F /tmp/msg`) must not see
@@ -883,7 +883,7 @@ def __vis_exec_call__(c):
 def __vis_key_hint__(__vis_d__, __vis_k__):
     # A missing key on a TOOL RESULT is a LOOKUP mistake, not a broken tool: shapes
     # differ per tool (shell -> stdout/exit/duration_ms, run_tests -> output,
-    # struct_index -> results/definitions). A bare `KeyError: 'output'` reads as a broken tool, so
+    # grep -> matches/hit_count). A bare `KeyError: 'output'` reads as a broken tool, so
     # the model guesses another name and spins. Name the tool, the near miss, and every
     # key it DID return — one wrong guess then ends the guessing.
     __vis_keys__ = list(__vis_d__.keys())
@@ -1009,8 +1009,8 @@ class __VisShell__(__VisResult__):
 
 
 class __VisResultList__(list):
-    # A host call result whose TOP-LEVEL shape is a LIST (struct_patch
-    # returns one row per file; some tools return a list of hits). It stays a
+    # A host call result whose TOP-LEVEL shape is a LIST (a tool that answers
+    # one row per hit). It stays a
     # REAL list — index / iterate / len / json.dumps / {**_}-free code all behave —
     # but ALSO answers the dict probes (.get/.keys/.items/.values) so a uniform
     # `res.get('op')` probe NEVER trips on it. A list has no top-level 'op', so .get
@@ -1161,7 +1161,7 @@ def __vis_settle_gather__(v):
             for aw in v.aws:
                 failure = None
                 try:
-                    out.append(__vis_settle__(aw))
+                    out.append(__vis_settle_child__(aw))
                 except BaseException as exc:
                     failure = exc
                 if failure is not None:
@@ -1172,7 +1172,7 @@ def __vis_settle_gather__(v):
                     out.append(__vis_clean_exception__(failure))
                     failure = None
             return out
-        thunks = [(lambda a=a: __vis_settle__(a)) for a in v.aws]
+        thunks = [(lambda a=a: __vis_settle_child__(a)) for a in v.aws]
         return __vis_pyify__(__vis_par__(thunks))
     except BaseException:
         # The host cancels outstanding futures, but user-retained guest Tasks would
@@ -1222,15 +1222,32 @@ def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
         # TOP-LEVEL tool result: re-type a list/str payload to the probeable
         # subclass. Without this a
-        # `struct_patch` return was a PLAIN list, so the documented
+        # LIST-shaped tool return was a PLAIN list, so the documented
         # uniform `res.get('op')` probe blew up with `'list' object has no attribute
         # 'get'` and the print-capture below could not recognise it as a result.
         return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
     if isinstance(v, __vis_Gather__):
         return __vis_settle_gather__(v)
+    if isinstance(v, __vis_Future__):
+        # A Future is a PLACEHOLDER, not work. Every other awaitable a top-level
+        # statement binds is something to RUN where it was written, but driving
+        # `f = asyncio.Future()` would block the block itself on a value only a
+        # sibling thread can set - and nothing else can run while it waits.
+        # `await f` and a Future handed to `gather` still wait (see
+        # `__vis_settle_child__`).
+        return v
     if __vis_is_awaitable__(v):
         return __vis_pyify__(__vis_drive__(v))
     return __vis_pyify__(v)
+
+
+def __vis_settle_child__(v):
+    # GATHER-child settle. A `gather` slot is work by definition, so the one
+    # awaitable the top-level settle refuses to drive - a Future - is exactly the
+    # thing a sibling slot is expected to complete here.
+    if isinstance(v, __vis_Future__):
+        return __vis_pyify__(__vis_drive__(v))
+    return __vis_settle__(v)
 
 
 def __vis_settle_stmt__(v):
@@ -1414,6 +1431,22 @@ class __vis_Sleep__:
     def __init__(self, delay, result=None):
         self.delay = float(delay)
         self.result = result
+
+    def _bounded(self, timeout):
+        # `wait_for(sleep(10), 0.5)` must give up after 0.5 s, not sleep for ten
+        # seconds and then report that it took too long.
+        delay = max(0.0, self.delay)
+        result = self.result
+        self.delay = 0.0
+        self.result = None
+        if timeout is not None and float(timeout) < delay:
+            __vis_time__.sleep(max(0.0, float(timeout)))
+            raise TimeoutError()
+        __vis_time__.sleep(delay)
+        return result
+
+    def __vis_bounded__(self, timeout):
+        return __vis_Blocking__(self._bounded, timeout)
 
     def __await__(self):
         __vis_time__.sleep(max(0.0, self.delay))
@@ -1604,6 +1637,13 @@ async def __vis_wait_for__(aw, timeout):
     # work starts; positive deadlines are checked cooperatively after each
     # awaitable completes (blocking host tools remain governed by Vis turn/eval
     # cancellation, which interrupts and cancels every gather child).
+    if timeout is not None:
+        # A blocking primitive takes the deadline INTO its own wait, so
+        # `wait_for(q.get(), 0.5)` really does give up after 0.5 s instead of
+        # discovering afterwards that the value never arrived.
+        bounded = getattr(aw, "__vis_bounded__", None)
+        if bounded is not None:
+            aw = bounded(float(timeout))
     task = __vis_create_task__(aw)
     if timeout is not None and float(timeout) <= 0:
         task.cancel()
@@ -1628,6 +1668,630 @@ def __vis_to_thread__(func, /, *args, **kwargs):
     # The deferred call is dispatched by gather on the same bounded platform
     # executor as tools; it never creates a guest thread or a per-call executor.
     return __vis_Call__(func, args, kwargs, getattr(func, "__name__", "to_thread"))
+
+
+class QueueEmpty(Exception):
+    pass
+
+
+class QueueFull(Exception):
+    pass
+
+
+class BrokenBarrierError(RuntimeError):
+    pass
+
+
+def __vis_sync_mod__():
+    # LAZY on purpose: this runtime source is eval'd into EVERY sandbox context
+    # and `import threading` costs ~13 ms there, so a block that never builds a
+    # lock, queue or future must not pay for one that does. After the first build
+    # it is a `sys.modules` hit.
+    import threading
+
+    return threading
+
+
+class __vis_Blocking__:
+    # An awaitable whose wait is a REAL blocking wait, exactly like
+    # `__vis_Sleep__`: there is no event loop to hand control to, so a primitive
+    # that must WAIT blocks the carrier thread it was awaited on. That is what
+    # makes these primitives mean anything here - `gather` settles its children
+    # on the host's bounded PLATFORM pool, so the awaitable that blocks and the
+    # one that will release it really do run on two threads.
+    #
+    # `fn(timeout)` returns the result or raises TimeoutError when the deadline
+    # expires. `__vis_bounded__` is the seam `__vis_wait_for__` pushes a real
+    # deadline through, so `wait_for(q.get(), 0.5)` bounds the WAIT instead of
+    # noticing afterwards that it already took too long.
+    __slots__ = ("fn", "timeout")
+
+    def __init__(self, fn, timeout=None):
+        self.fn = fn
+        self.timeout = timeout
+
+    def __vis_bounded__(self, timeout):
+        return __vis_Blocking__(self.fn, timeout)
+
+    def __await__(self):
+        fn = self.fn
+        # Like a completed coroutine frame, a settled wait must not keep the
+        # primitive - or a payload bound into the callable - alive.
+        self.fn = None
+        if fn is None:
+            raise RuntimeError("this wait was already awaited")
+        result = fn(self.timeout)
+        if False:
+            yield
+        return result
+
+
+class __vis_Lock__:
+    # asyncio.Lock over one guest lock: an uncontended acquire returns at once, a
+    # contended one blocks until the holding sibling releases it.
+    __slots__ = ("_lock",)
+
+    def __init__(self):
+        self._lock = __vis_sync_mod__().Lock()
+
+    def locked(self):
+        return self._lock.locked()
+
+    def _acquire(self, timeout=None):
+        if self._lock.acquire(True, -1.0 if timeout is None else float(timeout)):
+            return True
+        raise TimeoutError()
+
+    def acquire(self):
+        return __vis_Blocking__(self._acquire)
+
+    def release(self):
+        # A guest lock refuses an unowned release exactly as asyncio's does.
+        self._lock.release()
+
+    async def __aenter__(self):
+        await self.acquire()
+        return None
+
+    async def __aexit__(self, typ, val, tb):
+        self._lock.release()
+        return False
+
+
+class __vis_Event__:
+    __slots__ = ("_event",)
+
+    def __init__(self):
+        self._event = __vis_sync_mod__().Event()
+
+    def is_set(self):
+        return self._event.is_set()
+
+    def set(self):
+        self._event.set()
+
+    def clear(self):
+        self._event.clear()
+
+    def _wait(self, timeout=None):
+        if self._event.wait(timeout):
+            return True
+        raise TimeoutError()
+
+    def wait(self):
+        return __vis_Blocking__(self._wait)
+
+
+class __vis_Semaphore__:
+    __slots__ = ("_sem",)
+    _factory = "Semaphore"
+
+    def __init__(self, value=1):
+        self._sem = getattr(__vis_sync_mod__(), type(self)._factory)(value)
+
+    def locked(self):
+        # A take-and-give-back probe: threading's semaphore reports its count
+        # only through a private attribute, and this answer is exactly as racy as
+        # asyncio's own (the value can change the moment it is returned).
+        if self._sem.acquire(False):
+            self._sem.release()
+            return False
+        return True
+
+    def _acquire(self, timeout=None):
+        if self._sem.acquire(True, timeout):
+            return True
+        raise TimeoutError()
+
+    def acquire(self):
+        return __vis_Blocking__(self._acquire)
+
+    def release(self):
+        self._sem.release()
+
+    async def __aenter__(self):
+        await self.acquire()
+        return None
+
+    async def __aexit__(self, typ, val, tb):
+        self._sem.release()
+        return False
+
+
+class __vis_BoundedSemaphore__(__vis_Semaphore__):
+    __slots__ = ()
+    _factory = "BoundedSemaphore"
+
+
+class __vis_Condition__:
+    # Built on a plain guest lock, never threading's default RLock: asyncio's
+    # condition is NOT reentrant, and a reentrant one would answer `locked()`
+    # with False on the very thread that holds it.
+    __slots__ = ("_cond",)
+
+    def __init__(self, lock=None):
+        mod = __vis_sync_mod__()
+        self._cond = mod.Condition(
+            lock._lock if isinstance(lock, __vis_Lock__) else mod.Lock()
+        )
+
+    def locked(self):
+        if self._cond.acquire(False):
+            self._cond.release()
+            return False
+        return True
+
+    def _acquire(self, timeout=None):
+        if self._cond.acquire(True, -1.0 if timeout is None else float(timeout)):
+            return True
+        raise TimeoutError()
+
+    def acquire(self):
+        return __vis_Blocking__(self._acquire)
+
+    def release(self):
+        self._cond.release()
+
+    def _wait(self, timeout=None):
+        if self._cond.wait(timeout):
+            return True
+        raise TimeoutError()
+
+    def wait(self):
+        return __vis_Blocking__(self._wait)
+
+    def _wait_for(self, predicate, timeout=None):
+        result = self._cond.wait_for(predicate, timeout)
+        if not result:
+            raise TimeoutError()
+        return result
+
+    def wait_for(self, predicate):
+        return __vis_Blocking__(lambda timeout, p=predicate: self._wait_for(p, timeout))
+
+    def notify(self, n=1):
+        self._cond.notify(n)
+
+    def notify_all(self):
+        self._cond.notify_all()
+
+    async def __aenter__(self):
+        await self.acquire()
+        return None
+
+    async def __aexit__(self, typ, val, tb):
+        self._cond.release()
+        return False
+
+
+class __vis_Barrier__:
+    __slots__ = ("_barrier",)
+
+    def __init__(self, parties):
+        self._barrier = __vis_sync_mod__().Barrier(parties)
+
+    @property
+    def parties(self):
+        return self._barrier.parties
+
+    @property
+    def n_waiting(self):
+        return self._barrier.n_waiting
+
+    @property
+    def broken(self):
+        return self._barrier.broken
+
+    def _wait(self, timeout=None):
+        try:
+            return self._barrier.wait(timeout)
+        except __vis_sync_mod__().BrokenBarrierError as exc:
+            raise BrokenBarrierError(*exc.args) from None
+
+    def wait(self):
+        return __vis_Blocking__(self._wait)
+
+    def abort(self):
+        self._barrier.abort()
+
+    def reset(self):
+        self._barrier.reset()
+
+
+class __vis_Queue__:
+    # asyncio.Queue over ONE guest condition. It deliberately does not wrap
+    # `queue.Queue`: that one cannot bound `join()`, and an unbounded wait is the
+    # single worst failure mode here - it hangs the whole turn, because no loop
+    # can cancel the waiter from outside.
+    __slots__ = ("_items", "_maxsize", "_cond", "_unfinished")
+
+    def __init__(self, maxsize=0):
+        mod = __vis_sync_mod__()
+        self._maxsize = int(maxsize)
+        self._unfinished = 0
+        self._cond = mod.Condition(mod.Lock())
+        self._init()
+
+    def _init(self):
+        import collections
+
+        self._items = collections.deque()
+
+    def _push(self, item):
+        self._items.append(item)
+
+    def _pop(self):
+        return self._items.popleft()
+
+    @property
+    def maxsize(self):
+        return self._maxsize
+
+    def qsize(self):
+        with self._cond:
+            return len(self._items)
+
+    def empty(self):
+        with self._cond:
+            return not self._items
+
+    def _is_full(self):
+        return 0 < self._maxsize <= len(self._items)
+
+    def full(self):
+        with self._cond:
+            return self._is_full()
+
+    def put_nowait(self, item):
+        with self._cond:
+            if self._is_full():
+                raise QueueFull()
+            self._push(item)
+            self._unfinished += 1
+            self._cond.notify_all()
+
+    def _put(self, item, timeout=None):
+        with self._cond:
+            if not self._cond.wait_for(lambda: not self._is_full(), timeout):
+                raise TimeoutError()
+            self._push(item)
+            self._unfinished += 1
+            self._cond.notify_all()
+
+    def put(self, item):
+        return __vis_Blocking__(lambda timeout, v=item: self._put(v, timeout))
+
+    def get_nowait(self):
+        with self._cond:
+            if not self._items:
+                raise QueueEmpty()
+            item = self._pop()
+            self._cond.notify_all()
+            return item
+
+    def _get(self, timeout=None):
+        with self._cond:
+            if not self._cond.wait_for(lambda: bool(self._items), timeout):
+                raise TimeoutError()
+            item = self._pop()
+            self._cond.notify_all()
+            return item
+
+    def get(self):
+        return __vis_Blocking__(self._get)
+
+    def task_done(self):
+        with self._cond:
+            if self._unfinished <= 0:
+                raise ValueError("task_done() called too many times")
+            self._unfinished -= 1
+            self._cond.notify_all()
+
+    def _join(self, timeout=None):
+        with self._cond:
+            if not self._cond.wait_for(lambda: self._unfinished == 0, timeout):
+                raise TimeoutError()
+
+    def join(self):
+        return __vis_Blocking__(self._join)
+
+
+class __vis_LifoQueue__(__vis_Queue__):
+    __slots__ = ()
+
+    def _init(self):
+        self._items = []
+
+    def _pop(self):
+        return self._items.pop()
+
+
+class __vis_PriorityQueue__(__vis_Queue__):
+    __slots__ = ()
+
+    def _init(self):
+        self._items = []
+
+    def _push(self, item):
+        import heapq
+
+        heapq.heappush(self._items, item)
+
+    def _pop(self):
+        import heapq
+
+        return heapq.heappop(self._items)
+
+
+class __vis_Future__:
+    # The one primitive that exists so two THREADS can hand a value to each
+    # other: a `gather` child completes it, a sibling awaits it. Callbacks run on
+    # the completing thread - there is no loop to schedule them onto.
+    __slots__ = ("_event", "_lock", "_result", "_exception", "_cancelled", "_callbacks")
+
+    def __init__(self, *, loop=None):
+        mod = __vis_sync_mod__()
+        self._event = mod.Event()
+        self._lock = mod.Lock()
+        self._result = None
+        self._exception = None
+        self._cancelled = False
+        self._callbacks = []
+
+    def get_loop(self):
+        return __vis_asyncio__
+
+    def done(self):
+        return self._event.is_set()
+
+    def cancelled(self):
+        return self._cancelled
+
+    def _settle(self, cancelled=False, result=None, exception=None):
+        with self._lock:
+            if self._event.is_set():
+                raise InvalidStateError("Future is already done.")
+            self._cancelled = cancelled
+            self._result = result
+            self._exception = exception
+            callbacks = self._callbacks
+            self._callbacks = []
+        self._event.set()
+        for callback in callbacks:
+            callback(self)
+
+    def set_result(self, result):
+        self._settle(result=result)
+
+    def set_exception(self, exception):
+        self._settle(exception=__vis_clean_exception__(exception))
+
+    def cancel(self, msg=None):
+        if self._event.is_set():
+            return False
+        self._settle(cancelled=True)
+        return True
+
+    def add_done_callback(self, callback, *, context=None):
+        with self._lock:
+            if not self._event.is_set():
+                self._callbacks.append(callback)
+                return None
+        callback(self)
+        return None
+
+    def remove_done_callback(self, callback):
+        with self._lock:
+            kept = [c for c in self._callbacks if c != callback]
+            removed = len(self._callbacks) - len(kept)
+            self._callbacks = kept
+        return removed
+
+    def _wait(self, timeout=None):
+        if not self._event.wait(timeout):
+            raise TimeoutError()
+        if self._cancelled:
+            raise CancelledError()
+        if self._exception is not None:
+            raise __vis_clone_exception__(self._exception) from None
+        return self._result
+
+    def result(self, timeout=None):
+        # asyncio's `Future.result()` refuses a pending future; the
+        # `concurrent.futures` one blocks with a timeout, and
+        # `run_coroutine_threadsafe` hands callers that shape. Both are honoured.
+        if timeout is None and not self._event.is_set():
+            raise InvalidStateError("Result is not set.")
+        return self._wait(timeout)
+
+    def exception(self, timeout=None):
+        if timeout is None and not self._event.is_set():
+            raise InvalidStateError("Exception is not set.")
+        if not self._event.wait(timeout):
+            raise TimeoutError()
+        if self._cancelled:
+            raise CancelledError()
+        return self._exception
+
+    def __vis_bounded__(self, timeout):
+        return __vis_Blocking__(self._wait, timeout)
+
+    def __await__(self):
+        return __vis_Blocking__(self._wait).__await__()
+
+
+class __vis_Settled__:
+    # One finished slot of `as_completed`, handed back as an awaitable so the
+    # `for aw in as_completed(...): await aw` idiom keeps working.
+    __slots__ = ("ok", "value")
+
+    def __init__(self, ok, value):
+        self.ok = ok
+        self.value = value
+
+    def __await__(self):
+        value = self.value
+        self.value = None
+        if False:
+            yield
+        if not self.ok:
+            raise __vis_clone_exception__(value) from None
+        return value
+
+
+class __vis_Slot__:
+    # Wraps ONE `as_completed` child so a failure is RECORDED instead of raised:
+    # concurrent gather aborts every sibling on the first exception, and
+    # `as_completed` owes the caller the other results.
+    __slots__ = ("aw", "sink", "lock")
+
+    def __init__(self, aw, sink, lock):
+        self.aw = aw
+        self.sink = sink
+        self.lock = lock
+
+    def __await__(self):
+        ok = True
+        try:
+            value = yield from __vis_awaitable__(self.aw).__await__()
+        except BaseException as exc:
+            value = exc
+            ok = False
+        self.aw = None
+        if not ok:
+            value = __vis_clean_exception__(value)
+        with self.lock:
+            self.sink.append(__vis_Settled__(ok, value))
+        return None
+
+
+def __vis_as_completed__(aws, *, timeout=None):
+    # Real asyncio STREAMS completions; this cannot - the driver is one thread
+    # and `gather` is where concurrency lives - so the whole batch is settled
+    # CONCURRENTLY first and handed back in COMPLETION order, which is the part
+    # callers actually depend on. An early `break` therefore saves no work.
+    mod = __vis_sync_mod__()
+    lock = mod.Lock()
+    done = []
+    started = __vis_time__.monotonic()
+    __vis_settle__(__vis_Gather__([__vis_Slot__(aw, done, lock) for aw in aws], False))
+    if timeout is not None and __vis_time__.monotonic() - started > float(timeout):
+        raise TimeoutError()
+    yield from done
+
+
+class __vis_Timeout__:
+    # `async with asyncio.timeout(s)` on a runtime with no loop: nothing can
+    # interrupt a blocking call from outside, so the deadline is checked on EXIT
+    # - the same cooperative contract `wait_for` already documents. A single
+    # bounded wait is better expressed as `wait_for`, which pushes the deadline
+    # into the wait itself.
+    __slots__ = ("_when", "_expired")
+
+    def __init__(self, when):
+        self._when = when
+        self._expired = False
+
+    def when(self):
+        return self._when
+
+    def reschedule(self, when):
+        self._when = when
+
+    def expired(self):
+        return self._expired
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, typ, val, tb):
+        if self._when is not None and __vis_time__.monotonic() >= self._when:
+            self._expired = True
+            if typ is None or issubclass(typ, CancelledError):
+                raise TimeoutError()
+        return False
+
+
+class __vis_Runner__:
+    # `asyncio.Runner` is a context manager around `run`; there is no loop to own
+    # or close, so it is exactly that and nothing more.
+    __slots__ = ()
+
+    def __init__(self, *, debug=None, loop_factory=None):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, typ, val, tb):
+        return False
+
+    def run(self, coro, *, context=None):
+        return __vis_drive__(coro)
+
+    def get_loop(self):
+        return __vis_asyncio__
+
+    def close(self):
+        return None
+
+
+class __vis_AsyncioMeta__(type):
+    # Every name real asyncio has that this runtime deliberately does NOT. The
+    # answer stays an AttributeError - feature probes must keep getting False
+    # from `hasattr` - but one that says WHY and what to reach for instead of
+    # "type object '__vis_asyncio__' has no attribute 'open_connection'".
+    __vis_absent__ = {
+        "open_connection": "no selector loop owns sockets here - use `requests`/`httpx`",
+        "open_unix_connection": "no selector loop owns sockets here",
+        "start_server": "the sandbox does not serve asyncio sockets",
+        "start_unix_server": "the sandbox does not serve asyncio sockets",
+        "StreamReader": "streams need a selector loop",
+        "StreamWriter": "streams need a selector loop",
+        "create_subprocess_exec": "guest processes are never spawned - use `shell(...)`",
+        "create_subprocess_shell": "guest processes are never spawned - use `shell(...)`",
+        "run_forever": "nothing runs a loop - drive a coroutine with `asyncio.run(...)`",
+        "call_soon": "no loop schedules callbacks - call it, or `await` a coroutine",
+        "call_soon_threadsafe": "no loop schedules callbacks - complete an `asyncio.Future`",
+        "call_later": "no loop schedules callbacks - `await asyncio.sleep(...)` first",
+        "call_at": "no loop schedules callbacks - `await asyncio.sleep(...)` first",
+        "add_reader": "there is no selector to register a descriptor with",
+        "add_writer": "there is no selector to register a descriptor with",
+        "add_signal_handler": "the sandbox does not deliver signals to guest code",
+        "get_event_loop_policy": "there is no loop object to configure",
+        "set_event_loop_policy": "there is no loop object to configure",
+    }
+
+    def __getattr__(cls, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        why = __vis_AsyncioMeta__.__vis_absent__.get(
+            name,
+            "this shim covers coroutines, tasks, queues, synchronization and"
+            " `to_thread`; concurrency itself is `gather` on the host's bounded"
+            " platform pool",
+        )
+        raise AttributeError("asyncio." + name + " is unavailable in vis: " + why)
 
 
 def __vis_tool_proto__(nm, params):
@@ -1711,7 +2375,7 @@ def __vis_deferred__(realfn, nm="tool"):
     return __vis_publish_tool__(__vis_tool__, nm)
 
 
-class __vis_asyncio__:
+class __vis_asyncio__(metaclass=__vis_AsyncioMeta__):
     # Practical asyncio compatibility for Vis' coroutine trampoline. This is NOT
     # CPython's socket/select event loop: it owns no loop thread, timer thread,
     # task registry, or executor. Concurrent work is delegated only to the host's
@@ -1724,6 +2388,21 @@ class __vis_asyncio__:
     ALL_COMPLETED = "ALL_COMPLETED"
     FIRST_COMPLETED = "FIRST_COMPLETED"
     FIRST_EXCEPTION = "FIRST_EXCEPTION"
+    Future = __vis_Future__
+    Lock = __vis_Lock__
+    Event = __vis_Event__
+    Condition = __vis_Condition__
+    Semaphore = __vis_Semaphore__
+    BoundedSemaphore = __vis_BoundedSemaphore__
+    Barrier = __vis_Barrier__
+    BrokenBarrierError = BrokenBarrierError
+    Queue = __vis_Queue__
+    LifoQueue = __vis_LifoQueue__
+    PriorityQueue = __vis_PriorityQueue__
+    QueueEmpty = QueueEmpty
+    QueueFull = QueueFull
+    Runner = __vis_Runner__
+    Timeout = __vis_Timeout__
 
     @staticmethod
     def run(coro, *, debug=None):
@@ -1796,6 +2475,61 @@ class __vis_asyncio__:
     @staticmethod
     def to_thread(func, /, *args, **kwargs):
         return __vis_to_thread__(func, *args, **kwargs)
+
+    @staticmethod
+    def as_completed(aws, *, timeout=None):
+        return __vis_as_completed__(aws, timeout=timeout)
+
+    @staticmethod
+    def timeout(delay):
+        when = None if delay is None else __vis_time__.monotonic() + float(delay)
+        return __vis_Timeout__(when)
+
+    @staticmethod
+    def timeout_at(when):
+        return __vis_Timeout__(when)
+
+    @staticmethod
+    def create_future():
+        return __vis_Future__()
+
+    @staticmethod
+    def run_coroutine_threadsafe(coro, loop=None):
+        # There is no loop thread to hand the coroutine to, so it runs HERE, on
+        # the calling thread, and the future comes back already settled - which
+        # is exactly what the caller's `.result()` asks for.
+        future = __vis_Future__()
+        try:
+            future.set_result(__vis_drive__(coro))
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+    @staticmethod
+    def run_in_executor(executor, func, *args):
+        # `loop.run_in_executor(None, fn, ...)` is `to_thread`; the executor
+        # argument is meaningless when the host owns the only pool.
+        return __vis_to_thread__(func, *args)
+
+    @staticmethod
+    def time():
+        return __vis_time__.monotonic()
+
+    @staticmethod
+    def is_running():
+        return True
+
+    @staticmethod
+    def is_closed():
+        return False
+
+    @staticmethod
+    def close():
+        return None
+
+    @staticmethod
+    def stop():
+        return None
 
     @staticmethod
     def iscoroutinefunction(fn):
@@ -3157,35 +3891,6 @@ def __vis_kwargs_direct_tools__():
             g[__vis_n__] = __vis_direct_kwargs__(g[__vis_n__], __vis_n__)
 
 
-# ── echo-diff strip for a printed edit result: a struct_patch result
-# printed to stdout merely re-describes the bytes the model just authored, so drop
-# each file summary's redundant 'diff' for DISPLAY only. The captured original is
-# untouched, so the host op-card still renders the full diff.
-def __vis_is_file_summary__(__m__):
-    return (
-        isinstance(__m__, dict)
-        and isinstance(__m__.get("path"), str)
-        and isinstance(__m__.get("op"), str)
-        and "changed" in __m__
-    )
-
-
-def __vis_strip_echo_diff__(__m__):
-    return {__k__: __v__ for __k__, __v__ in __m__.items() if __k__ != "diff"}
-
-
-def __vis_strip_echo_diffs__(__x__):
-    if (
-        isinstance(__x__, list)
-        and __x__
-        and all(__vis_is_file_summary__(__e__) for __e__ in __x__)
-    ):
-        return [__vis_strip_echo_diff__(__e__) for __e__ in __x__]
-    if __vis_is_file_summary__(__x__):
-        return __vis_strip_echo_diff__(__x__)
-    return __x__
-
-
 # ── print delegates to the REAL print: a printed tool-result proxy is pyified into
 # a __VisResult__ so it prints as a clean real dict, and a deferred call handed to
 # print WITHOUT `await` is settled first. Nothing is captured on the side — the
@@ -3205,11 +3910,7 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
         else __vis_pyify__(__a__)
         for __a__ in __vis_a__
     )
-    # DISPLAY strips echo-diffs from a printed edit result: the model supplied the
-    # exact replacement, so the echoed diff is bloat in the stdout it reads back.
-    return __vis_real_print__(
-        *tuple(__vis_strip_echo_diffs__(__a__) for __a__ in __vis_a__), **__vis_kw__
-    )
+    return __vis_real_print__(*__vis_a__, **__vis_kw__)
 
 
 print = __vis_print__
