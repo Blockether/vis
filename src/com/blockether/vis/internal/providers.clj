@@ -924,32 +924,40 @@
           slash-provider [tagged* requested*]
           :else [tagged* slash-model])))
 
+(defn resolve-default-selection
+  "PURE: the valid PRIMARY provider/model pair `cfg`'s tags name within `fleet`.
+   Explicit config wins; an untagged config falls back to the first provider and
+   its first model, so a fleet always HAS a primary root while it has a provider.
+
+   Pure because every surface must resolve the tag the way the router does —
+   channels hold the config they just read, and a channel that re-read global
+   state here would answer for a different machine's config in a test and for a
+   stale one in a race."
+  [cfg fleet]
+  (let
+    [;; `default_model` accepts the same `provider/model` form as `--model`, and
+     ;; its provider part wins — the pair must resolve identically here and in
+     ;; `loop/honor-config-roots!`, or the picker and the router disagree.
+     [requested-provider requested-model]
+     (resolve-model-ref (:default-model cfg) (:default-provider cfg) fleet)
+
+     selected-provider
+     (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
+
+     model-names
+     (provider-model-names selected-provider)
+
+     selected-model
+     (if (some #{requested-model} model-names) requested-model (first model-names))]
+
+    (when (and selected-provider selected-model)
+      {:provider-id (:id selected-provider) :model selected-model})))
+
 (defn default-selection
-  "Return the valid PRIMARY provider/model pair for `fleet`. Explicit config
-   wins; an untagged config falls back to the first provider and its first model."
+  "The valid PRIMARY provider/model pair for `fleet`, read against THIS machine's
+   merged config. `resolve-default-selection` is the resolution itself."
   ([] (default-selection (picker-fleet)))
-  ([fleet]
-   (let
-     [cfg
-      (or (config/load-config) {})
-
-      ;; `default_model` accepts the same `provider/model` form as `--model`, and
-      ;; its provider part wins — the pair must resolve identically here and in
-      ;; `loop/honor-config-roots!`, or the picker and the router disagree.
-      [requested-provider requested-model]
-      (resolve-model-ref (:default-model cfg) (:default-provider cfg) fleet)
-
-      selected-provider
-      (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
-
-      model-names
-      (provider-model-names selected-provider)
-
-      selected-model
-      (if (some #{requested-model} model-names) requested-model (first model-names))]
-
-     (when (and selected-provider selected-model)
-       {:provider-id (:id selected-provider) :model selected-model}))))
+  ([fleet] (resolve-default-selection (or (config/load-config) {}) fleet)))
 
 (defn fallback-selection
   "Return the valid FALLBACK provider/model pair for `fleet`, or nil.
@@ -993,6 +1001,64 @@
     (:api-style preset)
     (assoc :api-style (:api-style preset))))
 
+(def ^:private selection-keys
+  "Config keys per router-root ROLE. `:primary` is the root every turn starts on;
+   `:fallback` is the second root, and only ever names ANOTHER provider."
+  {:primary {:provider "default_provider" :model "default_model"}
+   :fallback {:provider "fallback_provider" :model "fallback_model"}})
+
+(defn- ensure-default-selection!
+  "Re-tag the PRIMARY root when a fleet mutation left it naming nobody. Answers
+   true when config was rewritten.
+
+   `default-selection` degrades a missing or dangling `default_provider` to the
+   fleet's first provider, so ROUTING never broke — but the tag is what every
+   surface READS, so the only provider a machine had just added showed up with no
+   default at all (nothing was tagged until the user set it by hand), and removing
+   the tagged provider left the tag naming what is gone. Both are the same missing
+   write: whenever the fleet no longer holds the tagged provider, persist the pair
+   the router would have picked anyway — the newcomer when it is the only one, the
+   first survivor after a removal — and drop both keys when the fleet is empty, so
+   config never names a ghost.
+
+   A LIVE tag is left alone: adding a second provider must never steal a default
+   the user chose. The check runs against the merged config, the write against the
+   global file, exactly like `save-selection!` — a tag a project overlay owns is
+   never copied into the machine's own config."
+  [source]
+  (let
+    [fleet
+     (picker-fleet)
+
+     cfg
+     (or (config/load-config) {})
+
+     tagged
+     (first (resolve-model-ref (:default-model cfg) (:default-provider cfg) fleet))]
+
+    (when-not (some #(= tagged (:id %)) fleet)
+      (let
+        [{:keys [provider-id model]}
+         (resolve-default-selection cfg fleet)
+
+         {provider-key :provider model-key :model}
+         (:primary selection-keys)
+
+         raw
+         (or (config/load-global-config-raw) {})
+
+         raw*
+         (if (and provider-id model)
+           (assoc raw
+             provider-key (name provider-id)
+             model-key model)
+           (apply dissoc raw (vals (:primary selection-keys))))]
+
+        (when (not= raw raw*)
+          (config/save-config! raw* source)
+          (try (config/reload-config!) (catch Throwable _ nil))
+          true)))))
+
 (defn save-providers!
   "Replace the provider vector in the global string-keyed config while preserving
    unrelated keys, then refresh runtime provider state."
@@ -1009,14 +1075,10 @@
        (if (seq providers*) (assoc raw "providers" providers*) (dissoc raw "providers"))
        source)
      (try (config/reload-config!) (catch Throwable _ nil))
+     (invalidate-configured-providers!)
+     (ensure-default-selection! source)
      (rebuild-shared-router!)
      providers*)))
-
-(def ^:private selection-keys
-  "Config keys per router-root ROLE. `:primary` is the root every turn starts on;
-   `:fallback` is the second root, and only ever names ANOTHER provider."
-  {:primary {:provider "default_provider" :model "default_model"}
-   :fallback {:provider "fallback_provider" :model "fallback_model"}})
 
 (defn- raw-tagged-provider
   "The provider a RAW config's `<role>_provider`/`<role>_model` pair names, as a
@@ -1233,5 +1295,7 @@
      (try (logout-fn) (catch Throwable _ nil)))
    (let [changed? (config/remove-config-provider! provider-id source)]
      (try (config/reload-config!) (catch Throwable _ nil))
+     (invalidate-configured-providers!)
+     (ensure-default-selection! source)
      (rebuild-shared-router!)
      changed?)))

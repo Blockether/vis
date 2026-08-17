@@ -440,6 +440,7 @@
              [configured-providers providers/configured-providers]
              [configured-providers-cached providers/configured-providers-cached]
              [picker-fleet providers/picker-fleet]
+             [resolve-default-selection providers/resolve-default-selection]
              [authenticated-preset-providers providers/authenticated-preset-providers]
              [provider-presets-available providers/available-presets]
              [provider-ensure-base-url providers/ensure-base-url]

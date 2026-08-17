@@ -3957,6 +3957,21 @@
           (remove #(contains? configured-ids (:id %)))
           (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))))
 
+(defn router-primary
+  "PURE: the PRIMARY router root a surface should SHOW for `fleet` — the pair the
+   router itself resolves (`vis/resolve-default-selection`: an explicit tag wins,
+   an unset or dangling one degrades to the fleet's first provider), falling back
+   to the literal config tag when no fleet entry carries a model at all.
+
+   Surfaces must not read `:default-provider` raw. A machine that just added its
+   only provider, or removed the tagged one, has a config the ROUTER already reads
+   as pointing somewhere — showing the raw key instead marked nothing as default
+   and made a fresh fleet look unusable."
+  [config fleet]
+  (or (vis/resolve-default-selection config fleet)
+      (when-let [pid (:default-provider config)]
+        {:provider-id (keyword (name pid)) :model (:default-model config)})))
+
 (defn- gateway-auth-index
   "ONE gateway round trip for the WHOLE fleet. `GET /v1/router` already carries
    every provider's `status`, so Settings asks once instead of once per provider
@@ -3995,48 +4010,49 @@
 
    Router selection is part of the fleet, not a separate lookup: each entry
    carries whether it is the default or the fallback AND the model that choice
-   picked, so Settings can SHOW what `d`/`f` just did."
+    picked, so Settings can SHOW what `d`/`f` just did — through `router-primary`,
+    which resolves the tag the way the router does, so the machine's only provider
+    reads as the default it already is."
   []
-  (reset! provider-inventory (try
-                               (let
-                                 [config
-                                  (vis/load-config)
+  (reset! provider-inventory
+    (try
+      (let
+        [config
+         (vis/load-config)
 
-                                  fleet
-                                  (provider-fleet config)
+         fleet
+         (provider-fleet config)
 
-                                  primary
-                                   (vis/resolve-default-selection config fleet)
+         primary
+         (router-primary config fleet)
 
-                                  default-id
-                                  (some-> (:provider-id primary)
-                                          name)
+         default-id
+         (some-> (:provider-id primary)
+                 name)
 
-                                  fallback-id
-                                  (some-> (:fallback-provider config)
-                                          name)
+         fallback-id
+         (some-> (:fallback-provider config)
+                 name)
 
-                                  auth-index
-                                  (gateway-auth-index)]
+         auth-index
+         (gateway-auth-index)]
 
-                                 {:status :ok
-                                  :providers
-                                  (mapv (fn [provider]
-                                          (let
-                                            [pid (some-> (:id provider)
-                                                         name)]
-                                            {:provider provider
-                                             :auth (provider-auth-state provider auth-index)
-                                             :default? (= default-id pid)
-                                             :default-model (when (= default-id pid) (:model primary))
-                                             :fallback? (= fallback-id pid)
-                                             :fallback-model (when (= fallback-id pid)
-                                                               (some-> (:fallback-model config)
-                                                                       name))}))
-                                        fleet)
-                                  :error nil})
-                               (catch Exception e
-                                 {:status :error :providers [] :error (ex-message e)}))))
+        {:status :ok
+         :providers (mapv (fn [provider]
+                            (let
+                              [pid (some-> (:id provider)
+                                           name)]
+                              {:provider provider
+                               :auth (provider-auth-state provider auth-index)
+                               :default? (= default-id pid)
+                               :default-model (when (= default-id pid) (:model primary))
+                               :fallback? (= fallback-id pid)
+                               :fallback-model (when (= fallback-id pid)
+                                                 (some-> (:fallback-model config)
+                                                         name))}))
+                          fleet)
+         :error nil})
+      (catch Exception e {:status :error :providers [] :error (ex-message e)}))))
 
 (defn- provider-settings-status
   "One provider row's description: the ROUTER TAGS first, then the auth verdict,

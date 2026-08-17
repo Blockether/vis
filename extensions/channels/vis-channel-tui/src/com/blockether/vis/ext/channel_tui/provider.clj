@@ -919,7 +919,7 @@
      (first (filter #(same-id? (:id %) provider-id) fleet))
 
      default-selection
-     (vis/resolve-default-selection config fleet)
+     (dlg/router-primary config fleet)
 
      fallback-selection
      (when-let [pid (:fallback-provider config)]

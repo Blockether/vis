@@ -5400,25 +5400,6 @@
                  (.flush out))
                (catch Throwable _ nil))))
 
-(reg-fx :apply-config
-        (fn [config]
-          (let
-            [raw
-             (or (vis/load-config-raw) {})
-
-             persistent
-             (assoc raw "providers" (vec (:providers config)))]
-
-            (vis/save-config! persistent)
-            (let
-              [resolved
-               (or (vis/reload-config!) config)
-
-               router
-               (vis/rebuild-router! resolved)]
-
-              (vis/refresh-cached-routers! router)))))
-
 (defn- gateway-disconnect-data
   "Return gateway disconnect metadata from a throwable cause chain."
   [t]

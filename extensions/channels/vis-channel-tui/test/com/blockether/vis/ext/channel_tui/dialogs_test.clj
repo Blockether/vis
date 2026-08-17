@@ -1723,7 +1723,7 @@
 
       (try (with-redefs
              [vis/load-config
-              (constantly {:providers [{:id :anthropic :models ["claude"]} {:id :ollama}]
+              (constantly {:providers [{:id :anthropic :models ["claude-sonnet-4"]} {:id :ollama}]
                            :default-provider "anthropic"
                            :default-model "claude-sonnet-4"
                            :fallback-provider "ollama"
@@ -1762,6 +1762,33 @@
              (expect (= :error (:status @inventory)))
              (expect (= "boom" (:error @inventory))))
            (finally (reset! inventory original)))))
+  ;; Regression (user report): the machine's ONLY provider showed as no default at
+  ;; all. Settings read the raw `default_provider` key, which a fleet that was just
+  ;; created has not got — so nothing was tagged until the user set it by hand,
+  ;; while the router had been routing to that provider the whole time.
+  (it "an untagged fleet still shows the provider the router would route to"
+      (let
+        [inventory
+         (var-get #'dlg/provider-inventory)
+
+         original
+         @inventory]
+
+        (try (with-redefs
+               [vis/load-config
+                (constantly {:providers [{:id :acme-llm :models ["acme-1"]}]})
+
+                vis/authenticated-preset-providers
+                (constantly [])
+
+                vis/gateway-router-fleet
+                (constantly [{"id" "acme-llm" "status" {"is_authenticated" true}}])]
+
+               (dlg/load-provider-inventory!)
+               (let [{:keys [providers]} @inventory]
+                 (expect (= [true] (mapv :default? providers)))
+                 (expect (= ["acme-1"] (mapv :default-model providers)))))
+             (finally (reset! inventory original)))))
   (it
     "Enter on a provider row runs THAT provider's transient, then re-reads the fleet"
     (let

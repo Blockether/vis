@@ -135,6 +135,7 @@
   (let [cache (rv 'fleet-cache)]
     (with-redefs
       [config/load-global-config-raw (constantly {:providers []})
+       config/load-config (constantly {:providers []})
        config/save-config! (fn [& _]
                              nil)
        config/reload-config! (constantly nil)]
@@ -145,11 +146,91 @@
     (with-redefs
       [config/remove-config-provider! (fn [& _]
                                         true)
+       config/load-global-config-raw (constantly {})
+       config/load-config (constantly {:providers []})
+       config/save-config! (fn [& _]
+                             nil)
        config/reload-config! (constantly nil)]
 
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/remove-provider! :warm nil)
       (is (nil? @@cache) "remove-provider! drops the snapshot"))))
+
+(defn- with-machine-config
+  "Run `f` against an in-memory machine config `raw` — the string-keyed shape
+   `load-global-config-raw` answers — and return that config as it stands
+   afterwards. The persisted providers are the WHOLE fleet: no preset detection,
+   no registry, no disk, so a fleet mutation is observable as config alone."
+  [raw f]
+  (let [state (atom raw)]
+    (with-redefs
+      [config/load-global-config-raw (fn []
+                                       @state)
+       config/save-config! (fn [raw' & _]
+                             (reset! state raw')
+                             nil)
+       config/reload-config! (constantly nil)
+       config/load-config (fn []
+                            {:providers (vec (get @state "providers"))
+                             :default-provider (get @state "default_provider")
+                             :default-model (get @state "default_model")})
+       config/remove-config-provider!
+       (fn [provider-id & _]
+         (let
+           [before (vec (get @state "providers"))
+            after (vec (remove #(= (keyword (name provider-id)) (:id %)) before))]
+
+           (swap! state assoc "providers" after)
+           (not= before after)))
+       providers/authenticated-preset-providers (constantly [])]
+
+      (providers/invalidate-configured-providers!)
+      (f)
+      (let [result @state]
+        (providers/invalidate-configured-providers!)
+        result))))
+
+;; Regression (user report): the machine's ONLY provider was not its default —
+;; nothing was tagged until the user set it by hand — and removing the tagged
+;; provider left `default_provider` naming what had just been deleted instead of
+;; promoting whoever was left.
+(deftest a-fleet-mutation-retags-the-primary-root
+  (let
+    [acme
+     {:id :acme :models [{:name "acme-1"}]}
+
+     beta
+     {:id :beta :models [{:name "beta-1"}]}
+
+     tagged-acme
+     {"providers" [acme] "default_provider" "acme" "default_model" "acme-1"}
+
+     added
+     (with-machine-config {} #(providers/save-providers! [acme] nil))
+
+     second-added
+     (with-machine-config (assoc tagged-acme "providers" [acme])
+                          #(providers/save-providers! [acme beta] nil))
+
+     promoted
+     (with-machine-config (assoc tagged-acme "providers" [acme beta])
+                          #(providers/remove-provider! :acme nil))
+
+     emptied
+     (with-machine-config tagged-acme #(providers/remove-provider! :acme nil))]
+
+    (is (= "acme" (get added "default_provider"))
+        "the first provider a fleet gains IS the default root")
+    (is (= "acme-1" (get added "default_model"))
+        "and the root names the model it can actually route to")
+    (is (= "acme" (get second-added "default_provider"))
+        "a second provider never steals a default the user already has")
+    (is (= "beta" (get promoted "default_provider"))
+        "removing the tagged provider promotes the survivor")
+    (is (= "beta-1" (get promoted "default_model")))
+    (is (nil? (get emptied "default_provider"))
+        "and an emptied fleet names nobody rather than a ghost")
+    (is (nil? (get emptied "default_model")))))
 
 (deftest picker-fleet-appends-authenticated-but-unconfigured-oauth-providers
   ;; The model picker must list providers whose OAuth creds live OUTSIDE config

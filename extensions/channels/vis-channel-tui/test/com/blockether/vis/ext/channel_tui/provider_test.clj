@@ -70,24 +70,8 @@
              (it "loads the provider dialog namespace"
                  (expect (some? (find-ns 'com.blockether.vis.ext.channel-tui.provider)))))
 
-(defdescribe persisted-provider-config-test
-             (it "persists the dialog provider without runtime adapter coercion"
-                 (let
-                   [persisted-provider-config
-                    @#'provider/persisted-provider-config
-
-                    provider
-                    {:id :openai-codex
-                     :models [{:name "gpt-5.5"}]
-                     :base-url "https://chatgpt.com/backend-api"
-                     :api-key "tok"
-                     :api-style :openai-compatible-responses
-                     :llm-headers {"chatgpt-account-id" "acct_123"}}]
-
-                   (expect (= provider (persisted-provider-config provider))))))
-
 (defdescribe provider-dialog-save-domain-config-test
-             (it "returns the reloaded keyword-domain config after persisting raw YAML"
+             (it "hands the CORE fleet write the rows and answers the reloaded domain config"
                  (let
                    [saved
                     (atom nil)
@@ -102,22 +86,19 @@
                     @#'provider/save-provider-config!]
 
                    (with-redefs
-                     [vis/load-config-raw
-                      (constantly {"theme" "dark"})
-
-                      vis/configured-providers
+                     [vis/configured-providers
                       (constantly [])
 
-                      vis/save-config!
+                      vis/save-config-providers!
                       #(reset! saved %)
 
                       vis/load-config
                       (constantly domain)]
 
+                     ;; The core write owns the raw file, the default root and the
+                     ;; router rebuild — the TUI never assembles config itself.
                      (expect (= domain (save-provider-config! [item])))
-                     (expect (= "dark" (get @saved "theme")))
-                     (expect (= [(vis/provider-persisted-config item)]
-                                (get @saved "providers")))))))
+                     (expect (= [item] @saved))))))
 
 (defdescribe provider-dialog-save-keeps-daemon-owned-credentials-test
              (it "merges each row onto the persisted entry so the gateway-written key survives"
@@ -134,20 +115,17 @@
                     @#'provider/save-provider-config!]
 
                    (with-redefs
-                     [vis/load-config-raw
-                      (constantly {})
-
-                      vis/configured-providers
+                     [vis/configured-providers
                       (constantly [{:id :zai-coding-plan :api-key "sk-daemon-owned"}])
 
-                      vis/save-config!
+                      vis/save-config-providers!
                       #(reset! saved %)
 
                       vis/load-config
                       (constantly {:providers [item]})]
 
                      (save-provider-config! [item])
-                     (let [row (first (get @saved "providers"))]
+                     (let [row (first @saved)]
                        (expect (= :zai-coding-plan (:id row)))
                        (expect (= "sk-daemon-owned" (:api-key row)))
                        (expect (= [{:name "glm-5.2"}] (:models row))))))))

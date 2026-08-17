@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(tui): remove a provider for good, credential included
 - refactor(tui): drop provider Log Out for Remove, and ask inside the transient
 - refactor(tui): ask every provider and MCP question in the band it was fired from
+- fix(providers): keep a default root tagged as the fleet changes
 
 ## [v0.1.40] - 2026-08-16
 
