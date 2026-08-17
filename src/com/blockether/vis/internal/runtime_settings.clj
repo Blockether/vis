@@ -48,16 +48,23 @@
 (def ASK_CODE_TTFT_TIMEOUT_MS
   "Default time-to-first-token timeout for Vis `svar/ask-code!` calls (ms).
 
-   120s. The wait for the FIRST response header, and nothing else: no bytes
-   were sent, no tool ran, no output was streamed, so the request can simply be
-   made again somewhere else. Two minutes is generous for a queued or cold-
-   starting provider and short enough that a wedged connection does not eat five
-   minutes of a turn — which is exactly what a 300s budget did before it failed
-   the turn outright. svar's own `router/DEFAULT_TTFT_TIMEOUT_MS` is the same
-   two minutes, and the typed abort it raises is transient there, so the router
-   falls back to another provider instead. Model-progress silence is a separate,
-   opt-in semantic watchdog below."
-  120000)
+   45s. The wait for the FIRST response header, and nothing else: no bytes
+   arrived, no tool ran, no output was streamed, so the request can simply be
+   made again. Measured: a pinned zai-coding-plan turn spent its last 120s
+   waiting for headers that never came and died with ten iterations of finished
+   work behind it, because svar's own `router/DEFAULT_TTFT_TIMEOUT_MS` (the same
+   two minutes) is the WHOLE budget when the route is pinned to one
+   provider+model and svar's router has no second candidate to cross to.
+
+   Lowering it is only safe BECAUSE the abort is now re-issued while no output
+   exists (`loop/pre-output-stream-retryable?`): a queued or cold-starting
+   provider gets three 45s chances instead of one 120s chance, and a wedged
+   endpoint is named minutes sooner. Never lower this without that retry in
+   place — alone it would only kill healthy slow-queue turns faster.
+
+   Model-progress silence while keepalives continue is a separate, opt-in
+   semantic watchdog below."
+  45000)
 
 (def ASK_CODE_IDLE_TIMEOUT_MS
   "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls (ms).

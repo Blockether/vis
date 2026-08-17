@@ -246,11 +246,54 @@
    those as legitimate completions, so Vis may continue a thinking-only blip, but
    caps the sequence to avoid consuming the full iteration budget without output."
   3)
+(def ^:private MAX_PRE_OUTPUT_STREAM_RETRIES
+  "How many times Vis re-issues a request a stream watchdog aborted BEFORE any
+   output arrived. Two: one for the ordinary blip, one for the blip that repeats,
+   and then the turn fails with the stall named. An unbounded ladder would hide a
+   wedged endpoint behind minutes of silence, which is the defect this policy
+   exists to end, not to move."
+  2)
+
+(def ^:private PRE_OUTPUT_STREAM_RETRY_DELAYS_MS
+  "Backoff before each pre-output re-issue, indexed by attempt. Short on purpose:
+   nothing was generated, so trying again costs one connection, and a provider
+   that never answered is queueing rather than throttling — a throttle arrives as
+   a 429 and takes svar's rate-limit path instead."
+  [1000 3000])
+
+(defn- pre-output-stream-retryable?
+  "True when `e` is a stream-watchdog abort Vis may re-issue itself.
+
+   Three conditions, all required: the failure is one of svar's typed watchdog
+   aborts anywhere in its cause chain (HTTP clients wrap the typed ex-info), NO
+   output has streamed for this attempt, and the attempt budget is not spent.
+   With output already painted a resend would duplicate visible text — exactly
+   why svar refuses it — so that case stays terminal.
+
+   Measured cause: a provider accepted the POST and sent no response header for
+   the whole TTFT budget; svar declined the retry (`:no-retry-path`), its router
+   had no second candidate under Vis' pinned sticky routing, and a turn carrying
+   ten iterations of finished work died asking the human to type 'Continue'."
+  [^Throwable e {:keys [attempt output-started?]}]
+  (and (not output-started?)
+       (< (long (or attempt 0)) (long MAX_PRE_OUTPUT_STREAM_RETRIES))
+       (boolean (some perr/pre-output-stream-abort? (bounded-cause-chain e)))))
+
+(defn- pre-output-stream-backoff-ms
+  "Backoff in ms before pre-output re-issue number `attempt` (0-based), clamped to
+   the last step of `PRE_OUTPUT_STREAM_RETRY_DELAYS_MS`."
+  ^long [attempt]
+  (long (nth PRE_OUTPUT_STREAM_RETRY_DELAYS_MS
+             (min (long attempt) (dec (count PRE_OUTPUT_STREAM_RETRY_DELAYS_MS))))))
+
 (defn- next-retry-counters
   "Pure counter-threading for retry policies Vis still owns: context overflow,
-   max-token recovery, and auth refresh/fallback. Provider transport and
-   availability are deliberately absent: svar owns those retries and returns one
-   terminal result to Vis. Returns nil for a real iteration result."
+   max-token recovery, auth refresh/fallback, and the pre-output stream-watchdog
+   re-issue. Provider transport and availability are otherwise svar's: it owns
+   those retries and returns one terminal result to Vis. The single exception is
+   a watchdog abort with NO output — svar declines that one on purpose and its
+   router cannot re-route it under a pinned route, so Vis threads it here
+   (`pre-output-stream-retryable?`). Returns nil for a real iteration result."
   [result {:keys [attempt max-tokens-attempt] :or {attempt 0 max-tokens-attempt 0}}]
   (let
     [attempt
@@ -264,6 +307,7 @@
                                                                      (inc max-tokens-attempt)]
           (and (map? result) (contains? result ::retry-auth-fallback)) [attempt max-tokens-attempt]
           (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt]
+          (= result ::retry-pre-output-stream) [(inc attempt) max-tokens-attempt]
           (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt])))
 (defn- provider-retry-event
   [{:keys [provider model reason attempt delay-ms error status]}]
@@ -7225,6 +7269,44 @@
                                                 :status (:status (ex-data e))}}
                                         "Provider auth recovery exhausted; falling back")
                               {::retry-auth-fallback fallback-routing})
+                            ;; Stream watchdog BEFORE any output: the provider
+                            ;; took the request and never answered, so nothing
+                            ;; was generated, billed or painted and the
+                            ;; identical request may simply be made again. svar
+                            ;; declines this retry at its HTTP layer (one retry
+                            ;; there costs a whole timeout) and hands it to
+                            ;; router-owned provider fallback, which has no
+                            ;; second candidate under Vis' pinned sticky
+                            ;; routing — so without this branch a provider that
+                            ;; stayed silent kills a turn whose finished
+                            ;; iterations are all still sitting there.
+                            (pre-output-stream-retryable?
+                              e
+                              {:attempt attempt :output-started? @provider-output-started?})
+                            (let
+                              [delay-ms (pre-output-stream-backoff-ms attempt)
+                               chunk (provider-retry-progress-chunk
+                                       (inc (long iteration))
+                                       e
+                                       {:provider (:provider resolved-model)
+                                        :model (or (:name resolved-model) (:model resolved-model))
+                                        :reason :stream-watchdog-pre-output
+                                        :attempt (inc (long attempt))
+                                        :max-retries MAX_PRE_OUTPUT_STREAM_RETRIES
+                                        :delay-ms delay-ms})]
+
+                              (emit-hook! on-chunk chunk "Pre-output stream retry hook failed")
+                              (tel/log! {:level :warn
+                                         :id ::pre-output-stream-retry
+                                         :data {:iteration iteration
+                                                :provider (:provider resolved-model)
+                                                :attempt (inc (long attempt))
+                                                :max-retries MAX_PRE_OUTPUT_STREAM_RETRIES
+                                                :delay-ms delay-ms
+                                                :type (:type (ex-data e))}}
+                                        (str "Stream watchdog fired before any output; "
+                                             "re-issuing the same request"))
+                              ::retry-pre-output-stream)
                             :else
                             (if-let
                               [recovery (context-overflow-recovery!
@@ -7277,6 +7359,11 @@
                                (= result ::retry-auth-backoff)
                                ;; Retry the same fresh token; propagation may still be settling.
                                (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
+                                   (recur attempt* max-tokens-attempt* current-extra-body env))
+                               (= result ::retry-pre-output-stream)
+                               ;; The provider never answered, so nothing about
+                               ;; the route or the request needs changing.
+                               (do (Thread/sleep (long (pre-output-stream-backoff-ms attempt)))
                                    (recur attempt* max-tokens-attempt* current-extra-body env))
                                ;; Stream retry: same route and env.
                                :else (recur attempt* max-tokens-attempt* current-extra-body env)))

@@ -354,6 +354,21 @@
         (expect (re-find #"(?i)declined" (perr/provider-error-explanation err))))))
 
 (defdescribe
+  pre-output-stream-abort-test
+  "The typed watchdog family Vis may re-issue while nothing has streamed. The set
+   itself is svar's; this proves Vis reads it, and reads it in both error shapes."
+  (it "recognizes ttft / idle / semantic aborts as ex-info and as a trace error map"
+      (doseq
+        [error-type [:svar.core/stream-ttft-timeout :svar.core/stream-idle-timeout
+                     :svar.core/stream-semantic-timeout]]
+        (expect (true? (perr/pre-output-stream-abort? (ex-info "watchdog" {:type error-type}))))
+        (expect (true? (perr/pre-output-stream-abort? {:message "watchdog"
+                                                       :data {:type error-type}})))))
+  (it "excludes a user cancellation and an ordinary provider failure"
+      (expect (false? (perr/pre-output-stream-abort?
+                        (ex-info "cancelled" {:type :svar.core/stream-cancelled}))))
+      (expect (false? (perr/pre-output-stream-abort? {:data {:status 429}})))))
+(defdescribe
   stream-timeout-kind-test
   (it "typed :svar.core/stream-semantic-timeout → honest stall card, never 'Provider unavailable'"
       (let

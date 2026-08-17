@@ -256,6 +256,22 @@
   (contains? #{:svar.core/stream-semantic-timeout :svar.core/stream-idle-timeout}
              (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn pre-output-stream-abort?
+  "True when one of svar's TYPED stream watchdogs fired: `ttft` (no response
+   header), `idle` (no bytes) or `semantic` (no model progress) —
+   `failure/STREAM_WATCHDOG_ERROR_TYPES`, the single source of which types those
+   are. Dispatches on typed `ex-data`, NEVER on message text.
+
+   The type is only half a retry verdict; the caller owns the other half (did
+   any output start?), because only both together make re-issuing the request
+   idempotent: no header, no byte, no token, nothing billed, nothing painted.
+   svar's low-level HTTP layer declines these on purpose — one retry there costs
+   a whole timeout — and leaves them to router-owned provider fallback, which
+   has no second candidate when the caller pinned provider AND model. Vis is
+   then the only layer left that can retry at all."
+  [err]
+  (contains? failure/STREAM_WATCHDOG_ERROR_TYPES
+             (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 (def CONTEXT_OVERFLOW_TYPES
   "Every typed context-window failure svar can raise.
 

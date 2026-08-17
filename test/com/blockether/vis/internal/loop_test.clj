@@ -2118,8 +2118,10 @@
 
 (defdescribe
   ask-code-idle-timeout-test
-  (it "gives the first token 120s and the idle watchdog its own 300s by default"
-      (expect (= 120000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
+  (it "gives the first token 45s and the idle watchdog its own 300s by default"
+      ;; 45s, not svar's two minutes: the first header is the ONE wait Vis can
+      ;; retry for free, and `pre-output-stream-retryable?` now does.
+      (expect (= 45000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
       (expect (= 300000 rt/ASK_CODE_IDLE_TIMEOUT_MS))
       (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
         (expect (= ::router router))
@@ -3261,10 +3263,59 @@
            (lp/handle-iteration-exception! (ex-info "NameError: nope" {:type :vis/eval-error}) ctx)]
           (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
 
+;; Regression: a pinned provider accepted the POST and sent no response header for
+;; the whole TTFT budget. svar declined the retry (:no-retry-path), its router had
+;; no second candidate under Vis' sticky provider+model pin, and the turn died with
+;; ten iterations of finished work — the human had to type "Continue".
+(defdescribe
+  pre-output-stream-retry-test
+  "A stream watchdog that fires before ANY output is the one provider failure Vis
+   re-issues itself: no header, no byte, no token, nothing billed, nothing painted."
+  (let
+    [retryable? @#'lp/pre-output-stream-retryable?
+
+     backoff @#'lp/pre-output-stream-backoff-ms
+
+     next-counters @#'lp/next-retry-counters
+
+     ttft (ex-info "Stream TTFT timeout (45000 ms)" {:type :svar.core/stream-ttft-timeout})]
+
+    (it "re-issues every typed watchdog abort while no output has streamed"
+        (doseq [error-type [:svar.core/stream-ttft-timeout :svar.core/stream-idle-timeout
+                            :svar.core/stream-semantic-timeout]]
+          (expect (true? (retryable? (ex-info "watchdog" {:type error-type})
+                                     {:attempt 0 :output-started? false})))))
+    (it "sees the typed abort through the HTTP client's wrapper exception"
+        (expect (true? (retryable? (ex-info "HTTP client request failed" {} ttft)
+                                   {:attempt 0 :output-started? false}))))
+    (it "never resends once output has been painted"
+        (expect (false? (retryable? ttft {:attempt 0 :output-started? true}))))
+    (it "stops at the attempt budget instead of hiding a wedged endpoint"
+        (expect (true? (retryable? ttft {:attempt 1 :output-started? false})))
+        (expect (false? (retryable? ttft {:attempt 2 :output-started? false}))))
+    (it "leaves a cancellation and every unrelated failure terminal"
+        (expect (false? (retryable? (ex-info "cancelled" {:type :svar.core/stream-cancelled})
+                                    {:attempt 0 :output-started? false})))
+        (expect (false? (retryable? (ex-info "unauthorized" {:status 401})
+                                    {:attempt 0 :output-started? false}))))
+    (it "backs off briefly and spends exactly one attempt per re-issue"
+        (expect (= 1000 (backoff 0)))
+        (expect (= 3000 (backoff 1)))
+        (expect (= 3000 (backoff 7)))
+        (expect (= [1 1] (next-counters :com.blockether.vis.internal.loop/retry-pre-output-stream
+                                        {:attempt 0 :max-tokens-attempt 1}))))
+    (it "still fails the turn once the pre-output budget is spent"
+        (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error
+                         (lp/handle-iteration-exception! ttft
+                                                         {:iteration 3
+                                                          :messages [{:role "user"
+                                                                      :content "hi"}]})))))))
 (defdescribe
   stream-watchdog-terminal-error-test
-  "Stream watchdog failures already exhausted svar's bounded retry/fallback policy.
-   They must end the turn instead of becoming visible model-feedback iterations."
+  "Stream watchdog failures that reach here have spent BOTH svar's bounded
+   retry/fallback policy and Vis' own pre-output re-issue budget
+   (`pre-output-stream-retry-test`). They must end the turn instead of becoming
+   visible model-feedback iterations."
   (let [ctx {:iteration 5 :messages [] :routing {} :reasoning-level nil}]
     (doseq
       [error-type [:svar.core/stream-cancelled :svar.core/stream-idle-timeout
