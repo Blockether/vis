@@ -69,7 +69,7 @@ prints it beside the commit that produced the binary.
 | Track | Who builds it | Followable |
 |---|---|---|
 | `stable` | a release tag; the assets on the newest release | yes, and the default |
-| `beta` | the rolling per-commit prerelease, built on free runners, so Linux only | yes |
+| `beta` | Linux only, and PAUSED: the 6-hourly schedule is off while every native platform is broken, so betas ship only on a manual `beta-native` dispatch | yes, but nothing new lands |
 | `dev` | a build of your own: `clojure -T:build native`, or `vis-agent update --rebuild` | no |
 | `dry-run` | a CI build that published nothing | no |
 

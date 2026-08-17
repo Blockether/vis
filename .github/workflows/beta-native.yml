@@ -8,11 +8,16 @@ name: Beta Native
 # Assets carry the SAME names as a stable release — the wrapper looks for
 # `vis-agent-<os>-<arch>-community.tar.gz` and nothing else.
 #
-# COALESCED, not literally per commit. native-image takes 70-130 min on a free
-# runner (see native-release.yml for the measured numbers), so a beta per push
-# would queue for ever and burn the runner pool. The schedule takes the NEWEST
-# green commit every 6 h instead: a burst of ten commits ships one beta, and a
-# quiet day ships none.
+# PAUSED, NOT DELETED. The schedule is gone: every native platform is currently
+# broken — hosted macOS is killed by its own timeout, linux-arm64 dies of
+# OutOfMemoryError in native-image, and linux-x64 builds but fails its own binary
+# test — so a cron every 6 h burned the runner pool to produce nothing. Betas now
+# ship only when someone dispatches this workflow by hand. Restore the
+# `schedule:` block (and the assertion in release_bundle_test.clj) the day a
+# platform is green again; the coalescing rationale it carried was: native-image
+# takes 70-130 min on a free runner, so a beta per push would queue for ever, and
+# the newest green commit every 6 h ships one beta per burst and none on a quiet
+# day.
 #
 # GREEN IS A PRECONDITION, not a hope. A commit only becomes a beta once CI
 # (.github/workflows/ci.yml — tests, classpath, clj-kondo + reflection lint,
@@ -26,14 +31,10 @@ name: Beta Native
 # person using it, so betas run ONLY on free GitHub-hosted Linux runners and the
 # beta track has no macOS asset. macOS ships on stable tags.
 #
-# The `beta` tag is deliberately not `v*`: native-release.yml triggers on
-# `v[0-9]*`, so moving this one never starts a stable release build.
+# The `beta` tag is deliberately not `v*`: a beta must never look like a stable
+# release to any workflow that keys off `v*`.
 
 on:
-  schedule:
-    # Every 6 hours. Raising the frequency does not ship more betas, it only
-    # shortens the window in which a commit can go green before the next pick.
-    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       sha:

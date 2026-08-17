@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- build(ci): pause the beta native cron — every native platform is broken, so betas are dispatch-only
 - fix(build): make `dev` a track of its own, refused as an update target
 - feat(companion): pull the sessions list down to open the fleet-wide search
 - fix(companion): draw the pull-to-search band with the finger instead of snapping it

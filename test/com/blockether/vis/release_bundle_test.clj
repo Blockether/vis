@@ -708,8 +708,13 @@
       (expect (not (str/includes? directives "vis_macos_arm64_runner")) directives)
       (doseq [runner ["ubuntu-latest" "ubuntu-24.04-arm"]]
         (expect (str/includes? beta runner) runner))
-      ;; Coalesced, gated on a green CI run for that exact commit, and stamped.
-      (expect (str/includes? beta "cron:") beta)
+      ;; Regression, releases v0.1.39 and v0.1.40: every native platform is
+      ;; broken (hosted macOS timeout, linux-arm64 OutOfMemoryError, linux-x64
+      ;; failing its own binary test), so the 6-hourly cron only burned the
+      ;; runner pool. The beta track is dispatch-only until one is green.
+      (expect (not (str/includes? beta "cron:")) beta)
+      (expect (str/includes? beta "workflow_dispatch:") beta)
+      ;; Gated on a green CI run for that exact commit, and stamped.
       (expect (str/includes? beta "actions/workflows/ci.yml/runs?head_sha=") beta)
       (expect (str/includes? beta "VIS_RELEASE_TRACK: beta") beta)
       (expect (str/includes? (slurp "build.clj") "(System/getenv \"VIS_RELEASE_TRACK\")")
