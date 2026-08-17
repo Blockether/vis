@@ -1127,6 +1127,47 @@
              (expect (str/includes? out "ls")))
            (finally (doc-corpus/register-source! ::collision (constantly :gone) (constantly []))))))
 
+;; Regression: a skill added to `.agents/skills` mid-session was invisible to the
+;; sandbox — `/reload` rebuilt the corpus, but `doc(<name>)` still answered "is not a
+;; handle" and `apropos` never ranked it, because every skill, page and MCP
+;; description was COPIED into the context when it was built and that context
+;; outlives every reload.
+(defdescribe
+  the-document-corpus-is-read-live-test
+  (it
+    "answers a document that appeared after the context was built, and drops it when it goes"
+    (let
+      [ctx
+       (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings (fn []
+                                                                                  nil))))
+
+       read-it
+       (fn []
+         (str (:stdout (ep/run-python-block ctx "print(doc('freight-planning'))"))))]
+
+      (expect (str/includes? (read-it) "is not a handle"))
+      (try (doc-corpus/register-source! ::late
+                                        (constantly :present)
+                                        (fn []
+                                          [{:name "freight-planning"
+                                            :kind "skill"
+                                            :text "Routes crates of tangerines by rail."}]))
+           (let
+             [out
+              (read-it)
+
+              hits
+              (str (:stdout (ep/run-python-block ctx
+                                                 (str
+                                                   "print('found='+str('freight-planning' in "
+                                                   "apropos('routes crates of tangerines')))"))))]
+
+             (expect (str/includes? out "# freight-planning"))
+             (expect (str/includes? out "tangerines by rail"))
+             (expect (str/includes? hits "found=True")))
+           (finally (doc-corpus/register-source! ::late (constantly :gone) (constantly []))))
+      (expect (str/includes? (read-it) "is not a handle")))))
+
 (defdescribe
   block-source-introspection-test
   ;; A block's source was registered nowhere, so `inspect.getsource` on a

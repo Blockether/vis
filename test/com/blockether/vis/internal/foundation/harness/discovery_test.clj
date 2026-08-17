@@ -309,3 +309,35 @@
                    (expect (nil? (:commands skill)))
                    (expect (some #{"scripts/command-metadata.json"} (:resources skill))))))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+
+;; Regression: a skill dropped into `.agents/skills` while a session was running
+;; stayed unknown until the process restarted — the cache kept answering the set it
+;; had read when the session started.
+(defdescribe
+  skills-cache-revalidates-test
+  (it "sees a SKILL.md that appeared after the cache was warm, with no explicit reload"
+      (let
+        [root
+         (.toFile (Files/createTempDirectory "vis-skill-midsession" (make-array FileAttribute 0)))
+
+         early
+         (io/file root ".agents" "skills" "already-here" "SKILL.md")
+
+         late
+         (io/file root ".agents" "skills" "arrived-later" "SKILL.md")]
+
+        (try (.mkdirs (io/file root ".git"))
+             (io/make-parents early)
+             (spit early "---\nname: already-here\ndescription: First\n---\nFIRST")
+             (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+               (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+                 (let
+                   [warm (set (map :name (d/skills)))
+                    generation (d/generation)]
+
+                   (expect (= #{"already-here"} warm))
+                   (io/make-parents late)
+                   (spit late "---\nname: arrived-later\ndescription: Second\n---\nSECOND")
+                   (expect (= #{"already-here" "arrived-later"} (set (map :name (d/skills)))))
+                   (expect (< (long generation) (long (d/generation)))))))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))

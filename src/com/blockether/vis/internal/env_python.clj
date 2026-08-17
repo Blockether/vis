@@ -1077,14 +1077,23 @@
          (catch Throwable _ nil))))
 
 (defn- sandbox-corpus
-  "The whole corpus as `doc-corpus` entries, read LIVE off the globals so a
-   per-turn extension activation is searchable the moment it binds:
-   `__vis_docs__` holds one document per handle (function contracts seeded from
-   the extension registry, plus every documentation page, skill and MCP tool),
-    `__vis_calls__` holds the expression that uses the handles which are not
-    themselves Python names, `__vis_sigs__` the declared parameter list of every
-    callable, and `__vis_kinds__` labels the ones a source
-    CLASSIFIED (page, skill, mcp, shim).
+  "The whole corpus as `doc-corpus` entries: the sandbox's own globals merged with
+   the LIVE document corpus.
+
+   Read off the GLOBALS, so a per-turn extension activation is searchable the
+   moment it binds: `__vis_docs__` holds one document per handle (function
+   contracts seeded from the extension registry, plus every shim's page),
+   `__vis_calls__` holds the expression that uses the handles which are not
+   themselves Python names, `__vis_sigs__` the declared parameter list of every
+   callable, and `__vis_kinds__` labels the ones a source CLASSIFIED (shim).
+
+   Read LIVE from `doc-corpus/entries`: every skill, every documentation page and
+   every MCP tool. Those are never seeded, because this context outlives every
+   `/reload` — a copy taken when it was built answers a skill added, edited or
+   deleted mid-session with the corpus of an hour ago. The corpus memoizes on its
+   sources' stamps, so an unchanged one costs a stat pass. A global still WINS the
+   name: a callable's contract beats a documentation slug, which is exactly the
+   precedence the old `setdefault` seed encoded.
 
    The two kinds nobody labels are derived here: a documented handle is a
    `tool`, and the model's own `def` is `local` — `__vis_def_docs__` names every
@@ -1118,15 +1127,26 @@
      (called-str-map g "__vis_def_docs__")
 
      def-calls
-     (called-str-map g "__vis_def_calls__")]
+     (called-str-map g "__vis_def_calls__")
+
+     ;; The DOCUMENT half of the corpus, re-read on every call (see the
+     ;; docstring). A source that throws contributes nothing — discovery must
+     ;; never be the reason `doc`/`apropos` fails.
+     documents
+     (into {} (map (juxt :name identity)) (try (doc-corpus/entries) (catch Throwable _ nil)))]
 
     (into []
           (map
             (fn [nm]
               (let
-                [text
+                [document
+                 (get documents nm)
+
+                 text
                  (let [registered (str (get docs nm ""))]
-                   (if (str/blank? registered) (str (get def-docs nm "")) registered))
+                   (cond (seq registered) registered
+                         (seq (str (:text document))) (str (:text document))
+                         :else (str (get def-docs nm ""))))
 
                  ;; The CALL LINE `doc(name)` prints under the handle: the explicit
                  ;; expression when the handle is not a Python name of its own
@@ -1135,6 +1155,7 @@
                  ;; line says which parameters are required and in what order.
                  call
                  (or (not-empty (str (get calls nm)))
+                     (not-empty (str (:call document)))
                      (when-let [sig (get sigs nm)]
                        (str nm "(" sig ")"))
                      (not-empty (str (get def-calls nm))))]
@@ -1145,13 +1166,16 @@
                    ;; A REGISTERED document is what makes a handle a tool: a helper
                    ;; that shadows one keeps the tool's page, and a documented `def`
                    ;; stays `local` however much it says about itself.
-                   :kind (or (get kinds nm) (if (str/blank? (str (get docs nm))) "local" "tool"))}
+                   :kind
+                   (or (get kinds nm)
+                       (:kind document)
+                       (if (and (str/blank? (str (get docs nm))) (nil? document)) "local" "tool"))}
                   (seq (str call))
                   (assoc :call call)
 
                   (seq (str (get params nm)))
                   (assoc :params (str (get params nm)))))))
-          (distinct (concat (names-fn) (sort (keys docs)))))))
+          (distinct (concat (names-fn) (sort (keys docs)) (sort (keys documents)))))))
 
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
@@ -2319,61 +2343,27 @@
                                    [n "shim"]))
                             names)))
       (catch Throwable _ nil))
-    ;; DOCUMENTS: every skill's whole `SKILL.md`, every Vis documentation page and
-    ;; every MCP tool description join the SAME `__vis_docs__` dict the function
-    ;; contracts live in — ONE corpus, so `apropos` is one search and `doc` is one
-    ;; lookup. `setdefault` IS the precedence rule: a callable name always wins a
-    ;; documentation slug. `__vis_calls__` carries the expression that uses a
-    ;; handle which is not itself a Python name (`mcp__call(...)`); a skill and a
-    ;; documentation page carry none, because both are prose. Best-effort: a
-    ;; discovery hiccup must never break context creation.
-    (try
-      (let
-        [es
-         (doc-corpus/entries)
-
-         ;; With the shell tools OFF the `shell` verb is simply not bound, and a
-         ;; shell-shaped query would answer with silence — which reads as "no
-         ;; process can be started in this product". It can: the toggle closes the
-         ;; MODEL's door only. Same sentences as the POSIX refusal, never a copy.
-         shell-off?
-         (not (some (fn [[sym _]]
-                      (= "shell" (sym->py-name sym)))
-                    (or custom-bindings {})))
-
-         docs
-         (cond-> (into {} (map (juxt :name :text)) es)
-           shell-off?
-           (assoc "shell" (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension"))))
-
-         calls
-         (into {}
-               (keep (fn [e]
-                       (when (:call e) [(:name e) (:call e)])))
-               es)
-
-         kinds
-         (into {}
-               (keep (fn [e]
-                       (when (:kind e) [(:name e) (:kind e)])))
-               es)]
-
-        (when (seq docs)
-          (.putMember g "__vis_docs_json__" (json/write-json-str docs))
-          (.eval ctx
-                 "python"
-                 (str "_vis_docs = globals().setdefault('__vis_docs__', {})\n"
-                      "for _k, _v in json.loads(__vis_docs_json__).items():\n"
-                      "    _vis_docs.setdefault(_k, _v)\n" "del _vis_docs, _k, _v"))
-          (.putMember g "__vis_docs_json__" nil))
-        (when (seq calls)
-          (.putMember g "__vis_calls_json__" (json/write-json-str calls))
-          (.eval ctx
-                 "python"
-                 "globals().setdefault('__vis_calls__', {}).update(json.loads(__vis_calls_json__))")
-          (.putMember g "__vis_calls_json__" nil))
-        (seed-py-map! ctx g "__vis_kinds__" kinds))
-      (catch Throwable _ nil))
+    ;; DOCUMENTS — every skill, every documentation page, every MCP tool — are NOT
+    ;; seeded here: `sandbox-corpus` reads them LIVE off `doc-corpus/entries` on
+    ;; every `doc`/`apropos`. This context outlives every `/reload`, so a copy taken
+    ;; now would answer a skill added or edited mid-session with the corpus of an
+    ;; hour ago, and would keep answering for one the user deleted.
+    ;;
+    ;; The one document that depends on THIS context's bindings still seeds here:
+    ;; with the shell tools OFF the `shell` verb is simply not bound, and a
+    ;; shell-shaped query would answer with silence — which reads as "no process can
+    ;; be started in this product". It can: the toggle closes the MODEL's door only.
+    ;; Same sentences as the POSIX refusal, never a copy. Best-effort: a registry
+    ;; hiccup must never break context creation.
+    (try (when-not (some (fn [[sym _]]
+                           (= "shell" (sym->py-name sym)))
+                         (or custom-bindings {}))
+           (seed-py-map! ctx
+                         g
+                         "__vis_docs__"
+                         {"shell"
+                          (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension"))}))
+         (catch Throwable _ nil))
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await grep(x)` / `gather(grep(x), grep(y))` work).
     ;; `__vis_par__` (the bounded host platform pool) is wired as a binding above;
@@ -2445,9 +2435,9 @@
                         vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
       (.eval ctx "python" "__vis_defer_tools__()")
-      ;; Docs and signatures are seeded ABOVE, shims and the documentation
-      ;; corpus after them — so the stamp runs LAST, when every tool's contract
-      ;; is already in `__vis_docs__`/`__vis_sigs__` for it to carry.
+      ;; Docs and signatures are seeded ABOVE and the shims after them — so the
+      ;; stamp runs LAST, when every tool's contract is already in
+      ;; `__vis_docs__`/`__vis_sigs__` for it to carry.
       (.eval ctx "python" "__vis_stamp_tools__()"))
     ;; The DIRECT (never-deferred) verbs keep their synchronous identity but still
     ;; accept Python kwargs: wrap them so `fold_session(key, gist="…")` folds
