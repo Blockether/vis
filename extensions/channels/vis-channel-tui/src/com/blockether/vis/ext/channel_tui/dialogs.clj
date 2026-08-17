@@ -2643,6 +2643,28 @@
                                :items [{:key "q" :type :action :id :dismiss :label "Dismiss"}]}]})
   nil)
 
+(defn- magit-mini-wait!
+  "HOLD the band while something else finishes — a browser round-trip the daemon
+   is polling for. `line-fn` renders the ONE status line on every tick (elapsed
+   seconds), `done?` says the wait is over, and Esc gives up: a flow that has to
+   wait must not blank the list it was fired from either, so the wait paints in
+   the same frame as the question that started it. Returns true when `done?` won,
+   nil when the user pressed Esc."
+  [^TerminalScreen screen g {:keys [left text-w] :as region} title line-fn done?]
+  (loop []
+
+    (if (done?)
+      true
+      (let [row (band-question-frame! g region title [["Esc" "cancel"]])]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/put-str! g (+ (long left) 2) row (ellipsize (str (line-fn)) text-w))
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (if (some-> (.pollInput screen)
+                    modal-escape-key?)
+          nil
+          (do (Thread/sleep 120) (recur)))))))
+
 (defn- magit-discard-flow!
   [mini root {:keys [kind area path] :as row}]
   (when (= :file kind)
@@ -2706,6 +2728,7 @@
      `:choose!`      WHICH one, single-key — `[title choices]`, returns the `:id`
      `:confirm!`     y/n — `[question]` / `[question {:cost … :yes-label … :no-label …}]`
      `:note!`        SAY one line back — `[title line]`, dismissed with `q`
+     `:wait!`        HOLD the band while something else finishes — `[title line-fn done?]`
      `:transient!`   ANOTHER transient over the SAME band region — `[spec]`
      `:read-option`  the `:read-option` a spec with OPTION items hands `tr/run!`
 
@@ -2721,6 +2744,8 @@
                ([question opts] (magit-mini-confirm! screen g region question opts)))
    :note! (fn [title line]
             (magit-mini-note! screen g region title line))
+   :wait! (fn [title line-fn done?]
+            (magit-mini-wait! screen g region title line-fn done?))
    :transient! (fn [spec]
                  (embed-transient! screen g region spec))
    :read-option (region-option-reader screen g region)})
@@ -4571,16 +4596,19 @@
 
     ;; An MCP row IS its verbs — start, kill, enable, disable, sign in, edit,
     ;; remove — offered as a magit transient band in THIS frame, each on the key
-    ;; the verb itself carries. No manager dialog stacked on top of Settings.
+    ;; the verb itself carries, and every question that verb then asks (a field,
+    ;; the save confirm, a gateway refusal) lands in the SAME band, on the region
+    ;; snapshotted here BEFORE anything paints over the settings list.
     :mcp
-    (do (when-let
-          [action
-           (:action
-             (embed-transient! screen g region (mcp-model/server-transient-spec (:server row))))]
-          (when-let [f (:mcp-action callbacks)]
-            (f {:server (:server row) :action action}))
-          (load-mcp-inventory!))
-        @values)
+    (let [region (host-band-region screen region)]
+      (when-let
+        [action
+         (:action
+           (embed-transient! screen g region (mcp-model/server-transient-spec (:server row))))]
+        (when-let [f (:mcp-action callbacks)]
+          (f {:server (:server row) :action action :g g :region region}))
+        (load-mcp-inventory!))
+      @values)
 
     ;; Same for a provider row: default, fallback, sign in, status, remove are
     ;; a transient here, and picking a model is a second one — never a dialog.

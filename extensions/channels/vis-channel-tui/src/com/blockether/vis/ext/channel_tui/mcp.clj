@@ -12,7 +12,13 @@
    `server-status`, `tokenize-command`, `parse-kv`, `row->form`, `form->spec`
    and `spec-problem` are pure so the row text and the wire spec are
    unit-testable without a screen; the verbs themselves, and the transient band
-   that offers them, are pure in `mcp-model`."
+   that offers them, are pure in `mcp-model`.
+
+   Every question a verb asks — the transport, each field, the save confirm, a
+   gateway refusal — is asked in the BAND the verb was fired from (`dlg/band-questions`),
+   so adding, editing, authorizing and removing a server never stacks a window
+   over the Settings list. The one dialog left is `:details`: a read-only page is
+   a viewer, not a menu of keystrokes."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -173,11 +179,12 @@
           (coll? t) (long (count t))
           :else 0)))
 
-(defn- ask
-  "One prefilled text field. Esc gives nil, an empty Enter gives \"\" — the two
-   are different answers and the form relies on that."
-  [^TerminalScreen screen heading label initial body]
-  (dlg/text-input-dialog! screen heading label :initial (str initial) :body body))
+(defn- band-questions
+  "Everything ONE MCP verb may ASK, bound to the frame it was fired from. The
+   caller's region is snapshotted ONCE (`dlg/host-band-region`) so a taller
+   question hands back the rows it covered when it closes."
+  [^TerminalScreen screen g region]
+  (dlg/band-questions screen g (dlg/host-band-region screen region)))
 
 (defn- ask-all
   "Run `[key ask-fn]` prompts in order, threading the form through them. ANY Esc
@@ -191,62 +198,49 @@
           prompts))
 
 (defn- field-prompts
-  "The fields one transport actually has, as prompts for `ask-all`."
-  [^TerminalScreen screen heading transport]
+  "The fields one transport actually has, as prompts for `ask-all`. Each is ONE
+   band question: the label is the band's own title, and the example the old
+   dialog spent four lines of prose on rides IN the field as a placeholder — the
+   only part of that prose that ever answered the question."
+  [read! transport]
   (let
     [timeout [:timeout-ms
               (fn [f]
-                (ask screen
-                     heading
-                     "Timeout in ms (blank for the default):"
-                     (:timeout-ms f)
-                     ["How long the gateway waits for this server."]))]]
+                (read! "Timeout in ms (blank for the default):"
+                       {:initial (str (:timeout-ms f))
+                        :placeholder "how long the gateway waits for this server"}))]]
     (if (= "streamable_http" transport)
       [[:url
         (fn [f]
-          (ask screen
-               heading
-               "URL:"
-               (:url f)
-               ["The streamable HTTP endpoint, e.g. https://example.com/mcp" ""
-                "Servers that need OAuth are signed in afterwards with the"
-                "`Sign in` verb — the gateway keeps the tokens."]))]
+          (read! "URL:"
+                 {:initial (str (:url f))
+                  :placeholder "https://example.com/mcp — sign in afterwards with `Sign in`"}))]
        [:headers
         (fn [f]
-          (ask screen
-               heading
-               "Headers, KEY=value, comma separated:"
-               (:headers f)
-               ["Optional. Leave blank to keep what the gateway already stores."]))] timeout]
+          (read! "Headers, KEY=value, comma separated:"
+                 {:initial (str (:headers f))
+                  :placeholder "blank keeps what the gateway already stores"}))] timeout]
       [[:command-line
         (fn [f]
-          (ask screen
-               heading
-               "Command:"
-               (:command-line f)
-               ["The command the GATEWAY runs, with its arguments, e.g." ""
-                "  npx -y @modelcontextprotocol/server-filesystem /srv/data" ""
-                "Quotes keep an argument with spaces together."]))]
+          (read! "Command:"
+                 {:initial (str (:command-line f))
+                  :placeholder "npx -y @modelcontextprotocol/server-filesystem /srv/data"}))]
        [:cwd
         (fn [f]
-          (ask screen
-               heading
-               "Working directory (blank for the default):"
-               (:cwd f)
-               ["Resolved on the gateway's machine, not on this one."]))]
+          (read! "Working directory (blank for the default):"
+                 {:initial (str (:cwd f))
+                  :placeholder "resolved on the gateway's machine, not on this one"}))]
        [:env
         (fn [f]
-          (ask screen
-               heading
-               "Environment, KEY=value, comma separated:"
-               (:env f)
-               ["Optional. Leave blank to keep what the gateway already stores."]))] timeout])))
+          (read! "Environment, KEY=value, comma separated:"
+                 {:initial (str (:env f))
+                  :placeholder "blank keeps what the gateway already stores"}))] timeout])))
 
 (defn- collect-spec!
-  "Ask for every field of one server. `row` is nil for an add and the existing
-   sanitized row for an edit. Returns `[name spec]`, or nil the moment the user
-   escapes a prompt."
-  [^TerminalScreen screen row]
+  "Ask for every field of one server IN THE CALLER'S BAND. `row` is nil for an add
+   and the existing sanitized row for an edit. Returns `[name spec]`, or nil the
+   moment the user escapes a prompt."
+  [q row]
   (let
     [form
      (row->form row)
@@ -255,63 +249,62 @@
      (if row (str "MCP · edit " (get row "name")) "MCP · add server")]
 
     (when-let
-      [transport (if row
-                   (:transport form)
-                   (:id (dlg/select-dialog!
-                          screen
-                          heading
-                          [{:id "stdio" :label "stdio — the gateway runs a local command"}
-                           {:id "streamable_http"
-                            :label "http — a remote streamable HTTP endpoint"}])))]
+      [transport
+       (if row
+         (:transport form)
+         ((:choose! q)
+           heading
+           [{:key \s :id "stdio" :label "stdio — the gateway runs a local command"}
+            {:key \h :id "streamable_http" :label "http — a remote streamable HTTP endpoint"}]))]
       (when-let
         [server
          (if row
            (str (get row "name"))
-           (some->
-             (ask screen heading "Name:" "" ["A short id for this server, e.g. `filesystem`."])
-             str/trim))]
+           (some-> ((:read! q) "Name:" {:placeholder "a short id for this server, e.g. filesystem"})
+                   str/trim))]
         (when-let
-          [filled (ask-all (assoc form :transport transport)
-                           (field-prompts screen heading transport))]
+          [filled (ask-all (assoc form :transport transport) (field-prompts (:read! q) transport))]
           [server (form->spec filled)])))))
 
 (defn save-server!
-  "Add or edit ONE gateway-managed server. The candidate is dialed BY THE GATEWAY
-   before anything is persisted, so a wrong command or an unreachable URL is
-   reported while it is still just a form. Nothing is written on this machine —
-   the daemon owns the configuration, which is why this works unchanged against
-   a remote gateway."
-  [^TerminalScreen screen row]
-  (try (when-let [[server spec] (collect-spec! screen row)]
-         (if-let [problem (spec-problem server spec)]
-           (dlg/text-view-dialog! screen title [problem])
-           (let
-             [verdict (try (vis/gateway-mcp-test-server! server spec)
-                           (catch Exception e {"error" (ex-message e)}))
-              tools (tool-count verdict)
-              summary (if (get verdict "is_connected")
-                        (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
-                        (str "Could not connect: "
-                             (or (get verdict "error") "the server did not answer")))]
+  "Add or edit ONE gateway-managed server, every question inside the CALLER'S own
+   band. The candidate is dialed BY THE GATEWAY before anything is persisted, so a
+   wrong command or an unreachable URL is reported while it is still just a form.
+   Nothing is written on this machine — the daemon owns the configuration, which
+   is why this works unchanged against a remote gateway."
+  [^TerminalScreen screen g region row]
+  (let [q (band-questions screen g region)]
+    (try (when-let [[server spec] (collect-spec! q row)]
+           (if-let [problem (spec-problem server spec)]
+             ((:note! q) title problem)
+             (let
+               [verdict (try (vis/gateway-mcp-test-server! server spec)
+                             (catch Exception e {"error" (ex-message e)}))
+                tools (tool-count verdict)
+                summary (if (get verdict "is_connected")
+                          (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
+                          (str "Could not connect: "
+                               (or (get verdict "error") "the server did not answer")))]
 
-             (when (dlg/confirm-dialog!
-                     screen
-                     title
-                     [(str (if row "Save changes to `" "Add MCP server `") server "`?") "" summary
-                      "" "The gateway stores and runs it; every vis client sees it."])
-               (vis/gateway-mcp-save-server! server spec)
-               nil))))
-       (catch Exception e (dlg/text-view-dialog! screen title [(str "MCP: " (ex-message e))]) nil)))
+               (when ((:confirm! q)
+                       (str (if row "Save changes to `" "Add MCP server `") server "`?")
+                       {:cost summary
+                        :yes-label (if row "Yes, save it" "Yes, add it")
+                        :no-label "Discard it"})
+                 (vis/gateway-mcp-save-server! server spec)
+                 nil))))
+         (catch Exception e ((:note! q) title (str "MCP: " (ex-message e))) nil))))
 
 (defn- authorize!
-  "Run one browser OAuth flow for an HTTP MCP server THROUGH THE GATEWAY.
+  "Run one browser OAuth flow for an HTTP MCP server THROUGH THE GATEWAY, in the
+   band the verb was fired from.
 
    `auth/start` mints the flow daemon-side and hands back only the authorization
    URL and an opaque flow id — the PKCE verifier never reaches this process. When
    the gateway runs on this machine its loopback listener finishes the flow by
    itself, so an empty paste is answered by a poll; otherwise the user pastes the
    final redirect URL back and the daemon exchanges it."
-  [^TerminalScreen screen server]
+  [q server]
   (let
     [flow
      (vis/gateway-mcp-auth-start! server)
@@ -323,85 +316,86 @@
      (get flow "url")]
 
     (if-not (and flow-id url)
-      (dlg/text-view-dialog! screen title ["No authorization URL came back from vis."])
-      (do
-        (opener/open! url)
-        (let
-          [pasted
-           (dlg/text-input-dialog!
-             screen
-             title
-             "Paste the final browser URL or authorization code:"
-             :body
-             [(str "Signing in to `" server "`.") "" "A browser was opened. Finish the login there."
-              "" "If the browser can reach this gateway the flow completes on its"
-              "own — just press Enter on an empty field to check. Otherwise copy"
-              "the URL the browser ended on and paste it here." "" url])
+      ((:note! q) title "No authorization URL came back from vis.")
+      (do (opener/open! url)
+          (let
+            [pasted
+             ((:read! q)
+               (str "Signing in to `" server "` — paste the final browser URL, or Enter to check:")
+               {:placeholder url})
 
-           input
-           (some-> pasted
-                   str/trim)
+             input
+             (some-> pasted
+                     str/trim)
 
-           verdict
-           (if (str/blank? input)
-             (vis/gateway-mcp-auth-poll! server flow-id)
-             (vis/gateway-mcp-auth-complete! server flow-id input))
+             verdict
+             (if (str/blank? input)
+               (vis/gateway-mcp-auth-poll! server flow-id)
+               (vis/gateway-mcp-auth-complete! server flow-id input))
 
-           status
-           (get verdict "status")]
+             status
+             (get verdict "status")]
 
-          (cond
-            ;; Success is silent: parity with the provider dialogs.
-            (= "ok" status) (do (vis/gateway-mcp-start-server! server) nil)
-            (= "pending" status) (do (vis/gateway-mcp-auth-cancel! server flow-id)
-                                     (dlg/text-view-dialog!
-                                       screen
-                                       title
-                                       ["Sign-in was not finished — the flow was cancelled."]))
-            :else (dlg/text-view-dialog!
-                    screen
-                    title
-                    [(str "Auth failed: " (or (get verdict "error") "authorization failed"))])))))))
+            (cond
+              ;; Success is silent: parity with the provider bands.
+              (= "ok" status) (do (vis/gateway-mcp-start-server! server) nil)
+              (= "pending" status)
+              (do (vis/gateway-mcp-auth-cancel! server flow-id)
+                  ((:note! q) title "Sign-in was not finished — the flow was cancelled."))
+              :else ((:note! q)
+                      title
+                      (str "Auth failed: " (or (get verdict "error") "authorization failed")))))))))
 
 (defn run-action!
-  "Execute one palette verb against one server. Every gateway rejection (409 for
-   a hand-written server, 404 for an unknown one) surfaces as a dialog instead of
-   a crashed TUI."
-  [^TerminalScreen screen row action]
-  (let [server (str (get row "name"))]
-    (try
-      (case action
-        :kill
-        (vis/gateway-mcp-kill-server! server)
+  "Execute one palette verb against one server IN THE CALLER'S BAND. Every gateway
+   rejection (409 for a hand-written server, 404 for an unknown one) comes back as
+   a line in that same band, never as a window over the list it was fired from."
+  [^TerminalScreen screen g region row action]
+  (let
+    [region
+     (dlg/host-band-region screen region)
 
-        :start
-        (vis/gateway-mcp-start-server! server)
+     q
+     (band-questions screen g region)
 
-        :enable
-        (vis/gateway-mcp-set-server-enabled! server true)
+     server
+     (str (get row "name"))]
 
-        :disable
-        (vis/gateway-mcp-set-server-enabled! server false)
+    (try (case action
+           :kill
+           (vis/gateway-mcp-kill-server! server)
 
-        :auth
-        (authorize! screen server)
+           :start
+           (vis/gateway-mcp-start-server! server)
 
-        :logout
-        (vis/gateway-mcp-auth-logout! server)
+           :enable
+           (vis/gateway-mcp-set-server-enabled! server true)
 
-        :edit
-        (save-server! screen row)
+           :disable
+           (vis/gateway-mcp-set-server-enabled! server false)
 
-        :remove
-        (when (dlg/confirm-dialog! screen
-                                   title
-                                   [(str "Remove MCP server `" server "`?") ""
-                                    "This deletes it from the gateway's own configuration."])
-          (vis/gateway-mcp-delete-server! server))
+           :auth
+           (authorize! q server)
 
-        :details
-        (dlg/text-view-dialog! screen (str "MCP · " server) (server-details row))
+           :logout
+           (vis/gateway-mcp-auth-logout! server)
 
-        nil)
-      nil
-      (catch Exception e (dlg/text-view-dialog! screen title [(str "MCP: " (ex-message e))]) nil))))
+           :edit
+           (save-server! screen g region row)
+
+           :remove
+           (when ((:confirm! q)
+                   (str "Remove MCP server `" server "`?")
+                   {:cost "Deletes it from the gateway's own configuration."
+                    :yes-label "Yes, remove"
+                    :no-label "Keep it"})
+             (vis/gateway-mcp-delete-server! server))
+
+           ;; The one thing here that is a VIEW and not a verb: a read-only page of
+           ;; detail lines belongs in a viewer, not in a menu of keystrokes.
+           :details
+           (dlg/text-view-dialog! screen (str "MCP · " server) (server-details row))
+
+           nil)
+         nil
+         (catch Exception e ((:note! q) title (str "MCP: " (ex-message e))) nil))))

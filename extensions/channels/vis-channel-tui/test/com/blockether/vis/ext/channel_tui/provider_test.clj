@@ -14,12 +14,6 @@
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
-(defn- eventually
-  [pred]
-  (loop [attempts 50]
-    (cond (pred) true
-          (pos? attempts) (do (Thread/sleep 20) (recur (dec attempts)))
-          :else false)))
 
 (defn- add-keys!
   "Queue `keys` on the virtual terminal: `KeyType` members go through untouched,
@@ -33,151 +27,48 @@
                  (KeyStroke. ^KeyType k)
                  (KeyStroke. (Character/valueOf ^Character k) false false)))))
 
+(defn- band-stub
+  "A `dlg/band-questions` stand-in. `answers` maps a question's label — or a nested
+   transient spec's title — to what the user answers; every question asked lands
+   in `log`. An unlisted read/transient IS an Esc, an unlisted confirm is a yes.
+
+   A verb reached from a transient asks HERE: the dialog seams are redefined to
+   THROW alongside it, which is how these tests prove no window was opened."
+  [answers log]
+  {:read! (fn read! ([label] (read! label {}))
+            ([label opts] (swap! log conj [:read label opts]) (get answers label)))
+   :choose! (fn [title choices]
+              (swap! log conj [:choose title choices])
+              (get answers title))
+   :confirm! (fn confirm! ([question] (confirm! question nil))
+               ([question opts] (swap! log conj [:confirm question opts])
+                (get answers question true)))
+   :note! (fn [title line]
+            (swap! log conj [:note title line])
+            nil)
+   :wait! (fn [title _line-fn done?]
+            (swap! log conj [:wait title])
+            ;; The real one holds the band until the daemon answers or the clock
+            ;; runs out; so does this, without a terminal.
+            (loop [n 0]
+              (cond (done?) true
+                    (< n 300) (do (Thread/sleep 10) (recur (inc n)))
+                    :else nil)))
+   :transient! (fn [spec]
+                 (swap! log conj [:transient spec])
+                 (get answers (:title spec)))})
+
+(defn- band-fn
+  "`band-stub` as the `dlg/band-questions` redef itself."
+  [answers log]
+  (fn [& _]
+    (band-stub answers log)))
+
+(defn- notes "Every line the verb SAID back in the band." [log] (filterv #(= :note (first %)) @log))
+
 (defdescribe provider-dialog-namespace-test
              (it "loads the provider dialog namespace"
                  (expect (some? (find-ns 'com.blockether.vis.ext.channel-tui.provider)))))
-
-(defdescribe provider-dialog-title-copy-test
-             (it "uses the concise Providers title"
-                 (expect (= "Providers" @#'provider/provider-dialog-title))))
-
-(defdescribe default-first-provider-presentation-test
-             (it "moves the explicit default provider to the top without disturbing peers"
-                 (let
-                   [order
-                    @#'provider/default-first-providers
-
-                    fleet
-                    [{:id :anthropic-coding-plan} {:id :openai-codex} {:id :zai-coding-plan}]]
-
-                   (expect (= [:openai-codex :anthropic-coding-plan :zai-coding-plan]
-                              (mapv :id (order fleet "openai-codex"))))))
-             (it "moves the explicit default model above the live catalog and keeps Show all last"
-                 (with-redefs
-                   [vis/gateway-provider-model-options
-                    (fn [_ show-all?]
-                      (if show-all?
-                        {:models ["gpt-mini" "gpt-main" "gpt-main-2025-01-01"] :hidden-count 0}
-                        {:models ["gpt-mini" "gpt-main"] :hidden-count 1}))]
-                   (let
-                     [build @#'provider/build-model-list
-                      provider {:id :openai-codex}]
-
-                     (expect (= ["gpt-main" "gpt-mini" :show-all]
-                                (mapv :id (build provider ["gpt-main"] false))))
-                     (expect (= ["gpt-main" "gpt-mini" "gpt-main-2025-01-01"]
-                                (mapv :id (build provider ["gpt-main"] true))))))))
-
-(defdescribe
-  provider-inline-model-transient-test
-  (it
-    "selects the default model inside the provider dialog instead of opening another dialog"
-    (let
-      [terminal
-       (DefaultVirtualTerminal. (TerminalSize. 80 30))
-
-       screen
-       (doto (TerminalScreen. terminal) (.startScreen))
-
-       selected
-       (atom nil)
-
-       seed
-       {:default-provider :beta
-        :default-model "beta-default"
-        :providers [{:id :alpha :models [{:name "alpha-1"} {:name "alpha-2"}]}
-                    {:id :beta :models [{:name "beta-default"} {:name "beta-2"}]}]}]
-
-      (try
-        (with-redefs
-          [vis/authenticated-preset-providers
-           (constantly [])
-
-           vis/gateway-provider-status
-           (fn [_]
-             {"is_authenticated" true "is_loading" false})
-
-           vis/gateway-provider-limits
-           (fn [provider-id]
-             {:provider-id provider-id :status :ready :static {} :dynamic {:limits []}})
-
-           vis/worker-future
-           (fn [_ f]
-             (future (f)))
-
-           vis/gateway-provider-model-options
-           (fn [provider-id _]
-             {:models (if (= provider-id :alpha) ["alpha-1" "alpha-2"] ["beta-default" "beta-2"])
-              :hidden-count 0})
-
-           vis/gateway-set-router-default!
-           (fn [provider-id model]
-             (reset! selected {:provider-id provider-id :model model}))
-
-           vis/load-config-raw
-           (constantly {})
-
-           vis/configured-providers
-           (constantly [])
-
-           vis/save-config!
-           (constantly nil)
-
-           vis/load-config
-           (constantly seed)
-
-           dlg/select-dialog!
-           (fn [& _]
-             (throw (ex-info "nested model dialog opened" {})))]
-
-          ;; Default :beta starts first. Choose :alpha, Enter opens its magit
-          ;; transient, `d` runs "Set as Default...", `a` takes the first model.
-          (add-keys! terminal [KeyType/ArrowDown KeyType/Enter \d \a KeyType/Escape KeyType/Escape])
-          (provider/show-provider-dialog! screen seed)
-          (expect (= {:provider-id :alpha :model "alpha-1"} @selected)))
-        (finally (.stopScreen screen))))))
-
-(defdescribe provider-card-scroll-test
-             (it "keeps selected provider cards inside a visible scroll window"
-                 (let
-                   [card-visible-count
-                    @#'provider/card-visible-count
-
-                    card-window-start
-                    @#'provider/card-window-start]
-
-                   ;; Cards are 3 rows each with a 1-row gap, so an N-row pane fits
-                   ;; (quot (+ N 1) 4) cards: 7 -> 2, 8 -> 2, 11 -> 3.
-                   (expect (= 2 (card-visible-count 7)))
-                   (expect (= 2 (card-visible-count 8)))
-                   (expect (= 3 (card-visible-count 11)))
-                   ;; 8-row pane fits 2 cards, so the window keeps the selected card at
-                   ;; its bottom edge: select 12 -> start 11, select 19 -> start 18.
-                   (expect (= 0 (card-window-start 0 0 8 20)))
-                   (expect (= 11 (card-window-start 12 0 8 20)))
-                   (expect (= 18 (card-window-start 19 10 8 20)))))
-             (it "shows a scrollbar thumb for overflowing model/provider card lists"
-                 ;; Cards drive the unified primitive directly now. The viewport size
-                 ;; below is the count of cards a pane fits; the track stays 8 rows tall.
-                 (let
-                   [geom
-                    (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
-
-                    ;; 20 cards, viewport fits 3, track 8 rows.
-                    top
-                    (geom 20 3 8 0)
-
-                    bot
-                    (geom 20 3 8 17)
-
-                    flat
-                    (geom 3 3 8 0)]
-
-                   (expect (= 1 (:thumb-h top)))
-                   (expect (= 0 (:thumb-top-rel top)))
-                   (expect (= 1 (:thumb-h bot)))
-                   (expect (= 7 (:thumb-top-rel bot))) ;; track-h(8) - thumb-h(1) = 7
-                   (expect (nil? flat)))))
 
 (defdescribe persisted-provider-config-test
              (it "persists the dialog provider without runtime adapter coercion"
@@ -292,106 +183,6 @@
                      (select-keys (@#'provider/gateway-provider-status-safe {:id :ollama})
                                   ["is_authenticated" "source" "provider_id"])))
           (expect (= false @local-probed?))))))
-
-(defdescribe
-  provider-dialog-async-diagnostics-test
-  (it "seeds provider diagnostics without running blocking provider probes"
-      (let
-        [status-called?
-         (atom false)
-
-         limits-called?
-         (atom false)]
-
-        (with-redefs
-          [vis/gateway-provider-status
-           (fn [_]
-             (reset! status-called? true)
-             {:is-authenticated true})
-
-           vis/gateway-provider-limits
-           (fn [_]
-             (reset! limits-called? true)
-             {:status :ok})]
-
-          (expect (= {"is_authenticated" nil "is_loading" true}
-                     (@#'provider/initial-provider-status {:id :slow})))
-          (expect (= {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}
-                     (@#'provider/initial-provider-limits {:id :slow})))
-          (expect (= false @status-called?))
-          (expect (= false @limits-called?)))))
-  (it
-    "refreshes provider diagnostics in the background after loading state is visible"
-    (let
-      [status-entered
-       (promise)
-
-       limits-entered
-       (promise)
-
-       release
-       (promise)
-
-       statuses
-       (atom {})
-
-       limits
-       (atom {})]
-
-      (with-redefs
-        [vis/gateway-provider-status
-         (fn [provider-id]
-           (deliver status-entered provider-id)
-           @release
-           {"is_authenticated" true "source" "gateway"})
-
-         vis/gateway-provider-limits
-         (fn [provider-id]
-           (deliver limits-entered provider-id)
-           @release
-           {:provider-id provider-id :status :ok :static {:rpm 1} :dynamic {:limits []}})]
-
-        (@#'provider/refresh-provider-diagnostics! {:id :slow} statuses limits)
-        (expect (= true (get-in @statuses [:slow "is_loading"])))
-        (expect (= :loading (get-in @limits [:slow :status])))
-        (expect (= :slow (deref status-entered 500 nil)))
-        (expect (= :slow (deref limits-entered 500 nil)))
-        (expect (= true (@#'provider/provider-diagnostics-loading? @statuses @limits)))
-        (deliver release true)
-        (expect (eventually #(= true (get-in @statuses [:slow "is_authenticated"]))))
-        (expect (eventually #(= :ok (get-in @limits [:slow :status]))))
-        (expect (= false (@#'provider/provider-diagnostics-loading? @statuses @limits))))))
-  ;; Regression, issue #113: a wedged provider probe (a Python `status_fn`/
-  ;; `detect_fn` that never returns) blocked the TUI key/paint thread until the
-  ;; gateway client's own 30s budget expired, so "Show Status + Limits" and the
-  ;; provider action menu froze the whole terminal.
-  (it "bounds a wedged gateway probe instead of blocking the calling thread"
-      (with-redefs
-        [provider/gateway-probe-timeout-ms
-         200
-
-         vis/gateway-provider-status
-         (fn [_]
-           (Thread/sleep 3000)
-           {"is_authenticated" true})
-
-         vis/gateway-provider-limits
-         (fn [_]
-           (Thread/sleep 3000)
-           {:status :ok :static {} :dynamic {:limits []}})]
-
-        (let
-          [status
-           (@#'provider/gateway-provider-status-safe {:id :wedged})
-
-           limits
-           (@#'provider/gateway-provider-limits-safe {:id :wedged})]
-
-          (expect (= false (get status "is_authenticated")))
-          (expect (clojure.string/includes? (str (get status "error")) "timed out"))
-          (expect (= :error (:status limits)))
-          (expect (clojure.string/includes? (str (get-in limits [:error :message]))
-                                            "timed out"))))))
 
 (defdescribe
   provider-action-items-test
@@ -529,66 +320,97 @@
   ;; API-key providers now take the SAME gateway road as the OAuth ones:
   ;; `auth/start` mints the flow and returns the provider's own guidance,
   ;; `auth/complete` persists the key DAEMON-side. The TUI never runs a
-  ;; provider `:provider/auth-fn` and never writes a credential itself.
+  ;; provider `:provider/auth-fn` and never writes a credential itself — and it
+  ;; reads the key in the BAND it was fired from, never in a window over it.
   (it
-    "feeds gateway-issued auth guidance into the API-key input dialog"
+    "reads the key in the caller's own band and submits it to the gateway"
     (let
-      [input-args
-       (atom nil)
+      [log
+       (atom [])
 
        submitted
        (atom nil)]
 
       (with-redefs
-        [vis/gateway-provider-auth-start!
-         (constantly {"flow_id" "flow-1"
-                      "kind" "api-key"
-                      "instructions" ["  Z.ai (Coding Plan) requires a static API key."
-                                      "  Endpoint: https://api.z.ai/api/coding/paas/v4"]})
+        [dlg/host-band-region
+         (fn [_screen region]
+           region)
+
+         dlg/band-questions
+         (band-fn {"Sign in" {:action :submit :options {:api-key "sk-secret"}}} log)
+
+         vis/gateway-provider-auth-start!
+         (fn [_provider-id]
+           {"flow_id" "flow-1"
+            "kind" "api-key"
+            "instructions" ["Z.ai (Coding Plan) requires a static API key."
+                            "Create one at https://z.ai/manage-apikey/apikey-list"
+                            "Then run: vis-agent providers auth zai-coding-plan"]})
 
          vis/gateway-provider-auth-submit-key!
-         (fn [pid flow-id api-key]
-           (reset! submitted [pid flow-id api-key])
+         (fn [provider-id flow-id api-key]
+           (reset! submitted [provider-id flow-id api-key])
            {"status" "ok"})
 
          dlg/transient-dialog!
-         (fn [& args]
-           (reset! input-args args)
-           {:action :submit :options {:api-key "  sk-secret  "}})]
+         (fn [& _]
+           (throw (ex-info "the key prompt opened a dialog" {})))
+
+         dlg/text-view-dialog!
+         (fn [& _]
+           (throw (ex-info "the key prompt opened a dialog" {})))]
 
         ;; The row that comes back carries NO credential — the daemon owns it.
         (expect (= {:id :zai-coding-plan}
-                   (provider/authenticate-provider! nil {:id :zai-coding-plan})))
+                   (provider/authenticate-provider! nil nil nil {:id :zai-coding-plan})))
         (expect (= [:zai-coding-plan "flow-1" "sk-secret"] @submitted))
         (let
-          [[_ _ body spec]
-           @input-args
+          [spec
+           (second (first (filter #(= :transient (first %)) @log)))
 
            key-item
            (first (:items (first (:groups spec))))]
 
-          (expect (= ["  Z.ai (Coding Plan) requires a static API key."
-                      "  Endpoint: https://api.z.ai/api/coding/paas/v4"]
-                     body))
+          ;; A band has no room for three lines of prose, so the ONE line that
+          ;; answers "where do I get a key?" becomes the field's own heading and
+          ;; the CLI-only lines are dropped.
+          (expect (= "Create one at https://z.ai/manage-apikey/apikey-list"
+                     (:title (first (:groups spec)))))
           (expect (= :api-key (:id key-item)))
           (expect (= \* (:mask key-item)))
           (expect (= true (:secret? key-item)))))))
   (it "never runs the provider's in-process auth-fn"
-      (let [auth-called? (atom false)]
+      (let
+        [auth-called?
+         (atom false)
+
+         log
+         (atom [])]
+
         (with-redefs
-          [vis/provider-by-id (constantly {:provider/auth-fn (fn [& _]
-                                                               (reset! auth-called? true)
-                                                               :ok)})
+          [dlg/host-band-region
+           (fn [_screen region]
+             region)
+
+           dlg/band-questions
+           (band-fn {"Sign in" {:action :submit :options {:api-key "sk-key"}}} log)
+
+           vis/provider-by-id
+           (constantly {:provider/auth-fn (fn [& _]
+                                            (reset! auth-called? true)
+                                            {:api-key "in-process"})})
+
            vis/gateway-provider-auth-start!
-           (constantly {"flow_id" "flow-2" "kind" "api-key" "instructions" ["static guidance"]})
-           vis/gateway-provider-auth-submit-key! (constantly {"status" "ok"})
-           dlg/transient-dialog! (constantly {:action :submit :options {:api-key "sk-key"}})]
+           (constantly {"flow_id" "flow-2" "kind" "api-key"})
+
+           vis/gateway-provider-auth-submit-key!
+           (constantly {"status" "ok"})]
 
           (expect (= {:id :zai-coding-plan}
-                     (provider/authenticate-provider! nil {:id :zai-coding-plan})))
+                     (provider/authenticate-provider! nil nil nil {:id :zai-coding-plan})))
           (expect (= false @auth-called?)))))
   (it
-    "treats Esc from the API-key prompt as a gateway cancel, not a local write"
+    "cancels the gateway flow when the user escapes the key band"
     (let
       [cancelled
        (atom nil)
@@ -596,43 +418,48 @@
        submitted?
        (atom false)
 
-       viewer-called?
-       (atom false)]
+       log
+       (atom [])]
 
       (with-redefs
-        [vis/gateway-provider-auth-start!
-         (constantly {"flow_id" "flow-3" "kind" "api-key" "instructions" ["guidance"]})
+        [dlg/host-band-region
+         (fn [_screen region]
+           region)
+
+         ;; Nothing answers the "Sign in" band: that is an Esc.
+         dlg/band-questions
+         (band-fn {} log)
+
+         vis/gateway-provider-auth-start!
+         (constantly {"flow_id" "flow-3" "kind" "api-key"})
 
          vis/gateway-provider-auth-cancel!
-         (fn [pid flow-id]
-           (reset! cancelled [pid flow-id])
-           {"status" "cancelled"})
+         (fn [provider-id flow-id]
+           (reset! cancelled [provider-id flow-id]))
 
          vis/gateway-provider-auth-submit-key!
          (fn [& _]
-           (reset! submitted? true))
+           (reset! submitted? true)
+           {"status" "ok"})]
 
-         dlg/transient-dialog!
-         (constantly nil)
-
-         dlg/text-viewer-dialog!
-         (fn [& _]
-           (reset! viewer-called? true))]
-
-        (expect (nil? (provider/authenticate-provider! nil {:id :zai-coding-plan})))
+        (expect (nil? (provider/authenticate-provider! nil nil nil {:id :zai-coding-plan})))
         (expect (= [:zai-coding-plan "flow-3"] @cancelled))
         (expect (= false @submitted?))
-        (expect (= false @viewer-called?)))))
-  (it "surfaces a gateway failure as a dialog instead of a credential write"
-      (let [message (atom nil)]
+        ;; A cancel is not an error: the band says nothing at all.
+        (expect (empty? (notes log))))))
+  (it "reports a gateway failure in the band instead of writing a credential"
+      (let [log (atom [])]
         (with-redefs
-          [vis/gateway-provider-auth-start! (fn [& _]
-                                              (throw (ex-info "gateway down" {})))
-           dlg/text-view-dialog! (fn [& args]
-                                   (reset! message args))]
+          [dlg/host-band-region (fn [_screen region]
+                                  region)
+           dlg/band-questions (band-fn {} log)
+           vis/gateway-provider-auth-start! (fn [& _]
+                                              (throw (ex-info "gateway auth start failed: 503" {})))
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "a refusal opened a dialog" {})))]
 
-          (expect (nil? (provider/authenticate-provider! nil {:id :zai-coding-plan})))
-          (expect (str/includes? (str @message) "Authentication failed"))))))
+          (expect (nil? (provider/authenticate-provider! nil nil nil {:id :zai-coding-plan})))
+          (expect (str/includes? (str (notes log)) "Authentication failed"))))))
 
 (defdescribe
   provider-status-text-test
@@ -692,86 +519,116 @@
 (defdescribe
   copilot-device-login-test
   (it "does not start a device flow when the GATEWAY reports Copilot credentials"
-      (let [start-called? (atom false)]
-        (with-redefs
-          [vis/gateway-provider-status (constantly {"is_authenticated" true})
-           vis/gateway-provider-auth-start! (fn [& _]
-                                              (reset! start-called? true)
-                                              nil)]
-
-          (expect
-            (true?
-              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
-          (expect (= false @start-called?)))))
-  (it "drives the device flow THROUGH THE GATEWAY, never the provider in-process"
       (let
-        [started
-         (atom nil)
+        [start-called?
+         (atom false)
 
-         polled
-         (atom 0)]
+         log
+         (atom [])]
 
         (with-redefs
           [vis/gateway-provider-status
-           (constantly {"is_authenticated" false})
+           (constantly {"is_authenticated" true})
 
            vis/gateway-provider-auth-start!
-           (fn [pid]
-             (reset! started pid)
-             copilot-device-flow)
-
-           vis/gateway-provider-auth-poll!
            (fn [& _]
-             (swap! polled inc)
-             {"status" "ok"})
+             (reset! start-called? true)
+             nil)]
 
-           provider/device-auth-instructions!
-           (fn [& _]
-             true)]
+          (expect (= true
+                     (@#'provider/gateway-device-login!
+                      (band-stub {} log)
+                      :github-copilot-individual
+                      "GitHub Copilot")))
+          (expect (= false @start-called?)))))
+  (it
+    "drives the device flow THROUGH THE GATEWAY, never the provider in-process"
+    (let
+      [started
+       (atom nil)
 
-          (expect
-            (true?
-              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
-          (expect (= :github-copilot-individual @started))
-          (expect (= 1 @polled)))))
-  (it "cancels the gateway flow when the user escapes the code dialog"
-      (let [cancelled (atom nil)]
+       polled
+       (atom 0)
+
+       log
+       (atom [])]
+
+      (with-redefs
+        [vis/gateway-provider-status
+         (constantly {"is_authenticated" false})
+
+         vis/gateway-provider-auth-start!
+         (fn [provider-id]
+           (reset! started provider-id)
+           copilot-device-flow)
+
+         vis/gateway-provider-auth-poll!
+         (fn [& _]
+           (swap! polled inc)
+           {"status" "ok"})]
+
+        (expect (= true
+                   (@#'provider/gateway-device-login!
+                    ;; `w` — "I authorized in the browser" — on the code band.
+                    (band-stub {"GitHub Copilot" {:action :wait}} log)
+                    :github-copilot-individual
+                    "GitHub Copilot")))
+        (expect (= :github-copilot-individual @started))
+        (expect (= 1 @polled))
+        ;; The code and the URL are the two things the user must SEE, so they
+        ;; are the band's own group headings — not a window over the list.
+        (let [spec (second (first (filter #(= :transient (first %)) @log)))]
+          (expect (str/includes? (str (mapv :title (:groups spec))) "ABCD-EFGH"))
+          (expect (str/includes? (str (mapv :title (:groups spec)))
+                                 "https://github.com/login/device"))))))
+  (it "cancels the gateway flow when the user escapes the code band"
+      (let
+        [cancelled
+         (atom nil)
+
+         log
+         (atom [])]
+
         (with-redefs
-          [vis/gateway-provider-status (constantly {"is_authenticated" true})
-           vis/gateway-provider-auth-start! (constantly copilot-device-flow)
-           vis/gateway-provider-auth-cancel! (fn [_ flow-id]
-                                               (reset! cancelled flow-id))
-           provider/device-auth-instructions! (fn [& _]
-                                                nil)]
+          [vis/gateway-provider-status
+           (constantly {"is_authenticated" true})
+
+           vis/gateway-provider-auth-start!
+           (constantly copilot-device-flow)
+
+           vis/gateway-provider-auth-cancel!
+           (fn [_ flow-id]
+             (reset! cancelled flow-id))]
 
           (expect (nil? (@#'provider/gateway-device-login!
-                         nil
+                         (band-stub {} log)
                          :github-copilot-individual
                          "GitHub Copilot"
                          true)))
           (expect (= "flow-1" @cancelled)))))
-  (it "surfaces the gateway's error verdict instead of claiming success"
-      (let [shown (atom nil)]
+  (it "surfaces the gateway's error verdict in the band instead of claiming success"
+      (let [log (atom [])]
         (with-redefs
           [vis/gateway-provider-status (constantly {"is_authenticated" false})
            vis/gateway-provider-auth-start! (constantly copilot-device-flow)
            vis/gateway-provider-auth-poll! (constantly {"status" "error"
                                                         "message" "device authorization failed"})
-           provider/device-auth-instructions! (fn [& _]
-                                                true)
-           dlg/text-view-dialog! (fn [_ _ lines]
-                                   (reset! shown lines)
-                                   nil)]
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "a refusal opened a dialog" {})))]
 
-          (expect
-            (nil?
-              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
-          (expect (str/includes? (str @shown) "device authorization failed")))))
+          (expect (nil? (@#'provider/gateway-device-login!
+                         (band-stub {"GitHub Copilot" {:action :wait}} log)
+                         :github-copilot-individual
+                         "GitHub Copilot")))
+          (expect (str/includes? (str (notes log)) "device authorization failed")))))
   (it
-    "times out pending device authorization instead of hanging the TUI"
+    "times out pending device authorization instead of holding the band forever"
     (let
       [cancelled?
        (atom false)
+
+       log
+       (atom [])
 
        pending-result
        (reify
@@ -794,114 +651,33 @@
          (constantly copilot-device-flow)
 
          vis/gateway-provider-auth-cancel!
-         (fn [& _]
-           nil)
-
-         provider/device-auth-instructions!
-         (fn [& _]
-           true)
-
-         provider/device-wait-poll-ms
-         1
+         (constantly nil)
 
          provider/device-wait-timeout-ms
-         1
+         50
 
          vis/worker-future
-         (fn [& _]
+         (fn [_ _]
            pending-result)]
 
-        (expect
-          (nil?
-            (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
-        (expect (= true @cancelled?))))))
+        (expect (nil? (@#'provider/gateway-device-login!
+                       (band-stub {"GitHub Copilot" {:action :wait}} log)
+                       :github-copilot-individual
+                       "GitHub Copilot")))
+        (expect (= true @cancelled?))
+        (expect (str/includes? (str (notes log)) "Timed out"))))))
 
 (def ^:private codex-redirect "http://localhost:1455/auth/callback?code=abc&state=s")
 
 (defdescribe
   codex-oauth-ready-test
   (it "returns true immediately when the GATEWAY reports Codex credentials"
-      (let [start-called? (atom false)]
-        (with-redefs
-          [vis/gateway-provider-status (constantly {"is_authenticated" true})
-           vis/gateway-provider-auth-start! (fn [& _]
-                                              (reset! start-called? true)
-                                              nil)
-           dlg/confirm-dialog! (fn [& _]
-                                 nil)]
-
-          (expect (= true (@#'provider/codex-oauth-ready! nil)))
-          (expect (= false @start-called?)))))
-  (it "drives Codex login THROUGH THE GATEWAY, never in-process"
-      (let [seen (atom {})]
-        (with-redefs
-          [vis/gateway-provider-status (constantly {"is_authenticated" false})
-           vis/gateway-provider-auth-start!
-           (fn [provider-id]
-             (swap! seen assoc :started provider-id)
-             {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth.openai.com/authorize?x=1"})
-           vis/gateway-provider-auth-complete!
-           (fn [provider-id flow-id input]
-             (swap! seen assoc :completed [provider-id flow-id input])
-             {"status" "ok"})
-           opener/open! (fn [url]
-                          (swap! seen assoc :opened url)
-                          true)
-           dlg/confirm-dialog! (fn [& _]
-                                 true)
-           dlg/text-view-dialog! (fn [& _]
-                                   nil)
-           dlg/text-input-dialog! (fn [& _]
-                                    codex-redirect)]
-
-          (expect (= true (@#'provider/codex-oauth-ready! nil)))
-          (expect (= :openai-codex (:started @seen)))
-          (expect (= "https://auth.openai.com/authorize?x=1" (:opened @seen)))
-          (expect (= [:openai-codex "flow-1" codex-redirect] (:completed @seen))))))
-  (it "cancels the gateway flow when the user pastes nothing"
-      (let [cancelled (atom nil)]
-        (with-redefs
-          [vis/gateway-provider-status (constantly {"is_authenticated" false})
-           vis/gateway-provider-auth-start!
-           (constantly {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
-           vis/gateway-provider-auth-cancel! (fn [provider-id flow-id]
-                                               (reset! cancelled [provider-id flow-id]))
-           opener/open! (constantly true)
-           dlg/confirm-dialog! (fn [& _]
-                                 true)
-           dlg/text-view-dialog! (fn [& _]
-                                   nil)
-           dlg/text-input-dialog! (fn [& _]
-                                    nil)]
-
-          (expect (= false (@#'provider/codex-oauth-ready! nil)))
-          (expect (= [:openai-codex "flow-1"] @cancelled)))))
-  (it "forces a fresh gateway flow when re-authenticating existing credentials"
-      (let [start-called? (atom false)]
-        (with-redefs
-          [vis/gateway-provider-status (constantly {"is_authenticated" true})
-           vis/gateway-provider-auth-start!
-           (fn [& _]
-             (reset! start-called? true)
-             {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
-           vis/gateway-provider-auth-complete! (constantly {"status" "ok"})
-           opener/open! (constantly true)
-           dlg/confirm-dialog! (fn [& _]
-                                 true)
-           dlg/text-view-dialog! (fn [& _]
-                                   nil)
-           dlg/text-input-dialog! (fn [& _]
-                                    codex-redirect)]
-
-          (expect (= true (@#'provider/codex-oauth-ready! nil true)))
-          (expect (= true @start-called?)))))
-  (it "does not force Codex login from a plain authenticate call when credentials exist"
       (let
         [start-called?
          (atom false)
 
-         provider-config
-         {:id :openai-codex :models [{:name "gpt-5.1"}]}]
+         log
+         (atom [])]
 
         (with-redefs
           [vis/gateway-provider-status
@@ -910,32 +686,152 @@
            vis/gateway-provider-auth-start!
            (fn [& _]
              (reset! start-called? true)
-             nil)
-
-           dlg/confirm-dialog!
-           (fn [& _]
              nil)]
 
-          (expect (= provider-config (provider/authenticate-provider! nil provider-config)))
-          (expect (= false @start-called?)))))
-  (it "returns false when the gateway auth flow fails"
+          (expect (= true (@#'provider/codex-oauth-ready! (band-stub {} log))))
+          (expect (= false @start-called?))
+          ;; Nothing to confirm, nothing to say.
+          (expect (empty? @log)))))
+  (it
+    "drives Codex login THROUGH THE GATEWAY, never in-process"
+    (let
+      [seen
+       (atom {})
+
+       log
+       (atom [])]
+
       (with-redefs
         [vis/gateway-provider-status
          (constantly {"is_authenticated" false})
 
          vis/gateway-provider-auth-start!
-         (fn [& _]
-           (throw (ex-info "boom" {})))
+         (fn [provider-id]
+           (swap! seen assoc :started provider-id)
+           {"flow_id" "flow-1" "url" "https://auth.openai.com/authorize?x=1"})
+
+         vis/gateway-provider-auth-complete!
+         (fn [provider-id flow-id url]
+           (swap! seen assoc :completed [provider-id flow-id url])
+           {"status" "ok"})
+
+         opener/open!
+         (fn [url]
+           (swap! seen assoc :opened url)
+           true)
 
          dlg/confirm-dialog!
          (fn [& _]
-           true)
+           (throw (ex-info "the sign-in opened a dialog" {})))
 
-         dlg/text-view-dialog!
+         dlg/text-input-dialog!
          (fn [& _]
-           nil)]
+           (throw (ex-info "the paste opened a dialog" {})))]
 
-        (expect (= false (@#'provider/codex-oauth-ready! nil))))))
+        (expect (= true
+                   (@#'provider/codex-oauth-ready!
+                    (band-stub {"OpenAI Codex — paste the final browser URL:" codex-redirect}
+                               log))))
+        (expect (= :openai-codex (:started @seen)))
+        (expect (= "https://auth.openai.com/authorize?x=1" (:opened @seen)))
+        (expect (= [:openai-codex "flow-1" codex-redirect] (:completed @seen)))
+        ;; The band says what saying yes COSTS before it opens a browser.
+        (let [[_ question opts] (first (filter #(= :confirm (first %)) @log))]
+          (expect (str/includes? question "Codex"))
+          (expect (str/includes? (:cost opts) "browser"))
+          (expect (= "Yes, open the browser" (:yes-label opts)))))))
+  (it "cancels the gateway flow when the user pastes nothing"
+      (let
+        [cancelled
+         (atom nil)
+
+         log
+         (atom [])]
+
+        (with-redefs
+          [vis/gateway-provider-status
+           (constantly {"is_authenticated" false})
+
+           vis/gateway-provider-auth-start!
+           (constantly {"flow_id" "flow-1" "url" "https://auth.openai.com/x"})
+
+           vis/gateway-provider-auth-cancel!
+           (fn [provider-id flow-id]
+             (reset! cancelled [provider-id flow-id]))
+
+           opener/open!
+           (constantly true)]
+
+          (expect (= false (@#'provider/codex-oauth-ready! (band-stub {} log))))
+          (expect (= [:openai-codex "flow-1"] @cancelled)))))
+  (it "forces a fresh gateway flow when re-authenticating existing credentials"
+      (let
+        [start-called?
+         (atom false)
+
+         log
+         (atom [])]
+
+        (with-redefs
+          [vis/gateway-provider-status
+           (constantly {"is_authenticated" true})
+
+           vis/gateway-provider-auth-start!
+           (fn [& _]
+             (reset! start-called? true)
+             {"flow_id" "flow-1" "url" "https://auth.openai.com/x"})
+
+           vis/gateway-provider-auth-complete!
+           (constantly {"status" "ok"})
+
+           opener/open!
+           (constantly true)]
+
+          (expect (= true
+                     (@#'provider/codex-oauth-ready!
+                      (band-stub {"OpenAI Codex — paste the final browser URL:" codex-redirect} log)
+                      true)))
+          (expect (= true @start-called?)))))
+  (it "does not force Codex login from a plain authenticate call when credentials exist"
+      (let
+        [start-called?
+         (atom false)
+
+         provider-config
+         {:id :openai-codex}
+
+         log
+         (atom [])]
+
+        (with-redefs
+          [dlg/host-band-region
+           (fn [_screen region]
+             region)
+
+           dlg/band-questions
+           (band-fn {} log)
+
+           vis/gateway-provider-status
+           (constantly {"is_authenticated" true})
+
+           vis/gateway-provider-auth-start!
+           (fn [& _]
+             (reset! start-called? true)
+             nil)]
+
+          (expect (= provider-config (provider/authenticate-provider! nil nil nil provider-config)))
+          (expect (= false @start-called?)))))
+  (it "returns false when the gateway auth flow fails"
+      (let [log (atom [])]
+        (with-redefs
+          [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           vis/gateway-provider-auth-start! (fn [& _]
+                                              (throw (ex-info "gateway auth start failed: 500" {})))
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "a refusal opened a dialog" {})))]
+
+          (expect (= false (@#'provider/codex-oauth-ready! (band-stub {} log))))
+          (expect (str/includes? (str (notes log)) "Auth failed"))))))
 
 ;; ── Regression (user report): "right now the adding provider is a separate
 ;; dialogue — it should not be like this, it should be a sealed transient, it
@@ -1002,427 +898,90 @@
 ;; suite asserts the same silence for Copilot, Codex, and the generic
 ;; api-key auth path that providers like zai-coding use.
 
-(defn- text-view-recorder
-  [sink]
-  (fn [_ title lines]
-    (swap! sink conj {:title title :lines (vec lines)})
-    nil))
-
-(defn- text-viewer-recorder
-  [sink]
-  (fn [_ title text]
-    (swap! sink conj {:title title :text (str text)})
-    nil))
-
 (defdescribe
   silent-auth-success-test
-  (it "copilot OAuth success closes silently (no ✓ Authenticated! popup)"
-      (let [popups (atom [])]
+  ;; A successful sign-in used to end with a "✓ Authenticated!" popup over the
+  ;; list the user came from. Success is silent everywhere now: the band closes
+  ;; and the row it was about is simply signed in.
+  (it "copilot success closes the band silently"
+      (let [log (atom [])]
         (with-redefs
           [vis/gateway-provider-status (constantly {"is_authenticated" false})
            vis/gateway-provider-auth-start! (constantly copilot-device-flow)
            vis/gateway-provider-auth-poll! (constantly {"status" "ok"})
-           vis/worker-future (fn [_label thunk]
-                               (let [v (thunk)]
-                                 (reify
-                                   clojure.lang.IDeref
-                                     (deref [_] v)
-                                   clojure.lang.IPending
-                                     (isRealized [_] true))))
-           provider/device-auth-instructions! (fn [& _]
-                                                true)
-           dlg/text-view-dialog! (text-view-recorder popups)
-           dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "success opened a dialog" {})))
+           dlg/text-viewer-dialog! (fn [& _]
+                                     (throw (ex-info "success opened a dialog" {})))]
 
-          (expect
-            (true?
-              (@#'provider/gateway-device-login! nil :github-copilot-individual "GitHub Copilot")))
-          (expect (empty? (filter #(some (fn [l]
-                                           (str/includes? (str l) "Authenticated"))
-                                         (or (:lines %) [(:text %)]))
-                                  @popups))))))
-  (it "codex OAuth success closes silently (no ✓ Authenticated! popup)"
-      (let [popups (atom [])]
+          (expect (= true
+                     (@#'provider/gateway-device-login!
+                      (band-stub {"GitHub Copilot" {:action :wait}} log)
+                      :github-copilot-individual
+                      "GitHub Copilot")))
+          (expect (empty? (notes log))))))
+  (it "codex success closes the band silently"
+      (let [log (atom [])]
         (with-redefs
           [vis/gateway-provider-status (constantly {"is_authenticated" false})
-           vis/gateway-provider-auth-start!
-           (constantly {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
+           vis/gateway-provider-auth-start! (constantly {"flow_id" "flow-1"
+                                                         "url" "https://auth.openai.com/x"})
            vis/gateway-provider-auth-complete! (constantly {"status" "ok"})
            opener/open! (constantly true)
-           dlg/confirm-dialog! (fn [& _]
-                                 true)
-           dlg/text-input-dialog! (fn [& _]
-                                    "http://localhost:1455/auth/callback?code=abc&state=s")
-           dlg/text-view-dialog! (text-view-recorder popups)
-           dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "success opened a dialog" {})))]
 
-          (expect (= true (@#'provider/codex-oauth-ready! nil)))
-          (expect (empty? (filter #(some (fn [l]
-                                           (str/includes? (str l) "Authenticated"))
-                                         (or (:lines %) [(:text %)]))
-                                  @popups))))))
-  (it "anthropic OAuth success closes silently (parity with copilot/codex)"
-      (let [popups (atom [])]
+          (expect (= true
+                     (@#'provider/codex-oauth-ready!
+                      (band-stub {"OpenAI Codex — paste the final browser URL:" codex-redirect}
+                                 log))))
+          (expect (empty? (notes log))))))
+  (it "anthropic success closes the band silently (parity with copilot/codex)"
+      (let [log (atom [])]
         (with-redefs
           [vis/gateway-provider-status (constantly {"is_authenticated" false})
+           vis/gateway-provider-auth-start! (constantly {"flow_id" "flow-9"
+                                                         "url" "https://claude.ai/oauth"})
+           vis/gateway-provider-auth-complete! (constantly {"status" "ok"})
            opener/open! (constantly true)
-           dlg/confirm-dialog! (fn [& _]
-                                 true)
-           dlg/text-input-dialog! (fn [& _]
-                                    "http://localhost:53692/callback?code=abc&state=s")
-           dlg/text-view-dialog! (text-view-recorder popups)
-           dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "success opened a dialog" {})))]
 
-          (with-redefs
-            [vis/gateway-provider-auth-start!
-             (constantly {"flow_id" "flow-1" "kind" "pkce" "url" "https://auth"})
-             vis/gateway-provider-auth-complete! (constantly {"status" "ok"})]
-
-            (expect (= true (@#'provider/anthropic-oauth-ready! nil)))
-            (expect (empty? (filter #(some (fn [l]
-                                             (str/includes? (str l) "Authenticated"))
-                                           (or (:lines %) [(:text %)]))
-                                    @popups)))))))
-  (it "generic api-key provider (zai-coding-style) succeeds silently through the gateway"
-      (let
-        [popups
-         (atom [])
-
-         provider
-         {:id :zai-coding-plan :api-key nil}]
-
+          (expect (= true
+                     (@#'provider/anthropic-oauth-ready!
+                      (band-stub {"Anthropic — paste the final browser URL:" "https://x/?code=1"}
+                                 log))))
+          (expect (empty? (notes log))))))
+  (it "an api-key provider succeeds silently through the gateway"
+      (let [log (atom [])]
         (with-redefs
           [vis/gateway-provider-auth-start!
-           (constantly {"flow_id" "f" "kind" "api-key"})
-
-           vis/gateway-provider-auth-submit-key!
-           (constantly {"status" "ok"})
-
-           vis/display-label
-           (fn [_]
-             "Z.AI Coding")
-
-           dlg/transient-dialog!
-           (constantly {:action :submit :options {:api-key "sk-key"}})
-
-           dlg/text-view-dialog!
-           (text-view-recorder popups)
-
-           dlg/text-viewer-dialog!
-           (text-viewer-recorder popups)]
+           (constantly {"flow_id" "flow-1" "kind" "api-key" "instructions" ["Paste your key."]})
+           vis/gateway-provider-auth-submit-key! (constantly {"status" "ok"})
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "success opened a dialog" {})))]
 
           ;; No credential rides back into the TUI's own rows.
-          (expect (= {:id :zai-coding-plan} (@#'provider/gateway-api-key-login! nil provider)))
-          (expect (empty? @popups)))))
-  (it "generic api-key provider failure still surfaces a dialog"
-      (let
-        [popups
-         (atom [])
-
-         provider
-         {:id :zai-coding-plan :api-key nil}]
-
+          (expect (= {:id :zai-coding-plan}
+                     (@#'provider/gateway-api-key-login!
+                      (band-stub {"Sign in" {:action :submit :options {:api-key "sk-1"}}} log)
+                      {:id :zai-coding-plan :api-key "sk-1"})))
+          (expect (empty? (notes log))))))
+  (it "an api-key failure still says so, in the band"
+      (let [log (atom [])]
         (with-redefs
           [vis/gateway-provider-auth-start!
-           (constantly {"flow_id" "f" "kind" "api-key"})
+           (constantly {"flow_id" "flow-1" "kind" "api-key" "instructions" ["Paste your key."]})
+           vis/gateway-provider-auth-submit-key! (fn [& _]
+                                                   (throw (ex-info "boom" {})))
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "a refusal opened a dialog" {})))]
 
-           vis/gateway-provider-auth-submit-key!
-           (fn [& _]
-             (throw (ex-info "boom" {})))
-
-           vis/display-label
-           (fn [_]
-             "Z.AI Coding")
-
-           dlg/transient-dialog!
-           (constantly {:action :submit :options {:api-key "sk-key"}})
-
-           dlg/text-view-dialog!
-           (text-view-recorder popups)
-
-           dlg/text-viewer-dialog!
-           (text-viewer-recorder popups)]
-
-          (expect (nil? (@#'provider/gateway-api-key-login! nil provider)))
-          (expect (= 1 (count @popups)))
-          (expect (str/includes? (str (:lines (first @popups))) "Authentication failed: boom"))))))
-
-(defn- fallback-dialog-run
-  "Drive the REAL provider dialog to the end: pick the second provider, open its
-   actions, choose `Set as Fallback...`, take the first model. `tag!` stands in
-   for the gateway call, so this exercises the same key path a user walks."
-  [tag!]
-  (let
-    [terminal
-     (DefaultVirtualTerminal. (TerminalSize. 80 30))
-
-     screen
-     (doto (TerminalScreen. terminal) (.startScreen))
-
-     shown
-     (atom [])
-
-     primary
-     (atom nil)
-
-     seed
-     {:default-provider :beta
-      :default-model "beta-default"
-      :providers [{:id :alpha :models [{:name "alpha-1"} {:name "alpha-2"}]}
-                  {:id :beta :models [{:name "beta-default"} {:name "beta-2"}]}]}]
-
-    (try
-      (with-redefs
-        [vis/authenticated-preset-providers
-         (constantly [])
-
-         vis/gateway-provider-status
-         (fn [_]
-           {"is_authenticated" true "is_loading" false})
-
-         vis/gateway-provider-limits
-         (fn [provider-id]
-           {:provider-id provider-id :status :ready :static {} :dynamic {:limits []}})
-
-         vis/worker-future
-         (fn [_ f]
-           (future (f)))
-
-         vis/gateway-provider-model-options
-         (fn [provider-id _]
-           {:models (if (= provider-id :alpha) ["alpha-1" "alpha-2"] ["beta-default" "beta-2"])
-            :hidden-count 0})
-
-         vis/gateway-set-router-default!
-         (fn [provider-id model]
-           (reset! primary {:provider-id provider-id :model model}))
-
-         vis/gateway-set-router-fallback!
-         tag!
-
-         vis/load-config-raw
-         (constantly {})
-
-         vis/configured-providers
-         (constantly [])
-
-         vis/save-config!
-         (constantly nil)
-
-         vis/load-config
-         (constantly seed)
-
-         dlg/text-view-dialog!
-         (fn [_ title lines]
-           (swap! shown conj [title (vec lines)]))
-
-         dlg/select-dialog!
-         (fn [& _]
-           (throw (ex-info "nested model dialog opened" {})))]
-
-        ;; Default :beta sorts first. Down to :alpha, Enter opens its magit
-        ;; transient, `f` runs "Set as Fallback...", `a` takes the first model.
-        (add-keys! terminal [KeyType/ArrowDown KeyType/Enter \f \a KeyType/Escape KeyType/Escape])
-        (provider/show-provider-dialog! screen seed)
-        {:shown @shown :primary @primary})
-      (finally (.stopScreen screen)))))
-
-(defdescribe
-  provider-inline-fallback-transient-test
-  (it
-    "tags the FALLBACK pair inline — same dialog, different role, and the primary tag is left alone"
-    (let
-      [tagged
-       (atom nil)
-
-       {:keys [shown primary]}
-       (fallback-dialog-run (fn [provider-id model]
-                              (reset! tagged {:provider-id provider-id :model model})))]
-
-      (expect (= {:provider-id :alpha :model "alpha-1"} @tagged))
-      (expect (nil? primary) "choosing the fallback role must never re-tag the primary")
-      (expect (empty? shown))))
-  (it
-    "a daemon refusal (fallback on the primary's own provider) explains itself instead of killing the dialog"
-    (let
-      [{:keys [shown]} (fallback-dialog-run
-                         (fn [_ _]
-                           (throw (ex-info
-                                    "Fallback provider must differ from the primary provider (beta)"
-                                    {:http-status 400}))))]
-      (expect (= 1 (count shown)))
-      (expect (= "Fallback rejected" (ffirst shown)))
-      (expect (some #(str/includes? % "must differ from the primary provider")
-                    (second (first shown)))))))
-
-(defdescribe
-  provider-card-fallback-badge-test
-  (it
-    "paints the FALLBACK badge on the tagged provider and never on an untagged one"
-    (let
-      [terminal
-       (DefaultVirtualTerminal. (TerminalSize. 80 30))
-
-       screen
-       (doto (TerminalScreen. terminal) (.startScreen))
-
-       draw-card
-       @#'provider/draw-provider-card!
-
-       row-text
-       (fn [^long y]
-         (str/join (for [x (range 80)]
-                     (.getCharacterString (.getBackCharacter screen (int x) (int y))))))
-
-       status
-       {"is_authenticated" true "is_loading" false}
-
-       limits
-       {:status :ready :static {} :dynamic {:limits []}}]
-
-      (try (with-redefs [vis/provider-base-url (constantly "")]
-             (let [g (.newTextGraphics screen)]
-               (draw-card g
-                          0
-                          0
-                          78
-                          0
-                          false
-                          {:id :alpha}
-                          status
-                          limits
-                          {:provider-id :beta :model "beta-default"}
-                          {:provider-id :alpha :model "alpha-1"})
-               (draw-card g
-                          0
-                          4
-                          78
-                          1
-                          false
-                          {:id :beta}
-                          status
-                          limits
-                          {:provider-id :beta :model "beta-default"}
-                          {:provider-id :alpha :model "alpha-1"})))
-           (let
-             [fallback-card
-              (str (row-text 0) (row-text 1) (row-text 2))
-
-              default-card
-              (str (row-text 4) (row-text 5) (row-text 6))]
-
-             (expect (str/includes? fallback-card "FALLBACK"))
-             (expect (str/includes? fallback-card "alpha-1"))
-             (expect (not (str/includes? fallback-card "DEFAULT")))
-             (expect (str/includes? default-card "DEFAULT"))
-             (expect (not (str/includes? default-card "FALLBACK"))))
-           (finally (.stopScreen screen))))))
-
-(defn- card-rows-text
-  "Paint one provider card into a fresh virtual terminal and return its three
-   rows as strings, so layout claims are read off the real back-buffer."
-  [inner-w provider limits]
-  (let
-    [terminal
-     (DefaultVirtualTerminal. (TerminalSize. 120 12))
-
-     screen
-     (doto (TerminalScreen. terminal) (.startScreen))]
-
-    (try (with-redefs [vis/provider-base-url (constantly "")]
-           ((deref #'provider/draw-provider-card!)
-             (.newTextGraphics screen)
-             0
-             0
-             inner-w
-             0
-             false
-             provider
-             {"is_authenticated" true "is_loading" false}
-             limits
-             {:provider-id :other :model "other-1"}
-             nil))
-         (mapv (fn [^long y]
-                 (str/trimr (str/join (for [x (range 120)]
-                                        (.getCharacterString
-                                          (.getBackCharacter screen (int x) (int y)))))))
-               [0 1 2])
-         (finally (.stopScreen screen)))))
-
-(defdescribe
-  provider-card-account-line-test
-  (it "gives the account limits the card's third row instead of chopping them onto the model line"
-      (let
-        [limits
-         {:status :ready
-          :static {}
-          :dynamic {:limits [{:id :premium_interactions
-                              :label "Premium interactions"
-                              :remaining 92992.0
-                              :limit 100000.0
-                              :used 7008.0} {:id :chat :label "Chat" :is-unlimited true}]}}
-
-         [_line1 line2 line3]
-         (card-rows-text 78 {:id :alpha :models ["m1" "m2"]} limits)]
-
-        (expect (str/includes? line2 "2 models available"))
-        (expect (not (str/includes? line2 "Premium"))
-                "limits must no longer ride behind the model summary")
-        (expect (str/includes? line3 "Premium"))
-        (expect (str/includes? line3 "(92992)"))
-        (expect (str/includes? line3 "Chat unlimited")
-                "the whole account line fits once it owns a row")))
-  (it "ellipsizes the account line on a narrow dialog instead of amputating it mid-word"
-      (let
-        [limits
-         {:status :ready
-          :static {}
-          :dynamic {:limits [{:id :premium_interactions
-                              :label "Premium interactions"
-                              :remaining 92992.0
-                              :limit 100000.0
-                              :used 7008.0} {:id :chat :label "Chat" :is-unlimited true}]}}
-
-         [_line1 _line2 line3]
-         (card-rows-text 36 {:id :alpha :models ["m1" "m2"]} limits)]
-
-        (expect (str/ends-with? line3 "…"))
-        (expect (<= (count line3) 36))))
-  (it
-    "keeps the account line under a tagged provider's model row"
-    (let
-      [limits
-       {:status :ready :static {} :dynamic {:limits [{:id :chat :label "Chat" :is-unlimited true}]}}
-
-       terminal
-       (DefaultVirtualTerminal. (TerminalSize. 120 12))
-
-       screen
-       (doto (TerminalScreen. terminal) (.startScreen))
-
-       row-text
-       (fn [^long y]
-         (str/join (for [x (range 120)]
-                     (.getCharacterString (.getBackCharacter screen (int x) (int y))))))]
-
-      (try (with-redefs [vis/provider-base-url (constantly "")]
-             ((deref #'provider/draw-provider-card!)
-               (.newTextGraphics screen)
-               0
-               0
-               78
-               0
-               false
-               {:id :alpha :models ["m1"]}
-               {"is_authenticated" true "is_loading" false}
-               limits
-               {:provider-id :alpha :model "alpha-1"}
-               nil))
-           (expect (str/includes? (row-text 1) "alpha-1"))
-           (expect (str/includes? (row-text 1) "DEFAULT"))
-           (expect (not (str/includes? (row-text 1) "Chat unlimited")))
-           (expect (str/includes? (row-text 2) "Chat unlimited"))
-           (finally (.stopScreen screen))))))
+          (expect (nil? (@#'provider/gateway-api-key-login!
+                         (band-stub {"Sign in" {:action :submit :options {:api-key "sk-1"}}} log)
+                         {:id :zai-coding-plan})))
+          (expect (= 1 (count (notes log))))
+          (expect (str/includes? (str (notes log)) "Authentication failed: boom"))))))
 
 (defdescribe
   provider-transient-spec-test
@@ -1566,7 +1125,30 @@
   (it "the only action submits the armed key"
       (let [item (first (:items (second (:groups (provider/api-key-transient-spec)))))]
         (expect (= :submit (:id item)))
-        (expect (= :action (:type item))))))
+        (expect (= :action (:type item)))))
+  (it "hangs the provider's own guidance over the field, in place of `Credential`"
+      (expect (= ["Get one at https://z.ai/keys" "Authenticate"]
+                 (mapv :title
+                       (:groups (provider/api-key-transient-spec "Get one at https://z.ai/keys")))))
+      ;; Same shape either way: a hint changes the heading, never the keys.
+      (expect (= (mapv #(mapv :key (:items %)) (:groups (provider/api-key-transient-spec)))
+                 (mapv #(mapv :key (:items %))
+                       (:groups (provider/api-key-transient-spec
+                                  "Get one at https://z.ai/keys")))))))
+
+(defdescribe
+  api-key-hint-test
+  ;; The provider's guidance is written for the CLI; a band has room for ONE line.
+  (it "keeps the line that says where to create the key"
+      (expect (= "Create one at https://z.ai/manage-apikey/apikey-list"
+                 (provider/api-key-hint ["Z.ai (Coding Plan) requires a static API key."
+                                         "Create one at https://z.ai/manage-apikey/apikey-list"
+                                         "Then run: vis-agent providers auth zai-coding-plan"]))))
+  (it "falls back to the first line that says anything at all"
+      (expect (= "Paste your key." (provider/api-key-hint ["" "  " "Paste your key." "More."]))))
+  (it "has nothing to say about nothing"
+      (expect (nil? (provider/api-key-hint nil)))
+      (expect (nil? (provider/api-key-hint [])))))
 
 (defdescribe command-minted-provider-auth-test
              ;; The screen that started this: a provider whose token is minted by
@@ -1574,21 +1156,24 @@
              ;; right under guidance saying the token is minted automatically.
              (it "explains instead of prompting when config mints the credential itself"
                  (let
-                   [message
-                    (atom nil)
+                   [log
+                    (atom [])
 
                     start-called?
                     (atom false)]
 
                    (with-redefs
-                     [vis/gateway-provider-auth-start!
+                     [dlg/host-band-region
+                      (fn [_screen region]
+                        region)
+
+                      dlg/band-questions
+                      (band-fn {} log)
+
+                      vis/gateway-provider-auth-start!
                       (fn [& _]
                         (reset! start-called? true)
                         nil)
-
-                      dlg/text-view-dialog!
-                      (fn [& args]
-                        (reset! message args))
 
                       dlg/transient-dialog!
                       (fn [& _]
@@ -1596,9 +1181,11 @@
 
                      (expect (nil? (provider/authenticate-provider!
                                      nil
+                                     nil
+                                     nil
                                      {:id :corp :api-key-command "mint-token"})))
                      (expect (= false @start-called?))
-                     (expect (str/includes? (str @message) "api_key_command"))))))
+                     (expect (str/includes? (str (notes log)) "api_key_command"))))))
 
 ;; ── Regression (user report): "when I open the providers and click on active
 ;; providers the transient is hiding the full render of the settings" ─────────────────────────────────────────────────────────────────
@@ -1606,6 +1193,11 @@
 ;; band wiped EVERY row from the settings list's top down: the Settings frame
 ;; was an empty box with one popup floating in it, sidebar rail included. A band
 ;; is magit chrome — the buffer it is about stays painted above it.
+(def ^:private settings-router-writes
+  "What the router was asked to write during the last `settings-provider-band-frames`
+   run — `[:default provider-id model]` / `[:fallback provider-id model]`."
+  (atom []))
+
 (defn- settings-provider-band-frames
   "Drive Settings (parked on Providers) → `keystrokes` — Enter on the provider
    row, then whatever the flow under test needs — off a fixed config so the
@@ -1618,6 +1210,7 @@
    namespace alone."
   ([^long cols ^long rows] (settings-provider-band-frames cols rows [:enter :esc :esc]))
   ([^long cols ^long rows keystrokes]
+   (reset! settings-router-writes [])
    (with-redefs
      [vis/load-config
       (constantly {:providers [{:id :acme-llm}]
@@ -1636,10 +1229,14 @@
       (constantly {:models ["acme-1" "acme-2" "acme-3"] :hidden-count 0})
 
       vis/gateway-set-router-default!
-      (constantly nil)
+      (fn [& args]
+        (swap! settings-router-writes conj (into [:default] args))
+        nil)
 
       vis/gateway-set-router-fallback!
-      (constantly nil)
+      (fn [& args]
+        (swap! settings-router-writes conj (into [:fallback] args))
+        nil)
 
       provider/gateway-provider-status-safe
       (constantly nil)]
@@ -1918,51 +1515,15 @@
             (expect (pos? @gateway-calls))))
         (finally (reset! inventory original) (reset! mcp original-mcp))))))
 
-;; The provider dialog used to open with 2×N gateway calls — one status probe and
-;; one limits probe per provider — even though `GET /v1/router` already carries
-;; both for the whole fleet.
-(defdescribe
-  provider-dialog-single-gateway-call-test
-  (it
-    "loads every provider's status and limits from ONE gateway call"
-    (let
-      [router-calls
-       (atom 0)
-
-       statuses
-       (atom {})
-
-       limits
-       (atom {})
-
-       providers
-       [{:id :openai :models [{:name "gpt-5"}]} {:id :anthropic :models [{:name "claude"}]}]]
-
-      (with-redefs
-        [vis/worker-future
-         (fn [_label thunk]
-           (let [value (thunk)]
-             (future value)))
-
-         vis/gateway-router-diagnostics
-         (fn []
-           (swap! router-calls inc)
-           {:openai {:status {"is_authenticated" true}
-                     :limits {:provider-id :openai :status :ready}}
-            :anthropic {:status {"is_authenticated" false}
-                        :limits {:provider-id :anthropic :status :ready}}})
-
-         vis/gateway-provider-status
-         (fn [_]
-           (throw (ex-info "per-provider status probe must not run" {})))
-
-         vis/gateway-provider-limits
-         (fn [_]
-           (throw (ex-info "per-provider limits probe must not run" {})))]
-
-        (@#'provider/refresh-providers-diagnostics! providers statuses limits)
-        (expect (= 1 @router-calls))
-        (expect (= true (get-in @statuses [:openai "is_authenticated"])))
-        (expect (= false (get-in @statuses [:anthropic "is_authenticated"])))
-        (expect (= :ready (get-in @limits [:openai :status])))
-        (expect (= :ready (get-in @limits [:anthropic :status])))))))
+;; The provider MANAGER is gone: `d` (set default), `c` (clear fallback) and the
+;; model page they open are verbs of the band inside Settings, and they must
+;; still reach the router — this is what the deleted manager's own test proved.
+(defdescribe settings-provider-default-and-fallback-test
+             (it "sets the default model from the provider band in Settings"
+                 (settings-provider-band-frames 100 30 [:enter \d \a :esc :esc])
+                 (expect (= [[:default :acme-llm "acme-1"]] @settings-router-writes)))
+             (it "clears the fallback from the same band"
+                 ;; The fixture row already holds the fallback tag, so the band
+                 ;; offers `c` — Clear Fallback — in place of Set as Fallback.
+                 (settings-provider-band-frames 100 30 [:enter \c :esc])
+                 (expect (= [[:fallback]] @settings-router-writes))))

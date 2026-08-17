@@ -1543,8 +1543,13 @@
                  ;; verbs grouped the way magit groups a popup
                  (expect (= "fs \u00b7 idle" (:title @spec)))
                  (expect (= ["Runtime" "Configuration" "Inspect"] (mapv :title (:groups @spec))))
-                 ;; the picked verb reaches the manager verbatim
-                 (expect (= [{:server server :action :kill}] @fired))
+                 ;; the picked verb reaches the manager verbatim — with the
+                 ;; BAND it was fired from, so the questions it asks next
+                 ;; (a confirm, a refusal) land in this frame and not in a window
+                 (expect (= [{:server server :action :kill}]
+                            (mapv #(select-keys % [:server :action]) @fired)))
+                 (expect (= [{:left 0 :inner-w 40 :hint-row 20 :text-w 38 :min-row 3 :restore! nil}]
+                            (mapv :region @fired)))
                  ;; and it changes what the row says, so the inventory is re-read
                  (expect (= :ok (:status @inventory))))))
            (finally (reset! inventory original))))))
@@ -1808,7 +1813,7 @@
       ;; Each host used to unpack `:left`/`:inner-w`/`:hint-row`/`:text-w` again
       ;; and reach for `tr/run!` plus `transient-host` itself — five copies of
       ;; the same six coordinates, which is how two bands drift apart. The magit
-      ;; status buffer, the provider manager, Settings, `transient-dialog!` and
+      ;; status buffer, Settings, `transient-dialog!` and
       ;; the session band all compose THIS map now.
       (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
         (try
@@ -1822,7 +1827,7 @@
                          terminal
                          (if (= :enter k) (KeyStroke. KeyType/Enter) (term/keystroke k)))))]
 
-            (expect (= #{:read! :choose! :confirm! :note! :transient! :read-option}
+            (expect (= #{:read! :choose! :confirm! :note! :wait! :transient! :read-option}
                        (set (keys questions))))
             ;; One typed answer, in THIS region's own band and nowhere else: the
             ;; prompt is the band's title (row 16) and the text is typed into a
@@ -1949,11 +1954,32 @@
                (expect (str/includes? painted "remove failed"))
                (expect (str/includes? painted "provider remove failed: 400"))
                (expect (str/includes? painted "Dismiss")))
+             (finally (.stopScreen screen)))))
+  (it "a band HOLDS its own frame while a browser round-trip finishes"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try (let
+               [g (.newTextGraphics screen)
+                region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
+                ticks (atom 0)
+                answer ((:wait! (dlg/band-questions screen g region))
+                         "GitHub Copilot — waiting for authorization"
+                         (fn []
+                           "Finish the login in the browser · 0s")
+                         ;; Not done on the first paint: the band has to hold.
+                         (fn []
+                           (> (swap! ticks inc) 1)))
+                painted (str/join "\n" (map :text (term/painted-rows terminal)))]
+
+               (expect (= true answer))
+               (expect (str/includes? painted "waiting for authorization"))
+               (expect (str/includes? painted "Finish the login in the browser"))
+               ;; Esc is the way out of a wait, and the band says so.
+               (expect (str/includes? painted "cancel")))
              (finally (.stopScreen screen))))))
 
 ;;; ── One band COMPONENT, one instance per host ────────────────────────────────
 ;; `embed-transient!` is the band; a host differs only by the region it hands in.
-;; Settings and the provider manager each kept their own one-line wrapper around
+;; Settings and the provider band each kept their own one-line wrapper around
 ;; it (`settings-transient!`, `provider/run-transient!` + `provider/band-region`)
 ;; and the session screen spelled its own frame snapshot twice — four copies of a
 ;; component that has exactly one implementation.

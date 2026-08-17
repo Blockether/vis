@@ -2571,20 +2571,6 @@
            (render-frame! screen cols rows @state/app-db (System/currentTimeMillis))))
        (catch Throwable _ nil)))
 
-(defn- open-provider-modal!
-  "Open the full provider manager (add / sign in / pick models / remove) and
-   commit whatever it saved.
-
-   Settings hands this in as its `:provider-add` callback and calls it from
-   INSIDE its own dialog loop, which already holds `draw-lock` via
-   `with-dialog-lock`; so this must NOT re-grab the lock. Top-level callers wrap
-   it themselves. Returns nil."
-  [^TerminalScreen screen]
-  (when-let [c (provider/show-provider-dialog! screen (:config @state/app-db))]
-    (state/dispatch [:set-config c])
-    (state/dispatch [:force-provider-limits-refresh]))
-  nil)
-
 (defn- open-settings-modal!
   "Open Settings: the one hub for everything configurable, providers included.
 
@@ -2610,12 +2596,14 @@
                   {:focus-section focus-section
 
                    :mcp-add
-                   (fn [_] (mcp/save-server! screen nil))
+                   (fn [{:keys [g region]}] (mcp/save-server! screen g region nil))
 
                    ;; One verb the server's transient fired — the manager runs
-                   ;; it and reports its own failures; Settings just reloads.
+                   ;; it IN THAT SAME BAND (its own frame handle comes back
+                   ;; here) and reports its own failures; Settings just reloads.
                    :mcp-action
-                   (fn [{:keys [server action]}] (mcp/run-action! screen server action))
+                   (fn [{:keys [server action g region]}]
+                     (mcp/run-action! screen g region server action))
 
                    ;; Adding a provider is a BAND inside Settings, not a second
                    ;; manager on top of it: same frame, same hint bar, and the
@@ -5016,10 +5004,8 @@
                     (try (make-startup config)
                          (catch Throwable e
                            (if (vis-config/no-provider-ex e)
-                             (do (when-let
-                                   [c (with-dialog-lock #(provider/show-provider-dialog!
-                                                           screen
-                                                           (:config @state/app-db)))]
+                             (do (with-dialog-lock #(open-settings-modal! screen "Providers"))
+                                 (when-let [c (vis/load-config)]
                                    (state/dispatch [:set-config c])
                                    (state/dispatch [:force-provider-limits-refresh]))
                                  (make-startup (:config @state/app-db)))
@@ -7030,8 +7016,6 @@
                                   :settings
                                   (with-dialog-lock #(open-settings-modal! screen))
 
-                                  :model
-                                  (with-dialog-lock #(open-provider-modal! screen))
 
                                   ;; App verbs reachable from the palette (Ctrl+P)
                                   ;; in addition to their direct keys — the palette
