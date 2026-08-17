@@ -799,10 +799,24 @@ export class GatewayClient {
    * push at all — the app needs both to tell "push impossible here" apart from
    * "push possible, this phone just isn't registered".
    */
-  devices(
+  /**
+   * Last device list seen for THIS gateway. The notifications panel is opened over
+   * and over on an answer that rarely changes, so it paints this and revalidates
+   * instead of asking `Checking…` every time (see `lib/notify-verdict.ts`).
+   */
+  cachedDevices(): { devices: PushDevice[]; push: PushStatus } | null {
+    return readSnapshot(this.snapshotKey("devices"));
+  }
+
+  async devices(
     signal?: AbortSignal,
   ): Promise<{ devices: PushDevice[]; push: PushStatus }> {
-    return this.request("GET", "/v1/devices", undefined, signal);
+    const response = await this.request<{
+      devices: PushDevice[];
+      push: PushStatus;
+    }>("GET", "/v1/devices", undefined, signal);
+    writeSnapshot(this.snapshotKey("devices"), response);
+    return response;
   }
 
   /** Idempotent: re-registering the same token refreshes it, never duplicates. */

@@ -74,6 +74,7 @@ const relayed: PushStatus = {
 const machine = () => {
   const unregistered: string[] = [];
   const client = {
+    cachedDevices: () => null,
     devices: async () => ({
       devices: [
         { token_preview: maskToken(GRANT), platform: "ios", is_relayed: true },

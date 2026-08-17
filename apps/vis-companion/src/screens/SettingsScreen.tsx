@@ -51,6 +51,10 @@ import {
 import { applyTheme } from "../lib/theme";
 import { applyGatewayNotify, applyWebGatewayNotify } from "../lib/notify";
 import {
+  cachedNotifyVerdict,
+  rememberNotifyVerdict,
+} from "../lib/notify-verdict";
+import {
   registerForPush,
   registeredIds,
   refusedRelayUrl,
@@ -2158,6 +2162,17 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     supported && notify && perm === "granted" && subscription !== null;
   const machine = gateway.label ?? gatewayHost(gateway.url);
   const blocked = supported && perm === "denied";
+  // Same rule as the native panel: the verdict this browser settled on last time
+  // is the honest first frame, so reopening Settings does not flash `Checking…`.
+  const live = loaded ? notifying : null;
+  const remembered = useMemo(
+    () => cachedNotifyVerdict(gateway.url),
+    [gateway.url],
+  );
+  useEffect(() => {
+    if (live !== null) rememberNotifyVerdict(gateway.url, live);
+  }, [live, gateway.url]);
+  const shown = live ?? remembered;
   const hasBanner = Boolean(err) || !supported || blocked;
 
   return (
@@ -2183,11 +2198,13 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
 
       <NotifyConnectionRow
         machine={machine}
-        isOn={notifying}
+        isOn={shown ?? false}
         isBusy={busy !== null}
-        isChecking={!loaded}
-        disabled={!supported || blocked || !loaded || busy !== null}
-        onClick={() => void (notifying ? disable() : enable())}
+        isChecking={shown === null}
+        disabled={!supported || blocked || shown === null || busy !== null}
+        // The word on the button is what the press must do, so a row painted
+        // from the remembered verdict acts on THAT, not on a load still in flight.
+        onClick={() => void (shown ? disable() : enable())}
       />
     </SettingsPanel>
   );
@@ -2200,8 +2217,14 @@ export function NativeNotificationsPanel({
   client: GatewayClient;
   gateway: GatewayConn;
 }) {
-  const [push, setPush] = useState<PushStatus | null>(null);
-  const [devices, setDevices] = useState<PushDevice[] | null>(null);
+  // Reopening Settings must not re-ask a question this device already has the
+  // answer to: the last device list this machine gave is painted first and the
+  // fetch below revalidates it underneath.
+  const seed = useMemo(() => client.cachedDevices(), [client]);
+  const [push, setPush] = useState<PushStatus | null>(seed?.push ?? null);
+  const [devices, setDevices] = useState<PushDevice[] | null>(
+    seed?.devices ?? null,
+  );
   const [perm, setPerm] = useState<PushPermission>("unsupported");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
@@ -2258,11 +2281,14 @@ export function NativeNotificationsPanel({
   // This device can appear in the list under either of its names: its push token,
   // or the relay grant a machine without a signing key was handed instead.
   const [masks, setMasks] = useState<string[]>([]);
+  const [areMasksRead, setAreMasksRead] = useState(false);
   useEffect(() => {
     let stale = false;
     void (async () => {
       const ids = await registeredIds(token ?? "");
-      if (!stale) setMasks(ids.map(maskToken));
+      if (stale) return;
+      setMasks(ids.map(maskToken));
+      setAreMasksRead(true);
     })();
     return () => {
       stale = true;
@@ -2334,14 +2360,31 @@ export function NativeNotificationsPanel({
     Boolean(relayUrl) ||
     (provider ? provider.is_available : (push?.is_available ?? false));
 
+  // The OS outranks everything else: a machine can hold this device's token and
+  // still reach nobody, so a blocked permission is never reported as connected.
+  const blocked = supported && perm === "denied";
+  // THE ROW NEVER FLASHES. Its verdict is assembled from four asynchronous
+  // answers, so its honest first frame used to be `Checking…` on every open —
+  // an amber `Connect` that turned into a quiet `Disconnect` a moment later, on
+  // a question whose answer had not changed since the last time this dialog was
+  // opened. Reported as: the settings screen flickers. So the settled verdict is
+  // remembered per machine and painted first, and this pass revalidates it.
+  const isSettled = devices !== null && areMasksRead;
+  const live = isSettled ? notifying && !blocked : null;
+  const remembered = useMemo(
+    () => cachedNotifyVerdict(gateway.url),
+    [gateway.url],
+  );
+  useEffect(() => {
+    if (live !== null) rememberNotifyVerdict(gateway.url, live);
+  }, [live, gateway.url]);
+  const shown = live ?? remembered;
+
   // Gateway too old to know about push at all: render nothing.
   if (unsupported) return null;
 
   const machine = gateway.label ?? gatewayHost(gateway.url);
-  // The OS outranks everything else: a machine can hold this device's token and
-  // still reach nobody, so a blocked permission is never reported as connected.
-  const blocked = supported && perm === "denied";
-  const checking = devices === null;
+  const checking = shown === null;
   const hasBanner =
     Boolean(err) || !supported || blocked || Boolean(push && !available);
 
@@ -2386,13 +2429,15 @@ export function NativeNotificationsPanel({
 
       <NotifyConnectionRow
         machine={machine}
-        isOn={notifying && !blocked}
+        isOn={shown ?? false}
         isBusy={busy !== null}
         isChecking={checking}
         disabled={
           !supported || !available || blocked || checking || busy !== null
         }
-        onClick={() => void (notifying ? disable() : enable())}
+        // The word on the button is what the press must do, so a row painted
+        // from the remembered verdict acts on THAT, not on a load still in flight.
+        onClick={() => void (shown ? disable() : enable())}
       />
 
       {blocked && canOpenSystemNotificationSettings() && (

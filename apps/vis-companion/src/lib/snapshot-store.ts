@@ -59,6 +59,9 @@ const DURABLE_KINDS = new Set([
   'model',
   'model-default',
   'theme',
+  // The notifications panel's device list: reopened constantly, changed rarely,
+  // and its absence is the `Checking…` flash the panel is not allowed to have.
+  'devices',
 ]);
 
 // A transcript page is 24 turns and a single turn can be hundreds of kilobytes

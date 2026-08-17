@@ -6,6 +6,7 @@
 
 import { Preferences } from "@capacitor/preferences";
 import { bridged } from "./bridge";
+import { forgetNotifyVerdict } from "./notify-verdict";
 import type {
   GatewayConn,
   SpeechPrefs,
@@ -119,6 +120,7 @@ export async function removeConnection(url: string): Promise<GatewayConn[]> {
   if ((await getPrimaryUrl()) === url)
     await setPrimaryUrl(conns[0]?.url ?? null);
   await forgetGatewayNotify(url);
+  forgetNotifyVerdict(url);
   if (forgotten) await rememberRevocation(forgotten);
   return conns;
 }
