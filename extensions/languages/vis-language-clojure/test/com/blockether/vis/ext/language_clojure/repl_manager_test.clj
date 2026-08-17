@@ -471,19 +471,19 @@
             (rm/stop! "sess-slow" dir)
             (expect (= :down (rm/health "sess-slow" dir))))))))
 
-(defdescribe ensure-repl-failure-test
+(defdescribe start-failure-test
              (it "returns start!'s failed lifecycle map instead of swallowing it"
                  (let [dir (tmp-dir)]
                    (with-redefs
                      [rm/launcher-for (fn [_ _ _]
                                         {:tool :fake
                                          :cmd ["sh" "-c" "echo bad classpath; exit 1"]})]
-                     (let [r (rm/ensure-repl-for-dir! "sess-ens" dir)]
+                     (let [r (rm/start! "sess-ens" dir)]
                        (expect (= "failed" (get r "result")))
                        (expect (= 1 (get r "exit")))
                        (expect (some #(str/includes? % "bad classpath") (get r "log_tail")))))))
              (it "returns the no-launcher lifecycle map when the dir has no build file"
-                 (let [r (rm/ensure-repl-for-dir! "sess-ens-2" (tmp-dir))]
+                 (let [r (rm/start! "sess-ens-2" (tmp-dir))]
                    (expect (= "no-launcher" (get r "result"))))))
 
 (defdescribe resolve-target-no-repl-test
@@ -753,10 +753,10 @@
                                  {:status :down})]
           (expect (= "unreachable" (get (rm/connect! sid dir {:port 59998}) "result")))
           (expect (empty? (rm/session-repls sid))))))
-  (it "ensure-repl-for-dir! NEVER replaces an external attachment with a spawn"
+  (it "live-repl-for-dir REUSES an external attachment and never spawns over it"
       (let
         [sid
-         "s-ext-ensure"
+         "s-ext-live"
 
          dir
          (tmp-dir)]
@@ -765,7 +765,7 @@
           [nrepl-client/probe! (fn [_]
                                  {:status :up})]
           (rm/connect! sid dir {:port 59997})
-          (let [r (rm/ensure-repl-for-dir! sid dir)]
+          (let [r (rm/live-repl-for-dir sid dir)]
             (expect (= 59997 (:port r)))
             (expect (true? (:external? r)))))
         (with-redefs
@@ -777,40 +777,10 @@
            (fn [& _]
              (throw (ex-info "must not spawn over an external attachment" {})))]
 
-          (expect (= "external-unreachable" (get (rm/ensure-repl-for-dir! sid dir) "result"))))
+          ;; Unreachable = nothing to reuse: the caller gets nil (run_tests then
+          ;; uses a clean JVM) and the user's own server is left untouched.
+          (expect (nil? (rm/live-repl-for-dir sid dir))))
         (rm/stop! sid dir))))
-
-(defdescribe crash-loop-guard-test
-             (it "suspends autostart after repeated crashes and an explicit stop resets it"
-                 (let
-                   [sid
-                    "s-crash-loop"
-
-                    dir
-                    (tmp-dir)
-
-                    spawned
-                    (atom 0)]
-
-                   (dotimes [_ 5]
-                     (#'rm/note-crash! [sid dir]))
-                   (expect (true? (rm/crash-looping? sid dir)))
-                   (with-redefs
-                     [rm/start! (fn [& _]
-                                  (swap! spawned inc)
-                                  {"result" "started"})]
-                     (let [r (rm/ensure-repl-for-dir! sid dir)]
-                       (expect (= "crash-looping" (get r "result")))
-                       (expect (zero? @spawned))))
-                   ;; explicit stop = a deliberate human reset of the guard
-                   (rm/stop! sid dir)
-                   (expect (false? (rm/crash-looping? sid dir)))
-                   (with-redefs
-                     [rm/start! (fn [& _]
-                                  (swap! spawned inc)
-                                  {"result" "started"})]
-                     (expect (= "started" (get (rm/ensure-repl-for-dir! sid dir) "result")))
-                     (expect (= 1 @spawned))))))
 
 (defdescribe
   eval-host-threading-test

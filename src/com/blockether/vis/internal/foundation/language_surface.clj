@@ -118,11 +118,12 @@
                   (str "  " lang " : " (str/join " · " tools))))
       (when (contains? data "clojure")
         (str
-          "\n  clojure run_tests REUSES this session's managed REPL: it reloads the namespaces it"
-          " RUNS but NEVER their dependencies, so a changed PRODUCTION ns still serves the Vars"
-          " already loaded and tests pass or fail against stale code. `repl_eval`"
-          " `(require 'my.prod.ns :reload)` for each production ns you edited before rerunning;"
-          " when several changed, a FRESH REPL (`repl` stop, then start) beats `:reload-all`."
+          "\n  clojure run_tests NEVER starts a REPL: with none running it shells the project's"
+          " own test command in a CLEAN JVM, so the run always sees the code on disk. When THIS"
+          " session already has a REPL up for that project it REUSES it — and that path reloads"
+          " the namespaces it RUNS but NEVER their dependencies, so a changed PRODUCTION ns still"
+          " serves the Vars already loaded: `repl_eval` `(require 'my.prod.ns :reload)` for each"
+          " one you edited, or `repl` stop and let the clean JVM run them."
           "\n  clojure lint_code runs clj-kondo + `general` REFLECTION/BOXED-MATH checks;"
           " whole-project lint (omit code/paths) includes both; no separate reflection check.")))))
 
@@ -272,8 +273,8 @@
       (choose-handler env capability opts)]
 
      ;; A live environment may predate a process-jail namespace reload. Refresh the
-     ;; session binding immediately before a handler that may spawn a child. Clojure
-     ;; repl_eval can auto-start its managed nREPL when none is running.
+     ;; session binding immediately before a handler that may spawn a child: Clojure
+     ;; run_tests shells the project's own test command whenever no REPL is up.
      (when (#{:test-fn :repl-eval-fn} capability) (vis/prepare-session-jail! env))
      (post handler ((:handler handler) env payload)))))
 

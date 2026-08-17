@@ -503,8 +503,7 @@
                     result
                     (with-example-project
                       (fn [root]
-                        (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (constantly {:port
-                                                                                          54321})
+                        (with-redefs-fn {#'repl-manager/live-repl-for-dir (constantly {:port 54321})
                                          #'test-runner/run-via-repl
                                          (fn [& _]
                                            {"error" "Could not locate lazytest/core"})
@@ -518,54 +517,51 @@
                    (expect (= "cli" (get-in result [:result "mode"])))
                    (expect (= "clojure" (get-in result [:result "language"]))))))
 
-(defdescribe test-runner-repl-gate-test
-             (it "runs via the CLI suite when there is no launchable build file (no-launcher)"
-                 (let
-                   [called
-                    (atom false)
+(defdescribe
+  test-runner-repl-gate-test
+  ;; run_tests must never SPAWN: it reuses the REPL this session already
+  ;; keeps for the project, and with none it runs the suite in a clean JVM
+  ;; through the build tool's own test command.
+  (it "runs via the CLI suite when the session has no REPL for the project"
+      (let
+        [called
+         (atom false)
 
-                    result
-                    (with-example-project
-                      (fn [root]
-                        (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
-                                         (constantly {"result" "no-launcher" "status" "down"})
-                                         #'test-runner/run-via-cli
-                                         (fn [_root norm]
-                                           (reset! called true)
-                                           {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
-                          #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))]
+         result
+         (with-example-project
+           (fn [root]
+             (with-redefs-fn {#'repl-manager/live-repl-for-dir (constantly nil)
+                              #'repl-manager/start!
+                              (fn [& _]
+                                (throw (ex-info "run_tests must never start a REPL" {})))
+                              #'test-runner/run-via-cli
+                              (fn [_root norm]
+                                (reset! called true)
+                                {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
+               #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))]
 
-                   (expect @called)
-                   (expect (= "cli" (get-in result [:result "mode"])))))
-             (it "surfaces the launcher's boot-failure story instead of silently CLI-falling-back"
-                 (let
-                   [cli-called
-                    (atom false)
+        (expect @called)
+        (expect (= "cli" (get-in result [:result "mode"])))))
+  (it "reuses a REPL the session already has, without shelling the CLI"
+      (let
+        [seen-port
+         (atom nil)
 
-                    result
-                    (with-example-project
-                      (fn [root]
-                        (with-redefs-fn
-                          {#'repl-manager/ensure-repl-for-dir!
-                           (constantly
-                             {"result" "failed"
-                              "status" "failed"
-                              "message"
-                              "nREPL launcher exited before accepting connections (exit 1)"
-                              "log_tail" "Syntax error compiling."})
-                           #'test-runner/run-via-cli (fn [& _]
-                                                       (reset! cli-called true)
-                                                       {"mode" "cli"})}
-                          #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))
+         result
+         (with-example-project
+           (fn [root]
+             (with-redefs-fn {#'repl-manager/live-repl-for-dir (constantly {:port 4321})
+                              #'test-runner/run-via-repl
+                              (fn [_root nses _sel port]
+                                (reset! seen-port port)
+                                {"mode" "repl" "ns" (first nses) "is_pass" true})
+                              #'test-runner/run-via-cli
+                              (fn [& _]
+                                (throw (ex-info "must not shell the CLI while a REPL is up" {})))}
+               #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))]
 
-                    r
-                    (:result result)]
-
-                   (expect (not @cli-called))
-                   (expect (= "repl" (get r "mode")))
-                   (expect (str/includes? (get r "error") "not running (status failed)"))
-                   (expect (str/includes? (get r "error") "exited before accepting connections"))
-                   (expect (= "Syntax error compiling." (get r "log_tail"))))))
+        (expect (= 4321 @seen-port))
+        (expect (= "repl" (get-in result [:result "mode"]))))))
 
 (defdescribe
   test-runner-nested-root-test
@@ -580,15 +576,15 @@
                (spit (io/file svc "deps.edn") "{:paths [\"src\" \"test\"]}")
                (spit (io/file test-dir "svc_test.clj") "(ns svc-test)")
                (let [seen (atom nil)]
-                 (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (fn [_sid dir]
-                                                                        (reset! seen dir)
-                                                                        nil)
+                 (with-redefs-fn {#'repl-manager/live-repl-for-dir (fn [_sid dir]
+                                                                     (reset! seen dir)
+                                                                     nil)
                                   #'test-runner/run-via-cli
                                   (fn [_root norm]
                                     {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
                    #(test-runner/clj-test-fn {:workspace/root (.getAbsolutePath root)}
                                              {"paths" ["services/svc/test"]}))
-                 ;; the nREPL is autostarted at services/svc, where deps.edn lives
+                 ;; the REPL is looked up at services/svc, where deps.edn lives
                  (expect (= (.getCanonicalPath svc) (.getCanonicalPath (io/file @seen))))))
              (finally (cleanup root))))))
 

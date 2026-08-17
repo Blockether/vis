@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.language-clojure.test-runner
-  "Run a namespace's tests over the live nREPL (the fast inner loop) or, when no
-   nREPL is reachable, by shelling clojure -M:test (the suite gate).
+  "Run a namespace's tests in the session's ALREADY-RUNNING nREPL (the fast inner
+   loop) or -- the default, and whenever there is no such REPL -- by shelling the
+   project's own test command in a clean JVM. Nothing here EVER starts a REPL.
 
    The in-REPL path is FRAMEWORK-AGNOSTIC: a ns whose vars carry clojure.test
    :test metadata runs through clojure.test/run-tests; otherwise it is treated
@@ -970,57 +971,40 @@
                     root
                     " to run tests via CLI")})))
 
-(defn- relaunch-repl-async!
-  "Best-effort background stop + fresh start of `session-id`'s managed nREPL for `cwd`
-   on a daemon thread, so the NEXT eval/test hits a fresh server. Returns at once —
-   the relaunch (deps resolve + JVM boot, up to ~2 min) never blocks the caller."
-  [session-id dir]
-  (when (and session-id dir)
-    (doto (Thread. ^Runnable
-                   (fn []
-                     (try (repl-manager/stop! session-id dir)
-                          (repl-manager/start! session-id dir nil)
-                          (catch Throwable _ nil))))
-      (.setDaemon true)
-      (.setName "vis-clj-repl-recover")
-      (.start)))
-  nil)
-
 (defn- recover-if-unusable
-  "Auto-recovery seam for run_tests. When run-via-repl reports the nREPL was UNUSABLE
-   for this run — down / gone mid-run (\"repl_unusable\") or wedged past the timeout
-   (\"repl_wedged\") — don't just hand back a 'start a fresh REPL and retry' error and
-   burn the turn. Stop and relaunch the nREPL in the BACKGROUND, and for an unusable (not
-   merely wedged) server ALSO run the suite via the build-tool CLI so the caller still
-   gets REAL results THIS turn. A wedged eval is left CLI-less: its hang is likely the
-   code under test, which a CLI run would only re-hang on. The recovery is announced
-   on :note so the outcome is self-explaining."
-  [session-id root norm result]
+  "Recovery seam for run_tests: what happens when the REUSED nREPL lets a run down.
+   \"repl_unusable\" (down / gone mid-run) reruns the suite through the build tool's
+   CLI in a clean JVM, so the caller still gets REAL results THIS turn instead of a
+   'start a fresh REPL and retry' error that burns the turn. \"repl_wedged\" (hung past
+   the timeout) is left CLI-less: the hang is likely the code under test, which a CLI
+   run would only re-hang on. Nothing here starts or relaunches a REPL — reviving one
+   is the caller's own `repl` call. The outcome is announced on :note so the result
+   explains itself."
+  [root norm result]
   (cond (get result "repl_unusable")
-        (do (relaunch-repl-async! session-id root)
-            (let
-              [cli
-               (run-via-cli root norm)
+        (let
+          [cli
+           (run-via-cli root norm)
 
-               why
-               (get result "error")
+           why
+           (get result "error")
 
-               note
-               (str "nREPL was unusable"
-                    (when why (str " (" why ")"))
-                    " — ran the suite via CLI and relaunched a fresh nREPL in the background.")]
+           note
+           (str "the reused nREPL was unusable"
+                (when why (str " (" why ")"))
+                " — ran the suite in a clean JVM via the build tool's CLI instead.")]
 
-              (-> cli
-                  (assoc "recovered" true)
-                  (update "note"
-                          (fn [n]
-                            (if (seq (str n)) (str note " " n) note))))))
+          (-> cli
+              (assoc "recovered" true)
+              (update "note"
+                      (fn [n]
+                        (if (seq (str n)) (str note " " n) note)))))
         (get result "repl_wedged")
-        (do (relaunch-repl-async! session-id root)
-            (update result
-                    "error"
-                    (fn [e]
-                      (str e " Relaunching a fresh nREPL in the background."))))
+        (update
+          result
+          "error"
+          (fn [e]
+            (str e " Stop it (repl(\"clojure\", \"stop\")) — the next run then uses a clean JVM.")))
         :else result))
 
 (defn- has-build-file?
@@ -1070,9 +1054,11 @@
    nothing'. The one case that still errors is explicit-but-empty: a path was
    given yet no *_test.clj was found under it (a real 'nothing to run there', not
    a 'run all' intent), and likewise a `::name` that matched no var.
-   The nREPL boots at the tests' OWN project root — the nearest deps.edn /
-   project.clj / bb.edn at or below the workspace root — so a NESTED project runs
-   against its own build file instead of the workspace root's classpath.
+   The run is rooted at the tests' OWN project — the nearest deps.edn / project.clj /
+   bb.edn at or below the workspace root — so a NESTED project is tested against its
+   own build file. run_tests NEVER starts a REPL: it reuses THIS session's REPL for
+   that project when one is already up, and otherwise shells the project's own test
+   command in a clean JVM.
    The result :mode says which path ran; :language is always clojure so the result is self-describing
    across the language / framework / tool / mode axes."
   ([env arg]
@@ -1124,24 +1110,19 @@
       sel
       (select-keys norm [:vars :include :exclude])
 
-      ;; Boot the nREPL where the tests' OWN build file lives (nearest deps.edn /
+      ;; Root the run where the tests' OWN build file lives (nearest deps.edn /
       ;; project.clj / bb.edn at or below the workspace root), so a nested
       ;; project's deps.edn is honored. Falls back to the workspace root when the
       ;; request is at the top level or spans several projects.
       eff-root
       (if (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations)) root)
 
-      ;; Autostart / reuse THIS session's nREPL. `ensure-repl-for-dir!` already
-      ;; verifies liveness (wait-until-up) and stops+replaces a dead/wedged process,
-      ;; so a keyword-keyed result carrying :port is a VERIFIED-up server. When it
-      ;; can't hand back a live port it returns start!'s STRING-keyed lifecycle map
-      ;; ("no-launcher"/"failed"/"starting"…) instead — the two cases are gated apart
-      ;; below so a boot failure is surfaced, not swallowed into a bare CLI fallback.
-      repl
-      (repl-manager/ensure-repl-for-dir! (:session-id env) eff-root)
-
+      ;; REUSE, never spawn. `live-repl-for-dir` answers THIS session's REPL for the
+      ;; project only while it ANSWERS, nil otherwise — run_tests starts nothing. With
+      ;; no REPL up the suite runs in a clean JVM through the build tool's own test
+      ;; command, which is also what a fresh session gets.
       port
-      (:port repl)]
+      (:port (repl-manager/live-repl-for-dir (:session-id env) eff-root))]
 
      (when (empty? nses)
        (throw
@@ -1153,35 +1134,17 @@
            {:type :clj/bad-args :got arg})))
      (let
        [result
-        (cond
-          ;; nREPL is up and verified — the fast inner loop.
-          port (run-via-repl eff-root nses sel port)
-          ;; No launchable Clojure build file at all → the CLI suite is the
-          ;; correct path (it shells the build tool's own test command).
-          (= "no-launcher" (get repl "result")) (run-via-cli eff-root norm)
-          ;; A build file EXISTS but the nREPL did NOT come up ("failed" /
-          ;; still "starting" / wedged past its grace window). Do NOT silently
-          ;; CLI-fall-back onto a project whose REPL just crashed — surface the
-          ;; launcher's own story (result + message + log tail) so the boot
-          ;; failure IS the reported error instead of a confusing CLI miss.
-          (map? repl) (cond->
-                        {"mode" "repl"
-                         "ns" (str/join " " nses)
-                         "port" (get repl "port")
-                         "error" (str "nREPL for "
-                                      eff-root
-                                      " is not running (status "
-                                      (get repl "result" "unknown")
-                                      ") — "
-                                      (get repl "message" "the server failed to start")
-                                      ". Fix the boot error (see log_tail) and retry.")}
-                        (get repl "log_tail")
-                        (assoc "log_tail" (get repl "log_tail")))
-          ;; Defensive last resort (nil / unexpected shape): the CLI suite.
-          :else (run-via-cli eff-root norm))
+        (if port
+          ;; A REPL this session already keeps up for the project — the fast inner
+          ;; loop. It reloads only the namespaces it RUNS, so production Vars the
+          ;; caller edited stay as that REPL holds them (`repl_eval` `:reload`, or
+          ;; stop the REPL and let the clean JVM run it).
+          (run-via-repl eff-root nses sel port)
+          ;; The default: the build tool's own test command, in a clean JVM.
+          (run-via-cli eff-root norm))
 
         result
-        (recover-if-unusable (:session-id env) eff-root norm result)
+        (recover-if-unusable eff-root norm result)
 
         result'
         (if (and (get result "error")

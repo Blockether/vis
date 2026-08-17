@@ -68,61 +68,33 @@
 (def ^:private recover-if-unusable
   @#'com.blockether.vis.ext.language-clojure.test-runner/recover-if-unusable)
 
-(defdescribe
-  recover-if-unusable-test
-  (it "runs the CLI suite and relaunches the nREPL when the server was unusable"
-      (let [relaunched (atom nil)]
-        (with-redefs
-          [com.blockether.vis.ext.language-clojure.test-runner/relaunch-repl-async!
-           (fn [_sid dir]
-             (reset! relaunched dir)
-             nil)
-           com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
-           (fn [_root _norm]
-             {"mode" "cli" "is_pass" true "note" "7 cases"})]
-
-          (let [r (recover-if-unusable "sid" "/proj" {} {"repl_unusable" true "error" "down"})]
-            (expect (= "/proj" @relaunched))
-            (expect (= "cli" (get r "mode")))
-            (expect (true? (get r "recovered")))
-            (expect (re-find #"ran the suite via CLI" (get r "note")))
-            (expect (re-find #"7 cases" (get r "note")))))))
-  (it "relaunches the nREPL but keeps the timeout error for a wedged eval (no CLI)"
-      (let
-        [relaunched
-         (atom nil)
-
-         cli-called
-         (atom false)]
-
-        (with-redefs
-          [com.blockether.vis.ext.language-clojure.test-runner/relaunch-repl-async!
-           (fn [_sid dir]
-             (reset! relaunched dir)
-             nil)
-
-           com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
-           (fn [_root _norm]
-             (reset! cli-called true)
-             {})]
-
-          (let [r (recover-if-unusable "sid" "/proj" {} {"repl_wedged" true "error" "timed out"})]
-            (expect (= "/proj" @relaunched))
-            (expect (false? @cli-called))
-            (expect (re-find #"background" (get r "error")))))))
-  (it "passes a healthy result through untouched (no relaunch, no CLI)"
-      (let [relaunched (atom false)]
-        (with-redefs
-          [com.blockether.vis.ext.language-clojure.test-runner/relaunch-repl-async!
-           (fn [& _]
-             (reset! relaunched true)
-             nil)]
-          (let
-            [orig {"mode" "repl" "pass" 5}
-             r (recover-if-unusable "sid" "/proj" {} orig)]
-
-            (expect (= orig r))
-            (expect (false? @relaunched)))))))
+(defdescribe recover-if-unusable-test
+             ;; Recovery never SPAWNS: an unusable REPL means the clean-JVM CLI runs the suite
+             ;; THIS turn, and bringing a REPL back is the caller's own `repl` call.
+             (it "runs the CLI suite in a clean JVM when the reused server was unusable"
+                 (with-redefs
+                   [com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
+                    (fn [_root _norm]
+                      {"mode" "cli" "is_pass" true "note" "7 cases"})]
+                   (let [r (recover-if-unusable "/proj" {} {"repl_unusable" true "error" "down"})]
+                     (expect (= "cli" (get r "mode")))
+                     (expect (true? (get r "recovered")))
+                     (expect (re-find #"clean JVM" (get r "note")))
+                     (expect (re-find #"7 cases" (get r "note"))))))
+             (it "keeps the timeout error for a wedged eval and shells no CLI"
+                 (let [cli-called (atom false)]
+                   (with-redefs
+                     [com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
+                      (fn [_root _norm]
+                        (reset! cli-called true)
+                        {})]
+                     (let
+                       [r (recover-if-unusable "/proj" {} {"repl_wedged" true "error" "timed out"})]
+                       (expect (false? @cli-called))
+                       (expect (re-find #"clean JVM" (get r "error")))))))
+             (it "passes a healthy result through untouched (no CLI, nothing spawned)"
+                 (let [orig {"mode" "repl" "pass" 5}]
+                   (expect (= orig (recover-if-unusable "/proj" {} orig))))))
 
 (defdescribe
   group-faults-by-cwd-test
@@ -267,9 +239,9 @@
   [ws arg]
   (let [seen (atom {})]
     (with-redefs
-      [repl-manager/ensure-repl-for-dir! (fn [_sid root]
-                                           (swap! seen assoc :root root)
-                                           {:port 12345})
+      [repl-manager/live-repl-for-dir (fn [_sid root]
+                                        (swap! seen assoc :root root)
+                                        {:port 12345})
        com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
        (fn [_root nses sel _port]
          (swap! seen assoc :nses nses :sel sel)

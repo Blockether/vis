@@ -55,7 +55,7 @@
 (defn- proc-alive?
   "Registry-entry liveness. A MANAGED entry is alive while its subprocess is; an
    EXTERNAL attachment owns no process — it stays registered until detached (its
-   REAL liveness is the port probe in `health` / `ensure-repl-for-dir!`)."
+   REAL liveness is the port probe in `health` / `live-repl-for-dir`)."
   [info]
   (if (:external? info) true (alive? (:process info))))
 
@@ -65,37 +65,6 @@
 ;; by `health` (→ :failed) and `last-failure` so status/eval can surface the
 ;; REAL boot error. Cleared on a successful start and on `stop!`.
 (defonce ^:private last-failures (atom {}))
-
-;; ── Crash-loop guard ────────────────────────────────────────────────────────
-;; VS Code's LSP rule: never restart a server that crashed 5 times in the last
-;; 180 s. Without it, a REPL that dies instantly at boot (bad deps.edn, broken
-;; user.clj) is respawned by `ensure-repl-for-dir!` on EVERY eval/test — each
-;; attempt burning a full JVM boot. { [session-id dir] -> [crash-ms ...] },
-;; appended by `record-failure!` (the one unexpected-death chokepoint), cleared
-;; by `clear-failure!` (successful start / explicit stop = a deliberate reset).
-(def ^:private crash-window-ms 180000)
-
-(def ^:private max-crashes-in-window 5)
-
-(defonce ^:private crash-times (atom {}))
-
-(defn- note-crash!
-  [k]
-  (let [now (System/currentTimeMillis)]
-    (swap! crash-times update
-      k
-      (fn [v]
-        (conj (filterv #(< (- now (long %)) (long crash-window-ms)) (or v [])) now)))))
-
-(defn crash-looping?
-  "True when `[session-id dir]`'s managed REPL died `max-crashes-in-window`+
-   times inside `crash-window-ms` — autostart must STOP retrying and surface the
-   failure instead of burning another JVM boot per eval."
-  [session-id dir]
-  (let [now (System/currentTimeMillis)]
-    (>= (count (filter #(< (- now (long %)) (long crash-window-ms))
-                       (get @crash-times [session-id dir])))
-        (long max-crashes-in-window))))
 
 ;; ── Idle reaping ────────────────────────────────────────────────────────────
 ;; A managed REPL is a FULL project JVM (0.5–2 GB resident: the whole :dev:test
@@ -135,10 +104,7 @@
   [session-id dir]
   (get @last-failures [session-id dir]))
 
-(defn- clear-failure!
-  [session-id dir]
-  (swap! last-failures dissoc [session-id dir])
-  (swap! crash-times dissoc [session-id dir]))
+(defn- clear-failure! [session-id dir] (swap! last-failures dissoc [session-id dir]))
 
 ;; Kept in sync with the nrepl/nrepl version pinned in this extension's deps.edn.
 ;; Injected via `-Sdeps` so the launcher works even in target projects that don't
@@ -392,7 +358,6 @@
      tail
      (tail-log log-path 80)]
 
-    (note-crash! [session-id dir])
     (swap! last-failures assoc
       [session-id dir]
       (cond-> {"at" (System/currentTimeMillis)}
@@ -855,74 +820,32 @@
   [session-id id]
   (first (filter #(= (:id %) id) (session-repls session-id))))
 
-(defn ensure-repl-for-dir!
-  "Return the live REPL info for `[session-id dir]`, AUTOSTARTING one (with the
-   default :dev :test aliases) when the session owns none for `dir` — OR when the
-   recorded process is alive but UNREACHABLE (a boot that never bound its port, or
-   a wedged server thread that `proc-alive?` alone cannot see): such a stale
-   process is stopped and REPLACED. A still-booting process is given the
-   REMAINING cold-boot window (see `health-probe-ms`) before being judged wedged.
+(defn live-repl-for-dir
+  "The REPL `session-id` ALREADY has for `dir`, and only while it ANSWERS — else nil.
+   NEVER starts, stops or replaces a server: `run_tests` reuses a REPL the session
+   deliberately keeps up, and with none it runs the suite in a clean JVM instead of
+   spawning one behind the caller's back. `repl` `start` is the ONE way a managed
+   REPL comes into existence.
 
-   Two deliberate REFUSALS, both surfaced as start!-style STRING-keyed results
-   (callers tell live info apart by `:port` vs `\"result\"`):
-     - EXTERNAL attachment unreachable → \"external-unreachable\": vis NEVER
-       silently replaces the user's explicitly-attached REPL with a managed
-       spawn — reconnect or detach is the user's call.
-     - Crash loop (`crash-looping?`, VS Code semantics) → \"crash-looping\":
-       autostart is suspended instead of burning a JVM boot per eval; an
-       explicit stop (or the next successful start) resets the guard."
+   An EXTERNAL attachment is probed on its own host; a MANAGED entry needs a live
+   process AND a describe round-trip inside its remaining cold-boot window
+   (`health-probe-ms`), so a still-booting server counts and a wedged one does not."
   [session-id dir]
   (let
-    [k
-     [session-id dir]
+    [info
+     (get @processes [session-id dir])
 
-     info
-     (get @processes k)]
+     live?
+     (cond (nil? info) false
+           (:external? info) (= :up
+                                (:status (nrepl-client/probe! {:host (or (:host info) "localhost")
+                                                               :port (:port info)
+                                                               :timeout-ms 2000})))
+           :else (and (proc-alive? info)
+                      (:port info)
+                      (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info)))))]
 
-    (cond (:external? info)
-          (if (= :up
-                 (:status (nrepl-client/probe! {:host (or (:host info) "localhost")
-                                                :port (:port info)
-                                                :timeout-ms 2000})))
-            (do (touch! session-id dir) info)
-            {"result" "external-unreachable"
-             "status" "down"
-             "cwd" dir
-             "host" (or (:host info) "localhost")
-             "port" (:port info)
-             "message" (str "External nREPL at "
-                            (or (:host info) "localhost")
-                            ":"
-                            (:port info)
-                            " is not answering — bring it back up and reconnect"
-                            " (repl(\"clojure\", \"connect\", {\"port\": ...})), or"
-                            " repl(\"clojure\", \"stop\") to detach.")})
-          (and (proc-alive? info)
-               (:port info)
-               (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))
-          (do (touch! session-id dir) info)
-          (crash-looping? session-id dir)
-          (let [f (last-failure session-id dir)]
-            (cond->
-              {"result" "crash-looping"
-               "status" "failed"
-               "cwd" dir
-               "message" (str "nREPL for this dir crashed " max-crashes-in-window
-                              "+ times in " (quot (long crash-window-ms) 60000)
-                              " min — autostart is SUSPENDED. Fix the boot failure"
-                              " (see log_tail), then repl(\"clojure\", \"stop\")"
-                              " + repl(\"clojure\", \"start\")" " to reset.")}
-              (get f "exit")
-              (assoc "exit" (get f "exit"))
-
-              (get f "log")
-              (assoc "log" (get f "log"))
-
-              (seq (get f "log_tail"))
-              (assoc "log_tail" (get f "log_tail"))))
-          :else (do (when (proc-alive? info) (stop! session-id dir))
-                    (let [r (start! session-id dir nil)]
-                      (or (get @processes k) r))))))
+    (when live? (touch! session-id dir) info)))
 
 
 (defn resolve-target!
