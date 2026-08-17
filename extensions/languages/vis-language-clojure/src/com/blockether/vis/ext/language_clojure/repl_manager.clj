@@ -49,7 +49,7 @@
 (defonce ^:private processes (atom {}))
 
 ;; { [session-id dir] -> {:id :dir :host :port :dialect kw :build str? :target kw?
-;;                        :session-token str? :started-at ms :last-touch ms} }
+;;                        :started-at ms :last-touch ms} }
 ;; EXTERNAL nREPLs this session was explicitly told to attach to. Deliberately a
 ;; SECOND registry rather than a flag inside `processes`: an attachment owns no
 ;; process (nothing to reap, kill or watch for exit) and must be able to coexist
@@ -211,8 +211,7 @@
     (:build att)
     (assoc :build
       (:build att) :target
-      (:target att) :session-token
-      (:session-token att))))
+      (:target att))))
 
 (defn- attachment-view
   "Model-facing STRING-keyed view of an attachment: what it is, where it is, and
@@ -925,7 +924,6 @@
                           :build build
                           :target (:target shadow)
                           :dialect (if build :cljs :clj)
-                          :session-token (:session-token sel)
                           :started-at (System/currentTimeMillis)
                           :last-touch (System/currentTimeMillis)}
                      ;; ONE cheap eval, so the ANSWER to connect already says whether
@@ -933,10 +931,7 @@
                      ;; joined is a perfectly healthy attachment that evaluates
                      ;; nothing, and finding that out on the next repl_eval reads as
                      ;; a broken REPL instead of a missing `node`/browser.
-                     ping (when build (shadow-repl/eval! att {:code "1" :timeout-ms 5000}))
-                     att (cond-> att
-                           (:session-token ping)
-                           (assoc :session-token (:session-token ping)))]
+                     ping (when build (shadow-repl/eval! att {:code "1" :timeout-ms 5000}))]
 
                     (swap! attachments assoc k att)
                     (cond->
@@ -1010,7 +1005,7 @@
 (defn session-repls
   "Live REPLs OWNED by (or ATTACHED to) `session-id`, as a vec of
    `{:id :dir :port :tool :aliases :pid}` (+ `:log` for managed; `:external? :host
-   :dialect` and, for a shadow-cljs one, `:build :target :session-token` for
+   :dialect` and, for a shadow-cljs one, `:build :target` for
    attached) sorted by dir. Prunes dead managed entries as a side effect.
    This is the SINGLE source of truth for ctx + eval/test targeting — external
    REPLs enter it ONLY via an explicit `connect!`, never by discovery.
@@ -1130,9 +1125,7 @@
           ;; (the workspace root) when live, else the first (dir-sorted).
           (let [r (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))]
             (touch! session-id (:dir r))
-            (select-keys r
-                         [:id :dir :port :host :external? :dialect :build :target
-                          :session-token])))))))
+            (select-keys r [:id :dir :port :host :external? :dialect :build :target])))))))
 
 (defn eval!
   "Evaluate `opts` (an `nrepl-client/eval!` map minus its address) over `target` —
@@ -1140,23 +1133,18 @@
    STRING-keyed result, and never throws for a shadow-cljs condition.
 
    A target carrying a shadow-cljs `:build` is the whole reason this exists. The
-   build is (re)SELECTED in the nREPL session whenever that session is no longer
-   the one it was selected in — an evicted socket or a restarted watch otherwise
-   leaves the very same code silently answering as JVM Clojure — and the fresh
-   session token is written back to the attachment. The result carries \"build\",
-   and a build whose JS runtime is not connected answers with the instruction that
-   starts one instead of shadow's bare `No available JS runtime`."
-  [session-id {:keys [host port build dir] :as target} opts]
+   build is (re)SELECTED in the nREPL session before the eval whenever it is not
+   the one already selected THERE — a replaced session answers as JVM Clojure,
+   and a SIBLING build selected on the same server answers from the wrong
+   runtime, both without erroring. The result carries \"build\", and a build
+   whose JS runtime is not connected answers with the instruction that starts
+   one instead of shadow's bare `No available JS runtime`."
+  [{:keys [host port build] :as target} opts]
   (if-not build
     (nrepl-client/eval! (assoc opts
                           :host (or host "localhost")
                           :port port))
     (let [r (shadow-repl/eval! target opts)]
-      (when-let [token (:session-token r)]
-        (swap! attachments (fn [m]
-                             (cond-> m
-                               (contains? m [session-id dir])
-                               (assoc-in [[session-id dir] :session-token] token)))))
       (if (:selected? r)
         (cond-> (assoc (:result r) "build" build)
           (:message r)

@@ -464,8 +464,7 @@
         ;; The eval goes through repl-manager, not straight to the client: a
         ;; target attached to a shadow-cljs BUILD has to have that build selected
         ;; in the nREPL session first, or the same code answers as JVM Clojure.
-        (-> (repl-manager/eval! sid
-                                (assoc target :host (or (:host target) host))
+        (-> (repl-manager/eval! (assoc target :host (or (:host target) host))
                                 {:code code :ns ns :pretty? true :timeout-ms (or timeout_ms 30000)})
             strip-blank-repl-fields
             (assoc "code" code

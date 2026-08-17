@@ -833,11 +833,11 @@
 
      shadow-repl/select!
      (fn [_]
-       (or select {:selected? true :session-token "tok-1"}))
+       (or select {:selected? true}))
 
      shadow-repl/eval!
      (fn [_ _]
-       (or answer {:selected? true :result {"value" "1"} :session-token "tok-1"}))]
+       (or answer {:selected? true :result {"value" "1"}}))]
 
     (f)))
 
@@ -876,7 +876,6 @@
 
         (with-shadow {:answer {:selected? true
                                :result {}
-                               :session-token "tok-1"
                                :message (shadow-repl/runtime-hint "app" :node-script)}}
                      (fn []
                        (let [r (rm/connect! sid dir {:port 9999 :build "app"})]
@@ -1018,7 +1017,7 @@
 
 (defdescribe
   shadow-eval-routing-test
-  (it "routes an attachment's eval through its build and writes the fresh session back"
+  (it "routes an attachment's eval through its build, leaving the attachment in place"
       (let
         [sid
          "s-shadow-eval"
@@ -1032,29 +1031,26 @@
                        (with-redefs
                          [shadow-repl/eval! (fn [_ _]
                                               {:selected? true
-                                               :result {"value" "\"Hello, REPL!\"" "ns" "cljs.user"}
-                                               :session-token "tok-2"})]
+                                               :result {"value" "\"Hello, REPL!\""
+                                                        "ns" "cljs.user"}})]
                          (let
                            [target (rm/resolve-target! sid (str (rm/id-of dir) "#app") dir)
-                            r (rm/eval! sid target {:code "(repro.core/greeting)"})]
+                            r (rm/eval! target {:code "(repro.core/greeting)"})]
 
                            (expect (= "app" (:build target)))
                            (expect (= :cljs (:dialect target)))
                            (expect (= "\"Hello, REPL!\"" (get r "value")))
                            (expect (= "cljs.user" (get r "ns")))
                            (expect (= "app" (get r "build")))
-                           ;; The session the eval selected under is the one the NEXT
-                           ;; eval re-checks — stale token, silent JVM answers.
-                           (expect (= "tok-2" (:session-token (first (rm/session-repls sid)))))))))
+                           ;; The eval ROUTED through the attachment — it did not
+                           ;; replace or consume it: the dir keeps its cljs target.
+                           (expect (= "app" (:build (first (rm/session-repls sid)))))))))
         (rm/detach! sid dir)))
   (it "reports a lost selection as a build problem, with the command that fixes it"
       (with-redefs
         [shadow-repl/eval! (fn [_ _]
                              {:selected? false :message "watch for build not running"})]
-        (let
-          [r (rm/eval! "s-shadow-lost"
-                       {:host "localhost" :port 9999 :build "app" :dir "/p"}
-                       {:code "1"})]
+        (let [r (rm/eval! {:host "localhost" :port 9999 :build "app" :dir "/p"} {:code "1"})]
           (expect (nil? (get r "value")))
           (expect (str/includes? (get r "error_message") "watch for build not running"))
           (expect (str/includes? (get r "message") "shadow-cljs watch app")))))
@@ -1067,7 +1063,7 @@
            shadow-repl/eval! (fn [_ _]
                                (throw (ex-info "a JVM eval must not go through shadow" {})))]
 
-          (rm/eval! "s-shadow-jvm" {:host "devbox.internal" :port 4001} {:code "(+ 1 1)"})
+          (rm/eval! {:host "devbox.internal" :port 4001} {:code "(+ 1 1)"})
           (expect (= ["devbox.internal" 4001] [(:host @captured) (:port @captured)]))))))
 
 (defdescribe
@@ -1083,14 +1079,11 @@
             :external? true
             :dialect :cljs
             :build "app"
-            :target :node-script
-            :session-token "tok-1"})
+            :target :node-script})
 
          shadow-repl/eval!
          (fn [_ _]
-           {:selected? true
-            :result {"value" "\"Hello, REPL!\"" "ns" "cljs.user"}
-            :session-token "tok-1"})
+           {:selected? true :result {"value" "\"Hello, REPL!\"" "ns" "cljs.user"}})
 
          nrepl-client/eval!
          (fn [_]
