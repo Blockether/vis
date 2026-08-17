@@ -138,6 +138,12 @@ def state_del(key):
     return None
 
 
+def state_keys():
+    with _LOCK:
+        # A key written as null reads back as missing, so it is not a key.
+        return sorted(key for key, value in _read_state().items() if value is not None)
+
+
 # -- Talking to the operator --------------------------------------------------
 
 
@@ -730,6 +736,7 @@ _IMPLEMENTATIONS = {
     "state_get": state_get,
     "state_put": state_put,
     "state_del": state_del,
+    "state_keys": state_keys,
     "log": log,
     "notify": notify,
     "shell": shell,

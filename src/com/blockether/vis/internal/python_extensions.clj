@@ -222,6 +222,18 @@
   (aggregate/extension-delete-aggregate! (state-env) {:key (str k) :kind state-kind :scope :global})
   nil)
 
+(defn- state-keys*
+  "Every key `vis.state` can hand back, sorted. A row whose content is nil reads
+   as ABSENT through `state-get*` — JSON null and \"never written\" are one value at
+   this boundary — so it is not a key the mapping has."
+  []
+  (->> (aggregate/extension-list-aggregates (state-env) {:kind state-kind :scope :global})
+       (filter #(some? (:content %)))
+       (keep :aggregate-key)
+       (distinct)
+       (sort)
+       (vec)))
+
 ;; Trusted extension context
 
 ;; Declared host environment (`vis.extension(env=["NAME", ...])`)
@@ -354,6 +366,10 @@
                 "__vis_host_state_del__"
                 (->executable (fn [k]
                                 (state-del!* k))))
+    (.putMember g
+                "__vis_host_state_keys__"
+                (->executable (fn []
+                                (state-keys*))))
     (.putMember g
                 "__vis_host_log__"
                 (->executable

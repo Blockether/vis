@@ -317,10 +317,20 @@ vis.state["repo"] = "acme/widgets"      # write-through
 vis.state.get("repo")                   # read, None when missing
 vis.state.get("count", 0)               # read with default
 "repo" in vis.state                     # membership
-del vis.state["repo"]                   # delete
+del vis.state["repo"]                   # delete — KeyError when there is none
+vis.state.pop("repo", None)             # read it and drop it in one go
+vis.state.setdefault("count", 0)        # write only when missing
+vis.state.update({"repo": "acme/widgets", "count": 0})
+sorted(vis.state)                       # every key this extension owns
+len(vis.state), dict(vis.state)         # …because it is a MutableMapping
+vis.state.clear()                       # drop them all
 ```
 
-Values must be plain data (dicts, lists, strings, numbers, booleans).
+It is a `collections.abc.MutableMapping`, so `pop`, `setdefault`, `update`,
+`clear`, `keys`, `items`, `values`, `len`, iteration and comparison to a dict
+all mean what they mean on a dict. Values must be plain data (dicts, lists,
+strings, numbers, booleans); a key written as `None` is absent, because no host
+can tell a stored null from a key nobody ever wrote.
 
 ### Logging and notifications
 

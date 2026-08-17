@@ -374,6 +374,70 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
                                   (let [read (symbol-fn (registered "counter") 'read)]
                                     (expect (= 7 (get-in (read) [:result "count"])))))))))
 
+(def ^:private state-mapping-py
+  "\"\"\"vis.state as a whole mapping fixture.\"\"\"
+import vis
+
+
+def state_probe():
+    \"\"\"await state_probe() -> {...} — drive vis.state through the mapping surface.\"\"\"
+    vis.state.update({\"repo\": \"acme/widgets\", \"count\": 2})
+    vis.state.setdefault(\"count\", 99)
+    vis.state.setdefault(\"branch\", \"main\")
+    vis.state[\"ghost\"] = None
+    probe = {
+        \"keys\": sorted(vis.state),
+        \"len\": len(vis.state),
+        \"values\": sorted(str(v) for v in vis.state.values()),
+        \"popped\": vis.state.pop(\"count\"),
+        \"default\": vis.state.pop(\"count\", \"gone\"),
+        \"equals\": vis.state == {\"repo\": \"acme/widgets\", \"branch\": \"main\"},
+        \"raised\": False,
+    }
+    try:
+        del vis.state[\"count\"]
+    except KeyError:
+        probe[\"raised\"] = True
+    vis.state.clear()
+    probe[\"cleared\"] = list(vis.state)
+    return probe
+
+
+vis.extension(
+    name=\"state-mapping\",
+    description=\"vis.state mapping fixture.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    alias=\"state\",
+    symbols=[vis.symbol(state_probe, tag=\"mutation\")],
+)
+")
+
+;; Regression: `vis.state` answered five methods, so an extension could not `pop`
+;; (AttributeError) and `list(vis.state)` fell through to the old sequence protocol
+;; — it asked the host for the key `0`.
+(defdescribe state-mapping-test
+             (it "vis.state drives the whole mapping surface across the host boundary"
+                 (with-loaded {"state_mapping.py" state-mapping-py}
+                              (fn [_ _]
+                                (let
+                                  [probe
+                                   (symbol-fn (registered "state-mapping") 'probe)
+
+                                   out
+                                   (:result (probe))]
+
+                                  ;; a key written as None is no key: no host tells a
+                                  ;; stored null from one nobody ever wrote
+                                  (expect (= ["branch" "count" "repo"] (get out "keys")))
+                                  (expect (= 3 (get out "len")))
+                                  (expect (= ["2" "acme/widgets" "main"] (get out "values")))
+                                  (expect (= 2 (get out "popped")))
+                                  (expect (= "gone" (get out "default")))
+                                  (expect (true? (get out "equals")))
+                                  (expect (true? (get out "raised")))
+                                  (expect (= [] (get out "cleared"))))))))
+
 (defdescribe prompt-and-slash-test
              (it "a string prompt normalizes into :ext/prompt-fn"
                  (with-loaded {"counter.py" counter-py}

@@ -26,6 +26,7 @@ _vis_mod.__dict__["_host"] = _vis_types.SimpleNamespace(
     state_get=__vis_host_state_get__,
     state_put=__vis_host_state_put__,
     state_del=__vis_host_state_del__,
+    state_keys=__vis_host_state_keys__,
     log=__vis_host_log__,
     notify=__vis_host_notify__,
     shell=__vis_host_shell__,

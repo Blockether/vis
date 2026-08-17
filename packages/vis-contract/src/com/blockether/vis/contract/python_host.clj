@@ -32,7 +32,9 @@
 
 (s/def :op/name (s/and non-blank-string? #(re-matches #"[a-z][a-z0-9_]*" %)))
 (s/def :op/global (s/and non-blank-string? #(re-matches #"__vis_host_[a-z0-9_]+__" %)))
-(s/def :op/arity (s/int-in 1 4))
+;; An op that takes nothing is still an op: enumeration asks the host for the
+;; whole key list and passes no argument at all.
+(s/def :op/arity (s/int-in 0 4))
 (s/def :op/summary non-blank-string?)
 (s/def :op/outside #{:outside/local :outside/prompt :outside/refuse})
 (s/def :op/refusal non-blank-string?)

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- fix(extensions): make `vis.state` a whole mapping — `pop`, `setdefault`, `update`, `clear`, keys and iteration
 - refactor(editing): remove structural editing — `struct_index`, `struct_nodes` and `struct_patch` are gone; `grep` → `cat` → `patch` is the whole editing surface
 - feat(python): cover asyncio queues, locks, futures and timeouts in the sandbox shim
 - fix(python): settle a tool handed to `asyncio.to_thread` / `run_in_executor` inside its `gather` slot

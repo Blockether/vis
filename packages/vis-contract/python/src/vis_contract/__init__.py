@@ -100,6 +100,9 @@ class Host(Protocol):
     def state_del(self, key: str) -> Any:
         """Drop one key from the extension's durable state."""
 
+    def state_keys(self) -> Any:
+        """List every key the extension's durable state holds."""
+
     def log(self, level: str, message: str) -> Any:
         """Emit one engine log line at a level."""
 

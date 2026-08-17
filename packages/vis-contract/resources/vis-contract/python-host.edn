@@ -14,7 +14,7 @@
 ;;   :outside/local   a real local implementation: a file, stderr, a subprocess.
 ;;   :outside/prompt  the terminal stands in for the human channel Vis would raise.
 ;;   :outside/refuse  no honest local answer exists, and `:op/refusal` says why.
-{:contract/version 2
+{:contract/version 3
  :contract/ops
  [{:op/name "state_get"
    :op/global "__vis_host_state_get__"
@@ -30,6 +30,11 @@
    :op/global "__vis_host_state_del__"
    :op/arity 1
    :op/summary "Drop one key from the extension's durable state."
+   :op/outside :outside/local}
+  {:op/name "state_keys"
+   :op/global "__vis_host_state_keys__"
+   :op/arity 0
+   :op/summary "List every key the extension's durable state holds."
    :op/outside :outside/local}
   {:op/name "log"
    :op/global "__vis_host_log__"

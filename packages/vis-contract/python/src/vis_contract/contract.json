@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "ops": [
     {
       "name": "state_get",
@@ -20,6 +20,13 @@
       "global": "__vis_host_state_del__",
       "arity": 1,
       "summary": "Drop one key from the extension's durable state.",
+      "outside": "local"
+    },
+    {
+      "name": "state_keys",
+      "global": "__vis_host_state_keys__",
+      "arity": 0,
+      "summary": "List every key the extension's durable state holds.",
       "outside": "local"
     },
     {

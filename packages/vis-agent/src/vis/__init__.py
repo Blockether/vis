@@ -23,6 +23,7 @@ except NameError:  # Installed from PyPI: no host in the room, so bring one.
     _host = outside.host
 
 import inspect
+from collections.abc import MutableMapping as _MutableMapping
 
 _registration = {"spec": None}
 
@@ -334,25 +335,54 @@ def strings_of(value):
     return out
 
 
-class _State:
+class _State(_MutableMapping):
+    """The extension's durable store, as a mapping.
+
+    A real `MutableMapping`, so `pop`, `setdefault`, `update`, `clear`, `keys`,
+    `items`, `values`, `len` and iteration mean what they mean on a dict, and
+    comparing one to a dict compares contents. Five methods used to be the whole
+    surface: `vis.state.pop(key)` was an AttributeError, and `list(vis.state)`
+    fell through to the old sequence protocol and asked the host for the key `0`.
+
+    A read is one host call for the key it names — never a copy of the store;
+    only iteration and `len` ask for the key list. A key written as `None` is
+    absent, because no host can tell a stored JSON null from a key nobody wrote.
+    """
+
+    def _keys(self):
+        # Inside Vis the host answers a polyglot list; outside it, a real one.
+        return [str(key) for key in _host.state_keys()]
+
     def get(self, key, default=None):
-        v = _host.state_get(str(key))
-        return default if v is None else v
+        # The mixin would go through `__getitem__` and catch the KeyError it just
+        # made; asking the host once is the whole read.
+        value = _host.state_get(str(key))
+        return default if value is None else value
 
     def __getitem__(self, key):
-        v = _host.state_get(str(key))
-        if v is None:
+        value = _host.state_get(str(key))
+        if value is None:
             raise KeyError(key)
-        return v
+        return value
 
     def __setitem__(self, key, value):
         _host.state_put(str(key), value)
 
     def __delitem__(self, key):
+        # `state_del` forgives a key that was never there, so this read is the
+        # KeyError a mapping owes its caller — and what `pop` reports.
+        if _host.state_get(str(key)) is None:
+            raise KeyError(key)
         _host.state_del(str(key))
 
     def __contains__(self, key):
         return _host.state_get(str(key)) is not None
+
+    def __iter__(self):
+        return iter(self._keys())
+
+    def __len__(self):
+        return len(self._keys())
 
 
 state = _State()

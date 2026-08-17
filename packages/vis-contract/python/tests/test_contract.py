@@ -50,7 +50,7 @@ def test_every_op_is_completely_declared():
     for name, op in vis_contract.OPS.items():
         assert op["name"] == name
         assert op["global"] == f"__vis_host_{name}__"
-        assert 1 <= op["arity"] <= 3
+        assert 0 <= op["arity"] <= 3
         assert op["summary"].strip()
         assert op["outside"] in {"local", "prompt", "refuse"}
 

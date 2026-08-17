@@ -74,14 +74,17 @@ def test_any_object_that_satisfies_the_protocol_can_be_the_host(monkeypatch):
     vis.log("info", "hello")
     vis.notify("done")
     vis.state["seat"] = 4
-    del vis.state["seat"]
+    # This host records instead of storing, so the read that guards a delete finds
+    # nothing — and a mapping owes its caller a KeyError for that.
+    with pytest.raises(KeyError):
+        del vis.state["seat"]
     vis.reveal("vis-secret:abc")
 
     assert [name for name, _ in stranger.calls] == [
         "log",
         "notify",
         "state_put",
-        "state_del",
+        "state_get",
         "reveal_secret",
     ]
 
@@ -112,6 +115,43 @@ def test_state_survives_the_call_that_wrote_it(outside_home):
     del vis.state["deploy"]
     assert "deploy" not in vis.state
     assert vis.state.get("deploy", "gone") == "gone"
+
+
+def test_state_is_a_whole_mapping(outside_home):
+    # Regression: `vis.state` answered five methods, so `pop` raised
+    # AttributeError and `list(vis.state)` fell through to the sequence protocol
+    # and asked the host for the key `0`.
+    vis.state.update({"repo": "acme/widgets", "count": 2})
+    assert vis.state.setdefault("count", 99) == 2
+    assert vis.state.setdefault("branch", "main") == "main"
+
+    assert sorted(vis.state) == ["branch", "count", "repo"]
+    assert len(vis.state) == 3
+    assert sorted(vis.state.keys()) == ["branch", "count", "repo"]
+    assert ("count", 2) in vis.state.items()
+    assert sorted(vis.state.values(), key=str) == [2, "acme/widgets", "main"]
+    assert dict(vis.state) == {"repo": "acme/widgets", "count": 2, "branch": "main"}
+    assert vis.state == {"repo": "acme/widgets", "count": 2, "branch": "main"}
+
+    assert vis.state.pop("count") == 2
+    assert vis.state.pop("count", "gone") == "gone"
+    with pytest.raises(KeyError):
+        vis.state.pop("count")
+    with pytest.raises(KeyError):
+        del vis.state["count"]
+
+    vis.state.clear()
+    assert dict(vis.state) == {}
+    assert json.loads((outside_home / "state.json").read_text()) == {}
+
+
+def test_a_key_written_as_null_is_no_key_at_all():
+    # JSON null and "never written" are one value at this boundary, so a mapping
+    # that listed the key would then refuse to hand it back.
+    vis.state["ghost"] = None
+    assert "ghost" not in vis.state
+    assert list(vis.state) == []
+    assert vis.state.get("ghost", "gone") == "gone"
 
 
 def test_a_secret_is_a_handle_until_it_is_revealed():
