@@ -277,6 +277,15 @@ export function renderSessionsScreen({
       release?.();
       release = null;
     },
+    /**
+     * The gateway's own rows change under the reader: a turn landing on another
+     * machine, a session created elsewhere. Every later read from that machine
+     * answers these, so the next poll is real news.
+     */
+    setRows(index: number, rows: Session[]) {
+      const machine = byOrigin.get(new URL(conns[index].url).origin);
+      if (machine) machine.sessions = rows.map((row) => ({ ...row }));
+    },
     /** Hand the list a new filter, the way the app bar's field does. */
     setQuery(next: string) {
       shownQuery = next;

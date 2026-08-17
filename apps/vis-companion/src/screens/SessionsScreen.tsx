@@ -14,6 +14,7 @@ import {
   LIST_EDGE_END,
   LIST_FRAME,
   LiveCount,
+  LoadMore,
   MachineMark,
   MachineRail,
   MachineSwitcher,
@@ -56,6 +57,7 @@ import {
   useListScrollPark,
   type ListAnchor,
 } from '../lib/list-scroll';
+import { EPOCH_STALE_AWAY_MS, holdOrder, useOrderEpoch } from '../lib/order-epoch';
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
 import { SwipeActions } from '../components/SwipeActions';
 import {
@@ -105,6 +107,7 @@ import {
   sessionIsListed,
   sessionIsLive,
   sessionNeedsInput,
+  sessionMillis,
   sessionOrder,
   timeLabel,
   withSearchHits,
@@ -504,6 +507,10 @@ export function SessionsScreen({
     [],
   );
 
+  // The order the list is HELD in is renewed by reader actions that legitimately
+  // move a row, and this ref is how a callback declared above the hook reaches it.
+  const adoptRef = useRef<() => void>(() => {});
+
   // The star belongs to the GATEWAY, and this is the one place that asks it to move.
   // The row is repainted first so the mark lands in the SAME commit as the tap, the
   // PATCH follows, and the row the gateway echoes replaces the guess. A star this
@@ -527,6 +534,9 @@ export function SessionsScreen({
       patchMachine(key, (machine) =>
         withRank(starring ? nextFavoriteRank(machine.sessions ?? []) : null)(machine),
       );
+      // A star DOES move its row (`sessionOrder` bands starred rows first) and the
+      // reader asked for that, so this is a safe moment to take the order.
+      adoptRef.current();
       void api
         .setSessionFavorite(session.id, starring)
         .then((row) => patchMachine(key, withRank(favoriteRank(row))))
@@ -780,8 +790,11 @@ export function SessionsScreen({
     const timer = window.setInterval(refreshLiveStates, 10_000);
     // Waking is the one moment the rows are guaranteed stale, and a suspended
     // poll may still be latched: drop the latch, then refresh.
-    const stopWake = onWake(() => {
+    const stopWake = onWake(({ awayMs }) => {
       pollStartedAt.current = null;
+      // Away long enough that "where you were" stopped being a place: come back to
+      // what is current, the ORDER included (see `lib/order-epoch`).
+      if (awayMs >= EPOCH_STALE_AWAY_MS) adoptRef.current();
       refreshLiveStates();
     });
     return () => {
@@ -1093,13 +1106,63 @@ export function SessionsScreen({
     });
   }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages]);
 
+  // NOTHING MOVES WHILE THE READER IS LOOKING AT IT (see `lib/order-epoch`).
+  //
+  // The gateway's key is content time only now, and no band lifts a running or
+  // parked session over the rest, so nothing this device does can move a row.
+  // One mover is left and it cannot be removed: another machine — or another
+  // turn on this one — writing content while this list is on screen. The answer
+  // that arrives is correct and the rows still slide under the thumb, which was
+  // the whole report. So the order is HELD as of the last moment the reader
+  // agreed to it: polls repaint those rows IN PLACE, arrivals deeper than
+  // everything held append (that is paging), and a promotion waits behind the
+  // count above the list.
+  //
+  // The view key is the QUESTION the rows answer: scoping to another machine or
+  // typing a query is a different answer, with no reading position to protect.
+  //
+  // A FLEET STILL ANSWERING IS NOT AN ORDER: machines land one by one and a query
+  // is served by a round trip per gateway, so an epoch taken mid-arrival would
+  // park the machine that answered second behind the pill. Until every machine in
+  // scope has spoken — and while a query is live at all, because a search is the
+  // reader's own question and the gateway's answer to it IS the order — the rows
+  // are painted exactly as they came.
+  const naturalIds = useMemo(
+    () => filtered.flatMap((entry) => entry.sessions.map((session) => session.id)),
+    [filtered],
+  );
+  const isOrderSettled =
+    !searchNeedle && !searchPending && sessions !== null && isFleetLoaded(machines, scope);
+  const { epoch, adopt } = useOrderEpoch(
+    `${scope}\u0000${searchNeedle}`,
+    naturalIds,
+    isOrderSettled,
+  );
+  adoptRef.current = adopt;
+
+  const heldRows = useMemo(
+    () =>
+      filtered.map((entry) => ({
+        machine: entry.machine,
+        ...holdOrder(epoch, entry.sessions, (session) => ({
+          id: session.id,
+          millis: sessionMillis(session),
+        })),
+      })),
+    [epoch, filtered],
+  );
+
+  const pendingCount = useMemo(
+    () => heldRows.reduce((count, entry) => count + entry.pending.length, 0),
+    [heldRows],
+  );
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
   const searchCounts = useMemo(() => searchTally(filtered), [filtered]);
 
   const visible = useMemo(
-    () => (sessions === null ? null : filtered.flatMap((entry) => entry.sessions)),
-    [filtered, sessions],
+    () => (sessions === null ? null : heldRows.flatMap((entry) => entry.rows)),
+    [heldRows, sessions],
   );
 
   // THE DEMAND IS PINNED, NEVER LIFTED.
@@ -1584,14 +1647,14 @@ export function SessionsScreen({
   // are built from ITS rows only.
   const sections = useMemo(
     () =>
-      filtered.map((entry) => ({
+      heldRows.map((entry) => ({
         machine: entry.machine,
         // Group identity and every create action keep the gateway's canonical path.
         // Home-shortening is paint only; feeding `~/vis` back as an API root is how an
         // older gateway produced the impossible `/…/vis/~/vis` directory.
-        groups: groupByWorkDir(entry.sessions),
+        groups: groupByWorkDir(entry.rows),
       })),
-    [filtered],
+    [heldRows],
   );
 
   // The projects the "remove sessions" step offers are the ones this machine is
@@ -1878,6 +1941,22 @@ export function SessionsScreen({
           onConfirmDelete={confirmDelete}
           onCancelDelete={cancelDelete}
         />
+        {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
+            is where those rows go. Rows fresher than the oldest row on screen are
+            counted here instead of being inserted under the thumb; the tap is the
+            reader saying when. */}
+        {pendingCount > 0 && (
+          <LoadMore
+            isEarlier
+            label={`Show ${pendingCount} newer ${pendingCount === 1 ? 'session' : 'sessions'}`}
+            onClick={() => {
+              adopt();
+              listRef.current?.scrollTo({ top: 0 });
+            }}
+          >
+            {pendingCount === 1 ? '1 newer session' : `${pendingCount} newer sessions`}
+          </LoadMore>
+        )}
         {sessions === null ? (
           <NavigatorSkeleton />
         ) : visible?.length === 0 ? (

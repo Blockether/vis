@@ -529,7 +529,7 @@ function dateMillis(value?: string): number {
  * event, a model switch, a daemon start re-stamping the whole fleet), so ranking by
  * it made merely opening a session the freshest thing on the list.
  */
-function sessionMillis(session: Session): number {
+export function sessionMillis(session: Session): number {
   return dateMillis(session.modified_at ?? session.created_at);
 }
 
