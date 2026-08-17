@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GatewayClient } from "../lib/gateway";
 import { DocOverlay } from "./DocArtifact";
+import { AttachmentRail } from "./ChatContent";
 import { resetAnnotationDraftCache } from "../lib/annotation-drafts";
 
 // An opened document keeps unsaved remarks on the device (`lib/annotation-drafts`); these
@@ -250,5 +251,77 @@ describe("an artifact opened from the transcript", () => {
     expect(document.querySelector('button[aria-label^="Draw on page"]')).toBe(
       null,
     );
+  });
+});
+
+// A REMARK LIVES IN THE FILE, SO A CUT IS READ WITH THE REMARKS IT CARRIES.
+//
+// Asked once the transcript collapsed a revised note into one row: and stepping back
+// into those versions, are the comments there too? Nothing pinned it. A remark is not
+// metadata beside the artifact, it is a `## Comments` section INSIDE its bytes
+// (`lib/markdown-annotations`), and the band's version cell hands the tile another cut
+// to FETCH — so what comes back must be that cut's prose and that cut's remarks, never
+// the newest ones painted over an older document.
+describe("a document read back through its own versions", () => {
+  const cut = (index: number, version: number, size: number) => ({
+    filename: "PLAN.md",
+    media_type: "text/markdown",
+    size,
+    iteration_id: "i1",
+    index,
+    version,
+  });
+
+  const bytes: Record<string, string> = {
+    "blob:PLAN.md#0":
+      "# Release plan\n\nWe cut on Friday.\n\n## Comments\n\n- **Whole document** — Ship the rail collapse first.\n",
+    "blob:PLAN.md#1":
+      "# Release plan\n\nWe cut on Monday.\n\n## Comments\n\n- **Whole document** — The band reads better now.\n",
+  };
+
+  it("opens an older cut with the comments that cut was saved with", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => new Response(bytes[String(url)] ?? "")),
+    );
+    const asked: number[] = [];
+    const client = {
+      attachmentUrl: async (_sid: string, _iteration: string, index: number) => {
+        asked.push(index);
+        return `blob:PLAN.md#${index}`;
+      },
+      retainAttachment: () => () => {},
+    } as unknown as GatewayClient;
+
+    await act(async () => {
+      root.render(
+        <AttachmentRail
+          client={client}
+          sid="s1"
+          attachments={[cut(0, 1, 12_700), cut(1, 2, 12_400)]}
+        />,
+      );
+    });
+    await settle();
+
+    press('[aria-label="Open PLAN.md"]');
+    await settle();
+    // The one row opens on the NEWEST cut, and that cut's own remark is in the document.
+    expect(document.body.textContent).toContain("We cut on Monday.");
+    expect(document.body.textContent).toContain("The band reads better now.");
+
+    press('[aria-label="Versions of PLAN.md"]');
+    await settle();
+    press('[aria-label="Read v1 of PLAN.md"]');
+    await settle();
+
+    // v1 is fetched by ITS OWN index, and arrives with its prose and its remark.
+    expect(asked).toEqual([1, 0]);
+    expect(document.body.textContent).toContain("We cut on Friday.");
+    expect(document.body.textContent).toContain("Ship the rail collapse first.");
+    expect(document.body.textContent).not.toContain("The band reads better now.");
+    expect(
+      document.querySelector('[aria-label="Versions of PLAN.md"]')?.textContent,
+    ).toContain("v1 of 2");
   });
 });
