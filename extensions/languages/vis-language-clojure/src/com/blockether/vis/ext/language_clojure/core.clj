@@ -488,8 +488,7 @@
     {:code code :repaired? false}
     (let
       [verdict (balance/rebalance {:balancer repair/fix-delimiters
-                                   :parses-clean? (fn [^String s]
-                                                    (not (repair/delimiter-error? s)))
+                                   :parses-clean? repair/reads-clean?
                                    :source code
                                    :spans [[1 (max 1 (count (str/split-lines code)))]]
                                    :subject "this file has"})]
