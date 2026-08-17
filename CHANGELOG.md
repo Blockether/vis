@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(companion): pull the sessions list down to open the fleet-wide search
 - fix(companion): draw the pull-to-search band with the finger instead of snapping it
 - feat(companion): keep an unsaved comment and let it be edited
+- build(ci): build the macOS asset on our own runner, and watch the queue
 
 ## [v0.1.40] - 2026-08-16
 

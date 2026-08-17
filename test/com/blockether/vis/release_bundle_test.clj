@@ -604,13 +604,50 @@
         ;; One dispatch input moves the job to a bigger CLOUD label for a
         ;; single run, without touching the repository variable.
         (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)))
-  ;; NO RELEASE MAY DEPEND ON A LAPTOP BEING AWAKE. A job whose label matches no
-  ;; online runner queues for 24 hours and then fails, so a self-hosted default
-  ;; shipped tags with no macOS asset and no error until the next day.
-  (it "runs every workflow on hosted runners, never a self-hosted label"
+  ;; Regression, release v0.1.40: the macOS asset was defaulted onto GitHub's
+  ;; free hosted Mac, where native-image ran 5 h 51 min and was killed by the
+  ;; job's own timeout — the tag published with no macOS asset at all. It builds
+  ;; on OUR labelled Apple-silicon builder; the silence a hosted default was
+  ;; bought to remove — a job queueing 24 h when the builder is asleep — is
+  ;; removed by watching that queue from a free runner instead.
+  (it "builds the macOS asset on our own builder, and fails fast when it sleeps"
+      (let
+        [stable
+         (slurp ".github/workflows/native-release.yml")
+
+         macos-job
+         (->> (str/split-lines stable)
+              (drop-while #(not (str/starts-with? % "  macos:")))
+              (take 12)
+              (str/join "\n"))
+
+         pickup
+         (->> (str/split-lines stable)
+              (drop-while #(not (str/includes? % "macos-pickup:")))
+              (take 25)
+              (str/join "\n"))]
+
+        (expect (str/includes? macos-job "vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64'")
+                macos-job)
+        ;; Six hours was the hosted Mac's price for not finishing; a hung build
+        ;; has to give the workstation back the same morning. (The Linux matrix
+        ;; keeps its 6 h cap: a swapping analysis there is slow, not stuck.)
+        (expect (not (str/includes? macos-job "timeout-minutes: 350")) macos-job)
+        (expect (seq pickup) "no job watches the macOS queue")
+        ;; The watchdog must never wait on the machine it is watching.
+        (expect (str/includes? pickup "runs-on: ubuntu-latest") pickup)
+        ;; `contents: write` at the top of that file REPLACES the default token
+        ;; scopes, so reading this run's job list has to be granted explicitly.
+        (expect (str/includes? pickup "actions: read") pickup)
+        (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
+        (expect (str/includes? stable "::error::No runner labelled") stable)))
+  ;; The builder belongs to the STABLE macOS asset alone: a build pins every
+  ;; core and ~15 GiB, so no other workflow may take the workstation away.
+  (it "names the Apple-silicon builder in the native release only"
       (doseq
         [workflow (->> (file-seq (io/file ".github/workflows"))
-                       (filter #(str/ends-with? (.getName ^java.io.File %) ".yml")))]
+                       (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
+                       (remove #(= "native-release.yml" (.getName ^java.io.File %))))]
         (let
           [directives (->> (str/split-lines (slurp workflow))
                            (remove #(str/starts-with? (str/triml %) "#"))
@@ -618,10 +655,7 @@
                            str/lower-case)]
           (expect (not (str/includes? directives "self-hosted")) (.getPath ^java.io.File workflow))
           (expect (not (str/includes? directives "vis-macos-arm64"))
-                  (.getPath ^java.io.File workflow))))
-      ;; And the macOS default is the free hosted Apple-silicon class.
-      (expect (str/includes? (slurp ".github/workflows/native-release.yml")
-                             "vars.VIS_MACOS_ARM64_RUNNER || 'macos-26'")))
+                  (.getPath ^java.io.File workflow)))))
   ;; The tuning history in native-release.yml records runs labelled "no extra
   ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
   ;; native-image's OWN sizing has never actually been measured for this image.
