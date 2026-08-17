@@ -269,3 +269,31 @@
       (try (expect (false? (t/enabled? "vision_fallback_describe")))
            (finally (t/reset-to-default! "vision_fallback_describe")))
       (expect (true? (t/enabled? "vision_fallback_describe")))))
+
+(defdescribe
+  provider-fallback-toggle-registry-test
+  "`provider_fallback` decides whether a failed turn may be answered by a model the human
+   did not pick. It ships ON — today's rescue — and every route off the pick reads it."
+  (it "is registered as a persisted boolean that defaults on"
+      (let [spec (t/toggle-spec "provider_fallback")]
+        (expect (some? spec))
+        (expect (= :boolean (:type spec)))
+        (expect (true? (:default spec)))
+        (expect (true? (:persist? spec)))
+        (expect (= :vis (:owner spec)))
+        (expect (= :provider (:group spec)))
+        (expect (t/settings-description? (:description spec)))))
+  (it "shows up in the Settings list of BOTH channels from that one declaration"
+      ;; No `:channels` set and no `:settings? false`, so the TUI dialog and the
+      ;; companion sheet (`/v1/settings`) each render it without their own wiring.
+      (let
+        [ids (fn [specs]
+               (set (map :id specs)))]
+        (expect (contains? (ids (t/toggles-for-channel :tui)) "provider_fallback"))
+        (expect (contains? (ids (t/toggles-for-channel :web)) "provider_fallback"))))
+  (it "reads true by default and follows an override"
+      (expect (true? (t/enabled? "provider_fallback")))
+      (t/set-value! "provider_fallback" false)
+      (try (expect (false? (t/enabled? "provider_fallback")))
+           (finally (t/reset-to-default! "provider_fallback")))
+      (expect (true? (t/enabled? "provider_fallback")))))

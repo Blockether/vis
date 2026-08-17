@@ -611,4 +611,19 @@
        :owner :vis
        :group :provider
        :persist? true})
+    ;; Automatic fallback is a COST decision the human owns: a rescue on another
+    ;; provider answers in a model they did not pick and starts that provider's
+    ;; prompt cache from cold (~4x input spend for the rest of the session,
+    ;; issue #154). ON keeps today's rescue; OFF makes the pick a contract and
+    ;; surfaces the provider's own failure instead of quietly re-routing.
+    (register-toggle!
+      {:id "provider_fallback"
+       :label "Automatic provider fallback"
+       :description
+       "Rescue a failed turn on another provider or model. Off keeps the session on the picked one."
+       :type :boolean
+       :default true
+       :owner :vis
+       :group :provider
+       :persist? true})
     true))

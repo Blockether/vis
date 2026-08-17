@@ -215,8 +215,11 @@
       ;; current model + available models, so the agent can route a sub_loop
       ;; child by cost (read-only). `:routing env` is loop-internal; its VALUE
       ;; is built string-keyed at the loop because it crosses the boundary.
+      ;; A turn RESCUED onto another provider overrides that plan: the session
+      ;; dict must name the model that ANSWERED, because `session_utilization`
+      ;; is measured against THAT model's window, not the pinned one's.
       (seq (:routing env))
-      (assoc "session_routing" (:routing env)))))
+      (assoc "session_routing" (merge (:routing env) (eng/served-route ctx))))))
 
 (defn session-snapshot
   "Read-only data mirror of the Python `session` dict bound in the sandbox.

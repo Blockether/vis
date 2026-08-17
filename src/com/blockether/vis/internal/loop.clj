@@ -494,6 +494,28 @@
   (and (copilot-provider? (:provider resolved-model))
        (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
 
+(def ^:private PROVIDER_FALLBACK_TOGGLE
+  "Feature-toggle id gating every AUTOMATIC route away from the provider+model a
+   session picked. Registered once in `toggles`, so it appears in the TUI Settings
+   dialog and the companion Settings sheet from that one declaration."
+  "provider_fallback")
+
+(defn- provider-fallback-allowed?
+  "True while a failed turn may be rescued on a DIFFERENT provider or model.
+
+   OFF makes the session's pick a contract: a dead credential, an exhausted rate
+   limit or a safety refusal ends the turn with that provider's own error instead
+   of quietly answering from somewhere else. Fallback is never free — the peer's
+   prompt cache is cold (~4x input spend for the rest of the session, issue #154)
+   and the answer arrives from a model the human did not choose — so whether to pay
+   that is theirs to decide.
+
+   Reads the VALUE rather than `enabled?`: an unregistered id (a JVM that never
+   loaded the toggle defaults) must keep TODAY's rescue behaviour, while `enabled?`
+   is deliberately fail-CLOSED, which here would strand every turn on one provider."
+  []
+  (not (false? (toggles/value-of PROVIDER_FALLBACK_TOGGLE))))
+
 (def ^:private refusal-fallback-models
   "Ordered models Vis retries when the CURRENT model's Anthropic safety
    classifier DECLINES the request (`stop_reason: refusal`). Anthropic
@@ -506,12 +528,32 @@
   "The refusal-fallback chain for `resolved-model`, or nil. Only Anthropic's
    Fable/Opus/Sonnet 5 models emit `stop_reason: refusal`, so this targets those
    by name and drops the current model — so we never attach a pointless fallback
-   elsewhere, and never retry into the very model that just refused."
-  [resolved-model]
-  (let [nm (str (:name resolved-model))]
-    (when (re-find #"(?i)claude-(opus|fable|sonnet)-5" nm)
-      (not-empty (vec (remove #{nm} refusal-fallback-models))))))
+   elsewhere, and never retry into the very model that just refused.
 
+   nil while `provider_fallback` is off: a refusal switch still answers from a
+   model the human did not pick."
+  [resolved-model]
+  (when (provider-fallback-allowed?)
+    (let [nm (str (:name resolved-model))]
+      (when (re-find #"(?i)claude-(opus|fable|sonnet)-5" nm)
+        (not-empty (vec (remove #{nm} refusal-fallback-models)))))))
+
+(defn- pin-routing-to-model
+  "Routing svar cannot walk away from once the human turned `provider_fallback` off.
+
+   Fallback ON returns `routing` untouched — today's rescue ladder decides. Fallback OFF
+   stamps the model THIS call already resolved to as an explicit `:provider`/`:model` pin,
+   so svar's own provider walk has nowhere to land and a failure comes back as the pinned
+   provider's own error instead of a peer's answer. A half-named resolution (no provider,
+   or a blank name) is left alone: pinning half a route names a different model, not this
+   one."
+  [routing resolved-model]
+  (let [model-name (not-empty (str (:name resolved-model)))]
+    (cond-> (or routing {})
+      (and (not (provider-fallback-allowed?)) (:provider resolved-model) model-name)
+      (assoc :provider
+        (:provider resolved-model) :model
+        model-name))))
 (def ^:private casual-request-pattern
   #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
 
@@ -1998,6 +2040,20 @@
                           (not pressured?)
                           (dissoc "engine_overbudget_hint_turn")))))))
 
+(defn- stamp-served-route!
+  "Record the provider/model that ACTUALLY answered this iteration on the ctx-atom.
+
+   `session_routing` and `session_utilization` are what the model budgets against,
+   and both used to name the PINNED model for the whole turn. A turn rescued onto a
+   peer therefore reported the pin's context window while talking to the peer's — a
+   1M-window pin rescued onto a 128K peer read ~90% free right up to the provider's
+   rejection. The stamp carries the turn it belongs to, so it can never be read as
+   the next turn's plan (`ctx-engine/served-route`)."
+  [env iteration-result]
+  (when-let [ctx-atom (:ctx-atom env)]
+    (swap! ctx-atom ctx-engine/stamp-served-route
+      (:llm-provider iteration-result)
+      (:llm-model iteration-result))))
 (defn- stamp-iter-universe!
   "Record the raw iteration universe while pricing only `wire-iters` — the
    CURRENT provider-visible projection. `wire-iters` defaults to
@@ -4353,9 +4409,11 @@
        ;; empty so we pay full input rate to bootstrap. Keep fallback
        ;; within the active provider unless the caller explicitly
        ;; overrides.
-       base-routing (or routing {})
-       sticky-routing (cond-> base-routing
-                        (not (contains? base-routing :on-transient-error))
+       ;; Fallback OFF pins THIS call to the model it resolved to, so svar's own
+       ;; provider walk has nowhere else to land (`pin-routing-to-model`).
+       pinned-routing (pin-routing-to-model routing resolved-model)
+       sticky-routing (cond-> pinned-routing
+                        (not (contains? pinned-routing :on-transient-error))
                         (assoc :on-transient-error :fallback-model-in-the-same-provider))
        ;; svar's empty-reply resend ladder (same model, same request) is
        ;; invisible mid-call — collect each re-send here and surface it as
@@ -5539,7 +5597,10 @@
    re-fell-back on the very next iteration, ~12-16s later (issue #114). A COOLED pin
    is released exactly the way [[auth-fallback-routing]] releases it, which is the
    route the previous fallback already took. A pin on a HEALTHY provider is left
-   alone, and the provider's own accepted request re-admits it immediately."
+   alone, and the provider's own accepted request re-admits it immediately.
+
+   No-op while `provider_fallback` is off: with nowhere to route, excluding the
+   cooled provider would only trade its real error for a routing failure."
   [routing]
   (let
     [current
@@ -5551,7 +5612,7 @@
      pinned
      (or (:provider current) (:force-provider current))]
 
-    (if (empty? cooled)
+    (if (or (empty? cooled) (not (provider-fallback-allowed?)))
       current
       (cond->
         (-> current
@@ -5643,7 +5704,8 @@
 
 (defn- auth-fallback-routing
   "Build one cross-provider rescue route after OAuth refresh/backoff is exhausted.
-   Returns nil after visible output, without a provider id, or once enabled."
+   Returns nil after visible output, without a provider id, once enabled, or while
+   `provider_fallback` is off."
   [^Throwable e routing resolved-model]
   (let
     [data
@@ -5662,6 +5724,7 @@
      (or routing {})]
 
     (when (and provider
+               (provider-fallback-allowed?)
                (auth-error-shaped? e)
                (not output-started?)
                (not= :fallback-provider (:on-auth-error current)))
@@ -6126,6 +6189,38 @@
 
     (or hit (resolve-effective-model router))))
 
+(defn- turn-served-model
+  "Model map for the provider/model that actually answered this turn's last request,
+   or nil before anything has. Falls back to the router's root through
+   `resolve-model-info` when the served pair is no longer in the fleet."
+  [env]
+  (when-let [ctx-atom (:ctx-atom env)]
+    (when-let [served (ctx-engine/served-route @ctx-atom)]
+      (resolve-model-info (:router env) (get served "provider") (get served "model")))))
+
+(defn- iteration-context-limit
+  "Per-call input ceiling the pressure hint and `session_utilization` measure
+   against. Walks four sources in priority order:
+     1. caller-supplied `:max-context-tokens` (turn-level override; rarely set
+        today — TUI `vis/send!` does not pass it).
+     2. the model that ACTUALLY served the last request, then
+     3. the session's pinned model — `:input-limit` (models.dev input cap, e.g.
+        Copilot Claude-sonnet-4.6 = 128K) before `:context` (input+output budget,
+        used when models.dev exposes no separate input cap).
+     4. 200_000 for unknown models, matching the historical advisory ceiling.
+
+   Without (1)-(3) the hint fired off a uniform 200K baseline and either pestered
+   the model too early on a 1M-context Anthropic native call or, worse, under-warned
+   on a 128K Copilot call. The SERVED model outranks the pin because a rescued turn
+   keeps talking to the peer for the rest of the turn: measuring it against the
+   window it left is how a session reads `90% headroom` into a hard rejection."
+  [max-context-tokens served-model pinned-model]
+  (or max-context-tokens
+      (:input-limit served-model)
+      (:context served-model)
+      (:input-limit pinned-model)
+      (:context pinned-model)
+      200000))
 (defn router-for-model
   "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,
    so svar's router picks + falls back accordingly — WE don't pick one model, we
@@ -7197,27 +7292,12 @@
                                 :reasoning-effort reasoning-effort
                                 :requested-reasoning raw-reasoning-level})
                  pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
-                 ;; `:context-limit` for the `context-pressure-hint`
-                 ;; threshold. Walk three sources in priority order:
-                 ;;   1. caller-supplied `:max-context-tokens` (turn-
-                 ;;      level override; rarely set today — TUI
-                 ;;      `vis/send!` does not pass it).
-                 ;;   2. The resolved model's `:input-limit` (models.dev
-                 ;;      input cap, e.g. Copilot Claude-sonnet-4.6 = 128K).
-                 ;;   3. The resolved model's `:context` (input+output
-                 ;;      budget, used when models.dev exposes no
-                 ;;      separate input cap).
-                 ;;   4. 200_000 fallback for unknown models, matching
-                 ;;      the historical advisory ceiling.
-                 ;; Without this the hint fired off a uniform 200K
-                 ;; baseline and either pestered the model too early
-                 ;; on a 1M-context Anthropic native call or, worse,
-                 ;; under-warned on a 128K Copilot call where the
-                 ;; 50% trigger now lands at ~64K instead of 100K.
-                 effective-context-limit (or max-context-tokens
-                                             (:input-limit pre-resolved-model)
-                                             (:context pre-resolved-model)
-                                             200000)
+                 ;; The window the NEXT request is actually measured against —
+                 ;; the rescued peer's when this turn moved, else the pin's.
+                 ;; Priority and history live on `iteration-context-limit`.
+                 served-model (turn-served-model environment)
+                 effective-context-limit
+                 (iteration-context-limit max-context-tokens served-model pre-resolved-model)
                  _llm-provider-context (cond->
                                          {:selected (llm-id (:provider pre-resolved-model)
                                                             (some-> (:name pre-resolved-model)
@@ -7705,6 +7785,10 @@
                      ;; the pre-call guess: a turn rescued on a peer used to re-admit the
                      ;; dead credential and the next iteration re-probed it (issue #114).
                      _ (note-provider-request-ok! resolved-model iteration-result)
+                     ;; …and `session_routing` / `session_utilization` follow the
+                     ;; provider that answered, so the model budgets against the
+                     ;; window it is now talking to instead of the pin's.
+                     _ (stamp-served-route! environment iteration-result)
                      ;; …and when the pin is the credential that died, the SESSION
                      ;; follows the rescue: the picker chip stops naming a provider
                      ;; this session cannot reach, and the next turn no longer re-pins

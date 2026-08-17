@@ -315,6 +315,46 @@
           (long (Math/round (* 100.0 (/ (double req) (double win))))) "headroom_tokens"
           (max 0 (- win req)))))))
 
+(def served-route-key
+  "ctx key holding the provider/model pair that ACTUALLY answered the last
+   request of the CURRENT turn. `engine_*` is engine bookkeeping: `session-view`
+   never ships it, `enrich-ctx` folds it into the model-facing `session_routing`."
+  "engine_served_route")
+
+(defn stamp-served-route
+  "Pure: record `provider`/`model` as the pair that answered a request during the
+   ctx's current turn. A half-named route (either side blank) leaves ctx
+   untouched — it would be worse than the pin it replaces."
+  [ctx provider model]
+  (let
+    [p
+     (some-> provider
+             name
+             str/trim
+             not-empty)
+
+     m
+     (some-> model
+             str
+             str/trim
+             not-empty)]
+
+    (if (and p m)
+      (assoc ctx
+        served-route-key {"provider" p "model" m "turn" (long (or (get ctx "session_turn") 0))})
+      ctx)))
+
+(defn served-route
+  "Pure: `{\"provider\" .. \"model\" ..}` for THIS turn, or nil.
+
+   A stamp left by an EARLIER turn is ignored rather than pruned: the human may
+   have picked another model in between, and a turn's first request is sent before
+   anything has served it — until then the session pick is the only truth."
+  [ctx]
+  (let [stamp (get ctx served-route-key)]
+    (when (and (map? stamp)
+               (= (long (or (get stamp "turn") -1)) (long (or (get ctx "session_turn") 0))))
+      (not-empty (select-keys stamp ["provider" "model"])))))
 (def model-facing-keys
   "EXACT set of `session_*` keys the model is meant to see. Security access is
    included as an environment-derived value; engine bookkeeping remains hidden."

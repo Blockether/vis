@@ -4416,6 +4416,142 @@
           (expect (= #{} (cooled)))
           (expect (nil? (get @cooldown :rbi-genai)))
           (finally (reset! cooldown {}))))))
+;; Regression, issue #154: nothing let a human REFUSE the rescue. Every automatic route
+;; off the picked model — the cooldown exclusion, the post-refresh rescue, the refusal
+;; switch — happened unasked, answered from a model they had not chosen, and started that
+;; provider's prompt cache from cold for the rest of the session.
+(defdescribe
+  provider-fallback-toggle-test
+  "`provider_fallback` is the human's call. Every automatic route off the session's pick
+   asks it first, and an untouched install still rescues exactly as before."
+  (let
+    [cooldown @#'lp/provider-auth-cooldown
+
+     note! @#'lp/note-provider-auth-cooldown!
+
+     cooldown-routing @#'lp/apply-auth-cooldown-routing
+
+     fallback-routing @#'lp/auth-fallback-routing
+
+     refusals @#'lp/refusal-fallbacks-for
+
+      pin @#'lp/pin-routing-to-model
+     auth-error (ex-info "Unauthorized" {:status 401})
+
+     pinned {:provider :rbi-genai :model "gpt-5"}]
+
+    (it "ships ON, so an untouched install rescues turns exactly as before"
+        (let [spec (toggles/toggle-spec "provider_fallback")]
+          (expect (= :boolean (:type spec)))
+          (expect (true? (:default spec)))
+          (expect (true? (toggles/enabled? "provider_fallback")))))
+    (it "drops a cooled pin and excludes the dead credential while fallback is allowed"
+        (try
+          (reset! cooldown {})
+          (note! :rbi-genai)
+          (let [routed (cooldown-routing pinned)]
+            (expect (= #{:rbi-genai} (:exclude-providers routed)))
+            (expect (= :fallback-provider (:on-auth-error routed)))
+            (expect (nil? (:provider routed))))
+          (finally (reset! cooldown {}))))
+    (it "leaves the pin exactly as it found it once fallback is off"
+        ;; With nowhere to land, excluding the cooled provider would only trade its real
+        ;; 401 for a routing failure that names no credential at all.
+        (try
+          (reset! cooldown {})
+          (note! :rbi-genai)
+          (toggles/set-value! "provider_fallback" false)
+          (expect (= pinned (cooldown-routing pinned)))
+          (finally (toggles/reset-to-default! "provider_fallback")
+                   (reset! cooldown {}))))
+    (it "builds no cross-provider rescue route once fallback is off"
+        (expect (some? (fallback-routing auth-error pinned {:provider :rbi-genai})))
+        (try
+          (toggles/set-value! "provider_fallback" false)
+          (expect (nil? (fallback-routing auth-error pinned {:provider :rbi-genai})))
+          (finally (toggles/reset-to-default! "provider_fallback"))))
+    (it "offers no refusal-fallback model once fallback is off"
+        ;; A safety-classifier switch is still an answer from a model nobody picked.
+        (expect (= ["claude-opus-4-8"] (refusals {:name "claude-opus-5"})))
+        (try
+          (toggles/set-value! "provider_fallback" false)
+          (expect (nil? (refusals {:name "claude-opus-5"})))
+           (finally (toggles/reset-to-default! "provider_fallback"))))
+    (it "pins the call to the model it resolved once fallback is off"
+        ;; Without the pin, svar's own provider walk answers from a peer no matter what
+        ;; Vis excluded upstream — the exclusion list is advice, the pin is a contract.
+        (expect (= {} (pin nil {:provider :rbi-genai :name "gpt-5"})))
+        (try
+          (toggles/set-value! "provider_fallback" false)
+          (expect (= {:provider :rbi-genai :model "gpt-5"}
+                     (pin nil {:provider :rbi-genai :name "gpt-5"})))
+          (expect (= {:capabilities #{:vision} :provider :rbi-genai :model "gpt-5"}
+                     (pin {:capabilities #{:vision}} {:provider :rbi-genai :name "gpt-5"})))
+          (finally (toggles/reset-to-default! "provider_fallback"))))
+    (it "never pins half a route"
+        ;; A provider with no model name — or a name with no provider — would pin a
+        ;; DIFFERENT model than the one this very call resolved.
+        (try
+          (toggles/set-value! "provider_fallback" false)
+          (expect (= {} (pin nil {:provider :rbi-genai})))
+          (expect (= {} (pin nil {:name "gpt-5"})))
+          (finally (toggles/reset-to-default! "provider_fallback"))))))
+
+;; Regression, issue #154: a turn rescued onto a peer kept being MEASURED against the model
+;; it had left. `session["routing"]` named the provider that failed and `session_utilization`
+;; priced the pin's context window, so a 1M-window pin rescued onto a 128K peer read ~90%
+;; free right up to the provider's rejection.
+(defdescribe
+  served-route-follows-the-answer-test
+  "What answered the last request is what the next one is measured against: the served
+   provider/model reaches both the session dict's routing and the context ceiling, and
+   never outlives the turn that observed it."
+  (let
+    [limit @#'lp/iteration-context-limit
+
+     stamp! @#'lp/stamp-served-route!
+
+     served-model @#'lp/turn-served-model
+
+     router {:providers [{:id :pinned :models [{:name "big" :input-limit 1000000}]}
+                         {:id :peer :models [{:name "small" :input-limit 128000}]}]}]
+
+    (it "measures the window of the model that ANSWERED, not the one that was pinned"
+        (expect (= 128000 (limit nil {:input-limit 128000} {:input-limit 1000000}))))
+    (it "keeps the pinned window until something has actually served"
+        (expect (= 1000000 (limit nil nil {:input-limit 1000000}))))
+    (it "lets a caller-supplied ceiling outrank every resolved model"
+        (expect (= 42 (limit 42 {:input-limit 128000} {:input-limit 1000000}))))
+    (it "reads :context when models.dev exposes no separate input cap"
+        (expect (= 300000 (limit nil {:context 300000} {:input-limit 1000000}))))
+    (it "keeps the historical 200K advisory ceiling for a model nothing is known about"
+        (expect (= 200000 (limit nil nil nil))))
+    (it "stamps the provider that answered and resolves it back to that model"
+        (let [ctx-atom (atom {"session_turn" 3})]
+          (stamp! {:ctx-atom ctx-atom :router router} {:llm-provider :peer :llm-model "small"})
+          (expect (= {"provider" "peer" "model" "small"} (eng/served-route @ctx-atom)))
+          (expect (= 128000 (:input-limit (served-model {:ctx-atom ctx-atom :router router}))))))
+    (it "ignores a stamp left by an earlier turn"
+        ;; The human may have picked another model in between, and a turn's first request
+        ;; is sent before anything has served it.
+        (let [ctx-atom (atom {"session_turn" 3})]
+          (stamp! {:ctx-atom ctx-atom} {:llm-provider :peer :llm-model "small"})
+          (swap! ctx-atom assoc "session_turn" 4)
+          (expect (nil? (eng/served-route @ctx-atom)))
+          (expect (nil? (served-model {:ctx-atom ctx-atom :router router})))))
+    (it "refuses a half-named route rather than replacing the pin with it"
+        (let [ctx-atom (atom {"session_turn" 1})]
+          (stamp! {:ctx-atom ctx-atom} {:llm-provider :peer})
+          (expect (nil? (eng/served-route @ctx-atom)))))
+    (it "names the model that answered in the session dict the agent reads"
+        (let [ctx (eng/stamp-served-route {"session_turn" 2 "session_id" "s1"} :peer "small")
+              enriched (ctx-loop/enrich-ctx {:routing {"provider" "pinned" "model" "big"}} ctx)]
+          (expect (= {"provider" "peer" "model" "small"} (get enriched "session_routing")))))
+    (it "still shows the pinned route while the turn has been served by nobody"
+        (let [enriched (ctx-loop/enrich-ctx {:routing {"provider" "pinned" "model" "big"}}
+                                            {"session_turn" 2})]
+          (expect (= {"provider" "pinned" "model" "big"} (get enriched "session_routing")))))))
+
 (defdescribe
   router-with-pinned-model-test
   "A session pick naming a model only the provider's LIVE catalog lists must still
