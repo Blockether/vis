@@ -12,7 +12,7 @@
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
             [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
             [com.blockether.parinferish.balance :as balance]
-            [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
+            [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
@@ -117,7 +117,7 @@
                    (expect (nil? (:ext.engine/alias engine)))
                    (expect (empty? (:ext.engine/symbols engine)))))
              (it "hands the editors a `:balance-fn` instead of wrapping their ops"
-                 ;; The pack no longer intercepts `patch`/`struct_patch` to repair the FRAGMENT a
+                 ;; The pack no longer intercepts `patch` to repair the FRAGMENT a
                  ;; caller passed — that turned an informative refusal into a silently corrupt
                  ;; write. It publishes the repair as data on its language tools and the
                  ;; foundation decides, per edit, whether the repaired FILE is safe to keep.
@@ -715,19 +715,25 @@
   ;; Regression, session 621ba390: a Clojure edit whose replacement was an unbalanced FRAGMENT
   ;; parinfer-repaired ON ITS OWN and retried, so a partial form silently closed itself
   ;; and overwrote a good line; the caller was told only "(delimiters repaired)".
-  (it
-    "repairs a dropped closer on the line the edit wrote, and names it"
-    (let
-      [source
-       "(ns ok)\n\n(defn ok [] 1)\n\n(defn two [] 2)\n"
+  (it "repairs a dropped closer on the line the edit wrote, and names it"
+      (let
+        [source
+         "(ns ok)\n\n(defn ok [] 1)\n\n(defn two [] 2)\n"
 
-       result
-       (zipper/edit "clojure" source [1] :replace "(defn ok [] (inc 1)" {:balancer (clj-balancer)})]
+         spliced
+         (str/replace source "(defn ok [] 1)" "(defn ok [] (inc 1)")
 
-      (expect (true? (:ok? result)))
-      (expect (= "(ns ok)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" (:new-source result)))
-      ;; the repair is NAMED with the character and the line, never a silent footnote
-      (expect (= ["line 3 added `)` → `(defn ok [] (inc 1))`"] (:repairs result)))))
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
+                             :source spliced
+                             :spans [[3 3]]
+                             :original "(defn ok [] 1)"})]
+
+        (expect (true? (:ok? verdict)))
+        (expect (= "(ns ok)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" (:content verdict)))
+        ;; the repair is NAMED with the character and the line, never a silent footnote
+        (expect (= ["line 3 added `)` → `(defn ok [] (inc 1))`"] (:notes verdict)))))
   (it "refuses the reported case: the repair balances a line the edit never wrote"
       (let
         [;; the file from the report — the caller's anchor had drifted onto the binding
@@ -740,7 +746,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source broken
                              :spans [[4 4]]})]
 
@@ -758,7 +764,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source broken
                              :spans [[3 3]]})]
 
@@ -775,7 +781,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source broken
                              :spans [[3 3]]})]
 
@@ -810,7 +816,7 @@
 
          [ln n
           (balance/rebalance {:balancer (clj-balancer)
-                              :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                              :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                               :source (mutate ln mut)
                               :spans [[ln ln]]})])]
 
@@ -846,7 +852,7 @@
             :when (and (seq (str/trim line)) (nil? (str/index-of line ";")))
             :let [v
                   (balance/rebalance {:balancer (clj-balancer)
-                                      :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                                      :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                                       :source (mutate ln (str (str/trimr line) ")"))
                                       :spans [[ln ln]]})]
             :when (:ok? v)]
@@ -866,7 +872,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source broken
                              :spans [[3 3]]})]
 
@@ -894,7 +900,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source source
                              :original original
                              :spans [[4 9]]})]
@@ -907,7 +913,7 @@
                                 "               (mapv str [\"a\" \"b\"])))\n"
                                 "               (mapv str [\"a\" \"b\"]))))\n")
                    (:content verdict)))
-        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
   ;; Regression, session cc1ca6dd: a replacement dropped a docstring's closing `"`. A repair only
   ;; puts back `()[]{}`, so the pack had nothing to answer with and the refusal named a line 56
   ;; BELOW the edit as the one opening an unclosed string — the same replacement was re-sent twice.
@@ -923,7 +929,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source source
                              :original original
                              :spans [[5 5]]})]
@@ -934,7 +940,7 @@
                    (:notes verdict)))
         (expect (= (str/replace source "over the frame.\n" "over the frame.\"\n")
                    (:content verdict)))
-        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
   ;; ClojureScript rides the same grammar, the same pack and the same repair as Clojure, and it had
   ;; no coverage at all: a `#js` literal, a reader conditional or `js/` interop the parser or
   ;; parinfer stumbled on would refuse every cljs edit over a delimiter it could not place.
@@ -954,7 +960,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source source
                              :original original
                              :spans [[5 9]]})]
@@ -968,7 +974,7 @@
                                 "  (js/console.log \"row\" (pr-str (:id d)))\n"
                                 "  (js/console.log \"row\" (pr-str (:id d))))\n")
                    (:content verdict)))
-        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
   (it "puts back a quote a ClojureScript docstring dropped"
       (let
         [original
@@ -982,7 +988,7 @@
 
          verdict
          (balance/rebalance {:balancer (clj-balancer)
-                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                              :source source
                              :original original
                              :spans [[5 5]]})]
@@ -992,7 +998,7 @@
         (expect (= ["line 5 added `\"` → `Reads `js/undefined` as a missing value.\"`"]
                    (:notes verdict)))
         (expect (= original (:content verdict)))
-        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+        (expect (empty? (parse/error-nodes "clojure" (:content verdict))))))
   ;; The INSERTED block, in every shape. A model that writes a fresh form into the middle of a file
   ;; replaced a blank line, so the text it replaced witnesses nothing, and parinfer answers by
   ;; INDENTATION — it closes the form ABOVE the insertion. What the deficit belongs to is the last
@@ -1005,7 +1011,7 @@
 
        clean?
        (fn [s]
-         (empty? (zipper/error-nodes "clojure" s)))
+         (empty? (parse/error-nodes "clojure" s)))
 
        weave
        (fn [ln body]
@@ -1058,7 +1064,7 @@
 
        clean?
        (fn [s]
-         (empty? (zipper/error-nodes "clojure" s)))
+         (empty? (parse/error-nodes "clojure" s)))
 
        weave
        (fn [ln body]
@@ -1132,20 +1138,6 @@
                          :when (:ok? v)]
 
                         [ln i (:content v)]))))))
-  (it "leaves an unrepairable edit refused"
-      (let
-        [source
-         "(ns ok)\n\n(defn ok [] 1)\n"
-
-         result
-         (zipper/edit "clojure"
-                      source
-                      [1]
-                      :replace
-                      "(defn ok [] \"unterminated"
-                      {:balancer (clj-balancer)})]
-
-        (expect (= :syntax-broken (get-in result [:error :reason])))))
   ;; A closer omitted INSIDE a line is the one place indentation cannot help: parinfer closes at
   ;; the line's end, and `(map? x) (str …)` came back as `(map? x (str …))` — a cond clause turned
   ;; into a call, parsing, and written. The text the edit replaced says where it sat instead.
@@ -1169,7 +1161,7 @@
 
          [ln mut
           (balance/rebalance {:balancer (clj-balancer)
-                              :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                              :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                               :source (mutate ln mut)
                               :original shapes-corpus
                               :spans [[ln ln]]})])]
@@ -1204,7 +1196,7 @@
            [ln mut
             (balance/rebalance
               {:balancer (clj-balancer)
-               :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+               :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                :source (str/join
                          "\n"
                          (concat (take (dec (long ln)) lines) [mut] (drop (long ln) lines) [""]))
@@ -1247,7 +1239,7 @@
          [ln mut
           (balance/rebalance
             {:balancer (clj-balancer)
-             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+             :parses-clean? #(empty? (parse/error-nodes "clojure" %))
              :source
              (str/join "\n" (concat (take (dec (long ln)) lines) [mut] (drop (long ln) lines) [""]))
              :original shapes-corpus
@@ -1291,13 +1283,13 @@
           :when rewrote
           :let [intended
                 (splice ln rewrote)]
-          :when (empty? (zipper/error-nodes "clojure" intended))
+          :when (empty? (parse/error-nodes "clojure" intended))
           mut
           (inside-drops rewrote)]
 
          [ln mut intended
           (balance/rebalance {:balancer (clj-balancer)
-                              :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                              :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                               :source (splice ln mut)
                               :original shapes-corpus
                               :spans [[ln ln]]})])]
@@ -1340,11 +1332,11 @@
           :when broken
           :let [intended
                 (file (concat (take i lines) [b a] (drop (+ (long i) 2) lines)))]
-          :when (empty? (zipper/error-nodes "clojure" intended))]
+          :when (empty? (parse/error-nodes "clojure" intended))]
 
          [(inc (long i)) intended
           (balance/rebalance {:balancer (clj-balancer)
-                              :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                              :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                               :source
                               (file (concat (take i lines) [b broken] (drop (+ (long i) 2) lines)))
                               :original shapes-corpus
@@ -1401,7 +1393,7 @@
 
        verdict
        (balance/rebalance {:balancer balance-fn
-                           :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                           :parses-clean? #(empty? (parse/error-nodes "clojure" %))
                            :source
                            (str (str/join "\n" (concat (take at lines) block (drop at lines))) "\n")
                            :original source
@@ -1414,7 +1406,7 @@
       (expect (true? (:ok? verdict)))
       (expect (= [(str "line " (+ (long at) (count block)) " added `)` → `(+ y 1)))`")]
                  (:notes verdict)))
-      (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))
+      (expect (empty? (parse/error-nodes "clojure" (:content verdict))))
       ;; what the window is FOR: what the balancer reads does not grow with the file
       (expect (< @shown 40) (str "the balancer was shown " @shown " lines of " (count lines)))
       (expect (< ms 2000) (str "rebalancing " (count lines) " lines took " ms " ms")))))

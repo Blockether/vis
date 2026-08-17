@@ -104,7 +104,7 @@ describe("Markdown tool card body", () => {
   });
 });
 
-// Regression, companion transcript report: PATCH and STRUCT_PATCH diffs used a two-column
+// Regression, companion transcript report: PATCH diffs used a two-column
 // desktop layout, leaving each side unreadably narrow in the web and native apps.
 describe("compact diff blocks", () => {
   it("renders one unified column with explicit removed and added lines", () => {

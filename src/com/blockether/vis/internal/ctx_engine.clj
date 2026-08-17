@@ -1034,7 +1034,7 @@
   "Return the head call NAME (a string) of `src` — a Python source string —
    or nil when `src` is not a `name(...)` call form. Leading comments and
    blank lines are skipped. Reading the head name (rather than scanning the
-   raw source) avoids false positives — a `\"struct_patch(x)\"` inside a string can't
+   raw source) avoids false positives — a `\"db_commit(x)\"` inside a string can't
    match. Used by `classify-form-tag`."
   [src]
   (some-> (re-find py-head-name-re (str src))
@@ -1047,7 +1047,7 @@
    answers are plain prose (no control-flow verb), so no core head
    remains.
 
-   Extension tools (`struct_patch`, `db_commit`, anything an extension
+   Extension tools (`db_commit`, anything an extension
    ships) are NOT here. Extensions declare their own observation / mutation
    tag at registration time; the integration layer reaches that tag through
    `extension/op-tag` and passes it to `classify-form-tag` as an optional
@@ -1071,7 +1071,7 @@
    resolver wins when it returns a non-nil tag; on nil the engine
    falls back to `core-mutation-heads`. The integration layer in
    `loop.clj` builds the resolver from `extension/op-tag` so every
-   extension-declared tool (`struct_patch`, `db/commit!`, anything new an
+   extension-declared tool (`db/commit!`, anything new an
    extension ships) classifies correctly without the engine hard-
    coding its symbol."
   ([src] (classify-form-tag src nil))
@@ -1217,7 +1217,7 @@
 
    3-arity passes `head-tag-resolver` (see `classify-form-tag`) through
    to every `block->envelope` call so extension-declared mutation tools
-   (`struct_patch`, `db/commit!`, any symbol with inline `:tag` on its
+   (`db/commit!`, any symbol with inline `:tag` on its
    `vis/symbol` entry) classify correctly without the engine
    hard-coding their symbol set."
   ([blocks cursor] (blocks->forms blocks cursor nil))

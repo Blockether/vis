@@ -10,7 +10,6 @@
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
-            [com.blockether.vis.internal.foundation.editing.core :as ed]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.human-input :as hi]
@@ -3736,41 +3735,6 @@
           (expect (str/includes? m "#"))
           (expect (not (str/includes? m ";;")))))))
 
-(defdescribe
-  strip-echo-diffs-test
-  ;; A struct_patch result carries a per-file unified `"diff"`. On a
-  ;; successful edit that diff merely re-describes the bytes the model supplied,
-  ;; so it is stripped from the MODEL wire. The human card keeps it.
-  (let [strip @#'lp/strip-echo-diffs]
-    (it "drops the diff from a byte-exact edit summary"
-        (expect (= [{"path" "a.clj" "op" "update" "changed" true}]
-                   (strip [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"}]))))
-    (it "strips a single-map summary too"
-        (expect (= {"path" "a.clj" "op" "add" "changed" true}
-                   (strip {"path" "a.clj" "op" "add" "changed" true "diff" "--- x"}))))
-    ;; Drive the shared summary builder so struct_patch cannot silently diverge.
-    (it
-      "strips the diff from a real struct_patch summary"
-      (let
-        [summary ((deref #'ed/patch-result-file-summary)
-                   {:path "a.clj"
-                    :op :update
-                    :before "(defn foo [a] (+ a 1))\n"
-                    :after "(defn foo [a] (* a 2))\n"})]
-        ;; the un-stripped summary DOES carry the diff (human card keeps it)
-        (expect (contains? summary "diff"))
-        ;; struct_patch wraps it as `[summary]` — the echo diff is stripped on the
-        ;; model wire, but the line COUNTS survive (they are then the only
-        ;; statement of how big the edit was).
-        (expect (= [{"path" "a.clj" "op" "update" "changed" true
-                     "lines" {"added" 0 "removed" 0 "modified" 1}}]
-                   (strip [summary])))))
-    (it "leaves a non-edit result untouched"
-        (let [r {"hit_count" 3 "matches" {}}]
-          (expect (= r (strip r)))))
-    (it "leaves a mixed vector (not all file summaries) untouched"
-        (let [r [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"} {"text" "hi"}]]
-          (expect (= r (strip r)))))))
 
 (defdescribe
   only-python-execution-is-advertised-test

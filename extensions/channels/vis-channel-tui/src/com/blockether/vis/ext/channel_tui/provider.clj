@@ -341,28 +341,23 @@
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so
 ;; the dialog code below reads unchanged.
-(def ^:private persisted-provider-config vis/provider-persisted-config)
+(def ^:private local-no-auth-provider-ids vis/provider-local-no-auth-ids)
 
 (defn- save-provider-config!
-  "Persist the current provider set, then return the reloaded domain config.
-   Credentials are the DAEMON's (`auth/complete` writes them), so every row is
-   merged ONTO its persisted entry: fields the TUI does not carry — notably
-   `:api-key` — survive the write."
+  "Persist the current provider set THROUGH THE CORE fleet write, then return the
+   reloaded domain config. Credentials are the DAEMON's (`auth/complete` writes
+   them), so every row is merged ONTO its persisted entry: fields the TUI does not
+   carry — notably `:api-key` — survive the write.
+
+   The write itself belongs to `vis/save-config-providers!`, not to a raw config
+   assoc here: the core write is what re-points the default root at a fleet that
+   just gained its first provider, and what rebuilds the shared router — a fleet
+   the TUI wrote behind its back stayed untagged and unrouted until something else
+   happened to save."
   [items]
-  (let
-    [persisted
-     (into {} (map (juxt :id identity)) (vis/configured-providers))
-
-     rows
-     (mapv #(persisted-provider-config (merge (get persisted (:id %)) %)) items)
-
-     cfg
-     (assoc (or (vis/load-config-raw) {}) "providers" rows)]
-
-    (vis/save-config! cfg)
+  (let [persisted (into {} (map (juxt :id identity)) (vis/configured-providers))]
+    (vis/save-config-providers! (mapv #(merge (get persisted (:id %)) %) items))
     (vis/load-config)))
-
-(def ^:private local-no-auth-provider-ids vis/provider-local-no-auth-ids)
 
 
 
@@ -924,10 +919,7 @@
      (first (filter #(same-id? (:id %) provider-id) fleet))
 
      default-selection
-     {:provider-id (some-> (:default-provider config)
-                           name
-                           keyword)
-      :model (:default-model config)}
+     (vis/resolve-default-selection config fleet)
 
      fallback-selection
      (when-let [pid (:fallback-provider config)]

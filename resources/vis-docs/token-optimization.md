@@ -22,65 +22,27 @@ Each hit answers a ROW, not the document: `{kind, gist, at, hit}` — what it IS
 
 Use them before inventing a name or a call shape. They read the live registry and the live document corpus, so an extension appears the moment it binds and a copied catalog cannot go stale.
 
-## Read structure before bytes
+## Read the region before bytes
 
-For supported source, `struct_index` returns imports and a tree-sitter definition skeleton before any body is read:
+`grep({"query": [needles], "paths": [scopes]})` locates unknown code and answers one ANCHORED text block, so the search that FINDS a line also ADDRESSES it:
 
 ```text
-core.clj · clojure · 524 lines
-
-imports (2):
-  clojure.string :as str  @6
-
-definitions (29):
-  constants:
-    code-languages           @68..78
-  fn:
-    private path-extension   [^String path]  @41..52
-    detect-language          [^String path]  @54..66
+src/com/blockether/vis/internal/foundation/editing/core.clj  (2)
+  4395:573│ (defn- patch-edit-rows
+  ⋮
+  4735:981│ (defn- patch-tool
 ```
 
-Each row carries plain 1-based `line`/`end_line` numbers and the matching `anchor`/`end_anchor`, so a definition is already a `patch` argument. Read that one definition with `struct_nodes` at its `line` instead of paging the file. In Python, the structured `definitions` and `imports` values can stay bound while the model prints only the rows it needs.
+Every hit is already a `patch` argument. Terms are ORed over every scope, `include`/`exclude` bound which files the content sweep reads, `is_regex: True` runs the query as a real regex, and `query: ""` lists files.
 
-For unsupported text, generated files, or one already-known region, `cat(path, start, end)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. A negative endpoint counts from the end (`cat(path, -50)` is the tail 50 lines, `cat(path, -50, -30)` the window between them). `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
+For a known region, `cat(path, start, end)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. A negative endpoint counts from the end (`cat(path, -50)` is the tail 50 lines, `cat(path, -50, -30)` the window between them). `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
 
-## Edit structure, not surrounding text
+## Edit by address, never by restating text
 
-Two editors, two coordinates. Edit by NAME with `struct_patch` for supported code: it re-parses the file and refuses syntax-breaking writes. Edit by ADDRESS with `patch` — prose, config, comments, docstrings, and every unsupported language — spending an anchor `cat` or `grep` already produced.
-
-A definition from `struct_index` can be edited by name:
+One editor, one coordinate: `patch` spends an anchor `cat` or `grep` already produced, instead of quoting back the text it replaces. It re-parses the file after the write, so a syntax-breaking batch is refused whole and the file is left untouched.
 
 ```python
-await struct_patch({
-    "path": "src/core.clj",
-    "op": "replace",
-    "target": "add",
-    "code": "(defn add [a b c] (+ a b c))",
-})
-```
-
-When a definition is too coarse, enter it at a `struct_index` line, navigate with `struct_nodes` — which hands back each node's verbatim `source` PLUS its zipper cursor `at` — then pass that `at` to `struct_patch`. `nodes` is always a list, so many cursors (across many files) ride one call:
-
-```python
-nodes = await struct_nodes({
-    "path": "src/core.clj",
-    "nodes": [{"line": 42, "nav": [{"find": "(+ a b)"}]}],
-})
-node = nodes["results"][0]   # node["source"] is the code, node["at"] the cursor
-await struct_patch({
-    "path": "src/core.clj",
-    "op": "replace_node",
-    "at": node["at"],
-    "code": "(* a b)",
-})
-```
-
-The same editor supports named-definition moves, docs, nested child insertion, and unique sub-expression replacement. For a project-wide rename, first `grep` the identifier, then pass its candidate file paths to `struct_index({"paths": [...], "include_occurrences": True})` to inspect declarations and occurrence blast radius, then rename every one of them in ONE `struct_patch` batch — top-level keys are the shared defaults for each entry: `struct_patch({"op": "rename", "target": "handle_click", "code": "handle_tap", "edits": [{"path": path} for path in paths]})`.
-
-For prose, unsupported code, or one known region, spend the anchor instead of restating the text you are replacing:
-
-```python
-print(patch(path, [{"from": "4439:a80", "replace": '     :result "One row/edit: `path`, `op`, `changed`."'}]))
+print(patch(path, [{"from": "4439:a80", "replace": '     :result "One row per edit."'}]))
 patched src/…/editing/core.clj  1 edit  5182 → 5182 lines  parse: clean
   1  4439..4439  → 1 line  4439:b16
 ```
@@ -94,12 +56,12 @@ Every capability is a Python function, so one operation and a batch of fifty cos
 Printing is the whole cost model, and it cuts both ways. An unprinted value costs no context — and it is also gone once the block ends, because nothing stores a result the next block could re-read. Print the slice the answer needs, then keep working from the variable while the block is still running.
 
 ```python
-index, todos = await gather(
-    struct_index({"paths": paths}),
+todos, fixmes = await gather(
     grep({"query": "TODO", "paths": paths}),
+    grep({"query": "FIXME", "paths": paths}),
 )
-hits = [d for r in index["results"] for d in r["definitions"]]
-print(len(hits), todos.splitlines()[0])   # grep answers TEXT; line 1 is its summary
+# grep answers TEXT; line 1 is its summary
+print(todos.splitlines()[0], fixmes.splitlines()[0])
 ```
 
 This turns many reads plus a reduction into one visible result instead of one transcript entry per intermediate value.
@@ -181,8 +143,8 @@ The efficient path is:
 
 1. Discover capabilities with `apropos`, then read the one contract with `doc`.
 2. Locate relevant files and symbols with `grep` — it answers one anchored TEXT block, never a map, so a hit is already a `patch` argument.
-3. Map supported code with `struct_index`, then read only the needed body with `struct_nodes`; `cat(path, start, end)` for anything else you are about to edit.
-4. Edit by NAME with `struct_patch`, by ADDRESS with `patch`; fall back to a `python_execution` write only for a new file or a wholesale replacement.
+3. Read only the region you are about to change with `cat(path, start, end)`.
+4. Edit by ADDRESS with `patch`, every edit for one file in ONE call; fall back to a `python_execution` write only for a new file or a wholesale replacement.
 5. Keep batch intermediates in `python_execution`.
 6. Fold completed prior-turn noise while preserving durable evidence.
 

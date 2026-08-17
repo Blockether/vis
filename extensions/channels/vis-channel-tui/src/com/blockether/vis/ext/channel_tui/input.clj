@@ -1516,7 +1516,7 @@
   [path]
   (if (resolve-local-file path)
     (str "[Attached File: " path
-         "]\n" "The user attached this file. Read it (via the file/zipper tools) before answering.")
+         "]\n" "The user attached this file. Read it (via the file tools) before answering.")
     (format-file-mention path)))
 
 (defn expand-file-mentions

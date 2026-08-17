@@ -39,7 +39,7 @@ a working set, not a full transcript, on every turn.
 Vis hands the model exactly ONE tool — `python_execution` — and everything else is
 a function inside it:
 
-- **The sandbox** — every capability (`grep`, `cat`, `patch`, `struct_index`, `shell`, `attach`, an
+- **The sandbox** — every capability (`grep`, `cat`, `patch`, `shell`, `attach`, an
   MCP tool) is a bare Python name in an embedded GraalPython runtime. The
   agent writes Python that runs many of them, filters and chains their output, and
   `print()`s only the slice worth keeping. Ten file reads, one search, and a
@@ -57,9 +57,8 @@ lives in Python vars, never in the window, and the model decides what surfaces.
 Contracts are PULLED, not pushed: `apropos(text)` is full-text search over every
 function docstring, documentation page, skill body and MCP tool description, and
 `doc(name)` returns the authoritative contract for one of them. From there,
-`struct_index` → `struct_nodes` (a node's verbatim source + zipper cursor) →
-`struct_patch` for supported code; `grep` → `cat` → `patch` for everything
-addressed by line rather than by name. See [Token
+`grep` → `cat` → `patch` is the whole editing path: locate it, read the region
+you will change, then spend the anchor that read handed back. See [Token
 optimization](token-optimization.md) and [Extending Vis](extending.md#one-tool-and-it-is-python_execution).
 
 ```text

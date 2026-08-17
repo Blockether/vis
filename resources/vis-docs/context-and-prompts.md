@@ -49,7 +49,7 @@ closest to the conversation. The `system_prompt` string form (see
 `APPEND_SYSTEM.md` files.
 
 Replacing the core prompt is a sharp tool — Vis's prompt teaches the whole
-tool surface (file tools, `python_execution`, structural editors). Prefer
+tool surface (file tools, `python_execution`, the anchored editors). Prefer
 `APPEND_SYSTEM.md` or `AGENTS.md` unless you know you want a full rewrite.
 
 ## Prompt templates: `.vis/prompts/*.md`

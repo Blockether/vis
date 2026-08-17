@@ -685,7 +685,7 @@
             (expect (contains? paths (abs b)))
             (expect (contains? paths (abs c)))))))
   (it "hooks every mutating op and the shell sweep"
-      (expect (= #{:patch :struct_patch :fs :format_code} rw/mutation-ops))
+      (expect (= #{:patch :fs :format_code} rw/mutation-ops))
       (expect (contains? rw/sweep-ops :shell))
       (let [hooked (set (map :op rw/op-hooks))]
         (expect (every? hooked rw/mutation-ops))

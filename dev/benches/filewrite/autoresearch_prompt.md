@@ -4,8 +4,7 @@ You are completing one small Clojure programming task. Solve it in as few iterat
 
 The current working directory contains starter files listed below.
 Replace the `;; TODO` comments with your implementation. Modify the
-listed files with `v/patch` (or `z/patch` if you prefer Clojure/EDN
-zipper edits) — never `slurp`/`spit`.
+listed files with `v/patch` — never `slurp`/`spit`.
 
 When the implementation is in place, finish in a **clean** iteration
 (no extension tool calls in the same iteration as the answer):

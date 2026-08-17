@@ -62,7 +62,7 @@
         ;; of advertising `read_session` itself.
         (expect (str/includes? doc "foundation-introspection"))
         (expect (str/includes? doc "language facade"))
-        (expect (str/includes? doc "file and structural editing"))
+        (expect (str/includes? doc "file editing"))
         (expect (str/includes? doc "session workspace/VCS"))
         (expect (not (str/includes? doc "ext repro")))
         (expect (not (str/includes? doc "file-link")))

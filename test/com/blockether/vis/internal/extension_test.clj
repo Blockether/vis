@@ -573,7 +573,7 @@
   symbol-doc-page-test
   (it "declares a signature for every tool, so its page can open with a call line"
       (let [entries (live-tool-entries)]
-        (expect (< 20 (count entries)))
+        (expect (< 15 (count entries)))
         (doseq [entry entries]
           (let [sym (:ext.symbol/symbol entry)]
             (expect (string? (extension/symbol-doc-text entry)) (str sym " has no doc text"))
@@ -626,9 +626,10 @@
          docs
          (extension/sandbox-symbol-docs)]
 
-        (expect (str/starts-with? (str (get ks 'struct_index)) "Keys: paths (REQUIRED)")
-                (str (get ks 'struct_index)))
-        (expect (not (str/includes? (str (get docs 'struct_index)) "Keys: paths (REQUIRED)")))
+        (expect (str/starts-with? (str (get ks 'repl_eval)) "Keys: ") (str (get ks 'repl_eval)))
+        (expect (str/includes? (str (get ks 'repl_eval)) "code (REQUIRED)")
+                (str (get ks 'repl_eval)))
+        (expect (not (str/includes? (str (get docs 'repl_eval)) "code (REQUIRED)")))
         (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks)))))
   ;; Regression, doc quality: `run_tests` answered "execution metadata,
   ;; counts/details, output, timeout, and REPL-recovery diagnostics" — thirty

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- refactor(editing): remove structural editing — `struct_index`, `struct_nodes` and `struct_patch` are gone; `grep` → `cat` → `patch` is the whole editing surface
 - feat(python): cover asyncio queues, locks, futures and timeouts in the sandbox shim
 - build(ci): pause the beta native cron — every native platform is broken, so betas are dispatch-only
 - fix(build): make `dev` a track of its own, refused as an update target

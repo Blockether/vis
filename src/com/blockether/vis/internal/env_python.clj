@@ -129,7 +129,7 @@
         (string? x) x
         (boolean? x) x
         ;; `java.util.Map` covers BOTH Clojure maps (which implement it) AND a raw
-        ;; ordered `LinkedHashMap` a tool returns (e.g. struct_index's rows). The new
+        ;; ordered `LinkedHashMap` a tool returns (e.g. `ls`'s entries). The new
         ;; LinkedHashMap preserves the source's ITERATION ORDER — Clojure array-map
         ;; canonical key order, or a LinkedHashMap's insertion order — so the live
         ;; `ctx` dict and the rendered text agree, and ordered tool maps reach
@@ -192,7 +192,7 @@
         ;; Dicts preserve INSERTION ORDER: GraalPy's key iterator is insertion-
         ;; ordered, so accumulate into a flatland ordered-map (NOT a hash-map, whose
         ;; >8-key promotion scrambles order). Without this, a round-tripped ordered
-        ;; tool result (struct_index's per-file rows) comes back HASH-ordered and
+        ;; tool result (`ls`'s nested entries) comes back HASH-ordered and
         ;; the model reads the file out of line order. ordered-map is still a
         ;; persistent Clojure map (assoc/dissoc/string-lookup all work downstream).
         (.hasHashEntries v) (let [it (.getHashKeysIterator v)]
@@ -3062,14 +3062,14 @@
        (str
          "Sandbox policy denied " sandbox-denial-operation
          ": the resource is outside approved filesystem roots. "
-         "Use grep({\"query\": q}) or struct_index({\"paths\": ps}) to read, struct_patch({\"path\": p, \"op\": o, \"target\": t, \"code\": s}) to edit, "
+         "Use grep({\"query\": q}) or cat(path, start, end) to read, patch(path, edits) to edit, "
          "repl_eval(language, code) for project code, "
          "or ask the USER to add the path to workspace.filesystem in vis.yml and run /reload. Original error: ")
        sandbox-denied?
        (str
          "Your sandbox has NO real filesystem / native / process access — "
          "importlib + exec_module on a project file, open(), subprocess, and sockets "
-         "CANNOT run here. To READ a project file use grep({\"query\": q}) or struct_index({\"paths\": ps}); to RUN project code "
+         "CANNOT run here. To READ a project file use grep({\"query\": q}) or cat(path, start, end); to RUN project code "
          "(import its modules, use its deps) use repl_eval(language, code) — that runs "
          "in the project's interpreter where the file is importable. Original error: "))
 

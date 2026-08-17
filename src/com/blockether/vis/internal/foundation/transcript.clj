@@ -1337,8 +1337,8 @@
                    (str "<code>" (html-escape (nth @codes (Long/parseLong idx))) "</code>")))))
 
 (def ^:private md-extensions
-  ;; GFM tables: the transcript body embeds pipe tables (e.g. struct-index
-  ;; skeletons) that core CommonMark leaves as literal text.
+  ;; GFM tables: the transcript body embeds pipe tables (a tool result, an
+  ;; attached sheet) that core CommonMark leaves as literal text.
   (java.util.Collections/singletonList (TablesExtension/create)))
 
 (def ^:private ^Parser md-parser (.build (.extensions (Parser/builder) md-extensions)))

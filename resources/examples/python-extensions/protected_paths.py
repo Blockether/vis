@@ -3,7 +3,7 @@
 Demonstrates a GATE op hook. `fs_access` is asked BEFORE any path is
 opened, and it is asked under the interpreter itself: `open(p, "w")`,
 `Path.unlink`, `shutil.move` and `os.rename` in python_execution reach it
-exactly as `patch` and `struct_patch` do. So a rule written here
+exactly as `patch` does. So a rule written here
 cannot be routed around by picking a different tool or a different language.
 
 The callable receives {"operation": "file-read" | "file-write", "path":

@@ -1908,7 +1908,7 @@
    `:fs/access` is asked for EVERY path the Python sandbox's filesystem touches
    (`internal/sandbox-fs`) and for every path the model-driven editors touch
    (`foundation/editing/core`), with `{:operation :path}` — so ONE rule covers
-   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `struct_patch`
+   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `patch`
    alike, and \"protected\" can never mean \"protected from Python only\"."
   {:fs/access "fs_access"})
 
@@ -1924,7 +1924,7 @@
 ;; ── Cross-cutting operation hooks ────────────────────────────────────────────
 ;; A generic, op-keyword-keyed hook registry so ANY extension can decorate an
 ;; operation it does NOT own — e.g. the Clojure pack repairs `.clj` files after
-;; the foundation's `struct_patch`. Distinct from a symbol's own
+;; the foundation's `patch`. Distinct from a symbol's own
 ;; `:before-fn`/`:after-fn` (which only its DEFINER can set): these compose ON TOP
 ;; at the single `invoke-symbol-wrapper` chokepoint, so the hook is wired ONCE and
 ;; applies wherever that op is called. Before/after hooks are best-effort;
@@ -1934,7 +1934,7 @@
 
 (defn register-op-hook!
   "Register a cross-cutting hook on operation `:op` (its op-keyword, e.g.
-   :struct_patch). `:phase` is :after (default — sees & may rewrite the result
+   :patch). `:phase` is :after (default — sees & may rewrite the result
    envelope), :before (sees & may rewrite the args vector), :around (MIDDLEWARE
    — wraps the call), or :gate (the op is ASKED, never wrapped — see `gate-ops`;
    a gate op forces this phase whatever the caller declared, because the op
@@ -2049,7 +2049,7 @@
    result) runs the inner call. A hook may call `next` zero or more times (skip,
    retry with rewritten args), catch its throw and recover, or substitute a
    result outright — this is how an extension makes an op it doesn't own NOT fail
-   (e.g. the Clojure pack paren-repairs + retries a struct_patch). Hooks compose;
+   (e.g. the Clojure pack paren-repairs + retries a `patch`). Hooks compose;
    with none registered this is just `(apply f args)`."
   [op-kw env f args]
   (let
@@ -3183,7 +3183,7 @@
                            ls, exists?, locators, rg, env
                            queries, registry lookups
 
-     :mutation      mutates state — patch, struct_patch, append,
+     :mutation      mutates state — patch, write, append,
                            mkdir, touch, delete, move, copy.
 
    Channels that want to color tools by tag look it up themselves;
@@ -3452,7 +3452,7 @@
                               (boolean (:ext.symbol/inject-env? entry)))))))
 
 (defn symbol-keys-line
-  "`Keys: paths (REQUIRED) · ranges` — the options-dict vocabulary from
+  "`Keys: language · code (REQUIRED) · id` — the options-dict vocabulary from
    `:ext.symbol/params`, in DECLARED order (authors lead with what a caller cannot
    omit). The signature of a dict-shaped tool ends in `**kwargs`, which names
    nothing; this line is where its required keys are stated. nil when the entry

@@ -82,7 +82,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel: language facade; file and structural editing; session workspace/VCS and project-shape helpers; `main_agent_instructions`. Session introspection lives in `foundation-introspection` behind its toggle; Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
+     "Foundation kernel: language facade; file editing; session workspace/VCS and project-shape helpers; `main_agent_instructions`. Session introspection lives in `foundation-introspection` behind its toggle; Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"

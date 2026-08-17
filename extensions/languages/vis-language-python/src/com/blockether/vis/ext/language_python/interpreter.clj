@@ -7,7 +7,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
+            [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [com.blockether.vis.internal.paths :as paths]))
 
 (defn- exists? [root rel] (.isFile (io/file root rel)))
@@ -56,20 +56,19 @@
    for `[tool.uv]`, `tool.uv.index` for `[[tool.uv.index]]`.
 
    PARSED, never scanned: the tree-sitter TOML grammar already shipped with vis
-   (the one the structural editors use) does the reading, so a `[tool.uv]` sitting
+   (the one the edit guard parses with) does the reading, so a `[tool.uv]` sitting
    in a comment, a description string or a multi-line docstring is simply not a
    table node. Unparsable input yields no headers."
   [^String text]
-  (let [root (zipper/inspect "toml" text [])]
-    (into []
-          (comp (keep-indexed (fn [i child]
-                                (when (#{"table" "table_array_element"} (:kind child)) i)))
-                ;; Child 0 of a table node is its header key (bare/quoted/dotted).
-                (keep (fn [i]
-                        (:text (zipper/inspect "toml" text [i 0]))))
-                (map (fn [k]
-                       (str/join "." (map unquote-seg (str/split k #"\."))))))
-          (:children root))))
+  (into []
+        (comp (filter (fn [n]
+                        (#{"table" "table_array_element"} (:kind n))))
+              ;; Child 0 of a table node is its header key (bare/quoted/dotted).
+              (keep (fn [n]
+                      (:text (first (:children n)))))
+              (map (fn [k]
+                     (str/join "." (map unquote-seg (str/split k #"\."))))))
+        (parse/top-level-nodes "toml" text)))
 
 (defn- declares-table?
   "Does TOML `text` declare table `path`, or any table beneath it? `[tool.uv]` and

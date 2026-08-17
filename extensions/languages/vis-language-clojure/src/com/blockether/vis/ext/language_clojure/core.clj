@@ -982,7 +982,7 @@
                            :lint-fn clj-lint-fn
                            :test-fn test-runner/clj-test-fn
                            :repl-eval-fn clj-eval-fn
-                           ;; The foundation's patch / struct_patch gates hand this
+                           ;; The foundation's `patch` gate hands this
                            ;; the whole spliced FILE — never a lone replacement —
                            ;; and keep the result only when the repair is confined
                            ;; to the edited lines. Repairing a fragment on its own

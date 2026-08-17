@@ -335,7 +335,7 @@
           :regex-unescaped-quote
           (and (str/includes? tool-name "patch")
                (str/includes? lower-message "unmatched delimiter"))
-          :struct-patch-invalid-code
+          :patch-unbalanced-replacement
           ;; A refused ANCHOR is its own loop: the anchor drifted or was reused
           ;; after an edit, and the refusal already carries the fresh one. Left
           ;; generic it would only ever be counted, never explained.
@@ -359,8 +359,8 @@
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
 
-    :struct-patch-invalid-code
-    "The struct_patch `code` likely lost the closing quote or a delimiter. Re-emit it with a Python triple-quoted string for multi-line content."
+    :patch-unbalanced-replacement
+    "The `replace` text likely lost the closing quote or a delimiter, and a syntax-breaking write refuses the WHOLE batch. Re-emit that edit with a Python triple-quoted string for multi-line content."
 
     :patch-stale-anchor
     "The anchor no longer matches the line it names. The refusal already carries the CURRENT anchor — retry with that one instead of re-reading the file, and put every edit for that file in ONE patch(path, edits) call so earlier edits cannot drift later anchors."
@@ -787,9 +787,9 @@
         (conj
           "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
 
-        (contains? classes :struct-patch-invalid-code)
+        (contains? classes :patch-unbalanced-replacement)
         (conj
-          "Re-emit struct_patch with balanced `code`; use a triple-quoted Python string for multi-line replacement text.")
+          "Re-emit the patch with balanced `replace` text; use a triple-quoted Python string for multi-line replacement text.")
 
         (contains? classes :patch-stale-anchor)
         (conj

@@ -871,7 +871,7 @@ const FILE_MENTION_EXPAND_REGEX =
 function expandFileMentions(text: string): string {
   return text.replace(FILE_MENTION_EXPAND_REGEX, (_match, quoted, bare) => {
     const path = (quoted ?? bare) as string;
-    return `[Attached File: ${path}]\nThe user attached this file. Read it (via the file/zipper tools) before answering.`;
+    return `[Attached File: ${path}]\nThe user attached this file. Read it (via the file tools) before answering.`;
   });
 }
 

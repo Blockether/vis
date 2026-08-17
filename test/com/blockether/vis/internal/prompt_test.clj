@@ -134,17 +134,15 @@
       (expect (< (count text) 6200))
       (let
         [steps (mapv #(str/index-of text %)
-                     ["`grep` locates unknown code" "`struct_index` every known file"
-                      "read bodies in ONE call" "`struct_nodes`" "`struct_patch`"])]
+                     ["`grep` locates unknown code" "a hit IS a `patch` argument"
+                      "`patch(path, edits)`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
       ;; Regression, user report: a section that ORDERS a verb has to say how it is CALLED.
       ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
       ;; name the keys inside it — the shape is read, never remembered or looked up.
       (doseq
-        [shape ["`grep({\"query\": [needles], \"paths\": [scopes]})`"
-                "`struct_index` every known file (`{\"paths\": [f]}`)"
-                "`struct_nodes` (`{\"path\": f, \"nodes\": [names]}`)" "`cat(path, start, end)`"
+        [shape ["`grep({\"query\": [needles], \"paths\": [scopes]})`" "`cat(path, start, end)`"
                 "`patch(path, edits)`" "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
         (expect (str/includes? text shape)))
       (expect (str/includes? text "`grep(...)` FIRST"))
@@ -178,10 +176,10 @@
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
                   "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      (expect (not (str/includes? text "`struct_occurrences`")))
-      ;; struct_nodes IS named in the core prompt: reading a definition's SOURCE is a
-      ;; first-class step of the code workflow, not a specialist tool.
-      (expect (str/includes? text "`struct_nodes`"))
+      ;; Structural editing is gone: no core rule may name a verb the sandbox
+      ;; cannot call.
+      (doseq [gone ["`struct_occurrences`" "`struct_index`" "`struct_nodes`" "`struct_patch`"]]
+        (expect (not (str/includes? text gone))))
       (doseq
         [required ["Host project default" "`apropos(text)` full-text searches" "`doc(name)` returns"
                    "runtime > source > docs > assumption" "obey its stated preconditions"

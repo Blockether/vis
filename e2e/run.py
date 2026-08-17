@@ -6,11 +6,11 @@ scenarios and checks, per scenario:
   - CORRECT     resulting files satisfy want / wantnot, the answer contains
                 want_answer, and want_tools were actually used
   - NO-ERROR    no form raised inside the loop
-  - FAST PATH   the structural tools (struct_patch / sexpr) were used rather than
-                the slower cat -> patch anchor dance
+  - FAST PATH   the anchored `patch` wrote the edit, rather than the model
+                wandering through the file with `cat` alone
 
 Scenarios are SELF-CONTAINED FOLDERS, aggregated from the root `e2e/` and each
-language pack's `e2e/` (the foundation/struct_patch set lives in the root; a pack
+language pack's `e2e/` (the language-neutral editing set lives in the root; a pack
 owns the scenarios that exercise its surface, beside its `test/` dir):
 
     e2e/scenarios/<id>/                                  # foundation, any language
@@ -49,10 +49,9 @@ MODELS = [
 TIMEOUT = int(os.environ.get("VIS_E2E_TIMEOUT", "300"))
 WORKERS = int(os.environ.get("VIS_E2E_WORKERS", "5"))
 TRACES = os.environ.get("VIS_E2E_TRACES", "/tmp/vis_e2e/traces")
-STRUCTURAL = {"struct_patch", "sexpr"}
 
 # Scenario roots, aggregated like the test alias's `--dir` list: the foundation
-# (language-neutral struct_patch) set lives here in the root; each language pack
+# (language-neutral editing) set lives here in the root; each language pack
 # owns the e2e scenarios that exercise ITS surface, alongside its `test/` dir.
 SCENARIO_ROOTS = [os.path.join(HERE, "scenarios")]
 LANG_ROOT = os.path.join(REPO, "extensions/languages")
@@ -203,22 +202,12 @@ def run_one(job):
                 correct = False
                 detail.append(f"tool {t!r} not used")
 
-        used_structural = bool(toolset & STRUCTURAL)
+        used_patch = "patch" in toolset
         path = (
-            "struct_patch"
-            if "struct_patch" in toolset
+            "patch"
+            if "patch" in toolset
             else (
-                "sexpr"
-                if "sexpr" in toolset
-                else (
-                    "patch"
-                    if "patch" in toolset
-                    else (
-                        "repl"
-                        if (toolset & {"repl_eval", "repl_start"})
-                        else "cat-only"
-                    )
-                )
+                "repl" if (toolset & {"repl_eval", "repl_start"}) else "cat-only"
             )
         )
         if path in ("cat-only", "??") or errs or not (done and correct):
@@ -235,7 +224,7 @@ def run_one(job):
             "err_msgs": errs[:2],
             "wall": round(wall, 1),
             "forms": len(forms),
-            "used_structural": used_structural,
+            "used_patch": used_patch,
             "edit_path": path,
             "detail": detail,
         }
@@ -271,7 +260,7 @@ def main():
     print("-" * len(hdr))
     nclean = nfast = 0
     for r in results:
-        nfast += r["used_structural"]
+        nfast += r["used_patch"]
         nclean += r["errors"] == 0
         print(
             f"{r['id']:<18}{r['model']:<{mw}} {r['lang']:<11}"
@@ -284,9 +273,9 @@ def main():
             print(f"    err: {e[:140]}")
     n = len(results)
     # CROSS-VALIDATION GATE: a scenario passes only if EVERY model converged,
-    # produced correct output, and had no loop/tool errors. `STRUCTURAL(fast)`
-    # remains a performance/adherence metric because some language surfaces
-    # legitimately fall back to patch.
+    # produced correct output, and had no loop/tool errors. `PATCH(fast)`
+    # remains a performance/adherence metric because some scenarios legitimately
+    # answer from the REPL instead of editing a file.
     by_scn = {}
     for r in results:
         by_scn.setdefault(r["id"], []).append(
@@ -299,7 +288,7 @@ def main():
     print("-" * len(hdr))
     print(
         f"RUNS converged+correct+clean {ok_clean}/{n} "
-        f"| NO-ERROR {nclean}/{n} | STRUCTURAL(fast) {nfast}/{n}"
+        f"| NO-ERROR {nclean}/{n} | PATCH(fast) {nfast}/{n}"
     )
     print(
         f"GATE (scenario passes iff ALL {len(MODELS)} model(s) pass cleanly): {gated}/{len(by_scn)}"

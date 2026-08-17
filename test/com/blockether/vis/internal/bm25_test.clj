@@ -14,10 +14,10 @@
     :body (str "Edit a file by ADDRESS. Every edit for one file goes in one call: "
                "from_anchor, to_anchor and replace. An empty replace deletes.")
     :value {:name "patch"}}
-   {:name "struct_patch"
-    :gist "Edit code by NAME."
-    :body "Replace a function or class by its name, without an address."
-    :value {:name "struct_patch"}}
+   {:name "format_code"
+    :gist "Format code in place."
+    :body "Reformat a file or a code string with the project's own formatter."
+    :value {:name "format_code"}}
    {:name "run_tests"
     :gist "Run the test suite."
     :body "Select tests by paths only: a clojure var, a file, a directory."
@@ -45,7 +45,7 @@
                  (names (bm25/search (docs) "fromAnchor"))
                  (names (bm25/search (docs) "from anchor")))))
   (it "answers everything in name order for a blank query"
-      (expect (= ["patch" "prose-page" "run_tests" "struct_patch"]
+      (expect (= ["format_code" "patch" "prose-page" "run_tests"]
                  (names (bm25/search (docs) ""))))))
 
 (defdescribe
@@ -178,7 +178,7 @@
    typed PREFIX answered the wrong document — or, at distance 1 from two
    handles, the shorter one."
   (it "completes a prefix of at least three characters"
-      (expect (= "struct_patch" (:name (first (bm25/search (docs) "struc"))))))
+      (expect (= "format_code" (:name (first (bm25/search (docs) "form"))))))
   (it "prefers the same-length correction to a shorter neighbour"
       (let [ds [(doc* "patch" "Edit a file by address.") (doc* "path" "A filesystem path.")]]
         (expect (= "patch" (:name (first (bm25/search ds "pathc")))))))

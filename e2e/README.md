@@ -2,14 +2,14 @@
 
 End-to-end harness that drives the **real `vis-agent` CLI** on a battery of editing
 tasks and checks each one converges, is correct, runs clean, and takes the fast
-(structural) path. Sits alongside the root `test/` dir; see the module docstring
+(anchored `patch`) path. Sits alongside the root `test/` dir; see the module docstring
 in `run.py` for the full contract.
 
 ## Layout
 
 Scenarios are aggregated from the root **and** each language pack's `e2e/` — the
 same split as the test `--dir` list: the foundation (language-neutral
-`struct_patch`) set lives here in the root; a pack owns the scenarios that
+editing) set lives here in the root; a pack owns the scenarios that
 exercise ITS surface, beside its `test/` dir.
 
 ```

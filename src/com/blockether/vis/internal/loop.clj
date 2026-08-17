@@ -3259,31 +3259,6 @@
         (and hint (not (str/includes? (str msg) (str hint))))
         (str "\nhint: " hint)))))
 
-(defn- patch-file-summary?
-  "True when `m` is a struct_patch PER-FILE summary — the
-   `{\"path\" \"op\" \"changed\" …}` shape `patch-result-file-summary` emits. Used to
-   recognise an edit result at the model-wire crossing without touching any other
-   tool's `:result`."
-  [m]
-  (and (map? m) (string? (get m "path")) (string? (get m "op")) (contains? m "changed")))
-
-(defn- strip-echo-diff
-  "Drop the `\"diff\"` from one model-wire edit summary. Anchor and structural
-   edits apply the exact replacement the model supplied, so the diff is echo-bloat;
-   the human card still renders it from the unstripped result."
-  [m]
-  (dissoc m "diff"))
-
-(defn- strip-echo-diffs
-  "Model-wire compaction for a struct_patch `:result`: strip each
-   byte-exact file summary's redundant `\"diff\"` (see `strip-echo-diff`). A no-op
-   for any non-edit `:result` (only touched when EVERY element is a file summary)."
-  [result]
-  (cond (and (sequential? result) (seq result) (every? patch-file-summary? result))
-        (mapv strip-echo-diff result)
-        (patch-file-summary? result) (strip-echo-diff result)
-        :else result))
-
 
 (defn- elide-table-fences
   "Drop the ROWS out of every ````vis-table` fence in model-facing output.
@@ -3417,7 +3392,7 @@
      (fn [f]
        (cond (:summary? f) nil
              (:error f) (error->display (:error f))
-             (some? (:result f)) (clip-wire (env/ctx->python-str (strip-echo-diffs (:result f))))
+             (some? (:result f)) (clip-wire (env/ctx->python-str (:result f)))
              (not (str/blank? (str (:stdout f)))) (clip-wire (elide-table-fences (:stdout f)))
              :else nil))
 
@@ -4036,9 +4011,9 @@
         rather than travelling on to call synthesis, receipts and persistence.
 
    DEEP: keys are normalized at EVERY depth, not just the top level. Tools like
-   `struct_patch` carry NESTED dicts (`edits [{\":target\" …}]`); a shallow pass
+   `patch` carries NESTED dicts (`edits [{\":from\" …}]`); a shallow pass
    left the drift colon on those nested keys, so the synthesized Python call
-   leaked `struct_patch({\"edits\": [{\":target\": …}]})`.
+   leaked `patch(\"f.clj\", [{\":from\": …}])`.
 
    VALUES TOO, at every depth: a keyword/symbol VALUE (`{\"op\" :delete}` out of
    extension EDN) is stringified HERE — `:delete` -> `\"delete\"`, `:a/b` ->
@@ -10317,7 +10292,7 @@
 
      ;; The `:fs/access` gate, pushed down into the sandbox filesystem: a path an
      ;; extension's gate hook refuses is refused for `open(..., "w")`,
-     ;; `shutil.move` and `Path.unlink` exactly as it is for `struct_patch`.
+     ;; `shutil.move` and `Path.unlink` exactly as it is for `patch`.
      sandbox-gate-fn
      (when sandbox-roots-fn
        (extension/fs-access-gate (fn []

@@ -233,7 +233,7 @@
           (expect (str/includes? out "GET None True")))) ;; .get silent, still a real dict
     (it
       "EVERY settled tool value is dict-probeable: a list/str result answers .get without a type guard"
-      ;; A capability return can be a LIST (struct_patch/write rows) or a
+      ;; A capability return can be a LIST (a tool's per-row list) or a
       ;; bare STRING, not only a dict. The TOP-LEVEL settle normalizes each so a
       ;; uniform `res.get('op')` probe never trips — while the value keeps its
       ;; native list/str behaviour (index/iterate/len/concat).
@@ -263,22 +263,9 @@
         (let [mixed (ep/run-python-block ctx "print('FOUND:'); print(tp)")]
           (expect (re-find #"FOUND:" (str (:stdout mixed))))
           (expect (re-find #"'op'" (str (:stdout mixed))))))
-    (it "a printed write/struct_patch result drops its echo-diff from stdout"
-        ;; A write/struct_patch return is a LIST of `{path op changed diff}`
-        ;; file summaries. Printed to stdout that diff merely re-describes the bytes
-        ;; the model supplied, so it is stripped for DISPLAY exactly like the
-        ;; model-wire `strip-echo-diffs`.
-        (ep/bind-and-bump!
-          env
-          'edit
-          [{"path" "a.clj" "op" "update" "changed" true "diff" "--- before\n+++ after\n-x\n+y"}])
-        (let [result (ep/run-python-block ctx "print(edit)")]
-          (expect (not (str/includes? (str (:stdout result)) "diff")))
-          (expect (str/includes? (str (:stdout result)) "a.clj"))
-          (expect (str/includes? (str (:stdout result)) "'changed': True"))))
     (it
-      "a LIST-shaped tool result is dict-probeable (write/struct_patch rows)"
-      ;; `patch`/`write`/`struct_patch` return a LIST of per-file rows. At the
+      "a LIST-shaped tool result is dict-probeable (a tool's per-row list)"
+      ;; some tools answer a LIST of per-file rows. At the
       ;; TOP-LEVEL settle of a tool call that list must be re-typed to
       ;; `__VisResultList__`: otherwise the
       ;; documented uniform `res.get('op')` probe dies with `'list' object has no
@@ -407,7 +394,7 @@
                          "    if len(L) > 3 and L[3].startswith('Keys:'): keyed.append(n)\n"
                          "print('NOCALL='+json.dumps(bad))\n"
                          "print('KEYED='+str(len(keyed) > 8))\n"
-                         "print('REQUIRED='+str('Keys: paths (REQUIRED)' in doc('struct_index')))\n"
+                         "print('REQUIRED='+str('code (REQUIRED)' in doc('repl_eval')))\n"
                          "print('ONCE='+str(doc('patch').count('patch(path, edits)')))"))]
           (expect (re-find #"NOCALL=\[\]" out))
           (expect (str/includes? out "KEYED=True"))
@@ -417,22 +404,22 @@
         (let
           [out (run (str "a=apropos('')\n" "print('asyncio='+str('asyncio' in a),"
                          "'len='+str('len' in a)," "'ls='+str('ls' in a),"
-                         "'grep='+str('grep' in a)," "'struct_patch='+str('struct_patch' in a))"))]
+                         "'grep='+str('grep' in a)," "'patch='+str('patch' in a))"))]
           (expect (re-find #"asyncio=False" out))
           (expect (re-find #"len=False" out))
           (expect (re-find #"ls=True" out))
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
           (expect (re-find #"grep=True" out))
-          (expect (re-find #"struct_patch=True" out))))
+          (expect (re-find #"patch=True" out))))
     ;; `apropos` is FULL TEXT now: a query that appears in no NAME at all still
     ;; answers, and every row carries WHERE it matched — a bounded excerpt of the
     ;; document and the line the matched region starts on.
     (it "apropos searches the whole document, not just the name"
         (let
-          [out (run (str "print('skeleton='+str('struct_index' in apropos('skeleton')))\n"
-                         "print('names='+','.join(list(apropos('struct_patch'))[:1]))"))]
-          (expect (str/includes? out "skeleton=True"))
-          (expect (str/includes? out "names=struct_patch"))))
+          [out (run (str "print('fulltext='+str('grep' in apropos('is_regex')))\n"
+                         "print('names='+','.join(list(apropos('format_code'))[:1]))"))]
+          (expect (str/includes? out "fulltext=True"))
+          (expect (str/includes? out "names=format_code"))))
     ;; Regression: `apropos` ANDed its terms, so a six-word ask that several
     ;; documents partly covered answered `{}` — the query shape a model
     ;; naturally types dead-ended, and one-letter loop variables became
@@ -442,7 +429,7 @@
           [out (run (str "hits = apropos('patch from_anchor to_anchor replace edits schema')\n"
                          "print('any='+str(len(hits) > 0))\n"
                          "print('patch='+str('patch' in hits))\n"
-                         "print('typo='+str('struct_patch' in apropos('strcut_patch')))\n"
+                         "print('typo='+str('format_code' in apropos('fromat_code')))\n"
                          "print('none='+str(len(apropos('zzqqxk plorbfnat'))))"))]
           (expect (str/includes? out "any=True"))
           (expect (str/includes? out "patch=True"))

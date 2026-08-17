@@ -10,7 +10,7 @@
             [com.blockether.vis.internal.foundation.core]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe struct-patch-diagnosis-contract-test
+(defdescribe patch-diagnosis-contract-test
              (let
                [classify
                 @#'introspection/classify-expression-failure
@@ -18,10 +18,10 @@
                 advice
                 @#'introspection/advice-for-classification]
 
-               (it "classifies unbalanced struct_patch code and says how to re-emit it"
-                   (expect (= :struct-patch-invalid-code
-                              (classify "struct_patch({...})" "unmatched delimiter in code")))
-                   (let [message (advice :struct-patch-invalid-code)]
+               (it "classifies unbalanced patch replacement text and says how to re-emit it"
+                   (expect (= :patch-unbalanced-replacement
+                              (classify "patch(p, edits)" "unmatched delimiter in code")))
+                   (let [message (advice :patch-unbalanced-replacement)]
                      (expect (str/includes? message "triple-quoted"))
                      (expect (not (str/includes? message "anchor")))))))
 

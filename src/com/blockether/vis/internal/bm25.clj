@@ -757,8 +757,8 @@
    prose that merely mentions it. A handle the query does not name takes none,
    which is why one extra word is no longer a ranking cliff.
 
-   The terms are the RESOLVED ones, so `strcut_patch` - one transposition off
-   a real handle - still covers `struct_patch` outright. Only HANDLE tokens are
+   The terms are the RESOLVED ones, so `fromat_code` - one transposition off
+   a real handle - still covers `format_code` outright. Only HANDLE tokens are
    scanned (`:handle-ids`), never the corpus body."
   [^doubles scores ^objects handle-toks handle-ids bonus query-terms]
   (let

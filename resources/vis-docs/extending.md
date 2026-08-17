@@ -281,8 +281,8 @@ vis.err(title, body=None, data=None)
 vis.op_hook(ops, fn, phase="before")
 ```
 
-- `ops` — sandbox tool names to hook: `"struct_index"`,
-  `"struct_patch"`, `"shell"`, `"python_execution"`, … or a GATE op
+- `ops` — sandbox tool names to hook: `"patch"`,
+  `"shell"`, `"python_execution"`, … or a GATE op
   (below), which is a different shape and may not share a hook with them.
 - `phase="before"` — `fn(call)` receives `{"op", "args"}` **before** the op
   runs. Return `vis.block(reason)` to refuse it (the model sees the reason
@@ -293,7 +293,7 @@ vis.op_hook(ops, fn, phase="before")
 **Gate ops.** `"fs_access"` is not a tool: it is asked for every path the
 engine's editors AND the Python interpreter touch, so `open(p, "w")`,
 `Path.unlink` and `shutil.move` are refused by the same rule as `grep` and
-`struct_patch` — a guard cannot be routed around by picking another tool or another
+`patch` — a guard cannot be routed around by picking another tool or another
 language. `fn(access)` receives `{"operation": "file-read" | "file-write",
 "path": <absolute path>}`, returns `vis.block(reason)` to refuse or `None` to
 allow, and `phase` says nothing (the operation has not run yet, so declaring
@@ -1238,17 +1238,17 @@ the whole reason a fragment must not restate them.
 ### Your page and your `apropos` row
 
 Those two renderings ARE the contract, and both are built from the entry — so
-writing a tool is writing them. `doc("struct_index")` answers:
+writing a tool is writing them. `doc("grep")` answers:
 
 ```
-# struct_index  ·  callable                              <- the sandbox name
+# grep  ·  callable                                       <- the sandbox name
 
-struct_index(options, **kwargs)                          <- STRUCTURE: `:call`, else the real arglists
-Keys: paths (REQUIRED) · ranges · include_occurrences    <- STRUCTURE: `:params`
+grep(options, **kwargs)                                   <- STRUCTURE: `:call`, else the real arglists
+Keys: query · paths · include · exclude · is_regex …      <- STRUCTURE: `:params`
 
-ONE options map is the whole call — `struct_index({"paths": ["src"]})` …   <- `:description` (or the docstring)
+FIND WHERE something is — the codebase-wide search …      <- `:description` (or the docstring)
 
-Raw result: String-keyed `{results}`; one row per path …  <- `:result`
+Raw result: Text, not a map: line 1 summarizes …          <- `:result`
 ```
 
 A search never answers a body. It answers one bounded ROW per hit, built from the
@@ -1274,8 +1274,7 @@ Six rules follow, each measured against Vis's own corpus:
    line is scored as its own field and is what the row previews. Vis's editing
    pages were written mechanics-first, for a reader who already knew the tool;
    rewriting only their opening lines moved `grep` from rank 36 to 1 for *"find
-   where a symbol is used across the repo"* and `struct_index` from 50 to 1 for
-   *"what functions are defined in this file"* — over 27 natural asks, top-1
+   where a symbol is used across the repo"* — over 27 natural asks, top-1
    17 → 22.
 2. **Never write the call into the prose.** `doc(name)` prints it from `:call` or
    the real arglists, and the `Keys:` line from `:params`. A hand-typed

@@ -513,7 +513,7 @@ vis.extension(
     name=\"guard\",
     description=\"Guard fixture extension.\",
     kind=\"guard\",
-    op_hooks=[vis.op_hook([\"struct_patch\", \"patch\"], _guard, phase=\"before\")],
+    op_hooks=[vis.op_hook([\"fs\", \"patch\"], _guard, phase=\"before\")],
 )
 ")
 
@@ -528,10 +528,10 @@ vis.extension(
           [hooks
            (:ext/op-hooks (registered "guard"))
 
-           struct-hook
-           (some #(when (= :struct_patch (:op %)) %) hooks)]
+           fs-hook
+           (some #(when (= :fs (:op %)) %) hooks)]
 
-          (expect (= #{:struct_patch :patch} (set (map :op hooks))))
+          (expect (= #{:fs :patch} (set (map :op hooks))))
           (expect (every? #(= :around (:phase %)) hooks))
           ;; blocked: guard returns vis.block -> failure envelope, next never runs
           (let
@@ -539,9 +539,9 @@ vis.extension(
              (atom false)
 
              res
-             ((:fn struct-hook)
+             ((:fn fs-hook)
                {}
-               :struct_patch
+               :fs
                ["/x/.env" "data"]
                (fn [_]
                  (reset! ran? true)
@@ -552,9 +552,9 @@ vis.extension(
             (expect (false? @ran?)))
           ;; allowed: guard returns None -> next runs with original args
           (expect (= :ran
-                     ((:fn struct-hook)
+                     ((:fn fs-hook)
                        {}
-                       :struct_patch
+                       :fs
                        ["/x/ok.txt" "data"]
                        (fn [_]
                          :ran)))))))))
@@ -649,8 +649,10 @@ vis.extension(
    boundary INSIDE the hook, taking down the very call the hook only observed."
   (let [payload #'pyx/op-hook-payload]
     (it "a before-hook payload is strings-only and crosses the boundary intact"
-        (let [p (payload :struct_patch [{:path "/x/a.clj" :is-dirty-ok true}])]
-          (expect (= {"op" "struct_patch" "args" [{"path" "/x/a.clj" "is-dirty-ok" true}]} p))
+        (let [p (payload :patch [{:path "/x/a.clj" :edits [{:from "12:a1b" :replace "x"}]}])]
+          (expect (= {"op" "patch"
+                      "args" [{"path" "/x/a.clj" "edits" [{"from" "12:a1b" "replace" "x"}]}]}
+                     p))
           (expect (= p (ep/boundary-view p)))))
     (it "an after-hook payload stringifies the result too"
         (let [p (payload :grep ["needle"] {:status :ok :hits [{:path "a.clj"}]})]

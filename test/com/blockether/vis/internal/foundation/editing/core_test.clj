@@ -19,11 +19,9 @@
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
-            [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
-            [com.blockether.vis.internal.foundation.editing.structural :as structural]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.doc-corpus :as doc-corpus]
@@ -381,11 +379,11 @@
   ;; safe-path is the single gate; this suite proves every mutation
   ;; tool actually routes through it.
   (let [escape-paths ["../escape.txt" "../../etc/passwd" "/etc/passwd" "target/../../escape.txt"]]
-    (it "struct_patch refuses to write outside cwd"
-        (let [struct-patch (private-fn "struct-patch-tool")]
+    (it "patch refuses to write outside cwd"
+        (let [patch (private-fn "patch-tool")]
           (doseq [p escape-paths]
             (let
-              [err (try (struct-patch "path" p "op" "replace" "target" "f" "code" "x")
+              [err (try (patch p [{"from" "1:000" "replace" "x"}])
                         nil
                         (catch clojure.lang.ExceptionInfo e e))]
               (expect (some? err))
@@ -426,7 +424,7 @@
   (it "write tool fully removed: no symbol, no tool, no arg normalizer"
       ;; The whole-file write is Python's job now (`Path.write_text`, `open(p, "w")`),
       ;; which crosses the SAME `:fs/access` gate. `write-safe` survives only as the
-      ;; internal primitive `struct_patch` uses to commit a whole-buffer rewrite.
+      ;; internal primitive a whole-buffer rewrite commits through.
       (let
         [symbols
          (map :ext.symbol/symbol (editing/available-editing-symbols))
@@ -439,7 +437,7 @@
         (expect (nil? (private-var "write-symbol")))
         (expect (nil? (private-var "write-tool")))
         (expect (nil? (private-var "normalize-write-args")))
-        ;; the primitive stays: struct_patch commits through it
+        ;; the primitive stays: a whole-buffer rewrite commits through it
         (expect (some? (private-var "write-safe")))))
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
       (doseq
@@ -521,7 +519,7 @@
 (defdescribe
   fs-access-gate-before-fn-test
   (it
-    "struct_index asks the gate with file-read and refuses with the extension's own sentence"
+    "cat asks the gate with file-read and refuses with the extension's own sentence"
     (let
       [seen!
        (atom [])
@@ -534,12 +532,12 @@
         (fn []
           (let
             [before
-             (:ext.symbol/before-fn (private-fn "index-symbol"))
+             (:ext.symbol/before-fn (private-fn "cat-symbol"))
 
              failure
              (:result (before {:extensions (atom [])}
                               (constantly :ok)
-                              [{"paths" ["target/editing-test/protected/secret.edn"]}]))]
+                              ["target/editing-test/protected/secret.edn"]))]
 
             (expect (some? failure))
             (expect (false? (:success? failure)))
@@ -563,74 +561,67 @@
             ;; The gate is asked about the ABSOLUTE path the op resolved to, so a
             ;; rule cannot be dodged by spelling the same file differently.
             (expect (clojure.string/starts-with? (:path (first @seen!)) "/")))))))
-  (it
-    "struct_patch asks with file-write and refuses the WHOLE batch when one path is protected"
-    (let
-      [seen!
-       (atom [])
+  (it "patch asks with file-write and refuses when its path is protected"
+      (let
+        [seen!
+         (atom [])
 
-       hint
-       "Use (br/update-policy!) instead of editing policy files."]
+         hint
+         "Use (br/update-policy!) instead of editing policy files."]
 
-      (with-fs-gate! (refusing-gate seen! "protected/policy.txt" hint)
+        (with-fs-gate! (refusing-gate seen! "protected/policy.txt" hint)
+                       (fn []
+                         (let
+                           [before
+                            (:ext.symbol/before-fn (private-fn "patch-symbol"))
+
+                            out
+                            (before {:extensions (atom [])}
+                                    (constantly :ok)
+                                    ["target/editing-test/protected/policy.txt"
+                                     [{"from" "1:000" "replace" "x"}]])]
+
+                           (expect (= :ext.foundation.editing/path-protected
+                                      (-> out
+                                          :result
+                                          :error
+                                          :type)))
+                           (expect (= hint
+                                      (-> out
+                                          :result
+                                          :error
+                                          :hint)))
+                           (expect (= ["file-write"] (mapv :operation @seen!))))))))
+  (it "a gate hook that THROWS refuses: a boundary that fails open is not a boundary"
+      (with-fs-gate! (fn [_env _op _ctx]
+                       (throw (ex-info "guard exploded" {})))
                      (fn []
                        (let
                          [before
-                          (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
+                          (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
                           out
                           (before {:extensions (atom [])}
                                   (constantly :ok)
-                                  [{"op" "replace"
-                                    "target" "f"
-                                    "code" "x"
-                                    "edits" [{"path" "target/editing-test/plain.txt"}
-                                             {"path"
-                                              "target/editing-test/protected/policy.txt"}]}])]
+                                  ["target/editing-test/a.clj" [{"from" "1:000" "replace" "x"}]])]
 
                          (expect (= :ext.foundation.editing/path-protected
                                     (-> out
                                         :result
                                         :error
                                         :type)))
-                         (expect (= hint
-                                    (-> out
-                                        :result
-                                        :error
-                                        :hint)))
-                         (expect (= ["file-write" "file-write"] (mapv :operation @seen!))))))))
-  (it
-    "a gate hook that THROWS refuses: a boundary that fails open is not a boundary"
-    (with-fs-gate!
-      (fn [_env _op _ctx]
-        (throw (ex-info "guard exploded" {})))
-      (fn []
-        (let
-          [before
-           (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
-
-           out
-           (before {:extensions (atom [])}
-                   (constantly :ok)
-                   [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}])]
-
-          (expect (= :ext.foundation.editing/path-protected
-                     (-> out
-                         :result
-                         :error
-                         :type)))
-          (expect (clojure.string/includes? (-> out
-                                                :result
-                                                :error
-                                                :hint)
-                                            "fails closed"))))))
+                         (expect (clojure.string/includes? (-> out
+                                                               :result
+                                                               :error
+                                                               :hint)
+                                                           "fails closed"))))))
   (it "no gate registered: the op passes through with its args untouched"
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
+         (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
          args
-         [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}]
+         ["target/editing-test/a.clj" [{"from" "1:000" "replace" "x"}]]
 
          out
          (before {:extensions (atom [])} (constantly :ok) args)]
@@ -639,37 +630,34 @@
         (expect (= args (:args out)))))
   (it "a gate that reads a file does not recurse: the nested ask is skipped"
       (let [depth (atom 0)]
-        (with-fs-gate! (fn [env op ctx]
-                         (swap! depth inc)
-                         ;; What a guard that reads a file in order to decide looks like from
-                         ;; in here: the nested operation re-enters the gate.
-                         (extension/run-gate-hooks op env ctx))
-                       (fn []
-                         (let
-                           [before (:ext.symbol/before-fn (private-fn "index-symbol"))
-                            out (before {:extensions (atom [])}
-                                        (constantly :ok)
-                                        [{"paths" ["target/editing-test/a.clj"]}])]
+        (with-fs-gate!
+          (fn [env op ctx]
+            (swap! depth inc)
+            ;; What a guard that reads a file in order to decide looks like from
+            ;; in here: the nested operation re-enters the gate.
+            (extension/run-gate-hooks op env ctx))
+          (fn []
+            (let
+              [before (:ext.symbol/before-fn (private-fn "cat-symbol"))
+               out (before {:extensions (atom [])} (constantly :ok) ["target/editing-test/a.clj"])]
 
-                           (expect (not (contains? out :result)))
-                           (expect (= 1 @depth)))))))
+              (expect (not (contains? out :result)))
+              (expect (= 1 @depth)))))))
   (it ":fs/access refuses BEFORE the env's :mutation-gate is consulted"
       (with-fs-gate! (fn [_env _op _ctx]
                        "owner API only")
                      (fn []
                        (let
                          [before
-                          (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
+                          (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
                           out
                           (before {:extensions (atom [])
                                    :mutation-gate (fn [_]
                                                     (throw (ex-info "gate must not run" {})))}
                                   (constantly :ok)
-                                  [{"path" "target/editing-test/protected/x.clj"
-                                    "op" "replace"
-                                    "target" "f"
-                                    "code" "x"}])]
+                                  ["target/editing-test/protected/x.clj"
+                                   [{"from" "1:000" "replace" "x"}]])]
 
                          (expect (= :ext.foundation.editing/path-protected
                                     (-> out
@@ -682,12 +670,12 @@
          (atom nil)
 
          before
-         (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
+         (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
          out
          (before (gate-env seen! "Write a PLAN.md first.")
                  (constantly :ok)
-                 [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}])]
+                 ["target/editing-test/a.clj" [{"from" "1:000" "replace" "x"}]])]
 
         (expect (= :ext.foundation.editing/plan-required
                    (-> out
@@ -699,7 +687,7 @@
                        :result
                        :error
                        :hint)))
-        (expect (= :struct_patch (:op @seen!)))
+        (expect (= :patch (:op @seen!)))
         (expect (= ["target/editing-test/a.clj"] (:paths @seen!)))
         (expect (false? (:atomic? @seen!)))))
   (it "a nil :mutation-gate answer passes the op through"
@@ -708,12 +696,12 @@
          (atom nil)
 
          before
-         (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
+         (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
          out
          (before (gate-env seen! nil)
                  (constantly :ok)
-                 [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}])]
+                 ["target/editing-test/a.clj" [{"from" "1:000" "replace" "x"}]])]
 
         (expect (not (contains? out :result)))
         (expect (some? @seen!)))))
@@ -1194,10 +1182,9 @@
 
 (defdescribe
   anchored-verbs-are-back-test
-  ;; The inverse of the guard that used to keep these dead. `struct_patch`
-  ;; addresses a NAMED definition in a parsed language; prose, config, a comment,
-  ;; a docstring line and every unsupported language have no name and no node, so
-  ;; the only address left was the old text quoted back. `cat` mints the address
+  ;; The inverse of the guard that used to keep these dead. Prose, config, a
+  ;; comment, a docstring line and every language have no address of their own,
+  ;; so the only one left was the old text quoted back. `cat` mints the address
   ;; and `patch` spends it — neither may quietly disappear again.
   (it "bash helpers stay fully removed from the editing core"
       (doseq
@@ -1210,7 +1197,7 @@
                                         v))))))
   ;; The OLD multi-edit batch and its serializer-damage coercion layer stay dead: one
   ;; call is one FILE — every edit for it, resolved against one read — and the only
-  ;; coercion left is `normalize-edits-arg`, shared with `struct_patch`.
+  ;; coercion left is `normalize-edits-arg`, which `patch` itself spends.
   (it "no batch coercion layer came back with them"
       (doseq [v ["coerce-patch-edits" "patch-analysis" "patch-safe" "read-file-by-anchor"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
@@ -1223,11 +1210,10 @@
       (expect (re-matches #"\d+:[0-9a-f]{3}" (hashline/line-anchor 7 "(defn f [] 1)")))
       (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.escapes"
                                       "decode-unicode-escapes")))))
-  (it "both verbs are advertised beside the structural ones"
+  (it "both verbs are advertised"
       (let [names (set (map #(str (:ext.symbol/symbol %)) (editing/available-editing-symbols)))]
         (expect (contains? names "cat"))
         (expect (contains? names "patch"))
-        (expect (contains? names "struct_patch"))
         (expect (contains? names "grep")))))
 
 
@@ -1686,26 +1672,6 @@
     ;; binding it landed on — the file parsed and the caller was told only that a delimiter
     ;; was added. There is no would-be content here for a repair to be confined to, so
     ;; there is no repair: the engine's refusal NAMES the unclosed delimiter instead.
-    (it "struct_patch by NAME refuses a `code` fragment instead of completing it"
-        (let
-          [sp
-           (private-fn "struct-patch-tool")
-
-           _
-           (temp-dir-path "spreb")
-
-           f
-           (str (temp-root) "/spreb/m.clj")]
-
-          (spit (fs/file f) "(ns sp)\n\n(defn ok [] 1)\n")
-          (let
-            [out (try (with-balancer
-                        "(defn ok [] (inc 1))"
-                        #(sp {"path" f "op" "replace" "target" "ok" "code" "(defn ok [] (inc 1)"}))
-                      (catch clojure.lang.ExceptionInfo e (ex-message e)))]
-            (expect (string/includes? out "syntax error"))
-            (expect (string/includes? out "unclosed"))
-            (expect (= "(ns sp)\n\n(defn ok [] 1)\n" (slurp (fs/file f)))))))
     ;; Regression: a `[` the caller mistyped as `(` came back as a CALL that had swallowed
     ;; the argument after it — `(foo [1 2] 3)` written as `(foo (1 2 3))`. It parses, it is
     ;; one line, its skeleton is identical and only delimiters moved, so nothing but the
@@ -1778,47 +1744,7 @@
                           #(:result (patch-span rel a3 a3 "defn ok [] (inc 1))")))]
 
           (expect (string/includes? out "delimiters repaired: line 3 added `(`"))
-          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n" (slurp rel)))))
-    (it "struct_patch by LINE repairs the splice inside the lines it wrote"
-        (let
-          [sp
-           (private-fn "struct-patch-tool")
-
-           _
-           (temp-dir-path "sprebline")
-
-           f
-           (str (temp-root) "/sprebline/m.clj")]
-
-          (spit (fs/file f) "(ns sp)\n\n(defn ok [] 1)\n")
-          (let
-            [r (with-balancer
-                 "(ns sp)\n\n(defn ok [] (inc 1))\n"
-                 #(sp {"path" f "op" "replace_node" "line" 3 "code" "(defn ok [] (inc 1)"}))]
-            (expect (:success? r))
-            (expect (= ["line 3 added `)` → `(defn ok [] (inc 1))`"]
-                       (get (first (:result r)) "delimiters_repaired")))
-            (expect (= "(ns sp)\n\n(defn ok [] (inc 1))\n" (slurp (fs/file f)))))))
-    (it "struct_patch refuses a repair that would rewrite the code it was handed"
-        (let
-          [sp
-           (private-fn "struct-patch-tool")
-
-           _
-           (temp-dir-path "sprebno")
-
-           f
-           (str (temp-root) "/sprebno/m.clj")]
-
-          (spit (fs/file f) "(ns sp)\n\n(defn ok [] 1)\n")
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(with-balancer "(defn ok [] (dec 1))"
-                                           (fn []
-                                             (sp {"path" f
-                                                  "op" "replace"
-                                                  "target" "ok"
-                                                  "code" "(defn ok [] (inc 1)"})))))
-          (expect (= "(ns sp)\n\n(defn ok [] 1)\n" (slurp (fs/file f))))))))
+          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n" (slurp rel)))))))
 
 
 (defdescribe
@@ -2218,44 +2144,6 @@
                    (expect (= "keep\nreplaced\nkeep\n" (slurp rel))))))
 
 
-(defdescribe
-  struct-index-rows-are-patch-anchors-test
-  (it "a definition row's anchor feeds patch with no cat between"
-      (let
-        [rel
-         (write-temp! "structanchor/rows.clj"
-                      "(ns rows)\n\n(defn alpha [] 1)\n\n(defn beta [] 2)\n")
-
-         index-tool
-         (private-fn "index-tool")
-
-         row
-         (->> (get-in (index-tool {"paths" [rel]}) [:result "results" 0 "definitions"])
-              (filter #(= "alpha" (get % "name")))
-              first)
-
-         out
-         (:result (patch-span rel (get row "anchor") (get row "end_anchor") "(defn alpha [] 42)"))]
-
-        ;; The anchor rides BESIDE the line, never instead of it: struct_nodes
-        ;; still consumes the row's `line` as data.
-        (expect (= 3 (get row "line")))
-        (expect (re-matches #"\d+:[0-9a-f]{3}" (get row "anchor")))
-        (expect (string/starts-with? out "patched "))
-        (expect (string/includes? (slurp rel) "(defn alpha [] 42)"))))
-  (it "a struct_nodes entry carries its anchor too"
-      (let
-        [rel
-         (write-temp! "structanchor/nodes.clj" "(ns nodes)\n\n(defn gamma [] 3)\n")
-
-         nodes-tool
-         (private-fn "nodes-tool")
-
-         entry
-         (first (get-in (nodes-tool {"path" rel "nodes" [{"line" 3}]}) [:result "results"]))]
-
-        (expect (= 3 (get entry "line")))
-        (expect (re-matches #"\d+:[0-9a-f]{3}" (get entry "anchor"))))))
 
 
 (defdescribe
@@ -2391,11 +2279,11 @@
                    [path
                     (write-temp! "contract/read.clj" "(defn alpha [] 1)\n")
 
-                    index-tool
-                    (private-fn "index-tool")
+                    cat-tool
+                    (private-fn "cat-tool")
 
                     out
-                    (index-tool {"paths" [path]})
+                    (cat-tool path)
 
                     required
                     #{:success? :result :error :symbol :tag :metadata}]
@@ -2404,19 +2292,17 @@
                    ;; (e.g. :presentation) may also appear.
                    (expect (= required (clojure.set/intersection required (set (keys out)))))
                    (expect (true? (:success? out)))
-                   (expect (= :struct_index (:symbol out)))
-                   (let [row (get-in out [:result "results" 0])]
-                     (expect (= path (get row "path")))
-                     (expect (= ["alpha"] (mapv #(get % "name") (get row "definitions")))))
+                   (expect (= :cat (:symbol out)))
+                   (expect (string/includes? (:result out) "alpha"))
                    (expect (not (contains? out :markdown)))
                    (expect (nil? (:error out)))))
              (it "tool failure envelope carries structured :error"
                  (let
-                   [index-symbol
-                    (private-fn "index-symbol")
+                   [cat-symbol
+                    (private-fn "cat-symbol")
 
                     on-error
-                    (:ext.symbol/on-error-fn index-symbol)
+                    (:ext.symbol/on-error-fn cat-symbol)
 
                     out
                     (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
@@ -2429,14 +2315,14 @@
                    (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
                    (expect (not (contains? out :markdown))))))
 
-;; Regression: `patch` `replace` and `struct_patch` `code` used to write a
+;; Regression: a `patch` `replace` used to write a
 ;; literal `\u2014` -- the six characters -- into the file whenever the model
 ;; emitted the escape instead of the em dash itself, so edited files ended up
 ;; carrying `\u2014` in prose and docstrings where a dash belonged.
 (defdescribe
   editing-unicode-escape-decode-test
   "Drifted `\\uXXXX` escapes are decoded ONCE on the way in, for both text and
-   structural edits, and only where the escape can only BE drift: an escaped
+   every edit, and only where the escape can only BE drift: an escaped
    `\\\\uXXXX`, a control escape, a private-use code point and a lone surrogate
    are written through verbatim."
   (it "decodes an unescaped escape that names a printable non-ASCII character"
@@ -2462,29 +2348,7 @@
   (it "is total: nothing to decode, nothing to scan"
       (expect (= "plain" (escapes/decode-unicode-escapes "plain")))
       (expect (= "" (escapes/decode-unicode-escapes "")))
-      (expect (nil? (escapes/decode-unicode-escapes nil))))
-  (it "struct_patch writes the character, not the escape"
-      (let
-        [sp
-         (private-fn "struct-patch-tool")
-
-         _
-         (temp-dir-path "spesc")
-
-         f
-         (str (temp-root) "/spesc/m.clj")]
-
-        (spit (fs/file f) "(def note \"old\")\n")
-        (let
-          [r
-           (sp {"path" f "op" "replace" "target" "note" "code" "(def note \"a \\u2014 b\")"})
-
-           src
-           (slurp (fs/file f))]
-
-          (expect (:success? r))
-          (expect (string/includes? src "a \u2014 b"))
-          (expect (not (string/includes? src "\\u2014")))))))
+      (expect (nil? (escapes/decode-unicode-escapes nil)))))
 
 ;; Regression: the decoder's first cut judged an escape with a hand-written
 ;; range test -- "printable non-ASCII BMP" -- so it decoded escapes no edit can
@@ -2493,8 +2357,7 @@
 ;; use reached disk as real characters; on the BMP an unassigned point, a bidi
 ;; override, a zero-width joiner, a soft hyphen and a non-breaking space all
 ;; became silent invisible ink where six visible characters used to sit. And a
-;; drifted `match` was never decoded at all, so `struct_patch` could not locate
-;; the em dash the model was pointing at.
+;; drifted escape was never decoded on the way in.
 (defdescribe
   editing-unicode-escape-hostile-test
   "Hostile escapes. An escape is decoded only when it names a VISIBLE assigned
@@ -2555,97 +2418,6 @@
         (expect (identical? s (escapes/decode-unicode-escapes s))))
       ;; Total: a non-string is returned as it came.
       (expect (= 42 (escapes/decode-unicode-escapes 42))))
-  (it "struct_patch decodes a drifted `match` under both locators"
-      (let
-        [sp
-         (private-fn "struct-patch-tool")
-
-         _
-         (temp-dir-path "spmatch")
-
-         by-name
-         (str (temp-root) "/spmatch/name.clj")
-
-         by-at
-         (str (temp-root) "/spmatch/at.clj")]
-
-        (spit (fs/file by-name) "(def note \"a — b\")\n")
-        (spit (fs/file by-at) "(def note \"a — b\")\n")
-        ;; Name-based: `match` names a whole sub-NODE of the definition, here the
-        ;; string carrying the dash.
-        (expect (:success? (sp {"path" by-name
-                                "op" "replace_node"
-                                "target" "note"
-                                "match" "\"a \\u2014 b\""
-                                "code" "\"a - b\""})))
-        (expect (= "(def note \"a - b\")\n" (slurp (fs/file by-name))))
-        (expect (:success?
-                  (sp {"path" by-at "op" "replace_node" "at" [0] "match" "\\u2014" "code" "-"})))
-        (expect (= "(def note \"a - b\")\n" (slurp (fs/file by-at))))))
-  (it "struct_patch decodes every edit of a batch, and no invisible ink"
-      (let
-        [sp
-         (private-fn "struct-patch-tool")
-
-         _
-         (temp-dir-path "spescbatch")
-
-         f
-         (str (temp-root) "/spescbatch/m.clj")]
-
-        (spit (fs/file f) "(def a \"1\")\n(def b \"2\")\n")
-        (let
-          [r
-           (sp {"path" f
-                "edits" [{"op" "replace" "target" "a" "code" "(def a \"x \\u2014 y\")"}
-                         {"op" "replace" "target" "b" "code" "(def b \"p \\u2026 q\")"}
-                         {"op" "append" "code" "(def c \"\\u202e\")"}]})
-
-           src
-           (slurp (fs/file f))]
-
-          (expect (:success? r))
-          (expect (string/includes? src "x — y"))
-          (expect (string/includes? src "p … q"))
-          (expect (string/includes? src "(def c \"\\u202e\")")))))
-  (it "struct_patch rename decodes the new name"
-      (let
-        [sp
-         (private-fn "struct-patch-tool")
-
-         _
-         (temp-dir-path "spescrename")
-
-         f
-         (str (temp-root) "/spescrename/m.clj")]
-
-        (spit (fs/file f) "(defn widget [] 1)\n(widget)\n")
-        (let [r (sp {"path" f "op" "rename" "target" "widget" "code" "caf\\u00e9"})]
-          (expect (:success? r))
-          (expect (string/includes? (slurp (fs/file f)) "(defn café []")))))
-  (it "a decoded `code` still faces the re-parse gate"
-      ;; Decoding happens BEFORE the file is parsed, so drift can never smuggle a
-      ;; broken form past the structural guard.
-      (let
-        [sp
-         (private-fn "struct-patch-tool")
-
-         _
-         (temp-dir-path "spescparse")
-
-         f
-         (str (temp-root) "/spescparse/m.clj")]
-
-        (spit (fs/file f) "(def x 1)\n")
-        ;; Pinned to NO delimiter repair: this test is the decode → parse seam, not the
-        ;; repair, which has its own suite (`patch-delimiter-repair-test`). With a pack's
-        ;; balancer in reach the same broken form would be closed and written instead.
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(with-redefs-fn {(private-var "language-balancer") (constantly nil)}
-                            (fn []
-                              (sp
-                                {"path" f "op" "replace" "target" "x" "code" "(def x \\u2014"})))))
-        (expect (= "(def x 1)\n" (slurp (fs/file f))))))
   (it "is total, idempotent and line-preserving on random escape soup"
       ;; A seeded walk over backslash/hex soup. Whatever arrives, the decoder may
       ;; not throw, may not invent a line under a line-addressed patch, may not
@@ -2701,8 +2473,8 @@
         (let [s (str "\\u" (apply str (map #(char (long %)) quad)))]
           (expect (= s (escapes/decode-unicode-escapes s)) (pr-str s)))))
   (it "decodes megabytes in one linear pass"
-      ;; Every `patch` `replace` and every `struct_patch` `code` goes through the
-      ;; decoder, so it may never be the slow part of an edit: text between
+      ;; Every `patch` `replace` goes through the decoder, so it may never be
+      ;; the slow part of an edit: text between
       ;; backslashes is bulk-copied rather than walked character by character,
       ;; and an escape costs no substring and no matcher. All four blobs together
       ;; decode in about 4 ms (the first, regex-and-charAt cut needed 13 ms), so
@@ -2790,41 +2562,6 @@
           (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
           ;; Vis's own config home is always available.
           (expect (some? (safe-path (str (System/getProperty "user.home") "/.vis/config.yml"))))))))
-  ;; Regression: `struct_index` fans its per-path work out to the pack's scan pool
-  ;; (`structural/scan-mapv`), and a Clojure dynamic binding does NOT cross a raw
-  ;; Java worker thread. `safe-path` therefore read `*filesystem-roots*` as empty
-  ;; and `*workspace-root*` as nil on every worker, so indexing ONE path (which
-  ;; runs inline on the calling thread) accepted a file in a secondary filesystem
-  ;; root while indexing TWO threw "escapes the allowed workspace roots" for that
-  ;; very same file.
-  (it "confines a path the SAME way on a scan-pool worker as on the calling thread"
-      (let
-        [safe-path
-         (private-fn "safe-path")
-
-         ;; Deliberately NOT under the system temp dir, ~/.vis or the cwd: those are
-         ;; reachable unconditionally and would hide the missing bindings.
-         ctx-root
-         "/vis-test-secondary-root"
-
-         files
-         [(str ctx-root "/a.clj") (str ctx-root "/b.clj")]
-
-         resolve-all
-         (fn [paths]
-           (structural/scan-mapv #(.getPath ^java.io.File (safe-path %)) paths))]
-
-        (binding
-          [workspace/*workspace-root*
-           (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
-
-           workspace/*filesystem-roots*
-           [{:trunk ctx-root :clone ctx-root}]]
-
-          ;; A single item runs inline on this thread — this always worked.
-          (expect (= [(first files)] (resolve-all [(first files)])))
-          ;; Two or more fan out to the pool and MUST be confined identically.
-          (expect (= files (resolve-all files))))))
   (it
     "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
     (let
@@ -2919,538 +2656,43 @@
 
 
 
-(defdescribe
-  editing-native-contract-test
-  (let
-    [struct-description
-     (:ext.symbol/description editing/struct-patch-symbol)
+(defdescribe editing-native-contract-test
+             (let
+               [patch-description
+                (:ext.symbol/description editing/patch-symbol)
 
-     struct-result
-     (:ext.symbol/result editing/struct-patch-symbol)
+                patch-result
+                (:ext.symbol/result editing/patch-symbol)]
 
-     index-result
-     (:ext.symbol/result editing/index-symbol)]
+               ;; The Clojure pack publishes a delimiter repair, and the editors apply it
+               ;; when it stays inside the lines the call wrote, so "a syntax break is
+               ;; refused" alone was a lie; the editor says what actually happens — and
+               ;; which HALF of it, because only the omitted delimiter comes back.
+               (it "describes parse refusal AND delimiter repair"
+                   (expect (string/includes? patch-description
+                                             "a syntax-breaking write refuses the WHOLE batch"))
+                   (expect (string/includes?
+                             patch-description
+                             "delimiter you OMITTED is put back where the text you replaced"))
+                   (expect (string/includes? patch-description "never deleted or retyped"))
+                   ;; The batch's all-or-nothing property is a property of the BATCH,
+                   ;; and `doc(name)` is the only place it can be stated now that no
+                   ;; schema describes the `edits` parameter.
+                   (expect (string/includes? patch-description "writes NOTHING")))
+               (it "documents the Python result shape instead of relying on rendered output"
+                   (expect (string/includes? patch-result "one row per edit"))
+                   (expect (string/includes? patch-result "LIVE AFTER the write")))))
 
-    ;; The Clojure pack publishes a delimiter repair, and the editors apply it
-    ;; when it stays inside the lines the call wrote, so "a syntax break is
-    ;; refused" alone was a lie; the editor says what actually happens — and
-    ;; refused" alone was a lie; the editor says what actually happens — and
-    ;; which HALF of it, because only the omitted delimiter comes back.
-    (it "describes parse refusal AND delimiter repair"
-        (expect (string/includes? struct-description "will not parse is REFUSED"))
-        (expect (string/includes?
-                  struct-description
-                  "a delimiter you OMITTED is put back where the code this call replaced had it"))
-        (expect (string/includes? struct-description "never deleted or retyped"))
-        ;; The batch's all-or-nothing property is a property of the BATCH,
-        ;; and `doc(name)` is the only place it can be stated now that no
-        ;; schema describes the `edits` parameter.
-        (expect (string/includes? struct-description "rolls the earlier ones back")))
-    (it "documents the Python result shape instead of relying on rendered output"
-        (expect (string/includes? struct-result "`changed`"))
-        (expect (string/includes? struct-result "`diff`"))
-        (expect (string/includes? index-result "definitions")))))
 
-(defdescribe
-  outline-path-resolution-test
-  "Regression: index must route through safe-path like every other file tool —
-   it used the RAW path (slurp resolves against the JVM user.dir, not the
-   workspace cwd), so a nested `src/foo.clj` 404'd on the source runtime while cat
-   found it. The proof is that safe-path confinement now applies to index."
-  (let [index-tool (private-fn "index-tool")]
-    (it "resolves a NESTED workspace-relative path"
-        (let
-          [dir (temp-dir-path "outline-nested/src")
-           _ (spit (fs/file (str dir "/foo.clj")) "(ns foo)\n(defn bar [x] (+ x 1))\n")
-           r (index-tool {"paths" [(str (temp-root) "/outline-nested/src/foo.clj")]})
-           entry (get-in r [:result "results" 0])]
 
-          (expect (:success? r))
-          (expect (clojure.string/includes? (str (get entry "skeleton")) "bar"))
-          ;; the STRUCTURED sibling: machine-addressable definitions (no skeleton parsing),
-          ;; each row the same shape as an occurrences def — name/kind/line/end_line.
-          (let
-            [defs (get entry "definitions")
-             bar (first (filter #(= "bar" (get % "name")) defs))]
-
-            (expect (vector? defs))
-            (expect (= "fn" (get bar "kind")))
-            (expect (= "[x]" (get bar "signature")))
-            (expect (pos-int? (get bar "line")))
-            (expect (pos-int? (get bar "end_line")))
-            (expect (= 0 (get bar "depth"))))))
-    (it "REFUSES a path that escapes the workspace (proves safe-path confinement)"
-        (expect (true? (try (index-tool {"paths" ["/etc/hosts"]})
-                            false
-                            (catch clojure.lang.ExceptionInfo _ true)))))))
-
-(defdescribe
-  line-zipper-tool-test
-  "A row's LINE from struct_index is a first-class zipper handle: struct_nodes can
-   enter at it, and struct_patch can edit the corresponding node."
-  (let
-    [sexpr-tool
-     (private-fn "nodes-tool")
-
-     struct-patch
-     (private-fn "struct-patch-tool")]
-
-    (it "struct_nodes enters the zipper at a definition's line"
-        (let
-          [path
-           (write-temp! "line-zipper/read.clj"
-                        "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
-
-           r
-           (sexpr-tool {"path" path "line" 6})
-
-           node
-           (first (get-in r [:result "results"]))]
-
-          (expect (:success? r))
-          ;; `at` is the zipper cursor, `source` the node's verbatim SOURCE CODE.
-          (expect (= [2] (get node "at")))
-          (expect (= path (get node "path")))
-          (expect (clojure.string/includes? (get node "source") "defn bar"))))
-    (it "struct_patch edits the node addressed by a line"
-        (let
-          [path
-           (write-temp! "line-zipper/write.clj"
-                        "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
-
-           r
-           (struct-patch {"path" path "op" "replace" "line" 6 "code" "(defn bar [y]\n  (- y 2))"})]
-
-          (expect (:success? r))
-          (expect (clojure.string/includes? (slurp (fs/file path)) "(- y 2)"))))
-    (it "replace_node reuses node-addressing semantics when a line locates the node"
-        (let
-          [path
-           (write-temp! "line-zipper/replace-node.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
-
-           r
-           (struct-patch {"path" path
-                          "op" "replace_node"
-                          "line" 3
-                          "match" "(defn bar [y]\n  (* y 2))"
-                          "code" "(defn bar [y]\n  (+ y 2))"})]
-
-          (expect (:success? r))
-          (expect (clojure.string/includes? (slurp (fs/file path)) "(+ y 2)"))))
-    ;; Regression, issue #100: `match` meant two different things — the unique
-    ;; sub-expression to swap under `target`, but a whole-node equality check under
-    ;; the node locator, so the documented use always failed with `match does not
-    ;; equal the node selected`.
-    (it "replace_node swaps a sub-expression INSIDE the node a path locator selected"
-        (let
-          [path
-           (write-temp! "line-zipper/match-subexpr.clj" "(ns my.app)\n\n(defn f [x]\n  (+ x 1))\n")
-
-           r
-           (struct-patch
-             {"path" path "op" "replace_node" "line" 3 "match" "(+ x 1)" "code" "(+ x 2)"})]
-
-          (expect (:success? r))
-          (expect (= "(ns my.app)\n\n(defn f [x]\n  (+ x 2))\n" (slurp (fs/file path))))))
-    (it "refuses an ambiguous `match` under a path locator"
-        (let
-          [path
-           (write-temp! "line-zipper/match-ambiguous.clj"
-                        "(ns my.app)\n\n(defn f [x]\n  (+ (inc x) (inc x)))\n")
-
-           error
-           (try (struct-patch
-                  {"path" path "op" "replace_node" "line" 3 "match" "(inc x)" "code" "(dec x)"})
-                nil
-                (catch clojure.lang.ExceptionInfo e e))]
-
-          (expect (= 2 (:occurrences (ex-data error))))
-          (expect (clojure.string/includes? (ex-message error) "is not unique"))
-          (expect (= "(ns my.app)\n\n(defn f [x]\n  (+ (inc x) (inc x)))\n"
-                     (slurp (fs/file path))))))
-    (it "refuses a `match` that occurs nowhere in the located node"
-        (let
-          [path
-           (write-temp! "line-zipper/match-mismatch.clj"
-                        "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n")
-
-           error
-           (try (struct-patch {"path" path
-                               "op" "replace_node"
-                               "line" 3
-                               "match" "(inc x)"
-                               "code" "(defn foo [x]\n  (- x 1))"})
-                nil
-                (catch clojure.lang.ExceptionInfo e e))]
-
-          (expect (= :ext.foundation.editing/struct-locator-match-mismatch (:type (ex-data error))))
-          (expect (clojure.string/includes? (ex-message error) "does not occur in"))
-          (expect (= 0 (:occurrences (ex-data error))))
-          (expect (= "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n" (slurp (fs/file path))))))
-    (it "a line wins over a serializer-default empty at path"
-        (let
-          [path
-           (write-temp! "line-zipper/empty-at.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
-
-           r
-           (struct-patch
-             {"path" path "op" "insert_before" "line" 3 "at" [] "code" "(defn foo [x]\n  (+ x 1))"})
-
-           src
-           (slurp (fs/file path))]
-
-          (expect (:success? r))
-          (expect (= "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n"
-                     src))))
-    (it "a line that starts no node is refused before zipper navigation"
-        (let
-          [path
-           (write-temp! "line-zipper/no-node.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
-
-           r
-           (sexpr-tool {"path" path "line" 2})]
-
-          (expect (false? (:success? r)))
-          (expect (= :line-no-node (get-in r [:error :reason])))))))
-
-(defdescribe
-  patch-summary-line-counts-test
-  ;; A write/struct_patch summary states HOW BIG the edit was: the model
-  ;; wire strips the `"diff"` and the card caps it hunk-wise, so without the
-  ;; counts nothing said whether one line or four hundred moved.
-  (let
-    [summary
-     (private-fn "patch-result-file-summary")
-
-     counts
-     (fn [before after]
-       (get (summary {:op :update :path "a.txt" :before before :after after}) "lines"))]
-
-    (it "counts added, removed and modified lines from the content"
-        (expect (= {"added" 0 "removed" 0 "modified" 1} (counts "a\nb\nc\n" "a\nB\nc\n")))
-        (expect (= {"added" 2 "removed" 0 "modified" 0} (counts "a\nb\n" "a\nx\ny\nb\n")))
-        (expect (= {"added" 0 "removed" 1 "modified" 0} (counts "a\nb\nc\n" "a\nc\n")))
-        ;; A replaced chunk is modified for the overlap, added for the surplus.
-        (expect (= {"added" 1 "removed" 0 "modified" 1} (counts "a\nb\nc\n" "a\nX\nY\nc\n"))))
-    (it "a new file is all additions and a no-op carries no counts"
-        (expect (= {"added" 2 "removed" 0 "modified" 0}
-                   (get (summary {:op :add :path "a.txt" :before nil :after "a\nb\n"}) "lines")))
-        (expect (not (contains? (summary {:op :update :path "a.txt" :before "a\n" :after "a\n"})
-                                "lines"))))
-    (it "stays exact for a big file whose rendered diff is capped"
-        (let
-          [before
-           (string/join "\n" (map #(str "line-" %) (range 1500)))
-
-           after
-           (-> before
-               (string/replace "line-750\n" "LINE-750\n")
-               (string/replace "line-900\n" "LINE-900\n"))]
-
-          (expect (= {"added" 0 "removed" 0 "modified" 2} (counts before after)))))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
-(defdescribe
-  nodes-tool-plural-cross-file-test
-  "`struct_nodes` is the PLURAL navigator: many cursors, many files, ONE call.
-   Every entry answers with the node's verbatim `source` PLUS the `at` cursor
-   struct_patch takes, and a cursor that misses fails closed per ENTRY while its
-   siblings still answer."
-  (let [nodes (private-fn "nodes-tool")]
-    (it "answers many cursors across MANY files (and languages) in one call"
-        (let
-          [f1 (write-temp! "nodes-plural/a.clj"
-                           "(ns a)\n\n(defn zonk [x]\n  (if (pos? x) (* x 2) 0))\n")
-           f2 (write-temp! "nodes-plural/b.py" "def helper(n):\n    return n * 2\n")
-           r (nodes {"nodes" [f1 {"path" f2 "nav" [{"find_kind" "function_definition"}]}]})
-           [c1 c2] (get-in r [:result "results"])]
 
-          (expect (:success? r))
-          (expect (= 2 (count (get-in r [:result "results"]))))
-          (expect (= f1 (get c1 "path")))
-          (expect (= [] (get c1 "at")))
-          (expect (string/includes? (get c1 "source") "(defn zonk"))
-          (expect (= f2 (get c2 "path")))
-          (expect (= [0] (get c2 "at")))
-          (expect (string/includes? (get c2 "source") "def helper"))))
-    (it "a shared top-level `path` feeds every entry, and at/nav agree on one node"
-        (let
-          [p (write-temp! "nodes-shared/a.clj"
-                          "(ns a)\n\n(defn zonk [x]\n  (if (pos? x) (* x 2) 0))\n")
-           r (nodes {"path" p "nodes" [{"at" [1]} {"nav" [{"find" "zonk"}]}]})
-           [by-at by-nav] (get-in r [:result "results"])]
 
-          (expect (:success? r))
-          (expect (every? #(= p (get % "path")) [by-at by-nav]))
-          (expect (string/includes? (get by-at "source") "(defn zonk"))
-          (expect (= "zonk" (get by-nav "source")))))
-    (it "ONE impossible move is data on THAT entry; its siblings still answer"
-        (let
-          [p (write-temp! "nodes-partial/a.clj" "(ns a)\n\n(def k 1)\n")
-           r (nodes {"path" p "nodes" [{"at" [1]} {"nav" ["down" "right" "right" "right"]}]})
-           [ok miss] (get-in r [:result "results"])]
 
-          (expect (:success? r))
-          (expect (= "(def k 1)" (get ok "source")))
-          (expect (some? (get miss "error")))
-          (expect (= "bad-move" (get miss "reason")))))
-    (it "a call whose EVERY cursor missed is a failure, not an empty success"
-        (let
-          [p (write-temp! "nodes-allmiss/a.clj" "(ns a)\n")
-           r (nodes {"path" p "nodes" [{"nav" ["up"]} {"nav" [{"find" "nope-nope"}]}]})]
 
-          (expect (false? (boolean (:success? r))))
-          (expect (= :struct_nodes (get-in r [:error :mode])))))
-    (it "refuses a malformed `nodes` list instead of guessing"
-        (expect (throws? clojure.lang.ExceptionInfo #(nodes {"path" "a.clj" "nodes" []})))
-        (expect (throws? clojure.lang.ExceptionInfo #(nodes {"nodes" [42]})))
-        (expect (throws? clojure.lang.ExceptionInfo #(nodes {"nodes" [{"nav" ["down"]}]}))))))
 
-(defdescribe
-  unified-index-occurrences-e2e-test
-  "struct_index traces each declared identifier across the supplied files only when
-   `include_occurrences` is true."
-  (let [idx (private-fn "index-tool")]
-    (it
-      "indexes files and groups each definition with its uses when requested"
-      (let
-        [_ (temp-dir-path "occ")
-         f1 (str (temp-root) "/occ/lib.clj")
-         f2 (str (temp-root) "/occ/use.clj")]
-
-        (spit (fs/file f1) "(defn widget [x] (inc x))\n")
-        (spit (fs/file f2) "(ns u)\n(println (widget 1))\n(println (widget 2))\n")
-        (let
-          [r (idx {"paths" [f1 f2] "include_occurrences" true})
-           res (:result r)
-           groups (get res "occurrences")
-           widget (first (filter #(= "widget" (get % "name")) groups))
-           syms (get widget "symbols")
-           s (first syms)
-           uses (get s "uses")]
-
-          (expect (:success? r))
-          (expect (= [f1 f2] (mapv #(get % "path") (get res "results"))))
-          (expect (= ["widget" "u"] (mapv #(get % "name") groups)))
-          (expect (= 3 (get widget "count"))) ;; 1 def + 2 uses
-          (expect (= 1 (get widget "definition_count")))
-          (expect (= 1 (count syms)))
-          (expect (= "widget" (get s "name")))
-          (expect (= "fn" (get s "kind")))
-          (expect (= "[x]" (get s "signature")))
-          (expect (= f1 (get s "path")))
-          (expect (pos-int? (get s "line")))
-          (expect (not (contains? s "is_definition")))
-          (expect (= 2 (get s "use_count")))
-          (expect (= [f2] (mapv #(get % "path") uses)))
-          (expect (= 2 (count (get (first uses) "lines"))))
-          (expect (= #{"path" "lines"} (set (keys (first uses)))))
-          (expect (every? pos-int? (get (first uses) "lines")))
-          (expect (not (contains? widget "other_uses"))))))
-    (it "omits occurrences unless explicitly requested"
-        (let
-          [_ (temp-dir-path "occ-omitted")
-           f (str (temp-root) "/occ-omitted/lib.clj")]
-
-          (spit (fs/file f) "(defn widget [x] (inc x))\n")
-          (doseq [args [{"paths" [f]} {"paths" [f] "include_occurrences" false}]]
-            (let [result (:result (idx args))]
-              (expect (contains? result "results"))
-              (expect (not (contains? result "occurrences")))))))
-    (it "deduplicates occurrence scans while preserving duplicate result rows"
-        (let
-          [_ (temp-dir-path "occ-duplicates")
-           f (str (temp-root) "/occ-duplicates/lib.clj")]
-
-          (spit (fs/file f) "(defn widget [x] (widget x))\n")
-          (let
-            [result (:result (idx {"paths" [f f] "include_occurrences" true}))
-             widget (first (filter #(= "widget" (get % "name")) (get result "occurrences")))]
-
-            (expect (= [f f] (mapv #(get % "path") (get result "results"))))
-            (expect (= 2 (get widget "count")))
-            (expect (= 1 (get widget "definition_count")))
-            (expect (= 1 (get widget "scanned")))
-            (expect (= 1 (count (get widget "symbols")))))))
-    (it "rejects removed selector shapes and a non-boolean occurrence flag"
-        (doseq
-          [args [{"name" "widget"} {"path" "widget.clj"} "widget.clj"
-                 {"paths" ["widget.clj"] "include_occurrences" "yes"}]]
-          (expect (throws? clojure.lang.ExceptionInfo #(idx args)))))))
-
-(defdescribe merged-symbol-entry-points-test
-             "Occurrence grouping backs the one paths-only struct_index mode."
-             (let [idx (private-fn "index-tool")]
-               (it "an ambiguous name groups PER SYMBOL and parks the rest in other_uses"
-                   (let
-                     [_ (temp-dir-path "idxamb")
-                      a (str (temp-root) "/idxamb/a.clj")
-                      b (str (temp-root) "/idxamb/b.clj")
-                      c (str (temp-root) "/idxamb/c.clj")]
-
-                     (spit (fs/file a) "(defn gizmo [x] x)\n(gizmo 1)\n")
-                     (spit (fs/file b) "(defn gizmo [x y] y)\n(gizmo 1 2)\n")
-                     ;; uses only — owned by neither definition
-                     (spit (fs/file c) "(ns c)\n(gizmo 9)\n(gizmo 8)\n")
-                     (with-redefs [editing/rg-search (constantly {:files [a b c]})]
-                       (let
-                         [r (idx {"paths" [a b c] "include_occurrences" true})
-                          res (:result r)
-                          gizmo (first (filter #(= "gizmo" (get % "name")) (get res "occurrences")))
-                          syms (get gizmo "symbols")]
-
-                         (expect (:success? r))
-                         (expect (= 2 (get gizmo "definition_count")))
-                         (expect (= 2 (count syms)))
-                         ;; each definition keeps its own path + signature to disambiguate
-                         (expect (= [a b] (mapv #(get % "path") syms)))
-                         (expect (= ["[x]" "[x y]"] (mapv #(get % "signature") syms)))
-                         ;; a use in a file that defines the name exactly once is attributed there
-                         (expect (= [1 1] (mapv #(get % "use_count") syms)))
-                         (expect (= [[a] [b]]
-                                    (mapv (fn [s]
-                                            (mapv #(get % "path") (get s "uses")))
-                                          syms)))
-                         ;; the third file defines nothing, so ownership is NOT guessed
-                         (expect (= [c] (mapv #(get % "path") (get gizmo "other_uses"))))
-                         (expect (= 2 (count (get (first (get gizmo "other_uses")) "lines"))))))))
-               (it "struct_index without `paths` is refused"
-                   (expect (throws? clojure.lang.ExceptionInfo #(idx {}))))
-               (it "struct_occurrences is gone entirely"
-                   ;; No `struct_occurrences` symbol is exported: occurrence analysis is an
-                   ;; explicit struct_index option (a stale Var can survive a REPL :reload, so
-                   ;; assert on the exported symbol list, not `resolve`).
-                   (expect (not-any? #(= 'struct_occurrences (:ext.symbol/symbol %))
-                                     (editing/available-editing-symbols))))))
-
-(defdescribe
-  index-tool-e2e-test
-  "The paths-only `struct_index` tool indexes a real file and returns its row in
-   the ordered batch result without occurrence analysis by default."
-  (let [index (private-fn "index-tool")]
-    (it "returns the requested file's structural row without occurrences by default"
-        (let
-          [_ (temp-dir-path "outl")
-           f (str (temp-root) "/outl/m.clj")]
-
-          (spit (fs/file f) "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n")
-          (let
-            [r (index {"paths" [f]})
-             result (:result r)
-             entry (get-in result ["results" 0])]
-
-            (expect (:success? r))
-            (expect (= f (get entry "path")))
-            (expect (clojure.string/includes? (get entry "skeleton") "add"))
-            (expect (clojure.string/includes? (get entry "skeleton") "sub"))
-            (expect (= ["add" "sub"] (mapv #(get % "name") (get entry "definitions"))))
-            (expect (not (contains? result "occurrences"))))))))
-
-(defdescribe
-  index-tool-range-test
-  "struct_index narrows to a single `range` OR several `ranges` windows; a def is
-   kept when its span hits ANY window, and the chosen key is echoed back."
-  (let
-    [index
-     (private-fn "index-tool")
-
-     names
-     (fn [r]
-       (mapv #(get % "name") (get-in r [:result "results" 0 "definitions"])))]
-
-    (it
-      "ranges handles one or several windows and is echoed consistently"
-      (let
-        [_
-         (temp-dir-path "idxrange")
-
-         f
-         (str (temp-root) "/idxrange/m.clj")]
-
-        (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
-        (let
-          [whole
-           (index {"paths" [f]})
-
-           one
-           (index {"paths" [{"path" f "ranges" [[2 2]]}]})
-
-           multi
-           (index {"paths" [{"path" f "ranges" [[1 1] [3 3]]}]})]
-
-          (expect (= ["a" "b" "c"] (names whole)))
-          (expect (= ["b"] (names one)))
-          (expect (= [[2 2]] (get-in one [:result "results" 0 "ranges"])))
-          (expect (not (contains? (get-in one [:result "results" 0]) "range")))
-          (expect (= ["a" "c"] (names multi)))
-          (expect (= [[1 1] [3 3]] (get-in multi [:result "results" 0 "ranges"])))
-          (expect (not (contains? (get-in multi [:result "results" 0]) "range")))
-          (expect (= 3 (get-in whole [:result "results" 0 "line_count"])))
-          (expect (= 3 (get-in multi [:result "results" 0 "line_count"])))
-          ;; cat's whole-file sentinel unslices ONE batched path here too
-          (let [unsliced (index {"paths" [{"path" f "ranges" [[-1 -1]]}]})]
-            (expect (= ["a" "b" "c"] (names unsliced)))
-            (expect (nil? (get-in unsliced [:result "results" 0 "ranges"]))))
-          ;; a HALF sentinel is NOT the sentinel: it coerces to a real 1-based
-          ;; window exactly like cat instead of indexing a nonsense one
-          (let [half (index {"paths" [{"path" f "ranges" [[-1 3]]}]})]
-            (expect (= ["a" "b" "c"] (names half)))
-            (expect (= [[1 3]] (get-in half [:result "results" 0 "ranges"]))))
-          ;; every other cat `ranges` shape coerces here too, echoed normalized
-          (let [stringy (index {"paths" [{"path" f "ranges" "2, 2"}]})]
-            (expect (= ["b"] (names stringy)))
-            (expect (= [[2 2]] (get-in stringy [:result "results" 0 "ranges"]))))
-          ;; `ranges` stays OPTIONAL: absent or empty indexes the WHOLE file, the
-          ;; same as a bare path entry
-          (doseq [spec [{"path" f} {"path" f "ranges" []}]]
-            (let [r (index {"paths" [spec]})]
-              (expect (= ["a" "b" "c"] (names r)))
-              (expect (nil? (get-in r [:result "results" 0 "ranges"])))))
-          ;; a malformed scalar raises the range normalizer's OWN guidance, never a raw
-          ;; "Don't know how to create ISeq from: java.lang.Long"
-          (let
-            [msg
-             (fn [thunk]
-               (try (thunk) nil (catch Throwable t (ex-message t))))
-
-             bad
-             {"path" f "ranges" 3}]
-
-            (expect (clojure.string/includes? (str (msg #(index {"paths" [bad]})))
-                                              "[[start, end], ...]")))
-          (expect (throws? clojure.lang.ExceptionInfo #(index {})))
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(index {"paths" [{"path" f "range" [2 2]}]}))))))))
-
-(defdescribe batch-read-tools-test
-             (let [index-tool (private-fn "index-tool")]
-               (it "batches struct_index paths in request order"
-                   (let
-                     [_ (temp-dir-path "batch-read")
-                      a (str (temp-root) "/batch-read/a.clj")
-                      b (str (temp-root) "/batch-read/b.clj")]
-
-                     (spit (fs/file a) "(defn a [] 1)\n")
-                     (spit (fs/file b) "(defn b [] 2)\n")
-                     (let [results (get-in (index-tool {"paths" [a b]}) [:result "results"])]
-                       (expect (= [a b] (mapv #(get % "path") results)))
-                       (expect (= ["a" "b"] (mapv #(get-in % ["definitions" 0 "name"]) results))))))
-               (it "gives every batched path its OWN ranges"
-                   (let
-                     [_ (temp-dir-path "batch-ranges")
-                      a (str (temp-root) "/batch-ranges/a.clj")
-                      b (str (temp-root) "/batch-ranges/b.clj")]
-
-                     (spit (fs/file a) "(defn a [] 1)\n(defn a2 [] 2)\n")
-                     (spit (fs/file b) "(defn b [] 1)\n(defn b2 [] 2)\n")
-                     (let
-                       [results (get-in (index-tool {"paths" [{"path" a "ranges" [[1 1]]}
-                                                              {"path" b "ranges" [[2 2]]}]})
-                                        [:result "results"])]
-                       (expect (= [a b] (mapv #(get % "path") results)))
-                       (expect (= [[[1 1]] [[2 2]]]
-                                  (mapv #(mapv vec (get % "ranges")) results))))))))
 
 (defdescribe
   rg-tool-e2e-test
@@ -3685,152 +2927,7 @@
           (expect (= 2 (get-in r [:result "file_count"])))
           (expect (= [ghost] (mapv #(get % "requested") (get-in r [:result "missing_paths"])))))))))
 
-(defdescribe
-  struct-patch-tool-e2e-test
-  "struct_patch LENIENCY over real files: `delete` a def by name, and `replace_node`
-   given a `target` but no `match` falling back to the name-based `replace` the model
-   meant (instead of failing with 'replaceNode requires both match and code')."
-  (let [sp (private-fn "struct-patch-tool")]
-    (it "op delete drops the named def; the sibling survives"
-        (let
-          [_ (temp-dir-path "spd")
-           f (str (temp-root) "/spd/m.clj")]
 
-          (spit (fs/file f) "(defn keep-me [x] (inc x))\n(defn drop-me [y] (dec y))\n")
-          (let [r (sp {"path" f "op" "delete" "target" "drop-me"})]
-            (expect (:success? r))
-            (let [src (slurp (fs/file f))]
-              (expect (clojure.string/includes? src "keep-me"))
-              (expect (not (clojure.string/includes? src "drop-me")))))))
-    (it "append_child by NAME inserts inside that definition, not at end-of-file"
-        (let
-          [_ (temp-dir-path "spac")
-           f (str (temp-root) "/spac/m.clj")
-           before (str "(defdescribe clipboard-copy-actions-test\n"
-                       "  (it \"copies\" (expect true)))\n\n"
-                       "(defdescribe later-test\n" "  (it \"stays later\" (expect true)))\n")]
-
-          (spit (fs/file f) before)
-          (let
-            [r (sp {"path" f
-                    "op" "append_child"
-                    "target" "clipboard-copy-actions-test"
-                    "kind" "fn"
-                    "code" "(it \"reports failure\" (expect true))"})
-             src (slurp (fs/file f))]
-
-            (expect (:success? r))
-            (expect (clojure.string/includes?
-                      src
-                      "(it \"copies\" (expect true))\n  (it \"reports failure\" (expect true)))"))
-            (expect (< (.indexOf src "reports failure") (.indexOf src "later-test"))))))
-    (it "append_child WITH a path locator (`at`) still edits the located node"
-        (let
-          [_ (temp-dir-path "spac2")
-           f (str (temp-root) "/spac2/m.clj")]
-
-          (spit (fs/file f) "(ns t)\n(defn f [] (do 1 2))\n")
-          (let
-            [r (sp {"path" f "op" "append_child" "at" [1] "code" "3"})
-             src (slurp (fs/file f))]
-
-            (expect (:success? r))
-            ;; `at [1]` locates the defn, so the new child belongs inside it.
-            (expect (clojure.string/includes? src "(defn f [] (do 1 2) 3)")))))
-    (it "replace_node with a target but no match = a name-based replace (not an error)"
-        (let
-          [_ (temp-dir-path "spr")
-           f (str (temp-root) "/spr/m.clj")]
-
-          (spit (fs/file f) "(defn foo [x] (inc x))\n")
-          (let
-            [r (sp {"path" f "op" "replace_node" "target" "foo" "code" "(defn foo [x] (* 2 x))"})]
-            (expect (:success? r))
-            (expect (clojure.string/includes? (slurp (fs/file f)) "(* 2 x)")))))))
-
-(defdescribe
-  struct-patch-batch-test
-  "struct_patch BATCHES at the tool level: one call carries an ORDERED `edits`
-   array, top-level keys are shared defaults, and results come back one per edit
-   in request order (across one file or several)."
-  (let [sp (private-fn "struct-patch-tool")]
-    (it "one `edits` batch edits several files in request order"
-        (let
-          [_ (temp-dir-path "spb")
-           f1 (str (temp-root) "/spb/one.clj")
-           f2 (str (temp-root) "/spb/two.clj")]
-
-          (spit (fs/file f1) "(defn a [] 1)\n\n(defn b [] 2)\n")
-          (spit (fs/file f2) "(defn c [] 3)\n")
-          (let
-            [r (sp {"edits" [{"path" f1 "op" "replace" "target" "a" "code" "(defn a [] 11)"}
-                             {"path" f1 "op" "replace" "target" "b" "code" "(defn b [] 22)"}
-                             {"path" f2 "op" "replace" "target" "c" "code" "(defn c [] 33)"}]})]
-            (expect (:success? r))
-            (expect (= 3 (count (:result r))))
-            (expect (= 3 (get-in r [:metadata :edit-count])))
-            (expect (= 3 (get-in r [:metadata :changed-count])))
-            (expect (clojure.string/includes? (slurp (fs/file f1)) "(defn a [] 11)"))
-            (expect (clojure.string/includes? (slurp (fs/file f1)) "(defn b [] 22)"))
-            (expect (clojure.string/includes? (slurp (fs/file f2)) "(defn c [] 33)")))))
-    (it "top-level keys are shared defaults; each edit sees the previous one's file"
-        (let
-          [_ (temp-dir-path "spb2")
-           f (str (temp-root) "/spb2/m.clj")]
-
-          (spit (fs/file f) "(defn a [] 1)\n")
-          (let
-            [r (sp {"path" f
-                    "edits" [{"op" "rename" "target" "a" "code" "aa"}
-                             {"op" "append" "code" "(defn d [] 4)"}]})
-             src (slurp (fs/file f))]
-
-            (expect (:success? r))
-            (expect (= 2 (count (:result r))))
-            (expect (clojure.string/includes? src "(defn aa [] 1)"))
-            (expect (clojure.string/includes? src "(defn d [] 4)")))))
-    ;; Regression, issue #147: a failing entry stopped the batch and the earlier
-    ;; entries stayed on disk — the call raised, the block that could have
-    ;; compensated was unwound, and the tree was left half-edited.
-    (it "a failing entry rolls the whole batch back and says so"
-        (let
-          [_ (temp-dir-path "spb3")
-           f (str (temp-root) "/spb3/m.clj")]
-
-          (spit (fs/file f) "(defn a [] 1)\n")
-          (let
-            [r (try (sp {"path" f
-                         "edits" [{"op" "replace" "target" "a" "code" "(defn a [] 9)"}
-                                  {"op" "replace" "target" "nope" "code" "(defn nope [] 0)"}]})
-                    (catch Throwable e e))]
-            (expect (instance? Throwable r))
-            (expect (clojure.string/includes? (ex-message r) "stopped at edit 2 of 2"))
-            (expect (clojure.string/includes? (ex-message r) "rolled back"))
-            (expect (= 0 (:applied-count (ex-data r))))
-            (expect (= 1 (:rolled-back-count (ex-data r))))
-            ;; ATOMIC: the entry that DID apply is undone, not left standing.
-            (expect (= "(defn a [] 1)\n" (slurp (fs/file f)))))))
-    ;; Regression, issue #147: the batch spanned two files, the second entry was
-    ;; refused for a syntax error, and the first file kept a rename from a batch
-    ;; that reported failure.
-    (it "a batch that fails ACROSS files leaves every file byte-identical"
-        (let
-          [_ (temp-dir-path "spb4")
-           f1 (str (temp-root) "/spb4/one.clj")
-           f2 (str (temp-root) "/spb4/two.clj")
-           src1 "(defn alpha [] 1)\n"
-           src2 "(defn beta [] 2)\n"]
-
-          (spit (fs/file f1) src1)
-          (spit (fs/file f2) src2)
-          (let
-            [r (try (sp {"edits"
-                         [{"path" f1 "op" "rename" "target" "alpha" "code" "alpha-renamed"}
-                          {"path" f2 "op" "replace" "target" "beta" "code" "(defn beta [:"}]})
-                    (catch Throwable e e))]
-            (expect (instance? Throwable r))
-            (expect (= src1 (slurp (fs/file f1))))
-            (expect (= src2 (slurp (fs/file f2)))))))))
 
 
 
@@ -3987,16 +3084,13 @@
 ;; obvious reading of a two-argument search — died on ARGUMENT SHAPE instead of
 ;; searching, because the second positional meant OPTIONS and the error offered
 ;; three call shapes at once. There is ONE canonical shape now: a single options
-;; map (Python kwargs fold into that same map), for `grep` and `struct_nodes`
-;; alike, so nothing positional can be misread.
+;; map (Python kwargs fold into that same map), so nothing positional can be
+;; misread.
 (defdescribe canonical-options-map-only-test
-             "`grep` and `struct_nodes` take ONE options map — never a positional query or path."
+             "`grep` takes ONE options map — never a positional query."
              (let
                [grep-tool
                 (grep-data-fn)
-
-                nodes-tool
-                (private-fn "nodes-tool")
 
                 caught
                 (fn [f & args]
@@ -4018,19 +3112,7 @@
                       out
                       (grep-tool {"query" "needle" "paths" [(temp-dir-path "canonmap")]})]
 
-                     (expect (= 1 (get (:result out) "hit_count")))))
-               (it "struct_nodes refuses a positional path and answers the canonical map"
-                   (let
-                     [p
-                      (write-temp! "canonnodes/a.clj" "(ns a)\n\n(defn zonk [x] x)\n")
-
-                      e
-                      (caught nodes-tool p)]
-
-                     (expect (some? e))
-                     (expect (= :ext.foundation.editing/invalid-nodes-args (:type (ex-data e))))
-                     (expect (some? (caught nodes-tool p {"line" 3})))
-                     (expect (:success? (nodes-tool {"path" p})))))))
+                     (expect (= 1 (get (:result out) "hit_count")))))))
 
 (defdescribe find-files-directory-scope-test
              (let [find-files (grep-data-fn)]
@@ -4572,41 +3654,6 @@
 
           (expect (zero? (get out "item_count")))))))
 
-(defdescribe
-  structural-tool-gating-test
-  "The tree-sitter STRUCTURAL editors are advertised ONLY when the project has
-   structurally-supported code; a docs/config repo hides them, and it FAILS OPEN."
-  (let
-    [active?
-     (fn [sym langs]
-       (with-redefs
-         [environment/snapshot (fn []
-                                 {:languages {:languages (mapv (fn [l]
-                                                                 {:language l})
-                                                               langs)}})]
-         (extension/symbol-active? sym nil)))
-
-     struct-syms
-     [editing/struct-patch-symbol editing/index-symbol editing/nodes-symbol]]
-
-    (it "a Clojure project advertises every structural editor"
-        (doseq [s struct-syms]
-          (expect (true? (active? s ["clojure"])))))
-    (it "a docs-only (markdown/text) project HIDES them; grep stays"
-        (doseq [s struct-syms]
-          (expect (false? (active? s ["markdown" "text"]))))
-        (doseq [s [editing/grep-symbol]]
-          (expect (true? (active? s ["markdown" "text"])))))
-    (it "a mixed repo with ANY supported language keeps them (markdown + json)"
-        (expect (true? (active? editing/struct-patch-symbol ["markdown" "json"]))))
-    (it "shell reconciles to bash (scan says `shell`, tree-sitter says `bash`)"
-        (expect (true? (active? editing/struct-patch-symbol ["shell"]))))
-    (it "FAILS OPEN on an empty/unknown scan or a scan error"
-        (expect (true? (active? editing/struct-patch-symbol [])))
-        (with-redefs
-          [environment/snapshot (fn []
-                                  (throw (ex-info "boom" {})))]
-          (expect (true? (extension/symbol-active? editing/struct-patch-symbol nil)))))))
 
 (defdescribe
   rg-sort-key-efficiency-test
@@ -4950,7 +3997,7 @@
 (defdescribe
   fff-scan-concurrency-guard
   "The bounded-concurrency permit around FRESH fff index scans (rg /
-   find_files / occurrences). Bounds the CPU-heavy scan fan-out without
+   find_files). Bounds the CPU-heavy scan fan-out without
    serializing it, and never leaks a permit."
   (let
     [guard
@@ -5944,8 +4991,8 @@
 ;; =============================================================================
 
 (def ^:private editing-handles
-  "The six handles this extension puts in front of the model."
-  #{"cat" "patch" "grep" "struct_index" "struct_nodes" "struct_patch"})
+  "The three handles this extension puts in front of the model."
+  #{"cat" "patch" "grep"})
 
 (defn- ranked-corpus
   "What `apropos` ranks: every documented handle the session can reach, plus
@@ -5964,7 +5011,7 @@
   "Every page here was written for a reader who already knew the tool, so the ask
    a model actually types answered someone else: `find where a symbol is used
    across the repo` put `grep` 36th, `what functions are defined in this file`
-   put `struct_index` 50th, `show me lines 10 to 40 of a file` put `cat` 15th.
+   put `patch` 50th, `show me lines 10 to 40 of a file` put `cat` 15th.
    Each page now OPENS with the question it answers, in the words of the ask."
   (it "answers the editing tool whose job the ask is"
       (let [corpus (ranked-corpus)]
@@ -5975,9 +5022,7 @@
             ["search the codebase for a function name" "grep"]
             ["show me lines 10 to 40 of a file" "cat"] ["read a file with line numbers" "cat"]
             ["replace lines in a file" "patch"] ["edit a config file without rewriting it" "patch"]
-            ["rename a function everywhere" "struct_patch"]
-            ["what functions are defined in this file" "struct_index"]
-            ["read the body of a function" "struct_nodes"]]]
+            ["rewrite a docstring in place" "patch"]]]
           (let [ranked (mapv :name (doc-corpus/search corpus ask {:limit 50}))]
             ;; Of the six, the RIGHT one — a page must not answer its neighbour's ask.
             (expect (= [ask want] [ask (first (filter editing-handles ranked))]))

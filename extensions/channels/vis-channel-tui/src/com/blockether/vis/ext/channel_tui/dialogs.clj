@@ -4005,8 +4005,11 @@
                                   fleet
                                   (provider-fleet config)
 
+                                  primary
+                                   (vis/resolve-default-selection config fleet)
+
                                   default-id
-                                  (some-> (:default-provider config)
+                                  (some-> (:provider-id primary)
                                           name)
 
                                   fallback-id
@@ -4025,9 +4028,7 @@
                                             {:provider provider
                                              :auth (provider-auth-state provider auth-index)
                                              :default? (= default-id pid)
-                                             :default-model (when (= default-id pid)
-                                                              (some-> (:default-model config)
-                                                                      name))
+                                             :default-model (when (= default-id pid) (:model primary))
                                              :fallback? (= fallback-id pid)
                                              :fallback-model (when (= fallback-id pid)
                                                                (some-> (:fallback-model config)
