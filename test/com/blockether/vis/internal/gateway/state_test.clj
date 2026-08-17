@@ -179,15 +179,18 @@
 
         (expect (true? (get (state/soul "s-parked") "is_awaiting_input")))
         (expect (false? (get (state/soul "s-busy") "is_awaiting_input")))))
-  (it "puts a parked session above a live one, however old it is"
-      ;; The demand outranks both recency and liveness: a session that has been
-      ;; standing on its operator since yesterday is the row they came for.
+  ;; Regression, user report (paraphrased: "opening a session makes it the freshest
+  ;; thing and it jumps to the top, and the list keeps moving while I read it"): a run
+  ;; parked on a human, and a turn in flight, used to LEAD the navigator key, so the
+  ;; lifecycle of a turn MOVED rows under the reader - and, because the key is applied
+  ;; before the page is cut, pushed another session out of the window entirely.
+  (it "does not lift a parked session: demand is a FIELD, never a place in the order"
       (let
         [rows
          [{"id" "live-now" "live" true "modified_at" "2026-01-02T00:00:00Z"}
           {"id" "parked" "live" true "is_awaiting_input" true "modified_at" "2026-01-01T00:00:00Z"}
           {"id" "idle" "modified_at" "2026-01-03T00:00:00Z"}]]
-        (expect (= ["parked" "live-now" "idle"]
+        (expect (= ["idle" "live-now" "parked"]
                    (mapv #(get % "id") (#'state/order-session-summaries rows)))))))
 (defdescribe
   thinking-newline-normalization-test
@@ -2004,26 +2007,28 @@
 ;; freshness"): a search answered in its own relevance order, which had nothing
 ;; to do with the order the same sessions are LISTED in, so scanning the results
 ;; meant reading dates that jumped up and down. The store now answers
-;; freshest-first and the gateway lifts the running sessions over it — the very
-;; key `order-session-summaries` gives the navigator.
+;; freshest-first and NOTHING re-sorts it - a running session is not lifted over
+;; that either, because a band that flips when a turn starts is exactly the motion
+;; the navigator's own key just lost.
 (defdescribe gateway-search-order-test
-             (it "keeps the store's freshest-first order and lifts the running sessions"
-                 (let
-                   [order (fn [matches live]
-                            (mapv :session_id (#'state/search-matches-live-first matches live)))]
-                   ;; Freshest first is how the store answered; nothing re-sorts it.
-                   (expect (= ["new" "old"] (order [{:session_id "new"} {:session_id "old"}] {})))
-                   ;; A session with a turn in flight is the freshest thing there is.
-                   (expect (= ["run" "new" "old"]
-                              (order [{:session_id "new"} {:session_id "old"} {:session_id "run"}]
-                                     {"run" "turn-1"})))
-                   ;; Running sessions keep the order they arrived in.
-                   (expect (= ["a" "b" "c"]
-                              (order [{:session_id "a"} {:session_id "c"} {:session_id "b"}]
-                                     {"a" "turn-1" "b" "turn-2"}))))))
+             (it "paints the store's freshest-first order and lifts nothing"
+                 (with-redefs
+                   [lp/db-info
+                    (constantly {:db :fake})
+
+                    persistance/db-search-session-matches
+                    (fn [_ _ _]
+                      [{:id "new" :rank 0} {:id "old" :rank 2} {:id "run" :rank 1}])
+
+                    ;; A turn in flight is a FIELD on the row, never a place in the answer.
+                    bus/live-turns
+                    (constantly {"run" "turn-1"})]
+
+                   (expect (= ["new" "old" "run"]
+                              (mapv :session_id (state/search-session-matches "q")))))))
 
 (defdescribe gateway-session-order-test
-             (it "returns live sessions first and orders each state by recency"
+             (it "orders by content time alone, whatever happens to be running"
                  (let
                    [order-summaries
                     #'state/order-session-summaries
@@ -2034,8 +2039,44 @@
                      {"id" "idle-old" "live" false "modified_at" 2000}
                      {"id" "live-new" "live" true "modified_at" (java.util.Date. 3000)}]]
 
-                   (expect (= ["live-new" "live-old" "idle-new" "idle-old"]
+                   (expect (= ["idle-new" "live-new" "idle-old" "live-old"]
                               (mapv #(get % "id") (order-summaries sessions)))))))
+
+;; Regression, same report: with the band gone from the ordering key, a run parked on
+;; a human sits wherever its content time puts it - past the end of the first window in
+;; a big fleet - so the one state only the operator can clear had to reach a client
+;; BESIDE the window instead of being lifted into it.
+(defdescribe gateway-awaiting-beside-the-window-test
+             (it
+               "answers every parked session in full, outside the window"
+               (with-redefs
+                 [lp/db-info
+                  (constantly nil)
+
+                  persistance/db-session-turn-stats
+                  (constantly nil)
+
+                  lp/by-channel
+                  (fn [_]
+                    [{:id "fresh" :created-at 3000} {:id "middle" :created-at 2000}
+                     {:id "parked" :created-at 1000}])
+
+                  bus/waiting-requests
+                  (constantly {"parked" [{"id" "req-1" "since" 1}]})
+
+                  bus/session-waiting?
+                  (fn [sid]
+                    (= "parked" (str sid)))
+
+                  state/soul
+                  (fn [sid]
+                    {"id" (str sid) "created_at" 1000 "is_awaiting_input" (= "parked" (str sid))})]
+
+                 (let [page (state/list-sessions-page :all {:limit 1 :offset 0})]
+                   (expect (= ["fresh"] (mapv #(get % "id") (:sessions page))))
+                   (expect (= 3 (:total page)))
+                   ;; Deep in the fleet, absent from the window, and still complete here.
+                   (expect (= ["parked"] (mapv #(get % "id") (:awaiting page))))))))
 
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty

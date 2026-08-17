@@ -213,6 +213,10 @@ export function renderSessionsScreen({
         sessions: window,
         total: sessions.length,
         has_more: offset + window.length < sessions.length,
+        // The real gateway answers the parked runs BESIDE the window and COMPLETE,
+        // however deep in the fleet they sit (`state/list-sessions-page`), because the
+        // ordering no longer lifts them into the first page.
+        awaiting: sessions.filter((session) => session.is_awaiting_input === true),
       });
     }
     if (url.pathname === "/v1/sessions/actions/search") return answer({ matches: [] });

@@ -445,6 +445,12 @@ type SessionsWindow = {
   rows: Session[];
   total: number;
   hasMore: boolean;
+  /**
+   * The sessions this gateway says are PARKED on an unanswered human-input request,
+   * complete and from OUTSIDE the window (`state/list-sessions-page`). It rides the
+   * same validator as the rows, so a 304 says the demand is unchanged too.
+   */
+  awaiting: Session[];
 };
 
 /**
@@ -597,6 +603,8 @@ export class GatewayClient {
     { full: Session[]; windows: Map<number, SessionsWindow> }
   >();
 
+  /** Backing store of `parkedSessions`, refreshed by every list read. */
+  private parked: Session[] = [];
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
     this.token = conn.token;
@@ -1872,6 +1880,21 @@ export class GatewayClient {
     return readSnapshot<Session[]>(this.snapshotKey("sessions"));
   }
 
+  /**
+   * The sessions this gateway last reported PARKED on an unanswered human-input
+   * request.
+   *
+   * The list is ordered by content time and nothing else, so a parked run sits
+   * wherever it last spoke — in a long fleet, past the end of the window this device
+   * has read. The gateway therefore answers those rows BESIDE the window
+   * (`state/list-sessions-page`) and a screen pins them above the list, instead of an
+   * ordering that lifted them into it and moved every row under the reader the moment
+   * a turn asked for a human or was answered.
+   */
+  parkedSessions(): Session[] {
+    return this.parked;
+  }
+
   /** Last meta row seen for ONE session. */
   cachedSession(sid: string): Session | null {
     return readSnapshot<Session>(this.snapshotKey("session", sid));
@@ -2090,6 +2113,10 @@ export class GatewayClient {
                 rows: cached.slice(0, SESSIONS_PAGE),
                 total: persisted.total,
                 hasMore: cached.length > SESSIONS_PAGE,
+                // The remembered pin says nothing about who is waiting on a human: a
+                // demand is a fact of the CURRENT answer, so it starts empty and the
+                // first read fills it.
+                awaiting: [],
               },
             ],
           ]),
@@ -2110,6 +2137,7 @@ export class GatewayClient {
         sessions?: Session[];
         total?: number;
         has_more?: boolean;
+        awaiting?: Session[];
       }>(
         "GET",
         `/v1/sessions?limit=${SESSIONS_PAGE}&offset=${offset}`,
@@ -2124,23 +2152,30 @@ export class GatewayClient {
       const rows = res.data?.sessions ?? [];
       // Every row names the model it runs on, so opening any of them paints the
       // right chip on the FIRST frame instead of after a per-session round trip.
-      this.seedSessionModels(rows);
+      const awaiting = res.data?.awaiting ?? [];
+      // Every row names the model it runs on, so opening any of them paints the
+      // right chip on the FIRST frame instead of after a per-session round trip. A
+      // parked row is one a reader opens FIRST, and it may not be in `rows` at all.
+      this.seedSessionModels(rows.concat(awaiting));
       return {
         etag: res.etag ?? "",
         order,
         rows,
         total: res.data?.total ?? rows.length,
         hasMore: Boolean(res.data?.has_more),
+        awaiting,
       };
     };
 
     const head = await fetchWindow(0);
+    // The demand is answered by the HEAD and is complete there, so it is known before
+    // the walk below decides whether there is anything left to read.
+    this.parked = head.awaiting;
     const headPin = known.get(0);
     // THE ORDERING DECIDES WHETHER THERE IS A WALK AT ALL.
     //
-    // Only the FIRST window moves minute to minute: the list is recency-ordered, so
-    // every arrival, answer and demand for a human lands at the top, and a session
-    // with a turn in flight re-stamps its own row on every poll. The windows below
+    // Only the FIRST window moves minute to minute: the list is ordered by content
+    // time, so every arrival, answer and rename lands at the top. The windows below
     // it then cost a conditional round trip EACH to be told 304 — measured against a
     // 1192-session store, 12 serial requests every ten seconds per machine, eleven
     // of them proving nothing had changed. That cascade is what a reader sees the

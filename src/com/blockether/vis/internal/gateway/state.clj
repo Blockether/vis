@@ -4443,7 +4443,19 @@
 
 (defn- session-order
   "Session ids for `channel` in navigator order, computed from CHEAP facts only:
-   the persisted record, the live registry and the one grouped turn-stats query.
+   the persisted record and the one grouped turn-stats query.
+
+   The key is `[recency DESC, id ASC]` and nothing else. It used to LEAD with a
+   band - parked on a human 0, turn in flight 1, everything else 2 - so the
+   lifecycle of a turn MOVED rows: starting one lifted its session to the
+   absolute top, finishing it dropped the session back down, under the finger of
+   whoever was reading. And because the band sits in the key BEFORE the page is
+   cut (`list-sessions-page`), a turn starting anywhere also pushed another
+   session out of the window, tearing the pagination a client was walking.
+   Liveness and demand still reach every surface as FIELDS - `live` and
+   `is_awaiting_input` on the row, plus the parked rows a listing carries BESIDE
+   its window (`awaiting-summaries`) - so a dot and a strip can report them. They
+   no longer decide where a row sits; only durable content time does.
 
    It deliberately does NOT touch `soul` or workspace resolution. That
    per-session decoration is where a listing's time actually goes (measured on a
@@ -4452,43 +4464,21 @@
    instead of the fleet's. Same key as `order-session-summaries`, from the same
    sources, so the cut is the one a fully decorated sort would have made."
   [channel stats]
-  (let
-    [;; ONE scan for the whole ordering: `sort-by` calls its key fn O(n log n)
-     ;; times, and a liveness key that could flip mid-sort is a comparator that
-     ;; contradicts itself.
-     live
-     (bus/live-turns)
-
-     ;; Same rule, same reason, for the sessions blocked on a human.
-     waiting
-     (bus/waiting-requests)]
-
-    (->> (lp/by-channel channel)
-         (sort-by (fn [record]
-                    (let
-                      [id
-                       (:id record)
-
-                       entry
-                       (session-entry id)]
-
-                      [(cond (seq (get waiting (str id))) 0
-                             (or (:current-turn entry) (get live (str id))) 1
-                             :else 2)
-                       (unchecked-negate (record-recency-ms record (get stats (str id))))
-                       (str id)])))
-         (mapv :id))))
+  (->> (lp/by-channel channel)
+       (sort-by (fn [record]
+                  [(unchecked-negate (record-recency-ms record (get stats (str (:id record)))))
+                   (str (:id record))]))
+       (mapv :id)))
 
 (defn- order-session-summaries
-  "Gateway-owned navigator order: sessions PARKED on a human first, then the
-   rest of the live ones, then most recently active. The id tie-breaker keeps
-   repeated polls deterministic."
+  "Gateway-owned navigator order for DECORATED sessions: freshest content first,
+   the id breaking every tie so repeated polls are deterministic. Same key as
+   `session-order`, for the same reason - no band, so no row moves because a turn
+   started or ended."
   [sessions]
   (->> sessions
        (sort-by (fn [session]
-                  [(cond (true? (get session "is_awaiting_input")) 0
-                         (true? (get session "live")) 1
-                         :else 2) (unchecked-negate (long (session-recency-ms session)))
+                  [(unchecked-negate (long (session-recency-ms session)))
                    (str (get session "id"))]))
        vec))
 
@@ -4504,7 +4494,13 @@
 
 (defn list-sessions-page
   "A WINDOW of `list-sessions`, in the same gateway-owned navigator order:
-   `{:sessions rows :total n :offset o :limit l :order-digest s :has-more bool}`.
+   `{:sessions rows :awaiting rows :total n :offset o :limit l :order-digest s
+     :has-more bool}`.
+
+   `:awaiting` stands BESIDE the window: the sessions parked on an unanswered
+   human-input request, complete however deep in the fleet they sit, because a
+   client pins them above the list instead of the ordering lifting them into it
+   (see `session-order`).
 
    `nil` limit means \"the rest\", so `(list-sessions-page channel nil)` is the
    whole fleet and older callers keep their full list.
@@ -4539,13 +4535,14 @@
       (count ordered)
 
       ;; Digest of the ORDERING this window was cut from. Offsets index a list that
-      ;; is RECOMPUTED per request — a session starting a turn jumps into the live
-      ;; bucket at the top and shifts every window below it — so a client paging
-      ;; across such a change merges one row twice (duplicate id) and skips another
-      ;; entirely (a session silently missing from the list), with the merged count
-      ;; still equal to `total` so nothing looks wrong. Stamping the ordering makes
-      ;; that DETECTABLE with no server-side cursor state: two windows carrying
-      ;; different digests were cut from different fleets, and the client re-walks.
+      ;; is RECOMPUTED per request, and content still moves under a walk - another
+      ;; machine finishes a turn and every window below that session shifts - so a
+      ;; client paging across such a change merges one row twice (duplicate id) and
+      ;; skips another entirely (a session silently missing from the list), with the
+      ;; merged count still equal to `total` so nothing looks wrong. Stamping the
+      ;; ordering makes that DETECTABLE with no server-side cursor state: two windows
+      ;; carrying different digests were cut from different fleets, and the client
+      ;; re-walks.
       order-digest
       (Integer/toUnsignedString (int (hash ordered)) 16)
 
@@ -4560,9 +4557,24 @@
       rows
       (-> (into [] (keep soul) window)
           (session-summary-extras db stats)
-          order-session-summaries)]
+          order-session-summaries)
+
+      ;; Sessions PARKED on an unanswered human-input request, beside the window
+      ;; instead of lifted into it. The demand is real - only the operator can move
+      ;; that run - but paying for it with a BAND in the ordering key moved the
+      ;; whole list whenever a turn asked or was answered, and pushed another
+      ;; session out of the page. Here it is its own short answer, complete however
+      ;; deep the parked rows sit, so a client can pin them above a list whose
+      ;; order never flinches. Bounded by the runs blocked on a human right now,
+      ;; which is a handful, and cut to the same channel/root as the listing.
+      awaiting
+      (let [listed (into #{} (map str) ordered)]
+        (-> (into [] (comp (filter listed) (keep soul)) (keys (bus/waiting-requests)))
+            (session-summary-extras db stats)
+            order-session-summaries))]
 
      {:sessions rows
+      :awaiting awaiting
       :total total
       :offset from
       :limit (some-> limit
@@ -4576,9 +4588,10 @@
    `GET /v1/sessions` is enough to paint a session picker. Unwindowed —
    `list-sessions-page` serves clients that page.
 
-   The gateway owns navigator ordering: sessions blocked on a human first, then
-   the rest of the live ones, then idle sessions in most-recently-active order.
-   Clients must preserve this order.
+   The gateway owns navigator ordering: freshest content first, the id breaking
+   ties. Clients must preserve this order. Liveness and a run parked on a human
+   are FIELDS on the row (`live`, `is_awaiting_input`), never a lift - see
+   `session-order`.
 
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
    in one channel is visible in the others and vice-versa. Pass a specific
@@ -4598,25 +4611,6 @@
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db (mapv str (persistance/db-search-session-ids db channel query)) []))))
 
-(defn- search-matches-live-first
-  "Wire search matches in the LIST's own order.
-
-   `db-search-session-matches` already answers FRESHEST FIRST, which is most of
-   the navigator's key. The one fact only this process holds is which sessions
-   are RUNNING RIGHT NOW, and the list lifts those to the top
-   (`order-session-summaries`): a session whose turn is in flight is the freshest
-   thing there is. Doing the same here keeps a search a FILTER of the list rather
-   than a second ordering of it.
-
-   Total and pure: arrival order (already freshest-first) breaks every tie, so
-   the same answer sorts the same way every time."
-  [matches live]
-  (->> matches
-       (map-indexed vector)
-       (sort-by (fn [[i m]]
-                  [(if (get live (str (:session_id m))) 0 1) (long i)]))
-       (mapv second)))
-
 (defn search-session-matches
   "Soul-id STRINGS whose TITLE or TRANSCRIPT matches `query`, each TAGGED with
    WHERE it hit, RANKED by the server, and carrying up to a handful of MATCH
@@ -4631,39 +4625,39 @@
    `:is_in_request` = the user's own request matched; `:is_in_reply` = the
    assistant's answer; `:is_in_thinking` = only its reasoning aside.
 
-   THE ORDER IS THE ANSWER, and it is the LIST's own: sessions running right now
-   first, then freshest first — `db-search-session-matches` sorts by the instant
-   each session last moved (the `modified_at` a list read prints) and
-   `search-matches-live-first` lifts the in-flight ones, which is exactly the key
-   `order-session-summaries` gives the navigator. A search therefore FILTERS the
-   list instead of reshuffling it, and the dates only fall as a client scans down.
-   `:rank` travels so a surface can say WHERE the query hit and break a tie; it is
-   not the order and no surface re-derives one from the flags.
+   THE ORDER IS THE ANSWER, and it is the LIST's own: freshest first, which is
+   exactly the key `order-session-summaries` gives the navigator -
+   `db-search-session-matches` sorts by the instant each session last moved (the
+   `modified_at` a list read prints). A search therefore FILTERS the list instead
+   of reshuffling it, and the dates only fall as a client scans down. Sessions
+   RUNNING right now are no longer lifted over that: a band that flips when a turn
+   starts moved results under the reader's finger, which is the defect the
+   navigator's own key just lost. `:rank` travels so a surface can say WHERE the
+   query hit and break a tie; it is not the order and no surface re-derives one
+   from the flags.
    Blank query → []."
   ([query] (search-session-matches :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
-       (search-matches-live-first (mapv (fn
-                                          [{:keys [id rank in-title? in-request? in-reply?
-                                                   in-thinking? request-snippet reply-snippet
-                                                   hits]}]
-                                          {:session_id (str id)
-                                           :rank (long (or rank 0))
-                                           :is_in_title (boolean in-title?)
-                                           :is_in_request (boolean in-request?)
-                                           :is_in_reply (boolean in-reply?)
-                                           :is_in_thinking (boolean in-thinking?)
-                                           :request_snippet request-snippet
-                                           :reply_snippet reply-snippet
-                                           :hits (mapv (fn [h]
-                                                         {:side (name (:side h))
-                                                          :snippet (:snippet h)
-                                                          :at (some-> (:at h)
-                                                                      inst-ms)})
-                                                       (or hits []))})
-                                        (persistance/db-search-session-matches db channel query))
-                                  (bus/live-turns))
+       (mapv (fn
+               [{:keys [id rank in-title? in-request? in-reply? in-thinking? request-snippet
+                        reply-snippet hits]}]
+               {:session_id (str id)
+                :rank (long (or rank 0))
+                :is_in_title (boolean in-title?)
+                :is_in_request (boolean in-request?)
+                :is_in_reply (boolean in-reply?)
+                :is_in_thinking (boolean in-thinking?)
+                :request_snippet request-snippet
+                :reply_snippet reply-snippet
+                :hits (mapv (fn [h]
+                              {:side (name (:side h))
+                               :snippet (:snippet h)
+                               :at (some-> (:at h)
+                                           inst-ms)})
+                            (or hits []))})
+             (persistance/db-search-session-matches db channel query))
        []))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---

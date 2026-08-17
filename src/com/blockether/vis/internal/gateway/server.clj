@@ -1671,7 +1671,12 @@
   (let
     [stable
      (wire/json-str [(:total payload) (:offset payload) (:limit payload) (:root payload)
-                     (mapv #(dissoc % "server_time_ms") (:sessions payload))])
+                     (mapv #(dissoc % "server_time_ms") (:sessions payload))
+                     ;; The parked strip rides the same answer, so it must ride the
+                     ;; same validator: a run that starts or stops waiting on its
+                     ;; operator changes nothing in `sessions`, and hashing only those
+                     ;; rows would hide the demand behind a 304.
+                     (mapv #(dissoc % "server_time_ms") (:awaiting payload))])
 
      raw
      (.digest (MessageDigest/getInstance "SHA-256") (.getBytes stable StandardCharsets/UTF_8))]
@@ -1688,6 +1693,10 @@
    from cheap facts (see `state/list-sessions-page`), so a 100-row first page of
    a 448-session store costs roughly a fifth of the ~257ms full build and a fifth
    of its ~300KB — the app paints its first screen without waiting for the tail.
+
+   `awaiting` carries the sessions parked on an unanswered human-input request,
+   complete and OUTSIDE the window, so a client pins them above a list that no
+   longer reorders itself when a turn starts or ends.
 
    The companion refreshes this on a timer and the payload is BIG while the
    content is identical until a turn moves. With `If-None-Match` the steady state
@@ -1723,6 +1732,8 @@
 
          payload
          {:sessions (:sessions page)
+          ;; Beside the window, never inside it: `state/list-sessions-page`.
+          :awaiting (:awaiting page)
           :root root
           :total (:total page)
           :offset (:offset page)
@@ -1748,9 +1759,10 @@
    LIST's own order.
 
    The SERVER decides that order: `matches` carries every session whose title or
-   transcript matches, RUNNING sessions first and then FRESHEST first, each with
-   the `rank` band it earned (title 0, request 1, reply 2, thinking 3) and
-   `is_in_title`. Searching narrows the session list without reshuffling it, so
+   transcript matches, FRESHEST first, each with the `rank` band it earned (title
+   0, request 1, reply 2, thinking 3) and `is_in_title`. A running session is not
+   lifted over that - a band that flips mid-turn moves results under the reader's
+   finger. Searching narrows the session list without reshuffling it, so
    the dates a client paints only ever fall as it scans down; `rank` says WHERE
    the query hit. Clients PAINT this order and never re-derive one from the
    flags, so a third client cannot invent a fourth ordering. `session_ids`

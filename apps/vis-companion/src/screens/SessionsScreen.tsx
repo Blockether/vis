@@ -565,8 +565,25 @@ export function SessionsScreen({
             (machine) => machineKey(machine.conn) === key,
           );
           const merged = reconcileSessions(held?.sessions ?? null, rows);
-          if (held && held.error === null && held.answered && merged === held.sessions) return;
-          patchMachine(key, (machine) => ({ ...machine, sessions: merged, error: null, answered: true }));
+          // The parked rows arrive BESIDE the window (`parkedSessions`), so a demand
+          // that appeared or was answered is news even when the window's own rows are
+          // word for word what is already on screen.
+          const parked = reconcileSessions(held?.awaiting ?? null, api.parkedSessions());
+          if (
+            held &&
+            held.error === null &&
+            held.answered &&
+            merged === held.sessions &&
+            parked === held.awaiting
+          )
+            return;
+          patchMachine(key, (machine) => ({
+            ...machine,
+            sessions: merged,
+            awaiting: parked,
+            error: null,
+            answered: true,
+          }));
         };
         // Paint the first page the moment it lands instead of waiting for the whole
         // fleet to drain. Only ever called on a cold load (see `listSessions`).
@@ -1085,6 +1102,32 @@ export function SessionsScreen({
     [filtered, sessions],
   );
 
+  // THE DEMAND IS PINNED, NEVER LIFTED.
+  //
+  // A run parked on an unanswered human-input request is the one state a reader cannot
+  // infer and only they can clear: the turn is live, nothing is streaming, and it will
+  // stay that way until they answer it. It used to LEAD the gateway's ordering key,
+  // which moved every row on the screen whenever a turn asked for a human or got its
+  // answer — and, because the key is applied before the page is cut, pushed another
+  // session out of the window a reader was paging. So the gateway now answers those
+  // rows BESIDE the window (`GatewayClient.parkedSessions`), complete however deep in
+  // the fleet they sit, and they are pinned in their own band above a list whose order
+  // never flinches.
+  //
+  // A SEARCH IS THE READER'S OWN QUESTION and this band is not part of the answer, so
+  // it stands down while a query is live.
+  const parked = useMemo(
+    () =>
+      searchNeedle
+        ? []
+        : filtered.flatMap((entry) =>
+            (entry.machine.awaiting ?? []).map((session) => ({
+              session,
+              conn: entry.machine.conn,
+            })),
+          ),
+    [filtered, searchNeedle],
+  );
   // Per-machine tallies for the strip and the machine headers.
   const tallies = useMemo(
     () =>
@@ -1818,6 +1861,23 @@ export function SessionsScreen({
         )}
 
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
+        {/* Pinned above the list, and it does not scroll away with a machine's
+            section: the demand belongs to the whole fleet in view. */}
+        <NeedsYou
+          rows={parked}
+          drafts={draftMessages}
+          matches={matches}
+          needle={searchNeedle}
+          onOpen={onOpen}
+          onRename={startRename}
+          onDelete={startDelete}
+          onToggleStar={toggleStar}
+          rowAction={rowAction}
+          deleteBusy={actionBusy}
+          deleteError={actionError}
+          onConfirmDelete={confirmDelete}
+          onCancelDelete={cancelDelete}
+        />
         {sessions === null ? (
           <NavigatorSkeleton />
         ) : visible?.length === 0 ? (
@@ -2294,6 +2354,95 @@ function rowActionCopy(
     live: action.sessions.filter(sessionIsLive).length,
   };
 }
+
+
+/**
+ * THE BAND FOR RUNS PARKED ON A HUMAN — pinned above the list, never lifted into it.
+ *
+ * The navigator is ordered by content time and nothing else, so a session waiting on
+ * its operator sits wherever it last spoke: in a long fleet, past the end of the window
+ * this device has read. The band is where that demand is complete (the gateway answers
+ * those rows beside the window — `GatewayClient.parkedSessions`), and it is the price
+ * of taking liveness out of the ordering key: nothing moves under the reader any more,
+ * and the one state only they can clear still costs no scrolling.
+ *
+ * The rows are the LIST's own rows, not a summary of them: the same `SessionRow`, the
+ * same swipe, the same INPUT NEEDED mark. A parked session that IS in the window below
+ * appears in both places, the way a pinned message does — its place in its project is
+ * where the reader will look for it next time.
+ */
+const NeedsYou = memo(function NeedsYou({
+  rows,
+  drafts,
+  matches,
+  needle,
+  onOpen,
+  onRename,
+  onDelete,
+  onToggleStar,
+  rowAction,
+  deleteBusy,
+  deleteError,
+  onConfirmDelete,
+  onCancelDelete,
+}: {
+  /** One entry per parked session, carrying the machine it is parked on. */
+  rows: { session: Session; conn: GatewayConn }[];
+  drafts: DraftMessageStore;
+  matches: Map<string, SessionMatch> | null;
+  needle: string;
+  onOpen: Props['onOpen'];
+  onRename: (session: Session, conn: GatewayConn) => void;
+  onDelete: (session: Session, conn: GatewayConn) => void;
+  onToggleStar: (session: Session, conn: GatewayConn) => void;
+  /** The row anywhere in the fleet that is currently asking to be deleted, if any. */
+  rowAction: RowAction | null;
+  deleteBusy: boolean;
+  deleteError: string | null;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <section aria-label="Sessions waiting on you">
+      {/* The band wears the warning hue as its outgoing rule, the same ink the rows
+          below say INPUT NEEDED in, so the line under the name is read before it. */}
+      <SectionHeader rule="border-warn-strong">
+        <HeaderTitle name="Needs you" qualifier="Parked on an answer from you" />
+        <HeaderActions>
+          <HeaderMeta>
+            <HeaderTally count={rows.length} unit="session" />
+          </HeaderMeta>
+        </HeaderActions>
+      </SectionHeader>
+      {rows.map(({ session, conn }) => {
+        const pending =
+          rowAction?.mode === 'delete' &&
+          machineKey(rowAction.conn) === machineKey(conn) &&
+          rowAction.session.id === session.id;
+        return (
+          <SessionRow
+            key={`${machineKey(conn)}\u0000${session.id}`}
+            session={session}
+            draft={drafts[draftMessageKey(clientFor(conn).base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
+            conn={conn}
+            match={matches?.get(session.id) ?? null}
+            needle={needle}
+            onOpen={onOpen}
+            onRename={(row) => onRename(row, conn)}
+            onDelete={(row) => onDelete(row, conn)}
+            onToggleStar={(row) => onToggleStar(row, conn)}
+            isConfirmingDelete={pending}
+            deleteBusy={deleteBusy}
+            deleteError={pending ? deleteError : null}
+            onConfirmDelete={onConfirmDelete}
+            onCancelDelete={onCancelDelete}
+          />
+        );
+      })}
+    </section>
+  );
+});
 
 // Memoised: a 5.5s poll that changes nothing returns the SAME row objects
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.

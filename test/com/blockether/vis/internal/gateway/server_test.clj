@@ -2569,6 +2569,37 @@
           ((rv 'list-sessions-handler) {:query-params {}})
           (is (nil? (:root (second @seen)))))))))
 
+;; Regression, user report (paraphrased: "the list keeps jumping while I read it"): the
+;; navigator key used to LEAD with a band, so a run parked on a human was lifted into
+;; the first window - moving every row under the reader and pushing another session out
+;; of the page. The parked rows now ride BESIDE the window, which means the validator
+;; has to cover them: hashing only `sessions` would hide a new demand behind a 304.
+(deftest sessions-window-carries-the-parked-rows-beside-it
+  (let
+    [answer
+     (fn [awaiting]
+       (with-redefs
+         [state/list-sessions-page (fn [_ _]
+                                     {:sessions [{"id" "a" "server_time_ms" 1}]
+                                      :awaiting awaiting
+                                      :total 1
+                                      :offset 0
+                                      :limit 20
+                                      :order-digest "x"
+                                      :has-more false})]
+         ((rv 'list-sessions-handler) {:query-params {"limit" "20" "offset" "0"}})))
+
+     quiet
+     (answer [])
+
+     parked
+     (answer [{"id" "p" "is_awaiting_input" true "server_time_ms" 2}])]
+
+    (testing "the parked sessions travel outside the window"
+      (is (= ["p"] (mapv #(get % "id") (get (wire/parse-json (:body parked)) "awaiting"))))
+      (is (= ["a"] (mapv #(get % "id") (get (wire/parse-json (:body parked)) "sessions")))))
+    (testing "and a demand nobody has answered cannot hide behind a 304"
+      (is (not= (get-in quiet [:headers "ETag"]) (get-in parked [:headers "ETag"]))))))
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
 ;; `engine-error` 500, so a request that failed only because no AI provider was
 ;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a
