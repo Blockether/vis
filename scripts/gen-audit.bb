@@ -30,7 +30,7 @@
 (def blurbs
   {"core"                    "_Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._"
    "vis-persistance-sqlite"  "_Durable session store (SQLite + Flyway migrations)._"
-   "vis-language-clojure"    "_Clojure language pack (format/lint/structural edits)._"
+   "vis-language-clojure"    "_Clojure language pack (format/lint/tests/REPL)._"
    "vis-language-python"     "_Python language pack._"
    "vis-foundation-voice"    "_Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._"
    "vis-foundation-bridge"   "_Bridge verification tool surface._"

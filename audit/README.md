@@ -263,7 +263,7 @@ _Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._
 
 ### `vis-language-clojure` extension
 
-_Clojure language pack (format/lint/structural edits)._
+_Clojure language pack (format/lint/tests/REPL)._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|

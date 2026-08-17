@@ -3275,7 +3275,7 @@
    a built-in — internal is a first-class contributor of Python symbols /
    render-fns / ctx hooks, same path third-party extensions use.
 
-     foundation — the `v/` kernel (ls/grep/struct_* + workspace/env ctx). It is
+     foundation — the `v/` kernel (ls/grep/cat/patch + workspace/env ctx). It is
        mandatory (it owns the sandbox filesystem gate; the session
        workspace block waits for its `:ext/ctx-fn`), so it lives in core, not as a
        droppable extension.

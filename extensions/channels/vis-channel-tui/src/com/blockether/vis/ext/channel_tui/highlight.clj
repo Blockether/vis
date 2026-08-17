@@ -3,7 +3,7 @@
 
    The eval / code fences the model emits are colored by *parsing* them with the
    bundled tree-sitter grammars — the SAME `com.blockether/tree-sitter-language-pack`
-   the structural editors use — and painting each node by the grammar's OWN
+   the `patch` parse gate uses — and painting each node by the grammar's OWN
    `highlights.scm` capture scheme. That makes the classification accurate (a `;`
    inside a string is not a comment, a number inside a symbol is not a number)
    and GENERAL: Clojure, Python, JavaScript, JSON, … every fence we render is

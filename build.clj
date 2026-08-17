@@ -1338,11 +1338,6 @@
        ;; manifests out everywhere else. Host-parameterized instead.
        (str "-H:IncludeResources=META-INF/resources/" t-os "/" t-arch "/native.sha256")
        (str "-H:IncludeResources=META-INF/resources/engine/libtruffleattach/" t-os "/" t-arch "/.*")
-       ;; tree-sitter binding: a few pure-data classes (enums / structural
-       ;; op tables) reach the image heap and must initialize at BUILD time.
-       ;; NativeLib / TreeSitterLanguagePackRs stay run-time (they load the
-       ;; FFI lib) via the lib's own native-image.properties.
-       "--initialize-at-build-time=dev.kreuzberg.treesitterlanguagepack.StructuralApi$Op"
        ;; ── GraalPy native-image bring-up ──────────────────────────────
        ;; `org.graalvm.python/python-resources` ships its config at the
        ;; NON-standard `META-INF/resources/native-image.properties`, which

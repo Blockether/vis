@@ -117,12 +117,13 @@
       ;; forms inline is what makes the ordered fold executable; it is paid for by dropping
       ;; "Folding changes rendering, not storage" (the NOT-re-readable clause carries it), and
       ;; lands at 5 985.
-      ;; 6.05k → 6.1k for the three call shapes §3 was missing. The section names five code
-      ;; verbs and spelled a callable form for two (`cat`, `patch`); the three whose contract
-      ;; is a single options dict were named bare, so their shape had to be recalled or pulled
-      ;; mid-edit. Measured over 179 gateway journals (1 006 sandbox blocks, 326 of them calling
-      ;; a code verb): `grep` called with a bare string, `cat` with a dict, `struct_*` with a
-      ;; list, and `patch` edits keyed `from_anchor`/`to_anchor` — a key no release ever had.
+      ;; 6.05k → 6.1k for the call shapes §3 was missing. The section named its code
+      ;; verbs but spelled a callable form for only two (`cat`, `patch`); the ones whose
+      ;; contract is a single options dict were named bare, so their shape had to be
+      ;; recalled or pulled mid-edit. Measured over 179 gateway journals (1 006 sandbox
+      ;; blocks, 326 of them calling a code verb): `grep` called with a bare string,
+      ;; `cat` with a dict, and `patch` edits keyed `from_anchor`/`to_anchor` — a key no
+      ;; release ever had.
       ;; Each is a refused call and a wasted round trip; the literal dicts cost 71 characters
       ;; and land at 6 056.
       ;; 6.1k → 6.2k for the one line that makes a helper DESCRIBE itself. §2 already ordered the
@@ -176,10 +177,6 @@
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
                   "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      ;; Structural editing is gone: no core rule may name a verb the sandbox
-      ;; cannot call.
-      (doseq [gone ["`struct_occurrences`" "`struct_index`" "`struct_nodes`" "`struct_patch`"]]
-        (expect (not (str/includes? text gone))))
       (doseq
         [required ["Host project default" "`apropos(text)` full-text searches" "`doc(name)` returns"
                    "runtime > source > docs > assumption" "obey its stated preconditions"

@@ -39,7 +39,7 @@ Reproduce from the report's own steps first; if it does not reproduce, that IS t
 
 - **Every regression test names its issue in a comment on the test** — `;; Regression, issue #N: <what used to happen>` above the `defdescribe`/`it`. It describes the WRONG behavior, not what the code now does; after merge it is the only link back to the report.
 - **Keep extension layers proven and separate.** Clojure host, Python bootstrap and user-extension code are separate contracts. Begin in the layer the reproduction implicates; before crossing a language boundary, name the existing host callback, wire payload or failing end-to-end test that requires it, and add a test exercising the whole boundary. Never delete a semantic key, validation rule or requiredness marker because one path does not use it — trace its declaration, consumers and governing contract first.
-- **Structural repair is syntax-only.** Delimiter/Parinfer repair makes the smallest mechanical change that restores parseable source — never a semantic rewrite, a broadened feature or a cross-language change. Inspect the repaired diff; reject it if it escaped the intended enclosing form.
+- **Delimiter repair is syntax-only.** Delimiter/Parinfer repair makes the smallest mechanical change that restores parseable source — never a semantic rewrite, a broadened feature or a cross-language change. Inspect the repaired diff; reject it if it escaped the intended enclosing form.
 
 ## Shipping verified work
 

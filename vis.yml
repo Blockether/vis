@@ -35,7 +35,7 @@ workspace:
       description: Blockether Clojure bindings for ruff — bump ruff + release there, then move the com.blockether/ruff pin in deps.edn.
     - id: tree-sitter
       path: ~/tree-sitter-language-pack
-      description: Sibling repo — tree-sitter grammars powering structural tools.
+      description: Sibling repo — tree-sitter grammars for syntax highlighting and the patch parse gate.
     - id: tree-sitter-clojure
       path: ~/tree-sitter-clojure
       description: Blockether fork of sogaiu/tree-sitter-clojure — THE Clojure grammar (grammar.js + queries/highlights.scm + queries/tags.scm). The language pack pins it by rev in sources/language_definitions.json; bump the grammar here, tag v0.0.13-blockether.N, then move that rev.
@@ -61,7 +61,7 @@ workspace:
       search: false
     - id: clj-tslp
       path: ~/.cache/clj-tslp
-      description: Extracted tree-sitter native library loaded by structural tools/tests.
+      description: Extracted tree-sitter native library loaded by the patch parse gate and the TUI highlighter.
       search: false
     - id: graal
       path: ~/.sdkman/candidates/java/25.1.3-graalce
