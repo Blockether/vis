@@ -413,15 +413,21 @@
 
 (defn- refusal-fallback-chunk
   "Live-progress chunk for ONE automatic refusal fallback: the current model's
-   Anthropic safety classifier DECLINED, so svar switched to a fallback model
-   (e.g. Opus 5 → Opus 4.8). Same shape as a transport rewind
-   (`:provider-retry-reset`) so every channel already knows how to draw it and
-   the gateway persists it the instant it happens — the UI shows the switch
-   instead of a silent multi-second gap."
+   Anthropic safety classifier DECLINED, so svar switched to a SIBLING MODEL of the
+   same provider (e.g. Opus 5 -> Opus 4.8). Same chunk shape as a transport rewind
+   (`:provider-retry-reset`) so every channel already knows how to draw it and the
+   gateway persists it the instant it happens — the UI shows the switch instead of a
+   silent multi-second gap.
+
+   The TRACE event is a `:llm.routing/model-fallback`, never a provider retry: the
+   credential, the provider and the wire all worked, and counting a content decision
+   as a retry reports a healthy provider as flaky. The prompt cache is gone all the
+   same — an Anthropic cache belongs to ONE model — which is what the model-scoped
+   type tells the turn note."
   [iteration-position {:keys [from-model to-model category explanation attempt]}]
   (let
     [event
-     (cond-> {:event/type :llm.routing/provider-retry :reason :refusal-fallback :attempt attempt}
+     (cond-> {:event/type :llm.routing/model-fallback :reason :refusal :attempt attempt}
        from-model
        (assoc :from-model (str from-model))
 
@@ -504,7 +510,7 @@
   "True while a failed turn may be rescued on a DIFFERENT provider or model.
 
    OFF makes the session's pick a contract: a dead credential, an exhausted rate
-   limit or a safety refusal ends the turn with that provider's own error instead
+   limit or a broken wire ends the turn with that provider's own error instead
    of quietly answering from somewhere else. Fallback is never free — the peer's
    prompt cache is cold (~4x input spend for the rest of the session, issue #154)
    and the answer arrives from a model the human did not choose — so whether to pay
@@ -516,6 +522,25 @@
   []
   (not (false? (toggles/value-of PROVIDER_FALLBACK_TOGGLE))))
 
+(def ^:private REFUSAL_FALLBACK_TOGGLE
+  "Feature-toggle id gating the automatic switch to a SIBLING MODEL after Anthropic's
+   safety classifier declines a request. Deliberately NOT `provider_fallback`: a
+   refusal is an HTTP-200 content decision by one model, with a healthy credential,
+   provider and wire behind it, so a human who refused peer credentials has not
+   thereby refused the one recovery Anthropic itself documents."
+  "refusal_fallback")
+
+(defn- refusal-fallback-allowed?
+  "True while a DECLINED request may be re-asked of a sibling model of the SAME
+   provider.
+
+   OFF surfaces the refusal itself: the turn ends with the decline and its category
+   instead of an answer from a model the human did not pick. Reads the VALUE rather
+   than `enabled?` for the same reason as [[provider-fallback-allowed?]] — an
+   unregistered id must keep TODAY's behaviour, not strand the turn."
+  []
+  (not (false? (toggles/value-of REFUSAL_FALLBACK_TOGGLE))))
+
 (def ^:private refusal-fallback-models
   "Ordered models Vis retries when the CURRENT model's Anthropic safety
    classifier DECLINES the request (`stop_reason: refusal`). Anthropic
@@ -525,18 +550,38 @@
   ["claude-opus-4-8"])
 
 (defn- refusal-fallbacks-for
-  "The refusal-fallback chain for `resolved-model`, or nil. Only Anthropic's
-   Fable/Opus/Sonnet 5 models emit `stop_reason: refusal`, so this targets those
-   by name and drops the current model — so we never attach a pointless fallback
-   elsewhere, and never retry into the very model that just refused.
+  "The refusal-fallback chain for `resolved-model` WITHIN its own provider, or nil.
+   Only Anthropic's Fable/Opus/Sonnet 5 models emit `stop_reason: refusal`, so this
+   targets those by name and drops the current model — an identical retry earns the
+   identical decline.
 
-   nil while `provider_fallback` is off: a refusal switch still answers from a
-   model the human did not pick."
-  [resolved-model]
-  (when (provider-fallback-allowed?)
-    (let [nm (str (:name resolved-model))]
+   Every candidate is checked against the models `router` says that provider actually
+   serves. svar switches by handing the name back as `:routing {:model …}`, which the
+   router turns into `:force-model`: a name this provider does not serve either dies
+   as a routing failure naming no credential, or resolves on ANOTHER provider — a
+   content decision quietly moving the session's billing and its cache. No router, or
+   no sibling on that provider, therefore means no chain and the refusal surfaces as
+   itself.
+
+   nil while `refusal_fallback` is off."
+  [router resolved-model]
+  (when (refusal-fallback-allowed?)
+    (let
+      [nm
+       (str (:name resolved-model))
+
+       provider-id
+       (some-> (:provider resolved-model)
+               name
+               keyword)
+
+       served
+       (into #{}
+             (map #(str (:name %)))
+             (:models (some #(when (= provider-id (:id %)) %) (:providers router))))]
+
       (when (re-find #"(?i)claude-(opus|fable|sonnet)-5" nm)
-        (not-empty (vec (remove #{nm} refusal-fallback-models)))))))
+        (not-empty (into [] (comp (remove #{nm}) (filter served)) refusal-fallback-models))))))
 
 (defn- pin-routing-to-model
   "Routing svar cannot walk away from once the human turned `provider_fallback` off.
@@ -554,6 +599,24 @@
       (assoc :provider
         (:provider resolved-model) :model
         model-name))))
+(defn- pin-routing-to-provider
+  "Routing a REFUSAL switch cannot walk out of.
+
+   svar re-asks a declined request by replacing `:routing {:model …}` and keeping the
+   rest of that map, so a routing which never named a provider lets the router resolve
+   the fallback name wherever it is cheapest — a peer credential answering for a
+   content decision the original provider made. Stamping the provider this call already
+   resolved to keeps the switch inside it. A resolution with no provider is left alone:
+   half a pin routes to a different model, not this one."
+  [routing resolved-model]
+  (let
+    [provider-id (some-> (:provider resolved-model)
+                         name
+                         keyword)]
+    (cond-> (or routing {})
+      (and provider-id (not (contains? routing :provider)))
+      (assoc :provider provider-id))))
+
 (def ^:private casual-request-pattern
   #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
 
@@ -4412,8 +4475,16 @@
        ;; Fallback OFF pins THIS call to the model it resolved to, so svar's own
        ;; provider walk has nowhere else to land (`pin-routing-to-model`).
        pinned-routing (pin-routing-to-model routing resolved-model)
-       sticky-routing (cond-> pinned-routing
-                        (not (contains? pinned-routing :on-transient-error))
+       ;; Anthropic's safety classifier declines with HTTP 200 (`stop_reason: refusal`):
+       ;; the credential, the provider and the wire are all healthy, so the recovery is a
+       ;; SIBLING MODEL of the same provider — pin it, or the router resolves the fallback
+       ;; name on whichever provider is cheapest.
+       refusal-fallbacks (refusal-fallbacks-for (:router environment) resolved-model)
+       refusal-routing (cond-> pinned-routing
+                         refusal-fallbacks
+                         (pin-routing-to-provider resolved-model))
+       sticky-routing (cond-> refusal-routing
+                        (not (contains? refusal-routing :on-transient-error))
                         (assoc :on-transient-error :fallback-model-in-the-same-provider))
        ;; svar's empty-reply resend ladder (same model, same request) is
        ;; invisible mid-call — collect each re-send here and surface it as
@@ -4425,7 +4496,6 @@
        ;; fallback model (Opus 5 → Opus 4.8). Each switch is collected here and
        ;; surfaced on the routing trace, same as an empty-reply resend.
        refusal-fallback-events (atom [])
-       refusal-fallbacks (refusal-fallbacks-for resolved-model)
        provider-tools (model-facing-tools (:sandbox-caps environment))
        ask-opts
        (rt/with-default-ask-code-idle-timeout

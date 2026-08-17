@@ -390,6 +390,11 @@
    whole context. That silent 4× cost step is the reported half of issue #154 the
    numbers never showed, so the note says it in words on the turn it happens.
 
+   A `:llm.routing/model-fallback` moved the MODEL inside one provider — Anthropic's
+   safety classifier declining this request is the switch Vis raises that way. Nothing
+   about the credential or the provider failed, so it reads as its own reason and never
+   as a retry, but the cache is gone all the same: an Anthropic cache belongs to ONE
+   model.
    Returns nil when the trace has neither a fallback nor retries. Shared so the
    TUI can float it on its own faint row while the CLI folds it inline."
   [{:keys [llm-selected llm-fallback? llm-routing-trace]}]
@@ -399,6 +404,7 @@
         [from (or (model-pair-label llm-selected) "previous model")
          pick-move (first (filter #(= :session-pick (:scope %)) llm-routing-trace))
          fallback-event (first (filter #(and (contains? #{:llm.routing/provider-fallback
+                                                          :llm.routing/model-fallback
                                                           :llm.routing/format-fallback}
                                                         (:event/type %))
                                              (not= :session-pick (:scope %)))

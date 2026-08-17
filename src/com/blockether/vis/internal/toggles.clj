@@ -626,4 +626,18 @@
        :owner :vis
        :group :provider
        :persist? true})
+    ;; A refusal is Anthropic's safety classifier declining THIS request with HTTP 200:
+    ;; the credential, the provider and the wire are healthy, and an identical retry
+    ;; earns an identical decline, so the documented recovery is a sibling model of the
+    ;; SAME provider. That is a different decision from paying for a peer credential,
+    ;; which is why it is a different switch. ON keeps the documented recovery.
+    (register-toggle! {:id "refusal_fallback"
+                       :label "Automatic refusal fallback"
+                       :description
+                       "Re-ask a declined request on a sibling model of the same provider."
+                       :type :boolean
+                       :default true
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
     true))

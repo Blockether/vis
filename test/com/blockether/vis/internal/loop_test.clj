@@ -4438,7 +4438,12 @@
       pin @#'lp/pin-routing-to-model
      auth-error (ex-info "Unauthorized" {:status 401})
 
-     pinned {:provider :rbi-genai :model "gpt-5"}]
+     pinned {:provider :rbi-genai :model "gpt-5"}
+
+     claude-fleet {:providers [{:id :anthropic-coding-plan
+                                :models [{:name "claude-opus-5"} {:name "claude-opus-4-8"}]}]}
+
+     refused-model {:provider :anthropic-coding-plan :name "claude-opus-5"}]
 
     (it "ships ON, so an untouched install rescues turns exactly as before"
         (let [spec (toggles/toggle-spec "provider_fallback")]
@@ -4470,13 +4475,15 @@
           (toggles/set-value! "provider_fallback" false)
           (expect (nil? (fallback-routing auth-error pinned {:provider :rbi-genai})))
           (finally (toggles/reset-to-default! "provider_fallback"))))
-    (it "offers no refusal-fallback model once fallback is off"
-        ;; A safety-classifier switch is still an answer from a model nobody picked.
-        (expect (= ["claude-opus-4-8"] (refusals {:name "claude-opus-5"})))
+    (it "still offers the in-provider refusal switch once provider fallback is off"
+        ;; A refusal is not a provider failure: the credential, the provider and the wire
+        ;; all worked. Refusing PEER credentials must not also refuse the sibling model
+        ;; Anthropic documents as the recovery — `refusal_fallback` owns that call.
+        (expect (= ["claude-opus-4-8"] (refusals claude-fleet refused-model)))
         (try
           (toggles/set-value! "provider_fallback" false)
-          (expect (nil? (refusals {:name "claude-opus-5"})))
-           (finally (toggles/reset-to-default! "provider_fallback"))))
+          (expect (= ["claude-opus-4-8"] (refusals claude-fleet refused-model)))
+          (finally (toggles/reset-to-default! "provider_fallback"))))
     (it "pins the call to the model it resolved once fallback is off"
         ;; Without the pin, svar's own provider walk answers from a peer no matter what
         ;; Vis excluded upstream — the exclusion list is advice, the pin is a contract.
@@ -4497,6 +4504,73 @@
           (expect (= {} (pin nil {:name "gpt-5"})))
           (finally (toggles/reset-to-default! "provider_fallback"))))))
 
+;; Regression, issue #154 follow-up: a safety refusal was handled like a provider failure.
+;; Turning `provider_fallback` off silenced the recovery Anthropic documents, the fallback
+;; name was sent without checking that provider serves it, and nothing pinned the provider —
+;; so an HTTP-200 content decline could be answered by a peer credential.
+(defdescribe
+  refusal-fallback-scope-test
+  "An Anthropic refusal is HTTP 200 from a HEALTHY provider: the recovery is a sibling
+   model of that same provider, gated by its own switch, and never a route off it."
+  (let
+    [refusals @#'lp/refusal-fallbacks-for
+
+     pin-provider @#'lp/pin-routing-to-provider
+
+     chunk @#'lp/refusal-fallback-chunk
+
+     fleet {:providers [{:id :anthropic-coding-plan
+                         :models [{:name "claude-opus-5"} {:name "claude-opus-4-8"}]}
+                        {:id :peer :models [{:name "claude-opus-4-8"}]}]}
+
+     refused {:provider :anthropic-coding-plan :name "claude-opus-5"}]
+
+    (it "offers the sibling the refusing provider actually serves"
+        (expect (= ["claude-opus-4-8"] (refusals fleet refused))))
+    (it "offers nothing when the refusing provider serves no sibling"
+        ;; svar hands the name back as `:force-model`. A name this provider does not serve
+        ;; either dies as a routing failure naming no credential, or resolves on the peer
+        ;; that does serve it — moving billing because of a content decision.
+        (expect (nil? (refusals {:providers [{:id :anthropic-coding-plan
+                                             :models [{:name "claude-opus-5"}]}]}
+                                refused))))
+    (it "offers nothing when no router can confirm what the provider serves"
+        (expect (nil? (refusals nil refused))))
+    (it "never re-asks the very model that declined"
+        ;; The chain is data. Were the refusing model listed in it, re-sending it would
+        ;; earn the identical decline — a refusal is deterministic.
+        (with-redefs-fn {#'lp/refusal-fallback-models ["claude-opus-5" "claude-opus-4-8"]}
+          (fn []
+            (expect (= ["claude-opus-4-8"] (refusals fleet refused))))))
+    (it "leaves models that never emit a refusal alone"
+        ;; Only the Claude 5 family carries the safety classifier; a chain elsewhere pays
+        ;; a model switch for an error it will never see.
+        (expect (nil? (refusals fleet {:provider :peer :name "claude-opus-4-8"}))))
+    (it "is its own switch: off surfaces the decline, on keeps the recovery"
+        (try
+          (toggles/set-value! "refusal_fallback" false)
+          (expect (nil? (refusals fleet refused)))
+          (finally (toggles/reset-to-default! "refusal_fallback")))
+        (expect (= ["claude-opus-4-8"] (refusals fleet refused))))
+    (it "pins the provider that refused, so the switch cannot buy a peer credential"
+        (expect (= {:provider :anthropic-coding-plan} (pin-provider nil refused)))
+        (expect (= {:capabilities #{:vision} :provider :anthropic-coding-plan}
+                   (pin-provider {:capabilities #{:vision}} refused))))
+    (it "leaves an explicit provider and a half-named resolution untouched"
+        (expect (= {:provider :peer} (pin-provider {:provider :peer} refused)))
+        (expect (= {} (pin-provider nil {:name "claude-opus-5"}))))
+    (it "traces the switch as a MODEL fallback, never as a provider retry"
+        ;; A retry event says the provider misbehaved; this one answered first time and
+        ;; declined on purpose. The model-scoped type is also what tells the turn note the
+        ;; cache is cold, because an Anthropic prompt cache belongs to ONE model.
+        (let [ev (:event (chunk 2 {:from-model "claude-opus-5"
+                                   :to-model "claude-opus-4-8"
+                                   :category "policy"
+                                   :attempt 1}))]
+          (expect (= :llm.routing/model-fallback (:event/type ev)))
+          (expect (= :refusal (:reason ev)))
+          (expect (= "claude-opus-5" (:from-model ev)))
+          (expect (= "claude-opus-4-8" (:to-model ev)))))))
 ;; Regression, issue #154: a turn rescued onto a peer kept being MEASURED against the model
 ;; it had left. `session["routing"]` named the provider that failed and `session_utilization`
 ;; priced the pin's context window, so a 1M-window pin rescued onto a 128K peer read ~90%

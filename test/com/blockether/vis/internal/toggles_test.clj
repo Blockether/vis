@@ -297,3 +297,33 @@
       (try (expect (false? (t/enabled? "provider_fallback")))
            (finally (t/reset-to-default! "provider_fallback")))
       (expect (true? (t/enabled? "provider_fallback")))))
+
+(defdescribe
+  refusal-fallback-toggle-registry-test
+  "`refusal_fallback` decides whether a request Anthropic's safety classifier declined may be
+   re-asked of a sibling model of the SAME provider. It is separate from `provider_fallback`
+   because nothing about the credential, the provider or the wire failed."
+  (it "is registered as a persisted boolean that defaults on"
+      (let [spec (t/toggle-spec "refusal_fallback")]
+        (expect (some? spec))
+        (expect (= :boolean (:type spec)))
+        (expect (true? (:default spec)))
+        (expect (true? (:persist? spec)))
+        (expect (= :vis (:owner spec)))
+        (expect (= :provider (:group spec)))
+        (expect (t/settings-description? (:description spec)))))
+  (it "shows up in the Settings list of BOTH channels from that one declaration"
+      (let
+        [ids (fn [specs]
+               (set (map :id specs)))]
+        (expect (contains? (ids (t/toggles-for-channel :tui)) "refusal_fallback"))
+        (expect (contains? (ids (t/toggles-for-channel :web)) "refusal_fallback"))))
+  (it "is a DIFFERENT switch from provider fallback, not an alias of it"
+      ;; One human wants no peer credentials; another wants no model they did not pick.
+      ;; Collapsing the two would make the cheaper answer decide the safer one.
+      (t/set-value! "provider_fallback" false)
+      (try (expect (true? (t/enabled? "refusal_fallback")))
+           (finally (t/reset-to-default! "provider_fallback")))
+      (t/set-value! "refusal_fallback" false)
+      (try (expect (true? (t/enabled? "provider_fallback")))
+           (finally (t/reset-to-default! "refusal_fallback")))))

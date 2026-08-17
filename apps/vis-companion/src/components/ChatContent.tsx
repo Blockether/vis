@@ -943,6 +943,7 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
   const routing = turnRouting(turn);
   const fallbackTypes = new Set([
     "llm.routing/provider-fallback",
+    "llm.routing/model-fallback",
     "llm.routing/format-fallback",
   ]);
   const cacheBreakingTypes = new Set([
@@ -972,10 +973,14 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
   const cacheLost = routing.trace.some((item) =>
     cacheBreakingTypes.has(eventType(item)),
   );
+  // A trace value is JSON: an unnamed half of the pair arrives as `null`, which reads
+  // as "not named" to `modelPair` only once it is undefined.
+  const nameOf = (value: JsonValue | undefined) =>
+    typeof value === "string" && value.trim() ? value : undefined;
   const movedTo = pickMove
     ? modelPair({
-        provider: pickMove.to_provider,
-        model: pickMove.to_model,
+        provider: nameOf(pickMove.to_provider),
+        model: nameOf(pickMove.to_model),
       })
     : null;
   const event = fallbackEvent ?? retryEvents.at(-1);

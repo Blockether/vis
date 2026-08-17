@@ -139,6 +139,19 @@
                                                   :from-model "glm-5.1"
                                                   :to-provider "openai"
                                                   :to-model "gpt-4o"})))))
+  ;; A refusal is Anthropic's classifier declining THIS request on HTTP 200: the provider
+  ;; answered first time, so calling it a retry would report a healthy credential as flaky.
+  ;; The switch still landed on another model, whose cache is empty.
+  (it "reports a safety refusal as its own reason, never as a provider retry"
+      (expect (= "↳ from anthropic/claude-opus-5 — refusal, prompt cache lost"
+                 (fmt/meta-fallback-note
+                   {:llm-selected {:provider :anthropic :model "claude-opus-5"}
+                    :llm-fallback? true
+                    :llm-routing-trace [{:event/type :llm.routing/model-fallback
+                                         :reason :refusal
+                                         :from-model "claude-opus-5"
+                                         :to-model "claude-opus-4-8"
+                                         :category "policy"}]}))))
   (it "is nil when there was no fallback or retry"
       (expect (nil? (fmt/meta-fallback-note normal-result)))))
 
