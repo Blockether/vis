@@ -120,6 +120,30 @@
       "max": 100,
       "step": 1
     },
-    "secret_handle_prefix": "vis-secret:"
+    "secret_handle_prefix": "vis-secret:",
+    "live": 
+    {
+      "node_types": ["link","log","progress","stat","status","steps","table"],
+      "link_targets": ["attachment","path","url"],
+      "ops": ["add-node","append","clear","remove","remove-node","set"],
+      "tones": ["error","idle","ok","running","warn"],
+      "orders": ["insertion","newest-first"],
+      "reasons": ["completed","failed","interrupted","timeout","undeliverable"],
+      "log": 
+      {
+        "window_lines": 2000,
+        "window_lines_cap": 100000,
+        "max_patch_lines": 500
+      },
+      "table": 
+      {
+        "max_rows": 5000,
+        "max_patch_rows": 200
+      },
+      "max_stats": 32,
+      "max_steps": 200,
+      "max_links": 32,
+      "max_nodes": 32
+    }
   }
 }

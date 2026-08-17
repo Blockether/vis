@@ -43,11 +43,20 @@
 - The terminal can already scroll the way this needs and nothing extension-owned uses it: SGR mouse
   decode including the wheel (`.../channel_tui/input.clj:309-341`), wheel-momentum scrolling with a
   directional lock (`.../channel_tui/scroll.clj:219-298`), a scrollbar (`.../channel_tui/scrollbar.clj`).
-- The journal can already carry it: `state/append-event!` canonicalizes to snake_case, stamps a
-  monotonic `seq`, fans out to SSE and keeps a replay ring, and `:store? false` fans out live while
-  staying OUT of the ring (it still burns a `seq`, still reaches SSE and still reaches the bus) —
-  documented, implemented, and with no current caller
-  (`src/com/blockether/vis/internal/gateway/state.clj:348-364,429-437`).
+- The event rail can CARRY a live view, but nothing on it is STORAGE — every sink is bounded, and
+  this plan is designed around the exact bounds. `state/append-event!` canonicalizes to snake_case,
+  stamps a monotonic `seq`, fans out to SSE and keeps a replay ring
+  (`src/com/blockether/vis/internal/gateway/state.clj:348-364,429-437`) — 2000 events for the WHOLE
+  session, and that ring is explicitly not the record: "older events stay durable in the session
+  transcript; the ring only backs short SSE cursor reconnects" (`:37-40`). The cross-process journal
+  is smaller still: `<sid>.ndjson` is TRUNCATED at every `turn.started` and force-truncated past
+  16 MB mid-turn (`gateway/bus.clj:53,488-499`). And a durable publish PARKS the producing thread
+  until the journal writer acknowledges it, up to 5 s (`bus.clj:567-589`), so patch RATE is a
+  latency decision and not only a volume one.
+- The offload rail that turns bytes into an artifact wants the whole payload in memory as base64
+  (`internal/attachment_storage.clj:174-198`), so a long log cannot become an artifact by being
+  encoded at the end — it has to have been written while it ran. The file backend that resolves such
+  an artifact back already exists (`:261-275`, scheme `file`).
 - The repo already draws the line this plan depends on: attachments carry a closed `audiences`
   vocabulary that decides what the human is SHOWN versus what the model is TOLD
   (`src/com/blockether/vis/internal/attachments.clj:670-679`), and storage offload dispatches on
@@ -72,11 +81,24 @@ extension's call then returns `interrupted` and decides what to do), and settles
 the human can reopen afterwards. Patches are HUMAN-facing: they never enter model context. The
 model receives exactly one thing — the settled result the extension returns.
 
+Two rules the rest of the plan is built on, both settled on review:
+
+- **Every node has an id, and the id is the address.** A view holds as many logs, tables and
+  progress bars as the extension declares — `failures` and `passed` are two tables, patched
+  independently — and a view may GAIN or DROP a node while it runs, so a scan that discovers a
+  second device does not have to have declared it up front. There is no implicit "the" table.
+- **Everything is stored, and nothing is ever silently evicted.** Every accepted patch is appended
+  to the view's own append-only file BEFORE it is published, so the record is complete even if the
+  process dies mid-run. What a surface paints is a WINDOW over that record — a rendering decision,
+  never a data one. Where a collection must stay in memory to remain addressable (rows, steps,
+  stats, links) the bound is a REFUSAL carrying its reason, never a trim behind the caller's back.
+
 **What we do not solve.** No answers inside a live view: a question stays `ask`, because mixing the
 two puts validation, secrets and focus back into a pane that must never own the keyboard. No
 arbitrary markup, HTML or markdown nodes — a closed vocabulary is the only way the terminal and the
 phone can both be honest about a node. No second event bus, no schema library beyond
-`clojure.spec.alpha`, and no persistence beyond the session journal plus the one artifact. And
+`clojure.spec.alpha`, and no database — the only new storage is ONE append-only file per view, which
+IS the artifact once the view closes. And
 nothing in the HOST opens a view for anybody: `shell`, the tools and the runtime keep exactly the
 behavior they have today. A live view exists where EXTENSION code opened one — visibility is
 written, never something that happens to a process.
@@ -105,7 +127,16 @@ written, never something that happens to a process.
   the work MEANS — a status, a score, a step list — and the host only has bytes. An extension that
   spawns a shell drains its ring (`internal/foundation/shell.clj:116`) into a view it owns and
   labels; the model's own `sh.logs()` / `sh.wait()` guidance stays exactly as it is today.
-
+- *Keep only a window of the stream and let the rest fall off the end (this plan's first draft: a
+  2000-line ring inside the log node).* Lost on review: an eviction the human cannot see is data
+  loss with a progress bar in front of it, and it makes the artifact a lie — the log they watched is
+  not the log they can reopen. Storage is a file; the window is paint.
+- *Let the session event ring BE the store — publish every patch and read it back on reconnect.*
+  Lost: that ring holds 2000 events for the whole session and is documented as a reconnect cache,
+  not the record (`gateway/state.clj:37-40`); the journal it feeds is truncated every turn and again
+  past 16 MB (`gateway/bus.clj:53,488-499`); and a durable publish parks the producing thread until
+  the writer acks (`bus.clj:567-589`). A stream stored there evicts the session's own history AND
+  pays disk latency per patch, which is why the sink is a file the view owns.
 ## Phase 1 — Declare the live view and give the engine the primitive
 
 **Rationale.** Without it there is no vocabulary at all: every surface would invent its own node
@@ -126,7 +157,7 @@ human-input keys, so the snake_case wire spellings keep being DERIVED by `wire-k
    "stat"     :stat                  ; label -> value counters upserted by id: the score
    "steps"    :steps                 ; an ORDERED keyed checklist, each item carrying its own tone
    "log"      :log                   ; append-only ring of lines — the scrollback
-   "table"    :table                 ; rows upserted and removed by row id
+   "table"    :table                 ; rows upserted and removed by row id, in a DECLARED order
    "link"     :link})                ; labeled pointers the human OPENS
 
 ;; The three things a surface knows how to open. CLOSED.
@@ -138,23 +169,31 @@ human-input keys, so the snake_case wire spellings keep being DERIVED by `wire-k
 ;; (a view that ASKS is `ask`; blocking belongs to the form), `spinner` (`progress` with a nil
 ;; value already means indeterminate), `tree` (no caller).
 
-;; What one patch operation DOES to one node. CLOSED.
+;; What one patch operation DOES. The first four address ONE node BY ID; the last two change the
+;; view's SHAPE while it runs. CLOSED.
 (def live-ops
-  {"set"    :set                     ; replace a node's own state (status text, progress value …)
-   "append" :append                  ; add lines to a log; upsert rows, steps, stats and links by id
-   "remove" :remove                  ; drop keyed items by id
-   "clear"  :clear})                 ; empty a log, table, step list, stat strip or link list
+  {"set"         :set            ; replace a node's own state (status text, progress value …)
+   "append"      :append         ; add lines to a log; upsert rows, steps, stats and links by id
+   "remove"      :remove         ; drop keyed ITEMS by id
+   "clear"       :clear          ; empty a log, table, step list, stat strip or link list
+   "add-node"    :add-node       ; add a WHOLE node mid-run (a second table, a per-device log)
+   "remove-node" :remove-node})  ; drop a whole node, its items with it
 
 (def live-tones {"idle" :idle "running" :running "ok" :ok "warn" :warn "error" :error})
 
 ;; Why a view ended. CLOSED, and the only vocabulary an extension branches on.
 (def live-reasons #{"completed" "interrupted" "timeout" "undeliverable" "failed"})
 
-(def log-defaults   {:max-lines 2000 :max-lines-cap 20000 :max-patch-lines 500})
-(def table-defaults {:max-rows 500 :max-rows-cap 5000 :max-patch-rows 200})
+;; NOTHING here evicts. A `log` is UNBOUNDED: every line goes to the view's sink file and
+;; `:window-lines` is only how much of it a surface holds hot. The keyed collections must stay in
+;; memory to remain addressable, so they are bounded by REFUSAL — a patch that would exceed the
+;; bound is refused with the bound, the node id and `log` named as the home for unbounded volume.
+(def log-defaults   {:window-lines 2000 :window-lines-cap 100000 :max-patch-lines 500})
+(def table-defaults {:max-rows 5000 :max-patch-rows 200})
 (def stat-defaults  {:max-stats 32})           ; a strip, not a spreadsheet
 (def step-defaults  {:max-steps 200})          ; a checklist, not a second log
 (def link-defaults  {:max-links 32})
+(def view-defaults  {:max-nodes 32})           ; 200 devices are 200 ROWS, not 200 panes
 (def progress-defaults {:value nil})           ; nil is INDETERMINATE, not zero
 
 ;; One dispatch key, two multi-specs: a form node and a live node can never be
@@ -163,17 +202,25 @@ human-input keys, so the snake_case wire spellings keep being DERIVED by `wire-k
 (s/def ::tone (set (vals live-tones)))
 (s/def ::line string?)                          ; a blank line is a line
 (s/def ::lines (s/coll-of ::line :kind vector? :max-count (:max-patch-lines log-defaults)))
-(s/def ::max-lines (s/int-in 1 (inc (:max-lines-cap log-defaults))))
+(s/def ::window-lines (s/int-in 1 (inc (:window-lines-cap log-defaults))))  ; PAINT window; the sink keeps every line
 (s/def ::value (s/nilable (s/and number? #(<= 0 % 1))))
 (s/def ::done nat-int?)
 (s/def ::total pos-int?)
 (s/def ::cells (s/coll-of string? :kind vector?))
 (s/def ::table-column (s/and #(closed? column-keys %) (s/keys :req-un [::id ::label] :opt-un [::align])))
 (s/def ::columns (s/and (s/coll-of ::table-column :kind vector?) non-empty? distinct-ids?))
-(s/def ::row (s/and #(closed? row-keys %) (s/keys :req-un [::id ::cells])))
+(s/def ::row (s/and #(closed? row-keys %) (s/keys :req-un [::id ::cells] :opt-un [::tone])))
 (s/def ::rows (s/coll-of ::row :kind vector? :max-count (:max-patch-rows table-defaults)))
+;; A table is a KEYED collection, so its paint order has to be DECLARED or the terminal and the
+;; phone are free to disagree. `:insertion` (default) keeps first-seen order and an upsert NEVER
+;; moves a row — a row that changes stays where the eye left it. `:newest-first` is insertion
+;; reversed (a live feed). `{:by "col" :dir :asc|:desc}` sorts by one DECLARED column id, using
+;; DataTable's existing rule (numeric when every non-blank cell parses, else case-insensitive,
+;; blanks last, ties broken by insertion order so the order is TOTAL and reproducible).
+(s/def ::order (s/or :implicit #{:insertion :newest-first}
+                     :sorted (s/and #(closed? order-keys %) (s/keys :req-un [::by] :opt-un [::dir]))))
 (s/def ::item-ids (s/coll-of ::id :kind vector?))   ; rows, steps, stats or links
-(s/def ::max-rows (s/int-in 1 (inc (:max-rows-cap table-defaults))))
+(s/def ::max-rows (s/int-in 1 (inc (:max-rows table-defaults))))    ; the REFUSAL bound, not a ring
 
 (s/def ::detail (s/nilable string?))            ; a dimmed second line under a status or a step
 (s/def ::value-text string?)                    ; a stat's value AS SHOWN ("12 failed", "3.4 MB/s")
@@ -191,11 +238,14 @@ human-input keys, so the snake_case wire spellings keep being DERIVED by `wire-k
 (defmethod live-node-form :progress [_] (s/keys :req-un [::id ::type ::value] :opt-un [::label ::done ::total]))
 (defmethod live-node-form :stat     [_] (s/keys :req-un [::id ::type ::stats] :opt-un [::label]))
 (defmethod live-node-form :steps    [_] (s/keys :req-un [::id ::type ::steps] :opt-un [::label]))
-(defmethod live-node-form :log      [_] (s/keys :req-un [::id ::type ::lines ::max-lines] :opt-un [::label]))
-(defmethod live-node-form :table    [_] (s/keys :req-un [::id ::type ::columns ::rows ::max-rows] :opt-un [::label]))
+(defmethod live-node-form :log      [_] (s/keys :req-un [::id ::type ::lines ::window-lines] :opt-un [::label]))
+(defmethod live-node-form :table    [_] (s/keys :req-un [::id ::type ::columns ::rows ::max-rows ::order] :opt-un [::label]))
 (defmethod live-node-form :link     [_] (s/keys :req-un [::id ::type ::links] :opt-un [::label]))
 (s/def ::live-node (s/and (s/multi-spec live-node-form :type) live-node-closed?))
-(s/def ::nodes (s/and (s/coll-of ::live-node :kind vector?) non-empty? distinct-ids?))
+;; `::id` is the ADDRESS: chosen by the extension, unique inside the view, and named by every
+;; patch. Two tables are two ids, not two views.
+(s/def ::nodes (s/and (s/coll-of ::live-node :kind vector? :max-count (:max-nodes view-defaults))
+                      non-empty? distinct-ids?))
 
 ;; The view itself. `:id`, `:seq` and `:created-at` are ENGINE stamps
 ;; (`request-stamp-keys`), never written in a spec.
@@ -207,11 +257,17 @@ human-input keys, so the snake_case wire spellings keep being DERIVED by `wire-k
 
 ;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads the
 ;; snapshot instead of painting a torn view.
+(s/def ::node-spec ::live-node)                 ; the node `add-node` introduces
+(s/def ::after (s/nilable ::id))                ; place it after this node; nil means last
 (defmulti live-op-form :op)
-(defmethod live-op-form :set    [_] (s/keys :req-un [::op ::node] :opt-un [::text ::detail ::tone ::label ::value ::done ::total ::stats ::steps ::links]))
-(defmethod live-op-form :append [_] (s/keys :req-un [::op ::node] :opt-un [::lines ::rows ::stats ::steps ::links]))
-(defmethod live-op-form :remove [_] (s/keys :req-un [::op ::node ::item-ids]))
-(defmethod live-op-form :clear  [_] (s/keys :req-un [::op ::node]))
+(defmethod live-op-form :set    [_] (s/keys :req-un [::op ::node-id] :opt-un [::text ::detail ::tone ::label ::value ::done ::total ::stats ::steps ::links]))
+(defmethod live-op-form :append [_] (s/keys :req-un [::op ::node-id] :opt-un [::lines ::rows ::stats ::steps ::links]))
+(defmethod live-op-form :remove [_] (s/keys :req-un [::op ::node-id ::item-ids]))
+(defmethod live-op-form :clear  [_] (s/keys :req-un [::op ::node-id]))
+(defmethod live-op-form :add-node    [_] (s/keys :req-un [::op ::node-spec] :opt-un [::after]))
+(defmethod live-op-form :remove-node [_] (s/keys :req-un [::op ::node-id]))
+;; The address is `:node-id`, not `:node`: `::node` already names a whole node of
+;; the FORM tree, and a spec keyword is shared by every map that spells the key.
 (s/def ::live-op (s/multi-spec live-op-form :op))
 (s/def ::ops (s/and (s/coll-of ::live-op :kind vector?) non-empty?))
 (s/def ::live-patch (s/and #(closed? live-patch-keys %) (s/keys :req-un [::view-id ::seq ::ops])))
@@ -234,20 +290,54 @@ so no key is spelled a second time anywhere.
   `contract-vocabulary` (`:122-137`) exporting the live tables so the Python contract document reads
   one source.
 - `src/com/blockether/vis/internal/human_input.clj` — `normalize-live-view`, `normalize-patch`,
-  `apply-patch` (the materializer: log ring by `:max-lines`, upsert-by-id for table rows, steps,
-  stats and links, capped by `:max-rows` / `:max-steps` / `:max-stats` / `:max-links`), `live!`
+  `apply-patch` (the materializer: append into a log's hot window by `:window-lines`, upsert-by-id
+  for table rows, steps, stats and links, `add-node` / `remove-node` reshaping the view), `live!`
   (opens, publishes `:human-input/live-open`, parks with `rt/park-blocking-wall`, always closes),
-  `patch!`, `close!`, `interrupt!`.
+  `patch!`, `close!`, `interrupt!`. Every op names its node, so a view with four tables needs no
+  ordering rule and no "current" node.
+- Same file — a keyed collection is stored as an ORDER VECTOR of ids plus an id->item map, so the
+  three mutations are total and cheap: an `append` of an id already present REPLACES the item IN
+  PLACE (the row keeps its slot, so a counter ticking in row 3 does not throw the table at the
+  human), an unseen id is APPENDED to the order, and `remove` drops the id from both. Removing an
+  absent id and clearing an empty collection are NO-OPS, not refusals — a patch is a statement of
+  the wanted state, and an extension polling a fleet must not have to remember what it already
+  said. `:order` is applied at PAINT time from that vector, never by re-sorting the record, so
+  every surface derives the same order from the same state and a re-sort never loses the identity
+  a scroll anchor is pinned to.
+- Same file — a `{:by "col"}` order naming a column id the table does not declare is refused AT
+  DECLARATION with the id and the known column ids named, not silently ignored at paint time.
+- Same file — a patch that would push a keyed collection past `:max-rows` / `:max-steps` /
+  `:max-stats` / `:max-links`, or the view past `:max-nodes`, is REFUSED with the bound and the node
+  id in the reason, and the reason names `log` as the home for unbounded volume. Nothing is trimmed:
+  the caller learns, the human never watches rows disappear.
 - Same file — the `pending` registry entry gains `:kind` (`:form` | `:live`) so `cancel-all!`
   (`:1145-1150`), the turn-interrupt path (`:1251-1255`) and the undeliverable path (`:1220-1235`)
   release both kinds, and `checked-answer` routes to `::answer` or `::live-result` by kind.
+- `src/com/blockether/vis/internal/human_input/live_sink.clj` (new) — the store of record, because
+  no existing sink keeps a stream (ring 2000 events, journal truncated per turn and past 16 MB).
+  One append-only NDJSON file per view at `~/.vis/gateway/live/<session-id>/<view-id>.ndjson`:
+  header line = the opened view, one line per ACCEPTED patch, trailer line = the reason it ended.
+  Appended BEFORE the patch is published, so a crashed run keeps everything the engine accepted, and
+  opened in append mode so a resumed process never overwrites. Reads are a line range
+  (`read-range` from/count), which is what lets a surface pull the scrollback it paints and lets the
+  artifact be the file itself instead of a re-encoded copy.
 - `src/com/blockether/vis/human_input.clj` — builders `status`, `progress`, `stat`, `steps`, `log`,
-  `table`, `table-column`, `link`, and `live!` taking the view spec plus a function that receives
-  the handle, so the view closes on a throw as well as on a return.
-- Test `test/com/blockether/vis/internal/human_input_test.clj` — patch materialization including
-  ring eviction and row removal, refusal of an unknown node type / op / key naming the key,
-  `undeliverable` with no channel mounted, `interrupt!` releasing the parked caller, and a form and
-  a live view coexisting in the registry.
+  `table`, `table-column`, `link` — each taking its ID FIRST — plus `add-node` / `remove-node`, and
+  `live!` taking the view spec plus a function that receives the handle, so the view closes on a
+  throw as well as on a return.
+- Test `test/com/blockether/vis/internal/human_input_test.clj` — materialization for a view with TWO
+  tables and two logs where each patch touches only its own node, `add-node` / `remove-node` mid-run
+  (including a patch naming a node that was dropped), each bound refusing with node and bound named,
+- Same file — a table driven through an INTERLEAVED script (add a, add b, add c, update b, remove
+  a, re-add a, clear, add d) asserted row-by-row under each `:order`: insertion order proves the
+  updated row did not move and the re-added row went to the END (it is a new arrival, not a
+  resurrection), `:newest-first` proves the mirror image, `{:by …}` proves ties keep insertion
+  order so the same script always paints identically. Removing an absent id and clearing an empty
+  table are asserted as no-ops that still advance `seq`, and a `{:by "nope"}` order is asserted to
+  throw at declaration naming the known columns.
+  the sink round-tripped (write N lines, read a range back, reopen and append), refusal of an unknown
+  node type / op / key naming the key, `undeliverable` with no channel mounted, `interrupt!`
+  releasing the parked caller, and a form and a live view coexisting in the registry.
 - Same file — a bad live spec is refused WHERE IT WAS DECLARED: `live!` normalizes before it mounts
   anything, exactly as `request!` does (`:1200`), and throws the engine's one-line reason. There is no
   answer-instead-of-throw seam left to teach (`check`/`check-json` went with `vis.check`), so the live
@@ -273,6 +363,23 @@ process.
   `scrollbar.clj`), the scrollback buffer over `scroll.clj`, follow-tail that releases when the human
   scrolls up and re-arms at the bottom, a header line carrying title plus elapsed time, and click
   regions on `link` items.
+- Same file — a view is a STACK of labelled nodes in declaration order on ONE scroll surface, so
+  three tables and two logs read as sections rather than as competing panes. A node paints a WINDOW,
+  never its record: a table shows a window of its declared order plus a `+N more` line that expands,
+  and a log paints what fits and pulls older lines from the sink's range reader when the human
+  scrolls past what memory holds. `add-node` / `remove-node` reflow without moving what the human is
+  reading — the scroll anchor is the node id under the viewport, never a line offset.
+- Same file — a table under mutation repaints WITHOUT MOVING THE EYE, which is the whole difficulty:
+  the anchor inside a table is the ROW ID at the top of the viewport, so rows arriving above it (or
+  a row above it being removed) change the scrollbar, not the reading position; only a viewport
+  pinned at the end follows new rows, exactly like the log's follow-tail. Column widths are measured
+  ONCE per repaint from the painted window and only ever GROW while the view is open, so a wider
+  value in row 900 does not shuffle every earlier column; `columns` is fixed at declaration, so a
+  table never changes shape under the human. A row upserted or added is emphasised for one repaint
+  interval (`theme` tone, the same vocabulary as `steps`), which is what makes a changing table
+  readable instead of a flicker — and an optional row `:tone` keeps a failed row red for good.
+  A removed row is dropped immediately, never blanked in place: a gap that stays is a lie about the
+  state, and the sink is where the history lives.
 - `.../channel_tui/screen.clj:509-556` — three more ops (`:human-input/live-open`,
   `:human-input/live-patch`, `:human-input/live-close`) dispatching into state, built exactly like
   the `:human-input/request` case at `:548`.
@@ -285,6 +392,10 @@ process.
 - Test `extensions/channels/vis-channel-tui/test/.../channel_tui/live_view_test.clj` — open, patch,
   close, wheel scroll, follow-tail release/re-arm, Escape precedence over turn interrupt; plus the
   screenshot gate described by `doc("tui-rendering")`.
+- Same file — the table-under-mutation case gets its own assertions: with the viewport parked mid
+  table, rows inserted and removed ABOVE the anchor leave the top visible row id unchanged, a
+  viewport pinned at the end follows new rows, a wider cell grows a column and never shrinks it
+  while open, and the screenshot gate pins a before/after pair across one interleaved script.
 
 **Unknowns.** Where does the pane live when several views are open at once — stacked above the
 composer, or one pane with a switcher? The plan assumes stacked, newest last, capped at three
@@ -317,11 +428,31 @@ The envelope it carries is the Phase 1 shape as JSON:
 **Acceptance criteria.**
 
 - `packages/vis-agent/src/vis/__init__.py` — `vis.live(title, nodes, **options)` as a context
-  manager answering a `LiveView` handle with `status()`, `progress()`, `stat()`, `step()`, `log()`,
-  `row()`, `link()`, `remove()`, `clear()`, plus node builders `vis.status`, `vis.progress`,
-  `vis.stat`, `vis.steps`, `vis.log`, `vis.table`, `vis.table_column`, `vis.link`. The handle carries
-  `is_interrupted` and `reason`; a push after an interrupt raises `vis.Interrupted`, so an unattended
-  loop stops by itself while a compute loop can poll the flag.
+  manager answering a `LiveView` handle. Nodes are addressed BY ID, because a view with two tables
+  has no "the" table: `view["failures"]` (also `view.node("failures")`) answers a typed node handle —
+  `Table.upsert(row_id, cells)` / `.remove(ids)` / `.clear()`, `Log.write(*lines)`,
+  `Progress.set(value, done=, total=)`, `Status.set(text, tone=, detail=)`,
+  `Steps.set(step_id, tone=, detail=)`, `Stats.set(stat_id, value_text, tone=)`,
+  `Links.add(link_id, label, target)`.
+- Same file — `Table.upsert` is one verb for both "new row" and "row changed", because the caller
+  loop that writes a live table does not know which it is: `upsert("dev-7", [...])` inserts the
+  first time and replaces in place after, so a scan loop is a `for` over devices rather than a diff
+  the extension has to keep. `vis.table(id, columns=[…], order=…)` declares the order once
+  (`"insertion"` default, `"newest-first"`, or `{"by": "duration", "dir": "desc"}`); the batching
+  tick coalesces repeated upserts of the SAME row id into the last one, so a per-row progress
+  counter costs one wire row per tick instead of one per tick per write.
+- Same file — the view-level shortcuts (`view.log(...)`, `view.row(...)`, `view.status(...)`) stay
+  for the common single-node case and resolve to that node ONLY when the view holds exactly one node
+  of the type; otherwise they raise naming the candidate ids, so an ambiguous view fails at the call
+  instead of quietly patching the wrong table. `view.add(vis.table("passed", columns=[…]))` and
+  `view.drop("device-7")` reshape a running view; node builders `vis.status`, `vis.progress`,
+  `vis.stat`, `vis.steps`, `vis.log`, `vis.table`, `vis.table_column`, `vis.link` all take the id
+  first. The handle carries `is_interrupted` and `reason`; a push after an interrupt raises
+  `vis.Interrupted`, so an unattended loop stops by itself while a compute loop can poll the flag.
+- Same file — a push per line would be a host round trip per line, so the handle BATCHES: ops buffer
+  and flush on a tick (`:live/flush-ms`, default 100), at `:max-patch-lines`, and on close. That is
+  a correctness property rather than a nicety, because the engine's durable publish parks its
+  producing thread until the journal writer acknowledges the event (`gateway/bus.clj:567-589`).
 - `resources/vis-python/extension_bootstrap.py` — `live=__vis_host_live__` in `_host`.
 - `src/com/blockether/vis/internal/python_extensions.clj:490` — `host-member-names` gains `live`.
 - `src/com/blockether/vis/internal/human_input.clj` — `live-json!`, the strings-only seam beside
@@ -355,45 +486,60 @@ session events; without this phase the app stays blind exactly as it is today.
 
 **Acceptance criteria.**
 
-- `src/com/blockether/vis/internal/gateway/human_input.clj:77-88` — three more ops.
-  `human_input.live.open` and `human_input.live.close` are STORED, so a client that joins late
-  replays them. `human_input.live.patch` is published `:store? false` (`gateway/state.clj:365`), and
-  that flag is narrower than it sounds: the event is still stamped with the session's next `seq`,
-  still fanned out to SSE, still published on the cross-process bus — the ONLY thing skipped is
-  `(update :events trim-ring)`, the bounded in-memory replay ring (`:429-437`). Three consequences,
-  and this phase is designed around them. (1) A 2000-patch build cannot evict `turn.started`, the
-  form requests and the turn's real history out of that bounded ring. (2) A cursor replay or a
-  `/poll` pull — both read the ring (`state.clj:357-361`) — never re-delivers a patch, so nothing
-  redraws yesterday's progress. (3) On the bus a transient event is handed to the writer WITHOUT
-  waiting and may be dropped when the queue is saturated (`gateway/bus.clj:590-594`), and travels
-  marked `"_store" false` (`:483`) so a mirroring process keeps it out of its ring too. The price:
-  a reconnecting client sees a `seq` jump and must NOT read it as loss — it resyncs from the snapshot
-  route below, which is therefore a correctness requirement of this phase, not an optimization.
-  Patches are coalesced per view on a fixed tick (superseded `set` ops dropped, `append` lines
-  merged) before they are published.
+- `src/com/blockether/vis/internal/gateway/human_input.clj:77-88` — three more ops, and all three
+  are STORED exactly like every other session event (`:store?` left defaulted; the transient flag
+  keeps having no caller in this repo). `human_input.live.open` and `human_input.live.close` are the
+  lifecycle a late-joining client replays; `human_input.live.patch` carries the op vector the engine
+  already accepted and already appended to the sink. Storing them is what makes a TUI mirroring the
+  session from ANOTHER process paint the same view, and ring eviction is not data loss here for one
+  reason worth stating in the code: that ring is a 2000-event reconnect cache for the whole session
+  and explicitly not the record (`gateway/state.clj:37-40`) — the record is the view's sink file
+  plus the session transcript.
+- Same file — patches are COALESCED per view on a fixed tick before publishing (superseded `set` ops
+  dropped, `append` lines merged, `add-node`/`remove-node` never dropped). Not an optimization: a
+  durable publish parks the producing thread until the journal writer acks, up to 5 s
+  (`gateway/bus.clj:567-589`), and the cross-process journal is force-truncated past 16 MB mid-turn
+  (`:53,488-499`). The tick bounds thread cost and file churn while losing nothing, because the sink
+  already holds every accepted patch and the snapshot route below serves the repair.
 - `src/com/blockether/vis/internal/gateway/server.clj` — `GET /v1/sessions/:sid/human-input/live`
   answering the materialized snapshots (the resync path for a client that joined mid-flight or lost
-  SSE) and `POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt`, registered beside
-  the routes at `:3748-3750`; the session list's `awaiting` (`:1702`) gains the working state so the
-  sessions screen can mark a run as busy rather than parked.
-- `apps/vis-companion/src/lib/live-view.ts` — the pure reduction of the three events into view
-  state, a `seq` gap read as RESYNC rather than loss (the patch rule above), and the mirrors of the
-  closed tables (`LIVE_NODE_TYPES`, `LIVE_OPS`, `LIVE_TONES`, `LIVE_REASONS`, `LINK_TARGETS`), the
-  same way `lib/human-input.ts:22-40` mirrors the form vocabulary.
+  SSE), `GET …/live/:view-id/log/:node-id?from=<line>&count=<n>` reading the sink range so a phone
+  can scroll back through a log whose patches it never received, and
+  `POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt`, registered beside the routes
+  at `:3748-3750`; the session list's `awaiting` (`:1702`) gains the working state so the sessions
+  screen can mark a run as busy rather than parked.
+- `apps/vis-companion/src/lib/live-view.ts` — the pure reduction of the three events into view state
+  KEYED BY NODE ID (`add-node` and `remove-node` included), a `seq` gap read as RESYNC rather than
+  loss — a reconnect, a dropped frame and an evicted ring entry look identical from the client, and
+  the snapshot plus the log-range route are the repair — and the mirrors of the closed tables
+  (`LIVE_NODE_TYPES`, `LIVE_OPS`, `LIVE_TONES`, `LIVE_REASONS`, `LINK_TARGETS`), the same way
+  `lib/human-input.ts:22-40` mirrors the form vocabulary.
 - `apps/vis-companion/src/components/LiveView.tsx` + `dev/liveViewVariants.tsx` +
-  `lib/live-view.fixture.json` (one node of every kind, `request->view` verbatim) and rendering in
-  `screens/SessionScreen.tsx` where `HumanInputPrompt` renders; scroll follows the tail and releases
-  on touch, per `doc("companion-ui")`.
-- `apps/vis-companion/src/components/ui.tsx` — the two controls the vocabulary needs and the app
-  does not have: a progress bar and a table row. The closed set already covers the rest — `stat` on
-  `Pill` (`:749`), `steps` and `link` on `ListRow` (`:463`), a collapsed log on `Disclosure`
-  (`:603`), tone on `Banner` (`:1392`), pending on `Spinner` (`:1750`) — so the phone costs two new
-  controls, not seven painters, and they are added THERE per `doc("companion-ui")`, never inline.
+  `lib/live-view.fixture.json` (one node of every kind AND two tables side by side, `request->view`
+  verbatim) and rendering in `screens/SessionScreen.tsx` where `HumanInputPrompt` renders; nodes
+  render as labelled sections in declaration order, scroll follows the tail and releases on touch,
+  and a log pages older lines through the range route, per `doc("companion-ui")`.
+- `apps/vis-companion/src/components/DataTable.tsx` — REUSED, not reimplemented: it already keys
+  rows (`row.key` `:460`), sorts stably with the numeric/case-insensitive/blanks-last rule the
+  engine's `{:by …}` order mirrors (`:116-131`), and pages. A live table passes the ROW ID as
+  `row.key`, so React moves rows instead of rebuilding them and a re-render cannot reset a row the
+  human is touching. The human's own header sort stays a LOCAL OVERLAY on top of the declared
+  order — it survives every patch and is never written back, because the human's ordering is a
+  reading choice and the extension's is data. `sortRows` stays pure; only the fixture grows.
+- `apps/vis-companion/src/components/ui.tsx` — the ONE control the vocabulary needs and the app does
+  not have: a progress bar. The closed set already covers the rest — `stat` on `Pill` (`:749`),
+  `steps` and `link` on `ListRow` (`:463`), a collapsed log on `Disclosure` (`:603`), tone on
+  `Banner` (`:1392`), pending on `Spinner` (`:1750`), tables on `DataTable` — so the phone costs one
+  new control, not seven painters, and it is added THERE per `doc("companion-ui")`, never inline.
 - `apps/vis-companion/src/lib/gateway.ts` — subscribe the three events, resync from the snapshot
   route on reconnect (`:3182` is where the same argument is already made for `human_input.request`).
 - Test: `extensions/channels/vis-channel-tui/test/.../human_input_cross_channel_test.clj` extended to
-  read the new TypeScript tables and fail on drift; `LiveView.test.tsx` rendering the fixture;
-  `test/com/blockether/vis/internal/gateway/human_input_test.clj` for store/no-store and coalescing.
+  read the new TypeScript tables and fail on drift; `LiveView.test.tsx` rendering the fixture and
+  driving the same interleaved table script (insert, in-place update, remove, re-add) asserting row
+  identity by key, that a header sort chosen by the human survives the next patch, and that the
+  declared order is what an unsorted table paints;
+  `test/com/blockether/vis/internal/gateway/human_input_test.clj` for storage, coalescing (superseded
+  `set` dropped, `append` merged, `add-node` never dropped) and the log-range route.
 
 **Unknowns.** Does a live view deserve a push notification? The plan says no by default — it is not
 a question — with one exception under discussion: a view that closes `failed` while the app is
@@ -401,9 +547,10 @@ backgrounded.
 
 ## Phase 5 — Settle a finished view into an artifact the human can reopen
 
-**Rationale.** Without this the buffer dies with the pane: the human who looked away loses the log
-they were watching, and the only way to keep it would be to dump it into the transcript, which is
-what this plan exists to avoid.
+**Rationale.** By this phase the record already exists — the sink has been written since `open` —
+so nothing here copies a buffer anywhere. What is missing is REACHABILITY: after the pane is
+dismissed the human has no way back to the log they were watching, and the only alternative would be
+dumping it into the transcript, which is the cost this plan exists to remove.
 
 **Data.** The stored artifact, declared in `internal/human_input/spec.clj` beside the rest:
 
@@ -412,32 +559,42 @@ what this plan exists to avoid.
 (s/def ::live-artifact
   (s/and #(closed? live-artifact-keys %)
          (s/keys :req-un [::id ::view-id ::session-id ::title ::media-type ::audience
-                          ::ended-at ::reason ::view]
-                 :opt-un [::storage-uri ::size])))
+                          ::ended-at ::reason ::view ::storage-uri ::size ::line-count]
+                 :opt-un [::base64])))   ; inlined only under the small-view threshold
 ```
 
-`::audience` is the existing closed vocabulary (`internal/attachments.clj:670-679`) and a live
-artifact is human-only: the model is told it exists and gets the summary, never the bytes.
+`::view` is the FINAL materialized state (the summary a surface opens instantly); the bytes are the
+sink file the run already wrote, addressed by `::storage-uri`. `::audience` is the existing closed
+vocabulary (`internal/attachments.clj:670-679`) and a live artifact is human-only: the model is told
+it exists and gets the summary, never the bytes.
 
 **Acceptance criteria.**
 
-- `src/com/blockether/vis/internal/human_input.clj` — on close, materialize the final view, encode it
-  through `persistance/->json`, and route it via
-  `internal/attachment_storage/offload-attachment` (`:166-198`); the close event and the extension's
+- `src/com/blockether/vis/internal/human_input.clj` — on close the artifact IS the sink file that has
+  been growing since `open`: write the trailer line, register the attachment with
+  `:storage-uri "file://…"` (resolved by the built-in file backend, `attachment_storage.clj:261-275`),
+  `:size`, `:line-count` and the materialized final view as its summary. No base64 round trip:
+  `offload-attachment` wants the whole payload in memory as base64 (`:174-198`), and a build log is
+  precisely the thing that must never be held that way. A view under the inline threshold is ALSO
+  inlined, so a small one survives a session sync. The close event and the extension's
   `::live-result` carry the resulting `artifact-id`.
 - `extensions/channels/vis-channel-tui/src/.../channel_tui/live_view.clj` — a closed view collapses
   to one clickable line (title, reason, line count, elapsed) registered in `click_regions.clj`, which
   reopens the full scrollback read-only.
 - `apps/vis-companion/src/lib/artifacts.ts` — classify the media type so a finished view appears in
-  `ArtifactsSheet`; `components/LiveArtifact.tsx` renders it with the Phase 4 node painters in
-  read-only mode.
-- Test: `test/com/blockether/vis/internal/human_input_test.clj` (artifact written once, on every
-  reason including `interrupted`), `apps/vis-companion/src/lib/artifacts.test.ts` (classification),
-  and a TUI test that reopens a closed view after the pane was dismissed.
+  `ArtifactsSheet`; `components/LiveArtifact.tsx` renders the summary with the Phase 4 node painters
+  in read-only mode and pages the log through the same range route, so opening a 400 MB run costs
+  one screenful, not a download.
+- Test: `test/com/blockether/vis/internal/human_input_test.clj` (artifact registered once on every
+  reason including `interrupted` and `failed`, the sink file REFERENCED rather than re-encoded, and
+  the line count matching what was written), `apps/vis-companion/src/lib/artifacts.test.ts`
+  (classification), and a TUI test that reopens a closed view after the pane was dismissed.
 
-**Unknowns.** Cap on a stored view: the plan assumes the materialized ring (`:max-lines`) is what is
-stored, so a 2000-line default artifact is bounded — but a build that wants its whole log needs
-either a higher `:max-lines` or a second, file-backed sink. Decide when the first extension asks.
+**Unknowns.** Nothing is left open about WHAT is kept: the sink keeps every accepted patch and the
+artifact is that file — settled on review, not deferred to the first extension. The open question is
+lifetime: a sink outlives its session unless something deletes it, and `bus/forget!`
+(`gateway/bus.clj:636-640`) is the existing precedent for dropping per-session files on close. The
+plan assumes a sink is kept with its session and removed with it.
 
 ## State of the plan
 
@@ -452,10 +609,13 @@ Done:
 
 TODO, in order:
 
-1. Phase 1 — live vocabulary in `spec.clj`, `live!`/`patch!`/`close!`/`interrupt!` in the engine,
-   `:kind` in the pending registry.
-2. Phase 2 — TUI pane, wheel scroll, Escape precedence, screenshot gate.
-3. Phase 3 — `live` host op (contract version 3), `vis.live` context manager, checker parity.
-4. Phase 4 — gateway bridge (open/close stored, patches `:store? false` and coalesced, snapshot
-   resync, interrupt route), companion reducer, component and drift test.
-5. Phase 5 — artifact on close, reopen in both surfaces.
+1. Phase 1 — live vocabulary in `spec.clj` (node ids as addresses, `add-node`/`remove-node`, bounds
+   that REFUSE instead of evicting), `live!`/`patch!`/`close!`/`interrupt!` plus the append-only sink
+   in the engine, `:kind` in the pending registry.
+2. Phase 2 — TUI pane: labelled nodes stacked on one scroll surface, wheel scroll, Escape precedence,
+   screenshot gate.
+3. Phase 3 — `live` host op (contract version 3), `vis.live` with per-node handles and batched
+   flushing, checker parity.
+4. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
+   log-range resync, interrupt route), companion reducer keyed by node id, component and drift test.
+5. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.

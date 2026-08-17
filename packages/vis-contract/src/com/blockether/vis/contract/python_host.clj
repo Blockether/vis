@@ -143,6 +143,34 @@
 (s/def :human-input/max number?)
 (s/def :human-input/step number?)
 (s/def :human-input/secret-handle-prefix non-blank-string?)
+;; The LIVE half of the vocabulary: the node types, patch operations, tones,
+;; orders and endings a streaming view is built from, plus the bounds a patch is
+;; REFUSED against. Same shape as above — closed tables the engine owns and this
+;; document only renders.
+(s/def :human-input/node-types :human-input/strings)
+(s/def :human-input/link-targets :human-input/strings)
+(s/def :human-input/ops :human-input/strings)
+(s/def :human-input/tones :human-input/strings)
+(s/def :human-input/orders :human-input/strings)
+(s/def :human-input/reasons :human-input/strings)
+(s/def :human-input/window-lines pos-int?)
+(s/def :human-input/window-lines-cap pos-int?)
+(s/def :human-input/max-patch-lines pos-int?)
+(s/def :human-input/max-rows pos-int?)
+(s/def :human-input/max-patch-rows pos-int?)
+(s/def :human-input/max-stats pos-int?)
+(s/def :human-input/max-steps pos-int?)
+(s/def :human-input/max-links pos-int?)
+(s/def :human-input/max-nodes pos-int?)
+(s/def :human-input/log
+  (s/keys :req-un [:human-input/window-lines :human-input/window-lines-cap
+                   :human-input/max-patch-lines]))
+(s/def :human-input/table (s/keys :req-un [:human-input/max-rows :human-input/max-patch-rows]))
+(s/def :human-input/live
+  (s/keys :req-un [:human-input/node-types :human-input/link-targets :human-input/ops
+                   :human-input/tones :human-input/orders :human-input/reasons :human-input/log
+                   :human-input/table :human-input/max-stats :human-input/max-steps
+                   :human-input/max-links :human-input/max-nodes]))
 ;; The vocabulary the ENGINE hands in. Specced here because the contract is what
 ;; the package trusts: a surface that drifts is caught rendering the document, not
 ;; by an extension author reading a field type Python has never heard of.
@@ -150,7 +178,7 @@
   (s/keys :req-un [:human-input/field-types :human-input/text-types :human-input/choice-types
                    :human-input/secret-types :human-input/decor-types :human-input/group-type
                    :human-input/group-directions :human-input/otp :human-input/range
-                   :human-input/secret-handle-prefix]))
+                   :human-input/secret-handle-prefix :human-input/live]))
 
 (defn- op->json
   [{:op/keys [name global arity summary outside refusal]}]
@@ -165,7 +193,7 @@
 
 (defn- human-input->json
   [{:keys [field-types text-types choice-types secret-types decor-types group-type group-directions
-           otp range secret-handle-prefix]
+           otp range secret-handle-prefix live]
     :as vocabulary}]
   (when-not (s/valid? :contract/human-input vocabulary)
     (throw (ex-info "the human-input vocabulary handed to the contract is not one"
@@ -180,7 +208,23 @@
              "group_directions" group-directions
              "otp" (array-map "length" (:length otp) "ceiling" (:ceiling otp))
              "range" (array-map "min" (:min range) "max" (:max range) "step" (:step range))
-             "secret_handle_prefix" secret-handle-prefix))
+             "secret_handle_prefix" secret-handle-prefix
+             "live" (array-map
+                      "node_types" (:node-types live)
+                      "link_targets" (:link-targets live)
+                      "ops" (:ops live)
+                      "tones" (:tones live)
+                      "orders" (:orders live)
+                      "reasons" (:reasons live)
+                      "log" (array-map "window_lines" (get-in live [:log :window-lines])
+                                       "window_lines_cap" (get-in live [:log :window-lines-cap])
+                                       "max_patch_lines" (get-in live [:log :max-patch-lines]))
+                      "table" (array-map "max_rows" (get-in live [:table :max-rows])
+                                         "max_patch_rows" (get-in live [:table :max-patch-rows]))
+                      "max_stats" (:max-stats live)
+                      "max_steps" (:max-steps live)
+                      "max_links" (:max-links live)
+                      "max_nodes" (:max-nodes live))))
 
 (defn package-document
   "The contract as `vis_contract/contract.json`: snake_case string keys, ops in

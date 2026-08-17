@@ -1411,3 +1411,123 @@
         (expect (nil? (hs/request-error (hi/normalize-request (spec {"type" "heading" "text" "H"}
                                                                     {"type" "heading" "text" "H"}
                                                                     {"name" "host"}))))))))
+
+
+(defn- live-view
+  "A legal normalized live view carrying one node of every keyed kind, so a test
+   changes exactly the one thing it is about."
+  [& node-overrides]
+  {:id "view-1"
+   :title "Deploying"
+   :session-id "session-1"
+   :channel-ids [:tui]
+   :seq 0
+   :created-at 1
+   :is-cancellable true
+   :timeout-ms 0
+   :nodes (into [{:id "state" :type :status :text "connecting" :tone :running}
+                 {:id "bar" :type :progress :value 0.25}
+                 {:id "score" :type :stat :stats [{:id "failed" :label "failed" :value-text "0"}]}
+                 {:id "plan" :type :steps :steps [{:id "build" :label "build" :tone :running}]}
+                 {:id "out" :type :log :lines ["compiling"] :window-lines 2000}
+                 {:id "hosts"
+                  :type :table
+                  :max-rows 100
+                  :order :insertion
+                  :columns [{:id "host" :label "Host"} {:id "state" :label "State"}]
+                  :rows [{:id "h1" :cells ["alpha" "ok"] :tone :ok}]}
+                 {:id "docs"
+                  :type :link
+                  :links [{:id "report" :label "Report" :target-kind :attachment :target "att-1"}]}]
+                node-overrides)})
+
+(defdescribe
+  live-view-spec-test
+  "The live vocabulary is closed in the same directions the form's is: an
+   unknown node type is refused BY NAME, an id is an ADDRESS unique inside the
+   view, and a form field is not a node of a view."
+  (it "accepts a view holding one node of every kind"
+      (expect (nil? (hs/live-view-error (live-view)))))
+  (it "refuses a node type nobody can paint, rather than minting the keyword"
+      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :type] :marquee)))))
+  (it "refuses two nodes sharing one id, because an id is the address a patch names"
+      (expect (some? (hs/live-view-error (live-view
+                                           {:id "state" :type :status :text "b" :tone :ok})))))
+  (it "refuses a key no live node declares"
+      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :options] [])))))
+  (it "refuses a form field offered as a live node, and a live node offered as a field"
+      (expect (some? (hs/live-node-error {:id "host"
+                                          :name "host"
+                                          :type :plaintext
+                                          :label "Host"
+                                          :is-required false
+                                          :is-secret false})))
+      (expect (some? (hs/field-error {:id "state" :type :status :text "x" :tone :running}))))
+  (it "refuses a progress value outside its own fraction, and takes nil as indeterminate"
+      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 1 :value] 4))))
+      (expect (nil? (hs/live-view-error (assoc-in (live-view) [:nodes 1 :value] nil)))))
+  (it "refuses a sorted order naming a column the table never declared"
+      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :order] {:by "nope"}))))
+      (expect (nil? (hs/live-view-error
+                      (assoc-in (live-view) [:nodes 5 :order] {:by "host" :dir :desc})))))
+  (it "refuses a table row whose id is missing, because a row with no id cannot be upserted"
+      (expect (some? (hs/live-view-error
+                       (assoc-in (live-view) [:nodes 5 :rows] [{:cells ["a" "b"]}]))))))
+
+(defdescribe
+  live-patch-spec-test
+  "A patch is vocabulary only: which node, which operation, which items. Whether
+   the node EXISTS and whether a bound would be crossed is the materializer's
+   answer, not the spec's."
+  (it "accepts each of the six operations"
+      (let
+        [patch (fn [op]
+                 (hs/live-patch-error {:view-id "view-1" :seq 1 :ops [op]}))]
+        (expect (nil? (patch {:op :set :node-id "state" :text "done" :tone :ok})))
+        (expect (nil? (patch {:op :append :node-id "out" :lines ["one" ""]})))
+        (expect (nil? (patch
+                        {:op :append :node-id "hosts" :rows [{:id "h2" :cells ["beta" "ok"]}]})))
+        (expect (nil? (patch {:op :remove :node-id "hosts" :item-ids ["h1"]})))
+        (expect (nil? (patch {:op :clear :node-id "out"})))
+        (expect (nil? (patch {:op :add-node
+                              :node-spec {:id "extra" :type :status :text "x" :tone :idle}})))
+        (expect (nil? (patch {:op :remove-node :node-id "extra"})))))
+  (it "refuses an operation nobody implements, and a key no operation declares"
+      (expect (some? (hs/live-patch-error
+                       {:view-id "view-1" :seq 1 :ops [{:op :nudge :node-id "out"}]})))
+      (expect (some? (hs/live-patch-error {:view-id "view-1"
+                                           :seq 1
+                                           :ops [{:op :clear :node-id "out" :lines ["x"]}]}))))
+  (it "refuses a patch that names no node and one that carries no operation"
+      (expect (some? (hs/live-patch-error {:view-id "view-1" :seq 1 :ops [{:op :clear}]})))
+      (expect (some? (hs/live-patch-error {:view-id "view-1" :seq 1 :ops []}))))
+  (it
+    "refuses an `add-node` whose node is itself illegal, so a view cannot grow a shape it would have refused at declaration"
+    (expect (some? (hs/live-patch-error {:view-id "view-1"
+                                         :seq 1
+                                         :ops [{:op :add-node
+                                                :node-spec {:id "x" :type :marquee}}]})))))
+
+(defdescribe
+  live-result-spec-test
+  "The verdict is the ONE thing the model reads back, so it is deliberately not
+   an answer: it carries no field values, and an answer carries no artifact."
+  (it "accepts each ending, and refuses one nobody may branch on"
+      (expect (nil? (hs/live-result-error {:view-id "v" :is-completed true :reason :completed})))
+      (expect (nil? (hs/live-result-error {:view-id "v"
+                                           :is-completed false
+                                           :reason :interrupted
+                                           :summary "12 of 40 hosts"
+                                           :artifact-id "att-1"})))
+      (expect (some? (hs/live-result-error {:view-id "v" :is-completed false :reason :bored}))))
+  (it "refuses a verdict claiming completion while naming why it stopped"
+      (expect (some? (hs/live-result-error {:view-id "v" :is-completed true :reason :interrupted})))
+      (expect (some? (hs/live-result-error {:view-id "v" :is-completed false :reason :completed}))))
+  (it "refuses field values, because a live view never asked a question"
+      (expect (some? (hs/live-result-error
+                       {:view-id "v" :is-completed true :reason :completed :values {}}))))
+  (it "leaves the form's answer contract alone: its reason is still the line a human reads"
+      (expect (nil? (hs/answer-error nil
+                                     {:is-submitted false :reason "cancelled" :request-id "r"})))
+      (expect (some?
+                (hs/answer-error nil {:is-submitted false :reason :interrupted :request-id "r"})))))

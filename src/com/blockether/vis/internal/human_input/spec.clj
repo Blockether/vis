@@ -119,6 +119,151 @@
   [value]
   (and (string? value) (str/starts-with? value secret-handle-prefix)))
 
+;; The LIVE vocabulary — the second kind of interaction
+;;
+;; A form is one static request answered once. A live view is the same request
+;; plus a STREAM of patches: the extension keeps painting while it works, the
+;; human watches and may interrupt, and only the verdict reaches the model. Same
+;; file, same closed-table discipline, same derived wire spellings — a second
+;; `:kind`, never a second model.
+
+(def live-node-types
+  "Wire type name -> internal LIVE node type. CLOSED, like [[field-types]]: an
+   unknown name is refused BY NAME, never keyword-minted.
+
+   REFUSED here so review does not reopen them: `image`/`chart` (bytes on the
+   event bus and a renderer neither surface has — a picture is an attachment a
+   `link` points at), `markdown`/`html` (a closed vocabulary is the only reason
+   the terminal and the phone can agree), `button`/`field` (a view that ASKS is a
+   form; blocking belongs there), `spinner` (a `progress` with a nil value
+   already means indeterminate), `tree` (no caller)."
+  {"status" :status     ; one line, REPLACED: what is happening right now
+   "progress" :progress ; a fraction, or indeterminate
+   "stat" :stat         ; label -> value counters upserted by id: the score
+   "steps" :steps       ; an ORDERED keyed checklist, each item carrying its tone
+   "log" :log           ; append-only lines — the scrollback
+   "table" :table       ; rows upserted and removed by row id, in a DECLARED order
+   "link" :link})                      ; labeled pointers the human OPENS
+
+(def keyed-node-types
+  "Live node types holding a KEYED collection: every item is addressed by its own
+   id, so the same three mutations (upsert, remove, clear) are total for all of
+   them and each is bounded by REFUSAL rather than by eviction."
+  #{:stat :steps :table :link})
+
+(def link-targets
+  "The three things a surface knows how to open. CLOSED."
+  {"attachment" :attachment "path" :path "url" :url})
+
+(def live-ops
+  "What one patch operation DOES. The first four address ONE node BY ID; the last
+   two change the view's SHAPE while it runs. CLOSED."
+  {"set" :set           ; replace a node's own state (status text, progress value …)
+   "append" :append     ; add lines to a log; upsert rows, steps, stats, links by id
+   "remove" :remove     ; drop keyed ITEMS by id
+   "clear" :clear       ; empty a log, table, step list, stat strip or link list
+   "add-node" :add-node ; add a WHOLE node mid-run (a second table, a per-device log)
+   "remove-node" :remove-node})        ; drop a whole node, its items with it
+
+(def live-tones
+  "How a surface COLOURS one line, row, step or stat. CLOSED."
+  {"idle" :idle "running" :running "ok" :ok "warn" :warn "error" :error})
+
+(def live-orders
+  "Wire order name -> internal paint order of a `:table`'s rows. A keyed
+   collection has no order of its own, so the terminal and the phone would be
+   free to disagree unless the view DECLARES one."
+  {"insertion" :insertion "newest-first" :newest-first})
+
+(def live-reasons
+  "Why a view ended. CLOSED, and the only vocabulary an extension branches on."
+  {"completed" :completed
+   "interrupted" :interrupted
+   "timeout" :timeout
+   "undeliverable" :undeliverable
+   "failed" :failed})
+
+;; NOTHING here evicts. A `log` is UNBOUNDED: every line reaches the view's sink
+;; file and `:window-lines` is only how much of it a surface holds hot. The keyed
+;; collections must stay in memory to remain addressable, so they are bounded by
+;; REFUSAL — a patch that would cross the bound is refused with the bound, the
+;; node id, and `log` named as the home for unbounded volume.
+
+(def log-defaults
+  "The paint WINDOW of a `:log`, and the most lines one patch may carry. Neither
+   is a cap on the stream: the sink keeps every line that was accepted."
+  {:window-lines 2000 :window-lines-cap 100000 :max-patch-lines 500})
+
+(def table-defaults
+  "How many rows a `:table` may HOLD, and carry per patch."
+  {:max-rows 5000 :max-patch-rows 200})
+(def stat-defaults "A strip, not a spreadsheet." {:max-stats 32})
+(def step-defaults "A checklist, not a second log." {:max-steps 200})
+(def link-defaults "Pointers a human scans, not a bookmark file." {:max-links 32})
+(def view-defaults "200 devices are 200 ROWS, not 200 panes." {:max-nodes 32})
+(def progress-defaults "A nil value is INDETERMINATE, not zero." {:value nil})
+
+(def item-bounds
+  "The keyed collection each live node type holds: which key carries it, and how
+   many items it may hold before a patch is REFUSED. One table, so the
+   materializer, the refusal message and the contract document all read it."
+  {:stat {:key :stats :max (:max-stats stat-defaults)}
+   :steps {:key :steps :max (:max-steps step-defaults)}
+   :table {:key :rows :max (:max-rows table-defaults)}
+   :link {:key :links :max (:max-links link-defaults)}})
+
+;; The live keys — closed in both directions, exactly like the form's
+
+(def live-view-stamp-keys
+  "Keys the ENGINE stamps on a live view, never written in a spec: its own
+   identity, its arrival time, and the patch counter every surface orders by."
+  #{:id :seq :created-at})
+
+(def live-column-keys "Every key one declared table column may carry." #{:id :label :align})
+(def live-row-keys "Every key one table row may carry." #{:id :cells :tone})
+(def live-stat-keys "Every key one stat may carry." #{:id :label :value-text :tone})
+(def live-step-keys "Every key one step may carry." #{:id :label :tone :detail :value})
+(def live-link-keys "Every key one link may carry." #{:id :label :target-kind :target :tone})
+(def live-sorted-keys "Every key a `{:by …}` table order may carry." #{:by :dir})
+
+(def live-node-keys
+  "Every key a live NODE may be written with, whatever its type. Closed as one
+   set for the same reason [[field-keys]] is: the parser derives the snake_case
+   spellings from it, so no key is written down twice."
+  #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
+    :columns :rows :max-rows :order :links})
+
+(def live-view-keys
+  "Every key a live view may carry, engine stamps included — a view crossing a
+   process boundary is rebuilt from exactly this."
+  (into #{:title :description :source :session-id :channel-ids :nodes :is-cancellable :timeout-ms}
+        live-view-stamp-keys))
+
+(def live-op-key-sets
+  "Every key ONE patch operation may carry, per operation. Closed per op rather
+   than as a union, because `s/keys` accepts any key it was not told about: a
+   `clear` carrying lines meant to `append` and must hear so.
+
+   `:node-id` is the ADDRESS of the node an op speaks to — spelled apart from the
+   form tree's `:node`, which is a whole field; `:node-spec` is the whole node
+   `add-node` introduces."
+  {:set #{:op :node-id :text :detail :tone :label :value :done :total :stats :steps :links}
+   :append #{:op :node-id :lines :rows :stats :steps :links}
+   :remove #{:op :node-id :item-ids}
+   :clear #{:op :node-id}
+   :add-node #{:op :node-spec :after}
+   :remove-node #{:op :node-id}})
+
+(def live-op-keys
+  "Every key any patch operation may carry — the union the parser derives its
+   snake_case spellings from."
+  (reduce into #{} (vals live-op-key-sets)))
+
+(def live-patch-keys "Every key one patch carries." #{:view-id :seq :ops})
+
+(def live-result-keys
+  "Every key the verdict carries — the ONE thing the model reads back."
+  #{:view-id :is-completed :reason :summary :artifact-id :error})
 (defn contract-vocabulary
   "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
    into `vis_contract/contract.json` — the document every surface that cannot
@@ -134,7 +279,22 @@
    :group-directions (vec (sort (keys group-directions)))
    :otp {:length (:length otp-defaults) :ceiling (:ceiling otp-defaults)}
    :range {:min (:min range-defaults) :max (:max range-defaults) :step (:step range-defaults)}
-   :secret-handle-prefix secret-handle-prefix})
+   :secret-handle-prefix secret-handle-prefix
+   :live {:node-types (vec (sort (keys live-node-types)))
+          :link-targets (vec (sort (keys link-targets)))
+          :ops (vec (sort (keys live-ops)))
+          :tones (vec (sort (keys live-tones)))
+          :orders (vec (sort (keys live-orders)))
+          :reasons (vec (sort (keys live-reasons)))
+          :log {:window-lines (:window-lines log-defaults)
+                :window-lines-cap (:window-lines-cap log-defaults)
+                :max-patch-lines (:max-patch-lines log-defaults)}
+          :table {:max-rows (:max-rows table-defaults)
+                  :max-patch-rows (:max-patch-rows table-defaults)}
+          :max-stats (:max-stats stat-defaults)
+          :max-steps (:max-steps step-defaults)
+          :max-links (:max-links link-defaults)
+          :max-nodes (:max-nodes view-defaults)}})
 
 ;; The keys — one table, and the parser reads it too
 ;;
@@ -273,7 +433,10 @@
 
 (s/def ::id non-blank-string?)
 (s/def ::name non-blank-string?)
-(s/def ::type (set (vals field-types)))
+;; One dispatch key, two vocabularies: a form field and a live node can never be
+;; mistaken for each other, because neither multimethod has a method for the
+;; other's type.
+(s/def ::type (set (concat (vals field-types) (vals live-node-types))))
 (s/def ::label non-blank-string?)
 (s/def ::description non-blank-string?)
 (s/def ::placeholder non-blank-string?)
@@ -287,10 +450,21 @@
 (s/def ::max number?)
 (s/def ::step number?)
 (s/def ::direction (set (vals group-directions)))
-(s/def ::value non-blank-string?)
+;; One key, two domains: an OPTION's value is the string an answer comes back
+;; as, a live `:progress` or step value is a fraction of one. Each shape pins
+;; its own side down, so the union here never loosens either.
+;; One key, two domains: an OPTION's value is the string an answer comes back
+;; as, a live `:progress` or step value is a fraction of one. A bare predicate,
+;; not an `s/or`, because a conforming branch would reach every `s/and` that
+;; follows as a tagged pair instead of the value itself.
+(s/def ::value #(or (string? %) (number? %) (nil? %)))
 (s/def ::text non-blank-string?)
 
-(s/def ::option (s/and #(closed? option-keys %) (s/keys :req-un [::value ::label])))
+(s/def ::option
+  (s/and #(closed? option-keys %)
+         (s/keys :req-un [::value ::label])
+         ;; An option's value is what the answer map comes back holding.
+         #(non-blank-string? (:value %))))
 
 (s/def ::options
   (s/and (s/coll-of ::option :kind vector?)
@@ -435,7 +609,9 @@
 ;; An answer
 
 (s/def ::is-submitted boolean?)
-(s/def ::reason non-blank-string?)
+;; A form settles with a one-line reason a human reads; a live view ends on one
+;; of [[live-reasons]]. Each shape pins its own side down below.
+(s/def ::reason #(or (non-blank-string? %) (keyword? %)))
 (s/def ::request-id non-blank-string?)
 
 (s/def ::answer-value
@@ -455,6 +631,7 @@
 (s/def ::answer
   (s/and #(closed? answer-keys %)
          (s/keys :req-un [::is-submitted ::reason ::request-id] :opt-un [::values])
+         #(string? (:reason %))
          values-iff-submitted?))
 
 ;; An answered VALUE — the field's own domain
@@ -547,6 +724,186 @@
                   :else [node]))
           fields))
 
+;; A live view — the second kind of interaction
+;;
+;; Everything below is the SAME skeleton as a request: closed maps, engine
+;; stamps the spec never writes, one dispatch key per multi-spec. The one axis
+;; that differs is time — a view carries NODES that patches keep mutating, so
+;; `::id` is an ADDRESS named by every patch rather than a key in an answer map.
+
+(s/def ::tone (set (vals live-tones)))
+(s/def ::detail non-blank-string?)
+(s/def ::line string?)                                      ; a blank line is a line
+(s/def ::lines (s/coll-of ::line :kind vector? :max-count (long (:max-patch-lines log-defaults))))
+;; The PAINT window; the sink keeps every line that was accepted.
+(s/def ::window-lines (s/int-in 1 (inc (long (:window-lines-cap log-defaults)))))
+(s/def ::done nat-int?)
+(s/def ::total pos-int?)
+(s/def ::align #{:left :right})
+(s/def ::cells (s/coll-of string? :kind vector?))
+(s/def ::value-text string?)                                ; a stat's value AS SHOWN ("3.4 MB/s")
+(s/def ::target non-blank-string?)                          ; attachment id, workspace path, or url
+(s/def ::target-kind (set (vals link-targets)))
+(s/def ::by non-blank-string?)
+(s/def ::dir #{:asc :desc})
+(s/def ::node-id non-blank-string?)                         ; the ADDRESS a patch speaks to
+(s/def ::view-id non-blank-string?)
+(s/def ::is-completed boolean?)
+(s/def ::summary non-blank-string?)
+(s/def ::artifact-id non-blank-string?)
+(s/def ::error non-blank-string?)
+(s/def ::op (set (vals live-ops)))
+(s/def ::after (s/nilable ::node-id))                       ; place it after this node; nil means last
+(s/def ::item-ids (s/and (s/coll-of ::id :kind vector?) non-empty?))
+(s/def ::max-rows (s/int-in 1 (inc (long (:max-rows table-defaults)))))  ; the REFUSAL bound, not a ring
+
+(defn- fraction?
+  "A progress value: a fraction of one, or nil for INDETERMINATE. Zero is a
+   started job, nil is a job whose size nobody knows — a surface paints them
+   differently, so they may not be spelled the same."
+  [x]
+  (or (nil? x) (and (number? x) (<= 0 (double x) 1))))
+
+(defn- live-reason?
+  "True when this is one of the five endings an extension may branch on."
+  [x]
+  (contains? (set (vals live-reasons)) x))
+
+(s/def ::table-column
+  (s/and #(closed? live-column-keys %) (s/keys :req-un [::id ::label] :opt-un [::align])))
+
+(s/def ::columns
+  (s/and (s/coll-of ::table-column :kind vector?)
+         non-empty?
+         #(apply distinct? (map :id %))))
+
+(s/def ::row (s/and #(closed? live-row-keys %) (s/keys :req-un [::id ::cells] :opt-un [::tone])))
+(s/def ::rows (s/coll-of ::row :kind vector? :max-count (long (:max-patch-rows table-defaults))))
+
+(s/def ::stat
+  (s/and #(closed? live-stat-keys %) (s/keys :req-un [::id ::label ::value-text] :opt-un [::tone])))
+
+(s/def ::stats (s/coll-of ::stat :kind vector? :max-count (long (:max-stats stat-defaults))))
+
+(s/def ::live-step
+  (s/and #(closed? live-step-keys %)
+         (s/keys :req-un [::id ::label ::tone] :opt-un [::detail ::value])
+         #(fraction? (:value %))))
+
+(s/def ::steps (s/coll-of ::live-step :kind vector? :max-count (long (:max-steps step-defaults))))
+
+(s/def ::link
+  (s/and #(closed? live-link-keys %)
+         (s/keys :req-un [::id ::label ::target-kind ::target] :opt-un [::tone])))
+
+(s/def ::links (s/coll-of ::link :kind vector? :max-count (long (:max-links link-defaults))))
+
+;; A table is a KEYED collection, so its paint order has to be DECLARED or the
+;; terminal and the phone are free to disagree. `:insertion` (the default) keeps
+;; first-seen order and an upsert NEVER moves a row — a row that changes stays
+;; where the eye left it. `:newest-first` is insertion reversed (a live feed).
+;; `{:by "col" :dir :asc|:desc}` sorts by one DECLARED column id, ties broken by
+;; insertion order so the order is TOTAL and reproducible on every surface.
+(defn- sorted-order?
+  "A `{:by \"col\"}` order, written as a bare predicate: an `s/or` here would
+   CONFORM the value to a tagged pair, and every check that follows — including
+   the one that asks whether the column exists — would then be handed the tag
+   instead of the order."
+  [x]
+  (and (map? x)
+       (closed? live-sorted-keys x)
+       (non-blank-string? (:by x))
+       (or (nil? (:dir x)) (contains? #{:asc :desc} (:dir x)))))
+
+(s/def ::order #(or (contains? (set (vals live-orders)) %) (sorted-order? %)))
+
+(defmulti ^:private live-node-form "The form one live node type takes once normalized." :type)
+
+(defmethod live-node-form :status
+  [_]
+  (s/keys :req-un [::id ::type ::text ::tone] :opt-un [::label ::detail]))
+(defmethod live-node-form :progress
+  [_]
+  (s/and (s/keys :req-un [::id ::type] :opt-un [::label ::value ::done ::total])
+         #(fraction? (:value %))))
+(defmethod live-node-form :stat [_] (s/keys :req-un [::id ::type ::stats] :opt-un [::label]))
+(defmethod live-node-form :steps [_] (s/keys :req-un [::id ::type ::steps] :opt-un [::label]))
+(defmethod live-node-form :log
+  [_]
+  (s/keys :req-un [::id ::type ::lines ::window-lines] :opt-un [::label]))
+(defmethod live-node-form :table
+  [_]
+  (s/keys :req-un [::id ::type ::columns ::rows ::max-rows ::order] :opt-un [::label]))
+(defmethod live-node-form :link [_] (s/keys :req-un [::id ::type ::links] :opt-un [::label]))
+
+(defn- live-node-typed?
+  "A live node says so in its own `:type`. Spelled out because [[::type]] is the
+   union of both vocabularies — the one key both kinds of node dispatch on — and
+   nothing but this stops a form field from being read as a node of a view."
+  [{:keys [type]}]
+  (contains? (set (vals live-node-types)) type))
+
+(defn- ordered-by-declared-column?
+  "A `{:by \"col\"}` order names a column the table DECLARES. Refused here, at
+   declaration, rather than ignored at paint time three surfaces later."
+  [{:keys [type columns order]}]
+  (or (not= :table type) (not (map? order)) (contains? (set (map :id columns)) (:by order))))
+
+(s/def ::live-node
+  (s/and #(closed? live-node-keys %)
+         live-node-typed?
+         (s/multi-spec live-node-form :type)
+         ordered-by-declared-column?))
+
+;; `::id` is the ADDRESS: chosen by the extension, unique inside the view, and
+;; named by every patch. Two tables are two ids, not two views.
+(s/def ::nodes
+  (s/and (s/coll-of ::live-node :kind vector? :max-count (long (:max-nodes view-defaults)))
+         non-empty?
+         #(apply distinct? (map :id %))))
+
+(s/def ::live-view
+  (s/and #(closed? live-view-keys %)
+         (s/keys :req-un [::id ::title ::session-id ::channel-ids ::nodes ::is-cancellable
+                          ::timeout-ms ::seq ::created-at]
+                 :opt-un [::description ::source])))
+
+;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads
+;; the snapshot instead of painting a torn view.
+
+(s/def ::node-spec ::live-node)
+
+(defmulti ^:private live-op-form "The form one patch operation takes." :op)
+
+(defmethod live-op-form :set
+  [_]
+  (s/keys :req-un [::op ::node-id]
+          :opt-un [::text ::detail ::tone ::label ::value ::done ::total ::stats ::steps ::links]))
+(defmethod live-op-form :append
+  [_]
+  (s/keys :req-un [::op ::node-id] :opt-un [::lines ::rows ::stats ::steps ::links]))
+(defmethod live-op-form :remove [_] (s/keys :req-un [::op ::node-id ::item-ids]))
+(defmethod live-op-form :clear [_] (s/keys :req-un [::op ::node-id]))
+(defmethod live-op-form :add-node [_] (s/keys :req-un [::op ::node-spec] :opt-un [::after]))
+(defmethod live-op-form :remove-node [_] (s/keys :req-un [::op ::node-id]))
+
+(s/def ::live-op
+  (s/and #(closed? (get live-op-key-sets (:op %) #{}) %) (s/multi-spec live-op-form :op)))
+(s/def ::ops (s/and (s/coll-of ::live-op :kind vector?) non-empty?))
+(s/def ::live-patch (s/and #(closed? live-patch-keys %) (s/keys :req-un [::view-id ::seq ::ops])))
+
+;; What the blocked extension receives, and what the close event carries. It is
+;; deliberately NOT an `::answer`: a verdict carries no field values, and a form
+;; carries no artifact, so merging them would leave half of every map nil.
+
+(s/def ::live-result
+  (s/and #(closed? live-result-keys %)
+         (s/keys :req-un [::view-id ::is-completed ::reason]
+                 :opt-un [::summary ::artifact-id ::error])
+         #(live-reason? (:reason %))
+         ;; The one cross-key rule: completion is exactly the `completed` ending,
+         ;; so nothing can report success while naming why it stopped.
+         #(= (:is-completed %) (= :completed (:reason %)))))
 ;; Explaining a violation
 
 (defn- brief
@@ -627,3 +984,28 @@
   [fields answer]
   (or (error ::answer answer)
       (when (and (seq fields) (:is-submitted answer)) (values-error fields (:values answer)))))
+
+(defn live-node-error
+  "nil when `node` is a legal normalized LIVE node, else why it is not. A form
+   field is not a live node and refuses here, because the two multimethods share
+   one dispatch key and neither answers for the other's types."
+  [node]
+  (error ::live-node node))
+
+(defn live-view-error
+  "nil when `view` is a legal normalized live view, else why it is not."
+  [view]
+  (error ::live-view view))
+
+(defn live-patch-error
+  "nil when `patch` is a legal patch, else why it is not. Shape only: whether the
+   node it names EXISTS, and whether it would cross a bound, is the
+   materializer's answer — this one is about vocabulary."
+  [patch]
+  (error ::live-patch patch))
+
+(defn live-result-error
+  "nil when `result` is a legal verdict to hand a blocked extension, else why it
+   is not."
+  [result]
+  (error ::live-result result))
