@@ -139,23 +139,25 @@
       (expect (str/includes? (form/result-render {:stdout "raw"
                                                   :cards [{:op "grep" :result-summary "3 files"}]})
                              "raw")))
-  (it "renders a wall-clock timeout as its own ⧖ card carrying the form"
-      ;; The BACKSTOP fires with :result nil but :timeout? true — the flag
-      ;; travels on the envelope so the card is re-derived, never stored.
+  ;; Regression: a timed-out block used to paint a second ⧖ card under its error
+  ;; line, whose body re-showed the FORM already rendered above it, the STDOUT and
+  ;; the very same timeout message — three sections saying what the error line had
+  ;; already said. A timeout is an error like every other one.
+  (it "gives a wall-clock timeout no card of its own"
+      (expect (nil? (form/result-display {:src "time.sleep(99)"
+                                          :timeout? true
+                                          :error {:message "Timeout (30s)"
+                                                  :type :vis/eval-timeout
+                                                  :data {:timeout-ms 30000}}}))))
+  (it "keeps what a timed-out block printed as its ordinary stdout body"
       (let
         [card (form/result-display {:src "time.sleep(99)"
                                     :timeout? true
                                     :stdout "partial"
-                                    :error {:message "python_execution timed out after 30000ms"
-                                            :type :vis/eval-timeout
-                                            :data {:timeout-ms 30000}}})]
-        (expect (= "⧖ timed out after 30000ms" (:summary card)))
-        (expect (str/includes? (:body card) "time.sleep(99)"))
+                                    :error {:message "Timeout (30s)" :data {:timeout-ms 30000}}})]
+        (expect (nil? (:summary card)))
         (expect (str/includes? (:body card) "partial"))
-        (expect (str/includes? (:body card) "timed out"))))
-  (it "omits the deadline when none was recorded"
-      (expect (= "⧖ timed out"
-                 (:summary (form/result-display {:timeout? true :error {:message "boom"}}))))))
+        (expect (not (str/includes? (:body card) "time.sleep(99)"))))))
 
 (defdescribe with-display-derives-the-body-test
              (it "fills the body a restored envelope no longer carries"

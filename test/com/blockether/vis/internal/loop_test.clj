@@ -467,16 +467,16 @@
                                                        :result-render "**SHELL**\nls"}]
                                                      {:turn 1 :iter 1})]
                    (expect (= "**SHELL**\nls" (:result-render envelope)))))
-             (it "carries the timeout FLAG so the ⧖ card is re-derived instead of stored"
+             (it "carries the timeout FLAG, and derives no card from it"
                  (let [[envelope] (eng/blocks->forms [{:id 0
                                                        :code "time.sleep(99)"
                                                        :timeout? true
-                                                       :error {:message "python_execution timed out after 30000ms"
+                                                       :error {:message "Timeout (30s)"
                                                                :data {:timeout-ms 30000}}}]
                                                      {:turn 1 :iter 1})]
                    (expect (true? (:timeout? envelope)))
                    (expect (not (contains? envelope :result-render)))
-                   (expect (= "⧖ timed out after 30000ms" (:summary (form/result-display envelope)))))))
+                   (expect (nil? (form/result-display envelope))))))
 
 (defdescribe guest-interrupt-on-eval-timeout-test
              ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.

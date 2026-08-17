@@ -139,57 +139,25 @@
 (defn result-display
   "The human-channel DISPLAY for one executed form as `{:summary :body}` — the
    ONE surface both the TUI and the web render, so they're unified:
-     - the eval wall-clock BACKSTOP fired → a ⧖ TIMEOUT card carrying the FORM,
-       whatever it printed, and the message;
      - a `:result` value → pretty-printed (Python-literal, fenced) as the body,
        no summary;
      - `:stdout` → verbatim as the body, no summary.
+   A wall-clock TIMEOUT gets NO card of its own: it is an error like any other, so
+   the channel paints `:error` — `Timeout (300s)` — where it paints every failure,
+   and whatever the block printed before the wall stays its ordinary stdout body.
+   A second ⧖ card only re-showed the form already painted above it and repeated
+   that one message.
    The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there's
    nothing to show. NO symbol is consulted: a card is built from the FORM's own
    data, so it can never drift from what actually ran.
 
-   A PURE projection of fields the form ALREADY carries (`:timeout?`, `:error`,
-   `:result`, `:stdout`, `:src`) — that is what lets the live loop and a
+   A PURE projection of fields the form ALREADY carries (`:error`,
+   `:result`, `:stdout`) — that is what lets the live loop and a
    DB-restored envelope paint the same card without either of them storing the
    rendered string."
   [form]
   (let [clip clip-to-wire]
     (cond
-      ;; The eval wall-clock BACKSTOP fired: there is no :result to render, but the
-      ;; card must still read as a TIMEOUT — a distinct ⧖ headline, not the raw error
-      ;; string. Sits FIRST so a timeout always wins its own display regardless of
-      ;; any partial stdout/error also present.
-      (:timeout? form) (let
-                         [err (:error form)
-                          ms (some-> err
-                                     :data
-                                     :timeout-ms)
-                          ;; The evaluated FORM/prompt that blew the wall — so a
-                          ;; timeout card shows WHAT timed out, not just that it did.
-                          code (some-> (:src form)
-                                       str
-                                       str/trim
-                                       not-empty)
-                          msg (some-> (:message err)
-                                      str
-                                      not-empty)
-                          ;; Partial output the block PRINTED before the wall fired. A backstop
-                          ;; timeout is exactly when it matters: the work is gone, so the lines
-                          ;; that did print are all that is left of it.
-                          out (some-> (:stdout form)
-                                      str
-                                      str/trim
-                                      not-empty)
-                          detail (->> [(when code
-                                         (str "**FORM**\n" (strutil/fenced (clip code) "python")))
-                                       (when out (str "**STDOUT**\n" (strutil/fenced (clip out))))
-                                       (when msg (str "**TIMEOUT**\n" (strutil/fenced msg)))]
-                                      (remove nil?)
-                                      (str/join "\n\n")
-                                      not-empty)]
-
-                         {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
-                          :body (when detail (str "\n" detail))})
       ;; a result value → monospaced Python-literal body, so a dict/list reads as
       ;; structured data rather than reflowed prose.
       (some? (:result form)) (when-let [s (clip (env/ctx->python-str (:result form)))]

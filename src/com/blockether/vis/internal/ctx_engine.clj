@@ -1189,9 +1189,9 @@
         (some? (:vis/tool-name block))
         (assoc :vis/tool-name (:vis/tool-name block))
 
-        ;; The eval wall-clock BACKSTOP fired. The ⧖ TIMEOUT card is DERIVED from
-        ;; this flag plus the form's own error/stdout, so the FLAG travels and the
-        ;; rendered card never has to.
+        ;; The eval wall-clock BACKSTOP fired. The flag drives the form's STATUS
+        ;; (:timeout, painted like any other failure through `:error`); no card is
+        ;; derived from it, so nothing rendered has to travel.
         (:timeout? block)
         (assoc :timeout? true)
 
