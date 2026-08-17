@@ -1513,19 +1513,30 @@
   "The verdict is the ONE thing the model reads back, so it is deliberately not
    an answer: it carries no field values, and an answer carries no artifact."
   (it "accepts each ending, and refuses one nobody may branch on"
-      (expect (nil? (hs/live-result-error {:view-id "v" :is-completed true :reason :completed})))
+      (expect (nil? (hs/live-result-error {:view-id "v"
+                                           :is-completed true
+                                           :reason :completed
+                                           :markdown "# Deploy\n\n[ok] **done**"})))
       (expect (nil? (hs/live-result-error {:view-id "v"
                                            :is-completed false
                                            :reason :interrupted
+                                           :markdown "# Sweep\n\n[warn] **stopped**"
                                            :summary "12 of 40 hosts"
                                            :artifact-id "att-1"})))
-      (expect (some? (hs/live-result-error {:view-id "v" :is-completed false :reason :bored}))))
-  (it "refuses a verdict claiming completion while naming why it stopped"
-      (expect (some? (hs/live-result-error {:view-id "v" :is-completed true :reason :interrupted})))
-      (expect (some? (hs/live-result-error {:view-id "v" :is-completed false :reason :completed}))))
-  (it "refuses field values, because a live view never asked a question"
       (expect (some? (hs/live-result-error
-                       {:view-id "v" :is-completed true :reason :completed :values {}}))))
+                       {:view-id "v" :is-completed false :reason :bored :markdown "# Sweep"}))))
+  (it
+    "refuses a verdict carrying no markdown: what the human watched reaches the model or the view did not end"
+    (expect (some? (hs/live-result-error {:view-id "v" :is-completed true :reason :completed}))))
+  (it "refuses a verdict claiming completion while naming why it stopped"
+      (expect (some? (hs/live-result-error
+                       {:view-id "v" :is-completed true :reason :interrupted :markdown "# x"})))
+      (expect (some? (hs/live-result-error
+                       {:view-id "v" :is-completed false :reason :completed :markdown "# x"}))))
+  (it "refuses field values, because a live view never asked a question"
+      (expect
+        (some? (hs/live-result-error
+                 {:view-id "v" :is-completed true :reason :completed :markdown "# x" :values {}}))))
   (it "leaves the form's answer contract alone: its reason is still the line a human reads"
       (expect (nil? (hs/answer-error nil
                                      {:is-submitted false :reason "cancelled" :request-id "r"})))

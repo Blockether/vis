@@ -1,6 +1,6 @@
 # PLAN — Let an extension stream a live view the human watches and interrupts
 
-*Progress belongs on the human's screen and only the verdict belongs in the model's context — and the extension already knows both.*
+*Progress belongs on the human's screen; the model reads the finished picture ONCE, as markdown — and the extension already knows both.*
 
 ## Context
 
@@ -78,8 +78,10 @@ counters, an ordered checklist of steps, an append-only log buffer, a table whos
 and removed, and links the human can open. It paints in the TUI and in the companion app from
 one declared vocabulary, scrolls with the mouse wheel in both, is interrupted with Escape (the
 extension's call then returns `interrupted` and decides what to do), and settles into an artifact
-the human can reopen afterwards. Patches are HUMAN-facing: they never enter model context. The
-model receives exactly one thing — the settled result the extension returns.
+the human can reopen afterwards. Patches are HUMAN-facing: not one of them enters model context. The
+model receives exactly ONE thing, and it receives the WHOLE view: when a view ends the engine renders
+its materialized state as MARKDOWN and hands that back with the verdict. The stream stays out of the
+prompt; the picture the human watched is what the model reads.
 
 Two rules the rest of the plan is built on, both settled on review:
 
@@ -92,11 +94,18 @@ Two rules the rest of the plan is built on, both settled on review:
   process dies mid-run. What a surface paints is a WINDOW over that record — a rendering decision,
   never a data one. Where a collection must stay in memory to remain addressable (rows, steps,
   stats, links) the bound is a REFUSAL carrying its reason, never a trim behind the caller's back.
+- **Markdown is the model's surface.** One materializer, three renderers: the terminal pane, the
+  companion screen, and `->markdown` for the prompt. The model never sees a patch and never polls; it
+  reads the finished view, rendered from the same state the human watched, with the verdict first. A
+  render budget may truncate what the PROMPT holds — always saying how much it left behind — and never
+  what the record holds.
 
 **What we do not solve.** No answers inside a live view: a question stays `ask`, because mixing the
 two puts validation, secrets and focus back into a pane that must never own the keyboard. No
-arbitrary markup, HTML or markdown nodes — a closed vocabulary is the only way the terminal and the
-phone can both be honest about a node. No second event bus, no schema library beyond
+arbitrary markup, HTML or markdown NODES — a closed vocabulary is the only way the terminal and the
+phone can both be honest about a node, and the markdown the model reads is a RENDERING of that
+vocabulary produced by the engine, never a node an extension writes. No second event bus, no schema
+library beyond
 `clojure.spec.alpha`, and no database — the only new storage is ONE append-only file per view, which
 IS the artifact once the view closes. And
 nothing in the HOST opens a view for anybody: `shell`, the tools and the runtime keep exactly the
@@ -289,27 +298,50 @@ so no key is spelled a second time anywhere.
 - `src/com/blockether/vis/internal/human_input/spec.clj` — the block above, plus
   `contract-vocabulary` (`:122-137`) exporting the live tables so the Python contract document reads
   one source.
-- `src/com/blockether/vis/internal/human_input.clj` — `normalize-live-view`, `normalize-patch`,
-  `apply-patch` (the materializer: append into a log's hot window by `:window-lines`, upsert-by-id
-  for table rows, steps, stats and links, `add-node` / `remove-node` reshaping the view), `live!`
-  (opens, publishes `:human-input/live-open`, parks with `rt/park-blocking-wall`, always closes),
-  `patch!`, `close!`, `interrupt!`. Every op names its node, so a view with four tables needs no
-  ordering rule and no "current" node.
-- Same file — a keyed collection is stored as an ORDER VECTOR of ids plus an id->item map, so the
-  three mutations are total and cheap: an `append` of an id already present REPLACES the item IN
-  PLACE (the row keeps its slot, so a counter ticking in row 3 does not throw the table at the
-  human), an unseen id is APPENDED to the order, and `remove` drops the id from both. Removing an
-  absent id and clearing an empty collection are NO-OPS, not refusals — a patch is a statement of
-  the wanted state, and an extension polling a fleet must not have to remember what it already
-  said. `:order` is applied at PAINT time from that vector, never by re-sorting the record, so
-  every surface derives the same order from the same state and a re-sort never loses the identity
-  a scroll anchor is pinned to.
-- Same file — a `{:by "col"}` order naming a column id the table does not declare is refused AT
-  DECLARATION with the id and the known column ids named, not silently ignored at paint time.
-- Same file — a patch that would push a keyed collection past `:max-rows` / `:max-steps` /
-  `:max-stats` / `:max-links`, or the view past `:max-nodes`, is REFUSED with the bound and the node
-  id in the reason, and the reason names `log` as the home for unbounded volume. Nothing is trimmed:
-  the caller learns, the human never watches rows disappear.
+- `src/com/blockether/vis/internal/human_input.clj` — `normalize-live-view` and `normalize-patch`
+  (either spelling of every key, closed-table lookups instead of `keyword`-minting, blanks and nils
+  dropped BEFORE the materializer, which refuses them), then the lifecycle: `live!` (opens, publishes
+  `:human-input/live-open`, parks with `rt/park-blocking-wall`, always closes), `patch!`, `close!`,
+  `interrupt!`. Every op names its node, so a view with four tables needs no ordering rule and no
+  "current" node.
+- `src/com/blockether/vis/internal/human_input/live.clj` (new) — the MATERIALIZER and the MODEL's
+  renderer, pure and total, kept out of the lifecycle file because three surfaces read it and none of
+  them may own a private copy of what the view IS. `apply-patch` is ALL OR NOTHING — a patch whose
+  second op refuses leaves the view it was handed, so no surface ever paints half a patch — and it
+  refuses a `:seq` that does not ADVANCE, which is what lets a surface treat a gap as *re-read the
+  snapshot* instead of as loss.
+- Same file — a keyed collection stays the DECLARED vector and an upsert indexes it ONCE per patch:
+  an id already present is REPLACED IN PLACE (a counter ticking in row 3 does not throw the table at
+  the human), an unseen id is appended to the order, `remove` drops it. One shape for declaration,
+  snapshot, patch and paint, so no surface converts between two of them and the row identity a scroll
+  anchor is pinned to survives every re-sort. `:order` is applied at PAINT time by `ordered-rows`,
+  never by re-sorting the record, and a `{:by "col"}` naming a column the table does not declare is
+  refused AT DECLARATION with the known column ids named.
+- Same file — removing an absent item, clearing an empty collection and dropping a node that is
+  already gone are NO-OPS: a patch states the wanted state, and teardown is idempotent. A WRITE to a
+  node that is not there REFUSES, naming the ids the view does have — a patch that lands nowhere is a
+  bug, not a state.
+- Same file — `set` refuses a key the node's type has not got and names what it does set; `append`
+  refuses lines into a table and rows into a log, naming both; a keyed collection pushed past its
+  bound refuses with the bound, the node id and `log` named as the home for unbounded volume; and one
+  over-large patch refuses with `split it`, because a per-patch cap is a REFUSAL about latency (the
+  journal writer parks the producer) and not a second bound on the node.
+- Same file — a `:log` keeps a hot WINDOW of `:window-lines` plus an engine-stamped `:total-lines`
+  counting the RECORD, so `… N earlier lines` is counted and never guessed, and `clear` empties the
+  window while the record keeps every line.
+- Same file — `->markdown`, the MODEL's surface, rendered ONCE from the same materialized state the
+  two human surfaces painted: the verdict FIRST, then every node in declaration order. `status` is a
+  bold line over an italic detail, `progress` a percent and a count (`_working_` when indeterminate),
+  `stat` one `label value` strip, `steps` a `- [tone] label` checklist, `log` a fence widened past
+  whatever backticks the output carries, `table` a GFM pipe table honouring `:align` with cells
+  escaped so a pipe or a newline cannot invent a row, `link` a markdown link, a backticked path or a
+  named attachment. Colour is the one thing that cannot cross: a `[tone]` token stands where a surface
+  paints red, and a table whose rows carry tones grows ONE leading `!` column — the only place the
+  render is not a transliteration.
+- Same file — the model's BUDGET, and only the model's: a log renders its TAIL (120 lines) and a table
+  its HEAD (50 rows), each saying how many it left behind and that the record still holds them. A
+  caller may widen either per call. Truncation is a RENDER decision; nothing here touches the record,
+  and neither budget applies to the human's surfaces, which scroll the whole thing.
 - Same file — the `pending` registry entry gains `:kind` (`:form` | `:live`) so `cancel-all!`
   (`:1145-1150`), the turn-interrupt path (`:1251-1255`) and the undeliverable path (`:1220-1235`)
   release both kinds, and `checked-answer` routes to `::answer` or `::live-result` by kind.
@@ -325,19 +357,22 @@ so no key is spelled a second time anywhere.
   `table`, `table-column`, `link` — each taking its ID FIRST — plus `add-node` / `remove-node`, and
   `live!` taking the view spec plus a function that receives the handle, so the view closes on a
   throw as well as on a return.
-- Test `test/com/blockether/vis/internal/human_input_test.clj` — materialization for a view with TWO
-  tables and two logs where each patch touches only its own node, `add-node` / `remove-node` mid-run
-  (including a patch naming a node that was dropped), each bound refusing with node and bound named,
-- Same file — a table driven through an INTERLEAVED script (add a, add b, add c, update b, remove
-  a, re-add a, clear, add d) asserted row-by-row under each `:order`: insertion order proves the
-  updated row did not move and the re-added row went to the END (it is a new arrival, not a
-  resurrection), `:newest-first` proves the mirror image, `{:by …}` proves ties keep insertion
-  order so the same script always paints identically. Removing an absent id and clearing an empty
-  table are asserted as no-ops that still advance `seq`, and a `{:by "nope"}` order is asserted to
-  throw at declaration naming the known columns.
-  the sink round-tripped (write N lines, read a range back, reopen and append), refusal of an unknown
-  node type / op / key naming the key, `undeliverable` with no channel mounted, `interrupt!`
-  releasing the parked caller, and a form and a live view coexisting in the registry.
+- Test `test/com/blockether/vis/internal/human_input/live_test.clj` (new) — a view whose patches each
+  touch only their own node, `add-node` / `remove-node` mid-run including a WRITE to a node that was
+  dropped, every bound refusing with the node and the bound named, the log window kept while
+  `:total-lines` counts the record, and the model's markdown asserted as one GOLDEN document (verdict
+  first, the `!` tone column, the widened fence, both budgets, the escaped cell).
+- Same file — a table driven through an INTERLEAVED script (add a, add b, add c, update b, remove a,
+  re-add a) asserted row by row under each `:order`: insertion proves the updated row did not move and
+  the re-added row went to the END (it is a new arrival, not a resurrection), `:newest-first` proves
+  the mirror image, `{:by …}` proves ties keep insertion order and blanks stay last, so the same
+  script paints identically on every surface. Removing an absent id and clearing an empty table are
+  asserted as no-ops that still advance `seq`, and `{:by "nope"}` is refused at declaration naming the
+  columns the table does declare.
+- Test `test/com/blockether/vis/internal/human_input_test.clj` — the lifecycle half: the sink
+  round-tripped (write N lines, read a range back, reopen and append), refusal of an unknown node type
+  / op / key naming the key, `undeliverable` with no channel mounted, `interrupt!` releasing the parked
+  caller, and a form and a live view coexisting in the registry.
 - Same file — a bad live spec is refused WHERE IT WAS DECLARED: `live!` normalizes before it mounts
   anything, exactly as `request!` does (`:1200`), and throws the engine's one-line reason. There is no
   answer-instead-of-throw seam left to teach (`check`/`check-json` went with `vis.check`), so the live
@@ -566,7 +601,8 @@ dumping it into the transcript, which is the cost this plan exists to remove.
 `::view` is the FINAL materialized state (the summary a surface opens instantly); the bytes are the
 sink file the run already wrote, addressed by `::storage-uri`. `::audience` is the existing closed
 vocabulary (`internal/attachments.clj:670-679`) and a live artifact is human-only: the model is told
-it exists and gets the summary, never the bytes.
+it exists and gets the summary, never the bytes. The artifact stores no markdown copy: `::view` is the
+final materialized state, and `live/->markdown` re-renders exactly what the model was given from it.
 
 **Acceptance criteria.**
 
@@ -596,22 +632,87 @@ lifetime: a sink outlives its session unless something deletes it, and `bus/forg
 (`gateway/bus.clj:636-640`) is the existing precedent for dropping per-session files on close. The
 plan assumes a sink is kept with its session and removed with it.
 
+## Phase 6 — `gh`: the first live view a person actually watches
+
+**Rationale.** Everything above is mechanism. A CI run is the archetype the mechanism was built for:
+it takes fifteen minutes, the extension can see exactly when it ends, the human wants to WATCH it, and
+the model needs one paragraph at the end. Today that run is observed the expensive way — `sh.logs()`
+in a loop, one provider round trip per look — or not at all. It is also the honest end-to-end proof:
+the payload comes from a system this repo does not control, so a view that survives it survives real
+data. The mapping below was run against a real 18-job run of this repository (`gh run view --json`)
+through `live/apply-patch` and `live/->markdown` before it was written down.
+
+**Data.** The declared view — seven nodes, one per thing a person asks about a run:
+
+```
+status   "run"      "12 of 18 jobs finished, 1 failed"   detail: "workflow CI on main"
+progress "progress" done = finished jobs, total = all jobs
+stat     "score"    passed · failed · skipped · queued
+table    "jobs"     Job | Status | Took   rows keyed by the job's databaseId, :insertion order
+steps    "failing"  the running (else first failed) job's steps, one tone each
+log      "output"   that job's log, appended per poll
+link     "links"    the run URL, plus one per failed job
+```
+
+One mapping, used by every node: `status`/`conclusion` -> tone — `queued`/`in_progress` is `running`,
+`success` is `ok`, `skipped` and `neutral` are `idle`, anything else is `error`. Rows are upserted by
+job id every poll, so a job that changes state keeps its slot and the eye keeps its place.
+
+**Acceptance criteria.**
+
+- `.vis/extensions/gh.py` — one file, `vis.extension(name="gh")`, tools `gh_watch_run` (a run id, or
+  the newest run of the current branch) and `gh_watch_checks` (the same view over `gh pr checks`).
+  Opens the view, polls `gh run view --json jobs,status,conclusion,…` on a 5 s tick backing off to
+  15 s past five minutes, patches ONLY what changed, and returns when the run ends.
+- Same file — every GitHub call is the `gh` CLI through the sandbox shell verb. No hand-built HTTPS,
+  no token read, copied or printed: authentication is the operator's own `gh` session, and a missing
+  or unauthenticated `gh` REFUSES with one line before any view is opened — nothing to watch beats an
+  empty pane.
+- Same file — the tool returns the view's MARKDOWN, whatever ended it. On `interrupted` the model
+  still receives the picture the human was looking at when they pressed Escape, plus the reason, and
+  decides what to do next; on `completed` it receives the finished run. The log node is the failing
+  job's tail, so the model's copy is bounded by the Phase 1 budget and the whole log stays in the
+  view's record.
+- `resources/vis-docs/extending.md` — this replaces the background-shell example as the worked
+  example for `vis.live`: it is shorter, it is real, and it shows the two things an author gets wrong
+  (one node per question rather than one log for everything, and upsert-by-id rather than re-appending
+  the whole table).
+- Test — a recorded `gh run view` payload (one real run, trimmed) as a fixture: the mapper builds the
+  declared nodes and the patches, the engine accepts them, and the rendered markdown is asserted
+  against a golden document. No network in the test; the mapping is pure and the polling is not what
+  is being proven.
+
+**Unknowns.** Whether the failing job's log should stream continuously or only once a job fails — the
+plan assumes only the running-or-failing job, appended per poll, because eighteen job logs at once is
+a download rather than a view. And whether `gh_watch_checks` is the same mapper over a different
+payload (assumed yes) or its own view.
+
 ## State of the plan
 
-**REQUIRES WORK** — written, not yet accepted. Nothing is implemented.
+**IN FLIGHT** — Phase 1 is landing; Phases 2-6 are written and not yet started.
 
 Done:
 
-- Nothing in this plan. Its predecessor (make every capability an extension declared by one
-  cross-language contract) is parked at commit `6ac932db4` and is recoverable from there; its open
-  decisions — the TypeScript binding and the publishing identity — are untouched by this work and
-  outlive it.
+- Phase 1, the vocabulary — `internal/human_input/spec.clj` carries the closed live tables
+  (`live-node-types`, `live-ops`, `live-tones`, `live-orders`, `live-reasons`, `link-targets`,
+  `item-bounds`, `live-op-key-sets`), the specs (`::live-node`, `::live-view`, `::live-op`,
+  `::live-patch`, `::live-result`) and the four explainers, exported through `contract-vocabulary`
+  into `vis_contract/contract.json`. Commit `a566ad102`.
+- Phase 1, the materializer and the model's renderer — `internal/human_input/live.clj` with
+  `materialize`, `apply-patch`, `ordered-rows` and `->markdown`, pinned by
+  `test/com/blockether/vis/internal/human_input/live_test.clj` (the interleaved table script under
+  every declared order, every refusal, the budgets, and one golden markdown document). `::live-result`
+  now REQUIRES `:markdown`.
+- Its predecessor plan (make every capability an extension declared by one cross-language contract) is
+  parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
+  binding and the publishing identity — are untouched by this work and outlive it.
 
 TODO, in order:
 
-1. Phase 1 — live vocabulary in `spec.clj` (node ids as addresses, `add-node`/`remove-node`, bounds
-   that REFUSE instead of evicting), `live!`/`patch!`/`close!`/`interrupt!` plus the append-only sink
-   in the engine, `:kind` in the pending registry.
+1. Phase 1, the rest — `normalize-live-view` / `normalize-patch` and the `live!` / `patch!` / `close!` /
+   `interrupt!` lifecycle in `internal/human_input.clj`, the append-only sink in
+   `internal/human_input/live_sink.clj`, `:kind` in the pending registry, and the builders in
+   `com.blockether.vis.human-input`.
 2. Phase 2 — TUI pane: labelled nodes stacked on one scroll surface, wheel scroll, Escape precedence,
    screenshot gate.
 3. Phase 3 — `live` host op (contract version 3), `vis.live` with per-node handles and batched
@@ -619,3 +720,5 @@ TODO, in order:
 4. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
    log-range resync, interrupt route), companion reducer keyed by node id, component and drift test.
 5. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
+6. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
+   proof of the chain.

@@ -231,7 +231,10 @@
    set for the same reason [[field-keys]] is: the parser derives the snake_case
    spellings from it, so no key is written down twice."
   #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
-    :columns :rows :max-rows :order :links})
+    :columns :rows :max-rows :order :links
+    ;; ENGINE stamp, never written in a spec: how many lines a `:log`'s RECORD
+    ;; holds, so `… N earlier lines` is counted rather than guessed.
+    :total-lines})
 
 (def live-view-keys
   "Every key a live view may carry, engine stamps included — a view crossing a
@@ -263,7 +266,7 @@
 
 (def live-result-keys
   "Every key the verdict carries — the ONE thing the model reads back."
-  #{:view-id :is-completed :reason :summary :artifact-id :error})
+  #{:view-id :is-completed :reason :markdown :summary :artifact-id :error})
 (defn contract-vocabulary
   "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
    into `vis_contract/contract.json` — the document every surface that cannot
@@ -734,7 +737,11 @@
 (s/def ::tone (set (vals live-tones)))
 (s/def ::detail non-blank-string?)
 (s/def ::line string?)                                      ; a blank line is a line
-(s/def ::lines (s/coll-of ::line :kind vector? :max-count (long (:max-patch-lines log-defaults))))
+;; A node's `:lines` are its hot WINDOW, so this bound is the window cap, not
+;; the per-patch one: how many lines ONE patch may carry
+;; (`:max-patch-lines`) is a REFUSAL the materializer makes, with `split it`
+;; in the reason — a shape check cannot say that.
+(s/def ::lines (s/coll-of ::line :kind vector? :max-count (long (:window-lines-cap log-defaults))))
 ;; The PAINT window; the sink keeps every line that was accepted.
 (s/def ::window-lines (s/int-in 1 (inc (long (:window-lines-cap log-defaults)))))
 (s/def ::done nat-int?)
@@ -750,6 +757,8 @@
 (s/def ::view-id non-blank-string?)
 (s/def ::is-completed boolean?)
 (s/def ::summary non-blank-string?)
+(s/def ::markdown non-blank-string?)                        ; the whole view, rendered for the model
+(s/def ::total-lines nat-int?)                              ; the size of a log's record, engine-stamped
 (s/def ::artifact-id non-blank-string?)
 (s/def ::error non-blank-string?)
 (s/def ::op (set (vals live-ops)))
@@ -778,7 +787,9 @@
          #(apply distinct? (map :id %))))
 
 (s/def ::row (s/and #(closed? live-row-keys %) (s/keys :req-un [::id ::cells] :opt-un [::tone])))
-(s/def ::rows (s/coll-of ::row :kind vector? :max-count (long (:max-patch-rows table-defaults))))
+;; A node's `:rows` are everything the table HOLDS; `:max-patch-rows` is the
+;; materializer's refusal, for the same reason `::lines` carries the window.
+(s/def ::rows (s/coll-of ::row :kind vector? :max-count (long (:max-rows table-defaults))))
 
 (s/def ::stat
   (s/and #(closed? live-stat-keys %) (s/keys :req-un [::id ::label ::value-text] :opt-un [::tone])))
@@ -830,7 +841,7 @@
 (defmethod live-node-form :steps [_] (s/keys :req-un [::id ::type ::steps] :opt-un [::label]))
 (defmethod live-node-form :log
   [_]
-  (s/keys :req-un [::id ::type ::lines ::window-lines] :opt-un [::label]))
+  (s/keys :req-un [::id ::type ::lines ::window-lines] :opt-un [::label ::total-lines]))
 (defmethod live-node-form :table
   [_]
   (s/keys :req-un [::id ::type ::columns ::rows ::max-rows ::order] :opt-un [::label]))
@@ -898,7 +909,7 @@
 
 (s/def ::live-result
   (s/and #(closed? live-result-keys %)
-         (s/keys :req-un [::view-id ::is-completed ::reason]
+         (s/keys :req-un [::view-id ::is-completed ::reason ::markdown]
                  :opt-un [::summary ::artifact-id ::error])
          #(live-reason? (:reason %))
          ;; The one cross-key rule: completion is exactly the `completed` ending,
