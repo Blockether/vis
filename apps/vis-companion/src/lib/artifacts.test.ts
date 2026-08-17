@@ -10,6 +10,7 @@ import {
   attachmentIsPlayable,
   attachmentIsVideo,
   collapseArtifactVersions,
+  collapseAttachmentVersions,
   collectArtifacts,
   artifactsFromIndex,
   mergeArtifacts,
@@ -320,6 +321,62 @@ describe("collapsing an artifact into its versions", () => {
     ]);
     expect(collapsed).toHaveLength(2);
     expect(collapsed.every((entry) => entry.versions?.length === 1)).toBe(true);
+  });
+});
+
+// Regression, user report: "I commented on the model's document, saved, and now
+// instead of one there are two." The save files the SAME filename as the next
+// version of the same artifact, so the rail's descriptors thread by name exactly
+// as the gallery's rows do.
+describe("collapseAttachmentVersions", () => {
+  const cut = (
+    filename: string,
+    version: number,
+    index: number,
+    size = 100,
+  ): IterationAttachment => ({
+    filename,
+    version,
+    index,
+    size,
+    iteration_id: "i1",
+  });
+
+  it("keeps ONE thread per name, newest cut first", () => {
+    const threads = collapseAttachmentVersions([
+      cut("README.md", 1, 0, 13_000),
+      cut("chart.png", 1, 1),
+      cut("README.md", 2, 2, 12_700),
+    ]);
+    expect(threads).toHaveLength(2);
+    const [note, chart] = threads;
+    // The head is the row the transcript paints: the newest cut, its own weight.
+    expect(note.map((entry) => entry.version)).toEqual([2, 1]);
+    expect(note[0].size).toBe(12_700);
+    expect(chart).toHaveLength(1);
+  });
+
+  it("gives a file written once a one-element thread, so nothing branches", () => {
+    const [only] = collapseAttachmentVersions([cut("solo.pdf", 1, 0)]);
+    expect(only).toHaveLength(1);
+    expect(only[0].filename).toBe("solo.pdf");
+  });
+
+  it("threads a descriptor that carries no version at all", () => {
+    const threads = collapseAttachmentVersions([
+      { filename: "notes.md", index: 0 },
+      cut("notes.md", 2, 1),
+    ]);
+    expect(threads).toHaveLength(1);
+    expect(threads[0].map((entry) => entry.version ?? 1)).toEqual([2, 1]);
+  });
+
+  it("never merges two different names into one thread", () => {
+    const threads = collapseAttachmentVersions([
+      cut("a.png", 1, 0),
+      cut("b.png", 1, 1),
+    ]);
+    expect(threads.map((thread) => thread.length)).toEqual([1, 1]);
   });
 });
 

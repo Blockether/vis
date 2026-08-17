@@ -237,3 +237,101 @@ describe("an opened document", () => {
     expect(markup).not.toContain("60vh");
   });
 });
+
+// Regression, user report: "the model attached me a document, then I commented on
+// it and saved, and suddenly instead of the original one I see two". The rail now
+// paints ONE row per name (`collapseAttachmentVersions`), so the row itself has to
+// say that the version moved — and the thread it stands for opens from the band of
+// the document it opens, never from a second row in the transcript.
+describe("a revised document", () => {
+  const cuts = [
+    {
+      filename: "PLAN.md",
+      index: 1,
+      iteration_id: "i1",
+      version: 2,
+      size: 12_700,
+    },
+    {
+      filename: "PLAN.md",
+      index: 0,
+      iteration_id: "i1",
+      version: 1,
+      size: 13_000,
+    },
+  ];
+
+  it("says the version moved in the row the document already had", () => {
+    const html = renderToStaticMarkup(
+      <DocPreview
+        name="PLAN.md"
+        mime="text/markdown"
+        sizeLabel="12.4KB"
+        url="blob:x"
+        failed={false}
+        versions={cuts}
+        onNeeded={() => undefined}
+      />,
+    );
+    expect(text(html)).toContain("v2");
+    // A revision is a LINE in the row, never a second row: one name, one chevron.
+    expect(html.split('aria-label="Open PLAN.md"').length - 1).toBe(1);
+  });
+
+  it("leaves a file written once with nothing to report", () => {
+    const html = renderToStaticMarkup(
+      <DocPreview
+        name="ONCE.md"
+        mime="text/markdown"
+        sizeLabel="1.0KB"
+        url="blob:x"
+        failed={false}
+        versions={[cuts[1]]}
+        onNeeded={() => undefined}
+      />,
+    );
+    expect(text(html)).not.toContain("v1");
+  });
+
+  it("opens the thread from the BAND and reads the cut that is picked", async () => {
+    const picked: number[] = [];
+    render(
+      <DocOverlay
+        name="THREAD.md"
+        mime="text/markdown"
+        sizeLabel="12.4KB"
+        url={null}
+        failed={false}
+        versions={cuts}
+        shownAt={0}
+        onPick={(at) => picked.push(at)}
+        onClose={() => undefined}
+      />,
+    );
+    const cell = screen.getByLabelText("Versions of THREAD.md");
+    expect(cell.textContent).toContain("v2 of 2");
+
+    await userEvent.click(cell);
+    expect(screen.getByText("2 versions")).toBeTruthy();
+
+    await userEvent.click(screen.getByLabelText("Read v1 of THREAD.md"));
+    expect(picked).toEqual([1]);
+    // Picking closes the thread again: the document is what the screen is for.
+    expect(screen.queryByText("2 versions")).toBeNull();
+  });
+
+  it("gives a document with one cut no version cell at all", () => {
+    render(
+      <DocOverlay
+        name="LONE.md"
+        mime="text/markdown"
+        sizeLabel="1.0KB"
+        url={null}
+        failed={false}
+        versions={[cuts[1]]}
+        onClose={() => undefined}
+      />,
+    );
+    expect(screen.queryByLabelText("Versions of LONE.md")).toBeNull();
+  });
+});

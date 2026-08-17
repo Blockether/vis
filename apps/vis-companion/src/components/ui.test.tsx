@@ -706,9 +706,12 @@ describe("BandButton", () => {
     // And on both, that cell is the PRIMARY one: the band paints what is owed.
     expect(markdownArtifactSource).toContain("isPrimary");
     expect(imageViewerSource).toContain("isPrimary");
-    for (const source of [docSource, artifactsSheetSource]) {
-      expect(source).toContain("actions={actions}");
-    }
+    // The sheet hands that one cell straight to its band. The transcript's own
+    // overlay stands its version cell in the SAME run — `v2 of 2` beside Save,
+    // one hairline from the ✕ — so the annotator's cell is still the band's and
+    // never a footer of its own.
+    expect(artifactsSheetSource).toContain("actions={actions}");
+    expect(docSource).toMatch(/actions=\{\s*<>\s*\{versionCell\}\s*\{actions\}/);
   });
 });
 

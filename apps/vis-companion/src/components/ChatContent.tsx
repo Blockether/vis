@@ -20,6 +20,7 @@ import {
   attachmentIsImage,
   attachmentIsPlayable,
   attachmentIsVideo,
+  collapseAttachmentVersions,
   pageBySize,
   RAIL_PAGE,
 } from "../lib/artifacts";
@@ -1715,22 +1716,33 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
   client,
   sid,
   attachment,
+  versions,
 }: {
   client: GatewayClient;
   sid: string;
   attachment: IterationAttachment;
+  /** Every cut of this name in the step, newest first and this one included. */
+  versions: IterationAttachment[];
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [wanted, setWanted] = useState(false);
-  const iterationId = attachment.iteration_id ?? "";
-  const index = attachment.index ?? 0;
+  // The ROW is always the newest cut. The reader may go back through the band's
+  // own version cell, and then it is that cut's bytes the tile fetches.
+  const [shownAt, setShownAt] = useState(0);
+  const cut = versions[shownAt] ?? attachment;
+  const iterationId = cut.iteration_id ?? "";
+  const index = cut.index ?? 0;
   const name = attachment.filename || "document";
   const needed = useCallback(() => setWanted(true), []);
 
   useEffect(() => {
     if (!wanted || !iterationId || !sid) return;
     let alive = true;
+    // Another cut is another set of bytes: the ones on screen are dropped rather
+    // than left painting the version that was just left behind.
+    setUrl(null);
+    setFailed(false);
     const release = client.retainAttachment(sid, iterationId, index);
     client
       .attachmentUrl(sid, iterationId, index)
@@ -1760,6 +1772,9 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
       // saving either one is the next version of the same filename.
       annotate={{ client, sid, iterationId }}
       onNeeded={needed}
+      versions={versions}
+      shownAt={shownAt}
+      onPick={setShownAt}
     />
   );
 });
@@ -1779,9 +1794,22 @@ export const AttachmentRail = memo(function AttachmentRail({
   // to start forty downloads in the same tick, on whatever connection a phone
   // happens to have. Revealed a page at a time, by count AND by weight.
   const [pages, setPages] = useState(1);
-  const media = attachments.filter(
-    (entry) => attachmentIsPlayable(entry) || attachmentIsDoc(entry),
+  // ONE ROW PER ARTIFACT, NOT PER CUT.
+  //
+  // Regression, user report: commenting on a note and saving it turned one
+  // attached document into two rows. Re-attaching a filename is the NEXT VERSION
+  // of that artifact — the gallery has collapsed those threads ever since
+  // `collapseArtifactVersions` — but this rail painted a row per descriptor, so
+  // the human's own revision arrived as a second row under the same name and the
+  // group header summed both cuts ("2 documents · 25.6KB" over one 12.7KB note).
+  // The newest cut is the row; the rest is the history the reader opens.
+  const threads = collapseAttachmentVersions(
+    attachments.filter(
+      (entry) => attachmentIsPlayable(entry) || attachmentIsDoc(entry),
+    ),
   );
+  const media = threads.map((thread) => thread[0]);
+  const threadOf = new Map(media.map((head, at) => [head, threads[at]]));
   const page = pageBySize(media, (entry) => entry.size, pages, RAIL_PAGE);
   const playable = page.shown.filter(attachmentIsPlayable);
   // A clip is never a gallery tile: at ~183px the platform's own controls do not
@@ -1833,6 +1861,8 @@ export const AttachmentRail = memo(function AttachmentRail({
       {docs.length > 0 && (
         // One frame for the step's documents, and the header only when there is a
         // GROUP to report: a single document is one row and no header at all.
+        // `docs` are ARTIFACTS, one per name, so a revised note never becomes a
+        // group of its own cuts.
         <DocStack summary={docs.length > 1 ? docStackSummary(docs) : undefined}>
           {docs.map((attachment) => (
             <AttachmentDocTile
@@ -1840,6 +1870,7 @@ export const AttachmentRail = memo(function AttachmentRail({
               client={client}
               sid={sid}
               attachment={attachment}
+              versions={threadOf.get(attachment) ?? [attachment]}
             />
           ))}
         </DocStack>

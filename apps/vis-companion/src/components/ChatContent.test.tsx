@@ -15,7 +15,7 @@ import {
   mediaGridClass,
   mediaTileFrameClass,
 } from "../lib/media-frame";
-import type { TranscriptTurn } from "../lib/types";
+import type { IterationAttachment, TranscriptTurn } from "../lib/types";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -418,6 +418,58 @@ describe("the attachment rail", () => {
     const html = rail(3, 64 * 1024);
     expect(html).toContain("report-2.pdf");
     expect(text(html)).not.toContain("more");
+  });
+
+  // Regression, user report: "the model attached a document, I commented on it and
+  // saved, and now instead of one there are two". Saving files the same filename
+  // as the NEXT VERSION of the same artifact; this rail painted a row per
+  // descriptor, so the revision arrived as a second row under the same name and
+  // the stack grew a header summing both cuts.
+  const note = (size: number, index: number, version: number) => ({
+    filename: "README.md",
+    media_type: "text/markdown",
+    size,
+    iteration_id: "i1",
+    index,
+    version,
+  });
+  const revised = (extra: IterationAttachment[] = []) =>
+    renderToStaticMarkup(
+      <AttachmentRail
+        client={client}
+        sid="s1"
+        attachments={[note(13_000, 0, 1), note(12_700, 1, 2), ...extra]}
+      />,
+    );
+
+  it("answers a saved revision with the SAME one row", () => {
+    const html = revised();
+    expect(html.split('aria-label="Open README.md"').length - 1).toBe(1);
+    // One artifact is one row and no header at all — nothing to report a group of.
+    expect(text(html)).not.toContain("documents");
+    expect(text(html)).not.toContain("25.1KB");
+  });
+
+  it("makes the row say the version moved, and weighs the newest cut", () => {
+    const html = revised();
+    expect(text(html)).toContain("v2");
+    expect(text(html)).toContain("12.4KB");
+    expect(text(html)).not.toContain("12.7KB");
+  });
+
+  it("still reports a GROUP, counting artifacts and not cuts", () => {
+    const html = revised([
+      {
+        filename: "NOTES.md",
+        media_type: "text/markdown",
+        size: 1_000,
+        iteration_id: "i1",
+        index: 2,
+        version: 1,
+      },
+    ]);
+    expect(text(html)).toContain("2 documents");
+    expect(text(html)).not.toContain("3 documents");
   });
 });
 

@@ -307,6 +307,34 @@ export function collapseArtifactVersions(
 }
 
 /**
+ * THE SAME THREADS, ON THE TRANSCRIPT'S OWN DESCRIPTORS.
+ *
+ * [[collapseArtifactVersions]] is the gallery's collapse, over the whole
+ * session's [[SessionArtifact]] rows. A step's attachment rail holds raw
+ * [[IterationAttachment]] descriptors and used to paint a row PER CUT, so a note
+ * the human commented on and saved — the same filename, filed as the next
+ * version of the same iteration — arrived as a SECOND row under the same name.
+ *
+ * One thread per NAME, newest cut first and the head included, threads in the
+ * order their name first appears. The head is the row; the rest is the history
+ * behind it.
+ */
+export function collapseAttachmentVersions(
+  list: IterationAttachment[],
+): IterationAttachment[][] {
+  const threads = new Map<string, IterationAttachment[]>();
+  for (const entry of list) {
+    const name = entry.filename || "attachment";
+    const thread = threads.get(name);
+    if (thread) thread.push(entry);
+    else threads.set(name, [entry]);
+  }
+  return [...threads.values()].map((thread) =>
+    [...thread].sort((a, b) => (b.version ?? 1) - (a.version ?? 1)),
+  );
+}
+
+/**
  * A HUMAN'S REVISION, FOLDED BACK INTO THE TRANSCRIPT IT CAME FROM.
  *
  * Saving an annotated note (or an inked PDF, or a drawn-on picture) POSTs the

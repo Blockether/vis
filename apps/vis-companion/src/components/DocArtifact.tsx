@@ -1,4 +1,10 @@
-import { memo, type ReactNode, useCallback, useEffect } from "react";
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 
 import type { GatewayClient } from "../lib/gateway";
@@ -9,14 +15,16 @@ import {
   isPdfMedia,
   isTextMedia,
 } from "../lib/artifacts";
+import { parseAnnotated } from "../lib/markdown-annotations";
+import type { IterationAttachment } from "../lib/types";
 import {
   type DocumentChrome,
   MarkdownArtifact,
 } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
-import { TextFrame } from "./TextArtifact";
+import { readArtifactText, TextFrame } from "./TextArtifact";
 import { ChevronIcon } from "./icons";
-import { DialogHeader, ListRow, overlayLayer } from "./ui";
+import { BandButton, DialogHeader, ListRow, overlayLayer } from "./ui";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
 /**
@@ -161,6 +169,10 @@ export const DocStack = memo(function DocStack({
 /**
  * `4 documents · 31.4KB` — what a stack is, said once above it.
  *
+ * It counts ARTIFACTS, never cuts: the rail hands it one head per name
+ * (`collapseAttachmentVersions`), so a note saved a second time is one document
+ * of its newest weight instead of "2 documents" of both weights added together.
+ *
  * The weight is claimed only when every document reported one, exactly as
  * `mediaSummary` claims a gallery's: a partial total is a wrong number, not a
  * smaller one.
@@ -184,6 +196,9 @@ export const DocOverlay = memo(function DocOverlay({
   url,
   failed,
   annotate,
+  versions,
+  shownAt = 0,
+  onPick,
   onClose,
 }: {
   name: string;
@@ -193,6 +208,12 @@ export const DocOverlay = memo(function DocOverlay({
   failed: boolean;
   /** Present when the human may mark this artifact up. */
   annotate?: AnnotateContext;
+  /** Every cut of this name, newest first and the head included. */
+  versions?: IterationAttachment[];
+  /** Which cut is being read, an index into `versions`. */
+  shownAt?: number;
+  /** Read another cut; the owner fetches its bytes. */
+  onPick?: (at: number) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -202,6 +223,30 @@ export const DocOverlay = memo(function DocOverlay({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // THE HISTORY OF A NAME BELONGS TO THE BAND, NOT TO THE TRANSCRIPT.
+  //
+  // A revised document is ONE row in the step (`collapseAttachmentVersions`), so
+  // the thread behind it needs a door — and it is a cell of the band that already
+  // names the document, one hairline from the way out and beside Save. `v2 of 2`
+  // opens the cuts and closes them again, so the transcript keeps its single row
+  // and the chevron that has always opened it. A file written once has no thread
+  // and no cell.
+  const [isHistory, setHistory] = useState(false);
+  const cuts = versions ?? [];
+  const shown = cuts[shownAt];
+  const shownLabel = shown ? attachmentBytes(shown.size) : sizeLabel;
+  const versionCell =
+    cuts.length > 1 ? (
+      <BandButton
+        onClick={() => setHistory((open) => !open)}
+        aria-expanded={isHistory}
+        aria-label={`Versions of ${name}`}
+        title={`Versions of ${name}`}
+      >
+        v{shown?.version ?? 1} of {cuts.length}
+      </BandButton>
+    ) : null;
 
   // THE OPENED DOCUMENT IS THE VIEWPORT-PINNED LAYER, NOT THE GLASS.
   //
@@ -225,15 +270,61 @@ export const DocOverlay = memo(function DocOverlay({
       <DialogHeader
         title={name}
         subtitle={
-          note || [docKindLabel(mime), sizeLabel].filter(Boolean).join(" · ")
+          note || [docKindLabel(mime), shownLabel].filter(Boolean).join(" · ")
         }
-        actions={actions}
+        actions={
+          <>
+            {versionCell}
+            {actions}
+          </>
+        }
         closeLabel={`Close ${name}`}
         onClose={onClose}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
     </div>
   );
+
+  // The thread itself, in the document's own screen: newest first, each row the
+  // cut it opens. Nothing is fetched until one is picked — the same rule the
+  // gallery's `ArtifactVersions` follows.
+  if (isHistory)
+    return chrome({
+      actions: null,
+      note: `${cuts.length} versions`,
+      body: (
+        <ul
+          aria-label={`Versions of ${name}`}
+          className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 sm:p-4"
+        >
+          {cuts.map((cut, at) => (
+            <li key={`${cut.iteration_id ?? "iter"}-${cut.index}`}>
+              <ListRow
+                isFramed
+                onClick={() => {
+                  onPick?.(at);
+                  setHistory(false);
+                }}
+                aria-label={`Read v${cut.version ?? 1} of ${name}`}
+                className="gap-3"
+              >
+                <span className="font-mono text-meta font-bold text-white">
+                  v{cut.version ?? 1}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-mono text-chip text-footer-muted">
+                  {attachmentBytes(cut.size)}
+                </span>
+                {at === shownAt || at === 0 ? (
+                  <span className="font-mono text-chip text-accent">
+                    {at === shownAt ? "reading" : "latest"}
+                  </span>
+                ) : null}
+              </ListRow>
+            </li>
+          ))}
+        </ul>
+      ),
+    });
 
   // Opened, the artifact is not only READ: a note can be commented on and a PDF
   // drawn on, and either one saves as the next version of the same filename.
@@ -292,6 +383,9 @@ export const DocPreview = memo(function DocPreview({
   url,
   failed,
   annotate,
+  versions,
+  shownAt = 0,
+  onPick,
   onNeeded,
 }: {
   name: string;
@@ -302,6 +396,12 @@ export const DocPreview = memo(function DocPreview({
   failed: boolean;
   /** Present when the opened artifact may be marked up. */
   annotate?: AnnotateContext;
+  /** Every cut of this name, newest first — one entry for a file written once. */
+  versions?: IterationAttachment[];
+  /** Which cut the opened document is reading, an index into `versions`. */
+  shownAt?: number;
+  /** Read another cut; the owner fetches its bytes. */
+  onPick?: (at: number) => void;
   /** Asked for the bytes — the parent starts the fetch. */
   onNeeded: () => void;
 }) {
@@ -309,12 +409,51 @@ export const DocPreview = memo(function DocPreview({
   // under a different subtree, and an opened document must stay opened.
   const [opened, setOpened] = useStickyOverlay(`doc:${name}`);
 
+  // WHAT THE NEW VERSION IS, IN THE ROW THE DOCUMENT ALREADY HAD.
+  //
+  // Reported: "I commented on it and saved, and now there are two". A revision
+  // does not deserve a row — it deserves a LINE. `v2 · 3 comments` under the name
+  // says the thing the second row was accidentally saying, and costs no height:
+  // the row's box is its own minimum either way.
+  //
+  // The comments are not metadata beside the file, they are IN it, under one
+  // `## Comments` heading (`lib/markdown-annotations`) — so the count is read
+  // from the bytes this row already holds, and only for a note that was actually
+  // revised and is showing its newest cut.
+  const [comments, setComments] = useState(0);
+  const latest = versions?.[0];
+  const revision = latest && (latest.version ?? 1) > 1 ? (latest.version ?? 1) : 0;
+
   useEffect(() => {
     onNeeded();
   }, [onNeeded]);
 
+  useEffect(() => {
+    if (!revision || shownAt !== 0 || !url || !isTextMedia(mime, name)) return;
+    let alive = true;
+    readArtifactText(url)
+      .then((text) => {
+        if (alive) setComments(parseAnnotated(text).comments.length);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [revision, shownAt, url, mime, name]);
+
   const close = useCallback(() => setOpened(false), [setOpened]);
   const open = useCallback(() => setOpened(true), [setOpened]);
+
+  const revisionLine = revision
+    ? [
+        `v${revision}`,
+        comments > 0
+          ? `${comments} ${comments === 1 ? "comment" : "comments"}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
 
   return (
     <>
@@ -324,8 +463,13 @@ export const DocPreview = memo(function DocPreview({
         <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-warn">
           {docKindLabel(mime, name)}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
-          {name}
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate font-mono text-chip text-muted">{name}</span>
+          {revisionLine ? (
+            <span className="truncate font-mono text-chip text-footer-muted">
+              {revisionLine}
+            </span>
+          ) : null}
         </span>
         {sizeLabel ? (
           <span className="shrink-0 font-mono text-chip text-footer-muted">
@@ -348,6 +492,9 @@ export const DocPreview = memo(function DocPreview({
             url={url}
             failed={failed}
             annotate={annotate}
+            versions={versions}
+            shownAt={shownAt}
+            onPick={onPick}
             onClose={close}
           />,
           overlayLayer().host,
