@@ -49,7 +49,7 @@ function session(id: string, extra: Partial<Session> = {}): Session {
 }
 
 function machine(conn: GatewayConn, sessions: Session[] | null, error: string | null = null): FleetMachine {
-  return { conn, sessions, error };
+  return { conn, sessions, error, answered: error === null && sessions !== null };
 }
 
 describe('machineLabel', () => {
@@ -213,7 +213,7 @@ describe('reconcileMachines', () => {
     const next = reconcileMachines([studio, vps], [loaded, machine(tower, [session('b')])]);
     expect(next).toHaveLength(2);
     expect(next[0]).toBe(loaded);
-    expect(next[1]).toEqual({ conn: vps, sessions: null, error: null });
+    expect(next[1]).toEqual({ conn: vps, sessions: null, error: null, answered: false });
   });
 
   it('takes a renamed connection without dropping its rows', () => {
@@ -249,6 +249,30 @@ describe('scope', () => {
     expect(scopedSessions(half, null).map((s) => s.id)).toEqual(['a', 'b']);
     // Named, it is still itself: the scope the reader typed is never second-guessed.
     expect(scopedMachines(half, machineKey(tower))).toEqual([half[1]]);
+  });
+
+  // Regression, user report ("gateways that are not active should not show up in All —
+  // it should only appear once the gateway answers, not appear and then be detached"):
+  // a machine painted from its CACHED list took a section on the first frame and lost
+  // it seconds later when its probe timed out, so every open of the list flashed a
+  // machine that had been asleep for days.
+  it('keeps a machine out of the fleet view until it has answered', () => {
+    const cachedOnly: FleetMachine = { conn: tower, sessions: [session('c')], error: null, answered: false };
+    const half = [machines[0], cachedOnly];
+    expect(scopedMachines(half, null)).toEqual([machines[0]]);
+    expect(scopedSessions(half, null).map((s) => s.id)).toEqual(['a', 'b']);
+    // Named, it is still itself — the reader's own scope is never second-guessed.
+    expect(scopedMachines(half, machineKey(tower))).toEqual([cachedOnly]);
+    // And it walks in the moment it speaks.
+    expect(scopedMachines([machines[0], { ...cachedOnly, answered: true }], null)).toHaveLength(2);
+  });
+
+  it('is empty while the fleet is still being tried, so nothing flashes in', () => {
+    const cold = [
+      { ...machines[0], answered: false },
+      { conn: tower, sessions: null, error: null, answered: false } as FleetMachine,
+    ];
+    expect(scopedMachines(cold, null)).toEqual([]);
   });
 
   it('keeps every machine when nothing answers, so the blackout has somewhere to be said', () => {

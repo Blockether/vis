@@ -20,6 +20,16 @@ export interface FleetMachine {
   sessions: Session[] | null;
   /** Last load failure. Set means offline/unauthorized; the row degrades. */
   error: string | null;
+  /**
+   * TRUE ONLY ONCE THIS GATEWAY HAS SPOKEN TO THIS DEVICE since the screen mounted.
+   *
+   * `sessions` can be non-null without a single byte from the machine — the rows may
+   * be the cached list this device painted last time. `All` is a list of machines
+   * that ARE THERE, so it needs the difference: a cached list is what to paint the
+   * moment the machine answers, never a reason to give it a section first and take
+   * it away when the probe finally fails.
+   */
+  answered: boolean;
 }
 
 /** Identity of a machine in this screen: its transport URL. */
@@ -44,7 +54,7 @@ export function reconcileMachines(
   const byKey = new Map(previous.map((machine) => [machineKey(machine.conn), machine]));
   return conns.map((conn) => {
     const existing = byKey.get(machineKey(conn));
-    if (!existing) return { conn, sessions: null, error: null };
+    if (!existing) return { conn, sessions: null, error: null, answered: false };
     // The connection object itself can change (label, token, alts) without the
     // rows changing; keep the rows, take the new connection.
     return existing.conn === conn ? existing : { ...existing, conn };
@@ -65,12 +75,18 @@ export const SCOPE_ALL = null;
 /**
  * The machines a scope covers.
  *
- * `SCOPE_ALL` IS EVERY MACHINE THAT IS ANSWERING. `All` exists to show the fleet as
+ * `SCOPE_ALL` IS EVERY MACHINE THAT HAS ANSWERED. `All` exists to show the fleet as
  * separate machines — a section, a hue and a rail each — and a machine that is not
  * answering has no rows, no counts and no verbs to put in one; it was painting a
  * named band whose whole content was its own failure, in the middle of a list of
  * working computers. Its tile in the switcher keeps it visible and offers the retry
  * (see `MachineTab`), which is the only thing that machine can still do.
+ *
+ * A MACHINE WALKS IN WHEN IT SPEAKS, NEVER BEFORE. Cached rows made an untried
+ * machine look alive: it took its section on the first frame and lost it a few
+ * seconds later when the probe timed out, so every open of the list flashed a
+ * gateway that had been asleep for days. While anything is still being tried and
+ * nothing has answered yet, this is EMPTY — the screen is loading, not empty.
  *
  * A TOTAL BLACKOUT KEEPS EVERY MACHINE, because a screen with nothing on it cannot
  * say what happened: with nothing answering, the failures ARE the list (see
@@ -81,8 +97,11 @@ export const SCOPE_ALL = null;
  */
 export function scopedMachines(machines: FleetMachine[], scope: string | null): FleetMachine[] {
   if (!scope) {
-    const answering = machines.filter((machine) => !machine.error);
-    return answering.length > 0 ? answering : machines;
+    const answering = machines.filter((machine) => !machine.error && machine.answered);
+    if (answering.length > 0) return answering;
+    // Nothing has spoken yet: waiting is not a blackout, and only a fleet that has
+    // run out of machines to try hands the screen its failures.
+    return machines.some((machine) => !machine.error) ? [] : machines;
   }
   const one = machines.find((machine) => machineKey(machine.conn) === scope);
   return one ? [one] : machines;
@@ -171,7 +190,7 @@ export function searchFanout(
 
 /** True once every machine in scope has answered (or failed) at least once. */
 export function isFleetLoaded(machines: FleetMachine[], scope: string | null): boolean {
-  const inScope = scopedMachines(machines, scope);
+  const inScope = scope ? scopedMachines(machines, scope) : machines;
   return inScope.length > 0 && inScope.every((machine) => machine.sessions !== null || !!machine.error);
 }
 

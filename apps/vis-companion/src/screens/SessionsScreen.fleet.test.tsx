@@ -339,6 +339,39 @@ describe("a machine known to be dark reconnects in the background", () => {
     expect(again.requests.some((request) => request.machine === betaOrigin)).toBe(true);
   });
 
+  // Regression, user report ("gateways that are not active should not show up in All —
+  // it should only appear once the gateway answers, not appear at once and then get
+  // detached"): a machine this device had ANSWERED FOR before painted its cached rows on
+  // the first frame of the next mount, so a laptop that had since gone to sleep took a
+  // named section in the middle of the fleet and lost it when its probe ran out.
+  it("waits for the machine to speak before giving it a section", async () => {
+    const beta: MachineFixture = {
+      label: "beta",
+      sessions: [listSession({ id: "b1", title: "Second", workspace: { root: "/w/two" } })],
+    };
+    const view = renderSessionsScreen({ machines: [fleet()[0], beta] });
+    restore = view.restore;
+    // It answered here, so this device now holds beta's list.
+    await screen.findByText("Second");
+    view.unmount();
+
+    // The relaunch: the same beta, now asleep and never answering.
+    const again = renderSessionsScreen({
+      machines: [fleet()[0], { ...beta, down: true, hangs: true }],
+      at: view.conns,
+    });
+    restore = () => {
+      again.restore();
+      view.restore();
+    };
+    // Cached rows are what to paint WHEN it answers, never a section on their own.
+    expect(screen.queryByLabelText("beta projects")).toBeNull();
+    expect(document.body.textContent).not.toContain("Second");
+    await screen.findByText("First");
+    expect(screen.queryByLabelText("beta projects")).toBeNull();
+    expect(document.body.textContent).not.toContain("Second");
+  });
+
   describe("beside the fleet's own poll", () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());

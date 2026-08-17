@@ -246,6 +246,7 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
   return reconcileMachines(conns, previous).map((machine) => {
     if (machine.error !== null) return machine;
     const outage = fleetOutage.get(machineKey(machine.conn)) ?? null;
+    // Cached rows are what to paint WHEN it answers — never a claim that it has.
     if (machine.sessions !== null) return outage ? { ...machine, error: outage } : machine;
     const cached = clientFor(machine.conn).cachedSessions();
     if (!cached && !outage) return machine;
@@ -564,8 +565,8 @@ export function SessionsScreen({
             (machine) => machineKey(machine.conn) === key,
           );
           const merged = reconcileSessions(held?.sessions ?? null, rows);
-          if (held && held.error === null && merged === held.sessions) return;
-          patchMachine(key, (machine) => ({ ...machine, sessions: merged, error: null }));
+          if (held && held.error === null && held.answered && merged === held.sessions) return;
+          patchMachine(key, (machine) => ({ ...machine, sessions: merged, error: null, answered: true }));
         };
         // Paint the first page the moment it lands instead of waiting for the whole
         // fleet to drain. Only ever called on a cold load (see `listSessions`).
@@ -588,7 +589,7 @@ export function SessionsScreen({
         // fleet — for a machine that has not been on screen since it went dark.
         const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
         if (held?.error !== failure)
-          patchMachine(key, (machine) => ({ ...machine, error: failure }));
+          patchMachine(key, (machine) => ({ ...machine, error: failure, answered: false }));
         return failure;
       }
     },
