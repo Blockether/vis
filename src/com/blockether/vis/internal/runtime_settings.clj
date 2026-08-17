@@ -76,7 +76,14 @@
    SSE keepalive comment. 300s = CODEX PARITY with
    `DEFAULT_STREAM_IDLE_TIMEOUT_MS`. Model-progress silence while keepalives
    continue is different and does not time out by default; see
-   `ASK_CODE_SEMANTIC_TIMEOUT_MS`."
+   `ASK_CODE_SEMANTIC_TIMEOUT_MS`.
+
+   The FIRST byte is bounded tighter than this: svar's idle watchdog caps the
+   pre-first-byte wait at `llm/*stream-first-byte-timeout-ms*` (120s) and only
+   ever tightens, so a stream that answers headers and then writes nothing is
+   named in two minutes and re-issued by `loop/pre-output-stream-retryable?`
+   instead of holding the turn for the full 300s. This 300s governs the gaps
+   AFTER that byte."
   300000)
 
 (def ASK_CODE_SEMANTIC_TIMEOUT_MS
