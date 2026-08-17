@@ -1359,4 +1359,62 @@
 
                          :when (and (:ok? v) (not= intended (:content v)))]
 
-                        [ln (:content v)])))))))
+                        [ln (:content v)]))))))
+  ;; A rebalance is a repair the caller is WAITING for, and parinfer re-reads the text it has
+  ;; already placed: asking it about a whole file is quadratic, and this repo's own 11k-line
+  ;; namespace cost seconds to repair before the foundation started showing a balancer nothing
+  ;; but the edit's own region.
+  (it
+    "asks the pack's repair about the edit's own region, not the whole file"
+    (let
+      [form
+       (fn [i]
+         [(str "(defn f" i " [x]") "  (let [y (inc x)"
+          "        z (when (pos? y) (reduce + (map inc (range y))))]"
+          "    (cond (nil? z) {:a [1 2 3] :b #{:x :y}}"
+          (str "          (odd? z) (into [] (comp (map inc) (filter even?)) (range " i "))")
+          "          :else (str \"z=\" z))))" ""])
+
+       lines
+       (into ["(ns big.core)" ""] (mapcat form (range 1700)))
+
+       source
+       (str (str/join "\n" lines) "\n")
+
+       block
+       ["(defn probe [x]" "  (let [y (inc x)]" "    (+ y 1))"]
+
+       at
+       (quot (count lines) 2)
+
+       shown
+       (atom 0)
+
+       balance-fn
+       (let [pack (clj-balancer)]
+         (fn [s]
+           (swap! shown max (count (str/split-lines s)))
+           (pack s)))
+
+       t0
+       (System/nanoTime)
+
+       verdict
+       (balance/rebalance {:balancer balance-fn
+                           :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                           :source
+                           (str (str/join "\n" (concat (take at lines) block (drop at lines))) "\n")
+                           :original source
+                           :spans [[(inc (long at)) (+ (long at) (count block))]]})
+
+       ms
+       (/ (- (System/nanoTime) t0) 1e6)]
+
+      (expect (<= 11000 (count lines)))
+      (expect (true? (:ok? verdict)))
+      (expect (= [(str "line " (+ (long at) (count block)) " added `)` → `(+ y 1)))`")]
+                 (:notes verdict)))
+      (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))
+      ;; what the window is FOR: what the balancer reads does not grow with the file
+      (expect (< @shown 40) (str "the balancer was shown " @shown " lines of " (count lines)))
+      (expect (< ms 2000) (str "rebalancing " (count lines) " lines took " ms " ms")))))

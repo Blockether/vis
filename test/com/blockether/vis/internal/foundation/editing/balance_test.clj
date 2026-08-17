@@ -3,7 +3,8 @@
    on disk. Every case here is pure: the `balancer` is a stub returning the exact
    candidate, so what is under test is which candidates are ALLOWED to be written —
    not any particular pack's idea of a repair."
-  (:require [com.blockether.vis.internal.foundation.editing.balance :as balance]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.editing.balance :as balance]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- reads?
@@ -409,3 +410,69 @@
                     [[4 5]])]
         (expect (true? (:ok? r)))
         (expect (= "(ns a)\n(defn f\n  \"Doc one.\n   ends there.\"\n  [] 1)\n" (:content r))))))
+
+(defn- forms
+  "`n` numbered top-level forms, three lines each with a blank between them — a file long enough
+   that the piece of it a balancer is shown can be told from all of it."
+  ^String [n]
+  (apply str
+    (for [i (range n)]
+      (str "(defn f" i " [x]\n  (let [y (inc x)]\n    (+ y " i ")))\n\n"))))
+
+(defn- shown
+  "The text `rebalance` SHOWS a balancer for an edit on `spans`, captured from a balancer that
+   answers nothing — the region a repair is allowed to come from, in the balancer's own hands."
+  ^String [^String source spans]
+  (let [seen (atom nil)]
+    (balance/rebalance {:balancer (fn [s]
+                                    (reset! seen s)
+                                    nil)
+                        :parses-clean? (constantly false)
+                        :source source
+                        :spans spans})
+    @seen))
+
+(defdescribe
+  balancer-window-test
+  "How much of the file a balancer is asked about. A repair may only land on the lines the edit
+   wrote, so anything a balancer is told about the rest is work no verdict can use — and a
+   whole-file balancer is quadratic in practice, which is what makes a big file wait."
+  (it "shows the balancer the edited form and one on either side, not the file"
+      (let
+        [source
+         (forms 40)
+
+         seen
+         (shown source [[41 41]])]
+
+        (expect (str/includes? seen "(+ y 10)))"))
+        ;; the form above and the form below: the line a repair may close instead, and the
+        ;; dedent that tells indentation where the edited form ends
+        (expect (str/includes? seen "(+ y 9)))"))
+        (expect (str/includes? seen "(+ y 11)))"))
+        (expect (not (str/includes? seen "(+ y 8)))")))
+        (expect (not (str/includes? seen "(+ y 12)))")))
+        (expect (= 11 (count (str/split-lines seen))))
+        (expect (= 159 (count (str/split-lines source))))))
+  (it "writes the repair back into the file the balancer never saw"
+      (let
+        [healthy
+         (forms 40)
+
+         source
+         (str/replace healthy "(+ y 10)))" "(+ y 10))")
+
+         r
+         (balance/rebalance {:balancer (fn [s]
+                                         (str/replace s "(+ y 10))\n" "(+ y 10)))\n"))
+                             :parses-clean? reads?
+                             :source source
+                             :spans [[43 43]]})]
+
+        (expect (true? (:ok? r)))
+        (expect (= healthy (:content r)))
+        ;; the note counts lines in the FILE, not in the window the balancer answered about
+        (expect (= ["line 43 added `)` → `(+ y 10)))`"] (:notes r)))))
+  (it "shows the whole text when the edit has no form of its own"
+      (let [source "(defn f [x]\n  (let [y 1]\n    (+ y x)\n"]
+        (expect (= source (shown source [[2 2]]))))))

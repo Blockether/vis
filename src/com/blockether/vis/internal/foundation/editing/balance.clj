@@ -1087,6 +1087,102 @@
                  (quote-added? (nth before (dec (long line))) (nth after (dec (long line)))))
         {:ok? true :content candidate :notes [(quote-note line (nth after (dec (long line))))]}))))
 
+(def ^:private window-tries
+  "How many form starts `balancer-window` reads back through before it gives up and hands the
+   balancer the whole text. Every candidate cut is confirmed by scanning what it would remove,
+   so an unbounded search across a file whose lines start at the left margin inside a form
+   costs more than the window saves."
+  32)
+
+(defn- line-offsets
+  "The character index each of `lines` begins at, and last the length of them all — so the text
+   of lines `[i j)` is `(subs s (nth offs i) (nth offs j))`."
+  [lines]
+  (vec (reductions + 0 (map count lines))))
+
+(defn- self-contained?
+  "True when `s` closes everything it opens and closes nothing it did not open — a text that can
+   be cut away from what surrounds it without changing how the rest of the file nests."
+  [^String s]
+  (= [] (open-stack s)))
+
+(defn- balancer-window
+  "The `[from end)` line indices of `source` a balancer has to see to answer for an edit on
+   `spans`: the form the edit sits in, plus one whole form on either side, so the balancer still
+   reads the line above the edit and the dedent below it — the two things indent mode closes a
+   form by. What is cut away is `self-contained?`, so the answer inside the window is the answer
+   the balancer would give for the whole text, and a repair that reaches past the window is one
+   `verdict` refuses anyway for reaching outside the edit.
+
+   Candidates are lines that start at the left margin; each is confirmed by reading the text it
+   would cut away, and the search gives up after `window-tries` of them. nil when the edit has
+   no such region, which leaves the whole text as its own window."
+  [^String source lines offs spans]
+  (when (seq spans)
+    (let
+      [n
+       (count lines)
+
+       from
+       (dec (long (reduce min (map first spans))))
+
+       to
+       (dec (long (reduce max (map second spans))))
+
+       own-form?
+       (fn [i]
+         (let [^String l (nth lines i)]
+           (and (pos? (count l)) (not (space-char? (.charAt l (int 0)))))))
+
+       heads
+       (->> (range (min from (dec n)) -1 -1)
+            (filter own-form?)
+            (take window-tries)
+            (filter #(self-contained? (subs source 0 (long (nth offs %)))))
+            (take 2))
+
+       ends
+       (->> (range (inc to) (inc n))
+            (filter #(or (= % n) (own-form? %)))
+            (take window-tries)
+            (filter #(self-contained? (subs source (long (nth offs %)))))
+            (take 2))
+
+       head
+       (last heads)
+
+       end
+       (last ends)]
+
+      (when (and head end (< (- (long end) (long head)) n)) [head end]))))
+
+(defn- balancer-answer
+  "`source` repaired by `balancer`, which is shown no more of it than an accepted repair could
+   touch. A whole-file balancer is quadratic in practice — parinfer re-reads the text it has
+   already placed — so asking it about a 12k-line file costs seconds, while the edit's own
+   region costs milliseconds whatever the file's size: the difference between a repair the
+   caller waits for and one it never notices. nil when the balancer has no answer or throws —
+   it is a language pack's code, and a rebalance that cannot repair still has to refuse."
+  ^String [balancer ^String source spans]
+  (let
+    [lines
+     (terminated-lines source)
+
+     offs
+     (line-offsets lines)
+
+     answer
+     (fn [^String s]
+       (try (balancer s) (catch Throwable _ nil)))]
+
+    (if-let [[from end] (balancer-window source lines offs spans)]
+      (let
+        [a (long (nth offs from))
+         b (long (nth offs end))]
+
+        (when-let [fixed (answer (subs source a b))]
+          (str (subs source 0 a) fixed (subs source b))))
+      (answer source))))
 (defn rebalance
   "Try to make `source` — the content an edit WOULD have written, which does not
    parse — parse, by repairing its delimiters WITHOUT letting the repair reach past
@@ -1127,7 +1223,7 @@
        (when (seq pairs) (verdict request (reseat pairs source)))
 
        asked
-       (when-not (:ok? seated) (verdict request (try (balancer source) (catch Throwable _ nil))))
+       (when-not (:ok? seated) (verdict request (balancer-answer balancer source spans)))
 
        tailed
        (when-not (or (:ok? seated) (:ok? asked))
