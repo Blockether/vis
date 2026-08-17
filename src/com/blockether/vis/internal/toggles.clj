@@ -596,4 +596,19 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
+    ;; A session routes to ONE model, and a coding plan's model often has no
+    ;; vision. Rather than dropping the pixels and telling the agent to open a
+    ;; screenshot with PIL (which yields size and mode, never meaning), one cheap
+    ;; side-channel ask! on the cheapest sighted model in the SAME fleet turns each
+    ;; image into text. Off means today's behaviour; there is nothing to pay when
+    ;; the fleet has no vision model at all, so this defaults ON.
+    (register-toggle!
+      {:id "vision_fallback_describe"
+       :label "Describe images for blind models"
+       :description "Describe attached images with a vision model when the active model cannot see."
+       :type :boolean
+       :default true
+       :owner :vis
+       :group :provider
+       :persist? true})
     true))

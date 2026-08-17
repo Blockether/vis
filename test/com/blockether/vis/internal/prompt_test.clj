@@ -647,6 +647,80 @@
         (expect (= "system" (:role (first msgs)))))))
 
 (defdescribe
+  attached-images-descriptions-test
+  "When the active model cannot see, a sighted model's report stands in for the
+   pixels. The manifest must carry that report AND label it second-hand: an agent
+   that thinks it saw the image will testify about detail no one described."
+  (let
+    [assemble (fn [descriptions]
+                (:content (last (prompt/assemble-initial-messages
+                                  {:stable-prompt-messages []
+                                   :initial-user-content "what is on /tmp/shot.png?"
+                                   :vision? false
+                                   :user-images [{:path "/tmp/shot.png"
+                                                  :media-type "image/png"
+                                                  :base64 tiny-png-b64
+                                                  :size 5
+                                                  :size-label "5B"}]
+                                   :image-descriptions descriptions}))))]
+    (it "quotes the description, names the model and marks it second-hand"
+        (let [content (assemble {"/tmp/shot.png" {:text "a red 1x1 pixel" :model "pricey-seer"}})]
+          (expect (str/includes? content "/tmp/shot.png"))
+          (expect (str/includes? content "a red 1x1 pixel"))
+          (expect (str/includes? content "pricey-seer"))
+          (expect (str/includes? content "second-hand"))
+          ;; Nothing to open with PIL — the content is already here.
+          (expect (not (str/includes? content "the ONLY way to see them here")))
+          ;; Still no image blocks on a blind wire.
+          (expect (string? content))))
+    (it "keeps the PIL directive when nothing described the image"
+        ;; Toggle off, no sighted model in the fleet, or a refused ask: unchanged.
+        (let [content (assemble nil)]
+          (expect (str/includes? content "NOT attached"))
+          (expect (str/includes? content "PIL"))
+          (expect (not (str/includes? content "second-hand")))))
+    (it "ignores a description that names a different image"
+        (let [content (assemble {"/tmp/other.png" {:text "not this one" :model "seer"}})]
+          (expect (not (str/includes? content "not this one")))
+          (expect (str/includes? content "PIL"))))
+    (it "carries both directives when only some images were described"
+        (let
+          [content (:content (last (prompt/assemble-initial-messages
+                                     {:stable-prompt-messages []
+                                      :initial-user-content "look"
+                                      :vision? false
+                                      :user-images [{:path "/tmp/a.png"
+                                                     :media-type "image/png"
+                                                     :base64 tiny-png-b64
+                                                     :size 5
+                                                     :size-label "5B"}
+                                                    {:path "/tmp/b.png"
+                                                     :media-type "image/png"
+                                                     :base64 tiny-png-b64
+                                                     :size 5
+                                                     :size-label "5B"}]
+                                      :image-descriptions {"/tmp/a.png" {:text "a red pixel"
+                                                                         :model "seer"}}})))]
+          (expect (str/includes? content "a red pixel"))
+          (expect (str/includes? content "NO description"))
+          (expect (str/includes? content "PIL"))))
+    (it "never lets a description displace pixels a SIGHTED model can read"
+        (let
+          [msgs (prompt/assemble-initial-messages
+                  {:stable-prompt-messages []
+                   :initial-user-content "look"
+                   :user-images [{:path "/tmp/shot.png"
+                                  :media-type "image/png"
+                                  :base64 tiny-png-b64
+                                  :size 5
+                                  :size-label "5B"}]
+                   :image-descriptions {"/tmp/shot.png" {:text "a red pixel" :model "seer"}}})
+           blocks (:content (last msgs))]
+
+          ;; The image rides; the stale description is not printed anywhere.
+          (expect (vector? blocks))
+          (expect (not (str/includes? (pr-str blocks) "a red pixel")))))))
+(defdescribe
   resume-message-cache-stability-test
   (it "appends each completed turn as its own stable message"
       (let

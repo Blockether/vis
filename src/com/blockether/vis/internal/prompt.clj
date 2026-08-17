@@ -108,24 +108,53 @@
    text-only model) so the model doesn't hunt for an attachment that isn't
    there.
 
-   Two mutually exclusive directives ride at most one per manifest:
+   `descriptions` is the vision fallback's `{label {:text … :model …}}`: what a
+   SIGHTED model reported about an image this model cannot see. A described row
+   carries that report inline, so a blind target degrades to second-hand text
+   instead of a dead end.
+
+   Directives, at most one of the blind pair:
    - the \"you can SEE these\" / anti-PIL directive ONLY when at least one
      image is actually attached (a vision model — reading it with PIL is
-     wasteful), and
-   - the \"you canNOT see these, DO reach for PIL\" directive when an image
-     was demoted purely because the active model has no vision. There the
-     file is on disk and real; PIL/imaging libs are the model's ONLY way to
-     inspect its content, so we tell it to."
-  [attached skipped]
+     wasteful),
+   - the \"another model looked for you\" directive when the active model is
+     blind and something came back described, and
+   - the \"you canNOT see these, DO reach for PIL\" directive for blind images
+     nothing described. There the file is on disk and real; PIL/imaging libs
+     are the model's ONLY way to inspect its content, so we tell it to."
+  [attached skipped descriptions]
   (when (or (seq attached) (seq skipped))
-    (let [readable-blind (filter :readable-blind? skipped)]
+    (let
+      [described-for
+       (fn [row]
+         (get descriptions (:path row)))
+
+       readable-blind
+       (filter :readable-blind? skipped)
+
+       described
+       (filter described-for readable-blind)
+
+       undescribed
+       (remove described-for readable-blind)
+
+       describers
+       (into (sorted-set) (keep #(not-empty (str (:model (described-for %))))) described)]
+
       (prompt-block
         "attached-images"
         (str
           (when (seq attached)
             "You can SEE these images — they ride this message as image blocks. Look at them\n   directly. Do NOT open them with PIL or other imaging libraries to \"read\" their\n   content — that yields only pixel size/mode, never meaning. Reach for PIL ONLY to\n   TRANSFORM an image (resize/crop/convert), never to inspect one you can already see.\n\n")
-          (when (and (empty? attached) (seq readable-blind))
-            "The active model has NO vision — the image(s) below are NOT attached and you canNOT\n   see them. The files are real and on disk, so to inspect their CONTENT open them with\n   PIL / an imaging library and read what you need (that is the ONLY way to see them here).\n\n")
+          (when (and (empty? attached) (seq described))
+            (str
+              "The active model has NO vision, so the image(s) below are NOT attached. A\n   vision-capable model ("
+              (str/join ", " describers)
+              ") looked at each one and its report is quoted\n   under the row. That report is second-hand: it is what another model saw, not what\n   you saw, so never claim detail it does not mention. Open the file with PIL only for\n   pixel-exact work (measuring, cropping, comparing).\n\n"))
+          (when (and (empty? attached) (seq undescribed))
+            (if (seq described)
+              "A row below with NO description is one nothing has looked at. Those files are real\n   and on disk, so to inspect their CONTENT open them with PIL / an imaging library.\n\n"
+              "The active model has NO vision — the image(s) below are NOT attached and you canNOT\n   see them. The files are real and on disk, so to inspect their CONTENT open them with\n   PIL / an imaging library and read what you need (that is the ONLY way to see them here).\n\n"))
           (str/join "\n"
                     (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
                                            (str "- image "
@@ -138,8 +167,15 @@
                                                 size-label
                                                 ") — attached to this message"))
                                          attached)
-                            (map (fn [{:keys [path reason]}]
-                                   (str "- " path " — NOT attached: " reason))
+                            (map (fn [{:keys [path reason] :as row}]
+                                   (let [{:keys [text model]} (described-for row)]
+                                     (str "- "
+                                          path
+                                          " — NOT attached: "
+                                          reason
+                                          (when text
+                                            (str "\n  " model
+                                                 " looked at it and reported: " text)))))
                                  skipped))))))))
 
 (defn assemble-initial-messages
@@ -149,9 +185,13 @@
    materialized fold checkpoint), so adding a turn appends a message instead of
    rewriting one monolithic conversation recap. `:turn-context` is the current
    append-only turn/utilization assignment block and rides immediately before
-   the current user request."
+   the current user request.
+
+   `:image-descriptions` carries the vision fallback's `{label {:text … :model …}}`
+   for images this turn's target cannot see. Pure input: deciding whether that
+   report is worth paying for belongs to the caller, never to message assembly."
   [{:keys [stable-prompt-messages initial-user-content previous-turn-context turn-context
-           user-images skipped-images vision?]
+           user-images skipped-images vision? image-descriptions]
     :or {vision? true}}]
   (let
     [prior-messages
@@ -184,7 +224,7 @@
      (into (vec skipped-images) (:skipped wired))
 
      images-block
-     (when user-block (attached-images-block attached-images manifest-skipped))
+     (when user-block (attached-images-block attached-images manifest-skipped image-descriptions))
 
      text
      (str/join "\n\n" (keep identity [turn-block user-block images-block]))]

@@ -43,6 +43,7 @@
     [com.blockether.vis.internal.strutil :as strutil :refer [truncate]]
     [com.blockether.vis.internal.titling :as titling]
     [com.blockether.vis.internal.toggles :as toggles]
+    [com.blockether.vis.internal.vision-describe :as vision-describe]
     [com.blockether.vis.internal.workspace :as workspace]
     [taoensso.telemere :as tel])
   (:import [java.util.concurrent ExecutionException ExecutorService Future SynchronousQueue
@@ -3678,6 +3679,43 @@
     (seq dropped)
     (conj (dropped-images-note dropped))))
 
+(defn- iteration-description-messages
+  "What one prior iteration contributes when the target CANNOT see: the images the
+   budget kept, replaced by what a sighted model reported about each, then the usual
+   note for the ones the budget pushed out. Possibly empty; always a VECTOR, so
+   callers splice rather than branch.
+
+   `describe-images` is the injected describer (`vision-describe/describe-images`
+   bound to this session's router) — injected rather than called directly so this
+   stays a pure function of its inputs under test."
+  [describe-images {:keys [images dropped]}]
+  (let
+    [described (when (seq images)
+                 (into []
+                       (keep identity)
+                       (map (fn [image description]
+                              (when description
+                                (assoc description :label (attachment-recovery-label image))))
+                            images
+                            (or (describe-images images) (repeat nil)))))]
+    (cond-> []
+      (seq described)
+      (conj (vision-describe/descriptions-message described))
+
+      (seq dropped)
+      (conj (dropped-images-note dropped)))))
+
+(defn- replay-image-describer
+  "Describer for replayed figures, or nil when the vision fallback is off or nothing
+   in the fleet can see. Resolved per request (a provider switch mid-session takes
+   effect immediately) but it costs only router arithmetic: the calls happen lazily,
+   per image actually in play, and each image is described once per process."
+  [environment context]
+  (let [router (:router environment)]
+    (when (vision-describe/available? router)
+      (fn [images]
+        (vision-describe/describe-images router context images)))))
+
 (defn- conversation-suffix
   "Append-only conversation suffix for the current turn: each prior iteration
    as an `[assistant-replay, <results> user message]` PAIR, in iteration
@@ -3708,88 +3746,101 @@
    Produced IMAGES replay under a per-request budget (`replay-image-plan`):
    images are re-uploaded in full on every request, so an unbounded history
    eventually exceeds the provider's request limit and breaks every later
-   turn. Newest wins; older ones are named instead of sent."
-  [trailer-iters target]
-  (let
-    [iters
-     (vec (or trailer-iters []))
+   turn. Newest wins; older ones are named instead of sent. A target with no
+   vision takes the same plan through `:describe-images` instead: the figures
+   become one sighted model's report, so a blind model still knows what it drew."
+  ;; 2-arity: no side-channel at all — used by the emergency-fold ESTIMATOR, which
+  ;; re-prices the same trailer repeatedly and must never make a network call.
+  ([trailer-iters target] (conversation-suffix trailer-iters target nil))
+  ([trailer-iters target {:keys [describe-images]}]
+   (let
+     [iters
+      (vec (or trailer-iters []))
 
-     compatible
-     (into #{} (map first) (compatible-preserved-thinking-trailer-iters iters target))
+      compatible
+      (into #{} (map first) (compatible-preserved-thinking-trailer-iters iters target))
 
-     ;; Generated figures replay only to a vision-capable target; a
-     ;; text-only model gets the fence's summary/ASCII already carried in
-     ;; the results text, never image blocks it can't consume.
-     vision?
-     (target-supports-vision? target)
+      ;; Generated figures replay only to a vision-capable target; a
+      ;; text-only model gets the fence's summary/ASCII already carried in
+      ;; the results text, never image blocks it can't consume.
+      vision?
+      (target-supports-vision? target)
 
-     ;; ONE newest-first pass over the whole trailer, so the byte budget is
-     ;; decided for the request as a whole rather than per iteration.
-     image-plan
-     (when vision? (replay-image-plan iters))]
+      ;; A blind target still gets the figures — as TEXT. The same newest-first plan
+      ;; decides which ones are in play, then each rides as another model's report
+      ;; instead of pixels this one cannot read.
+      describer
+      (when-not vision? describe-images)
 
-    (vec
-      (mapcat
-        (fn [[pos iter-rec :as entry]]
-          (let
-            [results
-             (iteration-results-message iter-rec)
+      ;; ONE newest-first pass over the whole trailer, so the byte budget is
+      ;; decided for the request as a whole rather than per iteration.
+      image-plan
+      (when (or vision? describer) (replay-image-plan iters))]
 
-             ;; Image artifacts this iteration produced, as their OWN
-             ;; message(s) appended AFTER the results (keeps tool_use/tool_result
-             ;; adjacency intact). Empty for text targets, image-less iters, and
-             ;; iterations the budget pushed out (which contribute a note).
-             img
-             (when vision? (iteration-image-messages (get image-plan pos)))
+     (vec
+       (mapcat
+         (fn [[pos iter-rec :as entry]]
+           (let
+             [results
+              (iteration-results-message iter-rec)
 
-             +img
-             (fn [msgs]
-               (into (vec msgs) img))]
+              ;; Image artifacts this iteration produced, as their OWN
+              ;; message(s) appended AFTER the results (keeps tool_use/tool_result
+              ;; adjacency intact). Empty for text targets, image-less iters, and
+              ;; iterations the budget pushed out (which contribute a note).
+              img
+              (cond vision? (iteration-image-messages (get image-plan pos))
+                    describer (iteration-description-messages describer (get image-plan pos))
+                    :else nil)
 
-            (cond
-              ;; Collapse WINS over provenance: a `fold_session`/`session_drop`
-              ;; that covered this iteration removes its whole assistant +
-              ;; tool_result pair AND its generated image. The figure's vision
-              ;; visibility TRACKS its iteration's textual visibility (one
-              ;; invariant), so a folded step keeps only its one-line gist
-              ;; (plain text) — real compaction, bytes and all. Checked BEFORE
-              ;; the cross-turn seed branch so a folded seed also drops its
-              ;; image; otherwise a prior-turn figure would be byte-immune to
-              ;; compaction and re-billed to the vision model every turn.
-              (:collapsed? iter-rec) (if results [results] [])
-              ;; Cross-turn seed (NOT collapsed): never replay opaque thinking.
-              ;; A terminal incomplete turn has no reliable answer summary, so
-              ;; preserve its settled outputs as ordinary text; removing
-              ;; :tool-calls prevents orphaned tool_result blocks. Successful
-              ;; turns already carry their outcome in the prior-turn recap and
-              ;; continue to emit only any previously-unwired image artifacts.
-              (false? (:preserved-thinking/replay? iter-rec))
-              (if (terminal-incomplete-turn-status? (:cross-turn/turn-status iter-rec))
-                (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
-                  (+img [textual])
-                  (vec img))
-                (vec img))
-              ;; Same provider+model, valid signature → verbatim replay
-              ;; with the full thinking chain.
-              (contains? compatible pos)
-              (+img (let [replay (first (preserved-thinking-replay-messages [entry]))]
-                      (cond-> [replay]
-                        results
-                        (conj results))))
-              ;; Mismatched provider/model or poisoned signature: replay
-              ;; SANS thinking so the tool_use ids stay answerable, then
-              ;; the results.
-              :else (if-let [stripped (strip-assistant-thinking (:assistant-message iter-rec))]
-                      (+img (cond-> [stripped]
-                              results
-                              (conj results)))
-                      ;; No assistant message (errored before one landed) or
-                      ;; nothing but thinking: no tool_use to answer — degrade
-                      ;; the results to plain text.
-                      (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
-                        (+img [textual])
-                        [])))))
-        iters))))
+              +img
+              (fn [msgs]
+                (into (vec msgs) img))]
+
+             (cond
+               ;; Collapse WINS over provenance: a `fold_session`/`session_drop`
+               ;; that covered this iteration removes its whole assistant +
+               ;; tool_result pair AND its generated image. The figure's vision
+               ;; visibility TRACKS its iteration's textual visibility (one
+               ;; invariant), so a folded step keeps only its one-line gist
+               ;; (plain text) — real compaction, bytes and all. Checked BEFORE
+               ;; the cross-turn seed branch so a folded seed also drops its
+               ;; image; otherwise a prior-turn figure would be byte-immune to
+               ;; compaction and re-billed to the vision model every turn.
+               (:collapsed? iter-rec) (if results [results] [])
+               ;; Cross-turn seed (NOT collapsed): never replay opaque thinking.
+               ;; A terminal incomplete turn has no reliable answer summary, so
+               ;; preserve its settled outputs as ordinary text; removing
+               ;; :tool-calls prevents orphaned tool_result blocks. Successful
+               ;; turns already carry their outcome in the prior-turn recap and
+               ;; continue to emit only any previously-unwired image artifacts.
+               (false? (:preserved-thinking/replay? iter-rec))
+               (if (terminal-incomplete-turn-status? (:cross-turn/turn-status iter-rec))
+                 (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
+                   (+img [textual])
+                   (vec img))
+                 (vec img))
+               ;; Same provider+model, valid signature → verbatim replay
+               ;; with the full thinking chain.
+               (contains? compatible pos)
+               (+img (let [replay (first (preserved-thinking-replay-messages [entry]))]
+                       (cond-> [replay]
+                         results
+                         (conj results))))
+               ;; Mismatched provider/model or poisoned signature: replay
+               ;; SANS thinking so the tool_use ids stay answerable, then
+               ;; the results.
+               :else (if-let [stripped (strip-assistant-thinking (:assistant-message iter-rec))]
+                       (+img (cond-> [stripped]
+                               results
+                               (conj results)))
+                       ;; No assistant message (errored before one landed) or
+                       ;; nothing but thinking: no tool_use to answer — degrade
+                       ;; the results to plain text.
+                       (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
+                         (+img [textual])
+                         [])))))
+         iters)))))
 
 (defn- form-wire-chars
   "Approximate the wire SIZE (chars) one form contributes — error / native result
@@ -6608,6 +6659,16 @@
      turn-context
      (ctx-loop/render-block! environment ctx-renderer/render-turn-boundary)
 
+     ;; A blind target does not lose the user's screenshot: the cheapest sighted
+     ;; model in the SAME fleet turns each image into text (once per image — the
+     ;; description is content-keyed), and the report rides the manifest where the
+     ;; image blocks would have been.
+     initial-image-descriptions
+     (when-not initial-target-vision?
+       (vision-describe/describe-attachments (:router environment)
+                                             user-request
+                                             (:attached user-attachments)))
+
      initial-messages
      (prompt/assemble-initial-messages {:stable-prompt-messages stable-prompt-messages
                                         :initial-user-content user-request
@@ -6615,6 +6676,7 @@
                                         :user-images (:attached user-attachments)
                                         :skipped-images (:skipped user-attachments)
                                         :vision? initial-target-vision?
+                                        :image-descriptions initial-image-descriptions
                                         :previous-turn-context
                                         (previous-turn-context environment session-turn-id)})
 
@@ -7075,8 +7137,11 @@
                  _visible-iter-state (stamp-iter-universe! (:ctx-atom environment)
                                                            trailer-iters
                                                            summarized-trailer-iters)
-                 conversation-suffix-msgs (conversation-suffix summarized-trailer-iters
-                                                               replay-target)
+                 conversation-suffix-msgs (conversation-suffix
+                                            summarized-trailer-iters
+                                            replay-target
+                                            {:describe-images
+                                             (replay-image-describer environment user-request)})
                  provider-messages (into (vec messages) conversation-suffix-msgs)
                  effective-messages-atom (atom provider-messages)
                  ;; Per-ITERATION rescue counter: escalating context-overflow folds.

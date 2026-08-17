@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.session-model :as session-model]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.vision-describe :as vision-describe]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
 (defn- captured-svar-ask-code-opts
@@ -1839,6 +1840,141 @@
 
           (expect (= 2 (count suffix)))))))
 
+(defdescribe
+  conversation-suffix-blind-description-test
+  "A target with NO vision used to lose every generated figure outright: the image
+   was skipped and the model was told to open the file with PIL, which answers pixel
+   size and never meaning. With a sighted model anywhere in the fleet, the same
+   newest-first plan now replays each figure as that model's REPORT — text the blind
+   model can actually read — while the pixels themselves stay off its wire."
+  (let
+    [att {:tool-call-id "tc-1"
+          :media-type "image/png"
+          :base64 replay-png-b64
+          :filename "plot.png"
+          :size 67}
+
+     blind-target {:provider :zai-coding-plan :model "glm-5-turbo"}
+     seeing-target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+
+     describer (fn [images]
+                 (mapv (fn [img] {:text (str "a plot of " (:filename img)) :model "seer-1"}) images))
+
+     suffix-for (fn [target opts]
+                  (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target opts))]
+
+    (it "replays the figure as text for a blind target"
+        (let [suffix (suffix-for blind-target {:describe-images describer})
+              note (last suffix)]
+          (expect (= 3 (count suffix)))
+          (expect (= "user" (:role note)))
+          ;; TEXT, not pixels: a blind wire never sees an image block.
+          (expect (string? (:content note)))
+          (expect (str/includes? (:content note) "a plot of plot.png"))
+          (expect (str/includes? (:content note) "plot.png"))
+          (expect (str/includes? (:content note) "seer-1"))
+          (expect (str/includes? (:content note) "second-hand"))
+          (expect (not (str/includes? (pr-str suffix) "image_url")))))
+
+    (it "keeps today's silent behaviour when no describer is injected"
+        ;; The 2-arity is the estimator's and the no-vision-model path: back to the
+        ;; plain [assistant, results] pair.
+        (let [suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] blind-target)]
+          (expect (= 2 (count suffix)))))
+
+    (it "never describes for a target that can SEE"
+        (let [called (atom 0)
+              suffix (suffix-for seeing-target
+                                 {:describe-images (fn [images]
+                                                     (swap! called inc)
+                                                     (describer images))})]
+          (expect (zero? @called))
+          (expect (= 3 (count suffix)))
+          (expect (= ["image_url"] (mapv :type (:content (last suffix)))))))
+
+    (it "degrades to today's behaviour when the describer answers nothing"
+        ;; Toggle off, blind fleet, refused ask, deadline — all arrive here as nil.
+        (let [suffix (suffix-for blind-target {:describe-images (fn [_] nil)})]
+          (expect (= 2 (count suffix)))))
+
+    (it "describes only the images the replay budget kept"
+        (let [seen (atom [])
+              suffix (suffix-for blind-target
+                                 {:describe-images (fn [images]
+                                                     (swap! seen into (map :filename images))
+                                                     (describer images))})]
+          (expect (= ["plot.png"] @seen))
+          (expect (= 3 (count suffix)))))))
+
+(defdescribe
+  conversation-suffix-real-describer-test
+  "The replay seam wired to the REAL side-channel (only the provider call stubbed),
+   so the loop's own plumbing — toggle, capability routing, cache, message shape —
+   is exercised, not a hand-rolled stand-in."
+  (let
+    [att {:tool-call-id "tc-1"
+          :media-type "image/png"
+          :base64 replay-png-b64
+          :filename "plot.png"
+          :size 67}
+
+     seeing-router (svar/make-router [{:id :seeing
+                                       :api-key "k"
+                                       :base-url "http://seeing.invalid"
+                                       :api-style :openai
+                                       :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
+
+    (it "replays a figure a blind model cannot see as that fleet's report"
+        (vision-describe/clear-cache!)
+        (let
+          [suffix
+           (with-redefs-fn {#'svar/ask! (fn [_ _] {:result {:description "a red pixel on white"}})}
+             #(conversation-suffix
+                [(stub-tool-iter {:id 1 :attachments [att]})]
+                {:provider :zai-coding-plan :model "glm-5-turbo"}
+                {:describe-images ((deref #'lp/replay-image-describer)
+                                   {:router seeing-router}
+                                   "why is the plot empty?")}))
+
+           note
+           (last suffix)]
+
+          (expect (= 3 (count suffix)))
+          (expect (string? (:content note)))
+          (expect (str/includes? (:content note) "a red pixel on white"))
+          (expect (str/includes? (:content note) "seer"))
+          (expect (not (str/includes? (pr-str suffix) "image_url")))))))
+(defdescribe
+  replay-image-describer-test
+  "The describer is resolved from the SESSION's own fleet, so a session with nothing
+   that can see never pays for the attempt."
+  (let [describer #(deref #'lp/replay-image-describer)]
+    (it "is nil when no configured model has vision"
+        (let [router (svar/make-router [{:id :blind
+                                         :api-key "k"
+                                         :base-url "http://blind.invalid"
+                                         :api-style :openai
+                                         :models [{:name "cheap-blind" :capabilities #{:chat}}]}])]
+          (expect (nil? ((describer) {:router router} "ctx")))))
+
+    (it "is a fn when the fleet has a seeing model"
+        (let [router (svar/make-router [{:id :seeing
+                                         :api-key "k"
+                                         :base-url "http://seeing.invalid"
+                                         :api-style :openai
+                                         :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
+          (expect (fn? ((describer) {:router router} "ctx")))))
+
+    (it "is nil while the vision_fallback_describe toggle is off"
+        (let [router (svar/make-router [{:id :seeing
+                                         :api-key "k"
+                                         :base-url "http://seeing.invalid"
+                                         :api-style :openai
+                                         :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
+          (toggles/set-value! "vision_fallback_describe" false)
+          (try
+            (expect (nil? ((describer) {:router router} "ctx")))
+            (finally (toggles/reset-to-default! "vision_fallback_describe")))))))
 (defdescribe
   conversation-suffix-image-budget-test
   "An image is never REFERENCED by a later request, it is re-uploaded in full on

@@ -248,3 +248,24 @@
          :when description]
 
         (expect (t/settings-description? description)))))
+
+(defdescribe
+  vision-fallback-toggle-test
+  "`vision_fallback_describe` gates the borrowed-eyes side-channel. It ships ON: a
+   fleet with no vision model pays nothing for it, and a fleet that has one would
+   otherwise throw the image away and tell the model to open it with PIL."
+  (it "is registered as a persisted boolean that defaults on"
+      (let [spec (t/toggle-spec "vision_fallback_describe")]
+        (expect (some? spec))
+        (expect (= :boolean (:type spec)))
+        (expect (true? (:default spec)))
+        (expect (true? (:persist? spec)))
+        (expect (= :vis (:owner spec)))
+        (expect (= :provider (:group spec)))
+        (expect (t/settings-description? (:description spec)))))
+  (it "reads true by default and follows an override"
+      (expect (true? (t/enabled? "vision_fallback_describe")))
+      (t/set-value! "vision_fallback_describe" false)
+      (try (expect (false? (t/enabled? "vision_fallback_describe")))
+           (finally (t/reset-to-default! "vision_fallback_describe")))
+      (expect (true? (t/enabled? "vision_fallback_describe")))))

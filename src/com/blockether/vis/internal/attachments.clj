@@ -992,6 +992,13 @@
                :size size
                :size-label (size-label size)))))))))
 
+(defn image-label
+  "How ONE image attachment is NAMED to the model: its path when it has one, else
+   the filename it was given. The manifest, the skip reason and the vision-fallback
+   description all key off this, so a description and the row it describes cannot
+   drift apart."
+  [{:keys [path filename]}]
+  (or (not-empty (str path)) (not-empty (str filename)) "image"))
 (defn wire-images
   "[[wire-image]] over a whole user message's attachments, keeping the
    `{:attached [...] :skipped [{:path :reason}]}` shape the prompt manifest
@@ -1009,8 +1016,8 @@
   ([images] (wire-images images {}))
   ([images {:keys [vision?] :or {vision? true} :as opts}]
    (reduce
-     (fn [acc {:keys [path filename media-type] :as att}]
-       (let [label (or (not-empty (str path)) (not-empty (str filename)) "image")]
+     (fn [acc {:keys [media-type] :as att}]
+       (let [label (image-label att)]
          (cond
            (hidden-from-model? att) (update acc
                                             :skipped
