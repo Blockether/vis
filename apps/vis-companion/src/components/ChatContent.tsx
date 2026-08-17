@@ -703,9 +703,18 @@ export const Markdown = memo(function Markdown({
             >
               {/* The table sits on the SAME step as the surrounding prose — hardcoding
                   `text-ui` made a tool result's table one step BIGGER than the compact
-                  code blocks (`text-meta`) in the very same card. */}
+                  code blocks (`text-meta`) in the very same card.
+                  A CELL IS NOT JUSTIFIED PROSE. Inline `code` and links carry `break-all`
+                  so the justifier has a stop inside an atom it cannot break — and inside a
+                  table that makes the atom's MIN-CONTENT one character, which is a column
+                  the auto layout is free to starve. Measured at 390px: the file column got
+                  58px of a 366px bubble and painted `manifest.edn` down six lines, while
+                  the scroller around this table had nothing left to scroll. Word-break goes
+                  back to `normal` here — the inherited `overflow-wrap: break-word` still
+                  breaks a token too long for a line of its own — so a column asks for the
+                  width its content needs and a wide table reaches for the scroller. */}
               <table
-                className={`w-full border-collapse ${compact ? "text-meta" : "text-ui"}`}
+                className={`w-full border-collapse ${compact ? "text-meta" : "text-ui"} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
               >
                 {table}
               </table>

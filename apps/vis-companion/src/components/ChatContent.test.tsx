@@ -469,6 +469,40 @@ describe("a vis-doc fence", () => {
   });
 });
 
+// Reported from a phone: a table's first column was one atom wide — `manifest.edn`
+// painted as six stacked fragments and `THIRD_PARTY_MODELS.md` as eight. Inline
+// `code` carries `break-all` so the justifier has a stop inside an atom it cannot
+// break, and in a table that makes the column's MIN-CONTENT one character: the auto
+// layout handed the file column 58px of a 366px bubble.
+describe("a markdown table", () => {
+  const table = [
+    "| Plik | Zmiana |",
+    "| --- | --- |",
+    "| `manifest.edn` | the size gate is gone, only the licence gates a download |",
+    "| `THIRD_PARTY_MODELS.md` | regenerated |",
+  ].join("\n");
+
+  it("lets a file column ask for the width of its name, not of one character", () => {
+    const markup = renderToStaticMarkup(<Markdown>{table}</Markdown>);
+    const cellRules = (
+      /<table class="([^"]*)"/.exec(markup)?.[1] ?? ""
+    ).replace(/&amp;/g, "&");
+    expect(cellRules).toContain("[&_code]:[word-break:normal]");
+    expect(cellRules).toContain("[&_a]:[word-break:normal]");
+    // The other half of the contract: a table too wide for the bubble reaches for
+    // its own scroller instead of shredding a column to fit.
+    expect(markup).toContain("overflow-x-auto");
+    expect(text(markup)).toContain("manifest.edn");
+  });
+
+  it("leaves running prose breaking at every character, where the justifier needs it", () => {
+    const markup = renderToStaticMarkup(
+      <Markdown>{"A path `src/components/ChatContent.tsx` in a paragraph."}</Markdown>,
+    );
+    expect(/<p class="[^"]*text-justify/.test(markup)).toBe(true);
+    expect(/<code class="[^"]*break-all/.test(markup)).toBe(true);
+  });
+});
 // Reported from a phone: a message was sent, the session title updated, and the
 // answer rail under it was a bare "Vis" — no phase, no clock, no trace — for the
 // whole turn. A `running` row the screen had stopped following rendered nothing
