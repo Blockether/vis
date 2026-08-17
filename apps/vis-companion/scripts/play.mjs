@@ -22,8 +22,12 @@ const UPLOAD = 'https://androidpublisher.googleapis.com/upload/androidpublisher/
 
 const base64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
-/** Service-account JWT → OAuth2 access token. Valid an hour; a release never outlives it. */
-export const playToken = async (serviceAccount) => {
+/**
+ * Service-account JWT → OAuth2 access token. Valid an hour; a release never outlives it.
+ * The same key serves a second surface: pass the Reporting scope and the token reads Vitals
+ * (scripts/android-crashes.mjs), which androidpublisher cannot see at all.
+ */
+export const playToken = async (serviceAccount, { scope = SCOPE } = {}) => {
   const sa = typeof serviceAccount === 'string' ? JSON.parse(serviceAccount) : serviceAccount;
   if (sa.type !== 'service_account' || !sa.private_key || !sa.client_email) {
     throw new Error('that JSON is not a Google service-account key (needs type, client_email, private_key)');
@@ -31,7 +35,7 @@ export const playToken = async (serviceAccount) => {
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const claims = base64url(
-    JSON.stringify({ iss: sa.client_email, scope: SCOPE, aud: sa.token_uri ?? 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }),
+    JSON.stringify({ iss: sa.client_email, scope, aud: sa.token_uri ?? 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }),
   );
   const signature = base64url(cryptoSign('RSA-SHA256', Buffer.from(`${header}.${claims}`), createPrivateKey(sa.private_key)));
   const assertion = `${header}.${claims}.${signature}`;
