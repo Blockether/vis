@@ -1921,68 +1921,88 @@
       (expect (target-supports-vision? (target-for false)))
       (expect (not (target-supports-vision? (target-for true)))))))
 
+(defn- with-throwaway-vision-store
+  "Run `f` against a `~/.vis` of this test's own. What the gate learns about image support
+   is PERSISTED, and the machine running the suite has a real memory to keep out of."
+  [f]
+  (let [dir (java.io.File. (System/getProperty "java.io.tmpdir")
+                           (str "vis-vision-gate-" (System/nanoTime)))]
+    (.mkdirs dir)
+    (try (with-redefs [config/config-dir (constantly (.getPath dir))
+                       config/state-path (constantly (str (.getPath dir) "/state.yml"))]
+           (f))
+         (finally (vision-describe/clear-image-blind!)))))
+
 ;; Regression: the wire's own answer died with the request. A gateway that refuses
 ;; image content parts (HTTP 400 `unknown variant image_url, expected text`) was asked
 ;; again on the very next turn, because every later decision re-read the catalog —
 ;; which describes the MODEL and knows nothing about the endpoint in front of it.
 (defdescribe image-blind-learning-reaches-the-gate-test
-  "What a failed request taught outranks every capability table, for the rest of the
-   process."
+  "What a failed request taught outranks every capability table, for this process and
+   for the ones after it."
   (it "stops sending pixels to a provider whose wire refused them"
-      (try
-        (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
-        (vision-describe/remember-image-blind! :opencode-go)
-        (expect (not (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"})))
-        ;; Only that provider: the rest of the fleet keeps its eyes.
-        (expect (target-supports-vision? {:provider :openrouter
-                                          :model "qwen/qwen2.5-vl-72b-instruct"}))
-        (finally (vision-describe/clear-image-blind!))))
+      (with-throwaway-vision-store
+        (fn []
+          (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
+          (vision-describe/remember-image-blind! :opencode-go)
+          (expect (not (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"})))
+          ;; Only that provider: the rest of the fleet keeps its eyes.
+          (expect (target-supports-vision? {:provider :openrouter
+                                            :model "qwen/qwen2.5-vl-72b-instruct"})))))
   (it "learns from the turn's own failure, not only from the describer's"
-      (try
-        (lp/handle-iteration-exception!
-          (ex-info "All providers exhausted"
-                   {:type :svar.llm/all-providers-exhausted
-                    :attempts [{:provider "opencode-go"
-                                :model "mimo-v2.5"
-                                :status 400
-                                :error (str "Error from provider (Console Go): unknown variant "
-                                            "`image_url`, expected `text`")}
-                               {:provider "anthropic"
-                                :model "claude-opus-4-8"
-                                :status 429
-                                :error "rate limited"}]})
-          {:iteration 1 :messages [] :routing {} :reasoning-level nil})
-        (expect (vision-describe/image-blind-provider? :opencode-go))
-        ;; A provider that merely ran out of quota keeps its eyes.
-        (expect (not (vision-describe/image-blind-provider? :anthropic)))
-        (finally (vision-describe/clear-image-blind!))))
+      (with-throwaway-vision-store
+        (fn []
+          (lp/handle-iteration-exception!
+            (ex-info "All providers exhausted"
+                     {:type :svar.llm/all-providers-exhausted
+                      :attempts [{:provider "opencode-go"
+                                  :model "mimo-v2.5"
+                                  :status 400
+                                  :error (str "Error from provider (Console Go): unknown variant "
+                                              "`image_url`, expected `text`")}
+                                 {:provider "anthropic"
+                                  :model "claude-opus-4-8"
+                                  :status 429
+                                  :error "rate limited"}]})
+            {:iteration 1 :messages [] :routing {} :reasoning-level nil})
+          (expect (vision-describe/image-blind-provider? :opencode-go))
+          ;; A provider that merely ran out of quota keeps its eyes.
+          (expect (not (vision-describe/image-blind-provider? :anthropic))))))
   (it "teaches nothing when the turn failed for an ordinary reason"
-      (try
-        (lp/handle-iteration-exception!
-          (ex-info "Exceptional status code: 400"
-                   {:status 400 :provider-id :opencode-go :body "messages: at least one required"})
-          {:iteration 1 :messages [] :routing {} :reasoning-level nil})
-        (expect (not (vision-describe/image-blind-provider? :opencode-go)))
-        (finally (vision-describe/clear-image-blind!))))
+      (with-throwaway-vision-store
+        (fn []
+          (lp/handle-iteration-exception!
+            (ex-info "Exceptional status code: 400"
+                     {:status 400 :provider-id :opencode-go :body "messages: at least one required"})
+            {:iteration 1 :messages [] :routing {} :reasoning-level nil})
+          (expect (not (vision-describe/image-blind-provider? :opencode-go))))))
   ;; The costly over-generalization in the other direction: one small model that
   ;; cannot read pixels used to cost its whole provider every pair of eyes it had,
   ;; because the refusal was charged to the endpoint that carried it.
   (it "keeps the provider's OTHER models when only one refused pixels"
-      (try
-        (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
-        (expect (target-supports-vision? {:provider :opencode-go :model "qwen3.7-plus"}))
-        (lp/handle-iteration-exception!
-          (ex-info "Exceptional status code: 400"
-                   {:status 400
-                    :provider-id :opencode-go
-                    :model "mimo-v2.5"
-                    :body "The model mimo-v2.5 does not support image input"})
-          {:iteration 1 :messages [] :routing {} :reasoning-level nil})
-        (expect (not (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"})))
-        (expect (target-supports-vision? {:provider :opencode-go :model "qwen3.7-plus"}))
-        (expect (not (vision-describe/image-blind-provider? :opencode-go)))
-        (expect (vision-describe/image-blind-model? "mimo-v2.5"))
-        (finally (vision-describe/clear-image-blind!)))))
+      (with-throwaway-vision-store
+        (fn []
+          (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
+          (expect (target-supports-vision? {:provider :opencode-go :model "qwen3.7-plus"}))
+          (lp/handle-iteration-exception!
+            (ex-info "Exceptional status code: 400"
+                     {:status 400
+                      :provider-id :opencode-go
+                      :model "mimo-v2.5"
+                      :body "The model mimo-v2.5 does not support image input"})
+            {:iteration 1 :messages [] :routing {} :reasoning-level nil})
+          (expect (not (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"})))
+          (expect (target-supports-vision? {:provider :opencode-go :model "qwen3.7-plus"}))
+          (expect (not (vision-describe/image-blind-provider? :opencode-go)))
+          (expect (vision-describe/image-blind-model? "mimo-v2.5")))))
+  ;; A restart used to be amnesia: the gate re-read the catalog, sent pixels into the
+  ;; same 400, and the user paid the discovery again on the first image of the session.
+  (it "still knows, in the next process, what this one learned"
+      (with-throwaway-vision-store
+        (fn []
+          (vision-describe/remember-image-blind! :opencode-go)
+          (vision-describe/clear-image-blind!)
+          (expect (not (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"})))))))
 
 (defdescribe
   conversation-suffix-blind-description-test

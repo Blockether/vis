@@ -114,7 +114,13 @@
                                "auth" {"client_id" "vis"
                                        "scope" "openid profile offline_access"
                                        "authorization_timeout_ms" 300000}}}}
-   "titling" {"mode" "llm" "provider" "rbi_genai" "model" "gpt-5.4-mini"}})
+   "titling" {"mode" "llm" "provider" "rbi_genai" "model" "gpt-5.4-mini"}
+   ;; Machine-written, never hand-authored: what the wire itself answered about images,
+   ;; each row stamped so it can expire.
+   "vision_memory"
+   {"blind_providers" {"console-go" {"learned_at" "2026-01-05T09:12:00Z"}}
+    "blind_models" {"small-coder" {"learned_at" "2026-01-05T09:12:00Z" "providers" ["console-go"]}}
+    "working_eye" {"provider" "seeing" "model" "mimo-v2.5" "learned_at" "2026-01-05T09:14:00Z"}}})
 
 (defdescribe
   config-contract-test
@@ -474,8 +480,13 @@
         [config-spec/python-keys config-spec/python-schema (set (keys (get full-config "python")))]
         [config-spec/titling-keys config-spec/titling-schema
          (set (keys (get full-config "titling")))]
-        [config-spec/mcp-server-keys config-spec/mcp-server-schema
-         (into #{} (mapcat keys) servers)]]]
+        [config-spec/mcp-server-keys config-spec/mcp-server-schema (into #{} (mapcat keys) servers)]
+        [config-spec/vision-memory-keys config-spec/vision-memory-schema
+         (set (keys (get full-config "vision_memory")))]
+        [config-spec/vision-fact-keys config-spec/vision-fact-schema
+         (into #{} (mapcat keys) (vals (get-in full-config ["vision_memory" "blind_models"])))]
+        [config-spec/vision-eye-keys config-spec/vision-eye-schema
+         (set (keys (get-in full-config ["vision_memory" "working_eye"])))]]]
 
       (doseq [[declared schema fixture] cases]
         (expect (= declared (set (keys schema))))
@@ -496,6 +507,18 @@
       (expect (not (config-spec/valid? (assoc-in full-config
                                          ["router" "tokens" "pricing"]
                                          {"claude" {:input 1.0}})))))
+  (it "takes the machine's learned vision facts only in the shape it writes"
+      (expect (config-spec/valid? (assoc-in full-config
+                                    ["vision_memory" "blind_providers" "other"]
+                                    {"learned_at" "2026-01-06T00:00:00Z"})))
+      ;; A row with no stamp could never expire, so it is refused at the write boundary.
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["vision_memory" "blind_providers" "other"] {}))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["vision_memory" "working_eye" "prefer"] true))))
+      (expect (not (config-spec/valid? (assoc-in full-config
+                                         ["vision_memory" "blind_models" "small-coder" "providers"]
+                                         "console-go")))))
   (it "explain-problems names each offending top-level key, [] when valid"
       (expect (= []
                  (config-spec/explain-problems {"providers" [{"id" "a" "models" [{"name" "m"}]}]})))

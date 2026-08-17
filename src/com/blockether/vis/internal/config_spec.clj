@@ -346,10 +346,13 @@
     "auth"})
 (def python-keys #{"resource_cache" "source_paths" "interpreter" "runner"})
 (def titling-keys #{"mode" "provider" "model"})
+(def vision-fact-keys #{"learned_at" "providers"})
+(def vision-eye-keys #{"provider" "model" "learned_at"})
+(def vision-memory-keys #{"blind_providers" "blind_models" "working_eye"})
 (def config-keys
   #{"providers" "default_provider" "default_model" "fallback_provider" "fallback_model" "router"
     "system_prompt" "workspace" "jail" "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp"
-    "python" "titling"})
+    "python" "titling" "vision_memory"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -459,6 +462,33 @@
 (def titling-schema {"mode" titling-modes "provider" non-blank-string? "model" non-blank-string?})
 (s/def ::titling #(closed-map? titling-schema %))
 
+;; What the WIRE answered about images ------------------------------------------
+;;
+;; MACHINE-WRITTEN, never hand-authored: `vision-describe` records which endpoint
+;; refused an image content part outright, which model NAME answered that it cannot
+;; read pixels, and which provider/model pair actually DESCRIBED one, so a fresh
+;; process does not re-pay that discovery on the user's first image.
+;;
+;; Every row carries `learned_at`, because none of these facts is permanent: a
+;; provider ships the image variant it was missing, a plan gains a vision tier. The
+;; timestamp is what lets the reader EXPIRE a row and offer that endpoint an image
+;; again, instead of blinding it for good on one refusal.
+
+(def vision-fact-schema {"learned_at" non-blank-string? "providers" string-list?})
+(s/def ::vision-fact #(closed-map? vision-fact-schema #{"learned_at"} %))
+(s/def ::vision-facts
+  #(and (map? %) (every? non-blank-string? (keys %)) (every? (spec-pred ::vision-fact) (vals %))))
+
+(def vision-eye-schema
+  {"provider" non-blank-string? "model" non-blank-string? "learned_at" non-blank-string?})
+(s/def ::vision-eye #(closed-map? vision-eye-schema #{"provider" "learned_at"} %))
+
+(def vision-memory-schema
+  {"blind_providers" (spec-pred ::vision-facts)
+   "blind_models" (spec-pred ::vision-facts)
+   "working_eye" (spec-pred ::vision-eye)})
+(s/def ::vision-memory #(closed-map? vision-memory-schema %))
+
 ;; ── `environment:` — what the workspace's `.env` CANNOT say ───────────────────
 ;;
 ;; The working directory's `.env`/`.env.local` are loaded by default, whole, with
@@ -531,7 +561,8 @@
    "tui_settings" (spec-pred ::tui-settings)
    "mcp" (spec-pred ::mcp)
    "python" (spec-pred ::python)
-   "titling" (spec-pred ::titling)})
+   "titling" (spec-pred ::titling)
+   "vision_memory" (spec-pred ::vision-memory)})
 
 (s/def ::config #(closed-map? config-schema %))
 
@@ -554,7 +585,8 @@
                   "tui_settings" [tui-schema #{} :map]
                   "mcp" [mcp-schema #{} :map]
                   "python" [python-schema #{} :map]
-                  "titling" [titling-schema #{} :map]}
+                  "titling" [titling-schema #{} :map]
+                  "vision_memory" [vision-memory-schema #{} :map]}
    provider-schema {"models" [model-schema #{"name"} :vector]}
    router-schema {"rate_limit" [rate-limit-schema #{} :map]
                   "network" [router-network-schema #{} :map]
@@ -568,7 +600,10 @@
    network-schema {"rules" [network-rule-schema #{"host"} :vector]}
    network-rule-schema {"allow" [network-rule-allow-schema #{"method"} :vector]}
    mcp-schema {"servers" [mcp-server-schema #{} :map-of]}
-   mcp-server-schema {"auth" [mcp-auth-schema #{} :map]}})
+   mcp-server-schema {"auth" [mcp-auth-schema #{} :map]}
+   vision-memory-schema {"blind_providers" [vision-fact-schema #{"learned_at"} :map-of]
+                         "blind_models" [vision-fact-schema #{"learned_at"} :map-of]
+                         "working_eye" [vision-eye-schema #{"provider" "learned_at"} :map]}})
 
 (defn- edit-distance
   "Levenshtein distance — small inputs only (config key names)."

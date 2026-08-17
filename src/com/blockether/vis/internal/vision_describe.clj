@@ -26,11 +26,12 @@
      in the prompt, never as the agent's own sight, so pixel-exact work still goes
      through the imaging path.
 
-   A LEAF: svar + attachments + runtime-settings + toggles, never back on the loop."
+   A LEAF: svar + attachments + config + runtime-settings + toggles, never back on the loop."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.strutil :refer [truncate]]
@@ -38,6 +39,7 @@
             [taoensso.telemere :as tel])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
+           [java.time Instant]
            [java.util Base64]))
 
 (def TOGGLE_ID
@@ -123,70 +125,318 @@
   (toggles/enabled? TOGGLE_ID))
 
 ;; ── Learned wire facts ───────────────────────────────────────────────────────
+;;
+;; A capability table describes a MODEL; only a request settles what the endpoint in
+;; front of it accepts, and that answer is bought with a real call — a refusal, or a
+;; provider that spends its whole TTFT budget before saying no. What the wire answered
+;; is therefore remembered, and remembered ACROSS PROCESSES in `~/.vis/state.yml` under
+;; `vision_memory`: kept per-process, the same discovery was re-paid by every new
+;; session and every restart, on the user's first image of the day.
+;;
+;; Forgetting is asymmetric on purpose. A negative fact (this wire has no image part,
+;; this model cannot read pixels) is what the endpoint said about itself, so it is
+;; trusted until it EXPIRES; the positive one (this pair answered) is only a preference
+;; and is dropped the moment that provider fails at all. Nothing here is permanent —
+;; every row carries when it was learned and dies of old age, because a provider that
+;; ships the image variant it was missing must not stay blind on this machine forever.
+
+(def ^:private MEMORY_KEY
+  "Top-level `state.yml` key holding these registries (`config-spec/vision-memory-schema`)."
+  "vision_memory")
+
+(def ^:private MEMORY_TTL_MS
+  "How long a learned fact is trusted before that endpoint is offered an image again.
+
+   Re-probing costs ONE refused request per expired row; never re-probing means a
+   provider that fixed itself is blind here for good, and no user would ever find out
+   why. A week is short enough that a fix is picked up in days and long enough that the
+   cost is paid once, not once a session."
+  (* 7 24 60 60 1000))
+
+(def ^:private MEMORY_REFRESH_MS
+  "How stale the stored stamp of a WORKING pair may get before proving itself again
+   rewrites it. Without it a fleet whose one good eye keeps answering would still let
+   its row expire, and a session that describes twenty figures would write the store
+   twenty times."
+  (* 24 60 60 1000))
 
 (defonce ^:private image-blind-providers
-  ;; #{provider-id} — providers whose WIRE refused an image content part outright
-  ;; (HTTP 400 `unknown variant image_url, expected text`). Catalog and config both
-  ;; describe the MODEL; only a request settles what the endpoint in front of it
-  ;; accepts, so the answer it gave is remembered for the rest of the process and
-  ;; no later image is offered there again.
-  (atom #{}))
+  ;; {provider-id learned-at-ms} — providers whose WIRE refused an image content part
+  ;; outright (HTTP 400 `unknown variant image_url, expected text`). Catalog and config
+  ;; both describe the MODEL; only a request settles what the endpoint in front of it
+  ;; accepts, so the answer it gave is remembered and no later image is offered there
+  ;; until the row expires.
+  (atom {}))
 
 (defonce ^:private image-blind-models
-  ;; {model-name #{provider-id …}} — models whose provider answered "this model
-  ;; does not support image input" while carrying pixels for its OTHER models.
-  ;; That is a fact about the MODEL, so the NAME is out wherever it is served
-  ;; from; the provider ids are kept only to say where it was learned.
+  ;; {model-name {:providers #{provider-id …} :learned-at ms}} — models whose provider
+  ;; answered "this model does not support image input" while carrying pixels for its
+  ;; OTHER models. That is a fact about the MODEL, so the NAME is out wherever it is
+  ;; served from; the provider ids are kept only to say where it was learned.
   (atom {}))
 
 (defonce ^:private proven-eye
-  ;; {:provider-id :opencode-go :model "mimo-v2.5"} — the pair that last ANSWERED with a
-  ;; description, or nil. Capability metadata only says who COULD look; a 200 says who did.
-  ;; Without this the cheapest sighted candidate is re-offered first on every pass, so a fleet
-  ;; whose cheapest eyes are broken pays their failures again for every new image — measured on a
-  ;; live 7-provider fleet: two Copilot providers, ~20s of TTFT timeout each, in front of the
-  ;; model that actually answered.
+  ;; {:provider-id :opencode-go :model "mimo-v2.5" :learned-at ms} — the pair that last
+  ;; ANSWERED with a description, or nil. Capability metadata only says who COULD look; a
+  ;; 200 says who did. Without this the cheapest sighted candidate is re-offered first on
+  ;; every pass, so a fleet whose cheapest eyes are broken pays their failures again for
+  ;; every new image — measured on a live 7-provider fleet: two Copilot providers, ~20s of
+  ;; TTFT timeout each, in front of the model that actually answered.
   (atom nil))
+
+(defonce ^:private memory-loaded?
+  ;; Whether the store has been read into the registries in THIS process. One read, at
+  ;; the first question anyone asks about eyes — never at namespace load, which would put
+  ;; a file read in front of every `vis-agent` invocation that never sees an image.
+  (atom false))
+
+(defn- now-ms ^long [] (System/currentTimeMillis))
+
+(defn- ->stamp
+  "`ms` as an ISO-8601 instant — the only form a row carries, so `state.yml` stays
+   readable by the person whose machine learned the fact."
+  [ms]
+  (str (Instant/ofEpochMilli (long ms))))
+
+(defn- stamp->ms
+  "Epoch millis for an ISO-8601 stamp, or nil when the row is unreadable. A hand-edited
+   or truncated stamp reads as MISSING, which expires the row rather than trusting it."
+  [s]
+  (when-let
+    [text (some-> s
+                  str
+                  not-empty)]
+    (try (.toEpochMilli (Instant/parse text)) (catch Throwable _ nil))))
+
+(defn- fresh?
+  "Whether a fact stamped `ms` is still inside `MEMORY_TTL_MS`. A missing stamp is stale,
+   and so is one from the future: a clock that disagrees is no reason to blind a provider."
+  [ms]
+  (boolean (and ms (<= 0 (- (now-ms) (long ms)) MEMORY_TTL_MS))))
+
+(defn- id->name
+  "Provider id as the store spells it. Ids travel as KEYWORDS through routing and as
+   strings on disk; the two conversions live here and nowhere else."
+  [id]
+  (if (keyword? id) (name id) (str id)))
+
+(defn- blind-providers->wire
+  [m]
+  (into (sorted-map)
+        (map (fn [[id at]]
+               [(id->name id) {"learned_at" (->stamp at)}]))
+        m))
+
+(defn- wire->blind-providers
+  "Stored provider rows as `{provider-id learned-at-ms}`, expired and malformed rows out."
+  [w]
+  (into {}
+        (keep (fn [[id row]]
+                (let [at (stamp->ms (get row "learned_at"))]
+                  (when (and (not (str/blank? (str id))) (fresh? at)) [(keyword (str id)) at]))))
+        (when (map? w) w)))
+
+(defn- blind-models->wire
+  [m]
+  (into (sorted-map)
+        (map (fn [[model {:keys [providers learned-at]}]]
+               [(str model)
+                (cond-> {"learned_at" (->stamp learned-at)}
+                  (seq providers)
+                  (assoc "providers" (vec (sort (map id->name providers)))))]))
+        m))
+
+(defn- wire->blind-models
+  "Stored model rows as `{model-name {:providers #{…} :learned-at ms}}`, expired rows out."
+  [w]
+  (into {}
+        (keep (fn [[model row]]
+                (let [at (stamp->ms (get row "learned_at"))]
+                  (when (and (not (str/blank? (str model))) (fresh? at))
+                    [(str model)
+                     {:learned-at at :providers (into #{} (map keyword) (get row "providers"))}]))))
+        (when (map? w) w)))
+
+(defn- eye->wire
+  [{:keys [provider-id model learned-at]}]
+  (when (and provider-id learned-at)
+    (cond-> {"provider" (id->name provider-id) "learned_at" (->stamp learned-at)}
+      (not (str/blank? (str model)))
+      (assoc "model" (str model)))))
+
+(defn- wire->eye
+  [w]
+  (when (map? w)
+    (let
+      [provider
+       (get w "provider")
+
+       at
+       (stamp->ms (get w "learned_at"))]
+
+      (when (and (not (str/blank? (str provider))) (fresh? at))
+        {:provider-id (keyword (str provider))
+         :model (some-> (get w "model")
+                        str
+                        not-empty)
+         :learned-at at}))))
+
+(defn- memory->wire
+  "The three registries as the string-keyed `vision_memory` map. An empty registry
+   contributes no key, so a store that learned nothing carries nothing."
+  []
+  (let [eye (eye->wire @proven-eye)]
+    (cond-> {}
+      (seq @image-blind-providers)
+      (assoc "blind_providers" (blind-providers->wire @image-blind-providers))
+
+      (seq @image-blind-models)
+      (assoc "blind_models" (blind-models->wire @image-blind-models))
+
+      (some? eye)
+      (assoc "working_eye" eye))))
+
+(defn- persist-memory!
+  "Write the registries back into `~/.vis/state.yml`, UNIONED with what another Vis
+   process may have learned meanwhile and pruned of everything expired.
+
+   The union is what lets two concurrent sessions add up instead of overwriting each
+   other; the prune is what makes the file SHRINK, since a row that has expired is simply
+   not written back. The remembered EYE is NOT unioned — this process just watched that
+   pair answer or fail, and a drop has to survive the write or the endpoint that broke
+   would be resurrected by its own stale row.
+
+   Best-effort by contract: an unwritable or already-invalid store costs one warning,
+   never the turn that was learning."
+  []
+  (try
+    (let
+      [raw
+       (or (config/load-global-config-raw) {})
+
+       stored
+       (get raw MEMORY_KEY)
+
+       providers
+       (merge (wire->blind-providers (get stored "blind_providers")) @image-blind-providers)
+
+       models
+       (merge-with (fn [a b]
+                     {:learned-at (max (long (:learned-at a)) (long (:learned-at b)))
+                      :providers (into (or (:providers a) #{}) (:providers b))})
+                   (wire->blind-models (get stored "blind_models"))
+                   @image-blind-models)
+
+       eye
+       (eye->wire @proven-eye)
+
+       wire
+       (cond-> {}
+         (seq providers)
+         (assoc "blind_providers" (blind-providers->wire providers))
+
+         (seq models)
+         (assoc "blind_models" (blind-models->wire models))
+
+         (some? eye)
+         (assoc "working_eye" eye))
+
+       next-raw
+       (if (seq wire) (assoc raw MEMORY_KEY wire) (dissoc raw MEMORY_KEY))]
+
+      (when (not= raw next-raw) (config/save-config! next-raw :vision-memory)))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::memory-persist-failed :data {:error (ex-message t)}}
+                "Could not persist what this session learned about image support"))))
+
+(defn- load-memory!
+  "Read `vision_memory` into the registries ONCE per process, keeping only rows that have
+   not expired, and write the survivors straight back so the file converges instead of
+   growing a graveyard.
+
+   Called by every reader and every writer below: the first one through pays for the read,
+   the rest see a set flag. Facts learned in THIS process win over the file — they were
+   observed here, the file was only reported."
+  []
+  (when (compare-and-set! memory-loaded? false true)
+    (try (let [stored (get (or (config/load-global-config-raw) {}) MEMORY_KEY)]
+           (swap! image-blind-providers #(merge (wire->blind-providers (get stored
+                                                                            "blind_providers"))
+                                                %))
+           (swap! image-blind-models #(merge (wire->blind-models (get stored "blind_models")) %))
+           (swap! proven-eye #(or % (wire->eye (get stored "working_eye"))))
+           ;; Whatever the prune dropped is still on disk; writing now is what REMOVES it.
+           (when (not= stored (memory->wire)) (persist-memory!)))
+         (catch Throwable t
+           (tel/log! {:level :warn :id ::memory-load-failed :data {:error (ex-message t)}}
+                     "Could not read what earlier sessions learned about image support")))))
 
 (defn remember-working-eye!
   "Remember the provider/model pair that just described an image. Idempotent.
 
-   The id is kept exactly as svar reported it — provider ids travel as keywords through routing,
-   and a stringified one would silently never match a preference or an exclusion."
+   The id is kept exactly as svar reported it — provider ids travel as keywords through
+   routing, and a stringified one would silently never match a preference or an exclusion.
+
+   Written through to the store, but not once per image: the same pair proving itself
+   again only reaches disk after `MEMORY_REFRESH_MS`."
   [provider-id model]
+  (load-memory!)
   (when-not (str/blank? (str provider-id))
-    (reset! proven-eye {:provider-id provider-id
-                        :model (some-> model
-                                       str
-                                       not-empty)}))
+    (let
+      [now
+       (now-ms)
+
+       eye
+       {:provider-id provider-id
+        :model (some-> model
+                       str
+                       not-empty)
+        :learned-at now}
+
+       [previous _]
+       (reset-vals! proven-eye eye)]
+
+      (when (or (not= (dissoc previous :learned-at) (dissoc eye :learned-at))
+                (nil? (:learned-at previous))
+                (< (long MEMORY_REFRESH_MS) (- now (long (:learned-at previous)))))
+        (persist-memory!))))
   nil)
 
 (defn forget-working-eye!
   "Drop the remembered eye when it is the one that just failed.
 
-   Called for EVERY failure, not only a permanent refusal: an expired credential is no fact about
-   the model, but it does mean this provider is not the one to try FIRST any more. Whoever answers
-   the next image is remembered in its place."
+   Called for EVERY failure, not only a permanent refusal: an expired credential is no fact
+   about the model, but it does mean this provider is not the one to try FIRST any more.
+   Whoever answers the next image is remembered in its place — and the drop is written
+   through, so a restart cannot resurrect the endpoint that just broke."
   [{:keys [provider-id model]}]
-  (swap! proven-eye (fn [eye]
-                      (when-not (or (and provider-id (= provider-id (:provider-id eye)))
-                                    (and model (= model (:model eye))))
-                        eye)))
+  (load-memory!)
+  (let
+    [[previous current] (swap-vals! proven-eye
+                                    (fn [eye]
+                                      (when-not (or (and provider-id
+                                                         (= provider-id (:provider-id eye)))
+                                                    (and model (= model (:model eye))))
+                                        eye)))]
+    (when (not= previous current) (persist-memory!)))
   nil)
 
 (defn working-eye
-  "The provider/model pair that last described an image in this process, or nil."
+  "The provider/model pair that last described an image, with the stamp of when it
+   proved it — from this process or from the store."
   []
+  (load-memory!)
   @proven-eye)
 
 (defn- describe-routing
-  "`DESCRIBE_ROUTING` narrowed by everything this session already learned: providers whose wire
-   refused pixels and model NAMES that cannot read them are excluded, and the provider that last
-   ANSWERED is preferred.
+  "`DESCRIBE_ROUTING` narrowed by everything already learned: providers whose wire
+   refused pixels and model NAMES that cannot read them are excluded, and the provider
+   that last ANSWERED is preferred.
 
-   The preference names a PROVIDER, never a forced model — svar still optimizes for cost and speed
-   within it, the capability filter still holds, and the preference disappears the moment that
-   provider is excluded, so nothing learned here can pin a pass to a broken endpoint."
+   The preference names a PROVIDER, never a forced model — svar still optimizes for cost
+   and speed within it, the capability filter still holds, and the preference disappears
+   the moment that provider is excluded, so nothing learned here can pin a pass to a
+   broken endpoint."
   [excluded excluded-models]
   (let [preferred (:provider-id @proven-eye)]
     (cond-> DESCRIBE_ROUTING
@@ -200,36 +450,56 @@
       (assoc :prefer-providers [preferred]))))
 
 (defn remember-image-blind!
-  "Record `provider-id` as unable to carry an image content part at all. Idempotent."
+  "Record `provider-id` as unable to carry an image content part at all. Idempotent, and
+   written through to the store — the next session starts already knowing."
   [provider-id]
+  (load-memory!)
   (when provider-id
     (when-not (contains? @image-blind-providers provider-id)
       (tel/log! {:level :warn :id ::provider-image-blind :data {:provider provider-id}}
                 (str "Provider " provider-id
                      " rejected an image content part; "
-                     "sending it text only for the rest of this process")))
+                     "sending it text only until that fact expires")))
     (forget-working-eye! {:provider-id provider-id})
-    (swap! image-blind-providers conj provider-id))
+    (let
+      [[previous _] (swap-vals! image-blind-providers
+                                (fn [m]
+                                  (if (contains? m provider-id) m (assoc m provider-id (now-ms)))))]
+      ;; Only the FIRST refusal is news; re-stamping on every later one would keep a
+      ;; provider blind for as long as anything kept failing there.
+      (when-not (contains? previous provider-id) (persist-memory!))))
   provider-id)
 
 (defn remember-image-blind-model!
-  "Record `model` as unable to READ pixels, as learned on `provider-id`. Idempotent.
+  "Record `model` as unable to READ pixels, as learned on `provider-id`. Idempotent, and
+   written through to the store.
 
-   Deliberately NOT a provider verdict: the same endpoint keeps serving whatever
-   else it has eyes for, and the name stays out everywhere it is offered."
+   Deliberately NOT a provider verdict: the same endpoint keeps serving whatever else it
+   has eyes for, and the name stays out everywhere it is offered."
   [model provider-id]
+  (load-memory!)
   (when-let
-    [name (some-> model
-                  str
-                  not-empty)]
-    (when-not (contains? @image-blind-models name)
-      (tel/log! {:level :warn :id ::model-image-blind :data {:model name :provider provider-id}}
-                (str "Model " name
-                     " rejected image input; "
-                     "no image is offered to that model for the rest of this process")))
-    (forget-working-eye! {:model name})
-    (swap! image-blind-models update name (fnil conj #{}) provider-id)
-    name))
+    [model-name (some-> model
+                        str
+                        not-empty)]
+    (when-not (contains? @image-blind-models model-name)
+      (tel/log!
+        {:level :warn :id ::model-image-blind :data {:model model-name :provider provider-id}}
+        (str "Model " model-name
+             " rejected image input; "
+             "no image is offered to that model until that fact expires")))
+    (forget-working-eye! {:model model-name})
+    (let
+      [[previous current] (swap-vals! image-blind-models
+                                      (fn [m]
+                                        (update m
+                                                model-name
+                                                (fn [row]
+                                                  {:learned-at (or (:learned-at row) (now-ms))
+                                                   :providers (conj (or (:providers row) #{})
+                                                                    provider-id)}))))]
+      (when (not= previous current) (persist-memory!)))
+    model-name))
 
 (defn remember-image-refusal!
   "Learn ONE `provider-error/image-rejections` row at the scope it actually proves:
@@ -248,27 +518,39 @@
 (defn image-blind-provider?
   "True when `provider-id` already proved its wire cannot carry an image."
   [provider-id]
+  (load-memory!)
   (contains? @image-blind-providers provider-id))
 
 (defn image-blind-model?
   "True when `model` already proved it cannot read pixels, on any provider."
   [model]
+  (load-memory!)
   (contains? @image-blind-models
              (some-> model
                      str
                      not-empty)))
 
+(defn blind-provider-ids
+  "Provider ids no request may carry an image to."
+  []
+  (load-memory!)
+  (set (keys @image-blind-providers)))
+
 (defn blind-model-names
   "Model NAMES no request may show an image to."
   []
+  (load-memory!)
   (set (keys @image-blind-models)))
 
 (defn clear-image-blind!
-  "Forget everything this session learned about which eyes work. Tests only."
+  "Forget everything learned about which eyes work, and re-arm the store read. Tests only:
+   the file itself is left alone, so a test that redirects `config/state-path` never
+   touches the machine's real memory."
   []
-  (reset! image-blind-providers #{})
+  (reset! image-blind-providers {})
   (reset! image-blind-models {})
-  (reset! proven-eye nil))
+  (reset! proven-eye nil)
+  (reset! memory-loaded? false))
 
 (defn sighted-model
   "Descriptor of the model this fleet would use to LOOK at an image, or nil when no
@@ -286,7 +568,7 @@
   (when (map? router)
     (let
       [blind
-       @image-blind-providers
+       (blind-provider-ids)
 
        blind-models
        (blind-model-names)]
@@ -549,7 +831,7 @@
                      ;; Start from what earlier passes already learned: a wire that has no
                      ;; image part never grows one mid-session, and a model that cannot read
                      ;; pixels does not learn to.
-                     excluded @image-blind-providers
+                     excluded (blind-provider-ids)
                      excluded-models (blind-model-names)
                      round 0
                      done {}]

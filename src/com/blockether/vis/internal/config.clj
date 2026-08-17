@@ -750,8 +750,11 @@
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
 (def ^:private verbatim-key-subtrees
-  "String-keyed subtrees owned by users or wire protocols. Their keys stay exact."
-  #{"environment" "env" "headers" "llm_headers" "extra_body" "toggles" "pricing" "context_limits"})
+  "String-keyed subtrees owned by users, wire protocols or the machine's own learned
+   facts. Their keys stay exact — a provider id or a model name is data, never a
+   contract key to be adapted."
+  #{"environment" "env" "headers" "llm_headers" "extra_body" "toggles" "pricing" "context_limits"
+    "vision_memory"})
 
 (def ^:private keyword-valued-keys
   "Known scalar fields whose internal runtime representation is a keyword."

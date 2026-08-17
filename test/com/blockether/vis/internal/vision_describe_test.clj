@@ -2,16 +2,50 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.vision-describe :as vd]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
-;; The learned image-blind registry is a PROCESS fact — a wire that refuses image
-;; parts does not grow one mid-session — and the suite may run in any order, so
-;; every test starts from a clean slate and leaves one even when it fails.
-(set-ns-context! [(around-each [f] (vd/clear-image-blind!) (f) (vd/clear-image-blind!))])
+(defn- throwaway-store
+  "A `~/.vis` of this test's own, so the suite reads and grows a THROWAWAY memory. What the
+   registries learn is persisted, and the machine running the suite has a real one."
+  []
+  (let
+    [dir (java.io.File. (System/getProperty "java.io.tmpdir")
+                        (str "vis-vision-memory-" (System/nanoTime)))]
+    (.mkdirs dir)
+    (.getPath dir)))
+
+;; The learned facts outlive the process on purpose, so every test starts from an empty
+;; store AND empty registries, and leaves both behind even when it fails.
+(set-ns-context! [(around-each [f]
+                               (let [dir (throwaway-store)]
+                                 (with-redefs
+                                   [config/config-dir (constantly dir)
+                                    config/state-path (constantly (str dir "/state.yml"))]
+
+                                   (vd/clear-image-blind!)
+                                   (f)
+                                   (vd/clear-image-blind!))))])
+
+(defn- stored-memory
+  "The `vision_memory` block as it currently sits in the throwaway store, or nil."
+  []
+  (get (config/load-global-config-raw) "vision_memory"))
+
+(defn- write-store!
+  "Put `memory` into the store behind the registries' back — the only way to act like the
+   process that ran here yesterday, or the session running beside this one."
+  [memory]
+  (config/save-config! (assoc (or (config/load-global-config-raw) {}) "vision_memory" memory)))
+
+(defn- days-ago
+  "ISO stamp `n` days in the past, for a row that must (or must not) have expired."
+  [n]
+  (str (java.time.Instant/ofEpochMilli (- (System/currentTimeMillis) (* (long n) 24 60 60 1000)))))
 
 ;; 1x1 red PNG — REAL pixels. Every image this side-channel sends crosses the same
 ;; send-time gate as a wire image, so a placeholder payload is (correctly) refused.
@@ -698,7 +732,8 @@
                     #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "two")]))]
 
         (expect (nil? (:prefer-providers (:routing (:opts (first (:calls first-pass)))))))
-        (expect (= {:provider-id :seeing-backup :model "backup-seer"} (vd/working-eye)))
+        (expect (= {:provider-id :seeing-backup :model "backup-seer"}
+                   (select-keys (vd/working-eye) [:provider-id :model])))
         (expect (= [:seeing-backup]
                    (:prefer-providers (:routing (:opts (first (:calls second-pass)))))))))
   ;; A preference, never a pin: the capability filter and the cost optimization still decide
@@ -735,7 +770,8 @@
   (it "drops the eye when the model it names is the one that refused pixels"
       (with-asks (answered-by :seeing "cheap-seer")
                  #(vd/describe-images (two-eyes-fleet) "ctx" [(distinct-image "model-eye")]))
-      (expect (= {:provider-id :seeing :model "cheap-seer"} (vd/working-eye)))
+      (expect (= {:provider-id :seeing :model "cheap-seer"}
+                 (select-keys (vd/working-eye) [:provider-id :model])))
       (vd/remember-image-blind-model! "cheap-seer" :seeing)
       (expect (nil? (vd/working-eye))))
   (it "never prefers a provider it has already excluded"
@@ -759,3 +795,70 @@
         (expect (= "cheap-seer" (:name (vd/sighted-model fleet))))
         (vd/remember-working-eye! :seeing-backup "backup-seer")
         (expect (= "backup-seer" (:name (vd/sighted-model fleet)))))))
+;; Regression, T7: everything learned about which eyes work died with the process. The
+;; registries were `defonce` atoms and nothing else, so a fleet whose cheapest providers
+;; refuse pixels re-paid the same discovery — two ~20s TTFT timeouts, measured on a live
+;; 7-provider fleet — on the first image of every new session and after every restart.
+(defdescribe
+  vision-memory-outlives-the-process-test
+  "What the wire answered is remembered in `~/.vis/state.yml`, and stops being remembered
+   once it stops being true."
+  (it "reads back a wire refusal an earlier process learned"
+      (vd/remember-image-blind! :seeing-broken)
+      (expect (= #{"seeing-broken"} (set (keys (get (stored-memory) "blind_providers")))))
+      ;; A fresh process: nothing in memory, everything still on disk.
+      (vd/clear-image-blind!)
+      (expect (vd/image-blind-provider? :seeing-broken))
+      (expect (not (vd/image-blind-provider? :seeing))))
+  (it "reads back a blind model NAME, and where it was learned"
+      (vd/remember-image-blind-model! "cheap-seer" :seeing)
+      (vd/clear-image-blind!)
+      (expect (vd/image-blind-model? "cheap-seer"))
+      (expect (= ["seeing"] (get-in (stored-memory) ["blind_models" "cheap-seer" "providers"]))))
+  (it "reads back the pair that ANSWERED, so a new session starts where the last one ended"
+      (vd/remember-working-eye! :seeing-backup "backup-seer")
+      (vd/clear-image-blind!)
+      (expect (= {:provider-id :seeing-backup :model "backup-seer"}
+                 (select-keys (vd/working-eye) [:provider-id :model]))))
+  (it "writes nothing at all when nothing was learned"
+      (expect (nil? (vd/working-eye)))
+      (expect (nil? (stored-memory))))
+  ;; The other half of remembering: a fact that is no longer true has to LEAVE the store,
+  ;; or one bad afternoon blinds a provider on this machine for good.
+  (it "expires a stale refusal and drops it from the store"
+      (write-store! {"blind_providers" {"seeing-broken" {"learned_at" (days-ago 30)}}})
+      (expect (not (vd/image-blind-provider? :seeing-broken)))
+      (expect (nil? (stored-memory))))
+  (it "keeps a refusal that is still inside its window"
+      (write-store! {"blind_providers" {"seeing-broken" {"learned_at" (days-ago 1)}}})
+      (expect (vd/image-blind-provider? :seeing-broken)))
+  (it "drops a row whose stamp cannot be read at all"
+      (write-store! {"blind_models" {"cheap-seer" {"learned_at" "not-a-time"}}})
+      (expect (not (vd/image-blind-model? "cheap-seer")))
+      (expect (nil? (stored-memory))))
+  (it "erases the working eye the moment that provider fails"
+      (vd/remember-working-eye! :seeing-broken "cheap-seer")
+      (expect (some? (get (stored-memory) "working_eye")))
+      (vd/forget-working-eye! {:provider-id :seeing-broken})
+      (expect (nil? (get (stored-memory) "working_eye")))
+      ;; And the next process does not resurrect it from its own stale row.
+      (vd/clear-image-blind!)
+      (expect (nil? (vd/working-eye))))
+  ;; Two Vis sessions share one store. A blind write would make the last one to finish
+  ;; erase what the other just paid a refused request to learn.
+  (it "adds up with what a concurrent session learned instead of overwriting it"
+      (vd/remember-image-blind! :seeing-broken)
+      (write-store! (assoc-in (stored-memory)
+                      ["blind_providers" "learned-elsewhere"]
+                      {"learned_at" (days-ago 0)}))
+      (vd/remember-image-blind! :seeing-also-broken)
+      (expect (= #{"seeing-broken" "seeing-also-broken" "learned-elsewhere"}
+                 (set (keys (get (stored-memory) "blind_providers"))))))
+  ;; The store is a convenience, never a dependency: a locked-down or corrupt `~/.vis`
+  ;; must cost the memory, not the turn that was learning.
+  (it "keeps working when the store cannot be read or written"
+      (with-redefs
+        [config/state-path (fn []
+                             (throw (java.io.IOException. "no store")))]
+        (vd/remember-image-blind! :seeing-broken)
+        (expect (vd/image-blind-provider? :seeing-broken)))))
