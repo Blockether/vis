@@ -3029,10 +3029,6 @@ def __vis_restore_defs__(src):
 def __vis_run_async__(src):
     g = globals()
     __vis_pin_runtime__(g)
-    g["__vis_printed_results__"] = []  # per-block reset (real python list, appendable)
-    g["__vis_only_results__"] = (
-        True  # cleared if the block prints anything that isn't a tool result
-    )
     g["__vis_err_pos__"] = (
         None  # deepest <prog> failing position, computed by __vis_err_pos_now__
     )
@@ -3190,21 +3186,14 @@ def __vis_strip_echo_diffs__(__x__):
     return __x__
 
 
-# ── print-capture: a printed TOOL RESULT (a dict carrying 'op', stamped by the
-# host) is recorded on the side so the host can render ONE op-card per printed
-# result. The model's stdout/context is UNCHANGED — we delegate to the real print;
-# capture is a pure side-effect. The list is reset per block from Clojure.
-__vis_printed_results__ = []
+# ── print delegates to the REAL print: a printed tool-result proxy is pyified into
+# a __VisResult__ so it prints as a clean real dict, and a deferred call handed to
+# print WITHOUT `await` is settled first. Nothing is captured on the side — the
+# block's stdout IS its one result.
 __vis_real_print__ = print
 
 
 def __vis_print__(*__vis_a__, **__vis_kw__):
-    # Pyify args FIRST: a printed tool-result proxy becomes a __VisResult__ (so
-    # `print(await rg(...))` is captured even without an intervening assignment) and
-    # prints as a clean real dict. Capture by TYPE (isinstance), NOT the 'op' key —
-    # a model-built dict with 'op' is a plain dict and is correctly NOT captured.
-    # Track whether the block printed ONLY tool results: cards may replace the raw
-    # stdout for display ONLY then; otherwise show the full stdout (no text lost).
     # Auto-SETTLE a deferred call/gather handed to print WITHOUT `await` (e.g.
     # `print(rg(...))`): run it and show the real result instead of the loud
     # '<unawaited async tool call …>' repr. Only OUR OWN deferred thunks are
@@ -3216,21 +3205,8 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
         else __vis_pyify__(__a__)
         for __a__ in __vis_a__
     )
-    if __vis_kw__.get("file") is None:
-        for __vis_x__ in __vis_a__:
-            # A LIST-shaped result (struct_patch: one row per file)
-            # is a tool result too — `__VisResultList__` is its unforgeable marker.
-            # Missing it made a printed edit BOTH card-less and a card-killer: the
-            # block no longer counted as results-ONLY, so every OTHER printed card in it
-            # was dropped back to raw stdout.
-            if isinstance(__vis_x__, (__VisResult__, __VisResultList__)):
-                __vis_printed_results__.append(__vis_x__)
-            else:
-                globals()["__vis_only_results__"] = False
-        if not __vis_a__:  # a bare print() (blank line) is not a result
-            globals()["__vis_only_results__"] = False
-    # DISPLAY strips echo-diffs from a printed edit result (stdout mirrors the model
-    # wire); capture above kept the un-stripped originals for the host op-card.
+    # DISPLAY strips echo-diffs from a printed edit result: the model supplied the
+    # exact replacement, so the echoed diff is bloat in the stdout it reads back.
     return __vis_real_print__(
         *tuple(__vis_strip_echo_diffs__(__a__) for __a__ in __vis_a__), **__vis_kw__
     )

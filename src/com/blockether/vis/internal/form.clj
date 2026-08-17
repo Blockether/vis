@@ -25,8 +25,8 @@
    overrides). Add a new verbatim display field HERE; `->display`/`<-wire` then
    flow it across every boundary without runtime key rewriting.
 
-   Grouped: the source the model wrote, the result surfaces, the printed-result
-   op, the per-form display projections, the tool-call linkage, and the
+   Grouped: the source the model wrote, the result surfaces, the card op, the
+   per-form display projections, the tool-call linkage, and the
    repair/timeout flags channels surface."
   [;; source
    [:code "code"] [:display-code "display_code"] [:display-language "display_language"]
@@ -36,12 +36,10 @@
    ;; projection reproduces) and the op-card HEADLINE (a tool-authored summary,
    ;; never a first-line body slice)
    [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
-   ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
-   [:cards "cards"]
-   ;; A printed result's OWN op ("grep", "attach") — the only identity a card has.
-   ;; It is DATA the value carried out of the sandbox, never a symbol looked up in a
-   ;; registry, so a card cannot drift from what actually ran. Absent on the block
-   ;; itself: a form is always the model's python, so its card carries no op.
+   ;; A form's OWN op ("grep", "attach") — the only identity a card has. It is DATA
+   ;; the executed form carried, never a symbol looked up in a registry, so a card
+   ;; cannot drift from what actually ran. Absent on a python block: a form is
+   ;; always the model's python, so its card carries no op.
    [:op "op"]
    ;; display projections
    [:render-segments "render_segments"] [:result-kind "result_kind"]
@@ -56,15 +54,13 @@
 (defn result-card
   "Canonical result CARD descriptor — the ONE place the card / collapse decision is
    made, so the TUI and web AGREE on summary/collapsible instead of each
-   re-deriving it from the raw form. Given an executed form map (or one of the
-   canonical MINI-FORMS a python block carries in `:cards`, one per printed
-   result), returns:
+   re-deriving it from the raw form. Given an executed form map, returns:
 
-     {:op           `grep`             — the printed value's OWN op, verbatim
-                                          data it carried out of the sandbox, nil
-                                          for the block's own output. A channel
-                                          titles the card from this or from
-                                          nothing; no display NAME is minted here
+     {:op           `grep`             — the form's OWN op, verbatim data it
+                                          carried, nil for a python block's own
+                                          output. A channel titles the card from
+                                          this or from nothing; no display NAME is
+                                          minted here
       :summary      12 results          — the HEADLINE (`:result-summary`), nil
                                           when the value carried no tally
       :body         …markdown…          — the detail body (`:result-render`), nil
@@ -89,21 +85,6 @@
              not-empty)]
 
     (when (or summary body) {:op op :summary summary :body body :collapsible? (boolean body)})))
-
-(defn result-cards
-  "The card descriptor(s) a form renders — the ONE place a channel asks \"what
-   cards does this form show?\" so the TUI and web never re-derive it differently.
-
-   A python block that print()ed several results carries a `:cards` vector of
-   canonical mini-forms; each becomes its OWN card via `result-card`. Any other
-   form yields its single `result-card` (or none). Always a vector — channels just
-   iterate. Empty when the form printed nothing and returned nothing."
-  [form]
-  (if-let [cards (seq (:cards form))]
-    (into [] (keep result-card) cards)
-    (if-let [c (result-card form)]
-      [c]
-      [])))
 
 (def MAX_FORM_WIRE_CHARS
   "Per-block printed-output ceiling. A block's stdout is head-clipped to this
@@ -185,23 +166,18 @@
    so the rendered string never has to be persisted alongside the data it is a
    projection of.
 
-   Printed cards replace raw stdout only when at least one of them carries a
-   body: summary-only cards would otherwise suppress the sole non-empty result
-   surface, so stdout stays the fallback.
-
    TOTAL where `result-display` is strict: the live loop renders the result as it
    executes (and a value that cannot cross to Python still fails THERE, loudly),
    but a READER is deriving the body of a row that was written long ago. A
    forensic report or a reopened session must not die because one archived
    result no longer renders — no body beats a throw."
   [form]
-  (when-not (and (seq (:cards form)) (some :result-render (:cards form)))
-    (try (:body (result-display form)) (catch Throwable _ nil))))
+  (try (:body (result-display form)) (catch Throwable _ nil)))
 
 (defn with-display
   "Attach the display projections a channel paints but the store does NOT keep:
    the cached ruff rendering of the form's Python source, and the rendered
-   `:result-render` detail body. Nested result cards are normalized recursively.
+   `:result-render` detail body.
 
    An AUTHORED value is never overwritten: a form that already carries the
    source a channel must paint — paired with its `:display-language` — keeps it
@@ -216,10 +192,7 @@
     (as-> f (let [body (result-render f)]
               (cond-> f
                 body
-                (assoc :result-render body))))
-
-    (seq (:cards form))
-    (update :cards #(mapv with-display %))))
+                (assoc :result-render body))))))
 
 (defn ->display
   "Project the canonical display fields off a source map (loop chunk/block, a
@@ -241,9 +214,6 @@
   [event]
   (reduce (fn [acc [k wire-k]]
             (let [v (get event wire-k)]
-              (cond (nil? v) acc
-                    ;; `:cards` is a vector of canonical MINI-FORMS.
-                    (= k :cards) (assoc acc k (mapv <-wire v))
-                    :else (assoc acc k v))))
+              (if (nil? v) acc (assoc acc k v))))
           {}
           display-fields))

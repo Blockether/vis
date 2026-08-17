@@ -129,8 +129,8 @@
 
    The display surface is projected through `vis/form->display` — the ONE
    canonical display-key projection (`internal/form.clj`) the live wire and the
-   gateway also use — so a NEW display field (print-many `:cards`, the badge
-   colour, …) flows onto restored bubbles automatically instead of being
+   gateway also use — so a NEW display field (the card op, the badge colour,
+   …) flows onto restored bubbles automatically instead of being
    silently forgotten by a hand-listed map. On top of it we layer only the
    surfaces that AREN'T verbatim display keys: the bounded `:stdout`/`:error`,
    the derived `:duration-ms`/`:channel`, the computed op projections
@@ -211,9 +211,9 @@
           (vis/parse-block-display src)]
 
          ;; Project the persisted envelope's whole display-key set via
-         ;; `vis/form->display`: the pre-rendered result card and a print-many
-         ;; block's per-result cards. A hand-listed copy silently dropped those
-         ;; fields on resume; the canonical projection cannot drift.
+         ;; `vis/form->display`: the pre-rendered result card and its headline.
+         ;; A hand-listed copy silently dropped those fields on resume; the
+         ;; canonical projection cannot drift.
          ;; `:code`, `:scope`/`:tag`, and computed render segments are layered on top.
          (cond->
            (merge (vis/form<-wire env)

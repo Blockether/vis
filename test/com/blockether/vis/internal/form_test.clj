@@ -28,10 +28,6 @@
     :render-segments
     [{:kind :code}]
 
-    :cards
-    [{:op "cat" :result-summary "read 3 lines" :result-render "```\nx\n```"}
-     {:op "grep" :result-summary "5 results" :result-render "a.clj:1: x"}]
-
     (:timeout? :repaired?)
     true
 
@@ -65,32 +61,20 @@
         (expect (= "block.output" type))
         ;; The gateway carried, and <-wire recovered, EVERY canonical display key.
         (doseq [k form/display-keys]
-          (expect (some? (get back k))
-                  (str k
-                       " was dropped on the gateway round-trip — add it to a boundary projection")))
-        ;; Nested cards survive the same wire hop as the singular display fields.
-        (let [cards (:cards back)]
-          (expect (= 2 (count cards)))
-          (expect (= "cat" (:op (first cards)))))))
+          (expect
+            (some? (get back k))
+            (str k " was dropped on the gateway round-trip — add it to a boundary projection")))))
   (it
-    "result-cards is the ONE projection: N cards for a print-many block, 1 for its own output, none for neither"
-    ;; print-many: each :cards mini-form → its own card descriptor, in order,
-    ;; carrying the op the PRINTED value itself brought out of the sandbox.
-    (let
-      [multi (form/result-cards {:cards
-                                 [{:op "cat" :result-summary "read 3 lines" :result-render "x"}
-                                  {:op "grep" :result-summary "12 results" :result-render "y"}]})]
-      (expect (= 2 (count multi)))
-      (expect (= ["cat" "grep"] (mapv :op multi))))
-    ;; a block's own printed output (no :cards) → exactly one card, carrying no op:
-    ;; a card descriptor mints no display NAME of its own.
-    (let [one (form/result-cards {:result-render "```\nprinted\n```"})]
-      (expect (= 1 (count one)))
-      (expect (nil? (:op (first one)))))
+    "result-card is the ONE projection: a card for a form that shows something, none for one that shows nothing"
+    ;; a block's own printed output → exactly one card, carrying no op: a card
+    ;; descriptor mints no display NAME of its own.
+    (let [one (form/result-card {:result-render "```\nprinted\n```"})]
+      (expect (some? one))
+      (expect (nil? (:op one))))
     ;; the op is carried VERBATIM — an op nothing registered still reaches a channel.
     (expect (= "unheard_of" (:op (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
     ;; a block that printed nothing and returned nothing → no card at all.
-    (expect (= [] (form/result-cards {:result {:k 1}}))))
+    (expect (nil? (form/result-card {:result {:k 1}}))))
   (it "->display drops nils so a merge never stamps empty keys"
       (expect (= {} (form/->display {:result nil :op nil})))
       (expect (= {:op "grep"} (form/->display {:op "grep" :result-render nil})))))
@@ -130,15 +114,13 @@
       (expect (nil? (form/result-render {:src "x = 1"}))))
   (it "passes a vis-image fence through verbatim so the channel paints it inline"
       (expect (= "````vis-image\nx\n````" (form/result-render {:stdout "````vis-image\nx\n````"}))))
-  (it "suppresses the stdout body once a printed card carries one"
-      (expect (nil? (form/result-render {:stdout "raw"
-                                         :cards [{:op "grep"
-                                                  :result-summary "3 files"
-                                                  :result-render "```python\n[]\n```"}]}))))
-  (it "keeps stdout when the printed cards are headline-only"
-      (expect (str/includes? (form/result-render {:stdout "raw"
-                                                  :cards [{:op "grep" :result-summary "3 files"}]})
-                             "raw")))
+  ;; Regression: a printed tool result was captured on the side and painted as its
+  ;; OWN card, replacing the stdout — so ONE block that printed twice read as TWO
+  ;; results.
+  (it "keeps the WHOLE stdout as the one body, however many results the block printed"
+      (let [body (form/result-render {:stdout "first\nsecond"})]
+        (expect (str/includes? body "first"))
+        (expect (str/includes? body "second"))))
   ;; Regression: a timed-out block used to paint a second ⧖ card under its error
   ;; line, whose body re-showed the FORM already rendered above it, the STDOUT and
   ;; the very same timeout message — three sections saying what the error line had

@@ -3363,14 +3363,6 @@
          (let [s (baos->str baos)]
            (when-not (str/blank? s) s))))
 
-     ;; The tool-result objects the model print()ed this block — each a map
-     ;; carrying "op" (its origin). The HOST renders one op-card per result;
-     ;; stdout (context) is untouched.
-     read-printed
-     (fn []
-       (let [p (->clj (.getMember g "__vis_printed_results__"))]
-         (when (seq p) (vec p))))
-
      sink
      (atom [])
 
@@ -3395,14 +3387,6 @@
            out
            (read-out)
 
-           printed
-           (read-printed)
-
-           ;; true ⇔ the block printed NOTHING but tool results — only then may
-           ;; the human display replace the raw stdout with cards (no text lost).
-           only?
-           (true? (->clj (.getMember g "__vis_only_results__")))
-
            ;; Artifacts the block PRODUCED (matplotlib show/savefig, or an
            ;; `attach` call), captured at the source into the per-block
            ;; sink — folded in as `:attachments` so the loop OWNS the bytes with
@@ -3417,19 +3401,12 @@
           ;; FLAT sum type — success is ONE CONTEXT channel, never both:
           ;;   - printed output (`:stdout`) → the python_execution result; OR
           ;;   - the returned value (`:result`) → a block that returned without printing.
-          ;; Printed output WINS. `:printed-results` rides ALONGSIDE `:stdout` —
-          ;; it is DISPLAY-only (cards), NOT a second context channel. `:attachments`
-          ;; ride alongside EITHER — a produced-artifact channel, not context.
+          ;; Printed output WINS. `:attachments` ride alongside EITHER — a
+          ;; produced-artifact channel, not context.
           (if out
             (cond-> {:stdout out}
               attachments
-              (assoc :attachments attachments)
-
-              printed
-              (assoc :printed-results printed)
-
-              (and printed only?)
-              (assoc :only-printed-results? true))
+              (assoc :attachments attachments))
             (cond-> {}
               attachments
               (assoc :attachments attachments)

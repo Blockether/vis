@@ -193,31 +193,23 @@
         (println "PERF>>>" (:stdout r))
         (expect (re-find #"n30" (str (:stdout r))))))
     (it
-      "captures a REAL tool result (proxy→__VisResult__) by TYPE; a model dict with 'op' is NOT captured"
-      ;; `tp` is a HOST proxy with 'op' → pyify marks it __VisResult__. A model-built
-      ;; dict with 'op' is a PLAIN dict → not a __VisResult__ → correctly NOT captured.
+      "a block that prints several tool results is ONE result: every value lands in the block's stdout"
+      ;; Regression: each printed tool result was captured on the side
+      ;; (`:printed-results`) and painted as its OWN card, so ONE block that
+      ;; printed twice read as TWO results in the trace.
       (ep/bind-and-bump! env 'tp {"op" "cat" "x" 1})
       (let
-        [real
+        [one
          (ep/run-python-block ctx "print(tp)")
-
-         ;; proxy result → captured
-         faked
-         (ep/run-python-block ctx "print({'op':'cat'})")
-
-         ;; model dict → NOT captured (robust)
-         plain
-         (ep/run-python-block ctx "print('just text')")
 
          two
          (ep/run-python-block ctx "print(tp); print(tp)")]
 
-        (expect (= 1 (count (:printed-results real))))
-        (expect (= "cat" (get (first (:printed-results real)) "op"))) ;; origin = result "op" (strings-only)
-        (expect (empty? (:printed-results faked)))        ;; robustness: model 'op' dict ignored
-        (expect (empty? (:printed-results plain)))
-        (expect (= 2 (count (:printed-results two))))
-        (expect (re-find #"'op'" (str (:stdout real)))))) ;; stdout (context) still shows it
+        (expect (= 1 (count (re-seq #"'op'" (str (:stdout one))))))
+        (expect (= 2 (count (re-seq #"'op'" (str (:stdout two))))))
+        ;; FLAT sum: stdout is the whole result — no side channel to fan out on.
+        (expect (= #{:stdout} (set (keys one))))
+        (expect (= #{:stdout} (set (keys two))))))
     (it "a missing key on a tool result names the tool, the near miss and EVERY key it did return"
         ;; Result shapes are per-tool by design (shell -> stdout/stderr/exit,
         ;; run_tests -> output). A bare `KeyError: 'output'` reads as "the tool broke",
@@ -266,20 +258,11 @@
         (expect (re-find #"'dct_get', 'rg'" (str (:stdout r))))
         (expect (re-find #"'sweep_ok', True" (str (:stdout r))))
         (expect (re-find #"'rg_in', True" (str (:stdout r))))))
-    (it
-      "mixed print (text + result) keeps :only-printed-results? FALSE so stdout text is never dropped"
-      (ep/bind-and-bump! env 'tp {"op" "cat" "x" 1})
-      (let
-        [pure
-         (ep/run-python-block ctx "print(tp)")
-
-         mixed
-         (ep/run-python-block ctx "print('FOUND:'); print(tp)")]
-
-        (expect (true? (:only-printed-results? pure)))  ;; pure result print → cards may replace
-        (expect (not (:only-printed-results? mixed)))   ;; mixed → show full stdout
-        (expect (= 1 (count (:printed-results mixed)))) ;; the result is still captured
-        (expect (re-find #"FOUND:" (str (:stdout mixed))))))
+    (it "a mixed print keeps EVERY printed line in the one stdout"
+        (ep/bind-and-bump! env 'tp {"op" "cat" "x" 1})
+        (let [mixed (ep/run-python-block ctx "print('FOUND:'); print(tp)")]
+          (expect (re-find #"FOUND:" (str (:stdout mixed))))
+          (expect (re-find #"'op'" (str (:stdout mixed))))))
     (it "a printed write/struct_patch result drops its echo-diff from stdout"
         ;; A write/struct_patch return is a LIST of `{path op changed diff}`
         ;; file summaries. Printed to stdout that diff merely re-describes the bytes
@@ -294,13 +277,12 @@
           (expect (str/includes? (str (:stdout result)) "a.clj"))
           (expect (str/includes? (str (:stdout result)) "'changed': True"))))
     (it
-      "a LIST-shaped tool result is dict-probeable AND captured (write/struct_patch rows)"
+      "a LIST-shaped tool result is dict-probeable (write/struct_patch rows)"
       ;; `patch`/`write`/`struct_patch` return a LIST of per-file rows. At the
       ;; TOP-LEVEL settle of a tool call that list must be re-typed to
       ;; `__VisResultList__`: otherwise the
       ;; documented uniform `res.get('op')` probe dies with `'list' object has no
-      ;; attribute 'get'`, the print-capture cannot recognise the result, and the
-      ;; block stops counting as results-only — dropping every OTHER printed card.
+      ;; attribute 'get'`.
       (let
         [typed
          (ep/run-python-block
@@ -310,17 +292,11 @@
              "    return [{'path': 'a.clj', 'op': 'update', 'changed': True}]\n"
              "patchy = __vis_deferred__(__rows, 'patch')\n"
              "res = await patchy()\n"
-             "print(['type', type(res).__name__, 'get', res.get('op'), 'row', res[0]['op'], 'len', len(res)])\n"))
-
-         printed
-         (ep/run-python-block ctx "print(res)")]
-
+             "print(['type', type(res).__name__, 'get', res.get('op'), 'row', res[0]['op'], 'len', len(res)])\n"))]
         (expect (re-find #"'type', '__VisResultList__'" (str (:stdout typed))))
         (expect (re-find #"'get', None" (str (:stdout typed)))) ;; probe answers, never throws
         (expect (re-find #"'row', 'update'" (str (:stdout typed)))) ;; rows keep their own op
-        (expect (re-find #"'len', 1" (str (:stdout typed))))
-        (expect (= 1 (count (:printed-results printed))))
-        (expect (true? (:only-printed-results? printed)))))
+        (expect (re-find #"'len', 1" (str (:stdout typed))))))
     (it
       "session is a REAL dict after bind-ctx! — json.dumps(session) works (was a ForeignDict)"
       (ep/bind-ctx! ctx {"workspace" "/x" "roots" ["a" "b"] "facts" {"k" "v"}})

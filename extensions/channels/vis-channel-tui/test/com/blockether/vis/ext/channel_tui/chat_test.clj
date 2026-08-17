@@ -628,7 +628,7 @@
              ;; The restore chain — persisted envelope → `envelope->block` → `block->form-record`
              ;; — used to be TWO hand-listed projections, so a display field either forgot
              ;; silently vanished on RESUME while the live stream kept it (exactly how
-             ;; print-many `:cards` AND the card's own `:op` identity were dropped). Both
+             ;; the card's own `:op` identity was dropped). Both
              ;; builders now project through `vis/form->display` (the ONE display-key
              ;; projection). This guard drives a PERSISTED-SHAPED envelope through the REAL
              ;; restore entry (`it->iteration-entry`) so a drop anywhere in the chain fails.
@@ -643,21 +643,6 @@
                       :forms
                       first))]
 
-               (it "a restored print-many envelope keeps its per-result cards"
-                   (let
-                     [cards
-                      [{:op "cat" :result-summary "read 3 lines" :result-render "x"}
-                       {:op "grep" :result-summary "5 hits" :result-render "y"}]
-
-                      rec
-                      (restore {:scope "t1/i2"
-                                :tag :host
-                                :src "print(await cat('x'))"
-                                :result-summary "2 printed results"
-                                :cards cards})]
-
-                     (expect (= cards (:cards rec)))
-                     (expect (= 2 (count (vis/result-cards rec))))))
                (it "a restored single-result envelope keeps its card identity"
                    (let
                      [rec

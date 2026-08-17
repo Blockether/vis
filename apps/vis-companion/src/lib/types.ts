@@ -825,14 +825,13 @@ export interface TranscriptForm {
   result_kind?: string;
   result_detail?: Record<string, JsonValue>;
   render_segments?: JsonValue[];
-  cards?: TranscriptForm[];
   error?: JsonValue;
   stdout?: string;
   /**
-   * A PRINTED result's own op (`grep`, `attach`) — the only identity a card
-   * has, and data the value carried out of the sandbox rather than a name
-   * looked up in a registry. Absent on the block itself: a form is always the
-   * model's python, and its card reads RESULT.
+   * A form's own op (`grep`, `attach`) — the only identity a card has, and
+   * data the executed form carried rather than a name looked up in a
+   * registry. Absent on a python block: a form is always the model's python,
+   * and its card reads RESULT.
    */
   op?: string;
   silent?: boolean;

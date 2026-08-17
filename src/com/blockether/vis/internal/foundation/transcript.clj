@@ -144,10 +144,7 @@
       (assoc :op
         (:op envelope) :result-summary
         (:result-summary envelope) :result-render
-        (:result-render envelope))
-
-      (seq (:cards envelope))
-      (assoc :cards (:cards envelope)))))
+        (:result-render envelope)))))
 
 (defn- attachment-descriptor
   "Lean, byte-free descriptor for ONE persisted iteration attachment (an element
@@ -505,9 +502,6 @@
        :code (:code block)}
       (contains? block :result)
       (assoc :result-summary (result-summary (:result block)))
-
-      (seq (vis/result-cards block))
-      (assoc :cards (vis/result-cards block))
 
       error
       (assoc :error error))))

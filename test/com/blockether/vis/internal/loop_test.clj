@@ -3440,58 +3440,6 @@
         (let [r [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"} {"text" "hi"}]]
           (expect (= r (strip r)))))))
 
-(defdescribe printed-result-op-test
-             ;; Which renderer a PRINTED tool result resolves to. A map answers with its
-             ;; stamped `"op"`; a struct_patch return is a LIST of per-file rows
-             ;; with no top-level op — it must still resolve (they share ONE renderer), or
-             ;; a printed edit silently loses its card.
-             (let [op @#'lp/printed-result-op]
-               (it "reads the stamped op off a map result"
-                   (expect (= "ls" (op {"op" "ls" "action" "ls" "paths" ["a.txt"]})))
-                   (expect (= "cat" (op {"op" "cat"}))))
-               (it "resolves a list of per-file edit rows to the shared patch renderer"
-                   (expect (= "patch" (op [{"path" "a.clj" "op" "update" "changed" true}])))
-                   (expect (= "patch"
-                              (op [{"path" "a.clj" "op" "add" "changed" true}
-                                   {"path" "b.clj" "op" "update" "changed" false}]))))
-               (it "never guesses: an unstamped map, an empty or mixed list, a scalar"
-                   (expect (nil? (op {"hit_count" 3})))
-                   (expect (nil? (op [])))
-                   (expect (nil? (op [{"path" "a.clj" "op" "update" "changed" true}
-                                      {"text" "hi"}])))
-                   (expect (nil? (op "plain text"))))))
-
-(defdescribe printed-result-card-headline-test
-             ;; A card is DATA. Its title is the printed value's own `"op"`, its headline is
-             ;; the rows that value already carries, and its body is the value itself — so a
-             ;; result from an op with NO extension registered still paints, and no card can
-             ;; drift from what actually ran. There is no symbol table to consult.
-             (let [card @#'lp/printed-result-card]
-               (it "titles itself from the value's op and counts the rows the value carries"
-                   (let [c (card {"op" "grep" "results" [{"path" "a"} {"path" "b"} {"path" "c"}]})]
-                     (expect (= "grep" (:op c)))
-                     (expect (= "3 results" (:result-summary c)))
-                     (expect (str/includes? (:result-render c) "grep"))))
-               (it "paints an op no extension ever registered"
-                   (let [c (card {"op" "totally_unknown_op" "hits" [1 2]})]
-                     (expect (= "totally_unknown_op" (:op c)))
-                     (expect (= "2 hits" (:result-summary c)))
-                     (expect (some? (:result-render c)))))
-               (it "says one row in the singular"
-                   (expect (= "1 file" (:result-summary (card {"op" "ls" "files" ["a.txt"]}))))
-                   (expect (= "1 row"
-                              (:result-summary (card [{"path" "a.clj"
-                                                       "op" "update"
-                                                       "changed" true}])))))
-               (it "invents no number for a value that counts nothing"
-                   (let [c (card {"op" "shell" "stdout" "hi"})]
-                     (expect (nil? (:result-summary c)))
-                     ;; …and the card is still a card: the value is its body.
-                     (expect (str/includes? (:result-render c) "shell"))))
-               (it "is nil for a value carrying no op at all"
-                   (expect (nil? (card {"hit_count" 3})))
-                   (expect (nil? (card "plain text"))))))
-
 (defdescribe
   only-python-execution-is-advertised-test
   ;; ONE tool reaches the provider. Every other capability is already a bare Python

@@ -3594,7 +3594,7 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment display-code display-language render-segments result-render result-summary
-           result-kind result-detail error success? silent? cards]}]
+           result-kind result-detail error success? silent?]}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
@@ -3603,13 +3603,7 @@
    ;; (`:display-code`/`:display-language`). `:code` alone can't stand in for it —
    ;; the block renders differently once the formatted display lands, and without
    ;; these the live bubble keeps the pre-display body forever.
-   (text-fingerprint display-code) display-language
-   ;; Print-many cards: a cheap per-card digest (op/summary + a body fingerprint)
-   ;; so two card-forms with the same code + summary but different cards cannot
-   ;; collide on a stale cache entry.
-   (mapv (fn [c]
-           [(:op c) (text-fingerprint (:result-summary c)) (text-fingerprint (:result-render c))])
-         cards)])
+   (text-fingerprint display-code) display-language])
 
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
@@ -5435,143 +5429,112 @@
                              :section :iteration
                              :kind :result}))
 
-          ;; Result renders as MARKDOWN — same IR pipeline as the answer, in
-          ;; `:channel` mode so plain prose has no answer-bg but headings /
-          ;; lists / code bands still style. This is what makes the trace
-          ;; readable instead of a flat text dump.
-          ;; PRINT-MANY: a python block that printed several tool results carries a
-          ;; canonical mini-form per result in `:cards`. Render EACH as its OWN
-          ;; collapsible op-card in its tool's colour, with a distinct
-          ;; `:details-path` node-id so each card's expand state is independent.
-          ;; `vis/result-cards` is the ONE projection the web uses too.
-          printed-cards?
-          (seq (:cards form))
-
           ;; The trailing figure the companion paints on EVERY tool-card band:
           ;; `toolCards` returns `[form]` for every non-silent form, so a bare
           ;; value and a call that returned NOTHING are banded and timed there
           ;; while the terminal said nothing at all. Those two shapes have no
           ;; head to carry the figure, so the result band gets one row that
           ;; carries only it — flush-painted like any no-chevron headline. A card
-          ;; head, a printed card and the `+N more` disclosure already wear it,
+          ;; head and the `+N more` disclosure already wear it,
           ;; and a FAILED call rides its error headline (below): never both.
           duration-stamp
-          (when-let
-            [d
-             (and (not printed-cards?) (nil? card) (nil? error) (vis/format-duration duration-ms))]
+          (when-let [d (and (nil? card) (nil? error) (vis/format-duration duration-ms))]
             {:line
              (str result-marker " " (format-detail-summary-line "" d (max 1 (dec (long fill-w)))))
              :meta {:kind :result-headline}})
 
+          ;; Result renders as MARKDOWN — same IR pipeline as the answer, in
+          ;; `:channel` mode so plain prose has no answer-bg but headings /
+          ;; lists / code bands still style. This is what makes the trace
+          ;; readable instead of a flat text dump. ONE result per block: a
+          ;; python block that printed several values still paints its whole
+          ;; stdout as a single result.
           result-lines
-          (cond
-            printed-cards? (vec
-                             (mapcat (fn [i c]
-                                       (tool-card-entries
-                                         c
-                                         {:fill-w fill-w
-                                          ;; Each printed result wears its OWN
-                                          ;; duration when the sandbox reported one —
-                                          ;; never the envelope's figure repeated on
-                                          ;; every card.
-                                          :duration-ms (:duration-ms (get (:cards form) i))
-                                          :session-id session-id
-                                          :detail-expansions detail-expansions
-                                          :node-id
-                                          (when (and session-id (or (:body c) (:summary c)))
-                                            (detail-node-id {:session-turn-id session-turn-id
-                                                             :iteration-number iteration-number
-                                                             :block-number block-number
-                                                             :section :iteration
-                                                             :kind :result
-                                                             :details-path [i]}))}))
-                                     (range)
-                                     (vis/result-cards form)))
-            (or result-text head-summary)
-            (let
-              [entries
-               (when result-text
-                 (tag-copy-block-body (vec (paste-aware-ast->entries
-                                             (vis/markdown->ast result-text)
-                                             fill-w
-                                             {:mode :channel
-                                              :session-id session-id
-                                              :session-turn-id session-turn-id
-                                              :detail-expansions detail-expansions
-                                              :image-section :iteration}))
-                                      result-node-id
-                                      result-text))
-
-               entries
-               (vec entries)
-
-               preview-n
-               (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
-
-               hidden
-               (vec (drop preview-n entries))
-
-               ;; Re-mark every body line into the RESULT zone (strip
-               ;; its md/prose marker, prepend the result marker) so the
-               ;; WHOLE op-card paints on one `result-bg` band — code AND
-               ;; prose/eval output alike. Embedded ANSI (diff +/-)
-               ;; survives via `paint-ansi-line!` in that paint branch.
-               _->result
-               (fn [e]
-                 (let
-                   [l
-                    (str (:line e))
-
-                    stripped
-                    (or (second (split-structural-line-marker l)) l)]
-
-                   (assoc e :line (str result-marker stripped))))]
-
-              (cond
-                ;; The value's own headline rides on a neutral row; the whole
-                ;; `:result-render` body nests under it (collapsible). A
-                ;; headline-only result renders a plain row with no expand
-                ;; triangle because there is nothing beneath it.
-                card (tool-card-entries card
-                                        {:fill-w fill-w
-                                         :session-id session-id
-                                         :detail-expansions detail-expansions
-                                         :node-id result-node-id
-                                         :duration-ms duration-ms})
-                ;; Non-tool, long result: keep the first rows visible and
-                ;; collapse only the surplus behind the band's own name.
-                (and result-node-id (seq hidden))
+          (cond (or result-text head-summary)
                 (let
-                  [expanded?
-                   (detail-expanded? detail-expansions session-id result-node-id false)
+                  [entries
+                   (when result-text
+                     (tag-copy-block-body (vec (paste-aware-ast->entries
+                                                 (vis/markdown->ast result-text)
+                                                 fill-w
+                                                 {:mode :channel
+                                                  :session-id session-id
+                                                  :session-turn-id session-turn-id
+                                                  :detail-expansions detail-expansions
+                                                  :image-section :iteration}))
+                                          result-node-id
+                                          result-text))
 
-                   visible
-                   (vec (take preview-n entries))
+                   entries
+                   (vec entries)
 
-                   summary
-                   (detail-summary-entries
-                     {:marker result-marker
-                      :max-w fill-w
-                      ;; Collapsed used to read `+N more result lines` with no
-                      ;; name at all - the one band whose control never said what
-                      ;; it folds. It wears `RESULT` in both states now, exactly
-                      ;; like the code band above it.
-                      :summary (if expanded?
-                                 (band-label "RESULT")
-                                 (str (band-label "RESULT") " +" (count hidden) " more lines"))
-                      :hidden-entries hidden
-                      :collapsed? (not expanded?)
-                      :session-id session-id
-                      :node-id result-node-id
-                      :duration-ms duration-ms})]
+                   preview-n
+                   (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
 
-                  (vec (concat visible summary (when expanded? hidden))))
-                :else (cond-> entries
-                        duration-stamp
-                        (conj duration-stamp))))
-            ;; A call that returned nothing at all still took time. Its band is
-            ;; the figure and nothing else — the companion's empty-summary card.
-            duration-stamp [duration-stamp])
+                   hidden
+                   (vec (drop preview-n entries))
+
+                   ;; Re-mark every body line into the RESULT zone (strip
+                   ;; its md/prose marker, prepend the result marker) so the
+                   ;; WHOLE op-card paints on one `result-bg` band — code AND
+                   ;; prose/eval output alike. Embedded ANSI (diff +/-)
+                   ;; survives via `paint-ansi-line!` in that paint branch.
+                   _->result
+                   (fn [e]
+                     (let
+                       [l
+                        (str (:line e))
+
+                        stripped
+                        (or (second (split-structural-line-marker l)) l)]
+
+                       (assoc e :line (str result-marker stripped))))]
+
+                  (cond
+                    ;; The value's own headline rides on a neutral row; the whole
+                    ;; `:result-render` body nests under it (collapsible). A
+                    ;; headline-only result renders a plain row with no expand
+                    ;; triangle because there is nothing beneath it.
+                    card (tool-card-entries card
+                                            {:fill-w fill-w
+                                             :session-id session-id
+                                             :detail-expansions detail-expansions
+                                             :node-id result-node-id
+                                             :duration-ms duration-ms})
+                    ;; Non-tool, long result: keep the first rows visible and
+                    ;; collapse only the surplus behind the band's own name.
+                    (and result-node-id (seq hidden))
+                    (let
+                      [expanded?
+                       (detail-expanded? detail-expansions session-id result-node-id false)
+
+                       visible
+                       (vec (take preview-n entries))
+
+                       summary
+                       (detail-summary-entries
+                         {:marker result-marker
+                          :max-w fill-w
+                          ;; Collapsed used to read `+N more result lines` with no
+                          ;; name at all - the one band whose control never said what
+                          ;; it folds. It wears `RESULT` in both states now, exactly
+                          ;; like the code band above it.
+                          :summary (if expanded?
+                                     (band-label "RESULT")
+                                     (str (band-label "RESULT") " +" (count hidden) " more lines"))
+                          :hidden-entries hidden
+                          :collapsed? (not expanded?)
+                          :session-id session-id
+                          :node-id result-node-id
+                          :duration-ms duration-ms})]
+
+                      (vec (concat visible summary (when expanded? hidden))))
+                    :else (cond-> entries
+                            duration-stamp
+                            (conj duration-stamp))))
+                ;; A call that returned nothing at all still took time. Its band is
+                ;; the figure and nothing else — the companion's empty-summary card.
+                duration-stamp [duration-stamp])
 
           ;; The FAILURE row of a call. Code bands stay status-neutral, so this line
           ;; is the only place a failed tool can read as failed: it wears the error
@@ -5586,7 +5549,7 @@
                   ;; columns every error row is inset by, and never when a card
                   ;; head already wears it.
                   (cond-> (wrap-text (form-error-headline error) fill-w)
-                    (and (not printed-cards?) (nil? card))
+                    (nil? card)
                     (with-right-suffix (vis/format-duration duration-ms)
                                        (max 1 (- (long fill-w) (long code-text-inset-cols)))))))
 
@@ -6013,9 +5976,9 @@
             :else (recur (conj! out e) nil (next xs))))))))
 
 (defn- mergeable-iteration-forms
-  "Forms of an iteration when it is a PLAIN tool iteration — has forms, carries no
-   iteration-level error / recap / provider-fallback, and no `:cards` block on any
-   form. Returns the forms vector, else nil.
+  "Forms of an iteration when it is a PLAIN tool iteration — has forms and
+   carries no iteration-level error / recap / provider-fallback. Returns the
+   forms vector, else nil.
 
    No tool-name whitelist and no same-tool requirement: ANY maximal run of
    consecutive plain tool iterations (see `render-iteration-entries`) merges into
@@ -6024,12 +5987,7 @@
    INTERIOR iteration so mid-burst commentary never floats out of place."
   [entry]
   (let [{:keys [forms recaps provider-fallbacks error]} entry]
-    (when (and (nil? error)
-               (empty? recaps)
-               (empty? provider-fallbacks)
-               (seq forms)
-               (every? #(empty? (:cards %)) forms))
-      (vec forms))))
+    (when (and (nil? error) (empty? recaps) (empty? provider-fallbacks) (seq forms)) (vec forms))))
 
 (defn- iteration-narration?
   "True when an iteration carries visible NARRATION that must render on its own —
@@ -6051,7 +6009,7 @@
    thinking is the ONLY separator: a narrated iteration may OPEN a run (its
    narration renders ABOVE the merged forms) but an INTERIOR narrated call breaks
    it. A non-tool iteration (narration only, an iteration-level error / recap /
-   provider-fallback, a `:cards` block) renders on its own through `iter-entry-fn`.
+   provider-fallback) renders on its own through `iter-entry-fn`.
 
    This is the uniform-compaction contract: EVERY consecutive tool run collapses
    the same way — there is no tool-name whitelist and no per-tool summary band."

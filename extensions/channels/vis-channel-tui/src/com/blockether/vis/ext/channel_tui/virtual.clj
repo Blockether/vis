@@ -437,7 +437,7 @@
   (let
     [form-strings
      (fn [f]
-       (list* (or (:result-render f) (:result f)) (:comment f) (map :body (:cards f))))
+       (list (or (:result-render f) (:result f)) (:comment f)))
 
      trace-strings
      (fn [it]
@@ -565,12 +565,6 @@
                             rr
                             (long (section-rows (or (:result-render f) (:result f))))
 
-                            cardr
-                            (long (reduce (fn [^long x card]
-                                            (+ x 1 (long (section-rows (:body card)))))
-                                          0
-                                          (:cards f)))
-
                             comr
                             (long (let [cm (:comment f)]
                                     (if (and (string? cm) (not (str/blank? cm)))
@@ -580,7 +574,6 @@
                            (+ a
                               cr
                               rr
-                              cardr
                               comr
                               ;; Error band: pads + caret rows + the headline
                               ;; WRAPPED at fill-w — a long provider/exception

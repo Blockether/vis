@@ -3246,63 +3246,6 @@
         (patch-file-summary? result) (strip-echo-diff result)
         :else result))
 
-(defn- printed-result-op
-  "The op-STRING that resolves a PRINTED tool result's renderer.
-
-   A map result carries its origin under `\"op\"` (the engine stamps it). A
-   LIST-shaped result cannot — `struct_patch` returns one
-   per-file summary row, and the `\"op\"` on a ROW is the per-file edit verb
-   (`\"add\"`/`\"update\"`), never the tool. That shape has ONE renderer
-   (`render-patch-result`), so a list of per-file summaries resolves to
-   `\"patch\"` — the card paints the edit rows instead of silently vanishing."
-  [pr]
-  (cond (map? pr) (some-> (get pr "op")
-                          str)
-        (and (sequential? pr) (seq pr) (every? patch-file-summary? pr)) "patch"))
-
-
-
-(def ^:private tally-keys
-  "The sequential fields a result puts its ROWS under, in the order a headline
-   should prefer them. The KEY names the unit — a `files` vector of 3 reads
-   `3 files` — so a card sizes itself from the value instead of from a per-tool
-   renderer that had to be written first."
-  ["results" "files" "matches" "hits" "entries" "edits" "nodes" "rows" "items"])
-
-(defn- printed-result-tally
-  "The one-line HEADLINE for a printed result, taken from the value itself: the
-   count of the rows it carries plus the name of the field carrying them. nil when
-   the value counts nothing — then the card is its title and its body, and no
-   headline invents a number the result never reported."
-  [pr]
-  (let
-    [say (fn [n unit]
-           (str n
-                " "
-                (if (and (= 1 (long n)) (str/ends-with? unit "s"))
-                  (subs unit 0 (dec (count unit)))
-                  unit)))]
-    (cond (sequential? pr) (say (count pr) "rows")
-          (map? pr) (some (fn [k]
-                            (let [v (get pr k)]
-                              (when (sequential? v) (say (count v) k))))
-                          tally-keys))))
-
-(defn- printed-result-card
-  "One CARD for a value the model print()ed inside a python block, built from the
-   VALUE and nothing else: its own `:op` titles it, the rows it already carries
-   size it, and the value pretty-printed as a Python literal is the body. There is
-   no symbol table to consult, so a result from an op with no extension registered
-   still paints, and a card can never drift from what actually ran. Returns a
-   canonical MINI-FORM (`nil` for a value carrying no op)."
-  [pr]
-  (when-let [op (printed-result-op pr)]
-    {:op op
-     :result-summary (printed-result-tally pr)
-     :result-render (some-> (env/ctx->python-str pr)
-                            form/clip-to-wire
-                            (strutil/fenced "python"))}))
-
 
 (defn- elide-table-fences
   "Drop the ROWS out of every ````vis-table` fence in model-facing output.
@@ -4609,19 +4552,8 @@
               ;; HEADLINE; `:body` (→ `:result-render`) the detail.
               displayable (assoc result* :src expr)
               result-card (form/result-display displayable)
-              ;; RESULTS the model print()ed (each carrying its own :op) → one card
-              ;; each, built from the VALUE alone. Each card is a CANONICAL MINI-FORM,
-              ;; so the shared form projection handles it without a second shape.
-              printed-cards (vec (keep printed-result-card (:printed-results result*)))
-              ;; Printed cards replace raw stdout only when at least one carries a body.
-              ;; Summary-only cards otherwise suppress the sole non-empty result surface,
-              ;; so retain stdout as a fallback. Mixed text always keeps stdout too.
-              only-results? (:only-printed-results? result*)
-              cards (when (and only-results? (seq printed-cards)) printed-cards)
-              result-render (form/result-render (assoc displayable :cards cards))
-              result-summary (if cards
-                               (str (count cards) " printed result" (when (> (count cards) 1) "s"))
-                               (:summary result-card))]
+              result-render (form/result-render displayable)
+              result-summary (:summary result-card)]
 
              ;; Per-block streaming chunk (:phase
              ;; :form-result). Fires the moment a
@@ -4657,8 +4589,6 @@
                   ;; The op-card HEADLINE — a real tool-authored summary
                   ;; ("5 hits in 1 file"), NOT a first-line slice of the body.
                   :result-summary result-summary
-                  ;; Separate collapsible cards, one per printed tool result.
-                  :cards cards
                   ;; Native tool identity for the result badge.
                   :vis/tool-name (:vis/tool-name entry)
                   ;; Raw stdout kept for model-context consumers.
@@ -4671,7 +4601,6 @@
              {:block expr
               :result result*
               :result-summary result-summary
-              :cards cards
               :render-segments render-segments
               :svar/tool-call-id (:svar/tool-call-id entry)
               :vis/tool-name (:vis/tool-name entry)}))
@@ -4683,7 +4612,6 @@
        form-tool-ids (mapv :svar/tool-call-id executed)
        form-tool-names (mapv :vis/tool-name executed)
        form-result-summaries (mapv :result-summary executed)
-       form-cards (mapv :cards executed)
        ;; Preflight gate → synthetic block carries `:vis/preflight? true`
        ;; so channels can suppress the model-facing-only error box. Keep
        ;; the block in the persisted/trailer stream so the model still
@@ -4694,7 +4622,7 @@
                                      code-entries))
        blocks
        (validate-iteration-blocks!
-         (mapv (fn [idx code result segments tool-call-id tool-name result-summary cards]
+         (mapv (fn [idx code result segments tool-call-id tool-name result-summary]
                  (cond->
                    {:id idx
                     :code code
@@ -4751,9 +4679,6 @@
                    result-summary
                    (assoc :result-summary result-summary)
 
-                   (seq cards)
-                   (assoc :cards cards)
-
                    (get preflight-by-idx idx)
                    (assoc :vis/preflight? true)))
                (range)
@@ -4762,8 +4687,7 @@
                form-segments
                form-tool-ids
                form-tool-names
-               form-result-summaries
-               form-cards))]
+               form-result-summaries))]
 
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),

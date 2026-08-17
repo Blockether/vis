@@ -342,8 +342,7 @@
 (import-vars [form->display form/->display]
              [form-with-display form/with-display]
              [form<-wire form/<-wire]
-             [result-card form/result-card]
-             [result-cards form/result-cards])
+             [result-card form/result-card])
 
 (import-vars [markdown->ast ir/markdown->ast])
 ;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS

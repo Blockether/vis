@@ -344,21 +344,6 @@
 
         (expect (not (str/includes? (head zero) "0ms")))
         (expect (= (head zero) (head none)))))
-  (it "gives each printed card its OWN duration, never the envelope's"
-      (let
-        [lines
-         (render-forms [{:success? true
-                         :code "print(1)"
-                         :duration-ms 9000
-                         :cards [{:op "grep" :result-summary "5 hits" :duration-ms 40}
-                                 {:op "cat" :result-summary "read 3 lines"}]}])
-
-         head
-         (fn [needle]
-           (first (filter #(str/includes? % needle) lines)))]
-
-        (expect (str/ends-with? (str/trimr (strip-sentinels (body-of (head "5 hits")))) "40ms"))
-        (expect (not (str/includes? (body-of (head "read 3 lines")) "9.0s")))))
   (it "carries the duration on the long-result RESULT disclosure head"
       (let
         [entries

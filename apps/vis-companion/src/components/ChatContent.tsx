@@ -1022,12 +1022,10 @@ function hiddenForm(form: TranscriptForm): boolean {
   );
 }
 
-// Mirrors `form/result-cards`: a block that printed several results carries one
-// mini-form per result, and every other block is its own single card.
+// Every visible form is its OWN single card: a block's result is ONE result no
+// matter how many values it printed, so there is no per-result fan-out here.
 function toolCards(form: TranscriptForm): TranscriptForm[] {
-  if (hiddenForm(form)) return [];
-  if (form.cards?.length) return form.cards.flatMap(toolCards);
-  return [form];
+  return hiddenForm(form) ? [] : [form];
 }
 
 function ToolSummary({
