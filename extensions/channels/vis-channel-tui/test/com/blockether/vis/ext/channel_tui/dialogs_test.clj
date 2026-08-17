@@ -2047,3 +2047,118 @@
           (let [top (str/triml (:text (nth (term/painted-rows terminal) 1)))]
             (expect (str/starts-with? top "line-166")))
           (finally (.stopScreen screen))))))
+
+;; Regression (user report): pressing a scrollbar scrolled nothing. Settings painted
+;; one whose press/drag moved `scroll` alone - and the very next paint recomputes
+;; `scroll` from the SELECTED row, so the list snapped straight back under the thumb
+;; and only the keyboard could move it.
+(defdescribe
+  settings-scrollbar-drag-test
+  (it
+    "CLICK_DOWN on the settings track scrolls the list and the thumb stays there"
+    (let
+      [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+       (term/virtual-screen)
+
+       ;; The scrollbar as PAINTED, scanned off its glyphs (█ thumb on a
+       ;; │ track): a hit-test that drifts from the painter fails here
+       ;; instead of agreeing with itself.
+       bar
+       (fn []
+         (let
+           [g
+            (term/grid terminal)
+
+            cells
+            (for
+              [y
+               (range (count g))
+
+               x
+               (range (count (nth g y)))
+
+               :let [c
+                     (.charAt ^String (nth g y) x)]
+               :when (or (= c \█) (= c \│))]
+
+              [x y c])
+
+            thumb
+            (filter #(= \█ (nth % 2)) cells)
+
+            col
+            (when (seq thumb) (apply max (map first thumb)))]
+
+           (when col
+             {:col col
+              :thumb (vec (sort (map second (filter #(= col (first %)) thumb))))
+              :track (vec (sort (map second (filter #(= col (first %)) cells))))})))
+
+       row-text
+       (fn [y]
+         (str/trim (nth (term/grid terminal) y)))
+
+       open!
+       (fn []
+         (dlg/settings-dialog! screen {} nil))
+
+       press!
+       (fn [x y]
+         (.addInput terminal
+                    (MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. (int x) (int y))))
+         (.addInput terminal (KeyStroke. KeyType/Escape)))]
+
+      ;; Settings reads its gateway inventories once its first frame is up; this
+      ;; test is about the scrollbar, so it never pays for that round trip.
+      (with-redefs-fn {#'dlg/load-inventories! (fn []
+                                                 nil)}
+        (fn []
+          (try (.addInput terminal (KeyStroke. KeyType/Escape))
+               (open!)
+               (let
+                 [{:keys [col track]}
+                  (bar)
+
+                  track-top
+                  (long (first track))
+
+                  track-bottom
+                  (long (last track))
+
+                  before
+                  (row-text track-top)
+
+                  ;; One press on the track, then the frame it produced.
+                  press-at
+                  (fn [x y]
+                    (press! x y)
+                    (open!)
+                    {:thumb (first (:thumb (bar))) :row (row-text track-top)})]
+
+                 (expect (some? col))
+                 (expect (= track-top (first (:thumb (bar)))))
+                 (let
+                   [middle
+                    (press-at col (quot (+ track-top track-bottom) 2))
+
+                    bottom
+                    (press-at col track-bottom)
+
+                    top
+                    (press-at col track-top)
+
+                    beside
+                    (press-at (dec (long col)) track-bottom)]
+
+                   ;; The thumb follows the cursor down the track, and the list under
+                   ;; it moves with it - it no longer snaps back to the old selection.
+                   (expect (< track-top (long (:thumb middle)) (long (:thumb bottom))))
+                   (expect (not= before (:row middle)))
+                   (expect (not= (:row middle) (:row bottom)))
+                   ;; Back on the track's first row: the list is back at its start.
+                   (expect (= track-top (:thumb top)))
+                   (expect (= before (:row top)))
+                   ;; One column left of the bar is list content, not the track.
+                   (expect (= track-top (:thumb beside)))
+                   (expect (= before (:row beside)))))
+               (finally (.stopScreen screen))))))))

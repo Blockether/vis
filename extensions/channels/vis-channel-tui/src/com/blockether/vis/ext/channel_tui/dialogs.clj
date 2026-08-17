@@ -4362,6 +4362,26 @@
             (and (pos? delta) (= idx (dec n))) selected
             :else (recur (p/clamp (+ idx delta) 0 (max 0 (dec n))))))))
 
+(defn- settings-selection-for-window
+  "The row the cursor must take when a scrollbar drag scrolls the settings list to
+   paint row `start`. That window is SELECTION-DRIVEN - every paint recomputes
+   `scroll` from the selected row - so a drag that moved `scroll` alone is snapped
+   straight back by the next frame. Returns the first selectable row whose option
+   line lands inside the new window, or nil when the window holds none."
+  [rows entries ^long start ^long visible-h]
+  (let
+    [n
+     (count entries)
+
+     from
+     (long (p/clamp start 0 n))
+
+     to
+     (long (p/clamp (+ start visible-h) from n))]
+
+    (first (keep (fn [{:keys [row-idx part]}]
+                   (when (and (= part :option) (settings-selectable? (nth rows row-idx))) row-idx))
+                 (subvec entries from to)))))
 
 (defn- theme-display-label
   [theme-id]
@@ -5126,80 +5146,85 @@
               (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))]
 
              (when key
-               (cond (instance? MouseAction key)
-                     (if-let [step (modal-wheel-step key)]
-                       ;; Mouse wheel anywhere in the dialog — selection follows
-                       ;; the wheel direction so the cursor stays in the visible
-                       ;; window without having to chase it with arrow keys.
-                       (do (swap! selected #(move-settings-selection rows % step)) (recur))
-                       (let
-                         [drag (scrollbar/mouse-drag-step key
-                                                          {:col (+ lleft linner)
-                                                           :top list-top
-                                                           :track-h visible-h
-                                                           :total-h visual-n
-                                                           :inner-h visible-h
-                                                           :scroll @scroll}
-                                                          @scrollbar-drag-offset)]
-                         (when (= drag :release) (vreset! scrollbar-drag-offset nil))
-                         (when-let [grip (:arm drag)]
-                           (vreset! scrollbar-drag-offset grip))
-                         (when-some [s (:scroll drag)]
-                           (reset! scroll s))
-                         (recur)))
-                     :else (condp = (key-type key)
-                             ;; Esc clears an active search first, then closes on the next press.
-                             KeyType/Escape (if (str/blank? @query)
-                                              @values
-                                              (do (reset! query "")
-                                                  (reset! selected (first-selectable-index
-                                                                     all-rows))
-                                                  (reset! scroll 0)
-                                                  (recur)))
-                             KeyType/ArrowUp
-                             (do (swap! selected #(move-settings-selection rows % -1)) (recur))
-                             KeyType/ArrowDown
-                             (do (swap! selected #(move-settings-selection rows % 1)) (recur))
-                             ;; Backspace edits the live search query.
-                             KeyType/Backspace
-                             (do (when (seq @query)
-                                   (swap! query #(subs % 0 (dec (count %))))
-                                   (reset! selected (first-selectable-index
-                                                      (filter-settings-rows all-rows @query)))
-                                   (reset! scroll 0))
-                                 (recur))
-                             ;; Any printable character types into the search query (VS Code feel);
-                             ;; Enter is the only key that toggles/activates the selected row.
-                             KeyType/Character
-                             (let [c (key-character key)]
-                               (if (and c (>= (int c) 32))
-                                 (do (swap! query str c)
-                                     (reset! selected (first-selectable-index
-                                                        (filter-settings-rows all-rows @query)))
-                                     (reset! scroll 0)
-                                     (recur))
-                                 (recur)))
-                             KeyType/Enter (do (when selected-row
-                                                 (activate-settings-row!
-                                                   screen
-                                                   g
-                                                   {:left left
-                                                    :inner-w inner-w
-                                                    :hint-row hint-row
-                                                    :text-w (max 1 (- (long inner-w) 2))
-                                                    :min-row list-top
-                                                    ;; One snapshot per
-                                                    ;; activation: a
-                                                    ;; shorter band gives
-                                                    ;; the rows a taller
-                                                    ;; one covered back to
-                                                    ;; the list itself.
-                                                    :restore! (frame-restorer screen)}
-                                                   values
-                                                   callbacks
-                                                   selected-row))
+               (cond
+                 (instance? MouseAction key)
+                 (if-let [step (modal-wheel-step key)]
+                   ;; Mouse wheel anywhere in the dialog — selection follows
+                   ;; the wheel direction so the cursor stays in the visible
+                   ;; window without having to chase it with arrow keys.
+                   (do (swap! selected #(move-settings-selection rows % step)) (recur))
+                   (let
+                     [drag (scrollbar/mouse-drag-step key
+                                                      {:col (+ lleft linner)
+                                                       :top list-top
+                                                       :track-h visible-h
+                                                       :total-h visual-n
+                                                       :inner-h visible-h
+                                                       :scroll @scroll}
+                                                      @scrollbar-drag-offset)]
+                     (when (= drag :release) (vreset! scrollbar-drag-offset nil))
+                     (when-let [grip (:arm drag)]
+                       (vreset! scrollbar-drag-offset grip))
+                     (when-some [s (:scroll drag)]
+                       (reset! scroll s)
+                       ;; The window is selection-driven, so the cursor rides along
+                       ;; with the drag - otherwise the next paint recomputes
+                       ;; `scroll` from the old selection and the list snaps back.
+                       (when-let [row (settings-selection-for-window rows entries s visible-h)]
+                         (reset! selected row)))
+                     (recur)))
+                 :else (condp = (key-type key)
+                         ;; Esc clears an active search first, then closes on the next press.
+                         KeyType/Escape (if (str/blank? @query)
+                                          @values
+                                          (do (reset! query "")
+                                              (reset! selected (first-selectable-index all-rows))
+                                              (reset! scroll 0)
+                                              (recur)))
+                         KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
+                                             (recur))
+                         KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
                                                (recur))
-                             (recur)))))))))))
+                         ;; Backspace edits the live search query.
+                         KeyType/Backspace (do (when (seq @query)
+                                                 (swap! query #(subs % 0 (dec (count %))))
+                                                 (reset! selected (first-selectable-index
+                                                                    (filter-settings-rows all-rows
+                                                                                          @query)))
+                                                 (reset! scroll 0))
+                                               (recur))
+                         ;; Any printable character types into the search query (VS Code feel);
+                         ;; Enter is the only key that toggles/activates the selected row.
+                         KeyType/Character
+                         (let [c (key-character key)]
+                           (if (and c (>= (int c) 32))
+                             (do (swap! query str c)
+                                 (reset! selected (first-selectable-index
+                                                    (filter-settings-rows all-rows @query)))
+                                 (reset! scroll 0)
+                                 (recur))
+                             (recur)))
+                         KeyType/Enter (do (when selected-row
+                                             (activate-settings-row!
+                                               screen
+                                               g
+                                               {:left left
+                                                :inner-w inner-w
+                                                :hint-row hint-row
+                                                :text-w (max 1 (- (long inner-w) 2))
+                                                :min-row list-top
+                                                ;; One snapshot per
+                                                ;; activation: a
+                                                ;; shorter band gives
+                                                ;; the rows a taller
+                                                ;; one covered back to
+                                                ;; the list itself.
+                                                :restore! (frame-restorer screen)}
+                                               values
+                                               callbacks
+                                               selected-row))
+                                           (recur))
+                         (recur)))))))))))
 
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id
