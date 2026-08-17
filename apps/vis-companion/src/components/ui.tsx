@@ -7,6 +7,7 @@ import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
 } from 'react';
 
@@ -800,6 +801,59 @@ export function OptionRow({
 }
 
 /**
+ * A TAP IS THE PRESS, because iOS does not always finish one as a `click`.
+ *
+ * WKWebView turns a touch into a click through its own synthetic-click path,
+ * and that path can decide the tap was a hover and dispatch none — reported as
+ * "in a new session the send does nothing; tap the top so the keyboard hides,
+ * tap send again and it works". The composer stood above the keyboard the whole
+ * time and the button flashed under the finger, so the touch reached this
+ * control and only the click was missing. Pointer events are raised from the
+ * touch itself, so the press is read there and the click that may or may not
+ * follow the SAME gesture is swallowed. A mouse and a keyboard still arrive as
+ * a click; a finger that slid off the control still releases nothing, which is
+ * exactly what a click would have done.
+ */
+function useTapPress(
+  onPress: ((event: MouseEvent<HTMLButtonElement>) => void) | undefined,
+  isDisabled: boolean,
+) {
+  const gesture = useRef<'idle' | 'down' | 'pressed'>('idle');
+  const isOver = (event: PointerEvent<HTMLButtonElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    return (
+      event.clientX >= box.left &&
+      event.clientX <= box.right &&
+      event.clientY >= box.top &&
+      event.clientY <= box.bottom
+    );
+  };
+  return {
+    down: () => {
+      gesture.current = 'down';
+    },
+    up: (event: PointerEvent<HTMLButtonElement>) => {
+      // A release that did not start here is no press at all: `click` only
+      // fires when one element saw both halves of the gesture.
+      if (gesture.current !== 'down') return;
+      // Anything refused here falls back to the click, if one comes.
+      gesture.current = 'idle';
+      if (isDisabled || event.button !== 0 || event.defaultPrevented) return;
+      // A touch is captured by whatever was pressed, so the coordinates are the
+      // only thing that says the finger left the control before it lifted.
+      if (!isOver(event)) return;
+      gesture.current = 'pressed';
+      onPress?.(event);
+    },
+    click: (event: MouseEvent<HTMLButtonElement>) => {
+      const isEcho = gesture.current === 'pressed';
+      gesture.current = 'idle';
+      if (isEcho) return;
+      onPress?.(event);
+    },
+  };
+}
+/**
  * THE COMPOSER'S OWN CONTROLS, and there is one of them.
  *
  * Attach, dictate, send, stop: four boxes in one strip that were written four
@@ -813,6 +867,10 @@ export function OptionRow({
  * slot the send left, `recording` is `quiet` while it is listening. Nothing here
  * is a `className` at the call site, because a strip whose boxes disagree is
  * exactly what this replaced.
+ *
+ * The PRESS itself is `useTapPress` above: this strip is tapped with the
+ * keyboard up more than anything else in the app, and on iOS a tap is not
+ * reliably a `click`.
  */
 export function ComposerButton({
   label,
@@ -820,6 +878,10 @@ export function ComposerButton({
   isHolding = false,
   className = '',
   children,
+  disabled = false,
+  onClick,
+  onPointerDown,
+  onPointerUp,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   /** Icon-only, so the name is not optional. */
@@ -833,6 +895,7 @@ export function ComposerButton({
    */
   isHolding?: boolean;
 }) {
+  const press = useTapPress(onClick, disabled);
   const face = {
     quiet: 'h-8 w-7 text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted mouse:h-7 mouse:w-6',
     recording:
@@ -851,6 +914,16 @@ export function ComposerButton({
     <button
       type="button"
       aria-label={label}
+      disabled={disabled}
+      onPointerDown={(event) => {
+        onPointerDown?.(event);
+        press.down();
+      }}
+      onPointerUp={(event) => {
+        onPointerUp?.(event);
+        press.up(event);
+      }}
+      onClick={press.click}
       className={`relative grid shrink-0 place-items-center transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
