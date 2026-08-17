@@ -753,31 +753,6 @@ def paragraph(text):
     return {"type": "paragraph", "text": str(text)}
 
 
-def _check(title, fields, **options):
-    # PRIVATE - the judge behind `vis-agent extension check`, not an extension
-    # API. None when this form is VALID, else the ONE line saying what to fix:
-    # the very seam `ask` crosses, minus the human. The host runs the real
-    # request normalizer and throws the result away, so nothing is drawn,
-    # published or parked, and no validator function is called.
-    #
-    # `vis-agent extension check <file.py>` runs it over every `vis.ask(...)`
-    # in a file without importing it. An extension gets the same verdict from
-    # `vis.ask` itself, which refuses a bad request before anyone is asked.
-    import json
-
-    try:
-        request = _request_spec(title, fields, options, {})
-    except (TypeError, ValueError) as exc:
-        # A shape `ask` refuses outright - a field that is not a dict, a
-        # `validate=` that is not a function or cannot take the value - is
-        # ANSWERED here rather than raised: the check reports, never crashes.
-        return str(exc)
-    verdict = json.loads(_host.check_input(json.dumps(request)))
-    if verdict.get("is_valid"):
-        return None
-    return str(verdict.get("error") or "invalid human-input request")
-
-
 def reveal(handle):
     # Resolve an opaque `vis-secret:` handle to its plaintext, or None when the
     # handle is unknown or already forgotten. Never log or return the result.

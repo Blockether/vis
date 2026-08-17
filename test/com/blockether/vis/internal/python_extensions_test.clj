@@ -2000,12 +2000,24 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
 import vis
 
 
-def _at_least_8(secret):
-    return None if len(secret) >= 8 else 'at least 8 characters'
+def _refusal(title, fields, **options):
+    '''The one line `vis.ask` refuses this form with, or None when it takes it.
+
+    The engine's refusal crosses as a foreign exception - which is NOT an
+    `Exception` - reading `<host.class.Name>: <message>`, while a builder refuses
+    a shape it never had with a plain Python error. The author reads the message
+    either way.
+    '''
+    try:
+        vis.ask(title, fields, **options)
+    except BaseException as exc:
+        head, separator, rest = str(exc).partition(': ')
+        return rest if separator and '.' in head and ' ' not in head else str(exc)
+    return None
 
 
 def forms_report():
-    '''await forms_report() -> {'ok', ...} - build a form and check it.'''
+    '''await forms_report() -> {'kind', ...} - build a form, let the engine judge it.'''
     good = vis.column(
         vis.heading('Target'),
         vis.paragraph('Staging pages nobody.'),
@@ -2026,21 +2038,16 @@ def forms_report():
         vis.password('token'),
     )
     return {
-        'ok': vis._check('Deploy', [good], submit_label='Ship it'),
         'kind': good['type'] + ':' + good['direction'],
         'ink': good['fields'][0],
         'slider_type': good['fields'][2]['fields'][1]['type'],
-        'bad_option': vis._check('Deploy', [vis.select('env', [])]),
-        'bad_track': vis._check('Deploy', [vis.slider('canary', min=5, max=2)]),
-        'bad_names': vis._check('Deploy', [vis.plaintext('who'), vis.password('who')]),
-        'bad_title': vis._check('', [vis.plaintext('who')]),
-        'bad_key': vis._check('Deploy', [vis.plaintext('who', required=True)]),
-        'validated': vis._check('Deploy', [
-            vis.plaintext('who', validate=lambda text: None if text else 'who?'),
-            vis.password('token', validate=[_at_least_8, lambda value, values: None]),
-        ]),
-        'bad_validator': vis._check('Deploy', [vis.plaintext('who', validate=lambda: None)]),
-        'not_a_validator': vis._check('Deploy', [vis.plaintext('who', validate='nope')]),
+        'bad_option': _refusal('Deploy', [vis.select('env', [])]),
+        'bad_track': _refusal('Deploy', [vis.slider('canary', min=5, max=2)]),
+        'bad_names': _refusal('Deploy', [vis.plaintext('who'), vis.password('who')]),
+        'bad_title': _refusal('', [vis.plaintext('who')]),
+        'bad_key': _refusal('Deploy', [vis.plaintext('who', required=True)]),
+        'bad_validator': _refusal('Deploy', [vis.plaintext('who', validate=lambda: None)]),
+        'not_a_validator': _refusal('Deploy', [vis.plaintext('who', validate='nope')]),
     }
 
 
@@ -2057,41 +2064,38 @@ vis.extension(
 (defdescribe
   human-input-builders-test
   (it
-    "gives Python extensions the same form builders, checked by the engine itself"
-    (with-loaded
-      {"forms.py" forms-py}
-      (fn [_ _]
-        (let
-          [ext
-           (registered "forms")
+    "gives Python extensions the same form builders, and lets the engine refuse a bad one"
+    (with-loaded {"forms.py" forms-py}
+                 (fn [_ _]
+                   (let
+                     [ext
+                      (registered "forms")
 
-           res
-           (:result ((symbol-fn ext 'report)))]
+                      res
+                      (:result ((symbol-fn ext 'report)))]
 
-          ;; the builders compose plain wire data: a group, and nameless ink
-          (expect (= "group:column" (get res "kind")))
-          (expect (= {"type" "heading" "text" "Target"} (get res "ink")))
-          ;; `slider` is spelled so it never shadows the `range` builtin
-          (expect (= "range" (get res "slider_type")))
-          ;; a valid request is answered with None, never an exception
-          (expect (nil? (get res "ok")))
-          ;; and every mistake comes back as the engine's own one-line reason
-          (expect (= "Invalid human-input field env: select needs at least one option"
-                     (get res "bad_option")))
-          (expect (= "Invalid human-input field canary: :max must be greater than :min"
-                     (get res "bad_track")))
-          (expect (= "Invalid human-input request: field names must be distinct"
-                     (get res "bad_names")))
-          (expect (str/includes? (get res "bad_title") "non-blank :title"))
-          (expect (str/includes? (get res "bad_key") "unknown field key"))
-          ;; a validator is CODE: it never crosses the wire, so only its
-          ;; SHAPE is judged, and it is judged where it was written
-          (expect (nil? (get res "validated")))
-          (expect (= (str "a validate function takes the value, or the value "
-                          "and every value - this one takes neither")
-                     (get res "bad_validator")))
-          (expect (str/includes? (get res "not_a_validator")
-                                 "validate is a function, or a list of functions")))))))
+                     ;; the builders compose plain wire data: a group, and nameless ink
+                     (expect (= "group:column" (get res "kind")))
+                     (expect (= {"type" "heading" "text" "Target"} (get res "ink")))
+                     ;; `slider` is spelled so it never shadows the `range` builtin
+                     (expect (= "range" (get res "slider_type")))
+                     ;; and every mistake is RAISED by `vis.ask` itself, carrying the
+                     ;; engine's own one-line reason — the line the human never had to see
+                     (expect (= "Invalid human-input field env: select needs at least one option"
+                                (get res "bad_option")))
+                     (expect (= "Invalid human-input field canary: :max must be greater than :min"
+                                (get res "bad_track")))
+                     (expect (= "Invalid human-input request: field names must be distinct"
+                                (get res "bad_names")))
+                     (expect (str/includes? (get res "bad_title") "non-blank :title"))
+                     (expect (str/includes? (get res "bad_key") "unknown field key"))
+                     ;; a validator is CODE: it never crosses the wire, so only its
+                     ;; SHAPE is judged, and it is judged where it was written
+                     (expect (= (str "a validate function takes the value, or the value "
+                                     "and every value - this one takes neither")
+                                (get res "bad_validator")))
+                     (expect (str/includes? (get res "not_a_validator")
+                                            "validate is a function, or a list of functions")))))))
 
 ;; Regression, issue #118: a Python provider could never publish live account
 ;; usage. Its `limits_fn` row came back with `:unlimited?` instead of the host

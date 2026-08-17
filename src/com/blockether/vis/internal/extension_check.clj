@@ -7,15 +7,17 @@
    shell out, write state or mount a dialog. So nothing here executes the
    extension. The file is PARSED (`vis-python/extension_check.py`, `ast` only),
    the statically knowable arguments of every `vis.ask` call are
-   reconstructed, and the request that comes out is judged by
-   [[com.blockether.vis.internal.human-input/check-json]] -- the engine's own
-   seam, the same judge the running dialog uses.
+   reconstructed, and the request that comes out is judged by CALLING
+   [[com.blockether.vis.internal.human-input/normalize-request]] -- the engine's
+   own normalizer, the seam every running dialog crosses, so a refusal here is
+   the line the author would have seen in front of the human.
 
    The `vis` module the checker reads is the REAL one: the bootstrap is evaluated
    with every host callback bound to a refusal (`python-extensions/bind-inert-host!`),
    so `vis.plaintext(...)` builds its dict while `vis.shell(...)` cannot run. The
-   one exception is `__vis_host_check_input__`, because validating a request reads
-   nothing, writes nothing and asks nobody.
+   one exception is `__vis_host_request_input__`, bound to a judge that
+   normalizes the request and settles it `undeliverable`: a form is checked by
+   ASKING for it, and nobody is asked.
 
    What cannot be known without running the file (a field list assembled from an
    argument, an f-string title, a comprehension) is COUNTED as skipped, never
@@ -34,11 +36,29 @@
    shared reader so a resource missing from the native image fails loudly."
   (env/runtime-python-src "vis-python/extension_check.py"))
 
+(def ^:private unasked-answer
+  "What [[judge-request]] hands a checked `vis.ask` back: nobody was asked, so the
+   only honest settlement is the engine's own word for a request that reached no
+   surface."
+  (json/write-json-str (human-input/answer->wire {:is-submitted false :reason "undeliverable"})))
+
+(defn- judge-request
+  "The checker's `request_input`: normalize the request the way a real ask does,
+   then answer `undeliverable` instead of drawing, publishing or parking
+   anything. A bad spec throws here exactly where `vis.ask` throws for an
+   extension that runs, and that line is what the checker reports."
+  [request-json & _]
+  (let [request (json/read-json (str request-json) :key-fn identity)]
+    (human-input/normalize-request (cond-> request
+                                     (map? request)
+                                     (dissoc "channel_id" "channel_ids")))
+    unasked-answer))
+
 (defn- checker-context
   "A context holding the real `vis` module with an inert host, plus the checker."
   ^Context []
   (let [^Context ctx (px/build-context "extension-check")]
-    (px/bind-inert-host! ctx {"__vis_host_check_input__" human-input/check-json})
+    (px/bind-inert-host! ctx {"__vis_host_request_input__" judge-request})
     (locking ctx
       (.eval ctx "python" ^String px/bootstrap-python)
       (.eval ctx "python" ^String checker-python))

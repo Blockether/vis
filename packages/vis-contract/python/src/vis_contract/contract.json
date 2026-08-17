@@ -67,13 +67,6 @@
       "outside": "prompt"
     },
     {
-      "name": "check_input",
-      "global": "__vis_host_check_input__",
-      "arity": 1,
-      "summary": "Judge a human-input request without asking anybody.",
-      "outside": "local"
-    },
-    {
       "name": "reveal_secret",
       "global": "__vis_host_reveal_secret__",
       "arity": 1,

@@ -11,9 +11,9 @@ Three things come out of that:
 * a syntax error, with its own line;
 * every `vis.<name>` the module reads that the `vis` module does not have, which
   is how `vis.plaintxt(...)` is caught before it raises in front of a human;
-* every `vis.ask(...)` whose request can be reconstructed, validated through
-  the engine's own seam via `vis._check` - the same judge the running dialog
-  uses, never a second opinion about it.
+* every `vis.ask(...)` whose request can be reconstructed, judged by CALLING it
+  on a host that normalizes the request and settles it `undeliverable` instead
+  of asking anybody - the engine's own refusal, never a second opinion.
 
 A `validate=` function is checked by SHAPE, never called: a lambda or a `def` in
 the file stands in as a placeholder taking exactly the arguments it declares, so
@@ -172,6 +172,20 @@ def _request_args(node, env, names):
     return title, fields, options
 
 
+def _reason(exc):
+    """The one line a refusal says, without the class that carried it.
+
+    A host refusal crosses the polyglot boundary as a foreign exception whose
+    text reads `<host.class.Name>: <message>`, and the message is the whole of
+    what the author has to fix.
+    """
+    text = str(exc).strip()
+    head, separator, rest = text.partition(": ")
+    if separator and "." in head and " " not in head:
+        return rest
+    return text
+
+
 def _check_ask(node, env, names, report):
     try:
         title, fields, options = _request_args(node, env, names)
@@ -180,11 +194,12 @@ def _check_ask(node, env, names, report):
         return
     report["checked"] += 1
     try:
-        reason = vis._check(title, fields, **options)
-    except Exception as exc:  # a builder refused the shape outright
-        reason = str(exc)
-    if reason:
-        report["problems"].append(_problem("invalid-request", node, reason))
+        vis.ask(title, fields, **options)
+    except BaseException as exc:
+        # The engine refused the request, or a builder refused the shape outright.
+        # BaseException, because a host refusal arrives as a foreign exception that
+        # `except Exception` does not catch.
+        report["problems"].append(_problem("invalid-request", node, _reason(exc)))
 
 
 def _walk(node, env, names, report):

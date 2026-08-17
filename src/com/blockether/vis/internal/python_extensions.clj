@@ -440,17 +440,6 @@
                           validators-json
                           run))))))
     (.putMember g
-                "__vis_host_check_input__"
-                ;; The same seam as `request_input`, minus the human: one JSON
-                ;; request object in, one JSON verdict out. Nothing is drawn,
-                ;; published or parked and no validator runs, so
-                ;; `vis-agent extension check` can prove a form in a file
-                ;; it never ran.
-                (->executable (fn [request-json]
-                                ((requiring-resolve
-                                   'com.blockether.vis.internal.human-input/check-json)
-                                  request-json))))
-    (.putMember g
                 "__vis_host_reveal_secret__"
                 (->executable (fn [handle]
                                 ((requiring-resolve
@@ -508,9 +497,10 @@
    not run: a form is judged by the engine on the Clojure side, never by
    executing the extension.
 
-   `overrides` may hand back ONE member by name: the checker binds the real
-   `__vis_host_check_input__`, because validating a request reads nothing, writes
-   nothing and asks nobody."
+   `overrides` may hand back ONE member by name: the checker binds
+   `__vis_host_request_input__` to a judge that normalizes the request and
+   settles it `undeliverable`, so a form is judged by asking for it while
+   nobody is asked."
   ([^Context ctx] (bind-inert-host! ctx nil))
   ([^Context ctx overrides]
    (let [g (.getBindings ctx "python")]

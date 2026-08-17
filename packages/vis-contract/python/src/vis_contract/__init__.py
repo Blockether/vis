@@ -123,9 +123,6 @@ class Host(Protocol):
     ) -> str:
         """Ask the human, and block until the answer settles or is cancelled."""
 
-    def check_input(self, request_json: str) -> str:
-        """Judge a human-input request without asking anybody."""
-
     def reveal_secret(self, handle: str) -> Any:
         """Resolve a `vis-secret:` handle to its plaintext."""
 

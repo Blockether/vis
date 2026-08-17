@@ -32,7 +32,6 @@ _vis_mod.__dict__["_host"] = _vis_types.SimpleNamespace(
     jailed_shell=__vis_host_jailed_shell__,
     jailed_shell_session=__vis_host_jailed_shell_session__,
     request_input=__vis_host_request_input__,
-    check_input=__vis_host_check_input__,
     reveal_secret=__vis_host_reveal_secret__,
     forget_secret=__vis_host_forget_secret__,
     declare_env=__vis_host_declare_env__,

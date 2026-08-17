@@ -260,8 +260,18 @@ def test_a_required_field_left_empty_is_not_submitted(monkeypatch):
 # -- Judging a form ------------------------------------------------------------
 
 
-def test_check_reads_a_well_formed_request_and_says_nothing():
-    assert vis._check("Deploy", FORM) is None
+def _refusal(title, fields, **options):
+    """The line `vis.ask` refuses this form with, or None when it takes it."""
+    try:
+        vis.ask(title, fields, **options)
+    except _outside.Refused as exc:
+        return str(exc)
+    return None
+
+
+def test_ask_takes_a_well_formed_request_without_a_word(monkeypatch):
+    monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
+    assert _refusal("Deploy", FORM) is None
 
 
 @pytest.mark.parametrize(
@@ -275,14 +285,15 @@ def test_check_reads_a_well_formed_request_and_says_nothing():
         [vis.heading("nothing to answer")],
     ],
 )
-def test_check_names_what_is_wrong_with_a_form(form):
-    complaint = vis._check("Deploy", form)
+def test_ask_names_what_is_wrong_with_a_form(form):
+    complaint = _refusal("Deploy", form)
     assert isinstance(complaint, str) and complaint
 
 
-def test_check_knows_only_the_contracts_field_types():
+def test_ask_knows_only_the_contracts_field_types(monkeypatch):
+    monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
     for wire_type in CONTRACT["human_input"]["field_types"]:
         node = {"name": "a", "type": wire_type}
         if wire_type in CONTRACT["human_input"]["choice_types"]:
             node["options"] = ["one", "two"]
-        assert vis._check("Deploy", [node]) is None, wire_type
+        assert _refusal("Deploy", [node]) is None, wire_type

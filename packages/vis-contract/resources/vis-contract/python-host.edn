@@ -65,11 +65,6 @@
    :op/arity 3
    :op/summary "Ask the human, and block until the answer settles or is cancelled."
    :op/outside :outside/prompt}
-  {:op/name "check_input"
-   :op/global "__vis_host_check_input__"
-   :op/arity 1
-   :op/summary "Judge a human-input request without asking anybody."
-   :op/outside :outside/local}
   {:op/name "reveal_secret"
    :op/global "__vis_host_reveal_secret__"
    :op/arity 1

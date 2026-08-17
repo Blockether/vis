@@ -724,12 +724,6 @@ def _check_request(request):
     return None
 
 
-def check_input(request_json):
-    """`check_input`: is this form well formed, without showing it to anyone."""
-    complaint = _check_request(json.loads(request_json))
-    return json.dumps({"is_valid": complaint is None, "error": complaint or ""})
-
-
 # -- The host itself ----------------------------------------------------------
 
 _IMPLEMENTATIONS = {
@@ -740,7 +734,6 @@ _IMPLEMENTATIONS = {
     "notify": notify,
     "shell": shell,
     "request_input": request_input,
-    "check_input": check_input,
     "reveal_secret": reveal_secret,
     "forget_secret": forget_secret,
     "declare_env": declare_env,

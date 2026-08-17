@@ -6,7 +6,8 @@
    human, and the check still comes back as a report. What it DOES do is answer
    the three questions an author cannot answer by reading: does it parse, does it
    only touch `vis` names that exist, and would the forms it asks for be accepted
-   by the very seam the running dialog uses."
+   -- judged by CALLING `vis.ask` on a host that normalizes the request and
+   asks nobody, so the verdict is the engine's own."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.extension-check :as check]
