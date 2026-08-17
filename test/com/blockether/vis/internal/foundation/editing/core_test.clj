@@ -3912,7 +3912,48 @@
                    (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
                      (expect (= ["."] (:paths (coerce-rg spec))))))))
 
-;; Regression: `grep(["a", "b"], ["src", "tools"])` — needles, then scopes, the
+(defdescribe
+  grep-max-results-alias-test
+  ;; Models sometimes write `max_results` where grep's knob is `limit`; the call
+  ;; used to die on "find spec has unknown keys: max_results", so `max_results`
+  ;; is now an accepted ALIAS — one of the two, never both (the `paths`/`path`
+  ;; rule).
+  (let
+    [coerce-find
+     (private-fn "coerce-find-spec")
+
+     grep
+     (grep-data-fn)
+
+     caught
+     (fn [f & args]
+       (try (apply f args) nil (catch clojure.lang.ExceptionInfo e e)))]
+
+    (it "max_results is read as limit, and still must be a positive integer"
+        (expect (= 7 (:limit (coerce-find [{"query" "needle" "max_results" 7}]))))
+        (expect (= 7 (:limit (coerce-find [{"query" "needle" "limit" 7}]))))
+        (let [e (caught coerce-find [{"query" "needle" "max_results" 0}])]
+          (expect (some? e))
+          (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
+          (expect (string/includes? (ex-message e) "max_results"))))
+    (it "limit and max_results together are refused, naming both"
+        (let [e (caught coerce-find [{"query" "needle" "limit" 5 "max_results" 5}])]
+          (expect (some? e))
+          (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
+          (expect (string/includes? (ex-message e) "only one of canonical"))))
+    (it "a max_results grep runs and the coerced limit is echoed"
+        (let
+          [_
+           (write-temp! "maxres/a.clj" "needle here\n")
+
+           out
+           (:result (grep {"query" "needle" "paths" [(temp-dir-path "maxres")] "max_results" 3}))]
+
+          (expect (= 3 (get out "limit")))
+          (expect (= 1 (get out "hit_count")))))))
+
+
+ ;; Regression: `grep(["a", "b"], ["src", "tools"])` — needles, then scopes, the
 ;; obvious reading of a two-argument search — died on ARGUMENT SHAPE instead of
 ;; searching, because the second positional meant OPTIONS and the error offered
 ;; three call shapes at once. There is ONE canonical shape now: a single options

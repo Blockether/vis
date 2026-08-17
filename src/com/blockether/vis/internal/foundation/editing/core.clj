@@ -1730,7 +1730,7 @@
    `grep({\"query\": q, \"paths\": [\"src\"]})` are the same call. A positional query is
    REFUSED because the second positional used to mean OPTIONS: the obvious
    reading of `grep([\"a\" \"b\"], [\"src\" \"tools\"])` — needles, then scopes — died
-   on argument shape instead of searching."
+   on argument shape instead of searching. `limit` is canonical; `max_results` is its accepted alias — ONE of the two, never both."
   [args]
   (let
     [spec
@@ -1746,7 +1746,8 @@
            {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
 
      allowed-keys
-     #{"query" "paths" "path" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_regex"}
+     #{"query" "paths" "path" "limit" "max_results" "offset" "include" "exclude" "context"
+       "is_hidden" "is_regex"}
 
      unknown-keys
      (seq (remove allowed-keys (keys spec)))]
@@ -1757,7 +1758,7 @@
           (str
             "find spec has unknown keys: "
             (str/join ", " (map str unknown-keys))
-            ". Allowed: query, paths, limit, offset, include, exclude, context, is_hidden, is_regex.")
+            ". Allowed: query, paths, limit (alias max_results), offset, include, exclude, context, is_hidden, is_regex.")
           {:type :ext.foundation.editing/invalid-find-args
            :unknown (vec unknown-keys)
            :allowed (vec (sort allowed-keys))})))
@@ -1825,12 +1826,18 @@
        paths
        (into [] (comp (map normalize-find-dir-path) (distinct)) paths)
 
+       _
+       (when (and (contains? spec "limit") (contains? spec "max_results"))
+         (throw (ex-info
+                  "find spec must use only one of canonical \"limit\" or alias \"max_results\"."
+                  {:type :ext.foundation.editing/invalid-find-args :spec spec})))
+
        limit
-       (or (get spec "limit") default-find-limit)
+       (or (get spec "limit") (get spec "max_results") default-find-limit)
 
        _
        (when-not (and (integer? limit) (pos? (long limit)))
-         (throw (ex-info "find \"limit\" must be a positive integer"
+         (throw (ex-info "find \"limit\" (alias \"max_results\") must be a positive integer"
                          {:type :ext.foundation.editing/invalid-find-args :limit limit})))
 
        ;; PAGING. `offset` is where this page STARTS on both grep axes — the
@@ -5415,7 +5422,8 @@
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
        "`query: \"\"` lists files. Page with `offset`: line 1 names the next call when capped.")
      :params [{:name "query"} {:name "paths"} {:name "include"} {:name "exclude"} {:name "is_regex"}
-              {:name "context"} {:name "limit"} {:name "offset"} {:name "is_hidden"}]
+              {:name "context"} {:name "limit"} {:name "max_results"} {:name "offset"}
+              {:name "is_hidden"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
