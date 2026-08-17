@@ -4,6 +4,7 @@
    on, never a raw connect exception that eats the turn."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
+            [clojure.string :as str]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as tr]
@@ -298,14 +299,56 @@
       (with-project thing-test-file
                     (fn [root]
                       (expect (= ["com.example.thing-test"] (:nses (run-capturing root {})))))))
-  (it "errors on paths that hold no tests instead of falling back to everything"
+  (it "errors on a location that EXISTS yet holds no tests, never falling back to everything"
+      (with-project
+        (assoc thing-test-file "src/com/example/lonely.clj" "(ns com.example.lonely)\n")
+        (fn [root]
+          (let
+            [e (try (run-capturing root {"paths" ["src"]}) (catch clojure.lang.ExceptionInfo e e))]
+            (expect (= :clj/bad-args (:type (ex-data e))))
+            (expect (re-find #"no test namespaces \(\*_test\.clj / \*_test\.cljc\) under"
+                             (ex-message e)))))))
+  ;; Regression, user report (paraphrased: ONE directory segment of an otherwise
+  ;; correct path was misspelled, and the runner answered "no *_test.clj
+  ;; namespaces under <that very test file>" — so the caller read it as a project
+  ;; whose tests do not exist, retried the same typo, then went digging through
+  ;; the build file instead of the spelling).
+  (it "refuses a path that is NOT ON DISK as a typo, naming the part that is"
+      (with-project
+        thing-test-file
+        (fn [root]
+          (let
+            [typo
+             (str root "/repositories/nope/test/com/example/thing_test.clj")
+
+             e
+             (try (run-capturing root {"paths" [typo]}) (catch clojure.lang.ExceptionInfo e e))]
+
+            (expect (= :clj/bad-args (:type (ex-data e))))
+            (expect (= [typo] (:missing (ex-data e))))
+            (expect (str/includes? (ex-message e) "no such path"))
+            ;; The deepest live ancestor is the last segment that was still right.
+            (expect (str/includes? (ex-message e) (str "exists up to " (pr-str root))))))))
+  (it "reads a MISSING path handed to a namespace key as a missing path too"
       (with-project thing-test-file
                     (fn [root]
                       (let
-                        [e (try (run-capturing root {"paths" ["src"]})
+                        [e (try (run-capturing root {"ns" "test/com/example/nope_test.clj"})
                                 (catch clojure.lang.ExceptionInfo e e))]
-                        (expect (= :clj/bad-args (:type (ex-data e))))
-                        (expect (re-find #"no \*_test\.clj namespaces under" (ex-message e)))))))
+                        (expect (str/includes? (ex-message e) "no such path"))))))
+  ;; Regression, user report (paraphrased: a `.cljc` test file was invisible to
+  ;; selection — naming the file, or the directory holding it, reported no tests
+  ;; at all, though `clojure -M:test` loads it exactly like a `.clj`).
+  (it "resolves a .cljc test file, and a .cljc source file to its *-test ns"
+      (with-project
+        {"test/com/example/cross_test.cljc" "(ns com.example.cross-test)\n"
+         "src/com/example/cross.cljc" "(ns com.example.cross)\n"}
+        (fn [root]
+          (expect (= ["com.example.cross-test"]
+                     (:nses (run-capturing root {"paths" ["test/com/example/cross_test.cljc"]}))))
+          (expect (= ["com.example.cross-test"] (:nses (run-capturing root {"paths" ["test"]}))))
+          (expect (= ["com.example.cross-test"]
+                     (:nses (run-capturing root {"paths" ["src/com/example/cross.cljc"]})))))))
   ;; Regression, user report (paraphrased: the model kept naming a NAMESPACE, the
   ;; runner refused the call by that key's name, and the turn went into the
   ;; spelling instead of into the tests).

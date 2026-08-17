@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- fix(clj-test): answer a `run_tests` path that is NOT on disk with `no such path` plus the deepest part of it that exists, instead of "no tests under it"
+- fix(clj-test): select `*_test.cljc` files — a `.cljc` test namespace was invisible to `run_tests`
 - feat(clj-test): `run_tests` runs the clojure namespace a call names — `ns` / `nses` / `namespace` / `namespaces` and `var` / `vars` / `only` select instead of being refused
 - fix(extensions): make `vis.state` a whole mapping — `pop`, `setdefault`, `update`, `clear`, keys and iteration
 - refactor(editing): remove structural editing — `struct_index`, `struct_nodes` and `struct_patch` are gone; `grep` → `cat` → `patch` is the whole editing surface

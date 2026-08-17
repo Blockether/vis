@@ -546,43 +546,61 @@
   [ns-str]
   (when ns-str (if (str/ends-with? ns-str "-test") ns-str (str ns-str "-test"))))
 
+(def ^:private test-file-exts
+  "Extensions a JVM Clojure namespace lives in. `.cljc` is loaded and run by
+   `clojure -M:test` exactly like `.clj`, so `foo_test.cljc` IS a test file —
+   skipping it makes a path the caller spelled CORRECTLY look like a location
+   with no tests under it. `.cljs` never loads on the JVM and is absent by
+   design."
+  [".clj" ".cljc"])
+
+(defn- clj-source-file?
+  "True when `f` is a Clojure source file this JVM test run can load."
+  [^java.io.File f]
+  (boolean (and (.isFile f)
+                (some (fn [^String ext]
+                        (str/ends-with? (.getName f) ext))
+                      test-file-exts))))
+
+(defn- test-source-file?
+  "True when `f` is a TEST file: a `_test` source file in a JVM Clojure extension."
+  [^java.io.File f]
+  (boolean (and (.isFile f)
+                (some (fn [^String ext]
+                        (str/ends-with? (.getName f) (str "_test" ext)))
+                      test-file-exts))))
+
 (defn- all-test-files
-  "Index every *_test.clj under root by its declared ns string, built once per
+  "Index every test file under root by its declared ns string, built once per
    run so SOURCE paths can be resolved to their corresponding test namespace."
   [root]
   (into {}
         (keep (fn [^java.io.File f]
-                (when (and (.isFile f) (str/ends-with? (.getName f) "_test.clj"))
+                (when (test-source-file? f)
                   (when-let [ns (ns-of-file f)]
                     [ns f]))))
         (file-seq (io/file root))))
 
 (defn- path->nses
-  "Resolve ONE file/dir to test namespace strings. A *_test.clj file -> its own
-   ns. A plain source .clj file -> its matching *-test ns (when that test file
-   exists). A directory -> every *_test.clj under it; a pure source dir maps each
-   source ns to its existing *-test ns. `test-index` is a DELAY over {ns-str file}
-   — naming test files never pays for the workspace walk a source file needs."
+  "Resolve ONE file/dir to test namespace strings. A test file -> its own ns. A
+   plain source file -> its matching *-test ns (when that test file exists). A
+   directory -> every test file under it; a pure source dir maps each source ns
+   to its existing *-test ns. `test-index` is a DELAY over {ns-str file} —
+   naming test files never pays for the workspace walk a source file needs."
   [^java.io.File f test-index]
   (let
     [test-ns (fn [src-ns]
                (let [tn (source-ns->test-ns src-ns)]
                  (when (contains? @test-index tn) tn)))]
-    (cond (and (.isFile f) (str/ends-with? (.getName f) "_test.clj")) (keep identity
-                                                                            [(ns-of-file f)])
-          (and (.isFile f) (str/ends-with? (.getName f) ".clj")) (keep test-ns [(ns-of-file f)])
-          (.isDirectory f)
-          (let
-            [test-files (filter (fn [^java.io.File x]
-                                  (and (.isFile x) (str/ends-with? (.getName x) "_test.clj")))
-                                (file-seq f))]
-            (if (seq test-files)
-              (keep ns-of-file test-files)
-              (->> (file-seq f)
-                   (filter (fn [^java.io.File x]
-                             (and (.isFile x) (str/ends-with? (.getName x) ".clj"))))
-                   (keep ns-of-file)
-                   (keep test-ns))))
+    (cond (test-source-file? f) (keep identity [(ns-of-file f)])
+          (clj-source-file? f) (keep test-ns [(ns-of-file f)])
+          (.isDirectory f) (let [test-files (filter test-source-file? (file-seq f))]
+                             (if (seq test-files)
+                               (keep ns-of-file test-files)
+                               (->> (file-seq f)
+                                    (filter clj-source-file?)
+                                    (keep ns-of-file)
+                                    (keep test-ns))))
           :else [])))
 
 (defn- clj-file-name?
@@ -592,12 +610,48 @@
   [s]
   (boolean (re-find #"\.clj[cs]?$" (str s))))
 
+(defn- under-root
+  "The FILE a request entry names: absolute as given, otherwise relative to
+   `root`. The ONE place a caller's path becomes a location, so selection and
+   the missing-path check can never disagree about which file was meant."
+  ^java.io.File [root path]
+  (let [f (io/file (str path))]
+    (if (.isAbsolute f) f (io/file (str root) (str path)))))
+
+(defn- deepest-existing
+  "The nearest ancestor of `f` that is on disk (`f` itself when it is), or nil —
+   the last segment of a misspelled path that was still right."
+  ^java.io.File [^java.io.File f]
+  (loop [f f]
+    (cond (nil? f) nil
+          (.exists f) f
+          :else (recur (.getParentFile f)))))
+
+(defn- missing-locations
+  "The requested LOCATIONS that are not on disk, as
+   `[{:path <as asked> :exists <deepest live ancestor, or nil>}]`. Only entries
+   that NAME a location count: a namespace name has none — an unknown namespace
+   is a require-time failure, not a bad path — but a path handed to a namespace
+   key is still a path."
+  [root path-entries ns-entries]
+  (into []
+        (comp (keep (fn [{:keys [path ns]}]
+                      (when-let [named (or path (when (clj-file-name? ns) ns))]
+                        [named (under-root root named)])))
+              (remove (fn [[_ ^java.io.File f]]
+                        (.exists f)))
+              (map (fn [[named ^java.io.File f]]
+                     {:path named
+                      :exists (some-> (deepest-existing f)
+                                      (.getPath))})))
+        (concat path-entries ns-entries)))
+
 (defn- ns->test-nses
   "Resolve ONE namespace NAME to the test namespaces it selects: a test namespace
    is itself, a SOURCE namespace becomes its `*-test` namespace — the same
    translation a source PATH gets. A name the workspace index does not know is
-   passed through unchanged, because that index sees only `*_test.clj` files
-   under root: a namespace that lives elsewhere on the test classpath still runs,
+   passed through unchanged, because that index sees only the test FILES under
+   root: a namespace that lives elsewhere on the test classpath still runs,
    and a misspelled one fails loudly at require time instead of quietly selecting
    nothing."
   [ns-str test-index]
@@ -615,13 +669,7 @@
   [root {ns-str :ns var-name :var} test-index]
   (if (nil? ns-str)
     {:nses [] :var var-name}
-    (let
-      [pf
-       (io/file (str ns-str))
-
-       ^java.io.File f
-       (if (.isAbsolute pf) pf (io/file root (str ns-str)))]
-
+    (let [^java.io.File f (under-root root ns-str)]
       (cond (or (clj-file-name? ns-str) (.exists f)) {:nses (vec (path->nses f test-index))
                                                       :var var-name}
             (and (nil? var-name) (str/includes? ns-str "/")) (let [[n v] (str/split ns-str #"/" 2)]
@@ -667,13 +715,7 @@
 
      acc
      (reduce (fn [acc {:keys [path var]}]
-               (let
-                 [nses (when path
-                         (let
-                           [pf (io/file (str path))
-                            f (if (.isAbsolute pf) pf (io/file root (str path)))]
-
-                           (vec (path->nses f test-index))))]
+               (let [nses (when path (vec (path->nses (under-root root path) test-index)))]
                  (add acc nses var)))
              {:nses [] :vars [] :files []}
              path-entries)
@@ -783,19 +825,21 @@
           "run_tests(\"clojure\", {\"paths\": [\"test\"], \"exclude\": [\"slow\"]})"]}))))
 
 (defn- ns->source-relpath
+  "The relative source path a namespace maps to, WITHOUT the extension
+   (`a.core-test` -> `a/core_test`): the same namespace may live in a `.clj` or
+   a `.cljc` file, so the caller tries every test extension."
   [ns-str]
-  (str (-> ns-str
-           (str/replace "." "/")
-           (str/replace "-" "_"))
-       ".clj"))
+  (-> ns-str
+      (str/replace "." "/")
+      (str/replace "-" "_")))
 
 (defn- test-file-for
   "Find a test source file for ns-str under root, even when the live nREPL was
    started without test paths on its classpath."
   [root ns-str]
   (let
-    [rel
-     (ns->source-relpath ns-str)
+    [rels
+     (mapv (partial str (ns->source-relpath ns-str)) test-file-exts)
 
      root-file
      (io/file root)]
@@ -803,7 +847,9 @@
     (some (fn [^java.io.File f]
             (let [p (.getPath f)]
               (when (and (.isFile f)
-                         (str/ends-with? p rel)
+                         (some (fn [^String rel]
+                                 (str/ends-with? p rel))
+                               rels)
                          (str/includes? p
                                         (str java.io.File/separator "test" java.io.File/separator)))
                 (.getAbsolutePath f))))
@@ -1135,8 +1181,9 @@
 (defn clj-test-fn
   "Run clojure tests. The arg names PATHS — files, directories, or
    `<path>::<test-name>` node ids: this is where a path becomes a test namespace
-   and a name becomes ONE var. A *_test.clj file is read for the ns it declares,
-   a SOURCE file maps to its `*-test` ns when that test file exists, and a
+   and a name becomes ONE var. A test file (`*_test.clj` / `*_test.cljc`) is read
+   for the ns it declares, a SOURCE file maps to its `*-test` ns when that test
+   file exists, and a
    directory is walked for both; the `::name` half then keeps just that var,
    matching the test var itself (`adds-test`) or the SOURCE var it covers
    (`adds`), and `::name` with no path finds it wherever it lives.
@@ -1145,12 +1192,13 @@
    `clojure -M:test` itself takes; each entry gets the same translation (a source
    ns resolves to its `*-test` ns) and roots the run at the project its test file
    lives in, so the spelling a model reaches for RUNS instead of being refused.
-   When NO LOCATION is requested the whole workspace is scanned for *_test.clj
+   When NO LOCATION is requested the whole workspace is scanned for test files
    and every test namespace runs — empty selectors mean 'run everything', not
-   'run nothing'. The one case that still errors is explicit-but-empty: a
-   location was given yet no *_test.clj was found under it (a real 'nothing to
-   run there', not a 'run all' intent), and likewise a `::name` that matched no
-   var.
+   'run nothing'. Two calls error, and each says which mistake it was: a path
+   that is NOT ON DISK is a typo, answered with the deepest part of it that does
+   exist rather than with 'no tests under it', and explicit-but-empty is a
+   location that IS there yet holds no test namespace (a real 'nothing to run
+   there', not a 'run all' intent) — likewise a `::name` that matched no var.
    The run is rooted at the tests' OWN project — the nearest deps.edn / project.clj /
    bb.edn at or below the workspace root — so a NESTED project is tested against its
    own build file. run_tests NEVER starts a REPL: it reuses THIS session's REPL for
@@ -1193,9 +1241,7 @@
       ;; file-seqs per namespace.
       req-locations
       (into (vec (keep (fn [{:keys [path]}]
-                         (when path
-                           (let [pf (io/file (str path))]
-                             (if (.isAbsolute pf) pf (io/file root (str path))))))
+                         (when path (under-root root path)))
                        paths))
             (:files resolved))
 
@@ -1228,13 +1274,29 @@
       port
       (:port (repl-manager/live-repl-for-dir (:session-id env) eff-root))]
 
+     ;; An explicit location that is NOT THERE is a misspelling, not an empty
+     ;; suite: answering "no test namespaces under <path>" for a path that does
+     ;; not exist sends the caller hunting for missing tests or a broken build
+     ;; file instead of the wrong segment. Name the deepest part that DOES
+     ;; exist and the next segment is the typo.
+     (when-let [missing (seq (missing-locations root paths ns-selectors))]
+       (throw (ex-info (str "run_tests(clojure) no such path: "
+                            (str/join "; "
+                                      (map (fn [{:keys [path exists]}]
+                                             (str (pr-str path)
+                                                  (when exists
+                                                    (str " — exists up to " (pr-str exists)))))
+                                           missing)))
+                       {:type :clj/bad-args :got arg :missing (mapv :path missing)})))
      (when (empty? nses)
        (let [named (into (vec (keep :path paths)) (keep :ns ns-selectors))]
          (throw
            (ex-info
              (if (seq named)
-               (str "run_tests(clojure) found no *_test.clj namespaces under " (pr-str named))
-               "run_tests(clojure) found no *_test.clj namespaces anywhere under the workspace root")
+               (str "run_tests(clojure) found no test namespaces (*_test.clj / *_test.cljc) under "
+                    (pr-str named))
+               (str "run_tests(clojure) found no test namespaces (*_test.clj / *_test.cljc) "
+                    "anywhere under the workspace root"))
              {:type :clj/bad-args :got arg}))))
      (let
        [result
