@@ -14,15 +14,20 @@ name: Native Release
 #
 # The wrapper bundle is the distributed application artifact; there is no JVM
 # uberjar release asset. Libraries/extensions still publish to Clojars from
-# release.yml for people writing extensions. Only a `v*` tag PUBLISHES; a manual
-# dispatch from a branch builds and tests the same bundle and attaches nothing,
-# so the release build is verifiable without spending a tag on it.
+# release.yml for people writing extensions.
+#
+# TAG PUBLISHING IS OFF — releases are JVM-only for now. v0.1.39 and v0.1.40 both
+# shipped with NO native asset at all: hosted macOS never finished the image
+# (5 h 51 min, killed by its own timeout) and linux-arm64 died of
+# OutOfMemoryError in the points-to analysis on a 16 GB runner. A tag that
+# reliably produces nothing is worse than a tag that does not try: the release
+# is the `vis-agent` launcher plus Clojars, and the launcher already runs the
+# JVM source runtime when no native sidecar is installed. This workflow stays
+# dispatch-only so a platform can be re-proven by hand; restore
+# `push: {tags: ["v[0-9]*"]}` here (and its assertion in
+# test/com/blockether/vis/release_bundle_test.clj) once a green run exists for
+# every asset in the matrix.
 on:
-  push:
-    # v[0-9]* and not v*: `voice-assets-pack` is a tag in this repository and
-    # `v*` matched it, so pushing the asset pack started a native release that
-    # attached two Linux binaries to a release meant to carry models only.
-    tags: ['v[0-9]*']
   workflow_dispatch:
     inputs:
       tag:

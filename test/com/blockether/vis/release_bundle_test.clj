@@ -715,10 +715,17 @@
       (expect (str/includes? (slurp "build.clj") "(System/getenv \"VIS_RELEASE_TRACK\")")
               "build.clj")
       (expect (str/includes? beta "prerelease: true") beta)
-      ;; The rolling tag is not a v* tag, or every beta would start a stable
-      ;; native release too.
+      ;; The rolling tag is not a v* tag: a beta must never look like a stable
+      ;; release to any workflow that keys off `v*`.
       (expect (str/includes? beta "VIS_BETA_TAG: beta") beta)
-      (expect (str/includes? stable "tags: ['v[0-9]*']") stable)
+      ;; Regression, releases v0.1.39 and v0.1.40: both tags published with no
+      ;; native asset — hosted macOS was killed by its own timeout and
+      ;; linux-arm64 died of OutOfMemoryError — so a tag paid hours of CI to
+      ;; produce nothing. Until a platform is green again a release is JVM-only:
+      ;; release.yml still fires on the tag, native-release.yml is dispatch-only.
+      (expect (not (str/includes? stable "tags: ['v[0-9]*']")) stable)
+      (expect (str/includes? (slurp ".github/workflows/release.yml") "tags: ['v[0-9]*']")
+              "release.yml")
       (expect (str/includes? stable "VIS_RELEASE_TRACK:") stable)
       ;; One word, one axis: `channel` belongs to the TUI/web/Telegram adapters.
       (doseq

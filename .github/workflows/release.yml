@@ -130,8 +130,10 @@ jobs:
       # snapshot of the same two scripts, so releases/latest/download/... — the
       # URL already in the wild — never stops working. They only bootstrap: what
       # they install is never a tag, it is the branch tip, since a published
-      # release can carry broken source. native-release.yml attaches the platform
-      # bundles to this same release.
+      # release can carry broken source. These two scripts ARE the release payload
+      # right now: native-release.yml no longer runs on a tag (native builds are
+      # unreliable — see its header), so a release ships the launcher plus the
+      # Clojars deploy and the launcher runs the JVM source runtime.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:

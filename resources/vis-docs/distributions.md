@@ -152,7 +152,16 @@ and startup timings, `--jfr` records Java Flight Recorder profiles into
 
 ## The native release bundle
 
-Native-image output is platform-specific, so each release publishes exactly one
+**Right now a release ships no native bundle.** v0.1.39 and v0.1.40 both published
+without one — hosted macOS never finished the image and the Linux ARM64 builder ran
+out of memory — so `native-release.yml` no longer runs on a tag; it is dispatched by
+hand when a platform is being re-proven. A tag publishes the `vis-agent` launcher and
+the Clojars deploy, and the launcher runs the JVM source runtime (`jvm` in the table
+above) when no native sidecar is installed. Everything below describes that bundle for
+when it is rebuilt, and `bin/release-native --tag vX.Y.Z --upload` still attaches one
+to an existing release from a 32 GB machine.
+
+Native-image output is platform-specific, so a native release publishes exactly one
 archive per platform:
 
 ```text
