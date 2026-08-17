@@ -55,6 +55,8 @@
 
 (def ^:private menu-commands (deref #'screen/menu-commands))
 
+(def ^:private slash-suggestions-for-db (deref #'screen/slash-suggestions-for-db))
+
 (def ^:private command-palette-extra-commands (deref #'screen/command-palette-extra-commands))
 
 (def ^:private copy-session-id! (deref #'screen/copy-session-id!))
@@ -1848,3 +1850,23 @@
                    (expect (nil? (typed "/draft stash")))
                    (expect (nil? (typed "/export")))
                    (expect (nil? (typed "hello"))))))
+
+;; Regression (user report, from the TUI): ArrowUp recalled `/reload` out of the
+;; input history and the slash overlay opened over the composer — and while it
+;; is up the overlay OWNS ArrowUp/Down, so the next press moved ITS selection
+;; instead of walking further back through the ring.
+(defdescribe
+  recalled-line-paints-no-slash-overlay-test
+  (it "a buffer the user TYPED offers the overlay; a RECALLED one does not"
+      (let [buffer #(reduce input/insert-char (input/empty-input) (seq %))
+            ;; What ArrowUp dropped in the box — `/reload` in the report, and any
+            ;; slash line the palette can answer here (a unit-test JVM carries no
+            ;; engine slash registry, so match a built-in: `Search in Session`).
+            recalled (buffer "/s")]
+        (expect (seq (slash-suggestions-for-db nil {:input recalled :slash-command-index 0})))
+        ;; THIS is what used to spring open over the composer and, because an open
+        ;; overlay owns ArrowUp, strand the user on the entry they just recalled.
+        (expect (nil? (slash-suggestions-for-db nil
+                                                {:input recalled
+                                                 :slash-command-index 0
+                                                 :slash-command-hidden? true}))))))

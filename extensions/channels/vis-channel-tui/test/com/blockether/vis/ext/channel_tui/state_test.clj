@@ -3095,6 +3095,73 @@
 
                    (expect (= "prev-sent" (input/input->text (:input result)))))))
 
+;; Regression (user report, from the TUI): running `/reload` parked the command
+;; at the top of the ↑ recall ring, so the next ArrowUp refilled the composer
+;; with `/reload` and the slash overlay sprang open over it — and an open
+;; overlay OWNS ArrowUp, so the prompt the user was reaching for stayed
+;; unreachable.
+(defdescribe
+  commands-stay-out-of-input-history-test
+  (it "a command submission is never remembered, a prompt always is"
+      (expect (= ["fix the parser"] (:input-history (#'state/remember-input {} "fix the parser"))))
+      (expect (nil? (:input-history (#'state/remember-input {} "/reload"))))
+      (expect (nil? (:input-history (#'state/remember-input {} "/workspace new draft"))))
+      ;; A pasted absolute path is a PROMPT — the engine's own slash shape says so.
+      (expect (= ["/var/folders/x/shot.png what is this"]
+                 (:input-history
+                   (#'state/remember-input {} "/var/folders/x/shot.png what is this")))))
+  (it "a resumed session hydrates the ring without the commands of its past"
+      (expect (= ["first prompt" "second prompt"]
+                 (#'state/history-user-texts
+                  [{:role :user :text "first prompt"} {:role :assistant :text "answer"}
+                   {:role :user :text "/reload"} {:role :user :text "second prompt"}]))))
+  (it "a recalled line keeps the slash overlay shut"
+      (let
+        [event-fn
+         (fn [id]
+           (:fn (get @@#'state/event-registry id)))
+
+         recalled
+         (:db ((event-fn :history-up)
+                {:input-history ["/reload"]
+                 :input-history-index nil
+                 :input (input/empty-input)
+                 :pending-sends []}
+                [:history-up]))]
+
+        (expect (= "/reload" (input/input->text (:input recalled))))
+        (expect (true? (:slash-command-hidden? recalled)))
+        ;; Editing WITHIN the recalled command keeps the palette out of the way,
+        ;; exactly like a tab-completed slash does.
+        (expect (true? (:slash-command-hidden? ((event-fn :update-input)
+                                                 recalled
+                                                 [:update-input
+                                                  {:lines ["/reload now"] :crow 0 :ccol 11}]))))
+        ;; Typing a PROMPT over it arms the overlay again.
+        (expect (false? (:slash-command-hidden? ((event-fn :update-input)
+                                                  recalled
+                                                  [:update-input
+                                                   {:lines ["fix the parser"] :crow 0 :ccol 14}]))))
+        ;; ArrowDown lands back on the user's OWN draft, which is armed again.
+        (expect (false? (:slash-command-hidden?
+                          ((event-fn :history-down) recalled [:history-down]))))))
+  (it "ArrowUp keeps walking the ring past a recalled command"
+      (let
+        [history-up
+         (:fn (get @@#'state/event-registry :history-up))
+
+         first-up
+         (:db (history-up {:input-history ["older prompt" "/reload"]
+                           :input-history-index nil
+                           :input (input/empty-input)
+                           :pending-sends []}
+                          [:history-up]))
+
+         second-up
+         (:db (history-up first-up [:history-up]))]
+
+        (expect (= "/reload" (input/input->text (:input first-up))))
+        (expect (= "older prompt" (input/input->text (:input second-up)))))))
 (defdescribe
   cancel-restores-pending-to-input-test
   (it "message-received on CANCEL routes the backlog to the editor, not a drain"

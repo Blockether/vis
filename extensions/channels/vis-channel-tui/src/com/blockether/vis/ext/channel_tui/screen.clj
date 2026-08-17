@@ -846,6 +846,19 @@
      ;; the inline `@` file picker (shared with the web; see file-suggest).
      (if (seq slash) slash (file-suggest/suggestions input-state selected-index)))))
 
+(defn- slash-suggestions-for-db
+  "The overlay THIS frame shows: [[slash-suggestions-for-input]] for the live
+   editor, or nothing while `:slash-command-hidden?` says the buffer was RECALLED
+   rather than typed (↑ history, a queued send pulled back).
+
+   One gate for the paint AND the key router, because they must agree: an open
+   overlay owns ArrowUp/Down, so a recalled `/reload` that popped it open also
+   swallowed the next ↑ and stranded the user in the ring. The first keystroke
+   on top of the recalled line re-arms it (`:update-input` in state.clj)."
+  [screen db]
+  (when-not (:slash-command-hidden? db)
+    (slash-suggestions-for-input screen (:input db) (:slash-command-index db))))
+
 (defn- input-state-from-text [text] (input/paste-text (input/empty-input) (or text "")))
 
 (defn- activate-tab-entry-hit!
@@ -2305,7 +2318,7 @@
      (into transcript-selectable-ranges input-selectable-ranges)
 
      slash-suggestions
-     (slash-suggestions-for-input screen input slash-command-index)
+     (slash-suggestions-for-db screen db)
 
      ;; F2 context panel snapshot ({:tasks :facts}) — derived once here (like
      ;; slash-suggestions) from the active session's cache, refreshed at each
@@ -3178,7 +3191,7 @@
     ;; no-op, and non-`/`/`@` input returns empty cheaply (no index crawl).
     (render/draw-slash-command-suggestions!
       g
-      (slash-suggestions-for-input screen input slash-command-index)
+      (slash-suggestions-for-db screen db)
       input-top
       cols
       slash-command-index)
@@ -3417,7 +3430,7 @@
      (- rows 2)
 
      slash-suggestions
-     (slash-suggestions-for-input screen input slash-command-index)]
+     (slash-suggestions-for-db screen db)]
 
     (draw-bottom-chrome! screen
                          g
@@ -6111,7 +6124,7 @@
                                                            (long render/MESSAGE_MARGIN_TOP))
                                           :eff-scroll (get-in db [:layout :eff-scroll])}
                       slash-suggestions
-                      (slash-suggestions-for-input screen (:input db) (:slash-command-index db))]
+                      (slash-suggestions-for-db screen db)]
 
                      (cond
                        ;; F1 help / F2 task overlay is open: it LOCKS the
@@ -6820,15 +6833,13 @@
                      (when paste-id (state/dispatch [:remove-paste paste-id]))
                      (recur))
                    (and (instance? KeyStroke key)
-                        (seq (slash-suggestions-for-input screen
-                                                          (:input db)
-                                                          (:slash-command-index db)))
+                        (seq (slash-suggestions-for-db screen db))
                         (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown
                            KeyType/Enter KeyType/Tab KeyType/ReverseTab}
                          (.getKeyType ^KeyStroke key)))
                    (let
                      [suggestions
-                      (slash-suggestions-for-input screen (:input db) (:slash-command-index db))
+                      (slash-suggestions-for-db screen db)
                       ktype (.getKeyType ^KeyStroke key)]
 
                      (cond (= ktype KeyType/ArrowUp) (state/dispatch [:move-slash-command-selection

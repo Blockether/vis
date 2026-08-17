@@ -1090,11 +1090,39 @@
    `:open-building-tab`)."
   "Starting…")
 
+(defn- command-submission?
+  "True when `text` is a COMMAND the user RAN rather than a prompt they wrote:
+   the engine's own `/word …` shape (`vis/slash-parse`), which already rejects a
+   pasted absolute path (`/var/folders/…/shot.png what is this`).
+
+   Commands stay OUT of the ↑ recall ring. `/reload` used to land on top of it,
+   so the next ArrowUp refilled the composer with the command instead of the
+   prompt the user was reaching for — and that refill re-opened the slash
+   overlay, which OWNS ArrowUp, leaving the rest of the ring unreachable."
+  [text]
+  (some? (vis/slash-parse (str/triml (str text)))))
+
+(defn- remember-input
+  "Append `text` to this tab's ↑ recall ring — what the user can walk back to.
+   A command ([[command-submission?]]) and an immediate repeat of the newest
+   entry are never remembered."
+  [tab text]
+  (cond-> tab
+    (not (command-submission? text))
+    (update :input-history
+            (fn [xs]
+              (let [xs (vec (or xs []))]
+                (if (= text (last xs)) xs (conj xs text)))))))
+
 (defn- history-user-texts
+  "The ↑ recall ring hydrated from a persisted transcript: its USER messages
+   minus the commands — a resumed session must not re-stock the ring with the
+   `/reload`s of its own past."
   [history]
   (->> (or history [])
        (keep (fn [message]
-               (when (= :user (:role message)) (:text message))))
+               (let [text (:text message)]
+                 (when (and (= :user (:role message)) (not (command-submission? text))) text))))
        vec))
 
 (defn- tab-number
@@ -2650,6 +2678,11 @@
 
 (reg-event-db :update-input
               (fn [db [_ new-input]]
+                ;; `:slash-command-hidden?` means "this buffer is not the user
+                ;; typing a slash": a tab-completed command, or a line RECALLED
+                ;; from the ↑ ring. Editing keeps it shut while the line is still
+                ;; a slash — the palette would only be in the way — and leaving
+                ;; slash-land (or `:reset-input`) arms it again.
                 (let [text (input/input->text new-input)]
                   (cond-> (assoc db :input new-input)
                     (not (str/starts-with? (str/triml text) "/"))
@@ -3008,7 +3041,9 @@
                  :input-history-index nil
                  :input-history-draft nil
                  :slash-command-index 0
-                 :slash-command-hidden? false)
+                 ;; Pulled back from the QUEUE, not typed — same rule as a
+                 ;; history recall below: the overlay stays shut until edited.
+                 :slash-command-hidden? true)
            :fx (cond-> []
                  (and sid tid)
                  (conj [:gateway-delete-queued sid tid (current-tab-id db) entry]))})
@@ -3023,6 +3058,11 @@
                 {:db (assoc db
                        :input-history-index new-idx
                        :input-history-draft draft
+                       ;; A RECALLED line never pops the slash overlay open. It
+                       ;; would cover the composer and OWN the next ArrowUp, so
+                       ;; one `/reload` in the ring stranded the user there; the
+                       ;; first keystroke on top of it re-arms the overlay.
+                       :slash-command-hidden? true
                        :input (text->input-state (nth history new-idx)))})))))
 
 (reg-event-db :history-down
@@ -3042,10 +3082,14 @@
                         (let [new-idx (inc (long cur-idx))]
                           (assoc db
                             :input-history-index new-idx
+                            :slash-command-hidden? true
                             :input (text->input-state (nth history new-idx))))
+                        ;; Back on the user's OWN draft: their typing, so the
+                        ;; overlay is armed again.
                         :else (assoc db
                                 :input-history-index nil
                                 :input-history-draft nil
+                                :slash-command-hidden? false
                                 :input (text->input-state (or draft "")))))))
 
 (reg-event-db :reset-input
@@ -3720,10 +3764,7 @@
                                (update :pending-sends
                                        (fn [q]
                                          (conj (vec (or q [])) entry)))
-                               (update :input-history
-                                       (fn [xs]
-                                         (let [xs (vec (or xs []))]
-                                           (if (= text (last xs)) xs (conj xs text))))))))
+                               (remember-input text))))
          :fx (cond-> [[:notify "Queued — will send after current turn" :info 1500]]
                gw-fx
                (into gw-fx))}))))
@@ -3781,50 +3822,47 @@
                client-turn-id
                (str (java.util.UUID/randomUUID))]
 
-              {:db (update-tab
-                     db
-                     workspace-id
-                     (fn [w]
-                       (-> w
-                           (update :messages
-                                   conj
-                                   (assoc (chat/user-message preview-text)
-                                     :client-turn-id client-turn-id))
-                           (update :messages
-                                   conj
-                                   (assoc (pending-assistant-for text)
-                                     :client-turn-id client-turn-id))
-                           (update :input-history
-                                   (fn [xs]
-                                     (let [xs (vec (or xs []))]
-                                       (if (= full-text (last xs)) xs (conj xs full-text)))))
-                           ;; Sending re-pins to the bottom: one atomic FOLLOW
-                           ;; reset replaces the whole `:scroll` value, so no
-                           ;; in-flight animation target can dangle and flash the
-                           ;; view to the top of the freshly-appended message.
-                           (assoc :scroll scroll/follow
-                                  :loading? true
-                                  :cancel-token token
-                                  :cancelling? false
-                                  ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
-                                  ;; cancel/resubmit must retain the old submit's identity until
-                                  ;; its delayed turn.started either arrives or is proven absent.
-                                  :progress {:iterations []}
-                                  :turn-start-ms (System/currentTimeMillis)
-                                  ;; Identity of the turn this tab launched DIRECTLY: the
-                                  ;; correlation id we sent as the gateway idempotency key. A
-                                  ;; queue event echoing OUR OWN submit back (the gateway was
-                                  ;; still tearing down a just-cancelled turn and parked it) is
-                                  ;; recognised by that id — never by request text — instead of
-                                  ;; being painted as a second "Queued" row.
-                                  :live-turn-client-id client-turn-id
-                                  :submitted-input {:text text
-                                                    :pastes (:pastes source-db)
-                                                    :paste-counter (:paste-counter source-db)}
-                                  :input-history-index nil
-                                  :input-history-draft nil
-                                  :slash-command-index 0
-                                  :slash-command-hidden? false))))
+              {:db (update-tab db
+                               workspace-id
+                               (fn [w]
+                                 (-> w
+                                     (update :messages
+                                             conj
+                                             (assoc (chat/user-message preview-text)
+                                               :client-turn-id client-turn-id))
+                                     (update :messages
+                                             conj
+                                             (assoc (pending-assistant-for text)
+                                               :client-turn-id client-turn-id))
+                                     (remember-input full-text)
+                                     ;; Sending re-pins to the bottom: one atomic FOLLOW
+                                     ;; reset replaces the whole `:scroll` value, so no
+                                     ;; in-flight animation target can dangle and flash the
+                                     ;; view to the top of the freshly-appended message.
+                                     (assoc :scroll scroll/follow
+                                            :loading? true
+                                            :cancel-token token
+                                            :cancelling? false
+                                            ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
+                                            ;; cancel/resubmit must retain the old submit's identity until
+                                            ;; its delayed turn.started either arrives or is proven absent.
+                                            :progress {:iterations []}
+                                            :turn-start-ms (System/currentTimeMillis)
+                                            ;; Identity of the turn this tab launched DIRECTLY: the
+                                            ;; correlation id we sent as the gateway idempotency key. A
+                                            ;; queue event echoing OUR OWN submit back (the gateway was
+                                            ;; still tearing down a just-cancelled turn and parked it) is
+                                            ;; recognised by that id — never by request text — instead of
+                                            ;; being painted as a second "Queued" row.
+                                            :live-turn-client-id client-turn-id
+                                            :submitted-input {:text text
+                                                              :pastes (:pastes source-db)
+                                                              :paste-counter (:paste-counter
+                                                                               source-db)}
+                                            :input-history-index nil
+                                            :input-history-draft nil
+                                            :slash-command-index 0
+                                            :slash-command-hidden? false))))
                ;; `agent-text` (LLM-facing, with `@path` expanded into a
                ;; `[Attached File: ...]` directive) drives the model.
                ;; `preview-text` (un-expanded `@path` token, plus a fenced
