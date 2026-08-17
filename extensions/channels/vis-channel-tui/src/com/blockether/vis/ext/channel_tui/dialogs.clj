@@ -4582,7 +4582,7 @@
           (load-mcp-inventory!))
         @values)
 
-    ;; Same for a provider row: default, fallback, sign in, status, log out are
+    ;; Same for a provider row: default, fallback, sign in, status, remove are
     ;; a transient here, and picking a model is a second one — never a dialog.
     :provider
     (do (when-let [f (:provider-transient callbacks)]
