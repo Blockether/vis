@@ -6,7 +6,7 @@
    author cannot afford before a human is watching: an extension's top level may
    shell out, write state or mount a dialog. So nothing here executes the
    extension. The file is PARSED (`vis-python/extension_check.py`, `ast` only),
-   the statically knowable arguments of every `vis.ask` / `vis.check` call are
+   the statically knowable arguments of every `vis.ask` call are
    reconstructed, and the request that comes out is judged by
    [[com.blockether.vis.internal.human-input/check-json]] -- the engine's own
    seam, the same judge the running dialog uses.

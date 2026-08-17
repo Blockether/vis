@@ -2026,21 +2026,21 @@ def forms_report():
         vis.password('token'),
     )
     return {
-        'ok': vis.check('Deploy', [good], submit_label='Ship it'),
+        'ok': vis._check('Deploy', [good], submit_label='Ship it'),
         'kind': good['type'] + ':' + good['direction'],
         'ink': good['fields'][0],
         'slider_type': good['fields'][2]['fields'][1]['type'],
-        'bad_option': vis.check('Deploy', [vis.select('env', [])]),
-        'bad_track': vis.check('Deploy', [vis.slider('canary', min=5, max=2)]),
-        'bad_names': vis.check('Deploy', [vis.plaintext('who'), vis.password('who')]),
-        'bad_title': vis.check('', [vis.plaintext('who')]),
-        'bad_key': vis.check('Deploy', [vis.plaintext('who', required=True)]),
-        'validated': vis.check('Deploy', [
+        'bad_option': vis._check('Deploy', [vis.select('env', [])]),
+        'bad_track': vis._check('Deploy', [vis.slider('canary', min=5, max=2)]),
+        'bad_names': vis._check('Deploy', [vis.plaintext('who'), vis.password('who')]),
+        'bad_title': vis._check('', [vis.plaintext('who')]),
+        'bad_key': vis._check('Deploy', [vis.plaintext('who', required=True)]),
+        'validated': vis._check('Deploy', [
             vis.plaintext('who', validate=lambda text: None if text else 'who?'),
             vis.password('token', validate=[_at_least_8, lambda value, values: None]),
         ]),
-        'bad_validator': vis.check('Deploy', [vis.plaintext('who', validate=lambda: None)]),
-        'not_a_validator': vis.check('Deploy', [vis.plaintext('who', validate='nope')]),
+        'bad_validator': vis._check('Deploy', [vis.plaintext('who', validate=lambda: None)]),
+        'not_a_validator': vis._check('Deploy', [vis.plaintext('who', validate='nope')]),
     }
 
 

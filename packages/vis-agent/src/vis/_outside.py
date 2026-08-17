@@ -725,7 +725,7 @@ def _check_request(request):
 
 
 def check_input(request_json):
-    """`vis.check`: is this form well formed, without showing it to anyone."""
+    """`check_input`: is this form well formed, without showing it to anyone."""
     complaint = _check_request(json.loads(request_json))
     return json.dumps({"is_valid": complaint is None, "error": complaint or ""})
 

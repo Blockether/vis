@@ -344,8 +344,7 @@ the session of the call that is running — a tool, a slash command, a hook — 
 refuses on the spot when there is none, rather than parking on a dialog nobody
 can see. Provider lifecycle callbacks (`detect_fn`, `status_fn`) run outside any
 session, so they must never ask; keep them non-interactive and quick, and read
-credentials from the environment instead. `vis.check` needs no session at all:
-it only judges a request.
+credentials from the environment instead.
 
 ```python
 answer = vis.ask("Deploy", [
@@ -545,28 +544,6 @@ Buttons are not nodes: a dialog has exactly the two a dialog has, and you name
 them with `submit_label=` and `cancel_label=` (or drop the second one with
 `is_cancellable=False`).
 
-### Checking a form without asking
-
-`vis.check(title, fields, **options)` runs the very same validator `vis.ask`
-runs and then throws nothing away: it returns `None` when the request is valid,
-and the one-line reason when it is not. No dialog opens and nobody is
-interrupted, so it is what a test asserts on and what a tool can call before it
-decides to ask.
-
-```python
-vis.check("Deploy", [vis.select("env", [])])
-# -> 'Invalid human-input field env: select needs at least one option'
-
-vis.check("Deploy", [vis.plaintext("who"), vis.password("who")])
-# -> 'Invalid human-input request: field names must be distinct'
-
-vis.check("Deploy", [vis.plaintext("who")])
-# -> None
-```
-
-`vis-agent extension check <path>` is this same seam applied to a file you have
-not run: see **Checking an extension before it runs** below.
-
 ### Validating a field
 
 `validate` is a **function** — or a list of functions — that you write. There is
@@ -606,21 +583,21 @@ check comes before the expensive lookup behind it.
 A validator takes **one** argument (the value) or **two** (the value and every
 answer in the form — flat, whatever the layout); that second argument is how one
 field compares itself with another, across groups included. Any other shape is
-refused where you wrote it - by `vis.ask` and `vis.check` when the request is
-built, and by `vis-agent extension check` without running the file at all - never
-in front of the human who is finally typing:
+refused where you wrote it - by `vis.ask` when the request is built, and by
+`vis-agent extension check` without running the file at all - never in front
+of the human who is finally typing:
 
 ```python
-vis.check("Sign up", [vis.plaintext("email", validate=lambda: None)])
-# -> 'a validate function takes the value, or the value and every value - this
-#     one takes neither'
+vis.ask("Sign up", [vis.plaintext("email", validate=lambda: None)])
+# raises: a validate function takes the value, or the value and every value -
+#         this one takes neither
 
-vis.check("Sign up", [vis.plaintext("email", validate=r"[a-z]+")])
-# -> 'validate is a function, or a list of functions, taking the value (and
-#     optionally every value) and answering None or a message string'
+vis.ask("Sign up", [vis.plaintext("email", validate=r"[a-z]+")])
+# raises: validate is a function, or a list of functions, taking the value
+#         (and optionally every value) and answering None or a message string
 
-vis.check("Sign up", [vis.plaintext("email", validate=a_slug)])
-# -> None
+vis.ask("Sign up", [vis.plaintext("email", validate=a_slug)])
+# opens the dialog
 ```
 
 `False`
@@ -917,8 +894,8 @@ answered from the parse tree alone:
 * does it parse at all;
 * does it only reach for `vis.<name>` that the `vis` module actually has, so
   `vis.plaintxt(...)` is caught here instead of in front of a human;
-* would every `vis.ask(...)` / `vis.check(...)` request be accepted - judged by
-  the same engine seam `vis.check` uses, never a second opinion about it.
+* would every `vis.ask(...)` request be accepted - judged by the engine's own
+  seam, the same judge the running dialog uses, never a second opinion.
 
 That is possible because the builders are pure: reconstructing
 `vis.select("env", [])` builds a dict and touches nothing else. An argument that
@@ -1460,8 +1437,7 @@ names - the only namespace besides `core` an extension imports:
 
 Every builder returns the plain map you could have typed by hand, and validates
 it on the way out: `(hi/select "env" [])` throws at that line. `hi/form` does the
-same for the assembled request, and `hi/check` answers instead of throwing -
-`nil` when the request is fine, one line of prose when it is not.
+same for the assembled request.
 
 ### Validating a field (Clojure)
 
@@ -1499,10 +1475,6 @@ The function is judged where you wrote it, long before a human sees the form:
 (hi/checkbox "ack" {:validate (fn [] nil)})
 ;; throws Invalid human-input field ack: :validate function takes the value, or
 ;;        the value and every value ... this one takes neither
-
-(hi/check {:title "Sign up"
-           :fields [{:type "plaintext" :name "slug" :validate "[a-z]+"}]})
-;; => "Invalid human-input field slug: :validate takes a FUNCTION ...", never a throw
 ```
 
 The functions stay in your process. The engine runs them when the form is

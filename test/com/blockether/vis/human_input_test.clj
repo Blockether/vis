@@ -67,7 +67,7 @@
   (describe "the engine is the only judge"
             (it "accepts the whole assembled request, ink and groups and all"
                 (let [nodes (:fields (engine/normalize-request (deploy-form)))]
-                  (expect (nil? (hi/check (deploy-form))))
+                  (expect (nil? (engine/check (deploy-form))))
                   ;; ink is nameless even after normalization; only fields can be answered
                   (expect (= [nil nil] (mapv :name (take 2 nodes))))
                   (expect (= "token" (:name (last nodes))))))
@@ -99,58 +99,59 @@
   (describe
     "check"
     (it "answers instead of throwing, on data nobody built with a builder"
-        (expect (nil? (hi/check {:title "Deploy" :fields [{:type "plaintext" :name "who"}]})))
+        (expect (nil? (engine/check {:title "Deploy" :fields [{:type "plaintext" :name "who"}]})))
         (expect (re-find #"unknown type \"plaintxt\""
-                         (hi/check {:title "Deploy" :fields [{:type "plaintxt" :name "who"}]})))
-        (expect (some? (hi/check {:fields [{:type "plaintext" :name "who"}]})))
-        (expect (some? (hi/check {:title "Deploy" :fields []})))
-        (expect (some? (hi/check nil))))
+                         (engine/check {:title "Deploy" :fields [{:type "plaintxt" :name "who"}]})))
+        (expect (some? (engine/check {:fields [{:type "plaintext" :name "who"}]})))
+        (expect (some? (engine/check {:title "Deploy" :fields []})))
+        (expect (some? (engine/check nil))))
     (it "reads the wire spelling of every key too"
-        (expect (nil? (hi/check {"title" "Deploy"
-                                 "fields" [{"type" "select"
-                                            "name" "env"
-                                            "options" [{"value" "a"}]
-                                            "is_required" true}]})))))
-  (describe
-    "validate"
-    (it "keeps the validator itself in the map, in either shape"
-        ;; A validator is a FUNCTION, and a function is not wire data: the builder
-        ;; hands it straight back, and the engine calls it on the answered value
-        ;; (one argument) or on the value and every value (two).
-        (let
-          [required
-           (fn [value]
-             (when (= "" value) "who?"))
+        (expect (nil? (engine/check {"title" "Deploy"
+                                     "fields" [{"type" "select"
+                                                "name" "env"
+                                                "options" [{"value" "a"}]
+                                                "is_required" true}]})))))
+  (describe "validate"
+            (it "keeps the validator itself in the map, in either shape"
+                ;; A validator is a FUNCTION, and a function is not wire data: the builder
+                ;; hands it straight back, and the engine calls it on the answered value
+                ;; (one argument) or on the value and every value (two).
+                (let
+                  [required
+                   (fn [value]
+                     (when (= "" value) "who?"))
 
-           agrees
-           (fn [value values]
-             (when-not (= value (get values "who")) "must match"))]
+                   agrees
+                   (fn [value values]
+                     (when-not (= value (get values "who")) "must match"))]
 
-          (expect (= {:type "plaintext" :name "who" :validate required}
-                     (hi/plaintext "who" {:validate required})))
-          (expect (= {:type "password" :name "token" :validate [required agrees]}
-                     (hi/password "token" {:validate [required agrees]})))
-          (expect (nil? (hi/check (hi/form {:title "Deploy"}
+                  (expect (= {:type "plaintext" :name "who" :validate required}
+                             (hi/plaintext "who" {:validate required})))
+                  (expect (= {:type "password" :name "token" :validate [required agrees]}
+                             (hi/password "token" {:validate [required agrees]})))
+                  (expect (nil? (engine/check
+                                  (hi/form {:title "Deploy"}
                                            (hi/plaintext "who" {:validate required})
                                            (hi/password "token" {:validate [required agrees]})))))))
-    (it "refuses at the builder call what is not a function at all"
-        (expect (re-find #":validate takes a FUNCTION"
-                         (refusal #(hi/plaintext "who" {:validate "nope"}))))
-        (expect (re-find #":validate takes a FUNCTION"
-                         (refusal #(hi/plaintext "who" {:validate ["nope"]})))))
-    (it "refuses a function the dialog could never call"
-        ;; It receives the value, so a validator that takes no argument is a bug in
-        ;; the extension, caught on this line instead of at submit time.
-        (expect (re-find #"takes neither"
-                         (refusal #(hi/checkbox "ack"
-                                                {:validate (fn []
-                                                             nil)}))))
-        (expect (re-find #"takes neither"
-                         (refusal #(hi/plaintext "who"
-                                                 {:validate (fn [a b c]
-                                                              [a b c])})))))
-    (it "says the same thing without throwing, through check"
-        (expect (re-find #":validate takes a FUNCTION"
-                         (hi/check {:title "Deploy"
-                                    :fields
-                                    [{:type "plaintext" :name "who" :validate "nope"}]}))))))
+            (it "refuses at the builder call what is not a function at all"
+                (expect (re-find #":validate takes a FUNCTION"
+                                 (refusal #(hi/plaintext "who" {:validate "nope"}))))
+                (expect (re-find #":validate takes a FUNCTION"
+                                 (refusal #(hi/plaintext "who" {:validate ["nope"]})))))
+            (it "refuses a function the dialog could never call"
+                ;; It receives the value, so a validator that takes no argument is a bug in
+                ;; the extension, caught on this line instead of at submit time.
+                (expect (re-find #"takes neither"
+                                 (refusal #(hi/checkbox "ack"
+                                                        {:validate (fn []
+                                                                     nil)}))))
+                (expect (re-find #"takes neither"
+                                 (refusal #(hi/plaintext "who"
+                                                         {:validate (fn [a b c]
+                                                                      [a b c])})))))
+            (it "says the same thing without throwing, through check"
+                (expect (re-find #":validate takes a FUNCTION"
+                                 (engine/check {:title "Deploy"
+                                                :fields [{:type "plaintext"
+                                                          :name "who"
+                                                          :validate "nope"}]}))))))

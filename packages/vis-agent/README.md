@@ -51,7 +51,7 @@ way the contract says each behaves out here:
 | op | outside |
 | --- | --- |
 | `state`, `log`, `notify`, `shell`, secrets, `host_env` | done locally — a JSON file under `~/.vis/outside`, stderr lines, a real subprocess, a process-local vault |
-| `ask`, `check` | prompted in the TERMINAL: the same field tree, the same validators, the same `Answer` |
+| `ask` | prompted in the TERMINAL: the same field tree, the same validators, the same `Answer` |
 | `jailed_shell`, `jailed_shell_session` | refused by name — a jail is a property of the agent's process boundary, and nothing out here can enforce one |
 
 So an extension file imports, type-checks, unit-tests and runs on a laptop or in

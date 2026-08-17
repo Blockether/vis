@@ -33,8 +33,8 @@
    untouched instead of keeping a second copy of the vocabulary.
 
    Python extensions get the SAME names on the `vis` module —
-   `vis.select('env', ['staging', 'prod'], label='Environment')` — plus
-   `vis.check(...)`, which is [[check]] across the JSON boundary."
+   `vis.select('env', ['staging', 'prod'], label='Environment')` — built by
+   the same engine seam across the JSON boundary."
   (:require [com.blockether.vis.internal.human-input :as engine]))
 
 (set! *warn-on-reflection* true)
@@ -170,12 +170,3 @@
   (let [request (assoc opts :fields (vec nodes))]
     (engine/normalize-request request)
     request))
-
-(defn check
-  "Why `request` is not a valid form, as ONE line, or `nil` when it is fine.
-
-   [[form]] throws; this answers. It is what a test asserts on and what
-   `vis-agent extension check` prints, and it runs the engine's real seam
-   rather than a second opinion about it."
-  [request]
-  (engine/check request))

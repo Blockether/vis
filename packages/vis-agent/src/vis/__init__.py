@@ -9,7 +9,7 @@ protocol `vis-contract` declares — execs this source into it and registers it 
 Installed from PyPI (`pip install vis-agent`) there is no Vis process to seed
 anything, so `vis._outside` answers each op the way the contract document says it
 behaves outside the sandbox: durable state becomes a JSON file, `log`/`notify`
-become stderr lines, `ask`/`check` become terminal prompts, `shell` becomes a
+become stderr lines, `ask` becomes a terminal prompt, `shell` becomes a
 local subprocess, and the two jailed shells refuse by name because nothing out
 here can enforce a jail. That is what makes an extension importable, unit-testable
 and runnable with no agent in the room — the same file, one host or the other.
@@ -476,8 +476,8 @@ class Answer:
 def _validator_arity(fn):
     # How a validator wants to be CALLED: 2 for (value, every value), 1 for the
     # value alone, and None when it can take neither. The shape is judged here,
-    # at `vis.ask` / `vis.check`, instead of blowing up in front of the human on
-    # submit - a `lambda: None` is a bug in the extension, not a bad answer.
+    # at `vis.ask`, instead of blowing up in front of the human on submit - a
+    # `lambda: None` is a bug in the extension, not a bad answer.
     import inspect
 
     try:
@@ -665,8 +665,8 @@ def ask(title, fields, **options):
 #   ])
 #
 # A builder is a plain dict, so a form stays printable and can be assembled in a
-# loop. Nothing here talks to the host: `vis.check(...)` is the one call that
-# asks whether a whole form is valid.
+# loop. Nothing here talks to the host: a builder shapes a dict, and `vis.ask`
+# is what carries it to the engine that judges it.
 
 
 def _node(type_name, name, spec):
@@ -753,17 +753,16 @@ def paragraph(text):
     return {"type": "paragraph", "text": str(text)}
 
 
-def check(title, fields, **options):
-    # None when this form is VALID, else the ONE line saying what to fix. The
-    # very seam `ask` crosses, minus the human: the host runs the real request
-    # normalizer and throws the result away, so nothing is drawn, published or
-    # parked, and no validator function is called.
+def _check(title, fields, **options):
+    # PRIVATE - the judge behind `vis-agent extension check`, not an extension
+    # API. None when this form is VALID, else the ONE line saying what to fix:
+    # the very seam `ask` crosses, minus the human. The host runs the real
+    # request normalizer and throws the result away, so nothing is drawn,
+    # published or parked, and no validator function is called.
     #
-    #   why = vis.check('Deploy', [vis.select('env', [])])
-    #   # 'Invalid human-input field env: select needs at least one option'
-    #
-    # `vis-agent extension check <file.py>` runs this same check over every
-    # `vis.ask(...)` in a file without importing it.
+    # `vis-agent extension check <file.py>` runs it over every `vis.ask(...)`
+    # in a file without importing it. An extension gets the same verdict from
+    # `vis.ask` itself, which refuses a bad request before anyone is asked.
     import json
 
     try:
@@ -771,7 +770,7 @@ def check(title, fields, **options):
     except (TypeError, ValueError) as exc:
         # A shape `ask` refuses outright - a field that is not a dict, a
         # `validate=` that is not a function or cannot take the value - is
-        # ANSWERED here rather than raised: `check` never throws.
+        # ANSWERED here rather than raised: the check reports, never crashes.
         return str(exc)
     verdict = json.loads(_host.check_input(json.dumps(request)))
     if verdict.get("is_valid"):

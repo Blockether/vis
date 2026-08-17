@@ -11,9 +11,9 @@ Three things come out of that:
 * a syntax error, with its own line;
 * every `vis.<name>` the module reads that the `vis` module does not have, which
   is how `vis.plaintxt(...)` is caught before it raises in front of a human;
-* every `vis.ask(...)` / `vis.check(...)` whose request can be reconstructed,
-  validated through the engine's own seam via `vis.check` - the same judge the
-  running dialog uses, never a second opinion about it.
+* every `vis.ask(...)` whose request can be reconstructed, validated through
+  the engine's own seam via `vis._check` - the same judge the running dialog
+  uses, never a second opinion about it.
 
 A `validate=` function is checked by SHAPE, never called: a lambda or a `def` in
 the file stands in as a placeholder taking exactly the arguments it declares, so
@@ -47,8 +47,8 @@ _BUILDERS = (
     "paragraph",
 )
 
-# The two entry points that carry a request worth validating.
-_ASKS = ("ask", "check")
+# The one entry point that carries a request worth validating.
+_ASKS = ("ask",)
 
 
 class _Unknown(Exception):
@@ -164,7 +164,7 @@ def _problem(kind, node, message):
 
 
 def _request_args(node, env, names):
-    """The `(title, fields, options)` a `vis.ask` / `vis.check` call carries."""
+    """The `(title, fields, options)` a `vis.ask` call carries."""
     positional = [_value(a, env, names) for a in node.args]
     options = _kwargs(node, env, names)
     title = positional[0] if positional else options.pop("title")
@@ -180,7 +180,7 @@ def _check_ask(node, env, names, report):
         return
     report["checked"] += 1
     try:
-        reason = vis.check(title, fields, **options)
+        reason = vis._check(title, fields, **options)
     except Exception as exc:  # a builder refused the shape outright
         reason = str(exc)
     if reason:

@@ -39,10 +39,18 @@
        "    return vis.ask(\"Deploy\", [vis.plaintxt(\"who\")])\n" "\n"
        "\n" "vis.extension(name=\"demo\")\n"))
 
+(def ^:private retired-check-py
+  ;; `vis.check` was a public pre-flight until the static check became the only
+  ;; one, so an extension still calling it reads a name the module no longer has.
+  (str "import vis\n" "\n"
+       "\n" "def deploy(args):\n"
+       "    return vis.check(\"Deploy\", [vis.plaintext(\"who\")])\n" "\n"
+       "\n" "vis.extension(name=\"demo\")\n"))
+
 (def ^:private duplicate-names-py
   (str "import vis\n" "\n"
        "\n" "def deploy(args):\n"
-       "    return vis.check(\"Deploy\", [vis.plaintext(\"who\"), vis.password(\"who\")])\n" "\n"
+       "    return vis.ask(\"Deploy\", [vis.plaintext(\"who\"), vis.password(\"who\")])\n" "\n"
        "\n" "vis.extension(name=\"demo\")\n"))
 
 (def ^:private unknowable-py
@@ -59,11 +67,11 @@
        "\n" "\n"
        "def takes_nothing():\n" "    return None\n"
        "\n" "\n"
-       "def deploy(args):\n" "    vis.check(\"D\", [vis.plaintext(\"a\", validate=is_a_slug)])\n"
-       "    vis.check(\"D\", [vis.plaintext(\"b\", validate=lambda v, all: None)])\n"
-       "    vis.check(\"D\", [vis.plaintext(\"c\", validate=lambda: None)])\n"
-       "    vis.check(\"D\", [vis.plaintext(\"d\", validate=takes_nothing)])\n"
-       "    vis.check(\"D\", [vis.plaintext(\"e\", validate=[lambda v: None, \"nope\"])])\n"
+       "def deploy(args):\n" "    vis.ask(\"D\", [vis.plaintext(\"a\", validate=is_a_slug)])\n"
+       "    vis.ask(\"D\", [vis.plaintext(\"b\", validate=lambda v, all: None)])\n"
+       "    vis.ask(\"D\", [vis.plaintext(\"c\", validate=lambda: None)])\n"
+       "    vis.ask(\"D\", [vis.plaintext(\"d\", validate=takes_nothing)])\n"
+       "    vis.ask(\"D\", [vis.plaintext(\"e\", validate=[lambda v: None, \"nope\"])])\n"
        "    return vis.ask(\"D\", [vis.plaintext(\"f\", validate=args.get(\"rule\"))])\n" "\n"
        "\n" "vis.extension(name=\"demo\")\n"))
 
@@ -89,11 +97,11 @@
   ;; expensive part, and every case below is judged in the same one.
   (delay (into {}
                (map (juxt :path identity))
-               (check/check-sources [["valid.py" valid-py] ["bad-select.py" bad-select-py]
-                                     ["typo.py" typo-py] ["duplicate-names.py" duplicate-names-py]
-                                     ["unknowable.py" unknowable-py] ["broken.py" broken-py]
-                                     ["library.py" library-py] ["validators.py" validators-py]
-                                     ["side-effect.py" side-effect-py]]))))
+               (check/check-sources
+                 [["valid.py" valid-py] ["bad-select.py" bad-select-py] ["typo.py" typo-py]
+                  ["duplicate-names.py" duplicate-names-py] ["retired-check.py" retired-check-py]
+                  ["unknowable.py" unknowable-py] ["broken.py" broken-py] ["library.py" library-py]
+                  ["validators.py" validators-py] ["side-effect.py" side-effect-py]]))))
 
 (defn- report [path] (get @reports path))
 
@@ -119,7 +127,7 @@
                 (expect (str/includes? (reason "bad-select.py") "select needs at least one option"))
                 (expect (= 5 (:line (first (:problems (report "bad-select.py"))))))
                 (expect (= 1 (:checked (report "bad-select.py")))))
-            (it "judges a vis.check call exactly like a vis.ask call"
+            (it "refuses two fields answering to the same name"
                 (expect (= #{"invalid-request"} (kinds "duplicate-names.py")))
                 (expect (str/includes? (reason "duplicate-names.py")
                                        "field names must be distinct"))))
@@ -155,6 +163,12 @@
                                                      (:message %))
                                                   (:problems (report "typo.py"))))
                                        "plaintxt")))
+            (it "is what the retired `vis.check` reads as"
+                ;; The pre-flight IS this check now: an extension that still calls
+                ;; `vis.check(...)` is named here, not judged as a request.
+                (expect (= #{"unknown-attribute"} (kinds "retired-check.py")))
+                (expect (str/includes? (reason "retired-check.py") "no check"))
+                (expect (= 0 (:checked (report "retired-check.py")))))
             (it "is a syntax problem when the file does not even parse"
                 (expect (= #{"syntax"} (kinds "broken.py")))
                 (expect (= 3 (:line (first (:problems (report "broken.py"))))))))

@@ -443,9 +443,9 @@
                 "__vis_host_check_input__"
                 ;; The same seam as `request_input`, minus the human: one JSON
                 ;; request object in, one JSON verdict out. Nothing is drawn,
-                ;; published or parked and no validator runs, so `vis.check(...)`
-                ;; can prove a form an extension just built -- and
-                ;; `vis-agent extension check` can prove one it never ran.
+                ;; published or parked and no validator runs, so
+                ;; `vis-agent extension check` can prove a form in a file
+                ;; it never ran.
                 (->executable (fn [request-json]
                                 ((requiring-resolve
                                    'com.blockether.vis.internal.human-input/check-json)

@@ -261,7 +261,7 @@ def test_a_required_field_left_empty_is_not_submitted(monkeypatch):
 
 
 def test_check_reads_a_well_formed_request_and_says_nothing():
-    assert vis.check("Deploy", FORM) is None
+    assert vis._check("Deploy", FORM) is None
 
 
 @pytest.mark.parametrize(
@@ -276,7 +276,7 @@ def test_check_reads_a_well_formed_request_and_says_nothing():
     ],
 )
 def test_check_names_what_is_wrong_with_a_form(form):
-    complaint = vis.check("Deploy", form)
+    complaint = vis._check("Deploy", form)
     assert isinstance(complaint, str) and complaint
 
 
@@ -285,4 +285,4 @@ def test_check_knows_only_the_contracts_field_types():
         node = {"name": "a", "type": wire_type}
         if wire_type in CONTRACT["human_input"]["choice_types"]:
             node["options"] = ["one", "two"]
-        assert vis.check("Deploy", [node]) is None, wire_type
+        assert vis._check("Deploy", [node]) is None, wire_type
