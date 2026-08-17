@@ -2118,10 +2118,10 @@
 
 (defdescribe
   ask-code-idle-timeout-test
-  (it "gives the first token 45s and the idle watchdog its own 300s by default"
-      ;; 45s, not svar's two minutes: the first header is the ONE wait Vis can
+  (it "gives the first token 60s and the idle watchdog its own 300s by default"
+      ;; 60s, not svar's two minutes: the first header is the ONE wait Vis can
       ;; retry for free, and `pre-output-stream-retryable?` now does.
-      (expect (= 45000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
+      (expect (= 60000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
       (expect (= 300000 rt/ASK_CODE_IDLE_TIMEOUT_MS))
       (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
         (expect (= ::router router))
@@ -3278,7 +3278,7 @@
 
      next-counters @#'lp/next-retry-counters
 
-     ttft (ex-info "Stream TTFT timeout (45000 ms)" {:type :svar.core/stream-ttft-timeout})]
+     ttft (ex-info "Stream TTFT timeout (60000 ms)" {:type :svar.core/stream-ttft-timeout})]
 
     (it "re-issues every typed watchdog abort while no output has streamed"
         (doseq [error-type [:svar.core/stream-ttft-timeout :svar.core/stream-idle-timeout

@@ -48,7 +48,7 @@
 (def ASK_CODE_TTFT_TIMEOUT_MS
   "Default time-to-first-token timeout for Vis `svar/ask-code!` calls (ms).
 
-   45s. The wait for the FIRST response header, and nothing else: no bytes
+   60s. The wait for the FIRST response header, and nothing else: no bytes
    arrived, no tool ran, no output was streamed, so the request can simply be
    made again. Measured: a pinned zai-coding-plan turn spent its last 120s
    waiting for headers that never came and died with ten iterations of finished
@@ -56,15 +56,18 @@
    two minutes) is the WHOLE budget when the route is pinned to one
    provider+model and svar's router has no second candidate to cross to.
 
-   Lowering it is only safe BECAUSE the abort is now re-issued while no output
-   exists (`loop/pre-output-stream-retryable?`): a queued or cold-starting
-   provider gets three 45s chances instead of one 120s chance, and a wedged
-   endpoint is named minutes sooner. Never lower this without that retry in
-   place — alone it would only kill healthy slow-queue turns faster.
+   60s halves that one wait without calling a merely slow queue dead: a cold
+   start or a deep provider queue still gets a full minute per try. Shortening
+   it at all is only safe BECAUSE the abort is re-issued while no output exists
+   (`loop/pre-output-stream-retryable?`): the provider gets three 60s chances
+   seconds apart instead of one silent 120s chance, so a healthy slow start
+   survives and a wedged endpoint is named by visible retries instead of a
+   two-minute gap. Never shorten this without that retry in place — alone it
+   would only kill healthy slow-queue turns faster.
 
    Model-progress silence while keepalives continue is a separate, opt-in
    semantic watchdog below."
-  45000)
+  60000)
 
 (def ASK_CODE_IDLE_TIMEOUT_MS
   "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls (ms).
