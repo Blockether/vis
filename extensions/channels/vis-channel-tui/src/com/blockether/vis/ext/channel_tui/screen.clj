@@ -3009,7 +3009,23 @@
      (first (filter #(= live-idx (:idx %)) (:visible layout)))
 
      old-entry
-     (first (filter #(= live-idx (:idx %)) (:visible previous-layout)))]
+     (first (filter #(= live-idx (:idx %)) (:visible previous-layout)))
+
+     ;; Auto-bottom follow moves `eff-scroll` with no db change at all, so a
+     ;; streaming tick slides every stable bubble — and the reserved image
+     ;; boxes with them. The picture itself sits on the terminal's graphics
+     ;; layer, which no cell repaint can move: unless this path re-places it,
+     ;; it stays pinned to the row the last FULL frame put it on while its box
+     ;; scrolls out from under it, so it drifts out of its frame and over the
+     ;; chrome below.
+     transcript-shifted?
+     (boolean (and previous-layout (not= (:eff-scroll layout) (:eff-scroll previous-layout))))
+
+     ;; Collector for inline-image placements, as in the full and scroll paths.
+     ;; Only the shift branch fills it — it is the only one that repaints the
+     ;; whole messages band.
+     image-sink
+     (atom [])]
 
     ;; Diagnostic: capture per-tick geometry so we can see whether
     ;; iteration 2/3 actually reach the painter. Fires only when
@@ -3055,10 +3071,7 @@
     ;; messages band so their regions track the new rows.
     (let
       [prev-live-entry
-       old-entry
-
-       transcript-shifted?
-       (and previous-layout (not= (:eff-scroll layout) (:eff-scroll previous-layout)))]
+       old-entry]
 
       (if transcript-shifted?
         ;; ── FOLLOW-mode transcript shift ─────────────────────────────
@@ -3072,7 +3085,8 @@
         ;; `draw-messages-area!` re-lays the pixels AND re-registers every
         ;; transcript + live click region at its NEW row. Fires only on
         ;; height-change ticks; spinner-only ticks keep the cheap path.
-        (do (render/draw-messages-area! g layout messages-top messages-bottom cols)
+        (do (binding [render/*image-placements* image-sink]
+              (render/draw-messages-area! g layout messages-top messages-bottom cols))
             ;; Carry only chrome regions OUTSIDE the messages band; the
             ;; in-band ones were just re-registered fresh above.
             (doseq [r (cr/current)]
@@ -3222,6 +3236,13 @@
            :eff-scroll (long (:eff-scroll layout))
            :search-active? (boolean (get-in db [:search :active?]))})
         (record-frame! "live" (nanos->ms frame-start-ns refresh-end-ns))))
+    ;; Re-anchor inline images to the rows this tick just painted — cheap
+    ;; transmit-once `a=p` placements, the same ones `render-scroll-frame!`
+    ;; emits. The cheap live-band path deliberately does NOT paint: it repaints
+    ;; no image row, so its empty sink would delete every live placement.
+    (when transcript-shifted?
+      (paint-terminal-images!
+        (fitting-image-placements @image-sink messages-top messages-bottom)))
     (merge previous-layout
            {:cols cols
             :rows rows

@@ -1667,6 +1667,92 @@
                        (expect (= 20 (long (:rows scrolled))))
                        (expect (= 20 (long (:cols scrolled)))))))))
 
+;; Regression, reported bug: dropping a picture into a turn and letting the view
+;; auto-scroll to the bottom tore the drawing off its frame — it kept the screen
+;; row it already had, so it slid downward out of its box and over the chrome
+;; below. The 80ms live tick repaints the WHOLE messages band whenever
+;; auto-bottom follow shifts `eff-scroll`, but it never re-placed the terminal
+;; graphics, which no cell repaint can move: every picture stayed pinned to the
+;; row the last FULL frame gave it while its reserved box scrolled out from
+;; under it.
+(defdescribe
+  live-frame-image-placement-test
+  (let
+    [fence
+     (str "\n````vis-image\n" "[Image #1: shot.png]\n"
+          "/tmp/shot.png\n" "image/png\n"
+          "800x100\n" "12 kB\n````\n")
+
+     db
+     {:messages [{:role :user :text (str "look at this" fence) :timestamp (java.util.Date. 2000000)}
+                 {:role :assistant :text "streaming" :timestamp (java.util.Date. 2000001)}]
+      :input {:lines [""] :crow 0 :ccol 0}
+      :progress {:iterations [{:thinking "t"}]}
+      :loading? true
+      :settings {}
+      :session {:id "s1"}}
+
+     ;; One live tick against a real virtual terminal: what the tick
+     ;; handed the graphics painter, and where the caption the picture
+     ;; hangs under actually landed on screen.
+     live-tick!
+     (fn [previous-layout]
+       (let
+         [{terminal :terminal ^TerminalScreen scr :screen}
+          (term/virtual-screen)
+
+          painted
+          (atom :never-called)]
+
+         (virtual/invalidate-heights!)
+         (with-redefs
+           [timg/graphical-terminal?
+            (constantly true)
+
+            timg/images-protocol
+            (constantly :kitty)
+
+            screen/paint-terminal-images!
+            (fn [regions]
+              (reset! painted (vec regions)))]
+
+           (let
+             [layout ((deref #'screen/render-live-bubble-frame!) scr 80 30 db 1000 previous-layout)]
+             (.refresh scr)
+             {:painted @painted
+              :layout layout
+              :caption-row (first (keep-indexed (fn [i line]
+                                                  (when (str/includes? line "Image #1") i))
+                                                (term/grid terminal)))}))))]
+
+    (it "a follow-mode tick re-places the picture on the rows it just painted"
+        (let
+          [{:keys [painted caption-row]}
+           (live-tick! {:eff-scroll 99 :cols 80 :rows 30})
+
+           placement
+           (first painted)]
+
+          (expect (some? caption-row))
+          (expect (= 1 (count painted)))
+          ;; The reserved box opens on the row under the `[Image #1: …]`
+          ;; caption this very tick painted — not where the last full
+          ;; frame left it.
+          (expect (= (inc (long caption-row)) (long (:row placement))))
+          (expect (= 5 (long (:rows (:img placement)))))
+          (expect (= "/tmp/shot.png" (:path (:img placement))))))
+    (it "a tick that did not shift the transcript leaves the graphics layer alone"
+        ;; The cheap live-band path repaints no image row, so an empty
+        ;; placement set there would delete every picture on screen.
+        (let
+          [settled
+           (:layout (live-tick! {:eff-scroll 99 :cols 80 :rows 30}))
+
+           {:keys [painted]}
+           (live-tick! settled)]
+
+          (expect (= :never-called painted))))))
+
 ;; Regression: pressing C-x made every inline image in the transcript disappear.
 ;; The C-x hydra went through the MODAL `with-dialog-lock`, which deletes the
 ;; whole Kitty graphics layer so a full-screen dialog is the top surface; a band
@@ -1858,15 +1944,19 @@
 (defdescribe
   recalled-line-paints-no-slash-overlay-test
   (it "a buffer the user TYPED offers the overlay; a RECALLED one does not"
-      (let [buffer #(reduce input/insert-char (input/empty-input) (seq %))
-            ;; What ArrowUp dropped in the box — `/reload` in the report, and any
-            ;; slash line the palette can answer here (a unit-test JVM carries no
-            ;; engine slash registry, so match a built-in: `Search in Session`).
-            recalled (buffer "/s")]
+      (let
+        [buffer
+         #(reduce input/insert-char (input/empty-input) (seq %))
+
+         ;; What ArrowUp dropped in the box — `/reload` in the report, and any
+         ;; slash line the palette can answer here (a unit-test JVM carries no
+         ;; engine slash registry, so match a built-in: `Search in Session`).
+         recalled
+         (buffer "/s")]
+
         (expect (seq (slash-suggestions-for-db nil {:input recalled :slash-command-index 0})))
         ;; THIS is what used to spring open over the composer and, because an open
         ;; overlay owns ArrowUp, strand the user on the entry they just recalled.
-        (expect (nil? (slash-suggestions-for-db nil
-                                                {:input recalled
-                                                 :slash-command-index 0
-                                                 :slash-command-hidden? true}))))))
+        (expect (nil? (slash-suggestions-for-db
+                        nil
+                        {:input recalled :slash-command-index 0 :slash-command-hidden? true}))))))
