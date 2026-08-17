@@ -413,13 +413,17 @@
        (fn [provider-id]
          (if (= :openai provider-id) {"is_authenticated" true} {"is_authenticated" false}))]
 
-      (expect (= [:default :fallback :authenticate :status :logout :remove]
+      (expect (= [:default :fallback :authenticate :status :remove]
                  (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
+      ;; Log Out is GONE. Removal is the ONE teardown — the daemon runs the
+      ;; provider's own logout AND drops the config entry — so a provider signed
+      ;; out here can no longer linger as an authenticated preset nobody can get
+      ;; rid of.
       (expect (= ["Set as Default..." "Set as Fallback..." "Re-authenticate" "Show Status + Limits"
-                  "Log Out" "Remove Provider"]
+                  "Remove Provider"]
                  (mapv :label (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
       ;; Only the row that ALREADY carries the fallback tag can drop it.
-      (expect (= [:default :fallback :clear-fallback :authenticate :status :logout :remove]
+      (expect (= [:default :fallback :clear-fallback :authenticate :status :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
@@ -429,7 +433,7 @@
       ;; The PRIMARY's own card never offers the fallback tag: the daemon refuses
       ;; a fallback naming the primary's provider, so the action could only ever
       ;; produce a rejection dialog.
-      (expect (= [:default :authenticate :status :logout :remove]
+      (expect (= [:default :authenticate :status :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
@@ -437,7 +441,7 @@
                                                        true))))
       ;; A stale config naming ONE provider for both roles still drops `:fallback`
       ;; while keeping the escape hatch that clears the tag.
-      (expect (= [:default :clear-fallback :authenticate :status :logout :remove]
+      (expect (= [:default :clear-fallback :authenticate :status :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
@@ -445,129 +449,80 @@
                                                        true)))))))
 
 (defdescribe
-  logout-provider-test
+  remove-provider-test
+  ;; Regression (user report, Settings -> Providers): the TUI offered LOG OUT as a
+  ;; provider's only teardown while the companion offered Remove, so a provider
+  ;; signed out here kept its config entry and came back as an authenticated
+  ;; preset - and the confirmation stacked a DIALOG on top of the transient it
+  ;; was fired from.
   (it
-    "clears the credential through the gateway and KEEPS the persisted provider"
+    "asks in the caller's own band and drops config entry AND credential"
     (let
-      [logout-called?
-       (atom false)
-
-       removed
+      [removed
        (atom nil)
 
-       message
+       asked
        (atom nil)]
 
       (with-redefs
-        [;; Logout is a GATEWAY call: the daemon owns the credential file.
-         vis/gateway-provider-logout!
+        [vis/gateway-provider-remove!
          (fn [provider-id]
-           (reset! logout-called? (= :anthropic-coding-plan provider-id)))
+           (reset! removed provider-id)
+           {"is_removed" true})
 
-         vis/remove-config-provider!
-         (fn [provider-id source]
-           (reset! removed {:provider-id provider-id :source source})
-           true)
+         dlg/band-questions
+         (fn [_screen _g _region]
+           {:confirm! (fn [question opts]
+                        (reset! asked {:question question :opts opts})
+                        true)
+            :note! (fn [& args]
+                     (throw (ex-info "a successful removal said nothing" {:args args})))})
 
+         ;; A verb reached from a transient must never answer with a window.
          dlg/confirm-dialog!
          (fn [& _]
-           true)
+           (throw (ex-info "removal opened a dialog" {})))
 
          dlg/text-view-dialog!
-         (fn [& args]
-           (reset! message args))]
+         (fn [& _]
+           (throw (ex-info "removal opened a dialog" {})))]
 
-        (expect (= true (provider/logout-provider! nil {:id :anthropic-coding-plan})))
-        (expect (= true @logout-called?))
-        ;; Logging out forgets the CREDENTIAL, never the configuration: models,
-        ;; base-url and tags have to survive so signing back in is one dialog away.
-        (expect (nil? @removed))
-        (expect (str/includes? (str @message) "stays configured")))))
-  (it "reports a gateway refusal instead of letting it escape as a fatal error"
-      (let
-        [removed
-         (atom nil)
-
-         message
-         (atom nil)]
-
+        (expect (= true (provider/remove-provider! nil nil nil {:id :github-copilot-individual})))
+        (expect (= :github-copilot-individual @removed))
+        ;; The band says what saying yes COSTS, the way the companion's
+        ;; confirm row does - `Yes` alone never says what it agrees to.
+        (expect (str/includes? (str (:question @asked)) "Remove"))
+        (expect (str/includes? (str (:cost (:opts @asked))) "Signs out"))
+        (expect (= "Yes, remove" (:yes-label (:opts @asked)))))))
+  (it "keeps the row when the user declines"
+      (let [removed (atom nil)]
         (with-redefs
-          [vis/gateway-provider-logout!
-           (fn [_]
-             (throw (ex-info "provider logout failed: 400" {:status 400})))
+          [vis/gateway-provider-remove! (fn [provider-id]
+                                          (reset! removed provider-id))
+           dlg/band-questions (fn [& _]
+                                {:confirm! (fn [& _]
+                                             false)
+                                 :note! (fn [& _]
+                                          nil)})]
 
-           vis/remove-config-provider!
-           (fn [provider-id source]
-             (reset! removed {:provider-id provider-id :source source})
-             true)
+          (expect (nil? (provider/remove-provider! nil nil nil {:id :openai})))
+          (expect (nil? @removed)))))
+  (it "reports a gateway refusal in the SAME band instead of a dialog"
+      (let [note (atom nil)]
+        (with-redefs
+          [vis/gateway-provider-remove! (fn [_]
+                                          (throw (ex-info "provider remove failed: 400"
+                                                          {:status 400})))
+           dlg/band-questions (fn [& _]
+                                {:confirm! (fn [& _]
+                                             true)
+                                 :note! (fn [title line]
+                                          (reset! note [title line]))})
+           dlg/text-view-dialog! (fn [& _]
+                                   (throw (ex-info "refusal opened a dialog" {})))]
 
-           dlg/confirm-dialog!
-           (fn [& _]
-             true)
-
-           dlg/text-view-dialog!
-           (fn [& args]
-             (reset! message args))]
-
-          (expect (= false (provider/logout-provider! nil {:id :anthropic-coding-plan})))
-          (expect (nil? @removed))
-          (expect (str/includes? (str @message) "Logout failed"))))))
-
-(defdescribe remove-provider-test
-             ;; Regression (user report, screenshot of Settings -> Providers): a Copilot row
-             ;; the user never added could not be removed. Settings offered no removal at
-             ;; all, and the manager's `d` dropped the CARD while the daemon kept the
-             ;; credential - so the provider came back as an authenticated preset on the
-             ;; next open.
-             (it "drops config entry AND credential through the gateway"
-                 (let
-                   [removed
-                    (atom nil)
-
-                    message
-                    (atom nil)]
-
-                   (with-redefs
-                     [vis/gateway-provider-remove!
-                      (fn [provider-id]
-                        (reset! removed provider-id)
-                        {"is_removed" true})
-
-                      dlg/confirm-dialog!
-                      (fn [& _]
-                        true)
-
-                      dlg/text-view-dialog!
-                      (fn [& args]
-                        (reset! message args))]
-
-                     (expect (= true
-                                (provider/remove-provider! nil {:id :github-copilot-individual})))
-                     (expect (= :github-copilot-individual @removed))
-                     (expect (nil? @message)))))
-             (it "keeps the row when the user declines"
-                 (let [removed (atom nil)]
-                   (with-redefs
-                     [vis/gateway-provider-remove! (fn [provider-id]
-                                                     (reset! removed provider-id))
-                      dlg/confirm-dialog! (fn [& _]
-                                            false)]
-
-                     (expect (nil? (provider/remove-provider! nil {:id :openai})))
-                     (expect (nil? @removed)))))
-             (it "reports a gateway refusal instead of letting it escape as a fatal error"
-                 (let [message (atom nil)]
-                   (with-redefs
-                     [vis/gateway-provider-remove! (fn [_]
-                                                     (throw (ex-info "provider remove failed: 400"
-                                                                     {:status 400})))
-                      dlg/confirm-dialog! (fn [& _]
-                                            true)
-                      dlg/text-view-dialog! (fn [& args]
-                                              (reset! message args))]
-
-                     (expect (= false (provider/remove-provider! nil {:id :openai})))
-                     (expect (str/includes? (str @message) "Remove failed"))))))
+          (expect (= false (provider/remove-provider! nil nil nil {:id :openai})))
+          (expect (str/includes? (str @note) "remove failed"))))))
 
 (defdescribe
   api-key-auth-prompt-test
@@ -962,34 +917,6 @@
              nil)]
 
           (expect (= provider-config (provider/authenticate-provider! nil provider-config)))
-          (expect (= false @start-called?)))))
-  (it "does not force Codex login from the auth picker when credentials exist"
-      (let
-        [start-called?
-         (atom false)
-
-         provider-item
-         {:provider-id :openai-codex
-          :provider {:provider/id :openai-codex :provider/label "OpenAI Codex"}}]
-
-        (with-redefs
-          [dlg/select-dialog!
-           (fn [& _]
-             provider-item)
-
-           vis/gateway-provider-status
-           (constantly {"is_authenticated" true})
-
-           vis/gateway-provider-auth-start!
-           (fn [& _]
-             (reset! start-called? true)
-             nil)
-
-           dlg/confirm-dialog!
-           (fn [& _]
-             nil)]
-
-          (expect (= true (provider/show-provider-auth-dialog! nil)))
           (expect (= false @start-called?)))))
   (it "returns false when the gateway auth flow fails"
       (with-redefs
@@ -1504,12 +1431,12 @@
         [spec (provider/provider-transient-spec [{:id :default :label "Set as Default..." :key \d}
                                                  {:id :fallback :label "Set as Fallback..." :key \f}
                                                  {:id :authenticate :label "Authenticate" :key \a}
-                                                 {:id :logout :label "Log Out" :key \l}])]
+                                                 {:id :remove :label "Remove Provider" :key \x}])]
         (expect (= ["Routing" "Account"] (mapv :title (:groups spec))))
-        (expect (= [["d" "f"] ["a" "l"]] (mapv #(mapv :key (:items %)) (:groups spec))))
-        (expect (= [["Set as Default..." "Set as Fallback..."] ["Authenticate" "Log Out"]]
+        (expect (= [["d" "f"] ["a" "x"]] (mapv #(mapv :key (:items %)) (:groups spec))))
+        (expect (= [["Set as Default..." "Set as Fallback..."] ["Authenticate" "Remove Provider"]]
                    (mapv #(mapv :label (:items %)) (:groups spec))))
-        (expect (= [:default :fallback :authenticate :logout]
+        (expect (= [:default :fallback :authenticate :remove]
                    (mapv :id (mapcat :items (:groups spec)))))
         (expect (every? #(= :action (:type %)) (mapcat :items (:groups spec))))))
   (it "drops a group no action landed in"

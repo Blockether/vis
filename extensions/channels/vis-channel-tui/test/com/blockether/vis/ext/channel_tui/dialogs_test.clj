@@ -1804,58 +1804,59 @@
 
 (defdescribe
   band-questions-test
-  (it
-    "binds every question a band can ask to that band's OWN region"
-    ;; Each host used to unpack `:left`/`:inner-w`/`:hint-row`/`:text-w` again
-    ;; and reach for `tr/run!` plus `transient-host` itself — five copies of
-    ;; the same six coordinates, which is how two bands drift apart. The magit
-    ;; status buffer, the provider manager, Settings, `transient-dialog!` and
-    ;; the session band all compose THIS map now.
-    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
-      (try
-        (let
-          [g (.newTextGraphics screen)
-           region {:left 2 :inner-w 40 :hint-row 20 :text-w 38}
-           questions (dlg/band-questions screen g region)
-           feed! (fn [& ks]
-                   (doseq [k ks]
-                     (.addInput terminal
-                                (if (= :enter k) (KeyStroke. KeyType/Enter) (term/keystroke k)))))]
+  (it "binds every question a band can ask to that band's OWN region"
+      ;; Each host used to unpack `:left`/`:inner-w`/`:hint-row`/`:text-w` again
+      ;; and reach for `tr/run!` plus `transient-host` itself — five copies of
+      ;; the same six coordinates, which is how two bands drift apart. The magit
+      ;; status buffer, the provider manager, Settings, `transient-dialog!` and
+      ;; the session band all compose THIS map now.
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try
+          (let
+            [g (.newTextGraphics screen)
+             region {:left 2 :inner-w 40 :hint-row 20 :text-w 38}
+             questions (dlg/band-questions screen g region)
+             feed! (fn [& ks]
+                     (doseq [k ks]
+                       (.addInput
+                         terminal
+                         (if (= :enter k) (KeyStroke. KeyType/Enter) (term/keystroke k)))))]
 
-          (expect (= #{:read! :choose! :confirm! :transient! :read-option} (set (keys questions))))
-          ;; One typed answer, in THIS region's own band and nowhere else: the
-          ;; prompt is the band's title (row 16) and the text is typed into a
-          ;; field under it (row 18), directly above the region's hint row.
-          (feed! \h \i :enter)
-          (expect (= "hi" ((:read! questions) "Name:")))
-          (let [grid (vec (term/grid terminal))]
-            (expect (str/includes? (nth grid 16) "Name:"))
-            (expect (str/includes? (nth grid 18) "hi")))
-          ;; y/n and WHICH-one, same row, single key.
-          (feed! \y)
-          (expect (true? ((:confirm! questions) "Sure?")))
-          (feed! \b)
-          (expect (= :bb
-                     ((:choose! questions)
-                       "Which:"
-                       [{:key \a :id :aa :label "A"} {:key \b :id :bb :label "B"}])))
-          ;; A transient that opens a transient: the second band lands INSIDE
-          ;; the first one's box (its rows start at the region's own left
-          ;; edge), which is how magit asks a second thing without a second
-          ;; frame.
-          (feed! \x)
-          (expect (= :ex
-                     (:action ((:transient! questions)
-                                {:title "T"
-                                 :groups [{:title "G"
-                                           :items
-                                           [{:key "x" :type :action :id :ex :label "Ex"}]}]}))))
-          (expect (some #(str/starts-with? % "  │  x  Ex") (term/grid terminal)))
-          ;; And the `:read-option` an OPTION item hands `tr/run!`, bound to
-          ;; the same hint row.
-          (feed! \z \z :enter)
-          (expect (= "zz" ((:read-option questions) {:label "Token" :prompt "Token:"} nil))))
-        (finally (.stopScreen screen))))))
+            (expect (= #{:read! :choose! :confirm! :note! :transient! :read-option}
+                       (set (keys questions))))
+            ;; One typed answer, in THIS region's own band and nowhere else: the
+            ;; prompt is the band's title (row 16) and the text is typed into a
+            ;; field under it (row 18), directly above the region's hint row.
+            (feed! \h \i :enter)
+            (expect (= "hi" ((:read! questions) "Name:")))
+            (let [grid (vec (term/grid terminal))]
+              (expect (str/includes? (nth grid 16) "Name:"))
+              (expect (str/includes? (nth grid 18) "hi")))
+            ;; y/n and WHICH-one, same row, single key.
+            (feed! \y)
+            (expect (true? ((:confirm! questions) "Sure?")))
+            (feed! \b)
+            (expect (= :bb
+                       ((:choose! questions)
+                         "Which:"
+                         [{:key \a :id :aa :label "A"} {:key \b :id :bb :label "B"}])))
+            ;; A transient that opens a transient: the second band lands INSIDE
+            ;; the first one's box (its rows start at the region's own left
+            ;; edge), which is how magit asks a second thing without a second
+            ;; frame.
+            (feed! \x)
+            (expect (= :ex
+                       (:action ((:transient! questions)
+                                  {:title "T"
+                                   :groups [{:title "G"
+                                             :items
+                                             [{:key "x" :type :action :id :ex :label "Ex"}]}]}))))
+            (expect (some #(str/starts-with? % "  │  x  Ex") (term/grid terminal)))
+            ;; And the `:read-option` an OPTION item hands `tr/run!`, bound to
+            ;; the same hint row.
+            (feed! \z \z :enter)
+            (expect (= "zz" ((:read-option questions) {:label "Token" :prompt "Token:"} nil))))
+          (finally (.stopScreen screen))))))
 
 ;; Regression (reported from the TUI, screenshot of the draft band): a band asked
 ;; its follow-up question on its own hint row while its COMMAND rows stayed
@@ -1910,6 +1911,44 @@
                (expect (str/includes? painted "Yes"))
                (expect (str/includes? painted "No"))
                (expect (not (str/includes? painted "Abandon draft"))))
+             (finally (.stopScreen screen)))))
+  (it "a DESTRUCTIVE y/n names what saying yes COSTS, and what each answer does"
+      ;; `Yes` alone never says what it agrees to. The companion's confirm row
+      ;; spells the cost over the two answers and labels them with the verb, so
+      ;; the band that asks the same question in the terminal does too.
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try (let
+               [g (.newTextGraphics screen)
+                region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
+                _ (.addInput terminal (term/keystroke \y))
+                answer ((:confirm! (dlg/band-questions screen g region))
+                         "Remove GitHub Copilot?"
+                         {:cost "Signs out on the gateway machine and drops its entry there."
+                          :yes-label "Yes, remove"
+                          :no-label "Keep it"})
+                painted (str/join "\n" (map :text (term/painted-rows terminal)))]
+
+               (expect (true? answer))
+               (expect (str/includes? painted "Remove GitHub Copilot?"))
+               (expect (str/includes? painted "Signs out on the gateway machine"))
+               (expect (str/includes? painted "Yes, remove"))
+               (expect (str/includes? painted "Keep it")))
+             (finally (.stopScreen screen)))))
+  (it "a band SAYS a refusal in its own frame instead of opening a window over it"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try (let
+               [g (.newTextGraphics screen)
+                region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
+                _ (.addInput terminal (term/keystroke \q))
+                answer ((:note! (dlg/band-questions screen g region))
+                         "GitHub Copilot — remove failed"
+                         "provider remove failed: 400")
+                painted (str/join "\n" (map :text (term/painted-rows terminal)))]
+
+               (expect (nil? answer))
+               (expect (str/includes? painted "remove failed"))
+               (expect (str/includes? painted "provider remove failed: 400"))
+               (expect (str/includes? painted "Dismiss")))
              (finally (.stopScreen screen))))))
 
 ;;; ── One band COMPONENT, one instance per host ────────────────────────────────

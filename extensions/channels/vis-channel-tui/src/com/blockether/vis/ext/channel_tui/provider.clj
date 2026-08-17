@@ -10,7 +10,10 @@
 
    ALL provider OAuth is driven ENTIRELY through the gateway —
    Anthropic + Codex over browser/PKCE, GitHub Copilot over device code —
-   via `/v1/providers/:id/auth/{start,complete,poll,cancel}` and `/logout`.
+   via `/v1/providers/:id/auth/{start,complete,poll,cancel}`. Teardown is ONE
+   verb — `DELETE /v1/providers/:id` — because the daemon runs the extension's own
+   logout there and drops the config entry in the same step, exactly as the
+   companion's Remove does.
    The TUI therefore needs NO provider extension on its own classpath, holds
    no credential secret at any moment, and behaves identically when attached
    to a gateway on another machine."
@@ -960,12 +963,13 @@
          (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
 
          (or (:provider/status-fn registered) (:provider/detect-fn registered) (:api-key provider))
-         (conj {:id :status :label "Show Status + Limits" :key \s})
-
-         (or (:provider/logout-fn registered) (:api-key provider))
-         (conj {:id :logout :label "Log Out" :key \l}))
-       ;; Every row can be dropped — a fleet you can only ADD to is how a
-       ;; provider nobody wants stays on the screen forever.
+         (conj {:id :status :label "Show Status + Limits" :key \s}))
+       ;; Removal is the ONE teardown a provider has, the same verb the companion
+       ;; offers: the daemon runs the extension's own logout AND drops the config
+       ;; entry, so nothing survives to resurrect the row as an authenticated
+       ;; preset. A separate "log out" only ever left that ghost behind — and a
+       ;; fleet you can only ADD to is how a provider nobody wants stays on the
+       ;; screen forever.
        (conj {:id :remove :label "Remove Provider" :key \x})))))
 
 (def ^:private routing-action-ids
@@ -1266,43 +1270,6 @@
          (= :lmstudio (:id provider)) nil
          :else (gateway-api-key-login! screen provider))))
 
-(defn- perform-logout!
-  "Network logout for `provider`, KEEPING its config entry. No dialogs — the caller
-   owns confirmation and any feedback.
-
-   Logging out forgets the CREDENTIAL, not the configuration: models, base-url and
-   tags survive, so signing back in is one dialog away. It also never throws — a
-   gateway refusal (the 400 an api-key provider used to answer with) escaped as a
-   fatal error instead of a message.
-
-   Returns nil on success, or a human-readable failure string."
-  [provider]
-  (let [provider-id (:id provider)]
-    ;; Logout runs IN THE DAEMON: it owns the credential file, which may live
-    ;; on another machine entirely.
-    (try (vis/gateway-provider-logout! provider-id)
-         nil
-         (catch Throwable t (or (not-empty (str (ex-message t))) (str t))))))
-
-(defn logout-provider!
-  "Confirm, then log `provider` out through the gateway. The provider STAYS in the
-   config — only its credential is dropped. Returns true when the logout ran."
-  [^TerminalScreen screen provider]
-  (let [provider-id (:id provider)]
-    (when (dlg/confirm-dialog! screen
-                               (str (vis/display-label provider-id) " Authentication")
-                               [(str "Log out of " (vis/display-label provider-id) "?")])
-      (if-let [err (perform-logout! provider)]
-        (do (dlg/text-view-dialog! screen
-                                   (str (vis/display-label provider-id) " Authentication")
-                                   [(str "Logout failed: " err)])
-            false)
-        (do (dlg/text-view-dialog! screen
-                                   (str (vis/display-label provider-id) " Authentication")
-                                   [(str "Logged out of " (vis/display-label provider-id) ".")
-                                    "Provider stays configured; sign in again anytime."])
-            true)))))
-
 (defn- perform-remove!
   "Fleet removal for `provider` THROUGH THE GATEWAY. No dialogs — the caller owns
    confirmation and feedback.
@@ -1317,19 +1284,33 @@
        (catch Throwable t (or (not-empty (str (ex-message t))) (str t)))))
 
 (defn remove-provider!
-  "Confirm, then drop `provider` from the fleet through the gateway — config entry
-   and credential both. Returns true when the removal ran."
-  [^TerminalScreen screen provider]
-  (let [provider-id (:id provider)]
-    (when (dlg/confirm-dialog! screen
-                               (str (vis/display-label provider-id) " — remove")
-                               [(str "Remove " (vis/display-label provider-id) " from the fleet?")
-                                "Its credential is dropped too; add it back anytime."])
+  "Confirm IN THE CALLER'S BAND, then drop `provider` from the fleet through the
+   gateway — config entry and credential both.
+
+   This is the ONE teardown a provider has, the verb the companion offers under
+   the same name: the daemon runs the extension's own logout before it forgets the
+   entry, so nothing survives to resurrect the row as an authenticated preset. The
+   question, what saying yes COSTS and any refusal all paint INSIDE the frame the
+   transient was fired from — a verb reached from a band must never answer with a
+   window stacked on top of it.
+
+   Returns true when the removal ran."
+  [^TerminalScreen screen g region provider]
+  (let
+    [label
+     (vis/display-label (:id provider))
+
+     {:keys [confirm! note!]}
+     (dlg/band-questions screen g region)]
+
+    (when (confirm! (str "Remove " label "?")
+                    {:cost (str "Signs out of " label
+                                " on the gateway machine and drops its entry there"
+                                " — every device paired with it loses the provider.")
+                     :yes-label "Yes, remove"
+                     :no-label "Keep it"})
       (if-let [err (perform-remove! provider)]
-        (do (dlg/text-view-dialog! screen
-                                   (str (vis/display-label provider-id) " — remove")
-                                   [(str "Remove failed: " err)])
-            false)
+        (do (note! (str label " — remove failed") err) false)
         true))))
 
 (defn- choose-router-model!
@@ -1460,11 +1441,8 @@
           :status
           (do (show-provider-status! screen provider) false)
 
-          :logout
-          (boolean (logout-provider! screen provider))
-
           :remove
-          (boolean (remove-provider! screen provider))
+          (boolean (remove-provider! screen g region provider))
 
           false)))))
 
@@ -1615,38 +1593,6 @@
                                     #(preset-transient-spec available % (band-page-size region)))]
          (add-preset-provider! screen g region (first (filter #(= pid (:id %)) available))))))))
 
-(defn auth-provider-items
-  "One row per auth-capable provider, labelled with its GATEWAY auth verdict.
-
-   The N status probes fan out onto worker futures and are joined once, so
-   opening the dialog costs one round trip of latency instead of N serialized
-   blocking gateway calls on the UI thread."
-  []
-  (->> (vis/registered-providers)
-       (remove #(contains? local-no-auth-provider-ids (:provider/id %)))
-       (mapv (fn [provider]
-               [provider
-                (vis/worker-future "vis-tui-provider-auth-status"
-                                   #(gateway-provider-status-safe provider))]))
-       (mapv (fn [[provider status-future]]
-               (let [status @status-future]
-                 {:provider-id (:provider/id provider)
-                  :provider provider
-                  :label
-                  (str (:provider/label provider)
-                       " / "
-                       (if (get status "is_authenticated") "authenticated" "not authenticated"))})))
-       (sort-by :label)
-       vec))
-
-(defn show-provider-auth-dialog!
-  [^TerminalScreen screen]
-  (when-let [item (dlg/select-dialog! screen "Authenticate Provider" (auth-provider-items))]
-    (let [provider (or (:provider item) (vis/provider-by-id (:provider-id item)))]
-      ;; ONE auth path for every entry point: this dialog, the provider manager
-      ;; and add-provider all funnel into `authenticate-provider!`.
-      (boolean (authenticate-provider! screen {:id (:provider/id provider)})))))
-
 (def ^:private provider-dialog-title "Providers")
 
 (defn- pending-remove
@@ -1654,14 +1600,16 @@
    the gateway drops config entry and credential, then the card leaves the list.
    One definition, because the list's `d` and a card's `Remove Provider` must not
    be able to mean two different things."
-  [^TerminalScreen screen {:keys [items statuses limits selected]}]
+  [^TerminalScreen screen {:keys [g region items statuses limits selected]}]
   (let [provider (nth @items @selected)]
     {:prompt (str "Remove " (vis/display-label (:id provider)) "?  y / n")
      :run (fn []
             (if-let [err (perform-remove! provider)]
-              (dlg/text-view-dialog! screen
-                                     (str (vis/display-label (:id provider)) " — remove")
-                                     [(str "Remove failed: " err)])
+              ;; The refusal is a band in THIS frame as well: the card list the
+              ;; removal was fired from stays behind it.
+              ((:note! (dlg/band-questions screen g region))
+                (str (vis/display-label (:id provider)) " — remove failed")
+                err)
               (let [sel (long @selected)]
                 (swap! items #(vec (concat (subvec % 0 sel) (subvec % (inc sel)))))
                 (swap! statuses dissoc (:id provider))
@@ -2133,31 +2081,11 @@
                            :status
                            (do (reset! status-scroll 0) (reset! mode :status))
 
-                           :logout
-                           (do
-                             (reset! pending
-                               {:prompt
-                                (str "Log out of " (vis/display-label (:id provider)) "?  y / n")
-                                :run
-                                (fn []
-                                  (if-let [err (perform-logout! provider)]
-                                    (dlg/text-view-dialog! screen
-                                                           (str (vis/display-label (:id provider))
-                                                                " Authentication")
-                                                           [(str "Logout failed: " err)])
-                                    ;; The provider KEEPS its config row: only the
-                                    ;; credential is gone, so drop the cached
-                                    ;; verdicts and let the row re-probe as
-                                    ;; unauthenticated.
-                                    (do
-                                      (swap! statuses dissoc (:id provider))
-                                      (swap! limits dissoc (:id provider))
-                                      (refresh-provider-diagnostics! provider statuses limits))))})
-                             (reset! mode :confirm))
-
                            :remove
                            (do (reset! pending (pending-remove screen
-                                                               {:items items
+                                                               {:g g
+                                                                :region geom
+                                                                :items items
                                                                 :statuses statuses
                                                                 :limits limits
                                                                 :selected selected}))
@@ -2188,7 +2116,9 @@
                        ;; D - remove provider (inline confirm, no popup)
                        (= c \d) (do (when (pos? total)
                                       (reset! pending (pending-remove screen
-                                                                      {:items items
+                                                                      {:g g
+                                                                       :region geom
+                                                                       :items items
                                                                        :statuses statuses
                                                                        :limits limits
                                                                        :selected selected}))

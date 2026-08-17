@@ -2601,22 +2601,47 @@
 
 (defn- magit-mini-confirm!
   "Ask y/n in the band's own frame: the question is inked ON the band's opening
-   rule and `Yes` / `No` are the only rows under it. Returns true / false / nil (Esc)."
-  [^TerminalScreen screen g region question]
-  (case
-    (:action (embed-transient! screen
-                               g
-                               region
-                               {:title question
-                                :groups [{:items [{:key "y" :type :action :id :yes :label "Yes"}
-                                                  {:key "n" :type :action :id :no :label "No"}]}]}))
-    :yes
-    true
+   rule and `Yes` / `No` are the only rows under it. Returns true / false / nil (Esc).
 
-    :no
-    false
+   A DESTRUCTIVE question owes the reader more than the word `Yes`, so `opts`
+   carries what the companion's own confirm row carries: `:cost` — ONE line
+   saying what agreeing costs — becomes the heading over the two answers, and
+   `:yes-label` / `:no-label` name them in the caller's verb (`Yes, remove` /
+   `Keep it`) instead of making the reader remember what was asked."
+  ([^TerminalScreen screen g region question] (magit-mini-confirm! screen g region question nil))
+  ([^TerminalScreen screen g region question {:keys [cost yes-label no-label]}]
+   (case
+     (:action (embed-transient!
+                screen
+                g
+                region
+                {:title question
+                 :groups [(cond->
+                            {:items [{:key "y" :type :action :id :yes :label (or yes-label "Yes")}
+                                     {:key "n" :type :action :id :no :label (or no-label "No")}]}
+                            (not (str/blank? (str cost)))
+                            (assoc :title (str cost)))]}))
+     :yes
+     true
 
-    nil))
+     :no
+     false
+
+     nil)))
+
+(defn- magit-mini-note!
+  "SAY one line in the band's own frame — the refusal a verb came back with. The
+   message is the band's heading, `q` dismisses it, and the list it was fired from
+   stays on screen: a failure reached from a transient must not answer with a
+   window on top of it either. Returns nil."
+  [^TerminalScreen screen g region title line]
+  (embed-transient! screen
+                    g
+                    region
+                    {:title title
+                     :groups [{:title (str line)
+                               :items [{:key "q" :type :action :id :dismiss :label "Dismiss"}]}]})
+  nil)
 
 (defn- magit-discard-flow!
   [mini root {:keys [kind area path] :as row}]
@@ -2679,7 +2704,8 @@
 
      `:read!`        one typed answer, in the band's own frame — `[label]` / `[label opts]`
      `:choose!`      WHICH one, single-key — `[title choices]`, returns the `:id`
-     `:confirm!`     y/n — `[question]`
+     `:confirm!`     y/n — `[question]` / `[question {:cost … :yes-label … :no-label …}]`
+     `:note!`        SAY one line back — `[title line]`, dismissed with `q`
      `:transient!`   ANOTHER transient over the SAME band region — `[spec]`
      `:read-option`  the `:read-option` a spec with OPTION items hands `tr/run!`
 
@@ -2691,8 +2717,10 @@
             ([label opts] (magit-mini-read! screen g region label opts)))
    :choose! (fn [title choices]
               (magit-mini-choose! screen g region title choices))
-   :confirm! (fn [question]
-               (magit-mini-confirm! screen g region question))
+   :confirm! (fn confirm! ([question] (confirm! question nil))
+               ([question opts] (magit-mini-confirm! screen g region question opts)))
+   :note! (fn [title line]
+            (magit-mini-note! screen g region title line))
    :transient! (fn [spec]
                  (embed-transient! screen g region spec))
    :read-option (region-option-reader screen g region)})
