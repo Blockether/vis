@@ -1619,19 +1619,29 @@
         (let [[out written] (patch-line-3 nil "(defn ok [] \"1)")]
           (expect (string/includes? out "line 3 opens a string that is never closed"))
           (expect (= fixture written))))
-    (it "refuses a repair that balances by swallowing a form the edit never wrote"
-        ;; the candidate parses — it just closes the LAST defn instead of this line,
-        ;; which is the silent corruption the fragment-level repair used to write
+    ;; Regression, session 2224a346: for a missing closer the pack's repair landed OUTSIDE the
+    ;; edit — it closed the last form in the file — so the whole edit was refused and the same
+    ;; block was re-sent with one more `)` an iteration later. The out-of-bounds candidate is
+    ;; still never written; the closer this edit omitted now goes back on the line it wrote.
+    (it "closes the edit's own line when the repair would swallow a form it never wrote"
         (let
           [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (inc 1)\n\n(defn two [] 2))\n"
                                        "(defn ok [] (inc 1)")]
-          (expect (string/includes? out "would not parse"))
-          (expect (string/includes? out "changes line 5, outside the lines this call edited"))
-          (expect (= fixture written))))
-    (it "refuses a repair that rewrites code instead of delimiters"
+          (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
+          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
+    (it "closes the edit's own line when the repair would rewrite code instead of delimiters"
         (let
           [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (dec 1))\n\n(defn two [] 2)\n"
                                        "(defn ok [] (inc 1)")]
+          (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
+          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
+    ;; One closer too many is the shape nothing may answer: it is the same string as a LOST
+    ;; OPENER, so no candidate is built for it and the pack's own repair is judged on its merits
+    ;; alone — the caller is told what is wrong with it and the file stays as it was.
+    (it "refuses a repair that rewrites code, with no candidate left to fall back on"
+        (let
+          [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (dec 1))\n\n(defn two [] 2)\n"
+                                       "(defn ok [] (inc 1)))")]
           (expect (string/includes? out "would rewrite code, not delimiters"))
           (expect (= fixture written))))
     (it "keeps the plain refusal for a language whose pack publishes no repair"

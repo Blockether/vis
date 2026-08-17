@@ -45,6 +45,20 @@
    parses while the branches it was meant to guard move into a form nobody wrote. That is
    refused too, and the caller is told which line still carries the omission.
 
+    Both witnesses answer WHERE. When neither can — the balancer's answer reaches past the
+    edit, or retypes something of the caller's — one candidate is left: the closers the text
+    never wrote, appended at the END of the last line this call wrote. It is tried last, and
+    only for a call that wrote ONE region, because appending closes everything between the
+    omission and that seat into the form those closers close, and with a single edited region
+    that is code THIS call wrote, handed back to it in the note. Two edits in one call have
+    untouched lines between them, and those are never regrouped.
+
+    A dropped \" is the same mistake one character over, and no balancer can see it: a repair
+    only puts back `()[]{}`, while every string after the missing quote is inside out. Where
+    the text a region REPLACED ended with a quote and the line standing there now does not,
+    that one quote goes back at the same seat, under its own rule — never a general balancing
+    of strings, whose misplacement parses just as happily as the omission.
+
    The repair itself belongs to a language pack, not here: an `:ext/language-tools`
    entry registers `:balance-fn`, `String -> String | nil` (nil = unrepairable).
    This namespace owns only the decision to trust its answer, and it is handed the
@@ -159,6 +173,67 @@
     (str "no delimiter repair is possible: line "
          line
          " opens a string that is never closed, and a repair only puts back `()[]{}`")))
+(defn- open-stack
+  "The delimiters `s` leaves open, outermost first — `[]` for a text that closes everything it
+   opened. nil when a closer arrives that closes nothing or closes the wrong opener, and when a
+   string is left open, because a quote swallows delimiters this scan may not count.
+
+   Read the way `unterminated-string` reads, and on the same terms: a delimiter inside a
+   string, a comment or a character literal is text, not structure."
+  [^String s]
+  (let [n (long (count s))]
+    (loop
+      [i (long 0)
+       stack []
+       in-string? false
+       in-comment? false
+       escaped? false]
+
+      (if (>= i n)
+        (when-not in-string? stack)
+        (let [c (.charAt s (int i))]
+          (cond escaped? (recur (inc i) stack in-string? in-comment? false)
+                in-string? (cond (= c \\) (recur (inc i) stack true false true)
+                                 (= c \") (recur (inc i) stack false false false)
+                                 :else (recur (inc i) stack true false false))
+                in-comment? (recur (inc i) stack false (not= c \newline) false)
+                (= c \\) (recur (inc i) stack false false true)
+                (= c \") (recur (inc i) stack true false false)
+                (= c \;) (recur (inc i) stack false true false)
+                (= c \() (recur (inc i) (conj stack \)) false false false)
+                (= c \[) (recur (inc i) (conj stack \]) false false false)
+                (= c \{) (recur (inc i) (conj stack \}) false false false)
+                (delimiter-char? c) (let [^Character top (peek stack)]
+                                      (when (and top (= c (.charValue top)))
+                                        (recur (inc i) (pop stack) false false false)))
+                :else (recur (inc i) stack false false false)))))))
+
+(defn- span-deficit
+  "The closers the lines this call WROTE left open, in the order that closes them: what stands
+   open through line `idx` beyond what already stood open where line `from` begins. nil when the
+   call closed everything it opened, when it closed MORE than it opened, and when either scan
+   cannot say.
+
+   A SURPLUS is deliberately nil. `(f a))` with one closer too many and `f a))` whose opener was
+   lost are the same string here, exactly as they are to `additions-only?`, and nothing this
+   namespace knows tells the two apart — the caller is told which to look for instead.
+
+   Local on purpose: counting the WHOLE file says nothing about a block inserted inside a `{…}`,
+   where the lines after it close in an order the file no longer has."
+  ^String [lines ^long from ^long idx]
+  (let
+    [before
+     (open-stack (apply str (take (dec from) lines)))
+
+     through
+     (open-stack (apply str (take (inc idx) lines)))]
+
+    (when (and before
+               through
+               (< (count before) (count through))
+               (= (vec before) (vec (take (count before) through))))
+      (apply str (reverse (drop (count before) through))))))
+
 (defn- subsequence?
   "True when every element of `a` appears in `b`, in order — `b` is `a` with things
    INSERTED and nothing else."
@@ -541,6 +616,28 @@
 
     (and (pos? longer) (> (* 2 (lcs-length a b)) longer))))
 
+(defn- middles
+  "The lines `original` and `source` do NOT share at either end, as `[head was now]`: `head`
+   is how many leading lines they have in common, `was` the lines this edit replaced and
+   `now` the lines it wrote in their place. A shared line at either end is the file AROUND
+   the edit, and nothing about it is evidence of what the edit did."
+  [^String original ^String source]
+  (let
+    [was
+     (vec (str/split-lines original))
+
+     now
+     (vec (str/split-lines source))
+
+     head
+     (long (count (take-while true? (map = was now))))
+
+     tail
+     (long (count (take-while true?
+                              (map = (reverse (subvec was head)) (reverse (subvec now head))))))]
+
+    [head (subvec was head (- (count was) tail)) (subvec now head (- (count now) tail))]))
+
 (defn- paired-lines
   "Which line of `original` each line of `source` IS, as `{:line :replaced :wrote
    :same-code?}` maps whose `:line` is 1-based in `source`.
@@ -556,24 +653,8 @@
    say nothing, so they are dropped."
   [^String original ^String source]
   (let
-    [was
-     (vec (str/split-lines original))
-
-     now
-     (vec (str/split-lines source))
-
-     head
-     (long (count (take-while true? (map = was now))))
-
-     tail
-     (long (count (take-while true?
-                              (map = (reverse (subvec was head)) (reverse (subvec now head))))))
-
-     was-mid
-     (subvec was head (- (count was) tail))
-
-     now-mid
-     (subvec now head (- (count now) tail))
+    [[head was-mid now-mid]
+     (middles original source)
 
      anchors
      (when (and (seq was-mid) (seq now-mid))
@@ -613,7 +694,7 @@
 
     (into []
           (comp (map (fn [[was-at now-at same?]]
-                       {:line (inc (+ head (long now-at)))
+                       {:line (inc (+ (long head) (long now-at)))
                         :replaced (nth was-mid was-at)
                         :wrote (nth now-mid now-at)
                         :same-code? same?}))
@@ -662,6 +743,107 @@
                      (assoc acc i (str seated (line-ending (nth acc i)))))
                    now
                    reseated)))))
+
+(defn- written-lines
+  "The 1-based, inclusive `[from to]` lines of `source` this call actually WROTE, from the
+   text it replaced. `[1 n]` when there is no replaced text to compare against — every line
+   is then the edit's own as far as anything here can tell — and an empty range when the
+   edit only deleted, which leaves no line of its own to put anything on."
+  [^String original ^String source lines]
+  (if (string? original)
+    (let [[head _ now-mid] (middles original source)]
+      [(inc (long head)) (+ (long head) (count now-mid))])
+    [1 (count lines)]))
+
+(defn- span-seat
+  "Where a delimiter this call omitted may be APPENDED: the index into `lines` of the last
+   line carrying anything inside `[from to]` and inside the ONE span this call wrote, or nil.
+
+   One span, because appending closes everything between the omission and the seat into the
+   form those closers close. With a single edited region that is code THIS call wrote, and
+   the note hands the caller the line it produced. Two edits in one call have untouched
+   lines between them, and a closer appended after the second would regroup code nobody
+   here wrote — the same guess this namespace refuses everywhere else."
+  [spans lines [from to]]
+  (when (= 1 (count spans))
+    (last (keep-indexed (fn [i ^String l]
+                          (let [n (inc (long i))]
+                            (when (and (<= (long from) n (long to))
+                                       (inside-spans? n spans)
+                                       (not (str/blank? l)))
+                              i)))
+                        lines))))
+
+(defn- append-at
+  "`lines` rebuilt with `s` appended to line `idx`, after its last non-blank character and
+   before whatever ends the line — so nothing already on it moves, its trailing whitespace
+   is untouched and a CRLF file keeps its endings."
+  ^String [lines ^long idx ^String s]
+  (let
+    [^String line
+     (nth lines idx)
+
+     ending
+     (line-ending line)
+
+     body
+     (subs line 0 (- (count line) (count ending)))
+
+     code
+     (str/trimr body)]
+
+    (apply str (assoc (vec lines) idx (str code s (subs body (count code)) ending)))))
+
+(defn- closed-at-tail
+  "`source` with the closers the lines this call WROTE left open appended to the last of them —
+   the candidate of last resort, when neither the replaced text nor the balancer's indentation
+   could say where they belong. nil when the call closed everything it opened, when it closes
+   more than it opens, or when it wrote no single line to put them on."
+  ^String [spans ^String original ^String source]
+  (let
+    [lines
+     (terminated-lines source)
+
+     written
+     (written-lines original source lines)]
+
+    (when-let [idx (span-seat spans lines written)]
+      (when-let [missing (span-deficit lines (first written) idx)]
+        (append-at lines idx missing)))))
+
+(defn- quoted-tail?
+  "True when the last line of `lines` that carries anything ends with a `\"` — the text a
+   docstring or a string literal ends with."
+  [lines]
+  (boolean (when-let [^String l (last (remove str/blank? lines))]
+             (str/ends-with? (str/trimr l) "\""))))
+
+(defn- requoted
+  "`source` with the `\"` this edit dropped put back at the end of the last line it wrote —
+   nil unless a string is left open AND the text this edit replaced ended with a quote where
+   the line standing there now does not.
+
+   A dropped quote is not a missing bracket: every string after it is inside out, the reader
+   stops somewhere else entirely, and no balancer can help because a repair only puts back
+   `()[]{}`. The replaced text is the only witness that a quote ended that region, and it is
+   the whole licence for this candidate — which is why it is one quote, at that one seat,
+   and never a general balancing of strings."
+  ^String [spans ^String original ^String source]
+  (when (and (string? original) (unterminated-string source))
+    (let
+      [lines
+       (terminated-lines source)
+
+       [_ was-mid _]
+       (middles original source)
+
+       idx
+       (span-seat spans lines (written-lines original source lines))]
+
+      (when (and idx
+                 (quoted-tail? was-mid)
+                 (not (str/ends-with? (str/trimr ^String (nth lines idx)) "\"")))
+        (append-at lines idx "\"")))))
 
 (defn- substitution
   "The first delimiter `wrote` has that `replaced` did not, as `[typed had]`: the
@@ -744,6 +926,17 @@
        (excerpt replaced)
        "` and never had that delimiter, so what this call omitted is on another line"))
 
+(defn- changed-lines
+  "The 1-based numbers of the lines where `after` differs from `before`, two line vectors of
+   the same length — nil when they are not, because a repair that changed the line COUNT is a
+   different mistake and is refused as one."
+  [before after]
+  (when (= (count before) (count after))
+    (into []
+          (keep-indexed (fn [i l]
+                          (when (not= l (nth after i)) (inc (long i)))))
+          before)))
+
 (defn- verdict
   "Whether `candidate` may be written in place of `source`. Every rule is a licence the
    caller gave: their code untouched (`skeleton`), their delimiters untouched
@@ -775,11 +968,7 @@
            (str/split-lines candidate)
 
            changed
-           (when (= (count before) (count after))
-             (into []
-                   (keep-indexed (fn [i l]
-                                   (when (not= l (nth after i)) (inc (long i)))))
-                   before))
+           (changed-lines before after)
 
            outside
            (remove #(inside-spans? % spans) changed)
@@ -831,6 +1020,58 @@
                                                      (nth after (dec (long %))))
                                     changed)}))))
 
+(defn- quote-added?
+  "True when `after` is `before` with exactly ONE `\"` inserted and nothing else — every other
+   character theirs, in order, which is the whole change a requote may make to a line."
+  [^String before ^String after]
+  (let
+    [strip
+     (fn [^String s]
+       (str/replace s "\"" ""))
+
+     quotes
+     (fn [^String s]
+       (- (count s) (count (strip s))))]
+
+    (and (= (strip before) (strip after)) (= (inc (long (quotes before))) (long (quotes after))))))
+
+(defn- quote-note
+  "What a requote did to ONE line, in `delimiter-note`'s words: the character it put back, and
+   the line the caller now reads to check it."
+  [line-no ^String after]
+  (str "line " line-no " added `\"` → `" (excerpt after) "`"))
+
+(defn- requote-verdict
+  "Whether `candidate` — `source` with one `\"` put back where the text this edit replaced
+   ended with one — may be written. The parse gate every other candidate passes, and then the
+   two rules that make a quote different from a bracket: the string that was left OPEN now
+   closes, and exactly one quote was added, on ONE line, inside the lines this call wrote.
+   Answers nil when any of it fails, so the refusal the caller reads still describes the
+   balancer's own answer."
+  [{:keys [parses-clean? ^String source spans]} candidate]
+  (when (and (string? candidate)
+             (unterminated-string source)
+             (parses-clean? candidate)
+             (nil? (unterminated-string candidate)))
+    (let
+      [before
+       (str/split-lines source)
+
+       after
+       (str/split-lines ^String candidate)
+
+       changed
+       (changed-lines before after)
+
+       line
+       (when (= 1 (count changed)) (long (first changed)))]
+
+      (when (and line
+                 (= (str/ends-with? source "\n") (str/ends-with? ^String candidate "\n"))
+                 (inside-spans? line spans)
+                 (quote-added? (nth before (dec (long line))) (nth after (dec (long line)))))
+        {:ok? true :content candidate :notes [(quote-note line (nth after (dec (long line))))]}))))
+
 (defn rebalance
   "Try to make `source` — the content an edit WOULD have written, which does not
    parse — parse, by repairing its delimiters WITHOUT letting the repair reach past
@@ -844,15 +1085,21 @@
    evidence and is tried FIRST: a delimiter dropped from a line whose code survived
    goes back where that line had it, which is the only way to put a closer back in the
    MIDDLE of a line, or to tell a lost opener from one closer too many. The balancer's
-   own answer — indentation, and nothing else — is the fallback, and a refusal always
-   speaks about it, because it is the repair that was actually available.
+   own answer — indentation, and nothing else — is the fallback.
+
+   Two candidates follow it, and both put what the text is MISSING at the end of the last
+   line this call wrote: `closed-at-tail` appends the closers nothing else could place, for
+   a call that wrote one region, and `requoted` puts back a `\"` the replaced text proves
+   ended that region, which no balancer can supply. Neither ever speaks in a refusal — that
+   still describes the BALANCER's answer, because it is the repair the caller can reason
+   about from what they wrote.
 
    Answers nil when there is no balancer to ask, `{:ok? true :content S :notes [..]}`
    for a repair that may be written, and `{:ok? false :why msg}` for one that was
    found and REJECTED — the caller puts `why` in its refusal, because \"a repair
    exists but it reaches outside your edit\" is exactly what tells the caller to
    re-read the region instead of retrying the same replacement."
-  [{:keys [balancer ^String source ^String original] :as request}]
+  [{:keys [balancer ^String source ^String original spans] :as request}]
   (when (ifn? balancer)
     (let
       [pairs
@@ -862,6 +1109,16 @@
        (assoc request :pairs pairs)
 
        seated
-       (when (seq pairs) (verdict request (reseat pairs source)))]
+       (when (seq pairs) (verdict request (reseat pairs source)))
 
-      (if (:ok? seated) seated (verdict request (try (balancer source) (catch Throwable _ nil)))))))
+       asked
+       (when-not (:ok? seated) (verdict request (try (balancer source) (catch Throwable _ nil))))
+
+       tailed
+       (when-not (or (:ok? seated) (:ok? asked))
+         (verdict request (closed-at-tail spans original source)))]
+
+      (cond (:ok? seated) seated
+            (:ok? asked) asked
+            (:ok? tailed) tailed
+            :else (or (requote-verdict request (requoted spans original source)) asked)))))

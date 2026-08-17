@@ -874,6 +874,170 @@
         (expect (= "(ns ok)\n\n(defn ok [] (foo (1 2 3)))\n" ((clj-balancer) broken)))
         (expect (false? (:ok? verdict)))
         (expect (str/includes? (:why verdict) "retype"))))
+  ;; Regression, session 2224a346: a 36-line block inserted into the MIDDLE of a form was one `)`
+  ;; short. Parinfer reads INDENTATION, so it closed the form ABOVE the insertion and took a closer
+  ;; off the edit's own last line — both refused, and the whole patch with them; the same block was
+  ;; re-sent with one more `)` an iteration later.
+  (it "closes an inserted block the pack's repair would close above the insertion"
+      (let
+        [original
+         (str "(defdescribe outer-test\n"
+              "  (it \"reads a document\"\n" "      (with-fs-context\n"
+              "\n" "        (expect true))))\n")
+
+         source
+         (str "(defdescribe outer-test\n" "  (it \"reads a document\"\n"
+              "      (with-fs-context\n" "\n"
+              ";; A memo of its own\n" "(it \"inserted\"\n"
+              "    (expect (= [\"a\" \"b\"]\n" "               (mapv str [\"a\" \"b\"])))\n"
+              "\n" "        (expect true))))\n")
+
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :source source
+                             :original original
+                             :spans [[4 9]]})]
+
+        ;; what the pack answers on its own: line 3, which this edit never touched, closed three times
+        (expect (str/includes? ((clj-balancer) source) "      (with-fs-context)))"))
+        (expect (true? (:ok? verdict)))
+        (expect (= ["line 8 added `)` → `(mapv str [\"a\" \"b\"]))))`"] (:notes verdict)))
+        (expect (= (str/replace source
+                                "               (mapv str [\"a\" \"b\"])))\n"
+                                "               (mapv str [\"a\" \"b\"]))))\n")
+                   (:content verdict)))
+        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+  ;; Regression, session cc1ca6dd: a replacement dropped a docstring's closing `"`. A repair only
+  ;; puts back `()[]{}`, so the pack had nothing to answer with and the refusal named a line 56
+  ;; BELOW the edit as the one opening an unclosed string — the same replacement was re-sent twice.
+  (it "puts back a docstring quote no delimiter repair can supply"
+      (let
+        [original
+         (str "(ns a)\n\n(defn f\n  \"Doc line one.\n"
+              "   The rule above it stays a border.\"\n  []\n  (inc 1))\n")
+
+         source
+         (str "(ns a)\n\n(defn f\n  \"Doc line one.\n"
+              "   The rule below it is a slab over the frame.\n  []\n  (inc 1))\n")
+
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :source source
+                             :original original
+                             :spans [[5 5]]})]
+
+        (expect (nil? ((clj-balancer) source)))
+        (expect (true? (:ok? verdict)))
+        (expect (= ["line 5 added `\"` → `The rule below it is a slab over the frame.\"`"]
+                   (:notes verdict)))
+        (expect (= (str/replace source "over the frame.\n" "over the frame.\"\n")
+                   (:content verdict)))
+        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+  ;; The INSERTED block, in every shape. A model that writes a fresh form into the middle of a file
+  ;; replaced a blank line, so the text it replaced witnesses nothing, and parinfer answers by
+  ;; INDENTATION — it closes the form ABOVE the insertion. What the deficit belongs to is the last
+  ;; line this call actually wrote.
+  (it
+    "closes an inserted block at its own tail, at every insertion point"
+    (let
+      [lines
+       (str/split-lines shapes-corpus)
+
+       clean?
+       (fn [s] (empty? (zipper/error-nodes "clojure" s)))
+
+       weave
+       (fn [ln body]
+         (str/join "\n" (concat (take (long ln) lines) body (drop (long ln) lines) [""])))
+
+       block
+       ["(defn inserted [x]" "  (when (pos? x)" "    (inc x)))"]
+
+       short-one
+       (conj (vec (butlast block)) (drop-closers (last block) 1))
+
+       verdicts
+       (for [ln (range 1 (inc (count lines)))
+             :let [whole (weave ln block)
+                   source (weave ln short-one)]
+             :when (and (clean? whole) (not (clean? source)))]
+         [ln whole
+          (balance/rebalance {:balancer (clj-balancer)
+                              :parses-clean? clean?
+                              :source source
+                              :original shapes-corpus
+                              :spans [[(inc (long ln)) (+ (long ln) (count block))]]})])]
+
+      ;; the matrix is worth nothing if it silently stopped covering the file
+      (expect (<= 30 (count verdicts)))
+      (expect (= []
+                 (vec (for [[ln whole v] verdicts
+                            :when (not= whole (:content v))]
+                        [ln (or (:why v) :wrong-content)]))))))
+  ;; The dropped `"`, in every shape. A repair only puts back `()[]{}`, so a docstring left open is
+  ;; refused against a line far below the edit — and the text the edit replaced is the whole licence
+  ;; for putting one back. Where that text did not end with a quote, nothing may be written: a quote
+  ;; in the wrong seat PARSES, so the parse gate proves far less here than it does for a bracket.
+  (it
+    "puts back a docstring quote only where the replaced line ended with one"
+    (let
+      [lines
+       (str/split-lines shapes-corpus)
+
+       clean?
+       (fn [s] (empty? (zipper/error-nodes "clojure" s)))
+
+       weave
+       (fn [ln body]
+         (str/join "\n" (concat (take (long ln) lines) body (drop (long ln) lines) [""])))
+
+       documented
+       ["(defn documented" "  \"What it does, in one line." "   And the rule under it.\"" "  [x]"
+        "  (inc x))"]
+
+       carried
+       (for [ln (range 1 (inc (count lines)))
+             :let [whole (weave ln documented)
+                   source (weave ln (assoc (vec documented) 2 "   And the rule under it."))]
+             :when (and (clean? whole) (not (clean? source)))]
+         [ln whole
+          (balance/rebalance {:balancer (clj-balancer)
+                              :parses-clean? clean?
+                              :source source
+                              :original whole
+                              :spans [[(+ (long ln) 3) (+ (long ln) 3)]]})])
+
+       ungrounded
+       (for [ln (range 1 (inc (count lines)))
+             :let [line (nth lines (dec (long ln)))]
+             i (range (count line))
+             :when (= \" (nth line i))
+             :let [source (str/join "\n"
+                                    (concat (take (dec (long ln)) lines)
+                                            [(str (subs line 0 (long i)) (subs line (inc (long i))))]
+                                            (drop (long ln) lines)
+                                            [""]))]
+             :when (not (clean? source))]
+         [ln i
+          (balance/rebalance {:balancer (clj-balancer)
+                              :parses-clean? clean?
+                              :source source
+                              :original shapes-corpus
+                              :spans [[ln ln]]})])]
+
+      (expect (<= 30 (count carried)))
+      (expect (= []
+                 (vec (for [[ln whole v] carried
+                            :when (not= whole (:content v))]
+                        [ln (or (:why v) :wrong-content)]))))
+      ;; the same character dropped where the replaced line does not end with one: never written
+      (expect (<= 6 (count ungrounded)))
+      (expect (= []
+                 (vec (for [[ln i v] ungrounded
+                            :when (:ok? v)]
+                        [ln i (:content v)]))))))
   (it "leaves an unrepairable edit refused"
       (let
         [source

@@ -6,13 +6,23 @@
   (:require [com.blockether.vis.internal.foundation.editing.balance :as balance]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- reads?
+  "True when `s` reads as Clojure — the stand-in for a language pack's own parser, and the
+   whole gate for a case about the candidate this namespace BUILDS: it may be accepted
+   because it really parses, never because a stub said everything does."
+  [^String s]
+  (binding [*read-eval* false]
+    (try (vector? (read-string (str "[" s "\n]"))) (catch Exception _ false))))
+
 (defn- verdict
-  "`rebalance` over a stub balancer that answers `candidate`, with every candidate
-   treated as parseable unless `parses?` says otherwise."
-  ([source candidate spans] (verdict source candidate spans true))
+  "`rebalance` over a stub balancer that answers `candidate`, with that answer as the only
+   text that PARSES — so a case here is decided by the rules about it, and not by the
+   candidate `rebalance` builds itself once it is refused. `parses?` replaces that predicate,
+   as a function or as a bare true/false for a world where everything or nothing parses."
+  ([source candidate spans] (verdict source candidate spans #{candidate}))
   ([source candidate spans parses?]
    (balance/rebalance {:balancer (constantly candidate)
-                       :parses-clean? (constantly parses?)
+                       :parses-clean? (if (ifn? parses?) parses? (constantly parses?))
                        :source source
                        :spans spans})))
 
@@ -145,13 +155,15 @@
 (defn- seated
   "`rebalance` given the text the edit REPLACED, so a delimiter it dropped can go back
    where that text had it. `candidate` is the stub balancer's answer — the indentation
-   guess the replaced text has to beat."
-  [original source candidate spans]
-  (balance/rebalance {:balancer (constantly candidate)
-                      :parses-clean? (constantly true)
-                      :source source
-                      :original original
-                      :spans spans}))
+   guess the replaced text has to beat — and `parses?` says what may be written at all, for a
+   case whose point is which candidate is REFUSED."
+  ([original source candidate spans] (seated original source candidate spans (constantly true)))
+  ([original source candidate spans parses?]
+   (balance/rebalance {:balancer (constantly candidate)
+                       :parses-clean? parses?
+                       :source source
+                       :original original
+                       :spans spans})))
 
 (defdescribe
   seated-repair-test
@@ -234,13 +246,166 @@
   ;; line — one this edit left exactly as it found it — the file parsed, and the `if` lost its
   ;; branches to the form above it.
   (it "refuses a repair that closes a line whose code the edit kept"
+      ;; the balancer's answer is the only text that parses here, so the refusal is what is
+      ;; under test — the case after this one hands the same edit a real parser
       (let
-        [r (seated "(defn f [xs]\n  (if (seq xs)\n    (println \"a\")\n    (println \"b\")))\n"
-                   "(defn f [xs]\n    (println \"a\")\n  (if (seq xs\n    (println \"b\")))\n"
-                   "(defn f [xs]\n    (println \"a\"))\n  (if (seq xs\n    (println \"b\")))\n"
-                   [[2 3]])]
+        [balanced
+         "(defn f [xs]\n    (println \"a\"))\n  (if (seq xs\n    (println \"b\")))\n"
+
+         r
+         (seated "(defn f [xs]\n  (if (seq xs)\n    (println \"a\")\n    (println \"b\")))\n"
+                 "(defn f [xs]\n    (println \"a\")\n  (if (seq xs\n    (println \"b\")))\n"
+                 balanced
+                 [[2 3]]
+                 #{balanced})]
+
         (expect (false? (:ok? r)))
         (expect (= (str "a delimiter repair exists but it adds `)` to line 2, whose code this edit "
                         "did not change — the text it replaced was `(println \"a\")` and never had "
                         "that delimiter, so what this call omitted is on another line")
-                   (:why r))))))
+                   (:why r)))))
+  (it "closes the line the edit left open when the balancer aimed at one it kept"
+      (let
+        [r (seated "(defn f [xs]\n  (if (seq xs)\n    (println \"a\")\n    (println \"b\")))\n"
+                   "(defn f [xs]\n    (println \"a\")\n  (if (seq xs\n    (println \"b\")))\n"
+                   "(defn f [xs]\n    (println \"a\"))\n  (if (seq xs\n    (println \"b\")))\n"
+                   [[2 3]]
+                   reads?)]
+        (expect (true? (:ok? r)))
+        (expect (= "(defn f [xs]\n    (println \"a\")\n  (if (seq xs)\n    (println \"b\")))\n"
+                   (:content r)))))
+  (it "appends to the last line the edit WROTE, not to the last line of the span"
+      ;; the span reaches a line this edit left exactly as it found it, and the text it
+      ;; replaced is the evidence that nothing of that line's is missing
+      (let
+        [r (seated "(defn f []\n  (when (pos? y))\n  (inc 1))\n"
+                   "(defn f []\n  (if x\n  (inc 1))\n"
+                   nil
+                   [[2 3]]
+                   reads?)]
+        (expect (true? (:ok? r)))
+        (expect (= "(defn f []\n  (if x)\n  (inc 1))\n" (:content r))))))
+
+(defn- tailed
+  "`rebalance` with a real parse check and no replaced text: `candidate` is what a pack's
+   balancer would answer, so what is under test is the LAST candidate — the closers this edit
+   omitted, appended at the end of the line it wrote."
+  ([source spans] (tailed source nil spans))
+  ([source candidate spans]
+   (balance/rebalance
+     {:balancer (constantly candidate) :parses-clean? reads? :source source :spans spans})))
+
+(defdescribe
+  tail-close-test
+  "What is left when both witnesses are silent: the closers the text never wrote, at the end of
+   the last line this call wrote. The file parsed before the edit, so the omission is the
+   edit's own; the note hands back the line it produced."
+  ;; Regression, session 2224a346: a 36-line insertion missing exactly one `)` was REFUSED —
+  ;; the pack's repair put that closer on a line outside the edit, so nothing could be written,
+  ;; and the same block was re-sent with one more `)` an iteration later.
+  (it "closes what the edit left open at the end of the last line it wrote"
+      (let [r (tailed "(ns a)\n\n(defn f []\n  (when x\n    (inc 1))\n" [[3 5]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(ns a)\n\n(defn f []\n  (when x\n    (inc 1)))\n" (:content r)))
+        (expect (= ["line 5 added `)` → `(inc 1)))`"] (:notes r)))))
+  (it "repairs the omission a balancer wanted to close outside the edit"
+      (let
+        [r (tailed "(ns a)\n(defn f [] (inc 1)\n\n(defn g [] 2)\n"
+                   "(ns a)\n(defn f [] (inc 1)\n\n(defn g [] 2))\n"
+                   [[2 2]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(ns a)\n(defn f [] (inc 1))\n\n(defn g [] 2)\n" (:content r)))))
+  ;; The other half of `additions-only?`: one closer too many and a LOST OPENER are the same
+  ;; string, so appending can tell them apart no better than deleting could.
+  (it "refuses to guess when the text closes more than it opens"
+      (let [r (tailed "(defn f [s]\n  -> s str/trim))\n" [[2 2]])]
+        (expect (false? (:ok? r)))
+        (expect (= "no delimiter repair was found" (:why r)))))
+  (it "refuses when this call wrote more than one region"
+      ;; two edits have untouched lines between them, and a closer appended after the second
+      ;; takes lines nobody in this call wrote into the form it closes
+      (expect (false? (:ok? (tailed "(ns a)\n(defn f [] (inc 1)\n(def x 1)\n(defn g [] 2)\n"
+                                    [[2 2] [4 4]])))))
+  (it "closes that same text when the one region is the caller's own"
+      (expect (= "(ns a)\n(defn f [] (inc 1))\n(def x 1)\n(defn g [] 2)\n"
+                 (:content (tailed "(ns a)\n(defn f [] (inc 1)\n(def x 1)\n(defn g [] 2)\n"
+                                   [[2 2]])))))
+  (it "keeps the CRLF line endings of the file it closes"
+      (expect (= "(ns a)\r\n(defn f [] (inc 1))\r\n"
+                 (:content (tailed "(ns a)\r\n(defn f [] (inc 1)\r\n" [[2 2]])))))
+  (it "seats the closer after the code, not after the line's trailing whitespace"
+      (expect (= "(ns a)\n(defn f [] (inc 1))   \n"
+                 (:content (tailed "(ns a)\n(defn f [] (inc 1)   \n" [[2 2]])))))
+  (it "passes over a blank line at the end of the span"
+      (expect (= "(ns a)\n(defn f []\n  (inc 1))\n\n"
+                 (:content (tailed "(ns a)\n(defn f []\n  (inc 1)\n\n" [[2 4]])))))
+  (it "refuses closers that do not make the file parse"
+      ;; the seat is inside a string the edit wrote, so the closer lands as text and the
+      ;; deficit it was meant to answer is still there
+      (expect (false? (:ok? (tailed "(ns a)\n(def s \"one\n        two\")\n(defn f [] (inc 1)\n"
+                                    [[2 3]]))))))
+
+(defn- rewrote
+  "`rebalance` with the text the edit REPLACED and a real parse check — the evidence a
+   language pack has nothing to say about, because a repair only puts back `()[]{}`."
+  ([original source spans] (rewrote original source nil spans))
+  ([original source candidate spans]
+   (balance/rebalance {:balancer (constantly candidate)
+                       :parses-clean? reads?
+                       :source source
+                       :original original
+                       :spans spans})))
+
+(defdescribe
+  requote-test
+  "A dropped `\"` is not a missing bracket: no balancer can put one back, every string after it
+   is inside out, and the reader stops somewhere else entirely. The text the edit REPLACED is
+   the only witness that a quote ended that region, and it licenses exactly one — at the end of
+   the last line the edit wrote."
+  ;; Regression, session cc1ca6dd: a replacement dropped a docstring's closing `"`, the refusal
+  ;; named a line 56 lines below the edit as the one opening an unclosed string, and the same
+  ;; replacement was re-sent twice before the quote was noticed.
+  (it
+    "puts back the quote the text this edit replaced ended with"
+    (let
+      [r
+       (rewrote
+         "(ns a)\n(defn f\n  \"Doc line one.\n   The rule above it stays a border.\"\n  []\n  (inc 1))\n"
+         "(ns a)\n(defn f\n  \"Doc line one.\n   The rule below it is a slab over the frame.\n  []\n  (inc 1))\n"
+         [[4 4]])]
+      (expect (true? (:ok? r)))
+      (expect
+        (=
+          "(ns a)\n(defn f\n  \"Doc line one.\n   The rule below it is a slab over the frame.\"\n  []\n  (inc 1))\n"
+          (:content r)))
+      (expect (= ["line 4 added `\"` → `The rule below it is a slab over the frame.\"`"]
+                 (:notes r)))))
+  (it "leaves a string open that the replaced text never closed there"
+      ;; the region this edit replaced ended in `)`, so nothing here says a quote belongs at its
+      ;; end — the caller is told which line opens the string instead
+      (let
+        [r (rewrote "(ns a)\n(def s \"one\"\n       \"two\")\n"
+                    "(ns a)\n(def s \"one\"\n       two\")\n"
+                    [[3 3]])]
+        (expect (false? (:ok? r)))
+        (expect (= (str "no delimiter repair is possible: line 3 opens a string that is never "
+                        "closed, and a repair only puts back `()[]{}`")
+                   (:why r)))))
+  (it "refuses a quote that closes the string and leaves the file unparseable"
+      ;; the same edit also opened a form it never closed, and one quote is all this candidate
+      ;; is ever allowed to put back
+      (let
+        [r (rewrote "(ns a)\n(defn f\n  \"doc\"\n  [] 1)\n"
+                    "(ns a)\n(defn f\n  (when x\n  \"doc\n  [] 1)\n"
+                    [[3 4]])]
+        (expect (false? (:ok? r)))
+        (expect (= (str "no delimiter repair is possible: line 4 opens a string that is never "
+                        "closed, and a repair only puts back `()[]{}`")
+                   (:why r)))))
+  (it "puts the quote on the last line the edit wrote, not the last line of the span"
+      (let
+        [r (rewrote "(ns a)\n(defn f\n  \"Doc one.\n   ends here.\"\n  [] 1)\n"
+                    "(ns a)\n(defn f\n  \"Doc one.\n   ends there.\n  [] 1)\n"
+                    [[4 5]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(ns a)\n(defn f\n  \"Doc one.\n   ends there.\"\n  [] 1)\n" (:content r))))))
