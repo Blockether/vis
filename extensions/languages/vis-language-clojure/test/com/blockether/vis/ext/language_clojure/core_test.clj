@@ -935,6 +935,64 @@
         (expect (= (str/replace source "over the frame.\n" "over the frame.\"\n")
                    (:content verdict)))
         (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+  ;; ClojureScript rides the same grammar, the same pack and the same repair as Clojure, and it had
+  ;; no coverage at all: a `#js` literal, a reader conditional or `js/` interop the parser or
+  ;; parinfer stumbled on would refuse every cljs edit over a delimiter it could not place.
+  (it "closes an inserted ClojureScript block at its own tail"
+      (let
+        [original
+         (str "(ns app.panel)\n" "\n"
+              "(defn view [d]\n" "  (let [props #js {:className \"row\"}]\n"
+              "\n" "    [:div.row props]))\n")
+
+         source
+         (str "(ns app.panel)\n" "\n"
+              "(defn view [d]\n" "  (let [props #js {:className \"row\"}]\n"
+              "\n" ";; A memo of its own\n"
+              "(when ^boolean js/goog.DEBUG\n" "  (js/console.log \"row\" (pr-str (:id d)))\n"
+              "\n" "    [:div.row props]))\n")
+
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :source source
+                             :original original
+                             :spans [[5 9]]})]
+
+        ;; what the pack answers on its own: line 4, which this edit never touched, closed twice
+        (expect (str/includes? ((clj-balancer) source) "  (let [props #js {:className \"row\"}]))"))
+        (expect (true? (:ok? verdict)))
+        (expect (= ["line 8 added `)` → `(js/console.log \"row\" (pr-str (:id d))))`"]
+                   (:notes verdict)))
+        (expect (= (str/replace source
+                                "  (js/console.log \"row\" (pr-str (:id d)))\n"
+                                "  (js/console.log \"row\" (pr-str (:id d))))\n")
+                   (:content verdict)))
+        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
+  (it "puts back a quote a ClojureScript docstring dropped"
+      (let
+        [original
+         (str "(ns app.panel)\n"
+              "\n" "(defn view\n"
+              "  \"Row for one device.\n" "   Reads `js/undefined` as a missing value.\"\n"
+              "  [d]\n" "  [:div.row (:name d)])\n")
+
+         source
+         (str/replace original "missing value.\"\n" "missing value.\n")
+
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :source source
+                             :original original
+                             :spans [[5 5]]})]
+
+        (expect (nil? ((clj-balancer) source)))
+        (expect (true? (:ok? verdict)))
+        (expect (= ["line 5 added `\"` → `Reads `js/undefined` as a missing value.\"`"]
+                   (:notes verdict)))
+        (expect (= original (:content verdict)))
+        (expect (empty? (zipper/error-nodes "clojure" (:content verdict))))))
   ;; The INSERTED block, in every shape. A model that writes a fresh form into the middle of a file
   ;; replaced a blank line, so the text it replaced witnesses nothing, and parinfer answers by
   ;; INDENTATION — it closes the form ABOVE the insertion. What the deficit belongs to is the last
@@ -946,7 +1004,8 @@
        (str/split-lines shapes-corpus)
 
        clean?
-       (fn [s] (empty? (zipper/error-nodes "clojure" s)))
+       (fn [s]
+         (empty? (zipper/error-nodes "clojure" s)))
 
        weave
        (fn [ln body]
@@ -959,10 +1018,17 @@
        (conj (vec (butlast block)) (drop-closers (last block) 1))
 
        verdicts
-       (for [ln (range 1 (inc (count lines)))
-             :let [whole (weave ln block)
-                   source (weave ln short-one)]
-             :when (and (clean? whole) (not (clean? source)))]
+       (for
+         [ln
+          (range 1 (inc (count lines)))
+
+          :let [whole
+                (weave ln block)
+
+                source
+                (weave ln short-one)]
+          :when (and (clean? whole) (not (clean? source)))]
+
          [ln whole
           (balance/rebalance {:balancer (clj-balancer)
                               :parses-clean? clean?
@@ -973,8 +1039,12 @@
       ;; the matrix is worth nothing if it silently stopped covering the file
       (expect (<= 30 (count verdicts)))
       (expect (= []
-                 (vec (for [[ln whole v] verdicts
-                            :when (not= whole (:content v))]
+                 (vec (for
+                        [[ln whole v]
+                         verdicts
+
+                         :when (not= whole (:content v))]
+
                         [ln (or (:why v) :wrong-content)]))))))
   ;; The dropped `"`, in every shape. A repair only puts back `()[]{}`, so a docstring left open is
   ;; refused against a line far below the edit — and the text the edit replaced is the whole licence
@@ -987,7 +1057,8 @@
        (str/split-lines shapes-corpus)
 
        clean?
-       (fn [s] (empty? (zipper/error-nodes "clojure" s)))
+       (fn [s]
+         (empty? (zipper/error-nodes "clojure" s)))
 
        weave
        (fn [ln body]
@@ -998,10 +1069,17 @@
         "  (inc x))"]
 
        carried
-       (for [ln (range 1 (inc (count lines)))
-             :let [whole (weave ln documented)
-                   source (weave ln (assoc (vec documented) 2 "   And the rule under it."))]
-             :when (and (clean? whole) (not (clean? source)))]
+       (for
+         [ln
+          (range 1 (inc (count lines)))
+
+          :let [whole
+                (weave ln documented)
+
+                source
+                (weave ln (assoc (vec documented) 2 "   And the rule under it."))]
+          :when (and (clean? whole) (not (clean? source)))]
+
          [ln whole
           (balance/rebalance {:balancer (clj-balancer)
                               :parses-clean? clean?
@@ -1010,16 +1088,24 @@
                               :spans [[(+ (long ln) 3) (+ (long ln) 3)]]})])
 
        ungrounded
-       (for [ln (range 1 (inc (count lines)))
-             :let [line (nth lines (dec (long ln)))]
-             i (range (count line))
-             :when (= \" (nth line i))
-             :let [source (str/join "\n"
-                                    (concat (take (dec (long ln)) lines)
-                                            [(str (subs line 0 (long i)) (subs line (inc (long i))))]
-                                            (drop (long ln) lines)
-                                            [""]))]
-             :when (not (clean? source))]
+       (for
+         [ln
+          (range 1 (inc (count lines)))
+
+          :let [line
+                (nth lines (dec (long ln)))]
+          i
+          (range (count line))
+
+          :when (= \" (nth line i))
+          :let [source
+                (str/join "\n"
+                          (concat (take (dec (long ln)) lines)
+                                  [(str (subs line 0 (long i)) (subs line (inc (long i))))]
+                                  (drop (long ln) lines)
+                                  [""]))]
+          :when (not (clean? source))]
+
          [ln i
           (balance/rebalance {:balancer (clj-balancer)
                               :parses-clean? clean?
@@ -1029,14 +1115,22 @@
 
       (expect (<= 30 (count carried)))
       (expect (= []
-                 (vec (for [[ln whole v] carried
-                            :when (not= whole (:content v))]
+                 (vec (for
+                        [[ln whole v]
+                         carried
+
+                         :when (not= whole (:content v))]
+
                         [ln (or (:why v) :wrong-content)]))))
       ;; the same character dropped where the replaced line does not end with one: never written
       (expect (<= 6 (count ungrounded)))
       (expect (= []
-                 (vec (for [[ln i v] ungrounded
-                            :when (:ok? v)]
+                 (vec (for
+                        [[ln i v]
+                         ungrounded
+
+                         :when (:ok? v)]
+
                         [ln i (:content v)]))))))
   (it "leaves an unrepairable edit refused"
       (let

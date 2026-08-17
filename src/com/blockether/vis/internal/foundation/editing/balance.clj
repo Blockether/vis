@@ -51,7 +51,10 @@
     only for a call that wrote ONE region, because appending closes everything between the
     omission and that seat into the form those closers close, and with a single edited region
     that is code THIS call wrote, handed back to it in the note. Two edits in one call have
-    untouched lines between them, and those are never regrouped.
+    untouched lines between them, and those are never regrouped. How MANY of them is read off
+    the lines AFTER that seat: they close what they close, and only what they cannot supply is
+    added — save for a call with no replaced text to bound its own lines, where nothing short of
+    closing everything they left open is a claim this namespace will make.
 
     A dropped \" is the same mistake one character over, and no balancer can see it: a repair
     only puts back `()[]{}`, while every string after the missing quote is inside out. Where
@@ -207,32 +210,6 @@
                                       (when (and top (= c (.charValue top)))
                                         (recur (inc i) (pop stack) false false false)))
                 :else (recur (inc i) stack false false false)))))))
-
-(defn- span-deficit
-  "The closers the lines this call WROTE left open, in the order that closes them: what stands
-   open through line `idx` beyond what already stood open where line `from` begins. nil when the
-   call closed everything it opened, when it closed MORE than it opened, and when either scan
-   cannot say.
-
-   A SURPLUS is deliberately nil. `(f a))` with one closer too many and `f a))` whose opener was
-   lost are the same string here, exactly as they are to `additions-only?`, and nothing this
-   namespace knows tells the two apart — the caller is told which to look for instead.
-
-   Local on purpose: counting the WHOLE file says nothing about a block inserted inside a `{…}`,
-   where the lines after it close in an order the file no longer has."
-  ^String [lines ^long from ^long idx]
-  (let
-    [before
-     (open-stack (apply str (take (dec from) lines)))
-
-     through
-     (open-stack (apply str (take (inc idx) lines)))]
-
-    (when (and before
-               through
-               (< (count before) (count through))
-               (= (vec before) (vec (take (count before) through))))
-      (apply str (reverse (drop (count before) through))))))
 
 (defn- subsequence?
   "True when every element of `a` appears in `b`, in order — `b` is `a` with things
@@ -794,6 +771,44 @@
 
     (apply str (assoc (vec lines) idx (str code s (subs body (count code)) ending)))))
 
+(defn- seat-closers
+  "The closers to APPEND at line `idx` so the file closes again, or nil.
+
+   Taken from the top of what stands open at the seat — innermost first — and never more than
+   this call opened after line `from`, so a form the edit found already open is never closed on
+   its behalf. HOW MANY of them depends on what stands behind the call:
+
+     with a witness  the text this call replaced bounds its own lines, so the tail is read as it
+                     is written and as FEW closers are added as make the file close — the lines
+                     after the seat carry some of them already, and a block dropped into the
+                     middle of a `{…}` leaves those lines closing in an order the file no longer
+                     has;
+     without one     nothing says which forms are this call's, so the only claim left is that
+                     its lines close everything they opened — all of it, or no repair at all.
+
+   nil when that run of closers does not close the file, which is also the answer to one closer
+   too MANY: a surplus and a lost opener are the same string here, and nothing tells them apart."
+  ^String [lines ^long from ^long idx witness?]
+  (let
+    [before
+     (open-stack (apply str (take (dec from) lines)))
+
+     through
+     (open-stack (apply str (take (inc idx) lines)))
+
+     closes
+     (fn [k]
+       (let [closers (apply str (reverse (take-last k through)))]
+         (when-let [remaining (open-stack (append-at lines idx closers))]
+           (when (empty? remaining) closers))))]
+
+    (when (and before
+               through
+               (< (count before) (count through))
+               (= (vec before) (vec (take (count before) through))))
+      (let [opened (- (count through) (count before))]
+        (if witness? (first (keep closes (range 1 (inc opened)))) (closes opened))))))
+
 (defn- closed-at-tail
   "`source` with the closers the lines this call WROTE left open appended to the last of them —
    the candidate of last resort, when neither the replaced text nor the balancer's indentation
@@ -808,7 +823,7 @@
      (written-lines original source lines)]
 
     (when-let [idx (span-seat spans lines written)]
-      (when-let [missing (span-deficit lines (first written) idx)]
+      (when-let [missing (seat-closers lines (first written) idx (string? original))]
         (append-at lines idx missing)))))
 
 (defn- quoted-tail?

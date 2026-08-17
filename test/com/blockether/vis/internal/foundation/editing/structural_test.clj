@@ -93,6 +93,11 @@
    `.log`) return nil so a syntax guard never false-fires on them."
   (it "real code + strict-config extensions resolve to their language"
       (expect (= "clojure" (index/code-language "a.clj")))
+      ;; The whole Clojure family shares ONE grammar, so a ClojureScript or `.cljc` file is
+      ;; gated — and delimiter-repaired — exactly like a `.clj` one. An extension that
+      ;; resolved to no CODE language would skip the gate and write a broken file unguarded.
+      (expect (= "clojure" (index/code-language "a.cljs")))
+      (expect (= "clojure" (index/code-language "a.cljc")))
       (expect (= "python" (index/code-language "a.py")))
       (expect (= "rust" (index/code-language "a.rs")))
       (expect (= "json" (index/code-language "a.json")))

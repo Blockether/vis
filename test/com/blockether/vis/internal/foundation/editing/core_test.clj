@@ -1592,17 +1592,21 @@
      (fn [candidate f]
        (with-redefs-fn {(private-var "language-balancer") (constantly (constantly candidate))} f))
 
-     patch-line-3
-     (fn [candidate replacement]
+     patch-line-3-of
+     (fn [name source candidate replacement]
        (let
          [rel
-          (write-temp! "patch/rebalance.clj" fixture)
+          (write-temp! name source)
 
           a3
           (anchor-at (cat-tool rel) 3)]
 
          [(try (with-balancer candidate #(:result (patch-span rel a3 a3 replacement)))
-               (catch clojure.lang.ExceptionInfo e (ex-message e))) (slurp rel)]))]
+               (catch clojure.lang.ExceptionInfo e (ex-message e))) (slurp rel)]))
+
+     patch-line-3
+     (fn [candidate replacement]
+       (patch-line-3-of "patch/rebalance.clj" fixture candidate replacement))]
 
     (it "writes an in-bounds repair and names the character and the line"
         (let
@@ -1635,6 +1639,22 @@
                                        "(defn ok [] (inc 1)")]
           (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
           (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
+    ;; ClojureScript and `.cljc` ride the SAME grammar and the same pack as `.clj`, and the gate
+    ;; resolves the language from the EXTENSION alone: one that answered no CODE language would
+    ;; skip the gate entirely and write the broken file with no parse clause at all.
+    (it "repairs a ClojureScript or `.cljc` file exactly like a `.clj` one"
+        (doseq [ext ["cljs" "cljc"]]
+          (let
+            [source "(ns reb)\n\n(defn ok [] #js {:n 1})\n\n(defn two [] #?(:cljs 2 :clj 2))\n"
+             [out written] (patch-line-3-of (str "patch/rebalance-" ext "." ext)
+                                            source
+                                            ;; the pack's candidate rewrites code, so the fallback closes the
+                                            ;; edit's own line — the decision a `.clj` file gets
+                                            (string/replace source "#js {:n 1}" "#js {:n (dec 1)}")
+                                            "(defn ok [] #js {:n (inc 1)}")]
+
+            (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
+            (expect (= (string/replace source "#js {:n 1}" "#js {:n (inc 1)}") written)))))
     ;; One closer too many is the shape nothing may answer: it is the same string as a LOST
     ;; OPENER, so no candidate is built for it and the pack's own repair is judged on its merits
     ;; alone — the caller is told what is wrong with it and the file stays as it was.
