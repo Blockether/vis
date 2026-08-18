@@ -627,7 +627,8 @@
      (str
        "String-keyed result stamped with `op` — the SAME shape in every language: `result` "
        "(`started` | `already-running` | `starting` | `failed` | `no-launcher`), `id`, `cwd`, "
-       "`status`, plus `running,port,pid,cmd,tool,aliases,env,log,message` when known, and "
+        "`status`, plus `running,port,pid,cmd,tool,aliases,env,log,message` when known — a failed "
+        "start adds `exit` and `log_tail`, the same two keys whatever launched it — and "
        "`build,target,dialect,runtime` for a shadow-cljs attachment.")
      :description
      (str

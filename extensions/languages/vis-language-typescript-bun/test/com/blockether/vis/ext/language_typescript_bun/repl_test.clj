@@ -63,9 +63,18 @@
                (let [r (repl/eval! dir "JSON.parse('nope')" 15000)]
                  (expect (false? (get r "ok")))
                  (expect (re-find #"SyntaxError" (str (get r "exc")))))
-               (expect (= "up" (get (repl/status dir) "status")))
-               (repl/stop! dir)
-               (expect (= "down" (get (repl/status dir) "status")))
+                (let [up (repl/status dir)]
+                  (expect (= "up" (get up "status")))
+                  ;; ONE status shape for every language: a key rides only where
+                  ;; it MEANS something
+                  (expect (true? (get up "running")))
+                  (expect (get up "pid")))
+                (repl/stop! dir)
+                (let [down (repl/status dir)]
+                  (expect (= "down" (get down "status")))
+                  (expect (not (contains? down "running")))
+                  (expect (not (contains? down "pid")))
+                  (expect (not (contains? down "cmd"))))
                (finally (repl/stop! dir))))))
   ;; Regression, issue #repl-consistency: a second `repl_start` KILLED the live
   ;; Bun process and spawned a new one, so the session's globals vanished while
@@ -106,7 +115,43 @@
         (expect (= :ts/no-repl
                    (try (repl/eval! dir "1" 1000)
                         nil
-                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+  ;; Regression, issue #repl-consistency: `start!` answered "started" for a Bun
+  ;; that had never spoken, so a runtime which died on its first line passed as
+  ;; a usable REPL — Python had been handshaking since it shipped.
+  (it "fails startup when the runtime cannot complete the ping handshake"
+      (let [dir (.getPath (tmp-dir))]
+        (try (let
+               [result
+                (with-redefs
+                  [runner/resolve-command (constantly ["sh" "-c" "printf 'not-json\\n'; sleep 30"])]
+                  (repl/start! dir {:session-id test-session-id}))]
+
+               (expect (= "failed" (get result "status")))
+               (expect (string? (get result "message")))
+               (expect (= :ts/no-repl
+                          (try (repl/eval! dir "1" 1000)
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+             (finally (repl/stop! dir)))))
+  ;; Regression, issue #repl-consistency: a dead Bun launch answered `error` and
+  ;; nothing else — no exit code, none of what the child printed — where Python
+  ;; and Clojure both handed back the tail and the code.
+  (it "reports a dead launch by the keys EVERY language uses"
+      (let [dir (.getPath (tmp-dir))]
+        (try (let
+               [result
+                (with-redefs
+                  [runner/resolve-command (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
+                  (repl/start! dir {:session-id test-session-id}))]
+
+               (expect (= "failed" (get result "result")))
+               (expect (string? (get result "message")))
+               (expect (= 3 (get result "exit")))
+               (expect (= ["boom"] (get result "log_tail")))
+               ;; and NEVER by the old per-language names
+               (expect (nil? (get result "error"))))
+             (finally (repl/stop! dir)))))
   (it "imports a project module and reload() re-imports it cache-busted"
       (when (has-bun?)
         (let

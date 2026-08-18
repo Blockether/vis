@@ -12,6 +12,7 @@
    clean."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.ext.language-typescript-bun.runner :as runner]
             [com.blockether.vis.core :as vis])
   (:import [java.io BufferedReader BufferedWriter]))
@@ -41,11 +42,55 @@
           (if (< 200 (count arg)) "<repl_server.js>" arg))
         cmd))
 
+(def ^:private stderr-tail-lines
+  "How many of the child's last stderr lines a failed start hands back."
+  40)
+
+(defn- drain-stderr!
+  "Pump the child's stderr into a BOUNDED tail of line strings on a daemon
+   thread, answering `{:lines atom :done promise}`.
+
+   Nothing else reads that pipe: left unread it fills and the child BLOCKS
+   mid-write, and once the process is reaped the JDK closes the stream, so a
+   failed start reading it AFTERWARDS gets `Stream closed` and loses exactly the
+   words that explain the failure. Pumping from the start keeps both safe."
+  [^java.io.BufferedReader reader]
+  (let
+    [lines
+     (atom [])
+
+     done
+     (promise)]
+
+    (doto (Thread. ^Runnable
+                   (fn []
+                     (try (loop []
+                            (when-let [line (.readLine reader)]
+                              (swap! lines (fn [ls] (vec (take-last stderr-tail-lines (conj ls line)))))
+                              (recur)))
+                          (catch Throwable _ nil)
+                          (finally (deliver done true)))))
+      (.setDaemon true)
+      (.setName "vis-repl-stderr-pump")
+      (.start))
+    {:lines lines :done done}))
+
+(defn- stderr-tail
+  "What the child printed to stderr, as line strings — waiting BRIEFLY for the
+   pump to reach EOF, so a just-exited child's last words are not lost to a
+   race."
+  [info]
+  (let [{:keys [lines done]} (:stderr info)]
+    (when lines
+      (deref done 500 nil)
+      (vec (remove str/blank? @lines)))))
+
 (defn status
   "STRING-keyed lifecycle view (crosses as a tool `:result`): `result`, `cwd`,
-   `status`, plus `pid` / `cmd` / `env` while the runtime is up. `env` is the
-   delta this REPL was STARTED with, by NAME and digest only — the same shape
-   every language answers, and never a value."
+   `status`, plus `running` / `pid` / `cmd` / `env` while the runtime is up.
+   A key appears only where it MEANS something — a down REPL has no pid and no
+   command — which is the shape every language answers. `env` is the delta this
+   REPL was STARTED with, by NAME and digest only, and never a value."
   [dir]
   (let
     [info
@@ -57,10 +102,18 @@
     (cond->
       {"result" "status"
        "cwd" dir
-       "status" (if running? "up" "down")
-       "pid" (some-> ^Process (:process info)
-                     .pid)
-       "cmd" (:cmd info)}
+       "status" (if running? "up" "down")}
+
+      running?
+      (assoc "running" true)
+
+      running?
+      (assoc "pid" (some-> ^Process (:process info)
+                           .pid))
+
+      (and running? (:cmd info))
+      (assoc "cmd" (:cmd info))
+
       (and running? (seq (:env-fingerprint info)))
       (assoc "env" (:env-fingerprint info)))))
 
@@ -125,7 +178,8 @@
      info
      {:process p
       :writer (io/writer (.getOutputStream p))
-      :reader (io/reader (.getInputStream p))
+       :reader (io/reader (.getInputStream p))
+       :stderr (drain-stderr! (io/reader (.getErrorStream p)))
       :cmd (display-cmd cmd)
       :pid (.pid p)
       :started-at (System/currentTimeMillis)
@@ -145,14 +199,29 @@
                              {:type :ts/bad-handshake :response ping}))))
          (catch Throwable e
            (try (.destroy p) (catch Throwable _ nil))
+           (try (.waitFor p) (catch Throwable _ nil))
            (try (when (.isAlive p) (.destroyForcibly p)) (catch Throwable _ nil))
-           (swap! processes dissoc dir)
-           {"result" "failed"
-            "status" "failed"
-            "pid" (.pid p)
-            "cmd" (display-cmd cmd)
-            "cwd" dir
-            "error" (str "Bun REPL failed its startup handshake: " (.getMessage e))}))))
+           (let
+             [exit-code
+              (try (.exitValue p) (catch Throwable _ nil))
+
+              tail
+              (stderr-tail info)]
+
+             (swap! processes dissoc dir)
+             (cond->
+               {"result" "failed"
+                "status" "failed"
+                "pid" (.pid p)
+                "cmd" (display-cmd cmd)
+                "cwd" dir
+                "message" (str "Bun REPL failed its startup handshake: " (.getMessage e))}
+
+               exit-code
+               (assoc "exit" exit-code)
+
+               (seq tail)
+               (assoc "log_tail" tail)))))))
 
 (defn start!
   "Start the managed Bun REPL for `dir` — or REUSE the one already running.

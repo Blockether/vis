@@ -73,12 +73,13 @@
 
 (defn register-repl-resource!
   "Mirror a managed Bun REPL into the session resource registry (ctx + footer +
-   stop by id; no restart — stop, then start). No-op without a session or a live pid."
+   stop by id; no restart — stop, then start). No-op without a session, or for a
+   start that never came up."
   [session dir result & [id]]
   ;; `result` is repl/start!'s STRING-keyed lifecycle map. The resource map is
   ;; the CENTRAL resources.clj DATA shape (keyword keys), but `:detail` is
   ;; passed THROUGH verbatim, so it must already be STRING-keyed.
-  (when (and session (get result "pid"))
+  (when (and session (= "up" (get result "status")) (get result "pid"))
     (vis/register-resource! session
                             {:id (repl-resource-id dir id)
                              :kind :repl

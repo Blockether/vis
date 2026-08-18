@@ -193,9 +193,18 @@
                (let [r (repl/eval! dir "1/0" 10000)]
                  (expect (false? (get r "ok")))
                  (expect (re-find #"ZeroDivisionError" (str (get r "exc")))))
-               (expect (= "up" (get (repl/status dir) "status")))
-               (repl/stop! dir)
-               (expect (= "down" (get (repl/status dir) "status")))
+                (let [up (repl/status dir)]
+                  (expect (= "up" (get up "status")))
+                  ;; ONE status shape for every language: a key rides only where
+                  ;; it MEANS something
+                  (expect (true? (get up "running")))
+                  (expect (get up "pid")))
+                (repl/stop! dir)
+                (let [down (repl/status dir)]
+                  (expect (= "down" (get down "status")))
+                  (expect (not (contains? down "running")))
+                  (expect (not (contains? down "pid")))
+                  (expect (not (contains? down "cmd"))))
                (finally (repl/stop! dir))))))
   ;; Regression, issue #repl-consistency: a second `repl_start` KILLED the live
   ;; Python process and spawned a new one, so the session's globals vanished while
@@ -241,12 +250,33 @@
                                                               "printf 'not-json\\n'; sleep 30"])]
                          (repl/start! dir {:session-id test-session-id}))]
                (expect (= "failed" (get result "status")))
-               (expect (re-find #"invalid response" (get result "error")))
+                (expect (re-find #"invalid response" (get result "message")))
                (expect (= "<vis python driver>" (last (get result "cmd"))))
                (expect (= :py/no-repl
                           (try (repl/eval! dir "1" 1000)
                                nil
                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+             (finally (repl/stop! dir)))))
+  ;; Regression, issue #repl-consistency: a Python start that died read by
+  ;; `error` / `stderr` / `exit_code` while Clojure's read by `message` /
+  ;; `log_tail` / `exit`, so a failed start could not be read the same way twice.
+  (it "reports a dead launch by the keys EVERY language uses"
+      (let [dir (.getPath (tmp-dir))]
+        (try (let
+               [result
+                (with-redefs
+                  [interp/resolve-command (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
+                  (repl/start! dir {:session-id test-session-id}))]
+
+               (expect (= "failed" (get result "result")))
+               (expect (= "failed" (get result "status")))
+               (expect (string? (get result "message")))
+               (expect (= 3 (get result "exit")))
+               (expect (= ["boom"] (get result "log_tail")))
+               ;; and NEVER by the old per-language names
+               (expect (nil? (get result "error")))
+               (expect (nil? (get result "stderr")))
+               (expect (nil? (get result "exit_code"))))
              (finally (repl/stop! dir)))))
   (it "eval before start fails closed with a clear error"
       (let [dir (str (.getPath (tmp-dir)) "-never-started")]
