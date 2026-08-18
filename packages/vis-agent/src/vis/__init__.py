@@ -1051,10 +1051,13 @@ class LiveView:
         self._order = []
         self._is_open = False
         self._result = None
-        # 0.0 is the window ALREADY elapsed: the first push crosses at once, so a
-        # human sees the view move the moment work starts.
-        self._last_flush = 0.0
-        self._last_read = 0.0
+        # None is NEVER, and never is longer than any window: the first push and the
+        # first read cross at once, so a human sees the view move the moment work
+        # starts. A zero would not — `time.monotonic()` counts from an arbitrary
+        # origin, so on a freshly booted machine it reads a few seconds, which is
+        # INSIDE the window and would swallow the very first op.
+        self._last_flush = None
+        self._last_read = None
         answer = self._call({"op": "open", "view": request})
         self.view_id = str(answer.get("view_id") or "")
         self._settle(answer)
@@ -1107,12 +1110,15 @@ class LiveView:
         if not self._is_open:
             self._refuse_closed()
         self._coalesce(op)
-        if self._is_full() or self._elapsed_ms() >= self._flush_ms:
+        if self._is_full() or self._since_ms(self._last_flush) >= self._flush_ms:
             self.flush()
         return self
 
-    def _elapsed_ms(self):
-        return (time.monotonic() - self._last_flush) * 1000.0
+    def _since_ms(self, stamp):
+        """Milliseconds since a stamp, and forever when there has not been one."""
+        if stamp is None:
+            return float("inf")
+        return (time.monotonic() - stamp) * 1000.0
 
     def _is_full(self):
         return len(self._buffer) >= _MAX_BATCH or any(
@@ -1167,10 +1173,7 @@ class LiveView:
         Asks the engine at most once per flush window, so a compute loop can
         poll it every iteration and still cost one host call per tick.
         """
-        if (
-            self._is_open
-            and (time.monotonic() - self._last_read) * 1000.0 >= self._flush_ms
-        ):
+        if self._is_open and self._since_ms(self._last_read) >= self._flush_ms:
             try:
                 self.state()
             except Interrupted:

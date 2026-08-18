@@ -502,3 +502,29 @@ def test_a_burst_of_pushes_crosses_the_boundary_once_per_window(monkeypatch):
     lines = verdict["view"]["nodes"][0]["lines"]
     assert lines[0] == "starting"
     assert lines[-1] == "line 49"
+
+
+def test_the_first_op_crosses_on_a_freshly_booted_machine(monkeypatch):
+    # Regression: `time.monotonic()` counts from an arbitrary origin, so on a machine
+    # up for eight seconds every stamp of "never" fell INSIDE a 60s window — the first
+    # sign of life waited for the whole window instead of crossing at once, and the
+    # poll behind `is_interrupted` never asked. It failed only on freshly booted CI.
+    monkeypatch.setattr(vis.time, "monotonic", lambda: 8.0)
+    crossed = []
+    serve = _outside.live
+
+    def counted(envelope_json):
+        crossed.append(json.loads(envelope_json)["op"])
+        return serve(envelope_json)
+
+    monkeypatch.setattr(vis._host, "live", counted)
+    view = vis.live("Scan", [vis.output("tail")], flush_ms=60_000)
+    view.write("starting")
+
+    assert crossed == ["open", "patch"]
+    assert view.is_interrupted is False
+    assert crossed == ["open", "patch", "state"]
+    # The clock has not moved since that read, so the window still holds the next one.
+    assert view.is_interrupted is False
+    assert crossed == ["open", "patch", "state"]
+    view.close()
