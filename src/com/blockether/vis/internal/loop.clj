@@ -9780,7 +9780,17 @@
   (when-let [tok (:repl-sandbox-token environment)]
     (gateway-sandbox/unregister-session! tok))
   (process-jail/unregister-session-jail! (:session-id environment))
+  ;; BEFORE the context goes: the session's helper-source memo outlives both the
+  ;; context and the engine, and nothing else ever drops it (see
+  ;; `env-python/forget-session-defs!`).
+  (when-let [sid (:session-id environment)]
+    (try (env/forget-session-defs! sid) (catch Throwable _ nil)))
   (when-let [python-context (:python-context environment)]
+    ;; BEFORE the close, so a release that still needs a live handle has one:
+    ;; hand back every host object this session's guest opened and never closed
+    ;; (images, DB connections, SSH sessions). Without it they outlive the
+    ;; Context, the Engine and the session itself.
+    (try (env/release-scope! python-context) (catch Throwable _ nil))
     (try (.close ^Context python-context true) (catch Throwable _ nil)))
   ;; AFTER the context, and never skipped: a GraalPy Engine retains every Context
   ;; ever built on it, so closing the context alone gives back NOTHING. This close

@@ -22,6 +22,7 @@
   (:require [clojure.string :as str]
             [com.blockether.imaging :as im]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.foundation.gif :as gif]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import [java.util Base64]))
@@ -68,11 +69,26 @@
     (getRGB [_ x y] (bit-or amask (bit-and 0xffffffff (aget px (int (+ (* y w) x))))))
     (setRGB [_ x y v] (aset px (int (+ (* y w) x)) (unchecked-int v)) nil))
 
+(def ^:dynamic *scope*
+  "Scope of the Context whose guest is inside a host image op, bound once by
+   [[pil-envelope]]. Dynamic rather than an argument because `put-img!` is
+   reached from ~28 op sites, and threading a scope through all of them would
+   bury the one thing that matters — that an image belongs to the session that
+   made it — in mechanical churn."
+  nil)
+
 (defn- put-img!
-  "Register `img` under mode string, returning its new integer handle."
+  "Register `img` under mode string, returning its new integer handle.
+
+   The handle is OWNED by the current scope, so an image the guest never
+   `close()`s is still freed when its Context is disposed. A decoded image is an
+   on-heap `int[]` of w*h*4 bytes — 48 MB for one 4000x3000 frame — so an
+   unclosed image outliving its session is the single most expensive leak this
+   shim can produce."
   [^Raster img mode]
   (let [h (swap! counter inc)]
     (swap! registry assoc h {:img img :mode mode})
+    (env/own-in-scope! *scope* ::images h)
     h))
 
 (defn- raw-entry
@@ -95,7 +111,10 @@
                     " to it was dropped")))))
 
 (defn- free-img!
+  "Free ONE image. Also the scope releaser, so it stays idempotent and silent for
+   a handle that is already gone."
   [h]
+  (env/disown-in-scope! *scope* ::images (long h))
   (swap! pending-draws dissoc (long h))
   (some-> (take-draw! h)
           im/close!)
@@ -2220,89 +2239,94 @@
 
 (defn- pil-envelope
   ;; Every host image op funnels through this envelope; failures come back to
-  ;; Python as [false message] rather than a JVM stack trace.
-  [f]
-  (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
+  ;; Python as [false message] rather than a JVM stack trace. It is also the ONE
+  ;; place that binds [[*scope*]], so every handle an op mints is owned by the
+  ;; Context whose guest asked for it.
+  [scope f]
+  (binding [*scope* scope]
+    (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))]))))
+
+(env/register-scope-releaser! ::images free-img!)
 
 (defn- pil-bridge-bindings
   "Host callables (imaging-backed) the PIL shim delegates to. All image ops go
    through here; the Python side only holds integer handles + base64 blobs."
-  []
+  [scope]
   {"__vis_pil_new__" (fn [mode w h fill]
-                       (pil-envelope #(op-new mode (long w) (long h) fill)))
+                       (pil-envelope scope #(op-new mode (long w) (long h) fill)))
    "__vis_pil_open__" (fn [b64]
-                        (pil-envelope #(op-open b64)))
+                        (pil-envelope scope #(op-open b64)))
    "__vis_pil_save__" (fn [h fmt quality optimize]
-                        (pil-envelope #(op-save h fmt quality (boolean optimize))))
+                        (pil-envelope scope #(op-save h fmt quality (boolean optimize))))
    "__vis_pil_save_all__" (fn [hs fmt duration loop-count optimize]
                             (pil-envelope
                               #(op-save-all hs fmt duration loop-count (boolean optimize))))
    "__vis_pil_frames__" (fn [h]
-                          (pil-envelope #(op-frames h)))
+                          (pil-envelope scope #(op-frames h)))
    "__vis_pil_seek__" (fn [h n]
-                        (pil-envelope #(op-seek h (long n))))
+                        (pil-envelope scope #(op-seek h (long n))))
    "__vis_pil_quantize__" (fn [h colors dither]
-                            (pil-envelope #(op-quantize h colors dither)))
+                            (pil-envelope scope #(op-quantize h colors dither)))
    "__vis_pil_getpalette__" (fn [h]
-                              (pil-envelope #(op-getpalette h)))
+                              (pil-envelope scope #(op-getpalette h)))
    "__vis_pil_putpalette__" (fn [h data]
-                              (pil-envelope #(op-putpalette h data)))
+                              (pil-envelope scope #(op-putpalette h data)))
    "__vis_pil_save_temp__" (fn [h fmt]
-                             (pil-envelope #(op-save-temp h fmt)))
+                             (pil-envelope scope #(op-save-temp h fmt)))
    "__vis_pil_meta__" (fn [h]
-                        (pil-envelope #(meta-of h)))
+                        (pil-envelope scope #(meta-of h)))
    "__vis_pil_copy__" (fn [h]
-                        (pil-envelope #(op-copy h)))
+                        (pil-envelope scope #(op-copy h)))
    "__vis_pil_free__" (fn [h]
-                        (pil-envelope #(free-img! h)))
+                        (pil-envelope scope #(free-img! h)))
    "__vis_pil_resize__" (fn [h w hh r]
-                          (pil-envelope #(op-resize h (long w) (long hh) r)))
+                          (pil-envelope scope #(op-resize h (long w) (long hh) r)))
    "__vis_pil_crop__" (fn [h l t r b]
-                        (pil-envelope #(op-crop h (long l) (long t) (long r) (long b))))
+                        (pil-envelope scope #(op-crop h (long l) (long t) (long r) (long b))))
    "__vis_pil_rotate__" (fn [h ang exp fill]
-                          (pil-envelope #(op-rotate h ang exp fill)))
+                          (pil-envelope scope #(op-rotate h ang exp fill)))
    "__vis_pil_transpose__" (fn [h m]
-                             (pil-envelope #(op-transpose h m)))
+                             (pil-envelope scope #(op-transpose h m)))
    "__vis_pil_convert__" (fn [h t]
-                           (pil-envelope #(op-convert h t)))
+                           (pil-envelope scope #(op-convert h t)))
    "__vis_pil_getpixel__" (fn [h x y]
-                            (pil-envelope #(op-getpixel h x y)))
+                            (pil-envelope scope #(op-getpixel h x y)))
    "__vis_pil_putpixel__" (fn [h x y c]
-                            (pil-envelope #(op-putpixel h x y c)))
+                            (pil-envelope scope #(op-putpixel h x y c)))
    "__vis_pil_paste__" (fn [d s x y m]
-                         (pil-envelope #(op-paste d s x y m)))
+                         (pil-envelope scope #(op-paste d s x y m)))
    "__vis_pil_getbbox__" (fn [h]
-                           (pil-envelope #(op-getbbox h)))
+                           (pil-envelope scope #(op-getbbox h)))
    "__vis_pil_histogram__" (fn [h]
-                             (pil-envelope #(op-histogram h)))
+                             (pil-envelope scope #(op-histogram h)))
    "__vis_pil_tobytes__" (fn [h]
-                           (pil-envelope #(op-tobytes h)))
+                           (pil-envelope scope #(op-tobytes h)))
    "__vis_pil_frombytes__" (fn [mode w h b64]
-                             (pil-envelope #(op-frombytes mode (long w) (long h) b64)))
+                             (pil-envelope scope #(op-frombytes mode (long w) (long h) b64)))
    "__vis_pil_point__" (fn [h lut]
-                         (pil-envelope #(op-point h lut)))
+                         (pil-envelope scope #(op-point h lut)))
    "__vis_pil_conv__" (fn [h size ker sc off]
-                        (pil-envelope #(op-conv h (long size) ker sc off)))
+                        (pil-envelope scope #(op-conv h (long size) ker sc off)))
    "__vis_pil_rank__" (fn [h size rank]
-                        (pil-envelope #(op-rank h (long size) (long rank))))
+                        (pil-envelope scope #(op-rank h (long size) (long rank))))
    "__vis_pil_blend__" (fn [a b t]
-                         (pil-envelope #(op-blend a b t)))
+                         (pil-envelope scope #(op-blend a b t)))
    "__vis_pil_composite__" (fn [a b m]
-                             (pil-envelope #(op-composite a b m)))
+                             (pil-envelope scope #(op-composite a b m)))
    "__vis_pil_chop__" (fn [op a b]
-                        (pil-envelope #(op-chop op a b)))
+                        (pil-envelope scope #(op-chop op a b)))
    "__vis_pil_split__" (fn [h]
-                         (pil-envelope #(op-split h)))
+                         (pil-envelope scope #(op-split h)))
    "__vis_pil_merge__" (fn [mode hs]
-                         (pil-envelope #(op-merge mode hs)))
+                         (pil-envelope scope #(op-merge mode hs)))
    "__vis_pil_draws__" (fn [batch]
-                         (pil-envelope #(op-draws batch)))
+                         (pil-envelope scope #(op-draws batch)))
    "__vis_pil_textbbox__" (fn [text size font]
-                            (pil-envelope #(op-textbbox text size font)))
+                            (pil-envelope scope #(op-textbbox text size font)))
    "__vis_pil_offset__" (fn [h dx dy]
-                          (pil-envelope #(op-offset h dx dy)))
+                          (pil-envelope scope #(op-offset h dx dy)))
    "__vis_pil_alpha_composite__" (fn [d s dx dy]
-                                   (pil-envelope #(op-alpha-composite d s dx dy)))
+                                   (pil-envelope scope #(op-alpha-composite d s dx dy)))
    "__vis_pil_transform__" (fn [h ow oh method coeffs fill]
                              (pil-envelope
                                #(op-transform h (long ow) (long oh) method coeffs fill)))})

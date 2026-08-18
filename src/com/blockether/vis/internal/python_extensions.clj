@@ -1519,6 +1519,9 @@
   [ctx]
   (when ctx
     (let [engine (try (.getEngine ^Context ctx) (catch Throwable _ nil))]
+      ;; Host objects this context's guest opened, before it stops being able to
+      ;; hand them back (see `env-python/release-scope!`).
+      (try (env/release-scope! ctx) (catch Throwable _ nil))
       (try (.close ^Context ctx true) (catch Throwable _ nil))
       (when engine (try (.close ^Engine engine true) (catch Throwable _ nil))))))
 

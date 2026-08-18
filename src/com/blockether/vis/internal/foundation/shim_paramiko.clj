@@ -6,7 +6,8 @@
    registries); the Python classes are thin handle wrappers, exchanging
    command/path strings and base64 file bytes across the boundary."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.core :as vis])
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.env-python :as env])
   (:import [com.jcraft.jsch ChannelExec ChannelSftp JSch KeyPair Session SftpATTRS]
            [java.io ByteArrayInputStream ByteArrayOutputStream File]
            [java.nio.file Files]
@@ -53,10 +54,34 @@
 ;; connection close (the `SessionListener` below) plus the `max-live-servers`
 ;; cap, which together keep SSHD threads flat across many start/stop cycles.
 
+(def ^:private max-live-sessions
+  "Cap on live SSH sessions / SFTP channels. `max-live-servers` above already
+   bounds the SERVER side for exactly this reason; the client side had no such
+   bound, yet leaks the same way — nothing sweeps these registries when a Vis
+   session ends, so a `connect()` the model never closed holds its socket and
+   threads for the life of the process."
+  32)
+
+(defn- evict-oldest!
+  "Release the oldest entry of `reg` when it is already at `cap`. Handles come
+   from a monotonic counter, so the smallest key IS the oldest."
+  [reg cap release!]
+  (let [snapshot @reg]
+    (when (>= (count snapshot) (long cap))
+      (let [oldest (first (sort (keys snapshot)))]
+        (when-let [v (get snapshot oldest)]
+          (try (release! v) (catch Throwable _ nil))
+          (swap! reg dissoc oldest))))))
+
 (defn- reg-sess!
-  [^Session s]
+  "Register `s` under `scope`. The cap is a backstop for a runaway guest inside
+   ONE session; the scope is what guarantees the socket and its threads never
+   outlive the session that opened them."
+  [scope ^Session s]
+  (evict-oldest! sess-registry max-live-sessions (fn [^Session x] (.disconnect x)))
   (let [h (swap! sess-counter inc)]
     (swap! sess-registry assoc h s)
+    (env/own-in-scope! scope ::sessions h)
     h))
 
 (defn- sess-of
@@ -64,9 +89,11 @@
   (or (get @sess-registry (long h)) (throw (ex-info "SSH session is not active." {}))))
 
 (defn- reg-sftp!
-  [^ChannelSftp c]
+  [scope ^ChannelSftp c]
+  (evict-oldest! sftp-registry max-live-sessions (fn [^ChannelSftp x] (.disconnect x)))
   (let [h (swap! sftp-counter inc)]
     (swap! sftp-registry assoc h c)
+    (env/own-in-scope! scope ::sftp h)
     h))
 
 (defn- sftp-of
@@ -90,7 +117,7 @@
         (when (.exists f) (try (.addIdentity js (.getAbsolutePath f)) (catch Throwable _ nil)))))))
 
 (defn- op-connect
-  [opts]
+  [scope opts]
   (let
     [{:strs [hostname port username password key_filename passphrase timeout_ms policy look_for_keys
              compress auth_none]}
@@ -128,7 +155,7 @@
         (.put props "compression.c2s" "zlib@openssh.com,zlib,none"))
       (.setConfig sess props)
       (.connect sess (int (or timeout_ms 0)))
-      (reg-sess! sess))))
+      (reg-sess! scope sess))))
 
 (defn- op-exec
   [conn-h ^String command timeout-ms ^String stdin-b64]
@@ -171,6 +198,8 @@
              (.isConnected s))))
 
 (defn- op-ssh-close
+  "Disconnect ONE session. Also the scope releaser, so it stays idempotent and
+   silent for a handle that is already gone."
   [conn-h]
   (when-let [^Session s (get @sess-registry (long conn-h))]
     (.disconnect s)
@@ -191,7 +220,7 @@
    "st_mode" (.getPermissions a)})
 
 (defn- op-sftp-open
-  [conn-h]
+  [scope conn-h]
   (let
     [sess
      (sess-of conn-h)
@@ -200,7 +229,7 @@
      (.openChannel sess "sftp")]
 
     (.connect ch)
-    (reg-sftp! ch)))
+    (reg-sftp! scope ch)))
 
 (defn- op-sftp-listdir
   [h ^String path attr?]
@@ -477,19 +506,24 @@
     (swap! server-registry dissoc (long h)))
   nil)
 
+(env/register-scope-releaser! ::sessions op-ssh-close)
+
+(env/register-scope-releaser! ::sftp op-sftp-close)
+
 (defn- paramiko-bridge-bindings
   "Host callables (pure-Java JSch) the paramiko shim delegates to."
-  []
+  [scope]
   {"__vis_ssh_connect__" (fn [opts]
-                           (ssh-envelope #(op-connect opts)))
+                           (ssh-envelope #(op-connect scope opts)))
    "__vis_ssh_exec__" (fn [h cmd tmo stdin]
                         (ssh-envelope #(op-exec h cmd tmo stdin)))
    "__vis_ssh_active__" (fn [h]
                           (ssh-envelope #(op-ssh-active h)))
    "__vis_ssh_close__" (fn [h]
-                         (ssh-envelope #(op-ssh-close h)))
+                         (ssh-envelope #(do (env/disown-in-scope! scope ::sessions (long h))
+                                            (op-ssh-close h))))
    "__vis_sftp_open__" (fn [h]
-                         (ssh-envelope #(op-sftp-open h)))
+                         (ssh-envelope #(op-sftp-open scope h)))
    "__vis_sftp_listdir__" (fn [h path attr?]
                             (ssh-envelope #(op-sftp-listdir h path attr?)))
    "__vis_sftp_stat__" (fn [h path follow?]
@@ -513,7 +547,8 @@
    "__vis_sftp_pwd__" (fn [h]
                         (ssh-envelope #(op-sftp-pwd h)))
    "__vis_sftp_close__" (fn [h]
-                          (ssh-envelope #(op-sftp-close h)))
+                          (ssh-envelope #(do (env/disown-in-scope! scope ::sftp (long h))
+                                             (op-sftp-close h))))
    "__vis_key_generate__" (fn [kind bits passphrase]
                             (ssh-envelope #(op-key-generate kind bits passphrase)))
    "__vis_key_load__" (fn [private-b64 passphrase]
