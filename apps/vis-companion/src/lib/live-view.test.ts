@@ -414,6 +414,26 @@ describe('the record of a settled view', () => {
     expect(record?.reason).toBeUndefined();
   });
 
+  // Copied verbatim out of a record `human-input.live-sink` actually wrote (only the
+  // ids are shortened): every key in it is spelled by `gateway/wire`, and a fixture
+  // written by hand cannot catch the day that encoder changes its mind.
+  it('folds a record the engine really wrote, key for key', () => {
+    const record = liveRecordFromText(
+      [
+        '{"kind":"open","at":1787054624672,"view":{"seq":0,"channel_ids":["tui","app"],"id":"04fb86a2","nodes":[{"id":"tail","type":"log","lines":[],"window_lines":50,"total_lines":0}],"title":"CI","created_at":1787054624668,"session_id":"vis-xval","timeout_ms":0,"description":"cross-validation"}}',
+        '{"kind":"patch","at":1787054624675,"patch":{"view_id":"04fb86a2","seq":1,"ops":[{"op":"append","lines":["+ clojure -M:test"],"node_id":"tail"}]}}',
+        '{"kind":"close","at":1787054624679,"result":{"view_id":"04fb86a2","is_completed":true,"reason":"completed","is_from_human":false,"view":{"title":"CI","nodes":[{"id":"tail","type":"log","lines":["+ clojure -M:test"],"window_lines":50,"total_lines":1}],"description":"cross-validation"},"artifact_id":"c306b8b8"}}',
+      ].join('\n'),
+    );
+    expect(record?.view.title).toBe('CI');
+    expect(record?.reason).toBe('completed');
+    expect(record?.is_completed).toBe(true);
+    expect(record?.ended_at).toBe(1787054624679);
+    const log = nodeOfType(record!.view, 'tail', 'log');
+    expect(log.lines).toEqual(['+ clojure -M:test']);
+    expect(log.total_lines).toBe(1);
+  });
+
   it('is null when not one line of it is paintable', () => {
     expect(liveRecordFromText('')).toBeNull();
     expect(liveRecordFromText('not json at all')).toBeNull();

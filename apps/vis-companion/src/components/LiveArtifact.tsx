@@ -7,12 +7,14 @@
  * a time from the gateway, so "what did that scan actually find?" is answered
  * from the gallery instead of from a terminal that has since scrolled away.
  *
- * TWO THINGS ARE NEVER HELD: the middle of a long record, and the log. The ENDS
- * of the file are the whole picture — the declared view and the verdict that
- * sealed it, and the verdict carries the final materialized state — so a record
- * past `LIVE_RECORD_FOLD_LIMIT` is read at its two edges and the patches in
- * between are never parsed. Scrollback then comes from the range route, which
- * reads the same file server-side, one window at a time.
+ * WHAT IS NEVER PARSED is the middle. The record arrives as ONE artifact, through
+ * the same cache every artifact uses — the byte endpoint serves no ranges — but a
+ * long one must not become that many megabytes of `JSON.parse`: past
+ * `LIVE_RECORD_FOLD_LIMIT` only the two ENDS are read, which are the whole picture
+ * anyway (the declared view, and the verdict that sealed it carrying the final
+ * materialized state), and the patches between them are never touched. The LOG is
+ * never held at all: scrollback comes from the range route, which reads the same
+ * file server-side, one window at a time.
  */
 
 import { useEffect, useState, type ReactNode } from "react";

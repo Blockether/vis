@@ -2,6 +2,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl]
             [com.blockether.vis.internal.human-input :as hi]
@@ -1926,7 +1927,7 @@
   live-artifact-test
   (it "settles a finished view into ONE artifact this session owns, and names it in the verdict"
       (let
-        [{:keys [result rows file]}
+        [{:keys [result rows]}
          (filed (live-spec {:id "tail" :type "log" :window-lines 50})
                 {:summary "18 of 18 jobs finished"}
                 (fn [view-id]
@@ -1941,8 +1942,9 @@
           (expect (= "user" (:audience row)))
           (expect (= "ci.live.json" (:filename row)))
           ;; ADDRESSED, never re-encoded: the row points at the very file the run has
-          ;; been writing since `open`.
-          (expect (= (str "file://" (.getAbsolutePath ^java.io.File file)) (:storage-uri row)))
+          ;; been writing since `open`, by IDENTITY — a path only the machine that
+          ;; wrote it could resolve is not an address a row gets to outlive.
+          (expect (= (live-sink/record-uri (:session-id row) (:view-id row)) (:storage-uri row)))
           (expect (= (:view-id result) (:view-id row)))
           ;; The picture stays in the VERDICT — a row is a row.
           (expect (nil? (:view row))))))
@@ -1994,24 +1996,75 @@
         ;; base64 is exactly what addressing the record avoids.
         (expect (nil? (with-redefs [hs/live-artifact-inline-bytes 8]
                         (:base64 (first (:rows (filed spec)))))))))
-  (it "ends a view from somewhere that holds no artifacts without inventing one"
+  (it "reads the record back through the very rail that addressed it"
+      (recorded
+        (fn []
+          (let
+            [sink
+             (atom [])
+
+             spec
+             (live-spec {:id "now" :type "status" :text "Polling…"})
+
+             view
+             (hi/open-live! spec)
+
+             _
+             (binding [mpl/*attachment-sink* sink]
+               (with-redefs [hs/live-artifact-inline-bytes 8]
+                 (hi/close-live! (:id view))))
+
+             row
+             (first @sink)
+
+             file
+             (live-sink/view-file (:session-id spec) (:id view))]
+
+            ;; Past the inline floor the row carries no bytes at all — only the
+            ;; address — and an address no rail owns is a 404 on exactly the runs a
+            ;; settled artifact exists for: the long ones.
+            (expect (nil? (:base64 row)))
+            (expect (= (slurp file)
+                       (String. ^bytes (attachment-storage/resolve-bytes (:storage-uri row))
+                                "UTF-8")))))))
+  (it "files the artifact into the block that opened the view when the stop lands elsewhere"
       (recorded (fn []
                   (let
-                    [spec
-                     (live-spec {:id "now" :type "status" :text "Polling…"})
+                    [sink
+                     (atom [])
 
                      view
-                     (hi/open-live! spec)
+                     (binding [mpl/*attachment-sink* sink]
+                       (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
 
-                     ;; A human's stop arriving on a gateway thread: the view still ends and
-                     ;; the record is still sealed, the verdict simply names no artifact.
+                     ;; The human's stop: a gateway thread with no collector of its own. The
+                     ;; row still belongs to the block whose run produced it.
                      result
-                     (hi/interrupt-live! (:id view))]
+                     @(future (hi/interrupt-live! (:id view) "enough"))]
 
                     (expect (= :interrupted (:reason result)))
-                    (expect (not (contains? result :artifact-id)))
-                    (expect (some? (live-sink/verdict (live-sink/view-file (:session-id spec)
-                                                                           (:id view)))))))))
+                    (expect (= 1 (count @sink)))
+                    (expect (= (:artifact-id result) (:id (first @sink))))))))
+  (it "ends a view opened where nothing collects artifacts without inventing one"
+      (recorded
+        (fn []
+          (let
+            [spec
+             (live-spec {:id "now" :type "status" :text "Polling…"})
+
+             view
+             (hi/open-live! spec)
+
+             ;; Opened outside any block, so there is no collector to file
+             ;; into: the view still ends and the record is still sealed, the
+             ;; verdict simply names no artifact.
+             result
+             (hi/interrupt-live! (:id view))]
+
+            (expect (= :interrupted (:reason result)))
+            (expect (not (contains? result :artifact-id)))
+            (expect (some? (live-sink/verdict (live-sink/view-file (:session-id spec)
+                                                                   (:id view)))))))))
   (it "files ONE artifact even when the view is closed twice"
       (recorded (fn []
                   (let

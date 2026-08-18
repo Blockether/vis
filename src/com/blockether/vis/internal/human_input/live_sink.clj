@@ -20,8 +20,11 @@
    in either spelling."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.gateway.wire :as wire])
-  (:import (java.io File)))
+  (:import (java.io File)
+           (java.nio.file Files)))
 
 (set! *warn-on-reflection* true)
 
@@ -38,6 +41,73 @@
   ^File [session-id view-id]
   (io/file (views-dir) (str session-id) (str view-id ".ndjson")))
 
+(def record-scheme
+  "URI scheme of a live record. Owned by [[record-backend]], which is the only thing
+   that reads one back."
+  "vis-live")
+
+(def ^:private record-segment
+  "What a session or view id may look like inside a [[record-uri]]. A segment with a
+   separator or a `..` in it never reaches [[view-file]]."
+  #"[A-Za-z0-9._-]+")
+
+(defn record-uri
+  "Where the artifact of a settled view POINTS: `vis-live://<session-id>/<view-id>`.
+
+   Addressed by IDENTITY, not by path. A `file://` URI would put an absolute path of
+   the machine that wrote it into a row that outlives it, and would only ever resolve
+   for an operator who happened to register a file backend — so the artifact of a view
+   would read back as a 404 on the very runs it exists for. This scheme is owned here,
+   so the bytes come back through [[view-file]] wherever the records now live."
+  [session-id view-id]
+  (str record-scheme "://" session-id "/" view-id))
+
+(defn- uri-file
+  "The record ONE [[record-uri]] names, or nil for anything that is not one: another
+   scheme, a missing half, or a segment that is not a plain id."
+  ^File [uri]
+  (let
+    [prefix
+     (str record-scheme "://")
+
+     s
+     (str uri)]
+
+    (when (str/starts-with? s prefix)
+      (let [[session-id view-id extra] (str/split (subs s (count prefix)) #"/")]
+        (when (and (nil? extra)
+                   (re-matches record-segment (str session-id))
+                   (re-matches record-segment (str view-id)))
+          (view-file session-id view-id))))))
+
+(def record-backend
+  "The storage rail that reads a live record back. The artifact a settled view files
+   carries no bytes past the inline floor — it carries a [[record-uri]] — and this is
+   what turns that address into the bytes `GET /v1/sessions/:sid/iterations/:iid/
+   attachments/:idx` serves.
+
+   READ-ONLY BY DESIGN: `:storage/offload?` is false and the PUT declines, so having
+   this rail registered never moves anybody else's artifact off the database. The sink
+   is the only writer this file has ever had."
+  {:storage/id :vis-live-record
+   :storage/scheme record-scheme
+   :storage/priority -1
+   :storage/offload? (constantly false)
+   :storage/put-fn (fn [_]
+                     nil)
+   :storage/get-fn (fn [uri]
+                     (when-let [^File file (uri-file uri)]
+                       (when (.isFile file) (Files/readAllBytes (.toPath file)))))})
+
+(defn record-rail!
+  "Register [[record-backend]]. Idempotent by id, and called from BOTH ends: on LOAD,
+   because the process that serves the byte endpoint for a record written weeks ago
+   never opened a view of its own, and from [[open!]], so a rail something else
+   deregistered is back before the record that needs it exists."
+  []
+  (attachment-storage/register-backend! record-backend))
+
+(record-rail!)
 (defn- append-line!
   "One line, flushed and closed. A live view writes rarely (a patch is a human's
    heartbeat, not a byte stream), and a handle held open for the length of a CI
@@ -54,6 +124,7 @@
    declared view is the first line, so a reader that has the file needs nothing
    else to rebuild what the patches were applied to."
   ^File [view]
+  (record-rail!)
   (append-line! (view-file (:session-id view) (:id view))
                 {:kind :open :at (System/currentTimeMillis) :view view}))
 

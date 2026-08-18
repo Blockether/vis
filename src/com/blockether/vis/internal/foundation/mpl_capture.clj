@@ -124,19 +124,27 @@
    just made (`get_attachment`/`read_attachment`/`show_attachment`) inside the
    very block that made it, and the row the loop inserts later carries the same
    id. Returns the recorded map (nil with no sink). NEVER throws — capture must
-   not break a turn."
-  [m]
-  (when-let [sink *attachment-sink*]
-    (try (let
-           [rec (cond-> m
-                  (str/blank? (str (:id m)))
-                  (assoc :id (str (java.util.UUID/randomUUID)))
+   not break a turn.
 
-                  (nil? (:version m))
-                  (assoc :version (next-attachment-version (:filename m))))]
-           (swap! sink conj rec)
-           rec)
-         (catch Throwable _ nil))))
+   An ASYNCHRONOUS producer passes `sink`: an artifact whose bytes are only final
+   long after the block handed control back — a live view a human stops from a
+   gateway thread — files into the collector that block CAPTURED, because the row
+   belongs to the block that produced it and no other thread has one bound. The
+   ambient sink still wins where there is one: the block doing the recording is
+   alive by definition."
+  ([m] (record-attachment! m nil))
+  ([m sink]
+   (when-let [sink (or *attachment-sink* sink)]
+     (try (let
+            [rec (cond-> m
+                   (str/blank? (str (:id m)))
+                   (assoc :id (str (java.util.UUID/randomUUID)))
+
+                   (nil? (:version m))
+                   (assoc :version (next-attachment-version (:filename m))))]
+            (swap! sink conj rec)
+            rec)
+          (catch Throwable _ nil)))))
 
 (defn pending-attachments
   "What THIS block has recorded into `*attachment-sink*` so far — artifacts the

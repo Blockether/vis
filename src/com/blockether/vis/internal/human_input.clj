@@ -1640,7 +1640,11 @@
       :promise (promise)
       :session-id (:session-id view)
       :channel-ids (:channel-ids view)
-      :created-at (:created-at view)}]
+      :created-at (:created-at view)
+      ;; The collector of the block that OPENED the view. A human's stop arrives on a
+      ;; gateway thread, which holds no artifacts of its own, and the record still
+      ;; belongs to the block whose run produced it.
+      :attachment-sink mpl-capture/*attachment-sink*}]
 
     (swap! pending assoc view-id entry)
     (tel/log! {:level :debug
@@ -1791,7 +1795,7 @@
         :ended-at (System/currentTimeMillis)
         :reason (:reason result)
         :view (:view result)
-        :storage-uri (str "file://" (.getAbsolutePath file))
+        :storage-uri (live-sink/record-uri (:session-id view) (:view-id result))
         :size size
         :line-count line-count}
        (<= (long size) (long hi-spec/live-artifact-inline-bytes))
@@ -1816,10 +1820,10 @@
    The close SETTLES the view: the record it has been writing since `open` becomes
    an artifact this session owns, and its id rides back in the verdict — so the
    human can reopen the log after the pane is gone instead of it being dumped into
-   the transcript. A close reached from somewhere that holds no artifacts (a
-   human's stop arriving on a gateway thread, a unit test) still ends the view and
-   still writes the record; the verdict then simply names no artifact, and every
-   surface still reaches the log by view id."
+   the transcript. A close reached from somewhere that holds no artifacts (a human's
+   stop arriving on a gateway thread) still files one, into the collector the OPENING
+   block captured. Only a view opened outside any block names no artifact; the record
+   is sealed either way, and every surface still reaches the log by view id."
   ([view-id] (close-live! view-id {} nil))
   ([view-id ending] (close-live! view-id ending nil))
   ([view-id ending human]
@@ -1839,7 +1843,8 @@
 
            (when (contains? old view-id)
              (let
-               [artifact-id (when (mpl-capture/record-attachment! (live-attachment artifact))
+               [artifact-id (when (mpl-capture/record-attachment! (live-attachment artifact)
+                                                                  (:attachment-sink entry))
                               (:id artifact))
                 result (cond-> verdict
                          artifact-id

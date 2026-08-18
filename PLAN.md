@@ -685,7 +685,9 @@ final materialized state, and `live/->markdown` re-renders exactly what the mode
 
 - `src/com/blockether/vis/internal/human_input.clj` — on close the artifact IS the sink file that has
   been growing since `open`: write the trailer line, register the attachment with
-  `:storage-uri "file://…"` (resolved by the built-in file backend, `attachment_storage.clj:261-275`),
+  `:storage-uri "vis-live://<session-id>/<view-id>"` — a scheme `live_sink.clj` OWNS and registers a
+  read-only rail for, because `attachment_storage.clj`'s `file-backend` is explicitly not auto-registered
+  and an address no rail resolves is a 404 on exactly the long runs this artifact exists for —
   `:size`, `:line-count` and the materialized final view as its summary. No base64 round trip:
   `offload-attachment` wants the whole payload in memory as base64 (`:174-198`), and a build log is
   precisely the thing that must never be held that way. A view under the inline threshold is ALSO
@@ -696,8 +698,9 @@ final materialized state, and `live/->markdown` re-renders exactly what the mode
   reopens the full scrollback read-only.
 - `apps/vis-companion/src/lib/artifacts.ts` — classify the media type so a finished view appears in
   `ArtifactsSheet`; `components/LiveArtifact.tsx` renders the summary with the Phase 4 node painters
-  in read-only mode and pages the log through the same range route, so opening a 400 MB run costs
-  one screenful, not a download.
+  in read-only mode and pages the log through the same range route, so a 100 000-line run opens on one
+  screenful. The record itself arrives as ONE artifact through the shared attachment cache (the byte
+  endpoint serves no ranges): what the two-ended fold saves is parsing it, not downloading it.
 - Test: `test/com/blockether/vis/internal/human_input_test.clj` (artifact registered once on every
   reason including `interrupted` and `failed`, the sink file REFERENCED rather than re-encoded, and
   the line count matching what was written), `apps/vis-companion/src/lib/artifacts.test.ts`
