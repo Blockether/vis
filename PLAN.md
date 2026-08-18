@@ -1,6 +1,6 @@
 # PLAN — Let an extension stream a live view the human watches and interrupts
 
-*Progress belongs on the human's screen; the model reads the finished picture ONCE, as markdown — and the extension already knows both.*
+*Progress belongs on the human's screen; the model reads the finished picture ONCE, as data — and the extension already knows both.*
 
 ## Context
 
@@ -79,9 +79,10 @@ and removed, and links the human can open. It paints in the TUI and in the compa
 one declared vocabulary, scrolls with the mouse wheel in both, is interrupted with Escape (the
 extension's call then returns `interrupted` and decides what to do), and settles into an artifact
 the human can reopen afterwards. Patches are HUMAN-facing: not one of them enters model context. The
-model receives exactly ONE thing, and it receives the WHOLE view: when a view ends the engine renders
-its materialized state as MARKDOWN and hands that back with the verdict. The stream stays out of the
-prompt; the picture the human watched is what the model reads.
+model receives exactly ONE thing, and it receives the WHOLE view: when a view ends the engine hands
+back the verdict carrying its materialized state AS DATA — every node with its id, its tone and its
+numbers — budgeted, never prose. The stream stays out of the prompt; the picture the human watched is
+what the model reads, and `->markdown` renders that same picture into the document a human reopens.
 
 Two rules the rest of the plan is built on, both settled on review:
 
@@ -94,16 +95,17 @@ Two rules the rest of the plan is built on, both settled on review:
   process dies mid-run. What a surface paints is a WINDOW over that record — a rendering decision,
   never a data one. Where a collection must stay in memory to remain addressable (rows, steps,
   stats, links) the bound is a REFUSAL carrying its reason, never a trim behind the caller's back.
-- **Markdown is the model's surface.** One materializer, three renderers: the terminal pane, the
-  companion screen, and `->markdown` for the prompt. The model never sees a patch and never polls; it
-  reads the finished view, rendered from the same state the human watched, with the verdict first. A
-  render budget may truncate what the PROMPT holds — always saying how much it left behind — and never
-  what the record holds.
+- **The model reads DATA; markdown is the human's document.** One materializer, four readers: the
+  terminal pane, the companion screen, `picture` for the model and `->markdown` for the page a human
+  reopens. The model never sees a patch and never polls; it reads the finished view as VALUES — ids,
+  tones, numbers — with the verdict first, so it acts on the picture instead of recovering it from
+  prose. A budget may truncate what the MODEL holds — always saying how much it left behind — and
+  never what the record holds.
 
 **What we do not solve.** No answers inside a live view: a question stays `ask`, because mixing the
 two puts validation, secrets and focus back into a pane that must never own the keyboard. No
 arbitrary markup, HTML or markdown NODES — a closed vocabulary is the only way the terminal and the
-phone can both be honest about a node, and the markdown the model reads is a RENDERING of that
+phone can both be honest about a node, and the document a human reopens is a RENDERING of that
 vocabulary produced by the engine, never a node an extension writes. No second event bus, no schema
 library beyond
 `clojure.spec.alpha`, and no database — the only new storage is ONE append-only file per view, which
@@ -334,7 +336,7 @@ so no key is spelled a second time anywhere.
 - Same file — a `:log` keeps a hot WINDOW of `:window-lines` plus an engine-stamped `:total-lines`
   counting the RECORD, so `… N earlier lines` is counted and never guessed, and `clear` empties the
   window while the record keeps every line.
-- Same file — `->markdown`, the MODEL's surface, rendered ONCE from the same materialized state the
+- Same file — `->markdown`, the human's DOCUMENT, rendered ONCE from the same materialized state the
   two human surfaces painted: the verdict FIRST, then every node in declaration order. `status` is a
   bold line over an italic detail, `progress` a percent and a count (`_working_` when indeterminate),
   `stat` one `label value` strip, `steps` a `- [tone] label` checklist, `log` a fence widened past
@@ -343,11 +345,12 @@ so no key is spelled a second time anywhere.
   named attachment. Colour is the one thing that cannot cross: a `[tone]` token stands where a surface
   paints red, and a table whose rows carry tones grows ONE leading `!` column — the only place the
   render is not a transliteration.
-- Same file — the model's BUDGET, and only the model's: a log renders its TAIL (120 lines) and a table
+- Same file — the model's BUDGET, and only the model's, shared by `picture` and `->markdown` so the
+  data and the document leave the same thing behind: a log answers its TAIL (120 lines) and a table
   its HEAD (50 rows), each saying how many it left behind and that the record still holds them. A
   caller may widen either per call. Truncation is a RENDER decision; nothing here touches the record,
   and neither budget applies to the human's surfaces, which scroll the whole thing.
-- Same file — `parse-markdown`, the INVERSE: markdown back to a view, so the model's surface is
+- Same file — `parse-markdown`, the INVERSE: markdown back to a view, so the human's document is
   two-way rather than exhaust. The law is exact — a picture that elided nothing renders back byte for
   byte, so `(->markdown view {:result result})` IS the markdown it was parsed from — which is what
   makes a view authorable as markdown and a rendered view re-readable. Making the inverse exist paid
@@ -389,6 +392,10 @@ so no key is spelled a second time anywhere.
   dropped, every bound refusing with the node and the bound named, the log window kept while
   `:total-lines` counts the record, and the model's markdown asserted as one GOLDEN document (verdict
   first, the `!` tone column, the widened fence, both budgets, the escaped cell).
+- Same file — `picture`, the model's surface as DATA: the ids the view DECLARED (a node the model read
+  is a node it can patch), tones as keywords, the mount left behind, the same budget the document
+  renders with, `:elided` counting what stayed in the record, and a table's declared order applied
+  ONCE, so mounting the picture again cannot sort it twice.
 - Same file — the round trip, as laws rather than examples: every node type through
   `->markdown` → `parse-markdown` → `->markdown` unchanged (including each empty state, the fence
   inside a log, a pipe and a newline inside a cell, and two nodes sharing a label), every parsed node
@@ -403,14 +410,15 @@ so no key is spelled a second time anywhere.
   asserted as no-ops that still advance `seq`, and `{:by "nope"}` is refused at declaration naming the
   columns the table does declare.
 - Test `test/com/blockether/vis/internal/human_input_test.clj` — the lifecycle half: a view mounted,
-  patched BY NODE ID and closed into markdown carrying what the human watched; the record
+   patched BY NODE ID and closed into a verdict carrying the picture as DATA — with the document
+   rendered from that same picture on demand; the record
   round-tripped (open + patch + close read back, then reopened and APPENDED to, never truncated); a
   view that names no session refused at the MOUNT; a patch for a view that is not open refused by
   name; close idempotent (a second close is nil, not a second verdict); `interrupt-live!` ending
   `interrupted` and still carrying the picture; `with-live!` closing what a body opened when the body
   THROWS, the record's trailer reading `failed` with the message; and a form and a live view
   coexisting in one registry, where `submit!` refuses a view because a view never asked a question.
-- Same file — a view nobody watches still RUNS and still ends in the markdown the model reads: no
+- Same file — a view nobody watches still RUNS and still ends in the verdict the model reads: no
   channel mounted is a WARN in the log, never the refusal a form gets, because the whole product of a
   view is the picture at the end.
 - Test `test/com/blockether/vis/human_input_test.clj` — the builder half, the same two promises the
@@ -708,8 +716,8 @@ job id every poll, so a job that changes state keeps its slot and the eye keeps 
   no token read, copied or printed: authentication is the operator's own `gh` session, and a missing
   or unauthenticated `gh` REFUSES with one line before any view is opened — nothing to watch beats an
   empty pane.
-- Same file — the tool returns the view's MARKDOWN, whatever ended it. On `interrupted` the model
-  still receives the picture the human was looking at when they pressed Escape, plus the reason, and
+- Same file — the tool returns the view's PICTURE, whatever ended it. On `interrupted` the model
+  still receives the state the human was looking at when they pressed Escape, plus the reason, and
   decides what to do next; on `completed` it receives the finished run. The log node is the failing
   job's tail, so the model's copy is bounded by the Phase 1 budget and the whole log stays in the
   view's record.
@@ -718,7 +726,7 @@ job id every poll, so a job that changes state keeps its slot and the eye keeps 
   (one node per question rather than one log for everything, and upsert-by-id rather than re-appending
   the whole table).
 - Test — a recorded `gh run view` payload (one real run, trimmed) as a fixture: the mapper builds the
-  declared nodes and the patches, the engine accepts them, and the rendered markdown is asserted
+  declared nodes and the patches, the engine accepts them, and the model's picture is asserted
   against a golden document. No network in the test; the mapping is pure and the polling is not what
   is being proven.
 
@@ -741,9 +749,8 @@ Done:
 - Phase 1, the materializer and the model's renderer — `internal/human_input/live.clj` with
   `materialize`, `apply-patch`, `ordered-rows` and `->markdown`, pinned by
   `test/com/blockether/vis/internal/human_input/live_test.clj` (the interleaved table script under
-  every declared order, every refusal, the budgets, and one golden markdown document). `::live-result`
-  now REQUIRES `:markdown`.
-- Phase 1, the model's surface both ways — `parse-markdown` in the same file, with the render changes
+  every declared order, every refusal, the budgets, and one golden markdown document).
+- Phase 1, the document both ways — `parse-markdown` in the same file, with the render changes
   that made the inverse total (blockquoted verdict, marked error, a table's header always painted,
   trimmed cells). 37 tests in `live_test.clj`, 162 green across human-input.
 - Phase 1 COMPLETE — the lifecycle, the record and the builders. `normalize-live-view` /
@@ -754,6 +761,13 @@ Done:
   and `view` in `com.blockether.vis.human-input`; the runner exports in `com.blockether.vis.core`.
   205 green across the three human-input test files. A view is declared without a session and refused
   at the MOUNT if it still names none — a builder is callable before a session exists.
+- Phase 1, the model's surface is DATA — `live/picture` hands the verdict the finished view as values
+  (the ids the view declared, tones as keywords, numbers as numbers) under the SAME budget
+  `->markdown` renders with, `:elided` counts what stayed in the record, and a table's declared order
+  is applied once so mounting the picture again cannot sort it twice. `::live-result` now REQUIRES
+  `:view` and refuses `:markdown`: markdown is the HUMAN's document — what an artifact stores, what a
+  transcript embeds, what a hand-written picture is authored as — never the model's contract. 314
+  green across the human-input, gateway, contract, python-extensions and core test files.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.

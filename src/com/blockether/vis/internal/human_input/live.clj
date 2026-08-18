@@ -7,18 +7,22 @@
    read from. The terminal pane, the companion screen and the model all paint
    the same materialized map, so none of them can disagree about a row.
 
-   [[->markdown]] is the MODEL's surface. The human watches the stream; the
-   model gets the finished picture ONCE, as markdown, rendered from the same
-   state the other two painted. Markdown is a RENDERING, never a fourth
-   vocabulary: every node type has exactly one markdown form here, so a view
-   that reads well in the terminal already reads well in a prompt. Colour is
-   the only thing that cannot cross — where a surface paints red, the model
+   [[picture]] is the MODEL's surface: the finished view as DATA. Ids and tones
+   come with it, so a node the model read is a node it can patch, and a state is
+   never recovered from a sentence — the model acts on the same materialized map
+   the surfaces paint, budgeted, never on a description of it.
+
+   [[->markdown]] is the DOCUMENT that state renders into: what a human reopens,
+   what an artifact stores, what a transcript embeds. Markdown is a RENDERING,
+   never a fourth vocabulary: every node type has exactly one markdown form here,
+   so a view that reads well in the terminal already reads well on a page. Colour
+   is the only thing that cannot cross — where a surface paints red, the page
    reads a `[tone]` token.
 
-   [[parse-markdown]] is that rendering read BACK. One markdown form per node
-   type in one direction is one form per node type in the other, so a picture
-   the model was handed can be handed to the engine, and a whole view can be
-   AUTHORED as markdown. What a budget left behind is named, never guessed.
+   [[parse-markdown]] is that document read BACK. One markdown form per node type
+   in one direction is one form per node type in the other, so a whole view can be
+   AUTHORED as markdown and a rendered one re-read. What a budget left behind is
+   named, never guessed.
 
    Nothing here evicts the RECORD. Bounds on keyed collections are REFUSALS
    (`spec/item-bounds`) naming the bound and the node, a log's `:window-lines`
@@ -337,10 +341,11 @@
 ;; The model's surface
 
 (def ^:private model-budget
-  "What the MODEL is handed of an unbounded node. A log renders its TAIL and a
-   table its head, both saying how much they left behind and that the record
-   still holds it — the human scrolls the whole thing, the model reads the end
-   of the story."
+  "What the MODEL is handed of an unbounded node — shared by [[picture]] and
+   [[->markdown]], so the data and the document leave the same thing behind. A log
+   answers its TAIL and a table its head, both counting what they left and saying
+   the record still holds it: the human scrolls the whole thing, the model reads
+   the end of the story."
   {:log-tail-lines 120 :table-rows 50})
 
 (def ^:private empty-line
@@ -591,8 +596,77 @@
           links)
     [(empty-line :link)]))
 
+(defn picture
+  "The finished view as DATA — what the MODEL reads when it ends, and the only
+   shape it acts on. Ids come with it, so a node the model read is a node it can
+   patch by name; tones stay keywords, so nothing has to be recovered from a
+   sentence. The mount bookkeeping does not come: a picture is
+   `{:view {:title :description :nodes} :elided […]}`, the same pair
+   [[parse-markdown]] answers, so data out and document in describe ONE shape.
+
+   Budgeted from the same `model-budget` [[->markdown]] renders with, so the two
+   surfaces leave the same thing behind: a log answers its TAIL, a table the head
+   of the order it declared, and `:elided` COUNTS what neither carried. The record
+   keeps all of it. A table's rows come in PAINT order and the picture says
+   `:insertion`, because the order is already applied — mounting a picture again
+   must not sort it twice.
+
+   `opts` may widen the budget with `:log-tail-lines` and `:table-rows`."
+  ([view] (picture view nil))
+  ([view opts]
+   (let
+     [{:keys [log-tail-lines table-rows]}
+      (merge model-budget (select-keys opts [:log-tail-lines :table-rows]))
+
+      budgeted
+      (mapv
+        (fn [node]
+          (case (:type node)
+            :log
+            (let
+              [lines
+               (:lines node)
+
+               tail
+               (long log-tail-lines)
+
+               shown
+               (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
+
+               behind
+               (- (long (or (:total-lines node) (count lines))) (count shown))]
+
+              (with-meta (assoc node :lines shown) {:elided (max 0 behind)}))
+
+            :table
+            (let
+              [rows
+               (ordered-rows node)
+
+               limit
+               (long table-rows)
+
+               shown
+               (if (> (count rows) limit) (subvec rows 0 limit) rows)]
+
+              (with-meta (assoc node
+                           :rows shown
+                           :order :insertion)
+                {:elided (- (count rows) (count shown))}))
+
+            node))
+        (:nodes view))]
+
+     {:view (cond-> {:title (:title view) :nodes budgeted}
+              (:description view)
+              (assoc :description (:description view)))
+      :elided (into []
+                    (keep (fn [node]
+                            (let [items (long (or (:elided (meta node)) 0))]
+                              (when (pos? items) {:node-id (:id node) :items items}))))
+                    budgeted)})))
 (defn- verdict-line
-  "The first thing the model reads: how the view ended, before anything it
+  "The first thing the document says: how the view ended, before anything it
    painted. `->markdown` sets it apart in a `>` block, and the error carries a
    marker of its own — a reader (and [[parse-markdown]]) can tell a summary from
    what went wrong."
@@ -605,14 +679,16 @@
        (when error (str " · error: " error))))
 
 (defn ->markdown
-  "The whole view as markdown — what the MODEL gets, once, when the view ends.
+  "The whole view as markdown — the DOCUMENT the same state renders into, for a
+   human to reopen, an artifact to store and a transcript to embed. The model is
+   handed [[picture]] instead: data, not prose.
 
-   Rendered from the materialized state the human's surfaces painted, so the
-   prompt and the pane cannot tell different stories. `opts` may carry the
-   `:result` (rendered first, because the verdict is what a reader needs
-   before the detail) and may widen the model's budget with `:log-tail-lines`
-   and `:table-rows`. Both budgets truncate the RENDER and say so with the
-   count they left behind; neither touches the record."
+   Rendered from the materialized state the human's surfaces painted, so the page
+   and the pane cannot tell different stories. `opts` may carry the `:result`
+   (rendered first, because the verdict is what a reader needs before the detail)
+   and may widen the same budget with `:log-tail-lines` and `:table-rows`. Both
+   budgets truncate the RENDER and say so with the count they left behind; neither
+   touches the record."
   ([view] (->markdown view nil))
   ([view {:keys [result] :as opts}]
    (let

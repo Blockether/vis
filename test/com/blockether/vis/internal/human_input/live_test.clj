@@ -291,6 +291,65 @@
                      {:id "2" :cells ["classpath / vis-channel-tui" "21s"] :tone :ok}]}
              {:op :append :node-id "log" :lines ["FAIL in (live-view-test)" "expected: 2 rows"]})))
 
+;; The model's surface is DATA. The human watches the stream and reads the
+;; document; the model is handed the picture as values, so nothing it acts on has
+;; to be recovered from a sentence.
+
+(defdescribe
+  picture-test
+  (it "hands the model the ids it declared, so a node it read is a node it can patch"
+      (expect (= ["run" "jobs" "score" "steps" "t" "log" "links"]
+                 (mapv :id (:nodes (:view (live/picture ci-view)))))))
+  (it "hands over values, not prose: a tone is a keyword and a stat is its own number"
+      (let [score (node (:view (live/picture ci-view)) "score")]
+        (expect (= :error (:tone (node (:view (live/picture ci-view)) "run"))))
+        (expect (= [{:id "passed" :label "passed" :value-text "15" :tone :ok}
+                    {:id "failed" :label "failed" :value-text "3" :tone :error}]
+                   (:stats score)))))
+  (it "leaves the mount behind: a picture is the title, the description and the nodes"
+      (expect (= #{:title :nodes} (set (keys (:view (live/picture ci-view)))))))
+  (it "gives every node back as a node the engine would accept"
+      (expect (every? nil? (map hs/live-node-error (:nodes (:view (live/picture ci-view)))))))
+  (it "gives the model the log's TAIL and counts what stayed in the record"
+      (let
+        [v
+         (patched (view (log-node 100000))
+                  {:op :append :node-id "log" :lines (mapv #(str "line " %) (range 300))})
+
+         {:keys [view elided]}
+         (live/picture v)]
+
+        (expect (= 120 (count (:lines (node view "log")))))
+        (expect (= "line 180" (first (:lines (node view "log")))))
+        (expect (= 300 (:total-lines (node view "log"))))
+        (expect (= [{:node-id "log" :items 180}] elided))))
+  (it "budgets a table the same way, and says how many rows it left"
+      (let
+        [v
+         (patched
+           (view (table-node :insertion))
+           {:op :append :node-id "t" :rows [(row "a" "A" "1") (row "b" "B" "2") (row "c" "C" "3")]})
+
+         {:keys [view elided]}
+         (live/picture v {:table-rows 2})]
+
+        (expect (= ["a" "b"] (mapv :id (:rows (node view "t")))))
+        (expect (= [{:node-id "t" :items 1}] elided))))
+  (it
+    "applies the order the table declared and then says `insertion`, so mounting the picture again cannot sort it twice"
+    (let
+      [v
+       (patched
+         (view (table-node :newest-first))
+         {:op :append :node-id "t" :rows [(row "a" "A" "1") (row "b" "B" "2") (row "c" "C" "3")]})
+
+       t
+       (node (:view (live/picture v)) "t")]
+
+      (expect (= ["c" "b" "a"] (mapv :id (:rows t))))
+      (expect (= :insertion (:order t)))))
+  (it "says nothing about elisions when the budget cut nothing"
+      (expect (empty? (:elided (live/picture ci-view))))))
 (defdescribe
   markdown-test
   (it "renders the whole view, verdict first, in one markdown document"
@@ -312,7 +371,6 @@
                             {:result {:view-id "v"
                                       :is-completed false
                                       :reason :interrupted
-                                      :markdown "…"
                                       :summary "stopped after 18 jobs"}}))))
   (it "renders without a verdict while the view is still open"
       (let [md (live/->markdown ci-view)]
@@ -436,7 +494,6 @@
                                             {:view-id "v"
                                              :is-completed false
                                              :reason :interrupted
-                                             :markdown "…"
                                              :summary "the human stopped watching"
                                              :error "gh exited 1"})]
         (expect (= md again))
@@ -460,7 +517,6 @@
                                  {:view-id "v"
                                   :is-completed false
                                   :reason :failed
-                                  :markdown "…"
                                   :summary "3 of 18 jobs failed"
                                   :error "gh exited 1"})]
       (expect

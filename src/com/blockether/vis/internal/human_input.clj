@@ -1535,13 +1535,13 @@
 ;; Nothing here parks the caller. A form parks because only a human can answer
 ;; it; a view is DRIVEN by the extension that opened it, so the engine's job is
 ;; to keep the record, tell the surfaces, and hand back the one thing the model
-;; reads: the finished picture, as markdown.
+;; reads: the finished picture, as data.
 
 (def ^:private live-ending-keys
   "Every key the caller of [[close-live!]] may write. The view id, the completion
-   flag and the markdown are the ENGINE's: the picture is rendered from the
+   flag and the picture are the ENGINE's: what the human watched is read from the
    record, never claimed by whoever is ending it."
-  (wire-keys (reduce disj hi-spec/live-result-keys #{:view-id :is-completed :markdown})))
+  (wire-keys (reduce disj hi-spec/live-result-keys #{:view-id :is-completed :view :elided})))
 
 (defn- live-entry
   "The pending entry of live view `view-id`, or nil when no live view is open
@@ -1570,7 +1570,7 @@
    The caller keeps that id: every patch, and the close, name it.
 
    Nothing blocks. A view nobody has mounted a surface for still runs and still
-   ends in the markdown the model reads — the engine says so ONCE, in the log,
+   ends in the verdict the model reads — the engine says so ONCE, in the log,
    rather than refusing work whose whole product is the picture at the end. That
    is the one place a view differs from a request, which answers `undeliverable`
    at once because a form nobody can see is a thread parked forever."
@@ -1610,7 +1610,7 @@
                  :id ::live-unwatched
                  :data {:view-id view-id :title (:title view) :channel-ids (:channel-ids entry)}
                  :msg (str "Live view reached no channel — nobody is watching it. It still runs, "
-                           "and it still ends in the markdown the model reads")}))
+                           "and it still ends in the verdict the model reads")}))
     view))
 
 (defn patch-live!
@@ -1644,9 +1644,10 @@
 
 (defn- live-result
   "The verdict of `view`: how it ended, and the whole picture the human watched,
-   rendered ONCE for the model. The markdown comes from the same materialized
-   state both human surfaces painted, and it carries the verdict itself, so what
-   the model reads says how the story ended before it says anything else."
+   handed to the model as DATA. `:view` carries the finished nodes — ids, tones,
+   values — budgeted exactly as the document is, and `:elided` counts what that
+   budget left in the record. It reads the same materialized state both human
+   surfaces painted, and says how the story ended before it says anything else."
   [view ending fail!]
   (when-not (map? ending) (fail! "an ending must be a map"))
   (check-keys! "ending" live-ending-keys ending fail!)
@@ -1665,8 +1666,13 @@
        (trimmed (pick* ending :artifact-id))
        (assoc :artifact-id (trimmed (pick* ending :artifact-id))))
 
+     picture
+     (live/picture view)
+
      result
-     (assoc verdict :markdown (live/->markdown view {:result verdict}))]
+     (cond-> (assoc verdict :view (:view picture))
+       (seq (:elided picture))
+       (assoc :elided (:elided picture)))]
 
     (if-let [why (hi-spec/live-result-error result)]
       (fail! why)
@@ -1704,7 +1710,7 @@
 (defn interrupt-live!
   "End live view `view-id` because the human stopped watching — Escape in the
    terminal, the app's own stop. The verdict reads `interrupted` and still
-   carries the markdown of everything that had happened: what the human saw
+   carries the picture of everything that had happened: what the human saw
    before they stopped it is exactly what the model has to read."
   [view-id]
   (close-live! view-id {:reason :interrupted}))

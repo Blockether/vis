@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.human-input.live-sink :as live-sink]
             [com.blockether.vis.internal.human-input.spec :as hs]
             [com.blockether.vis.internal.runtime-settings :as rt]
@@ -1510,35 +1511,51 @@
                                          :ops [{:op :add-node
                                                 :node-spec {:id "x" :type :marquee}}]})))))
 
+(def ^:private done-picture
+  "The one finished picture the verdict specs speak about."
+  {:title "Deploy" :nodes [{:id "now" :type :status :text "done" :tone :ok}]})
+
 (defdescribe
   live-result-spec-test
-  "The verdict is the ONE thing the model reads back, so it is deliberately not
-   an answer: it carries no field values, and an answer carries no artifact."
+  "The verdict is the ONE thing the model reads back, and it reads DATA: the
+   picture with its ids and tones, never the document the human reads. It is not
+   an answer either — a verdict carries no field values, and an answer carries no
+   artifact."
   (it "accepts each ending, and refuses one nobody may branch on"
-      (expect (nil? (hs/live-result-error {:view-id "v"
-                                           :is-completed true
-                                           :reason :completed
-                                           :markdown "# Deploy\n\n[ok] **done**"})))
+      (expect (nil? (hs/live-result-error
+                      {:view-id "v" :is-completed true :reason :completed :view done-picture})))
       (expect (nil? (hs/live-result-error {:view-id "v"
                                            :is-completed false
                                            :reason :interrupted
-                                           :markdown "# Sweep\n\n[warn] **stopped**"
+                                           :view done-picture
+                                           :elided [{:node-id "now" :items 12}]
                                            :summary "12 of 40 hosts"
                                            :artifact-id "att-1"})))
       (expect (some? (hs/live-result-error
-                       {:view-id "v" :is-completed false :reason :bored :markdown "# Sweep"}))))
+                       {:view-id "v" :is-completed false :reason :bored :view done-picture}))))
   (it
-    "refuses a verdict carrying no markdown: what the human watched reaches the model or the view did not end"
+    "refuses a verdict carrying no picture: what the human watched reaches the model as data or the view did not end"
     (expect (some? (hs/live-result-error {:view-id "v" :is-completed true :reason :completed}))))
+  (it "refuses the document in place of the picture, because prose is not a contract"
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed true
+                                            :reason :completed
+                                            :markdown "# Deploy\n\n[ok] **done**"}))))
+  (it "refuses a picture carrying the mount, so a verdict cannot smuggle a session"
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed true
+                                            :reason :completed
+                                            :view (assoc done-picture :session-id "s")}))))
   (it "refuses a verdict claiming completion while naming why it stopped"
       (expect (some? (hs/live-result-error
-                       {:view-id "v" :is-completed true :reason :interrupted :markdown "# x"})))
+                       {:view-id "v" :is-completed true :reason :interrupted :view done-picture})))
       (expect (some? (hs/live-result-error
-                       {:view-id "v" :is-completed false :reason :completed :markdown "# x"}))))
+                       {:view-id "v" :is-completed false :reason :completed :view done-picture}))))
   (it "refuses field values, because a live view never asked a question"
       (expect
-        (some? (hs/live-result-error
-                 {:view-id "v" :is-completed true :reason :completed :markdown "# x" :values {}}))))
+        (some?
+          (hs/live-result-error
+            {:view-id "v" :is-completed true :reason :completed :view done-picture :values {}}))))
   (it "leaves the form's answer contract alone: its reason is still the line a human reads"
       (expect (nil? (hs/answer-error nil
                                      {:is-submitted false :reason "cancelled" :request-id "r"})))
@@ -1546,7 +1563,7 @@
                 (hs/answer-error nil {:is-submitted false :reason :interrupted :request-id "r"})))))
 
 ;; A live view — the interaction the human WATCHES. Nothing blocks, the record on
-;; disk is the store of record, and the model reads ONE markdown at the end.
+;; disk is the store of record, and the model reads ONE verdict at the end.
 
 (def ^:private live-views-dir
   "The private var every view record hangs under, redefined per test so nothing
@@ -1586,31 +1603,40 @@
 
 (defdescribe
   live-lifecycle-test
-  (it "mounts a view, patches it BY NODE ID, and ends in the markdown the model reads"
-      (watching
-        (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"}
-                   {:id "tail" :type "log" :window-lines 50})
-        (fn [view]
-          (let [view-id (:id view)]
-            (expect (= 0 (:seq view)))
-            (expect (= ["now" "tail"] (mapv :id (:nodes (hi/live-view view-id)))))
-            (let
-              [patched (hi/patch-live!
-                         view-id
-                         [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}
-                          {:op "append" :node-id "tail" :lines ["+ clojure -M:test" "18 passed"]}])]
-              (expect (= 1 (:seq patched)))
-              (expect (= "18 jobs" (:text (first (:nodes patched)))))
-              (expect (= ["+ clojure -M:test" "18 passed"] (:lines (second (:nodes patched)))))
-              (expect (= patched (hi/live-view view-id))))
-            (let [result (hi/close-live! view-id {:summary "18 of 18 jobs finished"})]
-              (expect (true? (:is-completed result)))
-              (expect (= :completed (:reason result)))
-              (expect (= view-id (:view-id result)))
-              ;; The verdict carries the picture, not a description of it.
-              (expect (str/includes? (:markdown result) "18 jobs"))
-              (expect (str/includes? (:markdown result) "+ clojure -M:test"))
-              (expect (str/includes? (:markdown result) "18 of 18 jobs finished")))))))
+  (it
+    "mounts a view, patches it BY NODE ID, and ends in the picture the model reads"
+    (watching
+      (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"}
+                 {:id "tail" :type "log" :window-lines 50})
+      (fn [view]
+        (let [view-id (:id view)]
+          (expect (= 0 (:seq view)))
+          (expect (= ["now" "tail"] (mapv :id (:nodes (hi/live-view view-id)))))
+          (let
+            [patched (hi/patch-live!
+                       view-id
+                       [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}
+                        {:op "append" :node-id "tail" :lines ["+ clojure -M:test" "18 passed"]}])]
+            (expect (= 1 (:seq patched)))
+            (expect (= "18 jobs" (:text (first (:nodes patched)))))
+            (expect (= ["+ clojure -M:test" "18 passed"] (:lines (second (:nodes patched)))))
+            (expect (= patched (hi/live-view view-id))))
+          (let [result (hi/close-live! view-id {:summary "18 of 18 jobs finished"})]
+            (expect (true? (:is-completed result)))
+            (expect (= :completed (:reason result)))
+            (expect (= view-id (:view-id result)))
+            ;; The verdict carries the picture as DATA — the ids it declared and
+            ;; the values it set — so the model acts on it instead of reading it
+            ;; back out of prose.
+            (expect (nil? (:markdown result)))
+            (expect (= "18 of 18 jobs finished" (:summary result)))
+            (expect (= ["now" "tail"] (mapv :id (:nodes (:view result)))))
+            (expect (= {:id "now" :type :status :text "18 jobs" :tone :ok}
+                       (first (:nodes (:view result)))))
+            (expect (= ["+ clojure -M:test" "18 passed"] (:lines (second (:nodes (:view result))))))
+            ;; …and the document the human reopens renders from that same picture.
+            (expect (str/includes? (live/->markdown (:view result) {:result result})
+                                   "18 of 18 jobs finished")))))))
   (it
     "keeps every ACCEPTED patch on disk, in the order the engine accepted them"
     (recorded
@@ -1685,7 +1711,7 @@
             (let [result (hi/interrupt-live! view-id)]
               (expect (false? (:is-completed result)))
               (expect (= :interrupted (:reason result)))
-              (expect (str/includes? (:markdown result) "12 of 40 hosts")))))))
+              (expect (= "12 of 40 hosts" (:text (first (:nodes (:view result)))))))))))
   (it "hands a body the view id and answers the verdict"
       (recorded (fn []
                   (let
@@ -1696,7 +1722,7 @@
                          (hi/patch-live! view-id
                                          [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}])))]
                     (expect (= :completed (:reason result)))
-                    (expect (str/includes? (:markdown result) "18 jobs"))))))
+                    (expect (= "18 jobs" (:text (first (:nodes (:view result))))))))))
   (it "closes what a body opened even when the body throws"
       (recorded
         (fn []

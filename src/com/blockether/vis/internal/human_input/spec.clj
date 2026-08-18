@@ -248,6 +248,17 @@
   (into #{:title :description :source :session-id :channel-ids :nodes :is-cancellable :timeout-ms}
         live-view-stamp-keys))
 
+(def live-picture-keys
+  "Every key the PICTURE carries — a finished view as data, with the mount
+   bookkeeping (`:id`, `:session-id`, `:channel-ids`, the stamps) left behind. It
+   is what the verdict hands the model and what a parsed document answers, so one
+   shape crosses in both directions."
+  #{:title :description :nodes})
+
+(def live-elided-keys
+  "Every key one elision carries: which node a budget cut and how many items it
+   did not carry. The record still holds them."
+  #{:node-id :items})
 (def live-op-key-sets
   "Every key ONE patch operation may carry, per operation. Closed per op rather
    than as a union, because `s/keys` accepts any key it was not told about: a
@@ -271,8 +282,11 @@
 (def live-patch-keys "Every key one patch carries." #{:view-id :seq :ops})
 
 (def live-result-keys
-  "Every key the verdict carries — the ONE thing the model reads back."
-  #{:view-id :is-completed :reason :markdown :summary :artifact-id :error})
+  "Every key the verdict carries — the ONE thing the model reads back, and it
+   reads DATA: `:view` is the finished picture with its ids and tones intact, so
+   the model acts on values instead of recovering them from prose. Markdown is the
+   human's document (`live/->markdown`), never the model's contract."
+  #{:view-id :is-completed :reason :view :elided :summary :artifact-id :error})
 (defn contract-vocabulary
   "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
    into `vis_contract/contract.json` — the document every surface that cannot
@@ -765,7 +779,6 @@
 (s/def ::view-id non-blank-string?)
 (s/def ::is-completed boolean?)
 (s/def ::summary non-blank-string?)
-(s/def ::markdown non-blank-string?)                        ; the whole view, rendered for the model
 (s/def ::total-lines nat-int?)                              ; the size of a log's record, engine-stamped
 (s/def ::artifact-id non-blank-string?)
 (s/def ::error non-blank-string?)
@@ -914,14 +927,27 @@
 (s/def ::ops (s/and (s/coll-of ::live-op :kind vector?) non-empty?))
 (s/def ::live-patch (s/and #(closed? live-patch-keys %) (s/keys :req-un [::view-id ::seq ::ops])))
 
+;; The PICTURE: a finished view as data, with the mount bookkeeping left behind.
+;; What the verdict hands the model and what a parsed document answers, so one
+;; shape crosses in both directions.
+(s/def ::view
+  (s/and #(closed? live-picture-keys %) (s/keys :req-un [::title ::nodes] :opt-un [::description])))
+
+;; What a budget left behind, per node. Never a key ON the node: truncation is a
+;; RENDER artifact and the record still holds every item.
+(s/def ::items pos-int?)
+
+(s/def ::elided
+  (s/coll-of (s/and #(closed? live-elided-keys %) (s/keys :req-un [::node-id ::items]))
+             :kind vector?))
 ;; What the blocked extension receives, and what the close event carries. It is
 ;; deliberately NOT an `::answer`: a verdict carries no field values, and a form
 ;; carries no artifact, so merging them would leave half of every map nil.
 
 (s/def ::live-result
   (s/and #(closed? live-result-keys %)
-         (s/keys :req-un [::view-id ::is-completed ::reason ::markdown]
-                 :opt-un [::summary ::artifact-id ::error])
+         (s/keys :req-un [::view-id ::is-completed ::reason ::view]
+                 :opt-un [::summary ::artifact-id ::error ::elided])
          #(live-reason? (:reason %))
          ;; The one cross-key rule: completion is exactly the `completed` ending,
          ;; so nothing can report success while naming why it stopped.
