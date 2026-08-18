@@ -6,18 +6,20 @@
    author cannot afford before a human is watching: an extension's top level may
    shell out, write state or mount a dialog. So nothing here executes the
    extension. The file is PARSED (`vis-python/extension_check.py`, `ast` only),
-   the statically knowable arguments of every `vis.ask` call are
-   reconstructed, and the request that comes out is judged by CALLING
-   [[com.blockether.vis.internal.human-input/normalize-request]] -- the engine's
-   own normalizer, the seam every running dialog crosses, so a refusal here is
-   the line the author would have seen in front of the human.
+   the statically knowable arguments of every `vis.ask` and every `vis.live` call
+   are reconstructed, and what comes out is judged by CALLING
+   [[com.blockether.vis.internal.human-input/normalize-request]] or
+   [[com.blockether.vis.internal.human-input/normalize-live-view]] -- the engine's
+   own normalizers, the seams every running dialog and every mounted view cross,
+   so a refusal here is the line the author would have seen in front of the human.
 
    The `vis` module the checker reads is the REAL one: the bootstrap is evaluated
    with every host callback bound to a refusal (`python-extensions/bind-inert-host!`),
    so `vis.plaintext(...)` builds its dict while `vis.shell(...)` cannot run. The
-   one exception is `__vis_host_request_input__`, bound to a judge that
-   normalizes the request and settles it `undeliverable`: a form is checked by
-   ASKING for it, and nobody is asked.
+   two exceptions are `__vis_host_request_input__`, bound to a judge that
+   normalizes the request and settles it `undeliverable`, and `__vis_host_live__`,
+   bound to a judge that normalizes the view and mounts nothing: a form is checked
+   by ASKING for it and a view by OPENING it, and neither reaches a human.
 
    What cannot be known without running the file (a field list assembled from an
    argument, an f-string title, a comprehension) is COUNTED as skipped, never
@@ -26,6 +28,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input :as human-input]
             [com.blockether.vis.internal.python-extensions :as px])
   (:import (java.io File)
@@ -54,11 +57,34 @@
                                      (dissoc "channel_id" "channel_ids")))
     unasked-answer))
 
+(defn- judge-view
+  "The checker's `live`: normalize the view the way a real `vis.live` does, then
+   answer the handle it would have answered -- without mounting it, publishing an
+   event or opening a record. A node the vocabulary has no name for throws here
+   exactly where the engine throws for an extension that runs, and that line is
+   what the checker reports."
+  [envelope-json & _]
+  (let
+    [envelope
+     (json/read-json (str envelope-json) :key-fn identity)
+
+     declared
+     (get envelope "view")
+
+     view
+     (human-input/normalize-live-view (cond-> declared
+                                        (map? declared)
+                                        (dissoc "channel_id" "channel_ids")))]
+
+    (wire/json-str {:view-id (:id view) :is-open true :view view})))
+
 (defn- checker-context
   "A context holding the real `vis` module with an inert host, plus the checker."
   ^Context []
   (let [^Context ctx (px/build-context "extension-check")]
-    (px/bind-inert-host! ctx {"__vis_host_request_input__" judge-request})
+    (px/bind-inert-host! ctx
+                         {"__vis_host_request_input__" judge-request
+                          "__vis_host_live__" judge-view})
     (locking ctx
       (.eval ctx "python" ^String px/bootstrap-python)
       (.eval ctx "python" ^String checker-python))

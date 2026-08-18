@@ -85,3 +85,25 @@
                   (map (fn [line]
                          (wire/->engine (json/read-json line)))))
             (line-seq reader)))))
+
+(defn verdict
+  "The verdict the record in `file` ENDS with, or nil while the view is still
+   open.
+
+   The registry drops a view the moment it closes, so this file is the only place
+   left that knows HOW it ended. An extension that pushes into a view the human
+   interrupted reads its reason here rather than being told merely that the view
+   is gone — and it costs one streamed pass, never the whole log in memory."
+  [^File file]
+  (when (and file (.isFile file))
+    (with-open [reader (io/reader file)]
+      (let
+        [last-line (reduce (fn [_ line]
+                             line)
+                           nil
+                           (line-seq reader))
+         record (some-> last-line
+                        json/read-json
+                        wire/->engine)]
+
+        (when (= "close" (:kind record)) (:result record))))))

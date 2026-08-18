@@ -668,6 +668,127 @@ resolves it inside the process, and `vis.forget(handle)` drops it. Handles are
 what the transcript, logs, and the model see — so pass the handle around and
 reveal it only at the moment of use.
 
+### Showing the human live work
+
+`vis.ask` parks an extension until a human answers. A **live view** is the
+opposite half: work that reports itself while it runs, on a surface nobody has
+to answer. `vis.live(...)` mounts the view and returns at once — the handle it
+answers is what the extension pushes into for as long as the job lasts, and the
+human watches it in the terminal, in the companion app, or both.
+
+```python
+import time
+
+import vis
+
+
+def deploy(target):
+    run = vis.shell(
+        {"op": "background", "id": "deploy", "command": f"./deploy.sh {target}"}
+    )
+    with vis.live(
+        f"Deploy · {target}",
+        [
+            vis.status("phase", "Starting", tone="running"),
+            vis.progress("done", total=3),
+            vis.steps(
+                "plan",
+                steps=[
+                    {"id": "build", "label": "Build"},
+                    {"id": "push", "label": "Push image"},
+                    {"id": "smoke", "label": "Smoke test"},
+                ],
+            ),
+            vis.output("tail", label="deploy.sh"),
+        ],
+        description=f"{target} · deploy.sh",
+        is_cancellable=True,
+    ) as view:
+        view["plan"].set("build", tone="running")
+        offset = 0
+        while True:
+            chunk = run.logs(offset)
+            offset = chunk["next_offset"]
+            if chunk["stdout"]:
+                view["tail"].write(chunk["stdout"].splitlines())
+            if view.is_interrupted:           # the human pressed Escape
+                run.stop()
+                break
+            if chunk["status"] != "running":
+                break
+            time.sleep(0.2)
+        view["done"].set(done=3, total=3)
+        view["phase"].set("Deployed", tone="ok")
+        return view.close(summary=f"{target} is deployed")
+```
+
+**A view declares its nodes once and addresses them by id ever after** — which
+is why the id is the first argument of every builder, exactly as a field name is
+in `vis.ask`. `view["phase"]` hands back the typed handle for that node, and the
+handle only has the verbs its type can honour:
+
+| Builder | Shows | Verbs on `view[id]` |
+| --- | --- | --- |
+| `vis.status(id, text, tone=…, detail=…)` | one line: what is happening right now | `.set(text, tone=, detail=, label=)` |
+| `vis.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
+| `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
+| `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
+| `vis.output(id, label=…)` | streamed lines | `.write(*lines)`, `.clear()` |
+| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=)`, `.remove(*ids)`, `.clear()` |
+| `vis.link(id, links=[…])` | pointers a human can open | `.add(link_id, label, target, target_kind=, tone=)` |
+
+`vis.output` builds a `log` node; the builder is named `output` so it never
+shadows `vis.log`, the engine log line — the same reason `vis.slider` builds a
+`range` field. Rows and columns of a declared table are `vis.table_row(...)` and
+`vis.table_column(...)`, and a table's `order` says how it paints — `insertion`
+(the default), `newest-first`, or `{'by': 'duration', 'dir': 'desc'}`.
+
+**Writing an item twice updates it in place.** Every keyed verb is an upsert:
+`.upsert("web-1", …)` is both "new row" and "that row changed", because a scan
+loop does not know which it is and the id is the address either way. The item
+keeps the position it first took, so a table does not reshuffle under the eye of
+whoever is reading it. Log lines are the exception that proves it: they have no
+id, so they concatenate, and the node is unbounded — `window_lines` is only how
+much of the tail a surface holds hot, never how much the view's record keeps.
+
+When a view has exactly ONE node of a type, the verb is on the view itself:
+`view.status(...)`, `view.progress(...)`, `view.stat(...)`, `view.step(...)`,
+`view.write(...)`, `view.row(...)`, `view.link(...)`. With two logs open, the
+shortcut refuses and names both ids rather than guessing. A view can also grow:
+`view.add(vis.table("failures", columns=[...]), after="tail")` mounts a node a
+run only discovers it needs, and `view.drop("failures")` takes it away.
+
+**The human can stop watching, and the extension finds out.** `view.is_interrupted`
+is true once the view ended without the extension closing it — Escape in the
+terminal, the interrupt button on the phone. It asks the engine at most once per
+batching window, so a tight loop may poll it every iteration and still cost one
+host call per tick. Pushing into a view that has already ended raises
+`vis.Interrupted`, so a loop that ignores the flag still stops instead of
+reporting into a surface nobody is watching.
+
+**Pushes are batched, not throttled away.** The first op after a quiet stretch
+crosses immediately; whatever else arrives within `flush_ms` (100 ms by default,
+`vis.live(..., flush_ms=…)` per view) rides the next push. Ops that fold into
+one another are folded first, so a loop that reports every iteration costs one
+host call per window rather than one per iteration. Every read (`view.state()`,
+`view.is_interrupted`) and `view.close(...)` flush first, so nothing you wrote is
+ever behind what you read.
+
+`view.close(reason=…, summary=…, error=…, artifact_id=…)` ends the view and
+answers **the verdict, as data**: `is_completed`, the `reason` it ended, the
+finished picture (`view`, plus `elided` counts for anything a budget cut), and
+the `summary` the extension chose. That is what the model reads — never a
+rendering of it. Closing twice answers the first verdict, so a `finally` that
+closes what an interrupt already closed cannot overwrite the reason the human
+chose. Used as a context manager, the view closes itself, and an exception
+inside closes it `failed` with the error rather than leaving a spinner up
+forever.
+
+Outside Vis — `python -c`, a unit test, CI — a live view still works: the
+transcript goes to stderr, the state is materialized truthfully (the same
+upserts, the same bounds), and a view that has ended answers its verdict instead
+of vanishing. An extension is written once and behaves the same in both places.
+
 ### LLM providers
 
 `vis.provider(...)` registers a first-class provider the model can actually
@@ -904,8 +1025,9 @@ answered from the parse tree alone:
 * does it parse at all;
 * does it only reach for `vis.<name>` that the `vis` module actually has, so
   `vis.plaintxt(...)` is caught here instead of in front of a human;
-* would every `vis.ask(...)` request be accepted - judged by the engine's own
-  seam, the same judge the running dialog uses, never a second opinion.
+* would every `vis.ask(...)` request and every `vis.live(...)` view be accepted -
+  judged by the engine's own seam, the same judge the running dialog and the
+  running view use, never a second opinion.
 
 That is possible because the builders are pure: reconstructing
 `vis.select("env", [])` builds a dict and touches nothing else. An argument that

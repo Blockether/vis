@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "ops": [
     {
       "name": "state_get",
@@ -74,6 +74,13 @@
       "outside": "prompt"
     },
     {
+      "name": "live",
+      "global": "__vis_host_live__",
+      "arity": 1,
+      "summary": "Open, patch, read or close one live view.",
+      "outside": "local"
+    },
+    {
       "name": "reveal_secret",
       "global": "__vis_host_reveal_secret__",
       "arity": 1,
@@ -99,6 +106,13 @@
     "default_op": "run",
     "spawn_ops": ["run","background"],
     "handle_ops": ["logs","wait","send","stop"]
+  },
+  "live": 
+  {
+    "default_op": "open",
+    "spawn_ops": ["open"],
+    "handle_ops": ["patch","state","close"],
+    "flush_ms": 100
   },
   "human_input": 
   {
@@ -128,6 +142,8 @@
       "ops": ["add-node","append","clear","remove","remove-node","set"],
       "tones": ["error","idle","ok","running","warn"],
       "orders": ["insertion","newest-first"],
+      "aligns": ["left","right"],
+      "sort_dirs": ["asc","desc"],
       "reasons": ["completed","failed","interrupted","timeout","undeliverable"],
       "log": 
       {

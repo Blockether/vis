@@ -337,3 +337,120 @@ def test_ask_knows_only_the_contracts_field_types(monkeypatch):
         if wire_type in CONTRACT["human_input"]["choice_types"]:
             node["options"] = ["one", "two"]
         assert _refusal("Deploy", [node]) is None, wire_type
+
+
+# -- A live view -----------------------------------------------------------------
+
+
+def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
+    # Nobody is watching a pane out here, so stderr carries the story and the
+    # host still holds the nodes: an extension polling its own view reads the
+    # same truth it would read inside a session.
+    with vis.live(
+        "Deploy",
+        [
+            vis.status("now", "Starting", tone="running"),
+            vis.table(
+                "jobs",
+                columns=[vis.table_column("job", "Job"), vis.table_column("state", "State")],
+            ),
+            vis.output("tail", label="Output"),
+        ],
+        description="staging",
+    ) as view:
+        view.status("Building", tone="running")
+        view.row("api", ["api", "queued"])
+        view.row("api", ["api", "done"], tone="ok")
+        view.write("cloning", "compiling")
+        nodes = {node["id"]: node for node in view.state()["nodes"]}
+        # The row was upserted by its id, not appended twice.
+        assert [row["cells"] for row in nodes["jobs"]["rows"]] == [["api", "done"]]
+        assert nodes["jobs"]["rows"][0]["tone"] == "ok"
+        assert nodes["tail"]["lines"] == ["cloning", "compiling"]
+        assert nodes["now"]["text"] == "Building"
+
+    verdict = view.result
+    assert verdict["is_completed"] is True
+    assert verdict["reason"] == "completed"
+    assert verdict["view"]["title"] == "Deploy"
+    transcript = capsys.readouterr().err
+    assert "== Deploy ==" in transcript
+    assert "Building" in transcript
+    assert "cloning" in transcript
+    assert "completed" in transcript
+
+
+@pytest.mark.parametrize(
+    "view",
+    [
+        ("", [vis.status("now", "waiting")]),
+        ("Deploy", []),
+        ("Deploy", [{"id": "now", "type": "sparkline"}]),
+        ("Deploy", [vis.status("now", "waiting"), vis.status("now", "again")]),
+        ("Deploy", [vis.status("", "waiting")]),
+    ],
+)
+def test_a_live_view_names_what_is_wrong_with_it(view):
+    with pytest.raises(_outside.Refused) as raised:
+        vis.live(*view)
+    assert str(raised.value)
+
+
+@pytest.mark.parametrize("op", CONTRACT["live"]["handle_ops"])
+def test_a_live_handle_op_names_the_view_it_cannot_find(op):
+    with pytest.raises(_outside.Refused) as raised:
+        _outside.live(json.dumps({"op": op, "view_id": "nope"}))
+    assert "nope" in str(raised.value)
+
+
+def test_a_push_at_a_node_the_view_never_declared_is_refused():
+    view = vis.live("Deploy", [vis.status("now", "waiting")])
+    envelope = {
+        "op": "patch",
+        "view_id": view.view_id,
+        "patch": {"ops": [{"op": "set", "node_id": "ghost", "text": "?"}]},
+    }
+    with pytest.raises(_outside.Refused) as raised:
+        _outside.live(json.dumps(envelope))
+    assert "ghost" in str(raised.value)
+
+
+def test_a_view_that_ended_answers_its_verdict_rather_than_vanishing():
+    view = vis.live("Scan", [vis.status("now", "reading")])
+    verdict = view.close(reason="interrupted", summary="the human stopped watching")
+
+    assert verdict["is_completed"] is False
+    assert view.reason == "interrupted"
+    # A `finally` closing what an interrupt already closed must not mint a
+    # second, cheerier ending.
+    assert view.close()["reason"] == "interrupted"
+    with pytest.raises(vis.Interrupted):
+        view.status("one more line")
+
+
+def test_a_burst_of_pushes_crosses_the_boundary_once_per_window(monkeypatch):
+    # The batching window is the contract's, and a compute loop that reports
+    # every iteration must not pay a host call for every iteration.
+    assert vis._FLUSH_MS == CONTRACT["live"]["flush_ms"]
+    crossed = []
+    serve = _outside.live
+
+    def counted(envelope_json):
+        crossed.append(json.loads(envelope_json)["op"])
+        return serve(envelope_json)
+
+    monkeypatch.setattr(vis._host, "live", counted)
+    view = vis.live("Scan", [vis.output("tail")], flush_ms=60_000)
+    view.write("starting")
+    # Leading edge: the first sign of life does not wait for a window.
+    assert crossed == ["open", "patch"]
+
+    for index in range(50):
+        view.write(f"line {index}")
+    assert crossed == ["open", "patch"]
+
+    verdict = view.close()
+    assert crossed.count("patch") == 2
+    lines = verdict["view"]["nodes"][0]["lines"]
+    assert lines[0] == "starting"
+    assert lines[-1] == "line 49"

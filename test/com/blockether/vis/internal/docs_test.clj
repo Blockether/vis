@@ -2,8 +2,9 @@
   "Docs renderer: cross-page markdown links must resolve in BOTH output
    modes (live `/docs/<slug>`, static `<slug>.html`), and the live
    handler tolerates literal `<slug>.md` deep links with a redirect.
-   Plus one CONTENT invariant: `extending.md` is where an extension author
-   learns what `doc(name)` renders and what an `apropos` row previews."
+   Plus the CONTENT invariants: `extending.md` is where an extension author learns
+   what `doc(name)` renders, what an `apropos` row previews, and how a live view is
+   driven from Python."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.docs :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -83,4 +84,17 @@
   (it "names the shim keys that drive discovery and the page they answer with"
       (let [md (extending-md)]
         (doseq [needle [":shim/imports" ":shim/globals" ":shim/description" ":shim/docs"]]
+          (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))
+
+;; A live view is the one primitive an author cannot infer from the field builders:
+;; its verbs differ per node type, and `vis.output` deliberately does not match the
+;; `log` node it builds (`vis.log` is the engine log line). When that Python surface
+;; is renamed, this test names the page that has to be renamed with it.
+(defdescribe
+  extending-page-teaches-the-live-view-test
+  (it "names the opener, the log builder that could not be called `log`, and what a loop reads"
+      (let [md (extending-md)]
+        (doseq
+          [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted"
+                   "flush_ms"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))

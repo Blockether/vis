@@ -51,6 +51,19 @@
   (s/and (s/keys :req [:shell/default-op :shell/spawn-ops :shell/handle-ops])
          #(contains? (set (:shell/spawn-ops %)) (:shell/default-op %))
          #(not-any? (set (:shell/handle-ops %)) (:shell/spawn-ops %))))
+;; The `live` verb's grammar, read exactly like the shell's: one spawn op that
+;; MOUNTS a view and answers its id, handle ops that drive the view that id names,
+;; and the window the packaged handle may coalesce pushes inside before one has to
+;; cross the host boundary.
+(s/def :live/default-op non-blank-string?)
+(s/def :live/spawn-ops (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
+(s/def :live/handle-ops
+  (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
+(s/def :live/flush-ms pos-int?)
+(s/def :contract/live
+  (s/and (s/keys :req [:live/default-op :live/spawn-ops :live/handle-ops :live/flush-ms])
+         #(contains? (set (:live/spawn-ops %)) (:live/default-op %))
+         #(not-any? (set (:live/handle-ops %)) (:live/spawn-ops %))))
 ;; A refusal is REQUIRED exactly when the op refuses, and meaningless otherwise:
 ;; the reason an author reads in the traceback is part of the contract, not of the
 ;; implementation that happens to raise.
@@ -63,7 +76,8 @@
 ;; conformed value a vector and the reflection check quiet.
 (s/def :contract/ops (s/and (s/coll-of :contract/op :kind vector? :distinct true) not-empty))
 (s/def :contract/version pos-int?)
-(s/def :contract/python-host (s/keys :req [:contract/version :contract/ops :contract/shell]))
+(s/def :contract/python-host
+  (s/keys :req [:contract/version :contract/ops :contract/shell :contract/live]))
 
 (def ^:private resource-path "vis-contract/python-host.edn")
 
@@ -115,6 +129,13 @@
    the ops that SPAWN a process, and the ops that drive the handle one answered."
   []
   (:contract/shell @document))
+
+(defn live-vocabulary
+  "The `live` verb's lifecycle grammar: the op an options map without one means,
+   the op that MOUNTS a view, the ops that drive the view it answered, and the
+   window a handle may coalesce pushes inside."
+  []
+  (:contract/live @document))
 ;; ---------------------------------------------------------------------------
 ;; The document the PACKAGE reads
 ;;
@@ -152,6 +173,8 @@
 (s/def :human-input/ops :human-input/strings)
 (s/def :human-input/tones :human-input/strings)
 (s/def :human-input/orders :human-input/strings)
+(s/def :human-input/aligns :human-input/strings)
+(s/def :human-input/sort-dirs :human-input/strings)
 (s/def :human-input/reasons :human-input/strings)
 (s/def :human-input/window-lines pos-int?)
 (s/def :human-input/window-lines-cap pos-int?)
@@ -168,9 +191,9 @@
 (s/def :human-input/table (s/keys :req-un [:human-input/max-rows :human-input/max-patch-rows]))
 (s/def :human-input/live
   (s/keys :req-un [:human-input/node-types :human-input/link-targets :human-input/ops
-                   :human-input/tones :human-input/orders :human-input/reasons :human-input/log
-                   :human-input/table :human-input/max-stats :human-input/max-steps
-                   :human-input/max-links :human-input/max-nodes]))
+                   :human-input/tones :human-input/orders :human-input/aligns :human-input/sort-dirs
+                   :human-input/reasons :human-input/log :human-input/table :human-input/max-stats
+                   :human-input/max-steps :human-input/max-links :human-input/max-nodes]))
 ;; The vocabulary the ENGINE hands in. Specced here because the contract is what
 ;; the package trusts: a surface that drifts is caught rendering the document, not
 ;; by an extension author reading a field type Python has never heard of.
@@ -215,6 +238,8 @@
                       "ops" (:ops live)
                       "tones" (:tones live)
                       "orders" (:orders live)
+                      "aligns" (:aligns live)
+                      "sort_dirs" (:sort-dirs live)
                       "reasons" (:reasons live)
                       "log" (array-map "window_lines" (get-in live [:log :window-lines])
                                        "window_lines_cap" (get-in live [:log :window-lines-cap])
@@ -237,6 +262,11 @@
              "shell"
              (let [{:shell/keys [default-op spawn-ops handle-ops]} (shell-vocabulary)]
                (array-map "default_op" default-op "spawn_ops" spawn-ops "handle_ops" handle-ops))
+             "live" (let [{:live/keys [default-op spawn-ops handle-ops flush-ms]} (live-vocabulary)]
+                      (array-map "default_op" default-op
+                                 "spawn_ops" spawn-ops
+                                 "handle_ops" handle-ops
+                                 "flush_ms" flush-ms))
              "human_input" (human-input->json human-input)))
 
 (def package-document-path

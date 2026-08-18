@@ -730,6 +730,258 @@ def _check_request(request):
     return None
 
 
+# -- A live view with no engine: the terminal is the record --------------------
+
+
+# Outside Vis nobody is watching a pane, so a view becomes a TRANSCRIPT on
+# stderr: the title once, a line per push, the verdict at the end. The nodes are
+# held here too, because `state` must answer what the view really carries — the
+# same mechanical rules the engine applies (`set` merges its keys onto the node,
+# `append` upserts an item by its id and concatenates log lines, `clear` empties,
+# `remove` drops ids), so an extension polling its own view reads the truth
+# either side of the boundary.
+_LIVE = _HUMAN["live"]
+_LIVE_HOST = contract["live"]
+_LIVE_ITEMS = {
+    "stat": "stats",
+    "steps": "steps",
+    "table": "rows",
+    "link": "links",
+    "log": "lines",
+}
+_LIVE_VIEWS = {}
+
+
+def _live_check_node(node, seen):
+    if not isinstance(node, dict):
+        return f"every node must be a map, got {node!r}"
+    kind = node.get("type")
+    if kind not in _LIVE["node_types"]:
+        types = ", ".join(_LIVE["node_types"])
+        return f"a node is one of {types}, got {kind!r}"
+    node_id = node.get("id")
+    if not isinstance(node_id, str) or not node_id.strip():
+        return f"a {kind} node needs an id"
+    if node_id in seen:
+        return f"two nodes answer to {node_id!r}"
+    seen.add(node_id)
+    return None
+
+
+def _check_view(view):
+    if not isinstance(view, dict):
+        return "a live view is a map of title and nodes"
+    title = view.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return "a live view needs a title"
+    nodes = view.get("nodes")
+    if not isinstance(nodes, (list, tuple)) or not nodes:
+        return "a live view needs at least one node"
+    if len(nodes) > _LIVE["max_nodes"]:
+        return "a live view holds at most {} nodes".format(_LIVE["max_nodes"])
+    seen = set()
+    for node in nodes:
+        complaint = _live_check_node(node, seen)
+        if complaint:
+            return complaint
+    return None
+
+
+def _live_at(view, node_id):
+    for index, node in enumerate(view.get("nodes") or []):
+        if node.get("id") == node_id:
+            return index
+    return None
+
+
+def _live_upsert(held, incoming):
+    # An item keeps the position it was first given: a row that updates in place
+    # is what makes a table readable while it fills.
+    merged = list(held or [])
+    for item in incoming or []:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        at = None
+        if item_id is not None:
+            at = next(
+                (i for i, one in enumerate(merged) if one.get("id") == item_id), None
+            )
+        if at is None:
+            merged.append(item)
+        else:
+            merged[at] = {**merged[at], **item}
+    return merged
+
+
+def _live_bound(node):
+    # The record outside is as long as the contract lets a surface hold: a log
+    # keeps its window, a table its rows, so a day-long loop cannot grow this
+    # process without a bound.
+    if node.get("type") == "log":
+        window = int(node.get("window_lines") or _LIVE["log"]["window_lines"])
+        node["lines"] = list(node.get("lines") or [])[-window:]
+    elif node.get("type") == "table":
+        rows = int(node.get("max_rows") or _LIVE["table"]["max_rows"])
+        node["rows"] = list(node.get("rows") or [])[-rows:]
+    return node
+
+
+def _live_items_key(node, name):
+    key = _LIVE_ITEMS.get(node.get("type"))
+    if key is None:
+        kind = node.get("type")
+        raise Refused(f"a {kind} node holds no items, so it takes no {name}")
+    return key
+
+
+def _live_apply(view, op):
+    """Fold one op into `view` and answer the line the transcript owes it."""
+    name = op.get("op") if isinstance(op, dict) else None
+    if name not in _LIVE["ops"]:
+        names = ", ".join(_LIVE["ops"])
+        raise Refused(f"a live op is one of {names}, got {name!r}")
+    if name == "add-node":
+        spec = op.get("node_spec")
+        complaint = _live_check_node(spec, {n.get("id") for n in view["nodes"]})
+        if complaint:
+            raise Refused(complaint)
+        after = _live_at(view, op.get("after"))
+        at = len(view["nodes"]) if after is None else after + 1
+        view["nodes"].insert(at, dict(spec))
+        return "+ {}".format(spec.get("label") or spec.get("id"))
+    index = _live_at(view, op.get("node_id"))
+    if index is None:
+        raise Refused("no node {!r} in this view".format(op.get("node_id")))
+    node = dict(view["nodes"][index])
+    if name == "remove-node":
+        view["nodes"].pop(index)
+        return "- {}".format(node.get("label") or node.get("id"))
+    if name == "set":
+        node.update({k: v for k, v in op.items() if k not in ("op", "node_id")})
+    elif name == "append":
+        key = _live_items_key(node, "lines to append")
+        payload = list(op.get(key) or [])
+        if key == "lines":
+            node[key] = list(node.get(key) or []) + payload
+        else:
+            node[key] = _live_upsert(node.get(key), payload)
+    elif name == "clear":
+        node[_live_items_key(node, "clear")] = []
+    elif name == "remove":
+        key = _live_items_key(node, "item_ids")
+        dropped = set(op.get("item_ids") or [])
+        node[key] = [i for i in (node.get(key) or []) if i.get("id") not in dropped]
+    view["nodes"][index] = _live_bound(node)
+    return _live_line(name, op, node)
+
+
+def _live_line(name, op, node):
+    label = node.get("label") or node.get("id")
+    kind = node.get("type")
+    if name == "clear":
+        return f"{label}: cleared"
+    if name == "remove":
+        return "{}: -{}".format(label, len(op.get("item_ids") or []))
+    if name == "append" and kind == "log":
+        return "\n".join(str(line) for line in (op.get("lines") or []))
+    if name == "append":
+        key = _LIVE_ITEMS[kind]
+        return f"{label}: +{len(op.get(key) or [])} {key}"
+    if kind == "status":
+        detail = node.get("detail")
+        return "{}: {}{}".format(label, node.get("text") or "", f" — {detail}" if detail else "")
+    if kind == "progress":
+        total = node.get("total")
+        if total:
+            return "{}: {} of {}".format(label, node.get("done") or 0, total)
+        value = node.get("value")
+        return "{}: {}".format(label, "working" if value is None else f"{round(value * 100)}%")
+    changed = ", ".join(k for k in op if k not in ("op", "node_id"))
+    return f"{label}: {changed}"
+
+
+def _live_say(lines):
+    for line in lines:
+        if line:
+            print(f"  {line}", file=sys.stderr)
+
+
+def _live_verdict(held, ending):
+    reason = str(ending.get("reason") or "completed")
+    if reason not in _LIVE["reasons"]:
+        reasons = ", ".join(_LIVE["reasons"])
+        raise Refused(f"a view ends for one of {reasons}, got {reason!r}")
+    view = held["view"]
+    verdict = {
+        "view_id": held["view_id"],
+        "is_completed": reason == "completed",
+        "reason": reason,
+    }
+    for key in ("summary", "error", "artifact_id"):
+        if str(ending.get(key) or "").strip():
+            verdict[key] = str(ending[key]).strip()
+    # Nothing is elided outside: this host cuts nothing, so the absent key says
+    # so rather than a count of zero.
+    verdict["view"] = {
+        "title": view.get("title"),
+        "description": view.get("description"),
+        "nodes": view.get("nodes"),
+    }
+    return verdict
+
+
+def live(envelope_json):
+    """`vis.live` with no pane: stderr is the surface, and the record with it."""
+    envelope = json.loads(envelope_json)
+    if not isinstance(envelope, dict):
+        raise Refused("a live envelope must be a JSON object")
+    op = str(envelope.get("op") or _LIVE_HOST["default_op"])
+    if op in _LIVE_HOST["spawn_ops"]:
+        view = envelope.get("view")
+        complaint = _check_view(view)
+        if complaint:
+            raise Refused(complaint)
+        view_id = str(uuid.uuid4())
+        held = {"view_id": view_id, "view": json.loads(json.dumps(view)), "seq": 0}
+        held["view"]["id"] = view_id
+        _LIVE_VIEWS[view_id] = held
+        print("\n== {} ==".format(view.get("title")), file=sys.stderr)
+        if view.get("description"):
+            print(textwrap.fill(str(view["description"]), 78), file=sys.stderr)
+        return json.dumps({"view_id": view_id, "is_open": True, "view": held["view"]})
+    if op not in _LIVE_HOST["handle_ops"]:
+        ops = ", ".join(list(_LIVE_HOST["spawn_ops"]) + list(_LIVE_HOST["handle_ops"]))
+        raise Refused(f"a live op is one of {ops}, got {op!r}")
+    view_id = str(envelope.get("view_id") or "")
+    held = _LIVE_VIEWS.get(view_id)
+    if held is None:
+        raise Refused(
+            f"no live view {view_id} is open — it was closed, interrupted, or never opened"
+        )
+    if held.get("result"):
+        # The engine answers an ended view from its record rather than refusing;
+        # the loop pushing into it learns WHY it stopped, in one shape.
+        return json.dumps(
+            {"view_id": view_id, "is_open": False, "result": held["result"]}
+        )
+    if op == "state":
+        return json.dumps({"view_id": view_id, "is_open": True, "view": held["view"]})
+    if op == "patch":
+        ops = (envelope.get("patch") or {}).get("ops") or []
+        _live_say([_live_apply(held["view"], one) for one in ops])
+        held["seq"] += 1
+        return json.dumps({"view_id": view_id, "is_open": True, "seq": held["seq"]})
+    verdict = _live_verdict(held, envelope.get("ending") or {})
+    held["result"] = verdict
+    ending = verdict.get("summary") or verdict.get("error") or ""
+    print(
+        "== {} · {}{} ==".format(
+            held["view"].get("title"), verdict["reason"], f" — {ending}" if ending else ""
+        ),
+        file=sys.stderr,
+    )
+    return json.dumps({"view_id": view_id, "is_open": False, "result": verdict})
+
+
 # -- The host itself ----------------------------------------------------------
 
 _IMPLEMENTATIONS = {
@@ -741,6 +993,7 @@ _IMPLEMENTATIONS = {
     "notify": notify,
     "shell": shell,
     "request_input": request_input,
+    "live": live,
     "reveal_secret": reveal_secret,
     "forget_secret": forget_secret,
     "declare_env": declare_env,

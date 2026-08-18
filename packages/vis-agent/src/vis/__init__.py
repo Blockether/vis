@@ -23,6 +23,7 @@ except NameError:  # Installed from PyPI: no host in the room, so bring one.
     _host = outside.host
 
 import inspect
+import time
 from collections.abc import MutableMapping as _MutableMapping
 
 _registration = {"spec": None}
@@ -796,3 +797,560 @@ def forget(handle):
     if not handle:
         return False
     return bool(_host.forget_secret(str(handle)))
+
+
+# -- Live views ---------------------------------------------------------------
+# A form PAUSES a run to collect values; a live view REPORTS on work already
+# running. Nothing here blocks: a push crosses to the engine, every mounted
+# surface repaints, and the extension carries straight on. The human watches it
+# move and may stop it; the model reads the finished picture as DATA.
+#
+#   with vis.live('CI', [vis.status('now', 'Polling'),
+#                        vis.table('jobs', columns=[vis.table_column('job', 'Job'),
+#                                                   vis.table_column('state', 'State')])]) as view:
+#       for job in poll():
+#           view['jobs'].upsert(job.id, [job.name, job.state], tone=job.tone)
+#       view['now'].set('Finished', tone='ok')
+#
+# Nodes are addressed BY ID, because a view with two tables has no "the" table.
+
+_FLUSH_MS = 100
+# How long a handle may coalesce pushes before one has to cross. Mirrors
+# `:live/flush-ms` in the contract document, which `python_host_test` reads back:
+# a host round trip per written line would park the extension on the journal
+# writer once per line, so the batching is part of the contract.
+
+_MAX_BATCH = 200
+# The most items one coalesced push carries, under every per-patch bound the
+# engine declares (500 log lines, 200 table rows). A hot loop coalesces into
+# whole patches instead of being refused for writing one too big.
+
+
+class Interrupted(Exception):
+    """The live view this handle drives is no longer open.
+
+    Raised by the next push after the human stopped watching — Escape in the
+    terminal, stop in the app — so an unattended loop ends by itself. A loop
+    that would rather finish its own work reads `view.is_interrupted` instead
+    and decides.
+    """
+
+    def __init__(self, view_id, reason=None):
+        self.view_id = view_id
+        self.reason = reason
+        ended = f" ({reason})" if reason else ""
+        super().__init__(f"live view {view_id} is no longer open{ended}")
+
+
+class _Node:
+    """One node of a live view, addressed by its id."""
+
+    def __init__(self, view, node_id, type_name):
+        self._view = view
+        self.node_id = str(node_id)
+        self.type = str(type_name)
+
+    def __repr__(self):
+        return f"<vis {self.type} {self.node_id!r}>"
+
+    def _op(self, name, **payload):
+        payload["op"] = name
+        payload["node_id"] = self.node_id
+        return self._view._push({k: v for k, v in payload.items() if v is not None})
+
+
+class _KeyedNode(_Node):
+    """A node holding items the extension addresses by id: it can drop them."""
+
+    def remove(self, *item_ids):
+        # Ids as arguments or as one iterable, because a caller with a list
+        # should not have to spread it.
+        ids = list(item_ids[0]) if len(item_ids) == 1 and not isinstance(item_ids[0], str) else list(item_ids)
+        return self._op("remove", item_ids=[str(i) for i in ids])
+
+    def clear(self):
+        return self._op("clear")
+
+
+class Status(_Node):
+    def set(self, text, tone=None, detail=None, label=None):
+        # One line saying what is happening RIGHT NOW.
+        return self._op("set", text=str(text), tone=tone, detail=detail, label=label)
+
+
+class Progress(_Node):
+    def set(self, value=None, done=None, total=None, label=None):
+        # A fraction (0..1), or the counts to make one. Neither is
+        # INDETERMINATE, which is a real state and not zero.
+        return self._op("set", value=value, done=done, total=total, label=label)
+
+
+class Stat(_Node):
+    def set(self, stat_id, value_text, label=None, tone=None):
+        # One counter of the strip, upserted by id.
+        return self._op(
+            "append",
+            stats=[_live_item(stat_id, {"value_text": str(value_text), "label": label, "tone": tone})],
+        )
+
+    def clear(self):
+        return self._op("clear")
+
+    def remove(self, *item_ids):
+        return _KeyedNode.remove(self, *item_ids)
+
+
+class Steps(_Node):
+    def set(self, step_id, tone=None, label=None, detail=None, value=None):
+        # One step of the checklist, upserted by id: the same call marks it
+        # running and later done.
+        return self._op(
+            "append",
+            steps=[_live_item(step_id, {"tone": tone, "label": label, "detail": detail, "value": value})],
+        )
+
+    def clear(self):
+        return self._op("clear")
+
+    def remove(self, *item_ids):
+        return _KeyedNode.remove(self, *item_ids)
+
+
+class Log(_Node):
+    def write(self, *lines):
+        # Lines as arguments or as one iterable. A log is UNBOUNDED: every line
+        # reaches the view's record, and the window is only what a surface holds.
+        given = lines[0] if len(lines) == 1 and not isinstance(lines[0], str) else lines
+        return self._op("append", lines=[str(line) for line in given])
+
+    def clear(self):
+        return self._op("clear")
+
+
+class Table(_KeyedNode):
+    def upsert(self, row_id, cells, tone=None):
+        # ONE verb for "new row" and "row changed": a scan loop writing a live
+        # table does not know which it is, and the id is the address either way.
+        return self._op(
+            "append",
+            rows=[_live_item(row_id, {"cells": [_cell(c) for c in cells], "tone": tone})],
+        )
+
+
+class Link(_KeyedNode):
+    def add(self, link_id, label, target, target_kind=None, tone=None):
+        # A pointer the human can open: a URL, a path, or an attachment id.
+        return self._op(
+            "append",
+            links=[
+                _live_item(
+                    link_id,
+                    {"label": str(label), "target": str(target), "target_kind": target_kind, "tone": tone},
+                )
+            ],
+        )
+
+
+_LIVE_NODES = {
+    "status": Status,
+    "progress": Progress,
+    "stat": Stat,
+    "steps": Steps,
+    "log": Log,
+    "table": Table,
+    "link": Link,
+}
+# The typed handle each node type answers. The engine owns the type table
+# (`human-input.spec/live-node-types`, rendered into the contract document);
+# `python_host_test` fails when this one names a type that is not in it.
+
+
+def _cell(value):
+    return "" if value is None else str(value)
+
+
+def _live_item(item_id, spec):
+    item = {"id": str(item_id)}
+    item.update({k: v for k, v in spec.items() if v is not None})
+    return item
+
+
+def _batch_size(op):
+    return max((len(v) for k, v in op.items() if isinstance(v, list)), default=1)
+
+
+class LiveView:
+    """A live view the human WATCHES, driven by the extension that opened it.
+
+    `vis.live(...)` mounts one and answers this handle. Nodes are addressed by
+    id — `view['jobs']`, or `view.node('jobs')` — and each answers the typed
+    handle its own type declares. The view-level shortcuts (`view.status(...)`,
+    `view.log(...)`, `view.row(...)`) resolve to the one node of that type and
+    raise naming the candidate ids when the view holds several, so an ambiguous
+    call fails where it was written instead of quietly patching the wrong table.
+
+    Pushes are BATCHED: ops buffer and cross on the next push after `flush_ms`,
+    when a coalesced push fills, and always before the view is read or closed.
+    A repeated write to the same row or the same node collapses into the last
+    one, so a per-row progress counter costs one wire row per tick rather than
+    one per write.
+
+    Closing is the point: `close()` answers the verdict the model reads. Used as
+    a context manager the view closes itself — `completed` on the way out, and
+    `failed` carrying the error when the body raised, because a run that died
+    mid-way still owes the model the picture the human was watching.
+    """
+
+    def __init__(self, request, flush_ms=None):
+        import json
+
+        self._json = json
+        self._flush_ms = _FLUSH_MS if flush_ms is None else max(0, int(flush_ms))
+        self._buffer = []
+        self._nodes = {}
+        self._order = []
+        self._is_open = False
+        self._result = None
+        # 0.0 is the window ALREADY elapsed: the first push crosses at once, so a
+        # human sees the view move the moment work starts.
+        self._last_flush = 0.0
+        self._last_read = 0.0
+        answer = self._call({"op": "open", "view": request})
+        self.view_id = str(answer.get("view_id") or "")
+        self._settle(answer)
+
+    # -- the host seam --------------------------------------------------------
+
+    def _call(self, envelope):
+        return self._json.loads(_host.live(self._json.dumps(envelope)))
+
+    def _settle(self, answer):
+        """Learn from every answer whether the view is still open."""
+        self._is_open = bool(answer.get("is_open"))
+        view = answer.get("view")
+        if isinstance(view, dict):
+            self._learn(view.get("nodes"))
+        if not self._is_open and answer.get("result"):
+            self._result = answer["result"]
+        return answer
+
+    def _learn(self, nodes):
+        if not isinstance(nodes, list):
+            return
+        self._nodes = {}
+        self._order = []
+        for node in nodes:
+            if isinstance(node, dict) and node.get("id"):
+                self._nodes[str(node["id"])] = str(node.get("type") or "")
+                self._order.append(str(node["id"]))
+
+    def _refuse_closed(self):
+        raise Interrupted(self.view_id, self.reason)
+
+    # -- pushing --------------------------------------------------------------
+
+    def _push(self, op):
+        # Leading edge, then a window: the first op after a quiet stretch crosses
+        # at once, and whatever arrives within `flush_ms` of it rides the next
+        # push, read or close. A loop reporting every iteration costs one host
+        # call per window instead of one per iteration.
+        if not self._is_open:
+            self._refuse_closed()
+        self._coalesce(op)
+        if self._is_full() or self._elapsed_ms() >= self._flush_ms:
+            self.flush()
+        return self
+
+    def _elapsed_ms(self):
+        return (time.monotonic() - self._last_flush) * 1000.0
+
+    def _is_full(self):
+        return len(self._buffer) >= _MAX_BATCH or any(_batch_size(op) >= _MAX_BATCH for op in self._buffer)
+
+    def _coalesce(self, op):
+        """Fold this op into the last one addressing the same node, if it folds.
+
+        Only the LAST op for that node is a candidate, so nothing reorders past
+        a `clear` or a `remove` that stands between them.
+        """
+        for earlier in reversed(self._buffer):
+            if earlier.get("node_id") != op.get("node_id"):
+                continue
+            if earlier["op"] == op["op"] == "set":
+                earlier.update(op)
+                return
+            if earlier["op"] == op["op"] == "append" and _merge_append(earlier, op):
+                return
+            break
+        self._buffer.append(op)
+
+    def flush(self):
+        """Send everything buffered. Called for you before any read or close."""
+        if not self._buffer:
+            return self
+        ops, self._buffer = self._buffer, []
+        if not self._is_open:
+            self._refuse_closed()
+        answer = self._settle(self._call({"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}}))
+        self._last_flush = time.monotonic()
+        if not self._is_open:
+            self._refuse_closed()
+        return answer and self
+
+    # -- reading --------------------------------------------------------------
+
+    def state(self):
+        """What the view looks like right now, as the surfaces paint it."""
+        self.flush()
+        answer = self._settle(self._call({"op": "state", "view_id": self.view_id}))
+        self._last_read = time.monotonic()
+        return answer.get("view")
+
+    @property
+    def is_interrupted(self):
+        """True once the human stopped watching.
+
+        Asks the engine at most once per flush window, so a compute loop can
+        poll it every iteration and still cost one host call per tick.
+        """
+        if self._is_open and (time.monotonic() - self._last_read) * 1000.0 >= self._flush_ms:
+            try:
+                self.state()
+            except Interrupted:
+                pass
+        return not self._is_open
+
+    @property
+    def reason(self):
+        """Why the view ended, or None while it is open."""
+        return (self._result or {}).get("reason")
+
+    @property
+    def result(self):
+        """The verdict, once the view has ended."""
+        return self._result
+
+    # -- nodes ----------------------------------------------------------------
+
+    def node(self, node_id):
+        """The typed handle for one node, by id."""
+        name = str(node_id)
+        type_name = self._nodes.get(name)
+        if not type_name:
+            known = ", ".join(self._order) or "no nodes"
+            raise KeyError(f"this view has no node {name!r} — it has {known}")
+        return _LIVE_NODES[type_name](self, name, type_name)
+
+    def __getitem__(self, node_id):
+        return self.node(node_id)
+
+    def __contains__(self, node_id):
+        return str(node_id) in self._nodes
+
+    def __iter__(self):
+        return iter(list(self._order))
+
+    def _only(self, type_name, verb):
+        ids = [i for i in self._order if self._nodes.get(i) == type_name]
+        if len(ids) == 1:
+            return self.node(ids[0])
+        if not ids:
+            raise KeyError(f"view.{verb}() needs a {type_name} node and this view has none")
+        raise KeyError(
+            f"view.{verb}() is ambiguous: this view has {len(ids)} {type_name} nodes — "
+            f"address one by id ({', '.join(ids)})"
+        )
+
+    def status(self, text, tone=None, detail=None):
+        return self._only("status", "status").set(text, tone=tone, detail=detail)
+
+    def progress(self, value=None, done=None, total=None):
+        return self._only("progress", "progress").set(value=value, done=done, total=total)
+
+    def stat(self, stat_id, value_text, label=None, tone=None):
+        return self._only("stat", "stat").set(stat_id, value_text, label=label, tone=tone)
+
+    def step(self, step_id, tone=None, label=None, detail=None, value=None):
+        return self._only("steps", "step").set(step_id, tone=tone, label=label, detail=detail, value=value)
+
+    def write(self, *lines):
+        return self._only("log", "write").write(*lines)
+
+    def row(self, row_id, cells, tone=None):
+        return self._only("table", "row").upsert(row_id, cells, tone=tone)
+
+    def link(self, link_id, label, target, target_kind=None, tone=None):
+        return self._only("link", "link").add(link_id, label, target, target_kind=target_kind, tone=tone)
+
+    # -- shape ----------------------------------------------------------------
+
+    def add(self, node, after=None):
+        """Add a whole node to a running view — a scan that discovers a seventh
+        device should not have to have declared it."""
+        op = {"op": "add-node", "node_spec": node}
+        if after is not None:
+            op["after"] = str(after)
+        self._push(op)
+        self.flush()
+        self._nodes[str(node.get("id"))] = str(node.get("type") or "")
+        self._order.append(str(node.get("id")))
+        return self.node(node.get("id"))
+
+    def drop(self, node_id):
+        """Drop a whole node, its items with it."""
+        self._push({"op": "remove-node", "node_id": str(node_id)})
+        self.flush()
+        self._nodes.pop(str(node_id), None)
+        self._order = [i for i in self._order if i != str(node_id)]
+        return self
+
+    # -- ending ---------------------------------------------------------------
+
+    def close(self, reason=None, summary=None, error=None, artifact_id=None):
+        """End the view and answer the verdict the model reads.
+
+        Closing twice is a no-op answering the first verdict: a `finally` that
+        closes what an interrupt already closed must not overwrite the reason
+        the human chose.
+        """
+        if not self._is_open:
+            return self._result
+        try:
+            self.flush()
+        except Interrupted:
+            return self._result
+        ending = {"reason": reason, "summary": summary, "error": error, "artifact_id": artifact_id}
+        answer = self._settle(
+            self._call(
+                {
+                    "op": "close",
+                    "view_id": self.view_id,
+                    "ending": {k: v for k, v in ending.items() if v is not None},
+                }
+            )
+        )
+        self._is_open = False
+        self._result = answer.get("result") or self._result
+        return self._result
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        if error is None:
+            self.close()
+        else:
+            # The run died mid-way and still owes the model the picture the
+            # human was watching, with the reason it stopped.
+            self.close(reason="failed", error=str(error) or kind.__name__)
+        return False
+
+    def __repr__(self):
+        state = "open" if self._is_open else (self.reason or "closed")
+        return f"<vis live view {self.view_id!r} {state}>"
+
+
+def _merge_append(earlier, op):
+    """Fold `op`'s items into `earlier`, or answer False when they do not fold."""
+    keys = [k for k in earlier if k not in ("op", "node_id")]
+    other = [k for k in op if k not in ("op", "node_id")]
+    if len(keys) != 1 or keys != other:
+        return False
+    key = keys[0]
+    if key == "lines":
+        earlier[key] = list(earlier[key]) + list(op[key])
+        return True
+    merged = {}
+    for item in list(earlier[key]) + list(op[key]):
+        # A repeated id keeps its POSITION and takes the newest values, which is
+        # exactly what the engine's upsert does.
+        merged[item.get("id")] = item
+    earlier[key] = list(merged.values())
+    return True
+
+
+def live(title, nodes, **options):
+    """Open a live view and answer the handle that drives it.
+
+    View options: description, source, is_cancellable, session_id, channel_ids,
+    plus `flush_ms` for the batching window. EVERY key is a snake_case string,
+    exactly as `vis.ask` documents.
+
+    The view is mounted at once and nothing blocks — use it as a context
+    manager so it closes itself:
+
+        with vis.live('Deploy', [vis.steps('plan', steps=[...])]) as view:
+            view['plan'].set('build', tone='running')
+
+    Closing answers the verdict: `is_completed`, `reason`, the finished picture
+    as data, and whatever `summary` the extension chose to end with.
+    """
+    flush_ms = options.pop("flush_ms", None)
+    request = {str(k): v for k, v in options.items()}
+    request["title"] = str(title)
+    request["nodes"] = list(nodes)
+    return LiveView(request, flush_ms=flush_ms)
+
+
+# -- Live view builders -------------------------------------------------------
+# One helper per node type, named exactly like Clojure's
+# `com.blockether.vis.human-input`, and the ID IS POSITIONAL because every op an
+# extension writes later addresses that id. A builder is a plain dict: nothing
+# here talks to the host, and `vis.live` is what carries it to the engine that
+# judges it.
+
+
+def _live_node(type_name, node_id, spec):
+    node = {str(k): v for k, v in spec.items() if v is not None}
+    node["type"] = type_name
+    node["id"] = str(node_id)
+    return node
+
+
+def status(node_id, text=None, **spec):
+    # One line saying what is happening right now: text, tone, detail, label.
+    return _live_node("status", node_id, dict(spec, text=text))
+
+
+def progress(node_id, **spec):
+    # A bar: value (0..1), or done/total. Neither is indeterminate.
+    return _live_node("progress", node_id, spec)
+
+
+def stat(node_id, stats=None, **spec):
+    # A strip of counters, each `{'id': ..., 'label': ..., 'value_text': ...}`.
+    return _live_node("stat", node_id, dict(spec, stats=stats))
+
+
+def steps(node_id, steps=None, **spec):
+    # A checklist, each `{'id': ..., 'label': ..., 'tone': ...}`.
+    return _live_node("steps", node_id, dict(spec, steps=steps))
+
+
+def output(node_id, **spec):
+    # Streamed lines. It is `log` on the wire; the builder is `output` so it
+    # never shadows `vis.log`, the engine log line — the same reason `slider`
+    # builds a `range` field. Unbounded: `window_lines` is only how much of it a
+    # surface holds hot, and the view's record keeps every line.
+    return _live_node("log", node_id, spec)
+
+
+def table(node_id, columns=None, **spec):
+    # Rows keyed by id. `order` declares how they paint — 'insertion' (the
+    # default), 'newest-first', or {'by': 'duration', 'dir': 'desc'}.
+    return _live_node("table", node_id, dict(spec, columns=columns))
+
+
+def table_column(column_id, label=None, **spec):
+    # One declared column: the id a cell sits under, its header, its align.
+    return _live_item(column_id, dict(spec, label=label))
+
+
+def table_row(row_id, cells, **spec):
+    # One declared row: the id every later upsert addresses, and its cells.
+    return _live_item(row_id, dict(spec, cells=[_cell(c) for c in cells]))
+
+
+def link(node_id, links=None, **spec):
+    # Pointers a human can open: url, path or attachment.
+    return _live_node("link", node_id, dict(spec, links=links))

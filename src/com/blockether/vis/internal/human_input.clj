@@ -39,6 +39,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.human-input.live-sink :as live-sink]
             [com.blockether.vis.internal.human-input.spec :as hi-spec]
@@ -2031,3 +2032,106 @@
          request!
          answer->wire
          json/write-json-str))))
+
+;; -- The Python seam ---------------------------------------------------------
+
+(def ^:private live-ops
+  "The live verb's op grammar, the same shape the shell verb's is:
+   `open` MOUNTS a view and answers the id every later op names, and each handle
+   op drives the view that id stands for.
+
+   `packages/vis-contract/resources/vis-contract/python-host.edn` declares the
+   same table for the packaged module and for a host outside Vis, and
+   `contract.python-host-test` is what fails when the two drift: an op the engine
+   does not know would make an extension that runs inside Vis refuse outside it."
+  {:default "open" :spawn #{"open"} :handle #{"patch" "state" "close"}})
+
+(defn- live-op-name
+  "The op `opts` asks for, refused BY NAME when it is in neither list. An options
+   map with no `op` means the default one, exactly as a shell options map does."
+  [opts]
+  (let [op (or (trimmed (get opts "op")) (:default live-ops))]
+    (when-not (or (contains? (:spawn live-ops) op) (contains? (:handle live-ops) op))
+      (throw (ex-info (str "unknown live view op " (pr-str op)
+                           " — use " (str/join ", "
+                                               (sort (into (:spawn live-ops) (:handle live-ops)))))
+                      {:type :vis/human-input-unknown-live-op :op op})))
+    op))
+
+(defn- live-handle-id
+  "The view a handle op names."
+  [opts op]
+  (or (trimmed (get opts "view_id"))
+      (invalid-live-patch! (str "a live " op " names no view_id — pass the id `open` answered"))))
+
+(defn- live-ended
+  "The answer for a view that is no longer open: its verdict read back off the
+   RECORD.
+
+   The registry drops a view the moment it ends, so an extension that pushes into
+   a view the human interrupted would otherwise learn only that it is gone. The
+   sink file still holds the trailer, so it learns WHY — which is the whole
+   difference between an unattended loop that stops and one that keeps working
+   for a screen nobody is watching."
+  [view-id]
+  (let [result (live-sink/verdict (live-sink/view-file (ambient-session-id) view-id))]
+    (when-not result
+      (invalid-live-patch!
+        (str "no live view " view-id " is open — it was closed, interrupted, or never opened")))
+    {:view-id view-id :is-open false :result result}))
+
+(defn live-dispatch
+  "One live-view op: an options map with wire keys in, the answer map out.
+
+   `open` answers the mounted view, `patch` the sequence number the engine
+   accepted, `state` what the view looks like right now, and `close` the verdict
+   the model reads. Every answer says `:is-open`, so the caller learns from the
+   op it was making that the human stopped watching — the record's verdict comes
+   back with it."
+  [opts]
+  (when-not (map? opts) (invalid-live-view! "a live envelope must be a JSON object"))
+  (let [op (live-op-name opts)]
+    (case op
+      "open"
+      (let [view (open-live! (get opts "view"))]
+        {:view-id (:id view) :is-open true :view view})
+
+      "patch"
+      ;; Asked BEFORE patching rather than catching the refusal after: a patch
+      ;; the human's interrupt raced is not a spec problem, and an author must
+      ;; not have to tell those two apart by reading a message.
+      (let [view-id (live-handle-id opts op)]
+        (if (live-view view-id)
+          {:view-id view-id :is-open true :seq (:seq (patch-live! view-id (get opts "patch")))}
+          (live-ended view-id)))
+
+      "state"
+      (let [view-id (live-handle-id opts op)]
+        (if-let [view (live-view view-id)]
+          {:view-id view-id :is-open true :view view}
+          (live-ended view-id)))
+
+      "close"
+      (let [view-id (live-handle-id opts op)]
+        (if-let [result (close-live! view-id (or (get opts "ending") {}))]
+          {:view-id view-id :is-open false :result result}
+          (live-ended view-id))))))
+
+(defn live-json!
+  "The strings-only seam a Python extension crosses for a live view: one JSON
+   envelope in, one JSON answer out.
+
+   Channel routing is host-side — a `channel_id`/`channel_ids` key is dropped
+   rather than minting keywords from guest data — so an extension always reaches
+   the channels the host picked, exactly as [[request-json!]] does.
+
+   Nothing blocks. A form parks the extension because it owes the human a value;
+   a view owes nobody anything, so the push crosses, the surfaces learn, and the
+   extension carries on."
+  [envelope-json]
+  (let [envelope (json/read-json (str envelope-json) :key-fn identity)]
+    (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))
+    (-> envelope
+        (dissoc "channel_id" "channel_ids")
+        live-dispatch
+        wire/json-str)))

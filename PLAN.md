@@ -491,7 +491,7 @@ takes at most half the rows between the transcript and the prompt.
 the 16 shipped extensions, and the model's polling loop lives in the Python sandbox.
 
 **Data.** One new host op and its op grammar, mirroring how `shell` is already declared —
-`packages/vis-contract/resources/vis-contract/python-host.edn`, `:contract/version` 2 -> 3:
+`packages/vis-contract/resources/vis-contract/python-host.edn`, `:contract/version` 3 -> 4:
 
 ```clojure
 {:op/name "live"
@@ -503,7 +503,8 @@ the 16 shipped extensions, and the model's polling loop lives in the Python sand
 :contract/live
 {:live/default-op "open"
  :live/spawn-ops ["open"]
- :live/handle-ops ["patch" "state" "close"]}
+ :live/handle-ops ["patch" "state" "close"]
+ :live/flush-ms 100}
 ```
 
 The envelope it carries is the Phase 1 shape as JSON:
@@ -516,8 +517,8 @@ The envelope it carries is the Phase 1 shape as JSON:
   has no "the" table: `view["failures"]` (also `view.node("failures")`) answers a typed node handle —
   `Table.upsert(row_id, cells)` / `.remove(ids)` / `.clear()`, `Log.write(*lines)`,
   `Progress.set(value, done=, total=)`, `Status.set(text, tone=, detail=)`,
-  `Steps.set(step_id, tone=, detail=)`, `Stats.set(stat_id, value_text, tone=)`,
-  `Links.add(link_id, label, target)`.
+  `Steps.set(step_id, tone=, label=, detail=, value=)`, `Stat.set(stat_id, value_text, tone=)`,
+  `Link.add(link_id, label, target)`.
 - Same file — `Table.upsert` is one verb for both "new row" and "row changed", because the caller
   loop that writes a live table does not know which it is: `upsert("dev-7", [...])` inserts the
   first time and replaces in place after, so a scan loop is a `for` over devices rather than a diff
@@ -525,39 +526,44 @@ The envelope it carries is the Phase 1 shape as JSON:
   (`"insertion"` default, `"newest-first"`, or `{"by": "duration", "dir": "desc"}`); the batching
   tick coalesces repeated upserts of the SAME row id into the last one, so a per-row progress
   counter costs one wire row per tick instead of one per tick per write.
-- Same file — the view-level shortcuts (`view.log(...)`, `view.row(...)`, `view.status(...)`) stay
-  for the common single-node case and resolve to that node ONLY when the view holds exactly one node
-  of the type; otherwise they raise naming the candidate ids, so an ambiguous view fails at the call
-  instead of quietly patching the wrong table. `view.add(vis.table("passed", columns=[…]))` and
+- Same file — the view-level shortcuts (`view.write(...)`, `view.row(...)`, `view.status(...)`,
+  `view.progress(...)`, `view.stat(...)`, `view.step(...)`, `view.link(...)`) stay for the common
+  single-node case and resolve to that node ONLY when the view holds exactly one node of the type;
+  otherwise they raise naming the candidate ids, so an ambiguous view fails at the call instead of
+  quietly patching the wrong table. `view.add(vis.table("passed", columns=[…]))` and
   `view.drop("device-7")` reshape a running view; node builders `vis.status`, `vis.progress`,
-  `vis.stat`, `vis.steps`, `vis.log`, `vis.table`, `vis.table_column`, `vis.link` all take the id
-  first. The handle carries `is_interrupted` and `reason`; a push after an interrupt raises
-  `vis.Interrupted`, so an unattended loop stops by itself while a compute loop can poll the flag.
+  `vis.stat`, `vis.steps`, `vis.output`, `vis.table`, `vis.table_column`, `vis.table_row` and
+  `vis.link` all take the id first. The log builder is `vis.output` because `vis.log` is already the
+  engine log line — the same collision `vis.slider` answers by building a `range` field. The handle
+  carries `is_interrupted` and `reason`; a push after an interrupt raises `vis.Interrupted`, so an
+  unattended loop stops by itself while a compute loop can poll the flag.
 - Same file — a push per line would be a host round trip per line, so the handle BATCHES: ops buffer
   and flush on a tick (`:live/flush-ms`, default 100), at `:max-patch-lines`, and on close. That is
   a correctness property rather than a nicety, because the engine's durable publish parks its
   producing thread until the journal writer acknowledges the event (`gateway/bus.clj:567-589`).
 - `resources/vis-python/extension_bootstrap.py` — `live=__vis_host_live__` in `_host`.
-- `src/com/blockether/vis/internal/python_extensions.clj:490` — `host-member-names` gains `live`.
+- `src/com/blockether/vis/internal/python_extensions.clj:459` — the binder binds `__vis_host_live__`;
+  `host-member-names` reads the contract document, so it gains `live` with the op itself.
 - `src/com/blockether/vis/internal/human_input.clj` — `live-json!`, the strings-only seam beside
   `request-json!` (`:1312-1345`).
 - Test `test/com/blockether/vis/contract/python_host_test.clj` (drift: document, bootstrap, package
   and engine dispatch agree) and `test/com/blockether/vis/internal/extension_check_test.clj` (a
   static check of an extension that opens a live view).
-- `packages/vis-agent/src/vis/_outside.py` `_check_request` (`:708-724`) accepts the live shape on the
-  same path, so `vis.live` refuses outside a Vis host exactly as it refuses inside one, and
-  `resources/vis-python/extension_check.py` `_ASKS` gains `live`: the checker judges a declared view by
-  CALLING it on the inert host (`internal/extension_check.clj` `judge-request`), which is the only
-  pre-flight an unattended extension gets.
-- `resources/vis-docs/extending.md` — the live view named in the `extension check` list (`:887-888`),
-  which promises ONE judge, so a primitive missing from it reads as a second one; plus the worked
-  example that carries the shell case at the EXTENSION layer where it belongs — spawn a background
-  shell, drain its ring (`internal/foundation/shell.clj:116`) into a `log` node the extension labels,
-  return one verdict to the model.
+- `packages/vis-agent/src/vis/_outside.py` — `live(envelope_json)` in `_IMPLEMENTATIONS`, judged by
+  `_check_view` on the same path `_check_request` judges a dialog, so `vis.live` refuses outside a
+  Vis host exactly as it refuses inside one; and `resources/vis-python/extension_check.py` gains
+  `_OPENS ("live",)` beside `_ASKS ("ask",)`: the checker judges a declared view by CALLING it on the
+  inert host (`internal/extension_check.clj` `judge-view`, the second judge beside `judge-request`),
+  which is the only pre-flight an unattended extension gets.
+- `resources/vis-docs/extending.md` — a live view named in the `extension check` list, which promises
+  ONE judge, so a primitive missing from it reads as a second one; plus the section "Showing the
+  human live work" carrying the shell case at the EXTENSION layer where it belongs — spawn a
+  background shell, drain its ring (`internal/foundation/shell.clj:116`) into a `log` node the
+  extension labels, return one verdict to the model.
 
-**Unknowns.** Outside a Vis host, is stderr rendering enough, or should `:outside/local` write the
-same JSON the engine would publish so a harness can assert on it? The plan assumes stderr, one line
-per patch.
+**Unknowns.** Answered: stderr alone is not enough. `:outside/local` prints one line per patch AND
+materializes the view, so a harness can assert on `state()` — the same upserts, the same bounds — and
+a view that has already ended answers its verdict instead of vanishing.
 
 ## Phase 4 — Bridge it to the companion app
 
@@ -738,7 +744,7 @@ payload (assumed yes) or its own view.
 
 ## State of the plan
 
-**IN FLIGHT** — Phases 1 and 2 are DONE and green; Phases 3-6 are written and not yet started.
+**IN FLIGHT** — Phases 1, 2 and 3 are DONE and green; Phases 4-6 are written and not yet started.
 
 Done:
 
@@ -782,16 +788,28 @@ Done:
   earned — `live/fraction` and `live/percent` are the ONE definition the document and the pane share.
   10 tests in `live_view_test.clj` including the screenshot gate, 586 green across the eight
   neighbouring TUI suites.
+- Phase 3 COMPLETE — Python gets the same primitive through one host op. `live` is declared in
+  `packages/vis-contract/resources/vis-contract/python-host.edn` (`:contract/version` 4,
+  `:live/flush-ms 100`), rendered into `vis_contract/contract.json`, bound in
+  `internal/python_extensions.clj` and answered by `live-json!` / `live-dispatch` in
+  `internal/human_input.clj`. `vis.live(...)` is a context manager whose handle addresses nodes BY ID
+  (`view["failures"].upsert("web-1", […])`), folds a burst into one patch per 100 ms window on the
+  LEADING edge, flushes before every read and every close, raises `vis.Interrupted` once the human
+  stopped watching, and answers the verdict as DATA. The log builder is `vis.output` because
+  `vis.log` is the engine log line. Outside a Vis host the view still runs — a stderr transcript AND
+  a truthfully materialized state, so an extension is written once and behaves the same in both
+  places. `extension_check` grew the SECOND judge (`judge-view` beside `judge-request`), so a
+  declared view is refused before a human ever sees it. 59 Python tests across `test_outside.py` and
+  the contract package, 27 Clojure tests across `python_host_test.clj` and `extension_check_test.clj`;
+  `resources/vis-docs/extending.md` teaches it with the worked background-shell drain.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.
 
 TODO, in order:
 
-1. Phase 3 — `live` host op (contract version 3), `vis.live` with per-node handles and batched
-   flushing, checker parity.
-2. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
+1. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
    log-range resync, interrupt route), companion reducer keyed by node id, component and drift test.
-3. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
-4. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
+2. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
+3. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
    proof of the chain.

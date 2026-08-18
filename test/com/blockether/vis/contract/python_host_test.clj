@@ -9,6 +9,7 @@
    context whose `vis._host` is read back and compared to the document."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.shell :as fshell]
+            [com.blockether.vis.internal.human-input :as human-input]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [lazytest.core :refer [defdescribe describe expect it]])
@@ -51,6 +52,27 @@
           ;; An options map with no `op` means the default one, so both spell
           ;; the same missing argument.
           (expect (= (op-type nil) (op-type default-op)))))
+    (it "speaks the live vocabulary the engine dispatches on"
+        ;; Same seam one layer up: the `vis` module reads these names out of the
+        ;; document, so an op the engine cannot dispatch would strand a live view
+        ;; the moment an extension pushed into it.
+        (let
+          [{:live/keys [default-op spawn-ops handle-ops flush-ms]}
+           (contract/live-vocabulary)
+
+           op-type
+           (fn [op]
+             (try (human-input/live-dispatch (cond-> {}
+                                               op
+                                               (assoc "op" op)))
+                  nil
+                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+          (expect (every? #(not= :vis/human-input-unknown-live-op (op-type %))
+                          (concat spawn-ops handle-ops)))
+          (expect (= :vis/human-input-unknown-live-op (op-type "detonate")))
+          (expect (= (op-type nil) (op-type default-op)))
+          (expect (pos-int? flush-ms))))
     (it "declares every global the engine actually binds into a live context"
         ;; `bind-inert-host!` binds the document's own list, so only the REAL
         ;; binder can prove the engine grew a host call the document never heard
@@ -78,4 +100,15 @@
                   "import vis\n','.join(sorted(n for n in vars(vis._host) if not n.startswith('_')))")
                 (.asString)
                 (str/split #","))))
-          (finally (.close ctx)))))))
+          (finally (.close ctx)))))
+    (it "batches on the window the document declares"
+        ;; The flush window is a CONTRACT number, not the module's own taste: the
+        ;; engine's durable publish parks the thread that pushed, so a module
+        ;; batching on a guess of its own would cost a host call per line.
+        (let [^Context ctx (pyx/build-context "python-contract-flush-test")]
+          (try (pyx/bind-inert-host! ctx nil)
+               (.eval ctx "python" ^String pyx/bootstrap-python)
+               (expect (= (str (:live/flush-ms (contract/live-vocabulary)))
+                          (-> (.eval ctx "python" "import vis\nstr(vis._FLUSH_MS)")
+                              (.asString))))
+               (finally (.close ctx)))))))

@@ -33,6 +33,7 @@ __all__ = [
     "CONTRACT",
     "HUMAN_INPUT",
     "OPS",
+    "LIVE",
     "SHELL",
     "VERSION",
     "Host",
@@ -57,7 +58,14 @@ OPS = {entry["name"]: entry for entry in CONTRACT["ops"]}
 """Every declared op by name, in document order."""
 
 SHELL = CONTRACT["shell"]
-"""The `shell` verb's lifecycle grammar: `default_op`, `spawn_ops`, `handle_ops`."""
+"""The `shell` verb's lifecycle grammar: `default_op`, `handle_ops`, `spawn_ops`."""
+
+LIVE = CONTRACT["live"]
+"""The `live` verb's lifecycle grammar: `default_op`, `spawn_ops`, `handle_ops`, `flush_ms`.
+
+`flush_ms` is how long a handle may coalesce pushes before one has to cross: a
+host round trip per written line would park the extension on the journal writer
+once per line."""
 
 HUMAN_INPUT = CONTRACT["human_input"]
 """The closed human-input vocabulary — field, decor and group types and their defaults."""
@@ -125,6 +133,9 @@ class Host(Protocol):
         run_validator: Callable[[str, str], str],
     ) -> str:
         """Ask the human, and block until the answer settles or is cancelled."""
+
+    def live(self, envelope_json: str) -> str:
+        """Open, patch, read or close one live view — the grammar is [[LIVE]]."""
 
     def reveal_secret(self, handle: str) -> Any:
         """Resolve a `vis-secret:` handle to its plaintext."""

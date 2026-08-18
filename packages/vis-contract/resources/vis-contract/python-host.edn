@@ -14,7 +14,7 @@
 ;;   :outside/local   a real local implementation: a file, stderr, a subprocess.
 ;;   :outside/prompt  the terminal stands in for the human channel Vis would raise.
 ;;   :outside/refuse  no honest local answer exists, and `:op/refusal` says why.
-{:contract/version 3
+{:contract/version 4
  :contract/ops
  [{:op/name "state_get"
    :op/global "__vis_host_state_get__"
@@ -70,6 +70,11 @@
    :op/arity 3
    :op/summary "Ask the human, and block until the answer settles or is cancelled."
    :op/outside :outside/prompt}
+  {:op/name "live"
+   :op/global "__vis_host_live__"
+   :op/arity 1
+   :op/summary "Open, patch, read or close one live view."
+   :op/outside :outside/local}
   {:op/name "reveal_secret"
    :op/global "__vis_host_reveal_secret__"
    :op/arity 1
@@ -95,4 +100,19 @@
  :contract/shell
  {:shell/default-op "run"
   :shell/spawn-ops ["run" "background"]
-  :shell/handle-ops ["logs" "wait" "send" "stop"]}}
+   :shell/handle-ops ["logs" "wait" "send" "stop"]}
+
+ ;; The `live` verb's own lifecycle grammar, read exactly like `:contract/shell`
+ ;; above: `open` MOUNTS a view and answers the id every later op names, and the
+ ;; handle ops drive the view that id stands for. `:live/flush-ms` is how long the
+ ;; packaged handle may coalesce pushes before one has to cross — a host round
+ ;; trip per written line would park the extension on the journal writer once per
+ ;; line, which is why the batching is part of the contract and not a nicety.
+ ;;
+ ;; Not to be confused with `human_input.live` in the rendered package document:
+ ;; that is the view VOCABULARY the engine owns, this is the verb's grammar.
+ :contract/live
+ {:live/default-op "open"
+  :live/spawn-ops ["open"]
+  :live/handle-ops ["patch" "state" "close"]
+  :live/flush-ms 100}}

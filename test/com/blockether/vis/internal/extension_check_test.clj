@@ -93,6 +93,26 @@
        "vis.notify(\"loaded\")\n" "vis.shell(\"touch /tmp/vis-extension-check-shelled\")\n"
        "\n" "vis.extension(name=\"demo\")\n"))
 
+(def ^:private live-py
+  (str
+    "import vis\n" "\n"
+    "\n" "def scan(args):\n"
+    "    with vis.live(\"Fleet scan\", [\n"
+    "        vis.status(\"now\", \"Starting\", tone=\"running\"),\n"
+    "        vis.table(\"devices\", columns=[vis.table_column(\"device\", \"Device\"),\n"
+    "                                     vis.table_column(\"state\", \"State\", align=\"right\")]),\n"
+    "        vis.output(\"tail\", label=\"Output\"),\n"
+    "    ], description=\"every device on the shelf\") as view:\n"
+    "        view.row(\"dev-7\", [\"dev-7\", \"ok\"], tone=\"ok\")\n" "\n"
+    "\n" "vis.extension(name=\"demo\", tools=[])\n"))
+
+(def ^:private bad-live-py
+  ;; The node vocabulary is closed, and a chart is not in it.
+  (str "import vis\n" "\n"
+       "\n" "def scan(args):\n"
+       "    return vis.live(\"Fleet scan\", [{\"id\": \"chart\", \"type\": \"sparkline\"}])\n" "\n"
+       "\n" "vis.extension(name=\"demo\")\n"))
+
 (def ^:private reports
   ;; ONE checker context for the whole suite: building the `vis` module is the
   ;; expensive part, and every case below is judged in the same one.
@@ -102,7 +122,8 @@
                  [["valid.py" valid-py] ["bad-select.py" bad-select-py] ["typo.py" typo-py]
                   ["duplicate-names.py" duplicate-names-py] ["retired-check.py" retired-check-py]
                   ["unknowable.py" unknowable-py] ["broken.py" broken-py] ["library.py" library-py]
-                  ["validators.py" validators-py] ["side-effect.py" side-effect-py]]))))
+                  ["validators.py" validators-py] ["side-effect.py" side-effect-py]
+                  ["live.py" live-py] ["bad-live.py" bad-live-py]]))))
 
 (defn- report [path] (get @reports path))
 
@@ -132,6 +153,15 @@
                 (expect (= #{"invalid-request"} (kinds "duplicate-names.py")))
                 (expect (str/includes? (reason "duplicate-names.py")
                                        "field names must be distinct"))))
+  (describe "a live view"
+            (it "is judged by OPENING it on a host that mounts nothing"
+                (expect (:is-valid (report "live.py")))
+                (expect (= #{} (kinds "live.py")))
+                (expect (= 1 (:checked (report "live.py")))))
+            (it "answers with the engine's own reason for a node it has no name for"
+                (expect (= #{"invalid-view"} (kinds "bad-live.py")))
+                (expect (str/includes? (reason "bad-live.py") "sparkline"))
+                (expect (= 5 (:line (first (:problems (report "bad-live.py"))))))))
   (describe "a validate= function"
             (it "is judged by SHAPE, never called"
                 ;; A validator is code, so the checker stands a placeholder taking

@@ -13,7 +13,8 @@ Three things come out of that:
   is how `vis.plaintxt(...)` is caught before it raises in front of a human;
 * every `vis.ask(...)` whose request can be reconstructed, judged by CALLING it
   on a host that normalizes the request and settles it `undeliverable` instead
-  of asking anybody - the engine's own refusal, never a second opinion.
+  of asking anybody - the engine's own refusal, never a second opinion, and
+  every `vis.live(...)` view judged the same way on a host that mounts nothing.
 
 A `validate=` function is checked by SHAPE, never called: a lambda or a `def` in
 the file stands in as a placeholder taking exactly the arguments it declares, so
@@ -30,7 +31,8 @@ import json
 import vis
 
 # Pure node constructors: calling one builds a dict and touches nothing else,
-# which is why a static check is allowed to call them.
+# which is why a static check is allowed to call them. The live half builds the
+# nodes of a view, the form half the fields of a request.
 _BUILDERS = (
     "plaintext",
     "password",
@@ -45,10 +47,21 @@ _BUILDERS = (
     "column",
     "heading",
     "paragraph",
+    "status",
+    "progress",
+    "stat",
+    "steps",
+    "output",
+    "table",
+    "table_column",
+    "table_row",
+    "link",
 )
 
-# The one entry point that carries a request worth validating.
+# The two entry points that carry a declaration worth validating: a form to ask
+# for, and a view to open.
 _ASKS = ("ask",)
+_OPENS = ("live",)
 
 
 class _Unknown(Exception):
@@ -163,13 +176,13 @@ def _problem(kind, node, message):
     }
 
 
-def _request_args(node, env, names):
-    """The `(title, fields, options)` a `vis.ask` call carries."""
+def _declaration(node, env, names, key):
+    """The `(title, <key>, options)` a `vis.ask` or a `vis.live` call carries."""
     positional = [_value(a, env, names) for a in node.args]
     options = _kwargs(node, env, names)
     title = positional[0] if positional else options.pop("title")
-    fields = positional[1] if len(positional) > 1 else options.pop("fields")
-    return title, fields, options
+    listed = positional[1] if len(positional) > 1 else options.pop(key)
+    return title, listed, options
 
 
 def _reason(exc):
@@ -186,24 +199,35 @@ def _reason(exc):
     return text
 
 
-def _check_ask(node, env, names, report):
+def _check_declaration(node, env, names, report, key, declare, kind):
     try:
-        title, fields, options = _request_args(node, env, names)
+        title, listed, options = _declaration(node, env, names, key)
     except (_Unknown, KeyError, IndexError):
         report["skipped"] += 1
         return
     report["checked"] += 1
     try:
-        vis.ask(title, fields, **options)
+        declare(title, listed, **options)
     except BaseException as exc:
-        # The engine refused the request, or a builder refused the shape outright.
-        # BaseException, because a host refusal arrives as a foreign exception that
-        # `except Exception` does not catch.
-        report["problems"].append(_problem("invalid-request", node, _reason(exc)))
+        # The engine refused the declaration, or a builder refused the shape
+        # outright. BaseException, because a host refusal arrives as a foreign
+        # exception that `except Exception` does not catch.
+        report["problems"].append(_problem(kind, node, _reason(exc)))
+
+
+def _check_ask(node, env, names, report):
+    _check_declaration(node, env, names, report, "fields", vis.ask, "invalid-request")
+
+
+def _check_live(node, env, names, report):
+    # A view is judged exactly as a form is: `vis.live` opens it on a host that
+    # normalizes it and mounts nothing, so a node the vocabulary has no name for
+    # is a problem HERE instead of in front of the human.
+    _check_declaration(node, env, names, report, "nodes", vis.live, "invalid-view")
 
 
 def _walk(node, env, names, report):
-    """Depth first, in source order: bind what is knowable, check every ask."""
+    """Depth first, in source order: bind what is knowable, judge every ask and view."""
     for child in ast.iter_child_nodes(node):
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
             # `validate=is_a_slug` is knowable: the name stands for its shape.
@@ -218,8 +242,12 @@ def _walk(node, env, names, report):
                         "the vis module has no " + attr,
                     )
                 )
-        if isinstance(child, ast.Call) and _read(child.func, names) in _ASKS:
-            _check_ask(child, env, names, report)
+        if isinstance(child, ast.Call):
+            called = _read(child.func, names)
+            if called in _ASKS:
+                _check_ask(child, env, names, report)
+            elif called in _OPENS:
+                _check_live(child, env, names, report)
         if (
             isinstance(child, ast.Assign)
             and len(child.targets) == 1

@@ -456,6 +456,17 @@
                           validators-json
                           run))))))
     (.putMember g
+                "__vis_host_live__"
+                ;; Live view: one JSON envelope in, one JSON answer out, and
+                ;; NOTHING blocks. A view is work reporting on itself, so the
+                ;; extension keeps running while the human watches it move —
+                ;; the opposite of `request_input`, which parks until a human
+                ;; answers.
+                (->executable (fn [envelope]
+                                ((requiring-resolve
+                                   'com.blockether.vis.internal.human-input/live-json!)
+                                  envelope))))
+    (.putMember g
                 "__vis_host_reveal_secret__"
                 (->executable (fn [handle]
                                 ((requiring-resolve
@@ -513,10 +524,11 @@
    not run: a form is judged by the engine on the Clojure side, never by
    executing the extension.
 
-   `overrides` may hand back ONE member by name: the checker binds
+   `overrides` may hand back members by name: the checker binds
    `__vis_host_request_input__` to a judge that normalizes the request and
-   settles it `undeliverable`, so a form is judged by asking for it while
-   nobody is asked."
+   settles it `undeliverable`, and `__vis_host_live__` to one that normalizes a
+   view and mounts nothing, so a form is judged by asking for it and a view by
+   opening it while nobody is asked and nothing is shown."
   ([^Context ctx] (bind-inert-host! ctx nil))
   ([^Context ctx overrides]
    (let [g (.getBindings ctx "python")]
