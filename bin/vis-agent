@@ -717,8 +717,9 @@ Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild] [--keep-gatew
          --keep-gateway
                        leave a running gateway alone. By default an idle one is
                        released after the install (nothing is watching it) so the
-                       next session starts on the runtime just installed; a busy
-                       or user-owned gateway is never touched either way
+                       next session starts on the runtime just installed. A busy
+                       or user-owned gateway is never touched: the first session
+                       that later finds it unused replaces it itself
        Update takes the runtime that is installed forward; it never swaps one
        runtime for the other, and never changes track on its own. The vis-agent
        command travels with it: a native update replaces this file from the
@@ -732,7 +733,9 @@ EOF
 # it self-reaps anyway, and the next client spawns the new build - so update does
 # it without asking. A busy or user-owned daemon is never touched: the runtime's
 # own `--if-idle` rule decides that, this shell decides nothing, and a failure
-# here never fails an update that already succeeded.
+# here never fails an update that already succeeded. Nor is a daemon left running
+# left stale - the next client that attaches one older than itself, with nobody
+# using it, replaces it (`client/stale-bounce-verdict`).
 release_stale_gateway() {
   local native source_root
   case "$(runtime_effective)" in

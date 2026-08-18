@@ -242,6 +242,65 @@
           (is (true? (:stopped? verdict)))
           (is (= 1 @stops)))))))
 
+;; The state `vis-agent update` leaves behind when a session was open: the daemon
+;; keeps serving the old image, so the next client to find it unused replaces it.
+(deftest a-daemon-older-than-this-build-is-replaced-only-when-nobody-is-using-it
+  (testing "an idle daemon on the old image is the whole reason this rule exists"
+    (let [verdict (client/stale-bounce-verdict {:ours "0.1.40"
+                                                :theirs "0.1.39"
+                                                :status idle-status})]
+      (is (true? (:bounce? verdict)))
+      (is (= "0.1.39" (:from verdict)))
+      (is (= "0.1.40" (:to verdict)))))
+  (testing "no version is worth aborting somebody's work for"
+    (is (= :clients
+           (:reason (client/stale-bounce-verdict {:ours "0.1.40"
+                                                  :theirs "0.1.39"
+                                                  :status (assoc idle-status "clients" 1)}))))
+    (is (= :running-turns
+           (:reason (client/stale-bounce-verdict {:ours "0.1.40"
+                                                  :theirs "0.1.39"
+                                                  :status (assoc idle-status "running_turns" 1)}))))
+    (is (= :user-owned
+           (:reason (client/stale-bounce-verdict {:ours "0.1.40"
+                                                  :theirs "0.1.39"
+                                                  :status (assoc idle-status "managed" false)})))))
+  (testing "same build, an older client, or a dev checkout: nothing to pick up"
+    (is (= :fresh
+           (:reason (client/stale-bounce-verdict {:ours "0.1.40" :theirs "0.1.40" :status idle-status}))))
+    (is (= :fresh
+           (:reason (client/stale-bounce-verdict {:ours "0.1.39" :theirs "0.1.40" :status idle-status}))))
+    (is (= :fresh
+           (:reason (client/stale-bounce-verdict {:ours "dev" :theirs "0.1.39" :status idle-status})))))
+  (testing "a status nobody could read is not evidence of an idle daemon"
+    (is (false? (:bounce? (client/stale-bounce-verdict {:ours "0.1.40"
+                                                        :theirs "0.1.39"
+                                                        :status nil}))))))
+
+(deftest a-stale-daemon-is-bounced-once-per-process-never-in-a-loop
+  (let [stops (atom 0)
+        guard @(rv 'stale-bounce-attempted?)
+        handshake @(rv 'gateway-handshake*)
+        previous @handshake]
+    (reset! guard false)
+    (reset! handshake {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.39"})
+    (try
+      (with-redefs-fn
+        {(requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version)
+         (constantly "0.1.40")
+         (rv 'report-version-bounce!) (constantly nil)
+         (rv 'send-json-with-entry!) (fn [& _] idle-status)
+         (rv 'db-target) (constantly "/tmp/vis-stale-bounce-test.db")
+         (rv 'await-daemon-down!) (constantly true)
+         #'client/stop-daemon! (fn [] (swap! stops inc) {:status "stopped" :stopping false})}
+        (fn []
+          (let [bounce! (rv 'bounce-stale-daemon!)]
+            (is (true? (:bounced? (bounce! fake-entry))))
+            (is (= :checked (:reason (bounce! fake-entry)))
+                "a daemon that comes back old costs one restart, never a restart loop")
+            (is (= 1 @stops)))))
+      (finally (reset! guard false) (reset! handshake previous)))))
+
 ;; Regression (reported: a gateway that stopped answering had to be killed by hand):
 ;; `stop-daemon!` reported a live orphan and handed the human an `lsof` line, with
 ;; the daemon's pid sitting in the registry entry it had just read.

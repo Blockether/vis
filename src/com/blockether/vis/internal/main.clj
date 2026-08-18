@@ -3266,19 +3266,24 @@
   "`--if-idle`: release the daemon only when releasing it is free, and say why when
    it is not. Never fails - `vis-agent update` runs exactly this after installing a
    new runtime, and an update must not report failure because someone had a TUI
-   open. Silent when nothing is running, so a plain update prints nothing extra."
+   open. Silent when nothing is running, so a plain update prints nothing extra.
+
+   A daemon left alone here is not left stale: the next client to attach it with
+   nobody using it replaces it itself (`client/stale-bounce-verdict`), so the advice
+   printed for a busy one is to finish and close the session, not to run anything."
   []
   (let [{:keys [stopped? reason clients running-turns pid]}
         ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon-if-idle!))
+
+        version
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version))
 
         plural
         (fn [n one] (str n " " one (when (not= 1 (long n)) "s")))]
 
     (cond
       stopped?
-      (stdout! (str "gateway stopped - next session starts on "
-                    ((requiring-resolve
-                       'com.blockether.vis.internal.gateway.protocol/release-version))))
+      (stdout! (str "gateway stopped - next session starts on " version))
 
       (= :not-running reason)
       nil
@@ -3297,7 +3302,10 @@
                     (plural clients "client")
                     ", "
                     (plural running-turns "running turn")
-                    ") - bounce it when free:\n"
+                    ") - left alone, still serving the old build.\n"
+                    "  Quit those sessions and the next vis picks up "
+                    version
+                    " by itself; to bounce it now:\n"
                     "  vis-agent gateway stop")))))
 
 (defn- cli-gateway-stop!

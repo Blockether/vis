@@ -66,3 +66,25 @@
          (is (= {:protocol 3 :min-client 3 :min-gateway 2 :version "3.0.0"} @handshake-atom))
          (is (= "client-too-old" (:reason (client/compatibility))))
          (finally (reset! handshake-atom previous)))))
+
+;; The order that decides whether a running daemon is stale after `vis-agent update`.
+(deftest release-version-ordering-test
+  (testing "a release is only ever picked up forward"
+    (is (true? (protocol/newer-release? "0.1.40" "0.1.39")))
+    (is (false? (protocol/newer-release? "0.1.39" "0.1.40")))
+    (is (false? (protocol/newer-release? "0.1.40" "0.1.40"))))
+  (testing "segments compare as numbers, not as text"
+    (is (true? (protocol/newer-release? "0.1.10" "0.1.9")))
+    (is (true? (protocol/newer-release? "0.2.0" "0.1.99"))))
+  (testing "a shorter version is zero-padded, never ranked by its length"
+    (is (true? (protocol/newer-release? "0.2" "0.1.9")))
+    (is (false? (protocol/newer-release? "0.1" "0.1.0")))
+    (is (false? (protocol/newer-release? "0.1.0" "0.1"))))
+  (testing "a prerelease ranks with the release it precedes"
+    (is (true? (protocol/newer-release? "0.1.40-rc1" "0.1.39")))
+    (is (false? (protocol/newer-release? "0.1.40" "0.1.40-rc1"))))
+  (testing "a build with no ordered version is neither newer nor older"
+    (is (false? (protocol/newer-release? "dev" "0.1.39")))
+    (is (false? (protocol/newer-release? "0.1.40" "dev")))
+    (is (false? (protocol/newer-release? "0.1.40" nil)))
+    (is (false? (protocol/newer-release? nil nil)))))

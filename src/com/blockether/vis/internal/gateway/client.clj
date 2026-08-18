@@ -74,6 +74,10 @@
   ;; the first probe; all-nil fields when the daemon is too old to advertise.
   (atom nil))
 
+(defonce ^:private stale-bounce-attempted?
+  ;; One version-driven restart per process, ever: see [[bounce-stale-daemon!]].
+  (atom false))
+
 (defn- db-target [] (config/resolve-db-spec))
 
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
@@ -476,56 +480,6 @@
       (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000))))
     (reset! cached-entry entry)
     (assert-compatible! entry)))
-
-(defn ensure-gateway!
-  "Return a fresh daemon registry entry for the current DB, auto-starting the
-   detached gateway if needed. `:memory` is a programmer error for this client;
-   headless one-shots stay in-process and should not call here.
-
-   Optional `:port`/`:host` overrides the bind used WHEN THIS CALL SPAWNS a fresh
-   daemon (e.g. `vis-agent channels web --port`); a fresh daemon already registered for
-   the DB is a singleton and is attached to as-is, so the override is moot there.
-
-   Freshness is DEBOUNCED: the full HTTP /healthz probe (via `probe-entry?`)
-   runs at most once per `entry-probe-ttl-ms`. Within that window a cached entry
-   whose pid is still alive is trusted directly, so the TUI's chatty poll loop
-   stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
-   every gateway call."
-  ([] (ensure-gateway! nil))
-  ([{:keys [port host]}]
-   (if-let [remote (remote-gateway)]
-     ;; A remote gateway is ATTACHED to, never managed: no registry, no spawn.
-     (ensure-remote-gateway! remote)
-     (let [db (db-target)]
-       (when (discovery/memory-db? db)
-         (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
-       (let [target-port (or port DEFAULT_PORT)
-             target-host (or host DEFAULT_HOST)
-             cached @cached-entry
-             now (System/nanoTime)
-             fresh-until (long @entry-fresh-until-ns)
-             fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
-                      true
-                      ;; Window elapsed (or no cached entry): pay for the real
-                      ;; HTTP probe once, then re-open the debounce window.
-                      (when (discovery/registry-fresh? cached probe-entry?)
-                        (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
-                        true))]
-
-         (if fresh?
-           (assert-compatible! cached)
-           (let
-             ;; First recover the exact failure mode where a live standard daemon
-             ;; owns 7890 but its registry was removed. Never enter discovery's
-             ;; spawn path while the requested port already has a listener.
-             [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
-             (if entry
-               (do (reset! cached-entry entry)
-                   (reset! entry-fresh-until-ns (+ (System/nanoTime)
-                                                   (* (long entry-probe-ttl-ms) 1000000)))
-                   (assert-compatible! entry))
-               (throw (ex-info "gateway daemon did not become ready"
-                               (assoc result :type :gateway/start-timeout)))))))))))
 
 (defn- release-client!
   []
@@ -1513,8 +1467,139 @@
     (let [verdict (daemon-idle? (status))]
       (if (:idle? verdict)
         (let [res (stop-daemon!)]
-          (assoc verdict :stopped? (not= "orphaned" (:status res)) :stop res))
+          (assoc verdict
+            :stopped? (not= "orphaned" (:status res))
+            :stop res))
         (assoc verdict :stopped? false)))))
+(defn stale-bounce-verdict
+  "THE rule for replacing a daemon that is merely OLD - a pure decision over the two
+   release versions and an admin status map (canonical STRING keys).
+
+   `vis-agent update` releases an idle daemon itself, but one a TUI held open
+   survives the install and would keep serving the old image to every session after
+   it. The next client to attach is the one that can fix that: it learns both
+   versions from the `/healthz` handshake every attach already pays for. Only a
+   STRICTLY older daemon is replaced ([[protocol/newer-release?]]), so an old client
+   never downgrades a newer daemon and two builds can never bounce each other in
+   turn; a `dev` build on either side is unordered and bounces nothing.
+
+   Use decides the rest, exactly as everywhere else: [[daemon-idle?]] over the status
+   map, tolerating NO client, because this runs before this process takes its lease.
+   Nobody's open session or running turn is ever aborted to pick up a version, and a
+   status that could not be read is not evidence of an idle daemon.
+
+   Returns {:bounce? :reason :from :to}: `:reason` is `:fresh` when there is nothing
+   to pick up, otherwise the [[daemon-idle?]] reason."
+  [{:keys [ours theirs status]}]
+  (if-not (protocol/newer-release? ours theirs)
+    {:bounce? false :reason :fresh :from theirs :to ours}
+    (let [{:keys [reason]} (daemon-idle? status)]
+      {:bounce? (= :idle reason) :reason reason :from theirs :to ours})))
+
+(defn- report-version-bounce!
+  "One stderr line before a restart nobody asked for, so the extra seconds read as a
+   version pickup and not as a hang. Never throws."
+  [from to]
+  (try (.println ^java.io.PrintStream System/err
+                 (str "vis-agent: gateway is running "
+                      (or from "an older build")
+                      " - restarting it on "
+                      to
+                      "…"))
+       (catch Throwable _ nil)))
+
+(defn- bounce-stale-daemon!
+  "Act on [[stale-bounce-verdict]] for the daemon `entry` this process just attached
+   to: stop it, so the caller starts THIS build in its place.
+
+   At most ONCE per process. A daemon that comes back old anyway - a client whose
+   own classpath predates the update spawning it again - then costs exactly one
+   restart instead of a loop. The version comparison happens first and is free (the
+   handshake is already in hand), so an up-to-date daemon never pays for the status
+   round trip. Returns the verdict with `:bounced?`."
+  [entry]
+  (let [ours
+        (protocol/release-version)
+
+        theirs
+        (:version @gateway-handshake*)]
+
+    (cond (not (protocol/newer-release? ours theirs)) {:bounced? false :reason :fresh}
+          (not (compare-and-set! stale-bounce-attempted? false true)) {:bounced? false
+                                                                       :reason :checked}
+          :else (let [status
+                      (try (send-json-with-entry! entry "GET" "/v1/admin/status")
+                           (catch Throwable _ nil))
+
+                      verdict
+                      (stale-bounce-verdict {:ours ours :theirs theirs :status status})]
+
+                  (if (:bounce? verdict)
+                    (do (report-version-bounce! theirs ours)
+                        (stop-daemon!)
+                        (await-daemon-down! (db-target) (:host entry) (:port entry))
+                        (assoc verdict :bounced? true))
+                    (assoc verdict :bounced? false))))))
+
+(defn ensure-gateway!
+  "Return a fresh daemon registry entry for the current DB, auto-starting the
+   detached gateway if needed. `:memory` is a programmer error for this client;
+   headless one-shots stay in-process and should not call here.
+
+   Optional `:port`/`:host` overrides the bind used WHEN THIS CALL SPAWNS a fresh
+   daemon (e.g. `vis-agent channels web --port`); a fresh daemon already registered for
+   the DB is a singleton and is attached to as-is, so the override is moot there.
+
+   Freshness is DEBOUNCED: the full HTTP /healthz probe (via `probe-entry?`)
+   runs at most once per `entry-probe-ttl-ms`. Within that window a cached entry
+   whose pid is still alive is trusted directly, so the TUI's chatty poll loop
+   stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
+   every gateway call.
+
+   A daemon OLDER than this build is also replaced here when replacing it is free
+   ([[bounce-stale-daemon!]]) - that is how the first vis started after
+   `vis-agent update` comes up on the new version with nobody stopping anything by
+   hand."
+  ([] (ensure-gateway! nil))
+  ([{:keys [port host] :as opts}]
+   (if-let [remote (remote-gateway)]
+     ;; A remote gateway is ATTACHED to, never managed: no registry, no spawn.
+     (ensure-remote-gateway! remote)
+     (let [db (db-target)]
+       (when (discovery/memory-db? db)
+         (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
+       (let [target-port (or port DEFAULT_PORT)
+             target-host (or host DEFAULT_HOST)
+             cached @cached-entry
+             now (System/nanoTime)
+             fresh-until (long @entry-fresh-until-ns)
+             fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
+                      true
+                      ;; Window elapsed (or no cached entry): pay for the real
+                      ;; HTTP probe once, then re-open the debounce window.
+                      (when (discovery/registry-fresh? cached probe-entry?)
+                        (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
+                        true))]
+
+         (if fresh?
+           (assert-compatible! cached)
+           (let
+             ;; First recover the exact failure mode where a live standard daemon
+             ;; owns 7890 but its registry was removed. Never enter discovery's
+             ;; spawn path while the requested port already has a listener.
+             [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
+             (if entry
+               (do (reset! cached-entry entry)
+                   (reset! entry-fresh-until-ns (+ (System/nanoTime)
+                                                   (* (long entry-probe-ttl-ms) 1000000)))
+                   (assert-compatible! entry)
+                   (if (:bounced? (bounce-stale-daemon! entry))
+                     ;; The old image released the port; start this build in its place.
+                     (ensure-gateway! opts)
+                     entry))
+               (throw (ex-info "gateway daemon did not become ready"
+                               (assoc result :type :gateway/start-timeout)))))))))))
+
 (defn- probe-route
   "Probe whether the daemon actually SERVES `path`, distinguishing three cases so
    the caller only ever force-restarts on a genuine missing-route 404:
