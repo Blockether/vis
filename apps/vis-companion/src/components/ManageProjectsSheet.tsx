@@ -21,7 +21,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, IconButton, Input, Spinner } from './ui';
-import { AnchoredPanel, MenuHeading, MenuItem, MenuNote } from './Menu';
+import { AnchoredPanel, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
 import { ChevronIcon, PencilIcon, ProjectsIcon, TrashIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
@@ -187,7 +187,10 @@ export function ManageProjectsSheet({
     (wanted === listing.path || wanted === homeify(listing.path, listing.home));
   const isTyping = typedSplit !== null;
   useEffect(() => {
-    if (settled) return;
+    // The inventory is not a filesystem: while it is on screen the gateway is never
+    // asked for a folder. Listing behind it spent a round-trip nobody could see and
+    // landed its rows under the projects, one frame late.
+    if (!adding || settled) return;
     const controller = new AbortController();
     const timer = window.setTimeout(
       () => {
@@ -212,7 +215,7 @@ export function ManageProjectsSheet({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [client, wanted, settled, isTyping]);
+  }, [adding, client, wanted, settled, isTyping]);
 
   const home = listing?.home ?? '';
   const here = listing?.path ?? '';
@@ -356,14 +359,22 @@ export function ManageProjectsSheet({
         </>
       ) : (
         <>
-      {/* Adding is a task, not a step in a tour: its band carries the app's one way
-          out. A BACK arrow into the project inventory was an exit into a screen the
-          human never asked for — the button says "New project", so the only way out of
-          it is closing it (or the scrim, which `AnchoredPanel` already dismisses on). */}
-      <MenuHeading
-        onClose={onCancel}
-        closeLabel={`Close new project on ${label}`}
-      >{`New project · ${label}`}</MenuHeading>
+      {/* Adding is a task, not a step in a tour, so its band carries the app's one way
+          out when the human ASKED for it by name (the start flow's `New project`).
+          Reached from the inventory's own `New project…` it IS a step inside this
+          menu, and a step is left the way it was entered — otherwise the only exit
+          from the browser is closing the sheet and finding the folder mark again. */}
+      {isAdding ? (
+        <MenuHeading
+          onClose={onCancel}
+          closeLabel={`Close new project on ${label}`}
+        >{`New project · ${label}`}</MenuHeading>
+      ) : (
+        <MenuBack
+          label={`Back to projects on ${label}`}
+          onBack={() => setAdding(false)}
+        >{`New project · ${label}`}</MenuBack>
+      )}
 
       {typed === null ? (
         <div

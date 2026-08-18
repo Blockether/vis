@@ -238,4 +238,49 @@ describe("starring a session", () => {
     expect(row!.querySelector("svg.fill-accent")).not.toBeNull();
     expect(rowOrder()[0]).toBe("s12");
   });
+  // Regression, user report on iOS (paraphrased: slide the LAST row open, tap the
+  // star, the row moves up wearing no mark, and only the next slide shows it — with
+  // the mark and the strip then saying two different things): the pin brought the row
+  // back with an ANIMATED `scrollIntoView`, and that call walks EVERY scrollable
+  // ancestor, so the FIRST scroller it moves is the row's own mandatory snap track —
+  // the drawer a verb has just sent home, in the very commit that moves its node.
+  // Measured in WebKit at 390px on this screen, same track, same call: an open track
+  // (216px) was still at 163px 150ms after `behavior: "smooth"` was asked for and only
+  // reached home ~900ms later, against home in the SAME FRAME for `behavior: "auto"`.
+  // A drawer left standing hides the row's LEADING edge, which is where the mark sits.
+  it("places the pinned row in the same frame, never on an animation", async () => {
+    const view = renderSessionsScreen({ machines });
+    restore = view.restore;
+    await screen.findByText("Older session");
+    // The row the pin MOVES: the one not already at the top of its project.
+    const moved = rowOrder()[1]!;
+    const title = moved === "older" ? "Older session" : "Newer session";
+
+    const asked: (ScrollIntoViewOptions | undefined)[] = [];
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function record(
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ) {
+      asked.push(typeof options === "object" ? options : undefined);
+    } as typeof Element.prototype.scrollIntoView;
+    try {
+      await userEvent.click(
+        screen
+          .getByRole("group", { name: `${title} actions` })
+          .querySelector('button[aria-label="Star"]')!,
+      );
+    } finally {
+      Element.prototype.scrollIntoView = scrollIntoView;
+    }
+
+    expect(asked).not.toHaveLength(0);
+    expect(asked[0]).toEqual({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "auto",
+    });
+    // Nothing in this tap may hand that track an animation the platform can drop.
+    expect(asked.some((options) => options?.behavior === "smooth")).toBe(false);
+  });
 });

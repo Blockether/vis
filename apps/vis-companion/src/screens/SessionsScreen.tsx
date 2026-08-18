@@ -2350,7 +2350,6 @@ export function SessionsScreen({
       {manageProjects && (
         <ManageProjectsSheet
           label={machineLabel(manageProjects.machine.conn)}
-          isAdding
           at={manageProjects.at}
           client={clientFor(manageProjects.machine.conn)}
           startAt={machineProject(manageProjects.machine)?.path ?? null}
@@ -2683,15 +2682,30 @@ const ProjectGroup = memo(function ProjectGroup({
     setPage(Math.floor(index / Math.max(1, Math.floor(pageSize) || 1)) + 1);
   }, [starredHere, sessions, pageSize]);
   // The row may land on the page already shown (starred from page one) or on the
-  // one this group just walked to; either way it is scrolled back into view on the
+  // one this group just walked to; either way it is placed back under the eye on the
   // commit that paints it.
+  //
+  // THE PIN IS A PLACE, NEVER AN ANIMATION — the same rule the drawer's way home
+  // already lives by (`SwipeActions`). `scrollIntoView` walks EVERY scrollable
+  // ancestor, and the FIRST one it meets is the row's own swipe track: the mandatory
+  // snap track the verb that fired this pin has just sent home, in this same commit.
+  //
+  // Regression, user report on iOS (paraphrased: slide the LAST row open, tap the
+  // star, the row moves up wearing no mark, and the next slide shows the mark and the
+  // strip saying two different things): an animated scroll inside a mandatory snap
+  // track is what WebKit is free to swallow, and a drawer left standing over its row
+  // hides the row's LEADING edge — which is exactly where the mark that tap just left
+  // sits. Measured in WebKit on this screen at 390px, same track, same call: an open
+  // track (216px) was still at 163px 150ms after `behavior: 'smooth'` was asked for
+  // and only reached home ~900ms later, against home in the SAME FRAME for
+  // `behavior: 'auto'`.
   useEffect(() => {
     const id = following.current;
     if (!id || !rows.some((session) => session.id === id)) return;
     following.current = null;
     rowsRef.current
       ?.querySelector(`[data-session-id="${CSS.escape(id)}"]`)
-      ?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
   }, [rows]);
   return (
     <>

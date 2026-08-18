@@ -432,3 +432,49 @@ describe("the path band", () => {
     expect(heights(naming!)).toEqual(["h-11", "mouse:h-9"]);
   });
 });
+
+
+// Regression, user report ("the projects manager blinks and it is not a projects manager
+// at all, only a way to add another project — none of the rows are there"): the folder
+// mark on the sessions list mounted this sheet with `isAdding`, so it opened straight on
+// the gateway's folder browser — an empty list that filled in one network round-trip
+// later, with no project rows and no trash beside them, and no way back to the inventory.
+describe("the projects mark opens the inventory", () => {
+  it("lists the machine's projects, each with its trash, before any browse", async () => {
+    const { client, onRemove } = sheet();
+
+    const row = await screen.findByRole("menuitem", { name: /vis/ });
+    expect(row).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+    // Nothing was asked of the gateway: the inventory is what this device already knows.
+    expect(client.browse.mock.calls.length).toBe(0);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove every transcript in vis" }),
+    );
+    expect(onRemove).toHaveBeenCalledWith(PROJECTS[0]);
+  });
+
+  it("leaves `New project…` the way it was entered", async () => {
+    sheet();
+    await screen.findByRole("menuitem", { name: /vis/ });
+
+    await userEvent.click(screen.getByRole("button", { name: "New project…" }));
+    await screen.findByRole("menuitem", { name: /tools/ });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Back to projects on tower" }),
+    );
+    expect(await screen.findByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+  });
+
+  it("keeps the way OUT when the caller asked for the browser by name", async () => {
+    sheet({ isAdding: true });
+    await screen.findByRole("menuitem", { name: /tools/ });
+
+    expect(screen.queryByRole("button", { name: /^Back to projects/ })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Close new project on tower" }),
+    ).toBeInTheDocument();
+  });
+});
