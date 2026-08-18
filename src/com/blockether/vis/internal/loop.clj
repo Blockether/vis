@@ -946,8 +946,8 @@
         (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
 
         ;; MOVABLE wall: a `human-input` pause inside the block parks this clock
-        ;; instead of dying at it, and a live view HOLDS it open for as long as the
-        ;; human is watching (see rt/parkable-wall).
+        ;; instead of dying at it, and a live view LIFTS it entirely for as long
+        ;; as the human is watching (see rt/parkable-wall).
         {eval-deadline :deadline eval-park :park eval-hold :hold}
         (rt/parkable-wall (System/currentTimeMillis) timeout-ms)
 

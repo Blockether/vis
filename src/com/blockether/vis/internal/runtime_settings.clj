@@ -324,13 +324,18 @@
    [[*blocking-wall-park*]] for work that ENTERS and LEAVES on separate calls.
    A live view opens on one crossing of the Python bridge and closes on another
    — there is no thunk to wrap around the watching — so a run SHOWING its work
-   held the wall open by taking a release token at `open` and spending it at
-   `close`."
+   takes a release token at `open` and spends it at `close`."
   nil)
 
 (defn hold-blocking-wall!
-  "Push every enclosing wall out to [[MAX_EVAL_TIMEOUT_MS]] until the returned
-   thunk is called, and answer that thunk.
+  "LIFT every enclosing wall until the returned thunk is called, and answer that
+   thunk.
+
+   Not a bigger budget — no budget. The wall is the backstop for code that fell
+   SILENT, and a run painting a picture a human is watching is the opposite of
+   silent: it is billed nothing at all, for as long as it shows its work. The
+   base budget comes back, measured from the release, when the last hold is
+   spent.
 
    Releasing twice is a no-op, so a `finally` releasing what a close already
    released cannot collapse the clock under work that is still running. With no
@@ -371,15 +376,15 @@
   "One MOVABLE wall clock for a bounded execution that began at `start` with
    `timeout-ms` of budget.
 
-   Returns `{:deadline <atom epoch-ms> :park (fn [thunk]) :hold (fn [] release)}`.
+   Returns `{:deadline <atom epoch-ms or nil> :park (fn [thunk]) :hold (fn [] release)}`,
+   where a NIL deadline is NO wall at all (see [[await-wall]]).
 
-   `park` is RE-ENTRANT: nested parks each push the deadline out to
-   [[MAX_EVAL_TIMEOUT_MS]] and only the OUTERMOST exit restores the base
-   budget, so an inner park returning cannot collapse the clock while an outer
-   park is still live. It also COMPOSES with the park inherited from
-   [[*blocking-wall-park*]], so parking an inner wall parks every enclosing one
-    too — a `human-input` call that asks the operator a question must not be
-    killed by the Python eval watchdog wrapped around its block.
+   `park` is RE-ENTRANT: nested parks each LIFT the wall and only the OUTERMOST
+   exit restores the base budget, so an inner park returning cannot collapse the
+   clock while an outer park is still live. It also COMPOSES with the park
+   inherited from [[*blocking-wall-park*]], so parking an inner wall parks every
+   enclosing one too — a `human-input` call that asks the operator a question
+   must not be killed by the Python eval watchdog wrapped around its block.
 
    `hold` is the same clock, taken and released on separate calls (see
    [[*blocking-wall-hold*]]), sharing park's depth so the two nest in either
@@ -403,14 +408,12 @@
         enter!
         (fn []
           (swap! depth inc)
-          (reset! deadline (+ (System/currentTimeMillis) (long MAX_EVAL_TIMEOUT_MS))))
+          (reset! deadline nil))
 
         leave!
         (fn []
-          (reset! deadline (+ (System/currentTimeMillis)
-                              (if (pos? (long (swap! depth dec)))
-                                (long MAX_EVAL_TIMEOUT_MS)
-                                timeout-ms))))
+          (reset! deadline (when-not (pos? (long (swap! depth dec)))
+                             (+ (System/currentTimeMillis) timeout-ms))))
 
         park
         (fn [thunk]
@@ -442,14 +445,29 @@
                    (outer))))
              hold)}))
 
+(def ^:private LIFTED_WALL_POLL_MS
+  "How often [[await-wall]] re-reads a LIFTED wall's deadline atom. Nothing is
+   billed while that atom is nil; this is only how fast the base budget lands
+   again once the last park or hold is spent."
+  250)
+
 (defn await-wall
   "Wait for `fut` until the CURRENT value of `deadline` passes, re-reading the
    atom on every wake so a park that MOVED the wall extends the wait instead of
-   expiring. Returns `timeout-value` once the wall is really reached."
+   expiring. Returns `timeout-value` once the wall is really reached.
+
+   A NIL deadline is no wall: a human is being asked, or is watching a live
+   view, and the run is billed nothing — the wait just continues, polling only
+   so the restored budget lands the moment the last hold is released."
   [fut deadline timeout-value]
   (loop []
 
-    (let [remaining (- (long @deadline) (System/currentTimeMillis))]
+    (let [at
+          (deref deadline)
+
+          remaining
+          (long (if at (- (long at) (System/currentTimeMillis)) LIFTED_WALL_POLL_MS))]
+
       (if (pos? remaining)
         (let [r (deref fut remaining timeout-value)]
           (if (identical? timeout-value r) (recur) r))

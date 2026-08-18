@@ -2022,47 +2022,45 @@
   ;; `Timeout (300s)` while the build was still going, and the pane it left
   ;; behind never closed — hours later it still painted the last poll and still
   ;; offered a Stop nobody was listening to.
-  (it "holds the wall of the block that opened it, and hands it back at the close"
+  (it "lifts the wall of the block that opened it, and hands it back at the close"
       (recorded (fn []
                   (let [{:keys [deadline hold]}
                         (rt/parkable-wall (System/currentTimeMillis) 20)
 
                         view
                         (binding [rt/*blocking-wall-hold* hold]
-                          (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
+                          (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))]
 
-                        held
-                        @deadline]
-
-                    ;; 20ms of budget, and the view bought the ceiling with it.
-                    (expect (> held (+ (System/currentTimeMillis) 60000)))
+                    ;; Not a bigger number — NO number. A run whose picture a human
+                    ;; is watching is billed nothing at all.
+                    (expect (nil? @deadline))
                     (hi/close-live! (:id view))
+                    (expect (some? @deadline))
                     (expect (< @deadline (+ (System/currentTimeMillis) 1000)))))))
-  (it "buys that wall again with every patch, so a build outlasts the ceiling"
+  (it "stays lifted while the view is open, patched or not"
       (recorded
         (fn []
           (let [{:keys [deadline hold]} (rt/parkable-wall (System/currentTimeMillis) 20)]
             (binding [rt/*blocking-wall-hold* hold]
-              (let [view (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"}))
-                    opened @deadline]
-
+              (let [view (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"}))]
+                ;; Far past the 20ms budget, and nothing had to be re-bought to
+                ;; get here: a picture that stands still is still being watched.
                 (Thread/sleep 30)
                 (hi/patch-live! (:id view) {:ops [{:op "set" :node-id "now" :text "Polling… 2"}]})
-                ;; Every patch is proof the run is alive, so the wall moves with it.
-                (expect (> @deadline opened))
+                (Thread/sleep 30)
+                (expect (nil? @deadline))
                 (hi/close-live! (:id view))
                 (expect (< @deadline (+ (System/currentTimeMillis) 1000)))))))))
-  (it "counts a watcher asking whether the human stopped as proof of life"
-      (recorded (fn []
-                  (let [{:keys [deadline hold]} (rt/parkable-wall (System/currentTimeMillis) 20)]
-                    (binding [rt/*blocking-wall-hold* hold]
-                      (let [view (hi/open-live! (live-spec
-                                                  {:id "now" :type "status" :text "Polling…"}))
-                            opened @deadline]
+  (it "stays lifted while a SECOND view is still open"
+      (recorded
+        (fn []
+          (let [{:keys [deadline hold]} (rt/parkable-wall (System/currentTimeMillis) 20)]
+            (binding [rt/*blocking-wall-hold* hold]
+              (let [one (hi/open-live! (live-spec {:id "now" :type "status" :text "One…"}))
+                    two (hi/open-live! (live-spec {:id "now" :type "status" :text "Two…"}))]
 
-                        (Thread/sleep 30)
-                        (hi/live-dispatch {"op" "state" "view_id" (:id view)})
-                        ;; A poll whose picture did not move still says the run is alive.
-                        (expect (> @deadline opened))
-                        (hi/close-live! (:id view))
-                        (expect (< @deadline (+ (System/currentTimeMillis) 1000))))))))))
+                (hi/close-live! (:id one))
+                ;; One watcher left is still a watcher.
+                (expect (nil? @deadline))
+                (hi/close-live! (:id two))
+                (expect (< @deadline (+ (System/currentTimeMillis) 1000))))))))))

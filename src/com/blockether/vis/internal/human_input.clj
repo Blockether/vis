@@ -1620,10 +1620,10 @@
          ;; gateway thread, which holds no artifacts of its own, and the record still
          ;; belongs to the block whose run produced it.
          :attachment-sink mpl-capture/*attachment-sink*
-         ;; The eval wall of the block that opened it, held open for as long as the
-         ;; view is. A run SHOWING its work is watched for as long as the work takes
-         ;; — a CI run is fifteen minutes — while the Python watchdog around the
-         ;; block bills five and killed the watch mid-picture. Released at the close,
+         ;; The eval wall of the block that opened it, LIFTED for as long as the
+         ;; view is open. A run SHOWING its work is never billed a deadline: a CI
+         ;; run takes fifteen minutes and the Python watchdog around the block
+         ;; billed five, killing the watch mid-picture. Released at the close,
          ;; whoever closes it.
          :wall-hold (rt/hold-blocking-wall!)}]
 
@@ -1643,31 +1643,6 @@
                  :msg (str "Live view reached no channel — nobody is watching it. It still runs, "
                            "and it still ends in the verdict the model reads")}))
     view))
-
-(defn- renew-wall-hold!
-  "Roll the eval wall forward on the block watching `view-id`: take a fresh hold,
-   then spend the one the last op took.
-
-   A hold is a fixed grant, not a promise — [[rt/hold-blocking-wall!]] buys the
-   engine's ceiling ONCE, and a build that outlasts the ceiling would still be
-   killed mid-picture. Every patch is proof the run is alive, so every patch buys
-   the ceiling again; a watch that stops patching stops being renewed, and the
-   backstop reaches it exactly as it reaches a block that fell silent."
-  [view-id]
-  (let [fresh
-        (rt/hold-blocking-wall!)
-
-        [before _]
-        (swap-vals!
-          pending
-          (fn [views]
-            (if (contains? views view-id) (assoc-in views [view-id :wall-hold] fresh) views)))]
-
-    (if (contains? before view-id)
-      (when-let [stale (get-in before [view-id :wall-hold])]
-        (stale))
-      ;; The view closed under this patch: the wall it held is nobody's now.
-      (fresh))))
 
 (defn patch-live!
   "Apply `patch` to live view `view-id` and return the view it made.
@@ -1697,7 +1672,6 @@
                    :view-id view-id
                    :session-id (:session-id entry)
                    :patch applied})
-        (renew-wall-hold! view-id)
         patched))))
 
 (defn- human-note
@@ -1857,8 +1831,8 @@
                ;; published, artifact and all: `live-ended` reads the record for a
                ;; view the human interrupted, and it must not learn less than the
                ;; thread that was holding it.
-               ;; The wall the open pushed out belongs to the block again the moment
-               ;; the view stops being watched.
+               ;; The wall the open LIFTED is the block's again the moment the
+               ;; view stops being watched.
                (when-let [release (:wall-hold entry)]
                  (release))
                (live-sink/close! (:file entry) result)
@@ -2327,13 +2301,9 @@
           (live-ended view-id)))
 
       "state"
-      ;; Reading the view is proof of life too — a watcher asking whether the human
-      ;; stopped is a watcher still watching — so it re-buys the wall exactly as a
-      ;; patch does. A run whose picture stands still for a whole ceiling while it
-      ;; asks nothing is the one the backstop is for.
       (let [view-id (live-handle-id opts op)]
         (if-let [view (live-view view-id)]
-          (do (renew-wall-hold! view-id) {:view-id view-id :is-open true :view view})
+          {:view-id view-id :is-open true :view view}
           (live-ended view-id)))
 
       "close"
