@@ -18,6 +18,10 @@
    "default_model" "claude"
    "fallback_provider" "openai"
    "fallback_model" "gpt"
+   ;; Provider ids the operator DELETED. Needed for a provider that never had a
+   ;; `providers` entry to delete — one synthesized from an env var or a stored
+   ;; credential — since absence from config cannot express "removed" for those.
+   "removed_providers" ["retired-provider"]
    "providers" [{"id" "anthropic"
                  "api_key" "secret"
                  ;; Command-backed credential: argv whose trimmed stdout is the key.
