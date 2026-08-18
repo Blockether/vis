@@ -771,6 +771,26 @@
 (def forget-human-input-secret!
   (requiring-resolve 'com.blockether.vis.internal.human-input/forget-secret!))
 
+;; Live views — the picture the human WATCHES while an extension works
+;;
+;; The same interaction one `:kind` further, and inverted: nothing blocks, the
+;; human only watches (and may stop it), and the model reads the VERDICT — one
+;; markdown rendering of the same materialized state both surfaces painted.
+;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
+;; a picture nobody updates on the human's screen and no markdown for the model.
+(def with-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/with-live!))
+
+(def open-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/open-live!))
+
+(def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/patch-live!))
+
+(def close-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/close-live!))
+
+(def interrupt-live-view!
+  (requiring-resolve 'com.blockether.vis.internal.human-input/interrupt-live!))
+
+(def live-view (requiring-resolve 'com.blockether.vis.internal.human-input/live-view))
+
 ;; Binary entry point
 ;;
 ;; `clojure -M:vis` invokes this `-main`. The dispatcher / built-in

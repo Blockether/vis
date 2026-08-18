@@ -1,6 +1,7 @@
 (ns com.blockether.vis.human-input
-  "Form builders for the typed pause an extension uses to ask the operator —
-   `com.blockether.vis.core/request-human-input!`.
+  "Builders for the two things an extension shows the operator: the typed pause
+   it WAITS on — `com.blockether.vis.core/request-human-input!` — and the live
+   view it does not, `com.blockether.vis.core/with-live-view!`.
 
    A request is plain data, and it stays plain data: every builder here returns
    the very map you could have typed by hand. What it adds is that the two
@@ -31,6 +32,23 @@
    Every optional key is the one the engine documents, in either spelling
    (`:is-required` or `\"is_required\"`): builders pass options through
    untouched instead of keeping a second copy of the vocabulary.
+
+   A LIVE VIEW is the same discipline one `:kind` further: [[view]] and the node
+   builders under it declare a picture the human WATCHES while the work runs. It
+   asks nothing and parks no thread; it is patched by node id and ends in a
+   verdict carrying the markdown the model reads.
+
+       (vis/with-live-view!
+         (hi/view {:title \"CI\"}
+                  (hi/status \"now\" \"Polling GitHub…\" {:tone \"running\"})
+                  (hi/table \"jobs\" [(hi/table-column \"job\" \"Job\")
+                                    (hi/table-column \"took\" \"Took\" {:align \"right\"})]))
+         (fn [view-id]
+           (vis/patch-live-view!
+             view-id
+             [{:op \"set\" :node-id \"now\" :text \"18 jobs\" :tone \"ok\"}
+              {:op \"append\" :node-id \"jobs\"
+               :rows [(hi/table-row \"build\" [\"tests / ubuntu\" \"13m0s\"] {:tone \"ok\"})]}])))
 
    Python extensions get the SAME names on the `vis` module —
    `vis.select('env', ['staging', 'prod'], label='Environment')` — built by
@@ -170,3 +188,127 @@
   (let [request (assoc opts :fields (vec nodes))]
     (engine/normalize-request request)
     request))
+
+;; Live views — the picture the human WATCHES while the work runs
+;;
+;; Nodes are built and checked exactly like fields, through the engine's own
+;; [[com.blockether.vis.internal.human-input/normalize-live-node]] seam. The four
+;; STATE ops (`set`, `append`, `clear`, `remove`) deliberately get no builder:
+;; each is a two-key map the engine already refuses by name against its closed
+;; table, and an invented `set-node` here would mint a second vocabulary beside
+;; the one the wire, the phone and the terminal all read. `add-node` and
+;; `remove-node` do get one — they change the view's SHAPE and carry a whole node.
+
+(defn- checked-node
+  "`node` itself, once the engine has agreed it is a live node — the normalized
+   form is DROPPED for the same reason [[checked]] drops it."
+  [node]
+  (engine/normalize-live-node node)
+  node)
+
+(defn- live-node
+  "One live node of `type-name`, addressed by `id`, carrying `opts`."
+  [type-name id opts]
+  (checked-node (assoc opts
+                  :id id
+                  :type type-name)))
+
+(defn status
+  "One line saying what is happening RIGHT NOW — replaced in place, never
+   appended, so the top of the view never scrolls. `opts` may carry `:label`,
+   `:detail` and a `:tone`."
+  ([id text] (status id text nil))
+  ([id text opts] (live-node "status" id (assoc opts :text text))))
+
+(defn progress
+  "How far the work has come: `:done` of `:total`, or a `:value` between 0 and 1.
+   Neither means INDETERMINATE, which is the honest picture while a job queues."
+  ([id] (progress id nil))
+  ([id opts] (live-node "progress" id opts)))
+
+(defn stat
+  "A strip of counters upserted by id — the score. Each entry of `stats` is
+   `{:id … :label … :value-text … :tone …}`."
+  ([id stats] (stat id stats nil))
+  ([id stats opts] (live-node "stat" id (assoc opts :stats (vec stats)))))
+
+(defn steps
+  "An ORDERED checklist: the shape of a pipeline, in the order it runs. Each of
+   `items` is `{:id … :label … :tone … :detail … :value …}` and carries its own
+   tone, because a step is where a run goes wrong."
+  ([id items] (steps id items nil))
+  ([id items opts] (live-node "steps" id (assoc opts :steps (vec items)))))
+
+(defn log
+  "Append-only lines — the scrollback. `:lines` seeds it and `:window-lines` says
+   how many a surface holds hot; the view's record on disk keeps every line
+   either way, so a window is a paint budget, never a loss."
+  ([id] (log id nil))
+  ([id opts] (live-node "log" id opts)))
+
+(defn table
+  "Rows upserted and removed by row id, painted in the `:order` the view
+   DECLARES — `columns` are [[table-column]]s, `:rows` seeds it and `:max-rows`
+   bounds it by refusal."
+  ([id columns] (table id columns nil))
+  ([id columns opts] (live-node "table" id (assoc opts :columns (vec columns)))))
+
+(defn link
+  "Labeled pointers the human OPENS: each of `links` is
+   `{:id … :label … :target … :target-kind …}` — an attachment, a path or a url."
+  ([id links] (link id links nil))
+  ([id links opts] (live-node "link" id (assoc opts :links (vec links)))))
+
+(defn table-column
+  "One column of a [[table]]: the `id` a cell is addressed by and the `label`
+   over it, optionally `:align` `\"right\"` for numbers.
+
+   A column is not a node, so it is checked by the table that declares it."
+  ([id label] {:id id :label label})
+  ([id label opts]
+   (assoc opts
+     :id id
+     :label label)))
+
+(defn table-row
+  "One row of a [[table]], keyed by `id`: `cells` in the order the columns were
+   declared, optionally `:tone`d. Built rather than typed because it is the one
+   POSITIONAL thing here — a cell means whatever column stands over it.
+
+   A row is not a node, so it is checked by the table, or the patch, carrying it."
+  ([id cells] {:id id :cells (vec cells)})
+  ([id cells opts]
+   (assoc opts
+     :id id
+     :cells (vec cells))))
+
+(defn- checked-op
+  "`op` itself, once the engine has agreed it is a patch operation."
+  [op]
+  (engine/normalize-live-op op)
+  op)
+
+(defn add-node
+  "Add a whole `node` to a RUNNING view — a second table, a per-device log.
+   `after` names the node it lands behind; without it, it goes last."
+  ([node] (checked-op {:op "add-node" :node-spec node}))
+  ([node after] (checked-op {:op "add-node" :node-spec node :after after})))
+
+(defn remove-node
+  "Drop node `node-id` from a running view, its items with it."
+  [node-id]
+  (checked-op {:op "remove-node" :node-id node-id}))
+
+(defn view
+  "The live view `com.blockether.vis.core/open-live-view!` mounts, built from
+   `opts` and the `nodes` that follow it — and refused right here if it is not
+   one.
+
+   `opts` needs at least a `:title`, and may carry `:description`, `:source`,
+   `:channel-ids`, `:is-cancellable` and `:timeout-ms`. At least one node is
+   required, and their ids must be distinct: every patch names the node it
+   speaks to."
+  [opts & nodes]
+  (let [view (assoc opts :nodes (vec nodes))]
+    (engine/normalize-live-view view)
+    view))

@@ -359,10 +359,30 @@
   "A progress node with no fraction: started, size unknown. Not an empty state —
    a bar nobody has measured still counts what it finished."
   "_working_")
+(defn- invalid-view!
+  "Refuse a view the engine may not paint: one line naming what to fix, thrown
+   where the view was declared."
+  [message]
+  (throw (ex-info (str "Invalid live view: " message)
+                  {:type :vis/human-input-invalid-live-view :reason message})))
+
+(def ^:private tone?
+  "Every colour a surface may paint, as a reader recognizes it. CLOSED in BOTH
+   directions: text that merely looks like a `[tone]` marker stays text, and a
+   tone no reader knows is never painted."
+  (set (vals spec/live-tones)))
+
 (defn- tone-tag
-  "How the model reads a colour it cannot see."
+  "How the model reads a colour it cannot see. A tone outside the closed
+   vocabulary is REFUSED rather than painted, because the marker would render as
+   prose [[parse-markdown]] hands back as text — the round trip would lose the
+   very node the colour was on."
   [tone]
-  (when tone (str "[" (name tone) "] ")))
+  (when tone
+    (when-not (tone? tone)
+      (invalid-view! (str "unknown tone " (pr-str tone)
+                          " — a surface paints one of " (str/join ", " (sort (map name tone?))))))
+    (str "[" (name tone) "] ")))
 
 (defn- percent "A fraction as whole percent." [value] (long (Math/round (* 100.0 (double value)))))
 
@@ -633,11 +653,6 @@
   (throw (ex-info (str "Invalid live-view markdown" (when line-no (str " at line " line-no))
                        ": " message)
                   {:type :vis/human-input-invalid-markdown :line line-no :reason message})))
-
-(def ^:private tone?
-  "Every colour a surface may paint, as a reader recognizes it. Closed, so text
-   that merely looks like a `[tone]` marker stays text."
-  (set (vals spec/live-tones)))
 
 (def ^:private reason? "Every ending a verdict may name." (set (vals spec/live-reasons)))
 

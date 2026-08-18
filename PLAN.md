@@ -300,10 +300,15 @@ so no key is spelled a second time anywhere.
   one source.
 - `src/com/blockether/vis/internal/human_input.clj` — `normalize-live-view` and `normalize-patch`
   (either spelling of every key, closed-table lookups instead of `keyword`-minting, blanks and nils
-  dropped BEFORE the materializer, which refuses them), then the lifecycle: `live!` (opens, publishes
-  `:human-input/live-open`, parks with `rt/park-blocking-wall`, always closes), `patch!`, `close!`,
-  `interrupt!`. Every op names its node, so a view with four tables needs no ordering rule and no
-  "current" node.
+  dropped BEFORE the materializer, which refuses them), then the lifecycle: `open-live!` (publishes
+  `:human-input/live-open`, returns the materialized view), `patch-live!`, `close-live!`,
+  `interrupt-live!`, and `with-live!`, which closes what it opened on a throw as well as on a return.
+  NOTHING PARKS: a form parks its caller because it must be answered, while a view is the work
+  reporting on itself — so the open returns at once and the verdict is the close. Every op names its
+  node, so a view with four tables needs no ordering rule and no "current" node.
+- Same file — a view is DECLARED without a session and MOUNTED into one: `:session-id` is optional in
+  `::live-view` and refused at `open-live!`, exactly as a request's is, so the same builder call works
+  in an extension that has not been handed a session yet.
 - `src/com/blockether/vis/internal/human_input/live.clj` (new) — the MATERIALIZER and the MODEL's
   renderer, pure and total, kept out of the lifecycle file because three surfaces read it and none of
   them may own a private copy of what the view IS. `apply-patch` is ALL OR NOTHING — a patch whose
@@ -358,16 +363,27 @@ so no key is spelled a second time anywhere.
   release both kinds, and `checked-answer` routes to `::answer` or `::live-result` by kind.
 - `src/com/blockether/vis/internal/human_input/live_sink.clj` (new) — the store of record, because
   no existing sink keeps a stream (ring 2000 events, journal truncated per turn and past 16 MB).
-  One append-only NDJSON file per view at `~/.vis/gateway/live/<session-id>/<view-id>.ndjson`:
+  One append-only NDJSON file per view at `~/.vis/gateway/views/<session-id>/<view-id>.ndjson`
+  (`live/` is TAKEN — the bus keeps a turn-liveness marker per session there and LISTS that
+  directory, so a view's stream gets a directory of its own rather than a subdirectory somebody
+  else's listing has to learn to skip):
   header line = the opened view, one line per ACCEPTED patch, trailer line = the reason it ended.
   Appended BEFORE the patch is published, so a crashed run keeps everything the engine accepted, and
   opened in append mode so a resumed process never overwrites. Reads are a line range
   (`read-range` from/count), which is what lets a surface pull the scrollback it paints and lets the
   artifact be the file itself instead of a re-encoded copy.
 - `src/com/blockether/vis/human_input.clj` — builders `status`, `progress`, `stat`, `steps`, `log`,
-  `table`, `table-column`, `link` — each taking its ID FIRST — plus `add-node` / `remove-node`, and
-  `live!` taking the view spec plus a function that receives the handle, so the view closes on a
-  throw as well as on a return.
+  `table`, `link` — each taking its ID FIRST — the two POSITIONAL item builders `table-column` /
+  `table-row`, the shape ops `add-node` / `remove-node`, and `view`, which mirrors `form`. Each
+  validates through the engine's public `normalize-live-node` / `normalize-live-op` /
+  `normalize-live-view` seam and DROPS the normalized form, so a mistake is dated to the builder call
+  instead of to the human's screen. The four STATE ops (`set`, `append`, `clear`, `remove`) get NO
+  builder on purpose: each is a two-key map whose `:op` the engine already refuses by name, and an
+  invented `set-node` here would mint a second vocabulary beside the closed table the wire, the phone
+  and the terminal all read.
+- `src/com/blockether/vis/core.clj` — the runner an extension actually calls, beside
+  `request-human-input!`: `with-live-view!` first, then `open-live-view!`, `patch-live-view!`,
+  `close-live-view!`, `interrupt-live-view!` and `live-view`.
 - Test `test/com/blockether/vis/internal/human_input/live_test.clj` (new) — a view whose patches each
   touch only their own node, `add-node` / `remove-node` mid-run including a WRITE to a node that was
   dropped, every bound refusing with the node and the bound named, the log window kept while
@@ -386,15 +402,22 @@ so no key is spelled a second time anywhere.
   script paints identically on every surface. Removing an absent id and clearing an empty table are
   asserted as no-ops that still advance `seq`, and `{:by "nope"}` is refused at declaration naming the
   columns the table does declare.
-- Test `test/com/blockether/vis/internal/human_input_test.clj` — the lifecycle half: the sink
-  round-tripped (write N lines, read a range back, reopen and append), refusal of an unknown node type
-  / op / key naming the key, `undeliverable` with no channel mounted, `interrupt!` releasing the parked
-  caller, and a form and a live view coexisting in the registry.
-- Same file — a bad live spec is refused WHERE IT WAS DECLARED: `live!` normalizes before it mounts
-  anything, exactly as `request!` does (`:1200`), and throws the engine's one-line reason. There is no
-  answer-instead-of-throw seam left to teach (`check`/`check-json` went with `vis.check`), so the live
-  view inherits one rule and cannot grow a second opinion. Test in the same file: an unknown node type
-  throws with the key named, and nothing was published.
+- Test `test/com/blockether/vis/internal/human_input_test.clj` — the lifecycle half: a view mounted,
+  patched BY NODE ID and closed into markdown carrying what the human watched; the record
+  round-tripped (open + patch + close read back, then reopened and APPENDED to, never truncated); a
+  view that names no session refused at the MOUNT; a patch for a view that is not open refused by
+  name; close idempotent (a second close is nil, not a second verdict); `interrupt-live!` ending
+  `interrupted` and still carrying the picture; `with-live!` closing what a body opened when the body
+  THROWS, the record's trailer reading `failed` with the message; and a form and a live view
+  coexisting in one registry, where `submit!` refuses a view because a view never asked a question.
+- Same file — a view nobody watches still RUNS and still ends in the markdown the model reads: no
+  channel mounted is a WARN in the log, never the refusal a form gets, because the whole product of a
+  view is the picture at the end.
+- Test `test/com/blockether/vis/human_input_test.clj` — the builder half, the same two promises the
+  form builders make: every live builder returns the plain map an extension could have typed by hand,
+  and every refusal (a tone outside the table, an order no surface paints, an unknown key, a node with
+  no id, two nodes sharing one, a view with no nodes) is dated to the builder call with the engine's
+  own one-line reason. A view with no session is NOT refused there — the mount owns that.
 
 **Unknowns.** Should `:timeout-ms` default to `no-timeout-ms` for a live view (a build takes as long
 as it takes) while a form keeps its five minutes? The plan assumes yes, stated in the docstring.
@@ -706,7 +729,7 @@ payload (assumed yes) or its own view.
 
 ## State of the plan
 
-**IN FLIGHT** — Phase 1 is landing; Phases 2-6 are written and not yet started.
+**IN FLIGHT** — Phase 1 is DONE and green; Phases 2-6 are written and not yet started.
 
 Done:
 
@@ -723,22 +746,26 @@ Done:
 - Phase 1, the model's surface both ways — `parse-markdown` in the same file, with the render changes
   that made the inverse total (blockquoted verdict, marked error, a table's header always painted,
   trimmed cells). 37 tests in `live_test.clj`, 162 green across human-input.
+- Phase 1 COMPLETE — the lifecycle, the record and the builders. `normalize-live-view` /
+  `normalize-live-node` / `normalize-live-op` / `normalize-patch` and `open-live!` / `patch-live!` /
+  `close-live!` / `interrupt-live!` / `with-live!` in `internal/human_input.clj`; the append-only
+  record in `internal/human_input/live_sink.clj` under `~/.vis/gateway/views/<session-id>/`; `:kind`
+  in the pending registry, where `submit!` refuses a view and a cancel closes one; the live builders
+  and `view` in `com.blockether.vis.human-input`; the runner exports in `com.blockether.vis.core`.
+  205 green across the three human-input test files. A view is declared without a session and refused
+  at the MOUNT if it still names none — a builder is callable before a session exists.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.
 
 TODO, in order:
 
-1. Phase 1, the rest — `normalize-live-view` / `normalize-patch` and the `live!` / `patch!` / `close!` /
-   `interrupt!` lifecycle in `internal/human_input.clj`, the append-only sink in
-   `internal/human_input/live_sink.clj`, `:kind` in the pending registry, and the builders in
-   `com.blockether.vis.human-input`.
-2. Phase 2 — TUI pane: labelled nodes stacked on one scroll surface, wheel scroll, Escape precedence,
+1. Phase 2 — TUI pane: labelled nodes stacked on one scroll surface, wheel scroll, Escape precedence,
    screenshot gate.
-3. Phase 3 — `live` host op (contract version 3), `vis.live` with per-node handles and batched
+2. Phase 3 — `live` host op (contract version 3), `vis.live` with per-node handles and batched
    flushing, checker parity.
-4. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
+3. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
    log-range resync, interrupt route), companion reducer keyed by node id, component and drift test.
-5. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
-6. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
+4. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
+5. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
    proof of the chain.

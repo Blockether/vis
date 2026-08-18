@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.human-input-test
   (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.human-input.live-sink :as live-sink]
             [com.blockether.vis.internal.human-input.spec :as hs]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it throws?]]
@@ -1542,3 +1544,190 @@
                                      {:is-submitted false :reason "cancelled" :request-id "r"})))
       (expect (some?
                 (hs/answer-error nil {:is-submitted false :reason :interrupted :request-id "r"})))))
+
+;; A live view — the interaction the human WATCHES. Nothing blocks, the record on
+;; disk is the store of record, and the model reads ONE markdown at the end.
+
+(def ^:private live-views-dir
+  "The private var every view record hangs under, redefined per test so nothing
+   here writes anywhere near the developer's own `~/.vis`."
+  (requiring-resolve 'com.blockether.vis.internal.human-input.live-sink/views-dir))
+
+(defn- temp-views-dir
+  []
+  (io/file (System/getProperty "java.io.tmpdir") (str "vis-views-" (random-uuid))))
+
+(defn- live-spec
+  "A live view in a session of its own, so its record shares a directory with
+   nothing else."
+  [& nodes]
+  {:title "CI"
+   :description "Blockether/vis · 42"
+   :session-id (str "vis-test-" (random-uuid))
+   :nodes (vec nodes)})
+
+(defn- recorded
+  "Run `f` with every view record under a temp directory of its own."
+  [f]
+  (with-redefs-fn {live-views-dir (constantly (temp-views-dir))} f))
+
+(defn- watching
+  "Open `spec` into a temp record, hand the mounted view to `f`, and close it —
+   so a failing expectation never leaves a view pending for the next test."
+  [spec f]
+  (recorded (fn []
+              (let [view (hi/open-live! spec)]
+                (try (f view) (finally (hi/close-live! (:id view))))))))
+
+(defn- live-refusal
+  "The one-line reason `f` was refused, or nil when it was accepted."
+  [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(defdescribe
+  live-lifecycle-test
+  (it "mounts a view, patches it BY NODE ID, and ends in the markdown the model reads"
+      (watching
+        (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"}
+                   {:id "tail" :type "log" :window-lines 50})
+        (fn [view]
+          (let [view-id (:id view)]
+            (expect (= 0 (:seq view)))
+            (expect (= ["now" "tail"] (mapv :id (:nodes (hi/live-view view-id)))))
+            (let
+              [patched (hi/patch-live!
+                         view-id
+                         [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}
+                          {:op "append" :node-id "tail" :lines ["+ clojure -M:test" "18 passed"]}])]
+              (expect (= 1 (:seq patched)))
+              (expect (= "18 jobs" (:text (first (:nodes patched)))))
+              (expect (= ["+ clojure -M:test" "18 passed"] (:lines (second (:nodes patched)))))
+              (expect (= patched (hi/live-view view-id))))
+            (let [result (hi/close-live! view-id {:summary "18 of 18 jobs finished"})]
+              (expect (true? (:is-completed result)))
+              (expect (= :completed (:reason result)))
+              (expect (= view-id (:view-id result)))
+              ;; The verdict carries the picture, not a description of it.
+              (expect (str/includes? (:markdown result) "18 jobs"))
+              (expect (str/includes? (:markdown result) "+ clojure -M:test"))
+              (expect (str/includes? (:markdown result) "18 of 18 jobs finished")))))))
+  (it
+    "keeps every ACCEPTED patch on disk, in the order the engine accepted them"
+    (recorded
+      (fn []
+        (let
+          [spec
+           (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
+
+           view
+           (hi/open-live! spec)
+
+           view-id
+           (:id view)]
+
+          (hi/patch-live! view-id [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}])
+          (hi/close-live! view-id {:summary "done"})
+          (let [lines (live-sink/read-range (live-sink/view-file (:session-id spec) view-id) 0 10)]
+            (expect (= ["open" "patch" "close"] (mapv :kind lines)))
+            (expect (= view-id (:id (:view (first lines)))))
+            (expect (= [1] (mapv :seq (keep :patch lines))))
+            (expect (= "18 jobs"
+                       (-> lines
+                           second
+                           :patch
+                           :ops
+                           first
+                           :text)))
+            (expect (true? (:is-completed (:result (last lines)))))
+            ;; APPEND mode: a process that reopens a record adds to it. Truncating
+            ;; here would drop a run somebody is still scrolling back through.
+            (live-sink/open! view)
+            (expect (= 4
+                       (count (live-sink/read-range (live-sink/view-file (:session-id spec) view-id)
+                                                    0
+                                                    10)))))))))
+  (it "refuses to mount a view that names no session"
+      (recorded (fn []
+                  (expect (re-find #"names no session"
+                                   (live-refusal #(hi/open-live! (dissoc (live-spec {:id "now"
+                                                                                     :type "status"
+                                                                                     :text "Hi"})
+                                                                   :session-id))))))))
+  (it "refuses a patch for a view that is not open, and names it"
+      (expect (re-find #"no live view"
+                       (live-refusal #(hi/patch-live! "not-a-view"
+                                                      [{:op "clear" :node-id "tail"}])))))
+  (it "closes ONCE: a second close is a no-op, not a second verdict"
+      (recorded (fn []
+                  (let
+                    [view
+                     (hi/open-live! (live-spec
+                                      {:id "now" :type "status" :text "Sweeping" :tone "running"}))
+
+                     view-id
+                     (:id view)]
+
+                    (expect (true? (:is-completed (hi/close-live! view-id))))
+                    (expect (nil? (hi/close-live! view-id)))
+                    (expect (nil? (hi/live-view view-id)))))))
+  (it "interrupts into a verdict that still carries what the human had watched"
+      (recorded
+        (fn []
+          (let
+            [view
+             (hi/open-live! (live-spec {:id "now" :type "status" :text "Sweeping" :tone "running"}))
+
+             view-id
+             (:id view)]
+
+            (hi/patch-live! view-id
+                            [{:op "set" :node-id "now" :text "12 of 40 hosts" :tone "warn"}])
+            (let [result (hi/interrupt-live! view-id)]
+              (expect (false? (:is-completed result)))
+              (expect (= :interrupted (:reason result)))
+              (expect (str/includes? (:markdown result) "12 of 40 hosts")))))))
+  (it "hands a body the view id and answers the verdict"
+      (recorded (fn []
+                  (let
+                    [result
+                     (hi/with-live!
+                       (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
+                       (fn [view-id]
+                         (hi/patch-live! view-id
+                                         [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}])))]
+                    (expect (= :completed (:reason result)))
+                    (expect (str/includes? (:markdown result) "18 jobs"))))))
+  (it "closes what a body opened even when the body throws"
+      (recorded
+        (fn []
+          (let
+            [spec
+             (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
+
+             opened
+             (atom nil)]
+
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(hi/with-live! spec
+                                             (fn [view-id]
+                                               (reset! opened view-id)
+                                               (throw (ex-info "the poll died" {}))))))
+            (expect (nil? (hi/live-view @opened)))
+            (let
+              [result (:result (last (live-sink/read-range (live-sink/view-file (:session-id spec)
+                                                                                @opened)
+                                                           0
+                                                           10)))]
+              (expect (= "failed" (:reason result)))
+              (expect (= "the poll died" (:error result)))
+              (expect (false? (:is-completed result))))))))
+  (it "keeps forms and live views in ONE registry without confusing the two"
+      (watching (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
+                (fn [view]
+                  (let [view-id (:id view)]
+                    (expect (contains? (set (map :id (hi/pending-requests))) view-id))
+                    ;; A pending view IS its materialized state: nodes, never a form's fields.
+                    (expect (some? (:nodes (hi/pending-request view-id))))
+                    (expect (nil? (:fields (hi/pending-request view-id))))
+                    (expect (re-find #"live view, not a form"
+                                     (live-refusal #(hi/submit! view-id {})))))))))

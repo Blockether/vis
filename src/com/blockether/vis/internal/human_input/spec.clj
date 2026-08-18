@@ -175,6 +175,12 @@
    free to disagree unless the view DECLARES one."
   {"insertion" :insertion "newest-first" :newest-first})
 
+(def live-aligns
+  "How a table column's cells sit under their header. CLOSED."
+  {"left" :left "right" :right})
+
+(def live-sort-dirs "Which way a `{:by …}` order runs. CLOSED." {"asc" :asc "desc" :desc})
+
 (def live-reasons
   "Why a view ended. CLOSED, and the only vocabulary an extension branches on."
   {"completed" :completed
@@ -288,6 +294,8 @@
           :ops (vec (sort (keys live-ops)))
           :tones (vec (sort (keys live-tones)))
           :orders (vec (sort (keys live-orders)))
+          :aligns (vec (sort (keys live-aligns)))
+          :sort-dirs (vec (sort (keys live-sort-dirs)))
           :reasons (vec (sort (keys live-reasons)))
           :log {:window-lines (:window-lines log-defaults)
                 :window-lines-cap (:window-lines-cap log-defaults)
@@ -746,13 +754,13 @@
 (s/def ::window-lines (s/int-in 1 (inc (long (:window-lines-cap log-defaults)))))
 (s/def ::done nat-int?)
 (s/def ::total pos-int?)
-(s/def ::align #{:left :right})
+(s/def ::align (set (vals live-aligns)))
 (s/def ::cells (s/coll-of string? :kind vector?))
 (s/def ::value-text string?)                                ; a stat's value AS SHOWN ("3.4 MB/s")
 (s/def ::target non-blank-string?)                          ; attachment id, workspace path, or url
 (s/def ::target-kind (set (vals link-targets)))
 (s/def ::by non-blank-string?)
-(s/def ::dir #{:asc :desc})
+(s/def ::dir (set (vals live-sort-dirs)))
 (s/def ::node-id non-blank-string?)                         ; the ADDRESS a patch speaks to
 (s/def ::view-id non-blank-string?)
 (s/def ::is-completed boolean?)
@@ -824,7 +832,7 @@
   (and (map? x)
        (closed? live-sorted-keys x)
        (non-blank-string? (:by x))
-       (or (nil? (:dir x)) (contains? #{:asc :desc} (:dir x)))))
+       (or (nil? (:dir x)) (contains? (set (vals live-sort-dirs)) (:dir x)))))
 
 (s/def ::order #(or (contains? (set (vals live-orders)) %) (sorted-order? %)))
 
@@ -875,9 +883,12 @@
 
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)
-         (s/keys :req-un [::id ::title ::session-id ::channel-ids ::nodes ::is-cancellable
-                          ::timeout-ms ::seq ::created-at]
-                 :opt-un [::description ::source])))
+         (s/keys :req-un [::id ::title ::channel-ids ::nodes ::is-cancellable ::timeout-ms ::seq
+                          ::created-at]
+                 ;; `::session-id` is optional HERE and required at `open-live!`, exactly
+                 ;; as a request's is: a view can be declared by a builder that has no
+                 ;; session yet, and it is the MOUNT that must name the session it runs in.
+                 :opt-un [::description ::source ::session-id])))
 
 ;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads
 ;; the snapshot instead of painting a torn view.

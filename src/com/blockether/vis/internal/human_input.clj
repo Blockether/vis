@@ -39,6 +39,8 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.human-input.live :as live]
+            [com.blockether.vis.internal.human-input.live-sink :as live-sink]
             [com.blockether.vis.internal.human-input.spec :as hi-spec]
             [com.blockether.vis.internal.human-input.validation :as validation]
             [com.blockether.vis.internal.runtime-settings :as rt]
@@ -305,13 +307,17 @@
       (invalid-field! field-id "option values must be distinct"))
     options))
 
-(defn- normalize-bool
-  [field-id label value fallback]
+(defn- bool-value
+  [fail! label value fallback]
   (cond (nil? value) fallback
         (boolean? value) value
         (= "true" (str value)) true
         (= "false" (str value)) false
-        :else (invalid-field! field-id (str label " must be a boolean"))))
+        :else (fail! (str label " must be a boolean"))))
+
+(defn- normalize-bool
+  [field-id label value fallback]
+  (bool-value #(invalid-field! field-id %) label value fallback))
 
 (defn- normalize-length
   "A `:min_length`/`:max_length` character count. `label` is the key the spec
@@ -669,7 +675,7 @@
        (catch Throwable _ nil)))
 
 (defn- normalize-channel-ids
-  [request]
+  [request fail!]
   (let
     [ids
      (pick request "channel_ids" :channel-ids "channel_id" :channel-id)
@@ -681,34 +687,34 @@
      (cond (nil? ids) [:tui :app]
            (keyword? ids) [ids]
            (sequential? ids) (vec ids)
-           :else (invalid-request! ":channel-ids must be a keyword or a sequence of keywords"))]
+           :else (fail! ":channel-ids must be a keyword or a sequence of keywords"))]
 
-    (when (empty? ids) (invalid-request! ":channel-ids must not be empty"))
-    (when-not (every? keyword? ids) (invalid-request! ":channel-ids must be keywords"))
+    (when (empty? ids) (fail! ":channel-ids must not be empty"))
+    (when-not (every? keyword? ids) (fail! ":channel-ids must be keywords"))
     ids))
 
 (defn- normalize-timeout
-  "The request's deadline in milliseconds, or [[no-timeout-ms]] when it waits
-   indefinitely.
+  "The deadline in milliseconds, or [[no-timeout-ms]] when the wait is
+   indefinite.
 
-   A missing key means [[default-timeout-ms]]; `0` is the one way to ask for no
-   deadline; a negative number is refused. Nothing is CLAMPED — a caller who
-   wants to wait all day says 0 and means it, so quietly shortening a stated
-   budget would only lie about when the answer arrives."
-  [request]
+   A missing key means `fallback`: five minutes for a request a human owes an
+   answer to, none for a live view whose work takes as long as the work takes.
+   `0` is the one way to ask for no deadline; a negative number is refused.
+   Nothing is CLAMPED — a caller who wants to wait all day says 0 and means it,
+   so quietly shortening a stated budget would only lie about when the answer
+   arrives."
+  [spec fallback fail!]
   (let
     [raw
-     (pick request "timeout_ms" :timeout-ms)
+     (pick spec "timeout_ms" :timeout-ms)
 
      ms
      (if (nil? raw)
-       default-timeout-ms
+       fallback
        (or (if (number? raw) (long raw) (parse-long (str raw)))
-           (invalid-request!
-             ":timeout-ms must be a number of milliseconds, or 0 to wait indefinitely")))]
+           (fail! ":timeout-ms must be a number of milliseconds, or 0 to wait indefinitely")))]
 
-    (when (neg? (long ms))
-      (invalid-request! ":timeout-ms must not be negative — 0 waits indefinitely"))
+    (when (neg? (long ms)) (fail! ":timeout-ms must not be negative — 0 waits indefinitely"))
     (long ms)))
 
 (defn normalize-request
@@ -754,8 +760,8 @@
          :cancel-label (or (trimmed (pick request "cancel_label" :cancel-label)) "Cancel")
          :is-cancellable
          (normalize-bool nil ":is-cancellable" (pick request "is_cancellable" :is-cancellable) true)
-         :timeout-ms (normalize-timeout request)
-         :channel-ids (normalize-channel-ids request)}
+         :timeout-ms (normalize-timeout request default-timeout-ms invalid-request!)
+         :channel-ids (normalize-channel-ids request invalid-request!)}
         session-id
         (assoc :session-id session-id)
 
@@ -764,6 +770,469 @@
 
         (trimmed (pick request "source" :source))
         (assoc :source (trimmed (pick request "source" :source)))))))
+
+;; A live view — the second kind of interaction
+;;
+;; The same parser, deliberately: closed tables looked up rather than keywords
+;; minted, either spelling of every key, blanks dropped before the materializer
+;; ever sees them. What differs is TIME. A form is answered once, so its shape is
+;; its whole life; a view is DECLARED once and then patched, so every node
+;; carries an `:id` that patches ADDRESS it by.
+
+(defn- invalid-live-view!
+  [message]
+  (throw (ex-info (str "Invalid live view: " message)
+                  {:type :vis/human-input-invalid-live-view :reason message})))
+
+(defn- invalid-live-patch!
+  [message]
+  (throw (ex-info (str "Invalid live-view patch: " message)
+                  {:type :vis/human-input-invalid-patch :reason message})))
+
+(defn- checked-live-view
+  [view]
+  (if-let [why (hi-spec/live-view-error view)]
+    (invalid-live-view! why)
+    view))
+
+(defn- checked-live-node
+  "`node` once it satisfies the node contract, else the reason it does not,
+   refused by whoever was declaring it."
+  [fail! node]
+  (if-let [why (hi-spec/live-node-error node)]
+    (fail! why)
+    node))
+
+(defn- checked-live-patch
+  [patch]
+  (if-let [why (hi-spec/live-patch-error patch)]
+    (invalid-live-patch! why)
+    patch))
+
+(def ^:private live-view-decl-keys
+  "Every key a live-view SPEC may write: the view's vocabulary minus the engine's
+   own stamps, plus the singular `channel_id` [[normalize-channel-ids]] accepts."
+  (conj (wire-keys (reduce disj hi-spec/live-view-keys hi-spec/live-view-stamp-keys)) "channel_id"))
+
+(def ^:private live-node-decl-keys
+  "Every key a NODE spec may write. `total_lines` is the engine's stamp on a log:
+   the size of the RECORD is counted, never claimed."
+  (wire-keys (disj hi-spec/live-node-keys :total-lines)))
+
+(def ^:private live-patch-decl-keys
+  "The one key a patch spec may write. `view_id` and `seq` are stamps: a caller
+   who could choose the seq could replay a patch, and one who could choose the
+   view could patch somebody else's."
+  (wire-keys (reduce disj hi-spec/live-patch-keys #{:view-id :seq})))
+
+(def ^:private live-order-decl-keys
+  "Every key a `{:by …}` table order may write."
+  (wire-keys hi-spec/live-sorted-keys))
+
+(def ^:private live-op-decl-keys
+  "Every key ONE operation may write, per operation — the op's own `:op` chooses
+   the set, so a `clear` carrying the lines it meant to `append` is refused
+   instead of silently emptying the node."
+  (update-vals hi-spec/live-op-key-sets wire-keys))
+
+(def ^:private live-item-keys
+  "Every key one item of a keyed collection may write, by the key holding them."
+  {:columns (wire-keys hi-spec/live-column-keys)
+   :rows (wire-keys hi-spec/live-row-keys)
+   :stats (wire-keys hi-spec/live-stat-keys)
+   :steps (wire-keys hi-spec/live-step-keys)
+   :links (wire-keys hi-spec/live-link-keys)})
+
+(def ^:private live-item-name
+  "What one item of each keyed collection is CALLED, so a refusal names the thing
+   the author wrote rather than the key it arrived under."
+  {:columns "column" :rows "row" :stats "stat" :steps "step" :links "link"})
+
+(defn- pick*
+  "The value of canonical key `k` written either legal way: `\"window_lines\"`
+   from the wire, `:window-lines` from Clojure."
+  [m k]
+  (pick m (snake-key k) k))
+
+(defn- live-term
+  "The entry `value` names in a CLOSED wire table, in either spelling. A term
+   outside the table is refused NAMING the table: a minted keyword reaches a
+   surface that has no way to paint it, and nothing downstream would ever say so."
+  [fail! what table value]
+  (or (when (or (keyword? value) (string? value)) (get table (name value)))
+      (fail!
+        (str what " must be one of " (str/join ", " (sort (keys table))) ", not " (pr-str value)))))
+
+(defn- live-text
+  [fail! what value]
+  (or (trimmed value) (fail! (str what " must be non-blank text"))))
+
+(defn- live-shown
+  "One value AS SHOWN. A number or a keyword is rendered, because a stat's value
+   and a table's cell are text on purpose — the extension chooses the units and
+   the engine never formats. A collection is refused: it would `str` into
+   Clojure source no human reads."
+  [fail! what value]
+  (cond (coll? value) (fail! (str what " is one text, not " (pr-str value)))
+        (string? value) value
+        (nil? value) (fail! (str what " must be text"))
+        :else (str value)))
+
+(defn- text-items
+  "A sequence of TEXTS. nil is the empty text — a blank line IS a line, and a
+   missing cell is an empty cell, not a hole in the row."
+  [fail! what values]
+  (when-not (sequential? values) (fail! (str what " must be a sequence of texts")))
+  (mapv (fn [value]
+          (if (nil? value) "" (live-shown fail! what value)))
+        values))
+
+(defn- live-long
+  [fail! what value]
+  (let
+    [n (if (number? value)
+         (when (== (double value) (Math/floor (double value))) (long value))
+         (parse-long (str/trim (str value))))]
+    (if (nil? n) (fail! (str what " must be a whole number")) (long n))))
+
+(defn- live-fraction
+  "A fraction of one. Absent is INDETERMINATE and stays absent: a job whose size
+   nobody knows is not a job at zero percent, and the two paint differently."
+  [fail! what value]
+  (let [n (if (number? value) value (parse-double (str/trim (str value))))]
+    (if (and (number? n) (<= 0 (double n) 1))
+      (double n)
+      (fail! (str what " must be a fraction from 0 to 1, or absent when the size is unknown")))))
+
+(defn- live-target-kind
+  "What a link points AT. Named by the spec, or inferred from a target carrying a
+   URL scheme; anything else is refused with the three kinds named, because a
+   surface opens each of them differently."
+  [fail! declared target]
+  (cond (some? declared) (live-term fail! ":target-kind" hi-spec/link-targets declared)
+        (re-find #"^[a-zA-Z][a-zA-Z0-9+.-]*://" target) :url
+        :else (fail! (str ":target-kind must be one of "
+                          (str/join ", " (sort (keys hi-spec/link-targets)))
+                          " — only a target carrying a scheme names its own kind"))))
+
+(defn- normalize-live-item
+  "One item of a keyed collection — a column, row, stat, step or link. All five
+   are normalized by the same three rules: closed keys, an `:id` that ADDRESSES
+   the item, and every closed vocabulary looked up rather than minted."
+  [fail! kind item]
+  (let [what (live-item-name kind)]
+    (when-not (map? item) (fail! (str "a " what " must be a map")))
+    (check-keys! what (live-item-keys kind) item fail!)
+    (let
+      [id (or (trimmed (pick* item :id))
+              (fail! (str "a " what " needs a non-blank :id — a patch addresses it by that id")))
+       item-fail! (fn [message]
+                    (fail! (str what " " id ": " message)))
+       label (trimmed (pick* item :label))
+       tone (some->> (pick* item :tone)
+                     (live-term item-fail! ":tone" hi-spec/live-tones))]
+
+      (case kind
+        :columns
+        (cond-> {:id id :label (or label (item-fail! "a column needs a :label"))}
+          (some? (pick* item :align))
+          (assoc :align (live-term item-fail! ":align" hi-spec/live-aligns (pick* item :align))))
+
+        :rows
+        (cond-> {:id id :cells (text-items item-fail! ":cells" (or (pick* item :cells) []))}
+          tone
+          (assoc :tone tone))
+
+        :stats
+        (cond->
+          {:id id
+           :label (or label (item-fail! "a stat needs a :label"))
+           :value-text (live-shown item-fail! ":value-text" (pick* item :value-text))}
+          tone
+          (assoc :tone tone))
+
+        :steps
+        (cond->
+          {:id id :label (or label (item-fail! "a step needs a :label")) :tone (or tone :idle)}
+          (trimmed (pick* item :detail))
+          (assoc :detail (trimmed (pick* item :detail)))
+
+          (some? (pick* item :value))
+          (assoc :value (live-fraction item-fail! ":value" (pick* item :value))))
+
+        :links
+        (let [target (live-text item-fail! ":target" (pick* item :target))]
+          (cond->
+            {:id id
+             :label (or label (item-fail! "a link needs a :label"))
+             :target target
+             :target-kind (live-target-kind item-fail! (pick* item :target-kind) target)}
+            tone
+            (assoc :tone tone)))))))
+
+(defn- normalize-live-items
+  [fail! kind values]
+  (cond (nil? values) []
+        (sequential? values) (mapv #(normalize-live-item fail! kind %) values)
+        :else (fail! (str ":" (name kind) " must be a sequence of " (live-item-name kind) "s"))))
+
+(defn- normalize-live-order
+  "How a table PAINTS its rows. Absent means insertion order — the order the
+   human watched them arrive in, which is the one order no surface can get wrong."
+  [fail! order]
+  (cond (nil? order) :insertion
+        (map? order) (do (check-keys! "order" live-order-decl-keys order fail!)
+                         (cond-> {:by (live-text fail! "a `{:by …}` order's :by" (pick* order :by))}
+                           (some? (pick* order :dir))
+                           (assoc :dir
+                             (live-term fail! ":dir" hi-spec/live-sort-dirs (pick* order :dir)))))
+        :else (live-term fail! ":order" hi-spec/live-orders order)))
+
+(defn- live-node
+  "One declared node of a live view. `fail!` is the refusal of whoever declares
+   it — a view spec, or the `add-node` op that introduces one mid-run — so one
+   node parser serves both without either learning the other's error type."
+  [fail! node]
+  (when-not (map? node) (fail! "a node must be a map"))
+  (check-keys! "node" live-node-decl-keys node fail!)
+  (let
+    [id
+     (or (trimmed (pick* node :id))
+         (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
+
+     node-fail!
+     (fn [message]
+       (fail! (str "node " id ": " message)))
+
+     type
+     (live-term node-fail! ":type" hi-spec/live-node-types (pick* node :type))
+
+     label
+     (trimmed (pick* node :label))
+
+     base
+     (cond-> {:id id :type type}
+       label
+       (assoc :label label))
+
+     items
+     (fn [kind]
+       (normalize-live-items node-fail! kind (pick* node kind)))]
+
+    (checked-live-node
+      node-fail!
+      (case type
+        :status
+        (cond->
+          (assoc base
+            :text (live-text node-fail! "a status' :text" (pick* node :text))
+            :tone (or (some->> (pick* node :tone)
+                               (live-term node-fail! ":tone" hi-spec/live-tones))
+                      :idle))
+          (trimmed (pick* node :detail))
+          (assoc :detail (trimmed (pick* node :detail))))
+
+        :progress
+        (cond-> base
+          (some? (pick* node :value))
+          (assoc :value (live-fraction node-fail! ":value" (pick* node :value)))
+
+          (some? (pick* node :done))
+          (assoc :done (live-long node-fail! ":done" (pick* node :done)))
+
+          (some? (pick* node :total))
+          (assoc :total (live-long node-fail! ":total" (pick* node :total))))
+
+        :stat
+        (assoc base :stats (items :stats))
+
+        :steps
+        (assoc base :steps (items :steps))
+
+        :log
+        (assoc base
+          :lines (if-some [lines (pick* node :lines)]
+                   (text-items node-fail! ":lines" lines)
+                   [])
+          :window-lines (if-some [window (pick* node :window-lines)]
+                          (live-long node-fail! ":window-lines" window)
+                          (long (:window-lines hi-spec/log-defaults))))
+
+        :table
+        (assoc base
+          :columns (items :columns)
+          :rows (items :rows)
+          :max-rows (if-some [bound (pick* node :max-rows)]
+                      (live-long node-fail! ":max-rows" bound)
+                      (long (:max-rows hi-spec/table-defaults)))
+          :order (normalize-live-order node-fail! (pick* node :order)))
+
+        :link
+        (assoc base :links (items :links))))))
+
+(defn normalize-live-node
+  "One declared node, refused where it was BUILT — the seam the node builders in
+   `com.blockether.vis.human-input` validate through, so an unknown key or a
+   `:tone` outside the table throws at the line that wrote it rather than in
+   front of the human."
+  [node]
+  (live-node invalid-live-view! node))
+
+(defn normalize-live-view
+  "Validate a live-view spec and return the view the materializer holds. Throws
+   `ex-info` with `:type :vis/human-input-invalid-live-view` on a bad spec, so a
+   view is refused WHERE IT WAS DECLARED, before any surface drew anything.
+
+   Three keys are the ENGINE's stamps and a spec that writes one is refused: the
+   view's `:id`, the `:seq` no patch has advanced yet, and `:created-at`. Two
+   writers of one id is exactly how a patch lands on the wrong view.
+
+   Unlike a request, a view must name its SESSION here rather than at mount
+   time: the session is where the record is kept, so a view without one has
+   nowhere to be written down.
+
+   `:timeout-ms` defaults to [[no-timeout-ms]] — a build takes as long as the
+   build takes. It is the deadline a surface may show and a driver may honour;
+   nothing in the engine kills a view that is still being patched, because the
+   work behind it is the extension's, not a human's."
+  [view]
+  (when-not (map? view) (invalid-live-view! "a live view must be a map"))
+  (check-keys! "live view" live-view-decl-keys view invalid-live-view!)
+  (let
+    [title
+     (or (trimmed (pick* view :title)) (invalid-live-view! "a live view needs a non-blank :title"))
+
+     raw-nodes
+     (pick* view :nodes)
+
+     _
+     (when-not (sequential? raw-nodes) (invalid-live-view! ":nodes must be a sequence"))
+
+     nodes
+     (mapv #(live-node invalid-live-view! %) raw-nodes)
+
+     _
+     (when (empty? nodes) (invalid-live-view! ":nodes must not be empty"))
+
+     _
+     (when-not (apply distinct? (mapv :id nodes))
+       (invalid-live-view! (str "node ids must be distinct — got "
+                                (str/join ", " (sort (mapv :id nodes))))))
+
+     session-id
+     (or (trimmed (pick* view :session-id)) (ambient-session-id))]
+
+    (checked-live-view
+      (cond->
+        {:id (str (random-uuid))
+         :title title
+         :nodes nodes
+         :is-cancellable
+         (bool-value invalid-live-view! ":is-cancellable" (pick* view :is-cancellable) true)
+         :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
+         :channel-ids (normalize-channel-ids view invalid-live-view!)
+         :seq 0
+         :created-at (System/currentTimeMillis)}
+        session-id
+        (assoc :session-id session-id)
+
+        (trimmed (pick* view :description))
+        (assoc :description (trimmed (pick* view :description)))
+
+        (trimmed (pick* view :source))
+        (assoc :source (trimmed (pick* view :source)))))))
+
+(def ^:private live-op-value
+  "How ONE key of a patch operation is normalized, by key. A table rather than a
+   branch per operation, so `:tone` means the same thing in every op that carries
+   one and no op can grow a private reading of a shared key."
+  {:node-id (fn [fail! value]
+              (live-text fail! ":node-id" value))
+   :after (fn [fail! value]
+            (live-text fail! ":after" value))
+   :text (fn [fail! value]
+           (live-text fail! ":text" value))
+   :detail (fn [fail! value]
+             (live-text fail! ":detail" value))
+   :label (fn [fail! value]
+            (live-text fail! ":label" value))
+   :tone (fn [fail! value]
+           (live-term fail! ":tone" hi-spec/live-tones value))
+   :value (fn [fail! value]
+            (live-fraction fail! ":value" value))
+   :done (fn [fail! value]
+           (live-long fail! ":done" value))
+   :total (fn [fail! value]
+            (live-long fail! ":total" value))
+   :lines (fn [fail! value]
+            (text-items fail! ":lines" value))
+   :item-ids (fn [fail! value]
+               (text-items fail! ":item-ids" value))
+   :rows (fn [fail! value]
+           (normalize-live-items fail! :rows value))
+   :stats (fn [fail! value]
+            (normalize-live-items fail! :stats value))
+   :steps (fn [fail! value]
+            (normalize-live-items fail! :steps value))
+   :links (fn [fail! value]
+            (normalize-live-items fail! :links value))
+   :node-spec (fn [fail! value]
+                (live-node fail! value))})
+
+(defn- live-op
+  "One patch operation, normalized against the closed key set its own `:op`
+   chooses."
+  [fail! op]
+  (when-not (map? op) (fail! "an operation must be a map"))
+  (let
+    [kind
+     (live-term fail! ":op" hi-spec/live-ops (pick* op :op))
+
+     ;; "an append op", "a set op" — the refusal is read out loud by whoever wrote it.
+     article
+     (if (contains? #{\a \e \i \o \u} (first (name kind))) "an " "a ")
+
+     op-fail!
+     (fn [message]
+       (fail! (str article (name kind) " op: " message)))]
+
+    (check-keys! (str (name kind) " op") (live-op-decl-keys kind) op op-fail!)
+    (reduce (fn [acc k]
+              (if-some [value (pick* op k)]
+                (assoc acc k ((live-op-value k) op-fail! value))
+                acc))
+            {:op kind}
+            (disj (hi-spec/live-op-key-sets kind) :op))))
+
+(defn normalize-live-op
+  "One patch operation, refused where it was BUILT — the seam the `add-node` /
+   `remove-node` builders check through. Shape only: whether the node an op
+   names EXISTS is the running view's answer, in [[normalize-patch]]."
+  [op]
+  (live-op invalid-live-patch! op))
+
+(defn normalize-patch
+  "Validate `patch` against the `view` it lands on and return its internal form:
+   the operations as declared, under the engine's own `:view-id` and the NEXT
+   `:seq`.
+
+   The ops may arrive bare or under `:ops`, because the wire carries a map and a
+   Clojure caller has a vector — everything below that is one vocabulary. Shape
+   only: whether the node an op names EXISTS, and whether it would cross a
+   bound, is `live/apply-patch`'s answer."
+  [view patch]
+  (let
+    [ops (cond (map? patch) (do (check-keys! "patch" live-patch-decl-keys patch invalid-live-patch!)
+                                (pick* patch :ops))
+               (sequential? patch) patch
+               :else (invalid-live-patch! "a patch is a sequence of operations"))]
+    (when-not (sequential? ops) (invalid-live-patch! ":ops must be a sequence of operations"))
+    (when (empty? ops)
+      (invalid-live-patch!
+        ":ops must not be empty — a patch that changes nothing is a bug, not a state"))
+    (checked-live-patch {:view-id (:id view)
+                         :seq (inc (long (:seq view)))
+                         :ops (mapv #(live-op invalid-live-patch! %) ops)})))
 
 ;; Value coercion — one implementation for defaults and submissions
 
@@ -1028,7 +1497,7 @@
    data instead of each inventing a layout."
   [request]
   (-> request
-      (dissoc :promise :channel-ids)
+      (dissoc :promise :channel-ids :kind)
       (assoc :fields (map-fields #(dissoc % :is-secret :validate) (:fields request)))))
 
 (def ^:private request-stamps
@@ -1061,20 +1530,224 @@
   [channel-ids event]
   (transduce (map #(channel-events/publish-channel-event! % event)) + 0 channel-ids))
 
+;; A live view's life — open, patch, close
+;;
+;; Nothing here parks the caller. A form parks because only a human can answer
+;; it; a view is DRIVEN by the extension that opened it, so the engine's job is
+;; to keep the record, tell the surfaces, and hand back the one thing the model
+;; reads: the finished picture, as markdown.
+
+(def ^:private live-ending-keys
+  "Every key the caller of [[close-live!]] may write. The view id, the completion
+   flag and the markdown are the ENGINE's: the picture is rendered from the
+   record, never claimed by whoever is ending it."
+  (wire-keys (reduce disj hi-spec/live-result-keys #{:view-id :is-completed :markdown})))
+
+(defn- live-entry
+  "The pending entry of live view `view-id`, or nil when no live view is open
+   under that id."
+  [view-id]
+  (let [entry (get @pending view-id)]
+    (when (= :live (:kind entry)) entry)))
+
+(defn- live-entry!
+  [view-id]
+  (or (live-entry view-id)
+      (invalid-live-patch!
+        (str "no live view " view-id " is open — it was closed, interrupted, or never opened"))))
+
+(defn live-view
+  "What live view `view-id` looks like right now, or nil. This IS what the
+   surfaces paint: one materialized map, so the terminal, the phone and the model
+   cannot disagree about a row."
+  [view-id]
+  (some-> (live-entry view-id)
+          :view
+          deref))
+
+(defn open-live!
+  "Mount a live view the human WATCHES and return it materialized, `:id` and all.
+   The caller keeps that id: every patch, and the close, name it.
+
+   Nothing blocks. A view nobody has mounted a surface for still runs and still
+   ends in the markdown the model reads — the engine says so ONCE, in the log,
+   rather than refusing work whose whole product is the picture at the end. That
+   is the one place a view differs from a request, which answers `undeliverable`
+   at once because a form nobody can see is a thread parked forever."
+  [view]
+  (let
+    [view
+     (live/materialize (normalize-live-view view))
+
+     view-id
+     (:id view)
+
+     _
+     (when-not (trimmed (:session-id view))
+       (invalid-live-view! (str "view " view-id
+                                " names no session — set :session-id, or open it "
+                                "from an extension environment that carries one")))
+
+     entry
+     {:kind :live
+      :id view-id
+      :view (atom view)
+      :file (live-sink/open! view)
+      :promise (promise)
+      :session-id (:session-id view)
+      :channel-ids (:channel-ids view)
+      :is-cancellable (:is-cancellable view)
+      :created-at (:created-at view)}]
+
+    (swap! pending assoc view-id entry)
+    (tel/log! {:level :debug
+               :id ::live-opened
+               :data {:view-id view-id :title (:title view) :nodes (mapv :id (:nodes view))}
+               :msg "Live view opened"})
+    (when (zero? (long (publish! (:channel-ids entry)
+                                 {:op :human-input/live-open :view-id view-id :view view})))
+      (tel/log! {:level :warn
+                 :id ::live-unwatched
+                 :data {:view-id view-id :title (:title view) :channel-ids (:channel-ids entry)}
+                 :msg (str "Live view reached no channel — nobody is watching it. It still runs, "
+                           "and it still ends in the markdown the model reads")}))
+    view))
+
+(defn patch-live!
+  "Apply `patch` to live view `view-id` and return the view it made.
+
+   One patch at a time per view: the record on disk is the order the engine
+   ACCEPTED patches in, and two threads racing would leave a file no replay can
+   trust. The line is written BEFORE any surface is told, so a crash keeps what
+   the engine accepted rather than what a screen managed to paint."
+  [view-id patch]
+  (let
+    [entry
+     (live-entry! view-id)
+
+     cell
+     (:view entry)]
+
+    (locking cell
+      (let
+        [applied
+         (normalize-patch @cell patch)
+
+         patched
+         (live/apply-patch @cell applied)]
+
+        (reset! cell patched)
+        (live-sink/append! (:file entry) applied)
+        (publish! (:channel-ids entry)
+                  {:op :human-input/live-patch :view-id view-id :patch applied})
+        patched))))
+
+(defn- live-result
+  "The verdict of `view`: how it ended, and the whole picture the human watched,
+   rendered ONCE for the model. The markdown comes from the same materialized
+   state both human surfaces painted, and it carries the verdict itself, so what
+   the model reads says how the story ended before it says anything else."
+  [view ending fail!]
+  (when-not (map? ending) (fail! "an ending must be a map"))
+  (check-keys! "ending" live-ending-keys ending fail!)
+  (let
+    [reason
+     (live-term fail! ":reason" hi-spec/live-reasons (or (pick* ending :reason) :completed))
+
+     verdict
+     (cond-> {:view-id (:id view) :is-completed (= :completed reason) :reason reason}
+       (trimmed (pick* ending :summary))
+       (assoc :summary (trimmed (pick* ending :summary)))
+
+       (trimmed (pick* ending :error))
+       (assoc :error (trimmed (pick* ending :error)))
+
+       (trimmed (pick* ending :artifact-id))
+       (assoc :artifact-id (trimmed (pick* ending :artifact-id))))
+
+     result
+     (assoc verdict :markdown (live/->markdown view {:result verdict}))]
+
+    (if-let [why (hi-spec/live-result-error result)]
+      (fail! why)
+      result)))
+
+(defn close-live!
+  "End live view `view-id` and return its verdict — the ONE thing the model
+   reads. nil when the view was already closed, so a `finally` closing what an
+   interrupt already closed is a no-op rather than a second verdict.
+
+   `ending` says how it ended: `:reason` (`completed` by default), `:summary`,
+   `:error`, `:artifact-id`."
+  ([view-id] (close-live! view-id {}))
+  ([view-id ending]
+   (when-let [entry (live-entry view-id)]
+     ;; The SAME cell `patch-live!` holds: a close racing the last patch waits for
+     ;; it, so the verdict renders the picture the record already ends with.
+     (let [cell (:view entry)]
+       (locking cell
+         (let
+           [result (live-result @cell ending invalid-live-view!)
+            [old _] (swap-vals! pending dissoc view-id)]
+
+           (when (contains? old view-id)
+             (live-sink/close! (:file entry) result)
+             (deliver (:promise entry) result)
+             (publish! (:channel-ids entry)
+                       {:op :human-input/live-close :view-id view-id :result result})
+             (tel/log! {:level :debug
+                        :id ::live-closed
+                        :data {:view-id view-id :reason (:reason result)}
+                        :msg "Live view closed"})
+             result)))))))
+
+(defn interrupt-live!
+  "End live view `view-id` because the human stopped watching — Escape in the
+   terminal, the app's own stop. The verdict reads `interrupted` and still
+   carries the markdown of everything that had happened: what the human saw
+   before they stopped it is exactly what the model has to read."
+  [view-id]
+  (close-live! view-id {:reason :interrupted}))
+
+(defn with-live!
+  "Open the view `view` declares, hand its id to `body`, and CLOSE it — on a
+   throw as well as on a return, because an extension that dies mid-run must
+   still leave the model the picture the human watched. Returns the verdict.
+
+   A `body` that closed the view itself WINS: the ending it chose is the one
+   that ships, this close is then a no-op and the answer is nil — a run that
+   knows why it stopped never has that reason overwritten by its wrapper."
+  [view body]
+  (let [view-id (:id (open-live! view))]
+    (try (body view-id)
+         (close-live! view-id)
+         (catch Throwable t
+           (close-live! view-id {:reason :failed :error (or (ex-message t) (str t))})
+           (throw t)))))
+(defn- entry->view
+  "One pending entry as the surfaces see it, by kind: a request loses its promise
+   and its validators, a live view IS its materialized state."
+  [entry]
+  (if (= :live (:kind entry))
+    (some-> (:view entry)
+            deref)
+    (request->view entry)))
+
 ;; Registry
 
 (defn pending-requests
-  "Snapshot of the currently pending requests, oldest first. Views only."
+  "Snapshot of the currently pending interactions — forms and live views alike,
+   oldest first. Views only."
   []
   (->> (vals @pending)
        (sort-by :created-at)
-       (mapv request->view)))
+       (mapv entry->view)))
 
 (defn pending-request
   "The pending request `request-id`, as a view, or nil."
   [request-id]
   (some-> (get @pending request-id)
-          request->view))
+          entry->view))
 
 (defn- settle!
   "Remove `request-id` and deliver `result` to whoever is blocked on it. Returns
@@ -1107,26 +1780,34 @@
    `{:is-accepted false :reason \"unknown\"}` for an already-settled request."
   [request-id values]
   (if-let [entry (get @pending request-id)]
-    (let [outcome (coerce-values (:fields entry) values)]
-      (if (:is-accepted outcome)
-        (if (settle! request-id
-                     {:is-submitted true
-                      :reason "submitted"
-                      :request-id request-id
-                      :values (:values outcome)})
-          {:is-accepted true}
-          {:is-accepted false :reason "unknown"})
-        outcome))
+    (if (= :live (:kind entry))
+      (invalid-answer! request-id
+                       (str "this is a live view, not a form — a view ends when the extension that "
+                            "opened it closes it, and carries no values to submit"))
+      (let [outcome (coerce-values (:fields entry) values)]
+        (if (:is-accepted outcome)
+          (if (settle! request-id
+                       {:is-submitted true
+                        :reason "submitted"
+                        :request-id request-id
+                        :values (:values outcome)})
+            {:is-accepted true}
+            {:is-accepted false :reason "unknown"})
+          outcome)))
     {:is-accepted false :reason "unknown"}))
 
 (defn- force-cancel!
-  "Settle `request-id` as cancelled no matter what the request declared. The
-   shutdown path: a detaching channel or a closing session must never leave a
-   thread parked, even on a request whose author forbade dismissal."
+  "Release `request-id` no matter what it declared — a form settles as
+   cancelled, a live view closes as interrupted. The shutdown path: a detaching
+   channel or a closing session must never leave a thread parked or a view open,
+   and the two kinds end differently because they were entered differently."
   [request-id reason]
-  (some? (settle!
-           request-id
-           {:is-submitted false :reason (or (trimmed reason) "cancelled") :request-id request-id})))
+  (if (live-entry request-id)
+    (some? (close-live! request-id {:reason :interrupted}))
+    (some? (settle! request-id
+                    {:is-submitted false
+                     :reason (or (trimmed reason) "cancelled")
+                     :request-id request-id}))))
 
 (defn cancel!
   "Cancel pending request `request-id` on the operator's behalf. Returns true
@@ -1198,6 +1879,7 @@
   (let
     [entry
      (assoc (normalize-request request)
+       :kind :form
        :promise (promise)
        :created-at (System/currentTimeMillis))
 

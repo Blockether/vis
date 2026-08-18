@@ -1,10 +1,10 @@
 (ns com.blockether.vis.human-input-test
-  "The public form builders — `com.blockether.vis.human-input`.
+  "The public builders — `com.blockether.vis.human-input`.
 
-   Two promises are tested here and nothing else: a builder returns the plain
-   spec map an extension could have typed by hand, and a mistake in it is
-   refused AT THE BUILDER CALL with the engine's own one-line reason instead of
-   in front of the human."
+   Two promises are tested here and nothing else, for a form and for a live view
+   alike: a builder returns the plain spec map an extension could have typed by
+   hand, and a mistake in it is refused AT THE BUILDER CALL with the engine's own
+   one-line reason instead of in front of the human."
   (:require [com.blockether.vis.human-input :as hi]
             [com.blockether.vis.internal.human-input :as engine]
             [lazytest.core :refer [defdescribe describe expect it]]))
@@ -159,3 +159,91 @@
                                                               :fields [{:type "plaintext"
                                                                         :name "who"
                                                                         :validate "nope"}]})))))))
+
+;; Live views — the picture the human WATCHES while an extension works. Same two
+;; promises: the plain map, and the mistake dated to the line that made it.
+
+(def ^:private ci-view
+  #(hi/view
+     {:title "CI" :description "Blockether/vis · 42"}
+     (hi/status "now" "Polling GitHub…" {:tone "running"})
+     (hi/progress "done" {:done 3 :total 18 :label "Jobs"})
+     (hi/stat "score" [{:id "passed" :label "passed" :value-text "3" :tone "ok"}])
+     (hi/steps "checks" [{:id "checkout" :label "Checkout" :tone "ok"}])
+     (hi/log "tail" {:window-lines 120})
+     (hi/table "jobs"
+               [(hi/table-column "job" "Job") (hi/table-column "took" "Took" {:align "right"})]
+               {:order "newest-first"})
+     (hi/link "run" [{:id "html" :label "Open the run" :target "https://example.com/run/42"}])))
+
+(defdescribe
+  live-builders-test
+  (describe
+    "shape"
+    (it "returns the plain map an extension could have typed by hand"
+        (expect (= {:type "status" :id "now" :text "Polling…"} (hi/status "now" "Polling…")))
+        (expect (= {:type "status" :id "now" :text "Done" :tone "ok"}
+                   (hi/status "now" "Done" {:tone "ok"})))
+        (expect (= {:type "progress" :id "done" :done 3 :total 18}
+                   (hi/progress "done" {:done 3 :total 18})))
+        (expect (= {:type "log" :id "tail"} (hi/log "tail")))
+        (expect (=
+                  {:type "stat" :id "score" :stats [{:id "passed" :label "passed" :value-text "3"}]}
+                  (hi/stat "score" [{:id "passed" :label "passed" :value-text "3"}])))
+        (expect (= {:type "steps" :id "checks" :steps [{:id "s" :label "Set up" :tone "ok"}]}
+                   (hi/steps "checks" [{:id "s" :label "Set up" :tone "ok"}])))
+        (expect (= {:type "table" :id "jobs" :columns [{:id "job" :label "Job"}]}
+                   (hi/table "jobs" [(hi/table-column "job" "Job")])))
+        (expect (= {:type "link"
+                    :id "run"
+                    :links [{:id "html" :label "Run" :target "/tmp/run" :target-kind "path"}]}
+                   (hi/link "run"
+                            [{:id "html" :label "Run" :target "/tmp/run" :target-kind "path"}]))))
+    (it "keys a column by its id and a row by the columns standing over its cells"
+        (expect (= {:id "job" :label "Job"} (hi/table-column "job" "Job")))
+        (expect (= {:id "took" :label "Took" :align "right"}
+                   (hi/table-column "took" "Took" {:align "right"})))
+        (expect (= {:id "b1" :cells ["tests / ubuntu" "13m0s"]}
+                   (hi/table-row "b1" ["tests / ubuntu" "13m0s"])))
+        (expect (= {:id "b1" :cells ["tests / ubuntu" "13m0s"] :tone "ok"}
+                   (hi/table-row "b1" ["tests / ubuntu" "13m0s"] {:tone "ok"}))))
+    (it "builds the view the engine mounts, nodes in the order they were declared"
+        (expect (= ["now" "done" "score" "checks" "tail" "jobs" "run"]
+                   (mapv :id (:nodes (ci-view)))))
+        (expect (= "CI" (:title (ci-view))))
+        (expect (nil? (refusal #(engine/normalize-live-view (ci-view))))))
+    (it "leaves the session to the MOUNT, exactly as a form does"
+        ;; A builder runs wherever an extension is written; which session the view
+        ;; runs in is `open-live-view!`'s business, and it refuses there.
+        (expect (nil? (refusal #(hi/view {:title "CI"} (hi/status "now" "Polling…")))))))
+  (describe
+    "refusal at the builder call"
+    (it "refuses a tone outside the closed table, naming the node"
+        (expect (re-find #"node now: :tone must be one of"
+                         (refusal #(hi/status "now" "Polling…" {:tone "bright"})))))
+    (it "refuses an order no surface knows how to paint"
+        (expect (re-find #":order must be one of"
+                         (refusal
+                           #(hi/table "jobs" [(hi/table-column "job" "Job")] {:order "random"})))))
+    (it "refuses a node with nothing to address it by"
+        (expect (re-find #":id" (refusal #(hi/status "" "Polling…")))))
+    (it "refuses a key the vocabulary does not have"
+        (expect (re-find #"colour" (refusal #(hi/status "now" "Polling…" {:colour "red"})))))
+    (it "refuses a view with no nodes, and one with no title"
+        (expect (re-find #":nodes must not be empty" (refusal #(hi/view {:title "CI"}))))
+        (expect (re-find #":title" (refusal #(hi/view {} (hi/status "now" "Polling…"))))))
+    (it "refuses two nodes answering to the same id"
+        (expect (re-find #"node ids must be distinct"
+                         (refusal
+                           #(hi/view {:title "CI"} (hi/status "now" "Polling…") (hi/log "now")))))))
+  (describe
+    "the two ops that change a running view's shape"
+    (it "builds them as the maps the patch takes"
+        (expect (= {:op "add-node" :node-spec {:type "log" :id "tail"}}
+                   (hi/add-node (hi/log "tail"))))
+        (expect (= {:op "add-node" :node-spec {:type "log" :id "tail"} :after "now"}
+                   (hi/add-node (hi/log "tail") "now")))
+        (expect (= {:op "remove-node" :node-id "tail"} (hi/remove-node "tail"))))
+    (it "refuses a node the running view could never paint"
+        (expect (re-find #"a status' :text" (refusal #(hi/add-node {:id "now" :type "status"})))))
+    (it "refuses a removal that names nothing" (expect (some? (refusal #(hi/remove-node "")))))))
