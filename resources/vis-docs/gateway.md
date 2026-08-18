@@ -114,14 +114,18 @@ What a remote target changes:
   auto-spawned for you, `vis-agent gateway stop` refuses (stop it on the machine
   that runs it), and the `/ui` self-heal force-restart is never attempted.
 - **`gateway status` and `gateway pair` answer from the target itself** — status is
-  that daemon's own admin map, and the pairing QR carries its host, port and token.
+  that daemon's own admin map, and the pairing QR carries its host and port, plus
+  the token only when you passed `--gateway-token` (that is the only token vis
+  knows about a machine it does not own). A target reached through an SSH tunnel
+  is `127.0.0.1` here, so `gateway pair` refuses it as loopback — pair from the
+  machine that runs it.
 - **The client claims no pid.** Lease reaping judges pids on the gateway's own
   machine, so a remote client sends none and is never reaped as "dead".
 - Your local registry is never consulted and `--db` means nothing next to
-  `--gateway`. The `sessions` commands are the exception: `list`, `show`,
-  `export` and `fork` read THIS machine's database directly instead of asking
-  a gateway, so they keep reporting local sessions whatever `--gateway` says.
-  A remote gateway's sessions are browsed from its TUI.
+  `--gateway`. The whole `sessions` family is the exception: `list`, `show`,
+  `fork`, `draft`, `delete` and `export` read THIS machine's database directly
+  instead of asking a gateway, so they keep reporting local sessions whatever
+  `--gateway` says. A remote gateway's sessions are browsed from its TUI.
 - An unreachable host, or a value that names no host, is an error — never a
   silent fall back to your own daemon, which would run the work on the wrong
   machine.
@@ -204,7 +208,8 @@ phone can never reach. To pair a running daemon **without a start flag**, use:
 vis-agent gateway pair
 ```
 
-It reads the gateway registered for the current DB and prints the same QR that
+It reads the gateway registered for the current DB (or the `--gateway` target) and
+prints the same QR that
 `--pair` prints at boot — no restart needed. Two guardrails:
 
 - **No gateway running** → it tells you to start one:
