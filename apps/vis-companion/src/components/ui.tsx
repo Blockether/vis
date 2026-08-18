@@ -1428,11 +1428,21 @@ export const SearchField = forwardRef<
  * It says what the NEXT thing the hand does will mean — `Pull to search` while
  * the pull is short of the threshold, `Release to search` once lifting would
  * open the page — so the reader is never told about a state, only about their
- * own next move. Armed, it takes the accent, because the one moment worth
- * seeing out of the corner of an eye is the moment the gesture becomes real.
+ * own next move. Armed, the whole band takes the amber PAIR — `accent-surface`
+ * paper under `accent-ink` — because the one moment worth seeing out of the
+ * corner of an eye is the moment the gesture becomes real, and paper is what an
+ * eye catches without reading. The amber it must NOT take is `accent` AS TEXT:
+ * that token is a button fill, and as this band's own word it measured 1.3:1 on
+ * this band's own paper (light theme #ffc420 on #f0eae2) — the one word the
+ * gesture exists to show, in the one ink nobody could read it in. The pair
+ * measures 5.6:1 there and 9.9:1 on the darkest shipped theme.
  *
- * It is `HEADER_BAND`'s own height and paper: it stands in for the band it
- * covers rather than adding a second, thinner strip above it, and it is
+ * Its hairline is not part of that: the edge WELDS the band to the list under
+ * it, so it is structure rather than state and stays the band's own in both
+ * phases.
+ *
+ * It is `HEADER_BAND`'s own height, and at rest its paper: it stands in for the
+ * band it covers rather than adding a second, thinner strip above it, and it is
  * decoration for a touch gesture, so it is never announced and never pressed.
  *
  * It FOLLOWS THE FINGER: `lib/pull-to-search` paints it straight onto this
@@ -1449,9 +1459,9 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
     <div
       ref={ref}
       aria-hidden="true"
-      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b bg-level-project font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none mouse:min-h-9 ${
+      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none mouse:min-h-9 ${
         isShown ? 'translate-y-0' : '-translate-y-full'
-      } ${isArmed ? 'border-accent text-accent' : 'border-dialog-edge text-dialog-hint'}`}
+      } ${isArmed ? 'bg-accent-surface text-accent-ink' : 'bg-level-project text-dialog-hint'}`}
     >
       <SearchIcon
         className={`size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${

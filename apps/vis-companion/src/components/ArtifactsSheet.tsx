@@ -859,7 +859,7 @@ function ArtifactVersions({
                 <Meta artifact={version} />
               </span>
               {position === 0 && (
-                <span className="font-mono text-chip text-accent">latest</span>
+                <span className="font-mono text-chip text-accent-ink">latest</span>
               )}
             </ListRow>
           </li>

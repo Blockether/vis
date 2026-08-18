@@ -75,11 +75,17 @@
   --color-accent: var(--primary);
   --color-accent-foreground: var(--primary-fg);
   --color-accent-2: var(--accent);
-  /* Legible amber for accent TEXT on surfaces. --primary is a BUTTON FILL
-     (light theme #ffc420 on #faf3eb = 1.45:1) and is unreadable as text at any
-     size; --warning is the palette's per-theme amber INK (light #7a4a00 = 6.8:1,
-     dark #fde68a). Amber text uses accent-ink; amber fills use accent. */
+  /* The amber family is THREE tokens, because one amber cannot be paper, ink and
+     fill at once. --primary is a BUTTON FILL (light theme #ffc420 on #faf3eb =
+     1.45:1) and is unreadable as text at any size; --warning is the palette's
+     per-theme amber INK (light #7a4a00 = 6.8:1, dark #fde68a); --warning-bg is
+     the PAPER that ink is tuned against — accent-ink on accent-surface measures
+     5.6:1 at worst and 9.9:1 at best across the six shipped themes. So amber
+     text takes accent-ink, amber paper under it accent-surface, amber fills
+     accent; and since a fill's own foreground clears 4.5:1 at 10px in only
+     three of those six palettes, a band that must be LOUD takes the pair. */
   --color-accent-ink: var(--warning);
+  --color-accent-surface: var(--warning-bg);
   --color-ok: var(--ok);
   /* Green INK and a green FILL are not the same green — the same split the amber
      tokens above make. --ok is an ink: a mid green on paper (#16a34a) and a

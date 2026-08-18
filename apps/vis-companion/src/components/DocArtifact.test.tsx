@@ -229,6 +229,33 @@ describe("an opened document", () => {
     view.unmount();
   });
 
+  // Regression, user report ("why is the contrast so weak here"): the mark on a cut
+  // of the thread was inked in `text-accent` — the amber BUTTON FILL, 1.45:1 on this
+  // screen's own paper — so a 9px word arrived as a smudge. Amber TEXT is `accent-ink`.
+  it("inks the mark on a cut in amber a reader can read", async () => {
+    render(
+      <DocOverlay
+        name="threaded.pdf"
+        mime="application/pdf"
+        sizeLabel="1.2 MB"
+        url="blob:x"
+        failed={false}
+        versions={[
+          { index: 0, iteration_id: "i2", version: 2, size: 2048 },
+          { index: 0, iteration_id: "i1", version: 1, size: 1024 },
+        ]}
+        shownAt={1}
+        onClose={() => undefined}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Versions of threaded.pdf" }),
+    );
+    for (const mark of [screen.getByText("latest"), screen.getByText("reading")]) {
+      expect(mark.className).toContain("text-accent-ink");
+      expect(mark.className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
+    }
+  });
   it("fills its box instead of standing at 60vh", () => {
     const markup = renderToStaticMarkup(
       <DocFrame url="blob:x" mime="application/pdf" name="q3.pdf" />,

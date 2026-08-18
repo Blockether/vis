@@ -315,7 +315,7 @@ export const DocOverlay = memo(function DocOverlay({
                   {attachmentBytes(cut.size)}
                 </span>
                 {at === shownAt || at === 0 ? (
-                  <span className="font-mono text-chip text-accent">
+                  <span className="font-mono text-chip text-accent-ink">
                     {at === shownAt ? "reading" : "latest"}
                   </span>
                 ) : null}

@@ -548,6 +548,26 @@ describe("an artifact with a history", () => {
     expect(text(html)).not.toContain("v1");
   });
 
+  // Regression, user report ("why is the contrast so weak here"): the mark on the
+  // newest cut was inked in `text-accent` — the amber BUTTON FILL, 1.45:1 on this
+  // sheet's own paper — so a 9px word arrived as a smudge. Amber TEXT is the
+  // palette's own amber ink, `accent-ink`, at 6.3:1 on the same paper.
+  it("inks the mark on the newest cut in amber a reader can read", async () => {
+    render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[threaded]}
+        onClose={() => {}}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Show 3 versions of chart.png" }),
+    );
+    const mark = await screen.findByText("latest");
+    expect(mark.className).toContain("text-accent-ink");
+    expect(mark.className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
+  });
   // The dot cannot live INSIDE the tile: a button inside a button is invalid
   // HTML and the browser hands the inner clicks to the outer control.
   it("keeps the history control a sibling of the tile it belongs to", () => {
