@@ -3791,10 +3791,19 @@
         ["/sessions/actions/search" {:get search-sessions-handler}] ["/fs" {:get browse-fs-handler}]
         ["/fs/actions/mkdir" {:post create-directory-handler}]
         ["/projects" {:get list-projects-handler :post create-project-handler}]
-        ["/projects/overview" {:get projects-overview-handler}]
+        ;; Pairs with `/projects/:pid` below: both sides of a conflicting pair must
+        ;; declare it, or reitit refuses to build the router at all.
+        ["/projects/overview" {:conflicting true :get projects-overview-handler}]
         ["/projects/actions/ensure" {:post ensure-project-for-root-handler}]
+        ;; `:conflicting true` because `/projects/overview` above is two segments
+        ;; too, so reitit cannot tell it apart from a `:pid` without being told.
+        ;; Matching still prefers the STATIC segment, so `/projects/overview`
+        ;; reaches its own handler and only a real id falls through to here.
         ["/projects/:pid"
-         {:get get-project-handler :patch patch-project-handler :delete delete-project-handler}]
+         {:conflicting true
+          :get get-project-handler
+          :patch patch-project-handler
+          :delete delete-project-handler}]
         ["/projects/:pid/sessions" {:patch reorder-project-sessions-handler}]
         [(sid-route "")
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
