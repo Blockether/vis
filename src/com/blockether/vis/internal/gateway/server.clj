@@ -1,8 +1,9 @@
 (ns com.blockether.vis.internal.gateway.server
   "Gateway HTTP/SSE server.
 
-   Clojure-native stack: reitit-ring routes -> Ring middleware -> the
-   Ring Jetty adapter on JDK virtual threads (`:virtual-threads? true`).
+   Clojure-native stack: reitit-ring routes -> Ring middleware -> a Jetty 12
+   CORE handler (`ring.adapter.jetty9` — no servlet layer) on JDK virtual
+   threads (`:virtual-threads? true`).
    SSE is a Ring `StreamableResponseBody` whose virtual thread is the
    connection's SINGLE socket writer: replay rides first, then it drains a
    bounded per-connection event queue that `state/fan-out!` enqueues onto,
@@ -39,7 +40,7 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.voice :as voice]
             [reitit.ring :as rr]
-            [ring.adapter.jetty :as jetty]
+            [ring.adapter.jetty9 :as jetty]
             [ring.core.protocols :as ring-protocols]
             [ring.middleware.cookies :as ring-cookies]
             [ring.middleware.params :as ring-params]
@@ -4080,8 +4081,25 @@
       (.setPort mirror (int port))
       (.addConnector server mirror))))
 
+(defn- gateway-configurator
+  "The adapter's `:configurator` — the seam for `Server` tuning no Ring option
+   expresses. A nil `mirror-port` skips the loopback mirror above.
+
+   Clearing `stopAtShutdown` is not optional: `ring.adapter.jetty9` turns it ON when
+   it builds the `Server`, which registers Jetty's OWN JVM shutdown hook to `.stop`
+   it. This namespace's hook is meant to be the only shutdown path — it cancels and
+   then DRAINS in-flight turns before releasing the socket — and a second hook racing
+   it would guillotine exactly the mid-turn work that drain exists to save."
+  [mirror-port]
+  (let
+    [mirror (some-> mirror-port
+                    loopback-mirror-configurator)]
+    (fn [^Server server]
+      (.setStopAtShutdown server false)
+      (when mirror (mirror server)))))
+
 (defn start!
-  "Start the gateway on the Ring Jetty adapter with virtual threads.
+  "Start the gateway on the Jetty 12 core adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
    Safe to call from any host process - the daemon (`vis-agent gateway start`), a TUI
    run, or an embedded caller."
@@ -4200,15 +4218,15 @@
           (gw-human-input/install!))
 
       server
-      (try
-        (start-jetty!
-          serving-handler
-          (cond->
-            {:port port :host host :join? false :virtual-threads? true :send-server-version? false}
-            mirror-loopback?
-            (assoc :configurator (loopback-mirror-configurator port)))
-          (+ (System/currentTimeMillis) 6000))
-        (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
+      (try (start-jetty! serving-handler
+                         {:port port
+                          :host host
+                          :join? false
+                          :virtual-threads? true
+                          :send-server-version? false
+                          :configurator (gateway-configurator (when mirror-loopback? port))}
+                         (+ (System/currentTimeMillis) 6000))
+           (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
 
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))

@@ -1,6 +1,9 @@
 {
   "reflection": [
     {
+      "type": "ring.adapter.jetty9.handlers.sync__init"
+    },
+    {
       "type": "java.lang.Character",
       "methods": [
         {

@@ -67,6 +67,12 @@
                               (get entry "methods"))))
                  entries)))
 
+(defn- registered-type?
+  "True when `type` is registered at all, so `Class/forName` can resolve it."
+  [entries type]
+  (boolean (some (fn [entry]
+                   (= type (get entry "type")))
+                 entries)))
 (defdescribe native-reachability-test
              (it "ships reachability metadata that parses"
                  (expect (.isFile metadata-file))
@@ -94,6 +100,27 @@
                  ;; nested config document is exactly the call the image must be able to make.
                  (expect (= {"gateway" {"host" "0.0.0.0" "port" 7890}}
                             (yamlstar/load "gateway:\n  host: 0.0.0.0\n  port: 7890\n")))))
+
+
+;; MEASURED regression (this working tree, before the registration below): the gateway
+;; served every request on `ring.adapter.jetty9`, whose Jetty handler is a `:gen-class`
+;; with gen-class's default `:load-impl-ns true`. Constructing it therefore runs
+;; `(clojure.lang.RT/load "ring/adapter/jetty9/handlers/sync")`, which resolves the
+;; namespace's AOT `__init` class through `Class/forName` — a name assembled at run
+;; time, invisible to the analysis, so the class was left out of the image. Every JVM
+;; test stayed green and the native BUILD stayed green; the binary died on `vis-agent
+;; gateway start` with "Could not locate ring/adapter/jetty9/handlers/sync__init.class
+;; ... on classpath" before it could bind a port.
+(defdescribe
+  the-http-adapters-gen-class-namespace-reaches-the-native-image-test
+  (it "registers the handler's __init class, the only thing RT/load can resolve"
+      (expect (registered-type? (reflection-entries) "ring.adapter.jetty9.handlers.sync__init")))
+  (it "keeps the gateway on the adapter this registration exists for"
+      ;; A different adapter makes the registration dead weight; the point of
+      ;; the pair is that one of them fails when the two drift apart.
+      (expect (str/includes?
+                (slurp (io/file "src" "com" "blockether" "vis" "internal" "gateway" "server.clj"))
+                "[ring.adapter.jetty9 :as jetty]"))))
 
 
 (defn- with-os-name

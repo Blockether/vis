@@ -19,7 +19,7 @@
             [com.blockether.vis.internal.voice :as voice]
             [com.blockether.vis.internal.loop :as lp]
             [reitit.ring :as rr]
-            [ring.adapter.jetty :as jetty]
+            [ring.adapter.jetty9 :as jetty]
             [ring.core.protocols :as ring-protocols]
             [ring.middleware.params :as ring-params]))
 
@@ -1897,11 +1897,10 @@
       (let
         [port (with-open [s (java.net.ServerSocket. 0)]
                 (.getLocalPort s))
-         server (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
-                                 {:port port
-                                  :host host
-                                  :join? false
-                                  :configurator ((rv 'loopback-mirror-configurator) port)})]
+         server
+         (jetty/run-jetty
+           (constantly {:status 200 :headers {} :body "ok"})
+           {:port port :host host :join? false :configurator ((rv 'gateway-configurator) port)})]
 
         (try (is (= #{host "127.0.0.1"}
                     (set (map (fn [^org.eclipse.jetty.server.ServerConnector c]
@@ -1912,6 +1911,84 @@
              (finally (.stop ^org.eclipse.jetty.server.Server server))))
       (is (nil? (non-loopback-ipv4)) "no non-loopback interface here; nothing to mirror"))))
 
+(deftest the-adapters-own-jvm-shutdown-hook-stays-off
+  (testing
+    "`ring.adapter.jetty9` builds its Server with `stopAtShutdown` ON, which registers
+            Jetty's own JVM hook to `.stop` it. `stop!` is meant to be the only shutdown
+            path: it cancels and then DRAINS in-flight turns before the socket goes, so a
+            second hook racing it would guillotine exactly the mid-turn work that drain
+            exists to save"
+    (let
+      [port
+       (with-open [s (java.net.ServerSocket. 0)]
+         (.getLocalPort s))
+
+       server
+       (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
+                        {:port port
+                         :host "127.0.0.1"
+                         :join? false
+                         ;; nil mirror-port: loopback needs no mirror, and this is
+                         ;; the shape `start!` passes on a default bind.
+                         :configurator ((rv 'gateway-configurator) nil)})]
+
+      (try (is (false? (.getStopAtShutdown ^org.eclipse.jetty.server.Server server)))
+           (is (= "ok" (slurp (str "http://127.0.0.1:" port "/"))))
+           (finally (.stop ^org.eclipse.jetty.server.Server server))))))
+
+(deftest a-flushed-frame-reaches-the-socket-before-the-body-returns
+  (testing
+    "every SSE stream here is a `StreamableResponseBody` that writes a frame, flushes,
+            and only returns when the session ends. An adapter that buffered the body
+            instead of pushing each flush would hold a whole turn's events back and
+            deliver them in one burst at the end — a live stream that is not live"
+    (let
+      [port
+       (with-open [s (java.net.ServerSocket. 0)]
+         (.getLocalPort s))
+
+       release
+       (promise)
+
+       server
+       (jetty/run-jetty (constantly {:status 200
+                                     :headers {"Content-Type" "text/event-stream"}
+                                     :body (reify
+                                             ring-protocols/StreamableResponseBody
+                                               (write-body-to-stream [_ _ output-stream]
+                                                 (let [^java.io.OutputStream out output-stream]
+                                                   (.write out
+                                                           (.getBytes "data: first\n\n" "UTF-8"))
+                                                    (.flush out)
+                                                   ;; Park exactly as a live stream parks between events. The
+                                                   ;; timeout only keeps a failing run from hanging the suite.
+                                                   (deref release 5000 :timed-out)
+                                                   (.write out (.getBytes "data: last\n\n" "UTF-8"))
+                                                   (.flush out)
+                                                   (.close out))))})
+                        {:port port :host "127.0.0.1" :join? false})]
+
+      (try (with-open [socket (java.net.Socket. "127.0.0.1" (int port))]
+             (.setSoTimeout socket 5000)
+             (doto (.getOutputStream socket)
+               (.write (.getBytes "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                                  "UTF-8"))
+               (.flush))
+             (let
+               [reader (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream socket)
+                                                                            "UTF-8"))
+                ;; Skip status line, headers and any chunk-size lines.
+                read-frame (fn []
+                             (loop [n 0]
+                               (when (< n 64)
+                                 (when-let [line (.readLine reader)]
+                                   (if (str/starts-with? line "data: ") line (recur (inc n)))))))]
+
+               (is (= "data: first" (read-frame))
+                   "the first frame must arrive while the body thread is still parked")
+               (deliver release :go)
+               (is (= "data: last" (read-frame)))))
+           (finally (.stop ^org.eclipse.jetty.server.Server server))))))
 (deftest sse-cursor-clamps-a-client-ahead-of-the-gateway-counter
   ;; A client keeps its replay cursor as a monotonic max across reconnects, but
   ;; the gateway's seq counter is per-process: a restarted daemon (or a session

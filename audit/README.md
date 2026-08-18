@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-08-17.
+> Generated 2026-08-18.
 
 Vis is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -44,8 +44,8 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 68 unique, across 18 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~146 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Direct dependency coordinates:** 66 unique, across 18 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~145 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -205,6 +205,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `com.taoensso/trove` | `1.1.0` | EPL-1.0 | 17 KB | 3rd-party |
+| `info.sunng/ring-jetty9-adapter` | `0.40.3` | EPL-1.0 | 163 KB | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
 | `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
 | `io.github.noahtheduke/lazytest` | `2.0.0` | EPL-1.0 | 46 KB | 3rd-party |
@@ -224,8 +225,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `org.commonmark/commonmark` | `0.29.0` | BSD-2-Clause | 211 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-strikethrough` | `0.29.0` | BSD-2-Clause | 13 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-tables` | `0.29.0` | BSD-2-Clause | 23 KB | 3rd-party |
-| `org.eclipse.jetty.ee9/jetty-ee9-servlet` | `12.1.11` | EPL-2.0 | 143 KB | 3rd-party |
-| `org.eclipse.jetty/jetty-server` | `12.1.11` | EPL-2.0 | 689 KB | 3rd-party |
 | `org.flatland/ordered` | `1.15.12` | EPL-1.0 | 14 KB | 3rd-party |
 | `org.graalvm.polyglot/polyglot` | `25.1.3` | UPL-1.0 | 502 KB | 3rd-party |
 | `org.graalvm.python/python-language` | `25.1.3` | UPL-1.0 + MIT + PSF | 90.7 MB | 3rd-party |
@@ -233,7 +232,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `org.graalvm.truffle/truffle-runtime` | `25.1.3` | UPL-1.0 | 913 KB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.17` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
-| `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
 
 ### `vis-channel-tui` extension
@@ -298,11 +296,11 @@ _Durable session store (SQLite + Flyway migrations)._
 
 | License | Count |
 |---|---|
-| EPL-1.0 | 20 |
+| EPL-1.0 | 21 |
 | Apache-2.0 | 15 |
-| MIT | 14 |
-| EPL-2.0 | 5 |
+| MIT | 13 |
 | BSD-2-Clause | 3 |
+| EPL-2.0 | 3 |
 | UPL-1.0 | 2 |
 | UPL-1.0 + MIT + PSF | 2 |
 | Bouncy Castle Licence | 2 |
