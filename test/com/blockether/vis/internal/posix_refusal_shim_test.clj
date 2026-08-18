@@ -10,6 +10,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
@@ -67,7 +68,7 @@
   ;; Regression, handle audit: with the shell toggle off the shim advertised only
   ;; that subprocess could not run, which read as "the other door might work".
   (it "says BOTH the shell tool and subprocess are disabled when `shell` is absent"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (tpc/with-own [ctx {}]
         (.eval ctx "python" "import subprocess")
         (let [msg (raised ctx "subprocess.run(['echo','hi'])")]
           (expect (some? msg))
@@ -101,7 +102,7 @@
         (expect (not (str/includes? (.asString (.eval ctx "python" "doc('shell')"))
                                     (get ep/PROCESS_SURFACE "extension"))))))
   (it "does not leak shim internals into the live-vars baseline"
-      (let [{:keys [initial-ns-keys]} (ep/create-python-context {})]
+      (tpc/with-own-env [{:keys [initial-ns-keys]} {}]
         ;; subprocess lives in sys.modules, not globals; the installer is del'd
         (expect (not (contains? initial-ns-keys "subprocess")))
         (expect (not (contains? initial-ns-keys "__vis_install_posix_compat__"))))))
@@ -132,7 +133,7 @@
                      (.eval ctx "python" "import subprocess")
                      (expect (= (str ban " " use') (raised ctx "subprocess.run('ls')"))))
                    ;; No shell tool: one sentence for the tool, `subprocess` and the handle.
-                   (let [ctx (:python-context (ep/create-python-context {}))]
+                   (tpc/with-own [ctx {}]
                      (.eval ctx "python" "import subprocess")
                      (expect (= off (raised ctx "subprocess.run('ls')")))
                      (expect (= off (raised ctx "__VisShell__({'id': 'p1'}).logs()"))))))
