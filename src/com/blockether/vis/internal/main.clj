@@ -3832,7 +3832,7 @@
      :cmd/subcommands #(registry/registered-under ["extension"])}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
-     :cmd/usage "vis-agent gateway <start|status|stop|pair> [--db PATH]"
+     :cmd/usage "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] gateway <start|status|stop|pair> [--db PATH]"
      :cmd/subcommands #(registry/registered-under ["gateway"])}
     {:cmd/name "python"
      :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
@@ -3857,7 +3857,7 @@
   [spec
    [{:cmd/name "start"
      :cmd/parent ["gateway"]
-     :cmd/doc "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground."
+     :cmd/doc "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground, always on THIS machine."
      :cmd/usage
      "vis-agent gateway start [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair]"
      :cmd/args
@@ -3891,25 +3891,28 @@
      :cmd/run-fn cli-gateway-start!}
     {:cmd/name "status"
      :cmd/parent ["gateway"]
-     :cmd/doc "Show the gateway daemon registered for the current DB without starting it."
+     :cmd/doc "Show the gateway this invocation drives — the --gateway target, else the daemon registered for the current DB — without starting it."
      :cmd/usage "vis-agent gateway status [--db PATH]"
      :cmd/args [{:name "db"
                  :kind :flag
                  :type :string
-                 :doc "SQLite DB path whose gateway registry should be inspected."}]
+                 :doc "SQLite DB path whose gateway registry should be inspected (ignored when --gateway names a remote gateway)."}]
+     :cmd/examples ["vis-agent gateway status"
+                    "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN gateway status"]
      :cmd/run-fn cli-gateway-status!}
     {:cmd/name "stop"
      :cmd/parent ["gateway"]
-     :cmd/doc "Stop the gateway daemon registered for the current DB."
+     :cmd/doc "Stop the gateway daemon registered for the current DB — never a --gateway target, which vis attaches to but never manages."
      :cmd/usage "vis-agent gateway stop [--db PATH]"
      :cmd/args
      [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be stopped."}]
      :cmd/run-fn cli-gateway-stop!}
     {:cmd/name "pair"
      :cmd/parent ["gateway"]
-     :cmd/doc "Print a companion pairing QR for the gateway already running for this DB."
+     :cmd/doc "Print a companion pairing QR for the gateway already running for this DB, or for the --gateway target."
      :cmd/usage "vis-agent gateway pair [--db PATH]"
-     :cmd/examples ["vis-agent gateway pair"]
+     :cmd/examples ["vis-agent gateway pair"
+                    "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN gateway pair"]
      :cmd/args [{:name "db"
                  :kind :flag
                  :type :string
@@ -4457,7 +4460,7 @@
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
      (help-row "--help, -h" "Show help.") "" "GATEWAY (WHICH DAEMON RUNS THE WORK)"
-     (help-row "--gateway HOST[:PORT]" "Drive a gateway on another machine (VIS_GATEWAY_URL).")
+     (help-row "--gateway HOST[:PORT]|URL" "Drive another machine's gateway, TUI included (VIS_GATEWAY_URL).")
      (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
      "RUNTIME (WHAT RUNS)"
      (help-row "vis-agent runtime" "Name the runtime installed, and where it lives.")
@@ -4470,7 +4473,8 @@
      "vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\""
      "vis-agent --toggles reasoning_level=deep \"refactor carefully\""
      "vis-agent --full-trace-json-stream --db :memory \"debug startup\""
-     "vis-agent sessions search sqlite"]))
+     "vis-agent sessions search sqlite"
+     "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN tui"]))
 
 (defn root-command
   "Build the root `vis-agent` command tree. Subcommands are pulled fresh on

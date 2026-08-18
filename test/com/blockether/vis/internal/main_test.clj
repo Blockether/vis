@@ -65,7 +65,15 @@
       (let [^String help (commandline/render-tree (#'main/root-command))]
         (expect (.contains help "CONFIGURATION"))
         (expect (.contains help "~/.vis/config.yml"))
-        (expect (.contains help "<project>/vis.yml")))))
+        (expect (.contains help "<project>/vis.yml"))))
+  (it "documents the flags that pick WHICH gateway does the work, TUI included"
+      (let [^String help (commandline/render-tree (#'main/root-command))]
+        (expect (.contains help "GATEWAY (WHICH DAEMON RUNS THE WORK)"))
+        (expect (.contains help "--gateway HOST[:PORT]|URL"))
+        (expect (.contains help "--gateway-token TOKEN"))
+        (expect (.contains help "VIS_GATEWAY_URL"))
+        (expect (.contains help "VIS_GATEWAY_TOKEN"))
+        (expect (.contains help "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN tui")))))
 
 (defdescribe
   fast-help-test
@@ -121,6 +129,38 @@
                  (#'main/split-gateway-flags ["channels" "tui"]))))
   (it "refuses a token with no address instead of silently using the local daemon"
       (expect (throws? clojure.lang.ExceptionInfo #(#'main/connect-gateway! {:token "t"})))))
+
+(defdescribe
+  gateway-command-help-test
+  (it
+    "says in `gateway` help which subcommands follow --gateway, and which never leave this machine"
+    (let
+      [subs
+       (into {} (map (juxt :cmd/name identity)) (registry/registered-under ["gateway"]))
+
+       parent
+       (first (filter #(= "gateway" (:cmd/name %)) (registry/registered-under [])))
+
+       says-remote?
+       (fn [cmd-name]
+         (str/includes? (str (:cmd/doc (get subs cmd-name))
+                             " "
+                             (str/join " " (:cmd/examples (get subs cmd-name))))
+                        "--gateway"))]
+
+      (expect (str/includes? (:cmd/usage parent) "--gateway HOST[:PORT] --gateway-token TOKEN"))
+      ;; `status` and `pair` answer from the --gateway target, `stop` refuses one
+      ;; outright, and `start` always runs a daemon HERE. Help that named none of
+      ;; this read as if --gateway did nothing to the gateway commands themselves.
+      (expect (says-remote? "status"))
+      (expect (says-remote? "pair"))
+      (expect (says-remote? "stop"))
+      (expect (str/includes? (:cmd/doc (get subs "start")) "THIS machine"))
+      ;; --db picks a LOCAL registry, so a remote target ignores it.
+      (expect (str/includes? (->> (:cmd/args (get subs "status"))
+                                  (map :doc)
+                                  (str/join " "))
+                             "ignored when --gateway")))))
 
 (defdescribe
   parse-run-args-test

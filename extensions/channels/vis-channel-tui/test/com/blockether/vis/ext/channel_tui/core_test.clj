@@ -14,6 +14,9 @@
         (expect (= :tui (:channel/id channel)))
         (expect (= "tui" (:channel/cmd channel)))
         (expect (= tui/tui-usage (:channel/usage channel)))
+        ;; The TUI is reached through the root gateway flags like any other command;
+        ;; its usage line is where a user looks for that.
+        (expect (re-find #"--gateway HOST\[:PORT\] --gateway-token TOKEN" tui/tui-usage))
         (expect (true? (:channel/owns-tty? channel)))
         (expect (ifn? (:channel/main-fn channel)))))
   (it "defers the full screen namespace until channel-main runs"

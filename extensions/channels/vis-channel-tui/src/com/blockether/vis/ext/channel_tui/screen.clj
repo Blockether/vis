@@ -7775,7 +7775,8 @@
              (.stopScreen screen))))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
-(def ^:private tui-usage "vis-agent channels tui [--session-id ID | --resume | --continue]")
+(def ^:private tui-usage
+  "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui [--session-id ID | --resume | --continue]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 

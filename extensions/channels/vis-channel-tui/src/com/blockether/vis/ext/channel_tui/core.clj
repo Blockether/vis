@@ -21,7 +21,8 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.builtin-hooks :as builtin-hooks]))
 
-(def tui-usage "vis-agent channels tui [--session-id ID | --resume | --continue]")
+(def tui-usage
+  "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui [--session-id ID | --resume | --continue]")
 
 (defn render-for-tui
   "Project canonical typed content blocks to Markdown for the TUI."

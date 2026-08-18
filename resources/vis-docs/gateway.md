@@ -113,6 +113,8 @@ What a remote target changes:
 - **vis never starts, restarts or stops a gateway it does not own.** Nothing is
   auto-spawned for you, `vis-agent gateway stop` refuses (stop it on the machine
   that runs it), and the `/ui` self-heal force-restart is never attempted.
+- **`gateway status` and `gateway pair` answer from the target itself** — status is
+  that daemon's own admin map, and the pairing QR carries its host, port and token.
 - **The client claims no pid.** Lease reaping judges pids on the gateway's own
   machine, so a remote client sends none and is never reaped as "dead".
 - Your local registry is never consulted and `--db` means nothing next to

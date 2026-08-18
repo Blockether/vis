@@ -179,6 +179,7 @@ because its native-image analysis does not converge within memory.
 - **[Process jail and gateway egress](jail.md)**: Seatbelt, filesystem/network policy, MITM, managed processes, trust boundaries, and verification.
 - **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes the wrapper's private native runtime.
 - **[Runtime distributions](distributions.md)**: wrapper bundles, runtime selection, and platform builds.
+- **[Gateway & pairing](gateway.md)**: the daemon every session runs through, companion pairing, and pointing any command — the TUI included — at a gateway on another machine with `--gateway`.
 - **[Configuration](configuration.md)**: providers and models, system_prompt overrides, router tuning, the database.
 - **[Extending Vis](extending.md)**: one guide to both flavors — drop-in [Python extensions](extending.md#python-extensions) (`.py` in `.vis/extensions/`, no rebuild, `/reload`able, Vis can write them for itself mid-session) and [Clojure extensions](extending.md#clojure-extensions) (the full-surface path: tools, channels, providers, slash commands, doc pages, compiled into the binary).
 - **[Content-block protocol](content-blocks.md)**: the canonical role-labelled message, typed block, persistence, and streaming contract.
