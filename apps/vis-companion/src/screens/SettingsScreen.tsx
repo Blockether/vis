@@ -792,14 +792,16 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
           </p>
         )}
         {!showForm ? (
-          <Button
-            variant="primary"
-            density="panel"
-            className="w-full justify-center"
-            onClick={() => openForm(null)}
-          >
-            Add an MCP server
-          </Button>
+          <div className="px-3 py-2">
+            <Button
+              variant="primary"
+              density="panel"
+              className="w-full justify-center"
+              onClick={() => openForm(null)}
+            >
+              Add an MCP server
+            </Button>
+          </div>
         ) : (
           <div className="space-y-3 p-2.5">
             <div

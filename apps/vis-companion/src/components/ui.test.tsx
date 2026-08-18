@@ -1560,10 +1560,12 @@ describe("settings is ONE dialog with two columns", () => {
       uiSource.indexOf("THE ✕, AND THERE IS EXACTLY ONE OF IT"),
     );
     expect(notify).toContain("w-full justify-center sm:w-auto");
-    // Reported again over the settings screenshot: on a phone this verb was inset
-    // by its wrapper while `Add a provider` and `Add an MCP server` ran edge to
-    // edge, so one panel's action was narrower and taller than the next one's.
-    expect(notify).toContain('className="flex items-center justify-end sm:px-3 sm:py-2"');
+    // Reported again over the settings screenshot: full-bleed verbs read as a
+    // landing page's call to action, so every panel verb now keeps the panel's
+    // own left/right inset on a phone — the one `Connect` always had.
+    expect(notify).toContain('className="flex items-center justify-end px-3 py-2"');
+    expect(providerAuthSource).toContain('<div className="px-3 py-2">');
+    expect(settings).toContain('<div className="px-3 py-2">');
     // And a dot centred in a two-line row sat between the name and its meta line,
     // marking neither. Both lists give it the NAME's own type step — `text-body`
     // is the 18px line box, so no hand-set `leading-*` is needed and the type

@@ -877,20 +877,23 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
 
   return (
     <>
-      {/* A ROW, NOT A CHIP. It stands under the last provider as the list's own
-          last line, so it wears the row's height and the full width. */}
-      <Button
-        variant="primary"
-        density="panel"
-        className="w-full justify-center"
-        aria-label="Add a provider"
-        onClick={() => {
-          setIsPicking(true);
-          setChosen(null);
-        }}
-      >
-        Add a provider
-      </Button>
+      {/* A ROW, NOT A CHIP — but inset by the same margin the rows' own text
+          keeps, so the verb lines up with the list above it instead of with the
+          panel's border. Full-bleed made it read as a call to action. */}
+      <div className="px-3 py-2">
+        <Button
+          variant="primary"
+          density="panel"
+          className="w-full justify-center"
+          aria-label="Add a provider"
+          onClick={() => {
+            setIsPicking(true);
+            setChosen(null);
+          }}
+        >
+          Add a provider
+        </Button>
+      </div>
 
       {isPicking && (
         <Modal size="fit" onDismiss={close}>
