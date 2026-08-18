@@ -253,17 +253,16 @@
    The real tool still owns validation/clamping; this only prevents the outer
    watchdog from preempting a longer requested budget."
   [code]
-  (let
-    [code
-     (str code)
+  (let [code
+        (str code)
 
-     secs
-     (for [[_ n] (re-seq timeout-secs-re code)]
-       (long (Math/round (Double/parseDouble n))))
+        secs
+        (for [[_ n] (re-seq timeout-secs-re code)]
+          (long (Math/round (Double/parseDouble n))))
 
-     ms
-     (for [[_ n] (re-seq timeout-ms-re code)]
-       (long (Math/ceil (/ (Double/parseDouble n) 1000.0))))]
+        ms
+        (for [[_ n] (re-seq timeout-ms-re code)]
+          (long (Math/ceil (/ (Double/parseDouble n) 1000.0))))]
 
     (max-of (concat secs ms))))
 
@@ -291,12 +290,11 @@
   "Eval watchdog for ONE Python block: the configured base, raised so it sits a
    grace period ABOVE the longest bounded call the block makes."
   [base-timeout-ms code]
-  (let
-    [base
-     (clamp-eval-timeout-ms base-timeout-ms)
+  (let [base
+        (clamp-eval-timeout-ms base-timeout-ms)
 
-     secs
-     (max-of [(explicit-shell-timeout-secs code) (implicit-call-budget-secs code)])]
+        secs
+        (max-of [(explicit-shell-timeout-secs code) (implicit-call-budget-secs code)])]
 
     (if secs
       (clamp-eval-timeout-ms (max base (+ (* 1000 (long secs)) (long shell-timeout-eval-grace-ms))))
@@ -320,6 +318,27 @@
     (park thunk)
     (thunk)))
 
+(def ^:dynamic *blocking-wall-hold*
+  "Hold hook installed by the innermost enclosing timeout wall: `(fn [] release)`.
+
+   [[*blocking-wall-park*]] for work that ENTERS and LEAVES on separate calls.
+   A live view opens on one crossing of the Python bridge and closes on another
+   — there is no thunk to wrap around the watching — so a run SHOWING its work
+   held the wall open by taking a release token at `open` and spending it at
+   `close`."
+  nil)
+
+(defn hold-blocking-wall!
+  "Push every enclosing wall out to [[MAX_EVAL_TIMEOUT_MS]] until the returned
+   thunk is called, and answer that thunk.
+
+   Releasing twice is a no-op, so a `finally` releasing what a close already
+   released cannot collapse the clock under work that is still running. With no
+   wall installed (a host-side call, tests) both halves are no-ops."
+  []
+  (if-let [hold *blocking-wall-hold*]
+    (hold)
+    (fn [])))
 (defn guest-safepoint!
   "Poll the polyglot safepoint of the context this host call is running inside,
    and let whatever it raises propagate.
@@ -352,7 +371,7 @@
   "One MOVABLE wall clock for a bounded execution that began at `start` with
    `timeout-ms` of budget.
 
-   Returns `{:deadline <atom epoch-ms> :park (fn [thunk])}`.
+   Returns `{:deadline <atom epoch-ms> :park (fn [thunk]) :hold (fn [] release)}`.
 
    `park` is RE-ENTRANT: nested parks each push the deadline out to
    [[MAX_EVAL_TIMEOUT_MS]] and only the OUTERMOST exit restores the base
@@ -360,36 +379,68 @@
    park is still live. It also COMPOSES with the park inherited from
    [[*blocking-wall-park*]], so parking an inner wall parks every enclosing one
     too — a `human-input` call that asks the operator a question must not be
-    killed by the Python eval watchdog wrapped around its block."
+    killed by the Python eval watchdog wrapped around its block.
+
+   `hold` is the same clock, taken and released on separate calls (see
+   [[*blocking-wall-hold*]]), sharing park's depth so the two nest in either
+   order."
   [start timeout-ms]
-  (let
-    [timeout-ms
-     (long timeout-ms)
+  (let [timeout-ms
+        (long timeout-ms)
 
-     deadline
-     (atom (+ (long start) timeout-ms))
+        deadline
+        (atom (+ (long start) timeout-ms))
 
-     depth
-     (atom 0)
+        depth
+        (atom 0)
 
-     inherited
-     *blocking-wall-park*
+        inherited
+        *blocking-wall-park*
 
-     park
-     (fn [thunk]
-       (swap! depth inc)
-       (reset! deadline (+ (System/currentTimeMillis) (long MAX_EVAL_TIMEOUT_MS)))
-       (try (thunk)
-            (finally (reset! deadline (+ (System/currentTimeMillis)
-                                         (if (pos? (long (swap! depth dec)))
-                                           (long MAX_EVAL_TIMEOUT_MS)
-                                           timeout-ms))))))]
+        inherited-hold
+        *blocking-wall-hold*
+
+        enter!
+        (fn []
+          (swap! depth inc)
+          (reset! deadline (+ (System/currentTimeMillis) (long MAX_EVAL_TIMEOUT_MS))))
+
+        leave!
+        (fn []
+          (reset! deadline (+ (System/currentTimeMillis)
+                              (if (pos? (long (swap! depth dec)))
+                                (long MAX_EVAL_TIMEOUT_MS)
+                                timeout-ms))))
+
+        park
+        (fn [thunk]
+          (enter!)
+          (try (thunk) (finally (leave!))))
+
+        hold
+        (fn []
+          (enter!)
+          (let [spent (atom false)]
+            (fn []
+              (when (compare-and-set! spent false true) (leave!)))))]
 
     {:deadline deadline
      :park (if inherited
              (fn [thunk]
                (park #(inherited thunk)))
-             park)}))
+             park)
+     :hold (if inherited-hold
+             (fn []
+               (let [outer
+                     (inherited-hold)
+
+                     mine
+                     (hold)]
+
+                 (fn []
+                   (mine)
+                   (outer))))
+             hold)}))
 
 (defn await-wall
   "Wait for `fut` until the CURRENT value of `deadline` passes, re-reading the

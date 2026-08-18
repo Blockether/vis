@@ -273,6 +273,24 @@ describe('what a run says about its own layout', () => {
     });
     expect(screen.getAllByRole('cell')[0].querySelector('code')?.textContent).toBe('db-1');
   });
+
+  // Regression, reported from the phone: the headline shared one flex line with
+  // its detail, so "1 of 2 jobs finished" beside a workflow and a job name was
+  // squeezed to one word per line — a column of five words down the panel.
+  it('gives the headline the whole width and puts its detail on the line below', () => {
+    paint();
+    const headline = screen.getByText('Scanning db-2').closest('p') as HTMLElement;
+    const detail = screen.getByText('host 2 of 3').closest('p') as HTMLElement;
+    // Two elements, not two halves of one line.
+    expect(headline).not.toBe(detail);
+    expect(headline.contains(detail)).toBe(false);
+    // The same grid, the detail on its own row under the headline's column.
+    expect(detail.parentElement).toBe(headline.parentElement);
+    expect(detail.className).toContain('col-start-2');
+    // Nothing may take width from the headline any more.
+    expect(headline.className).not.toContain('flex-1');
+    expect(headline.parentElement?.className).not.toContain('flex');
+  });
 });
 
 describe('the section is built from the closed vocabulary', () => {

@@ -265,12 +265,11 @@
    surface — the human simply skipped it. A misspelled key now names its own
    fix instead of disappearing."
   [what allowed m fail!]
-  (doseq
-    [k
-     (keys m)
+  (doseq [k
+          (keys m)
 
-     :let [canonical
-           (snake-key k)]]
+          :let [canonical
+                (snake-key k)]]
 
     (cond (not (contains? allowed canonical)) (fail! (str "unknown " what
                                                           " key " (pr-str k)
@@ -288,12 +287,13 @@
 (defn- normalize-option
   [field-id option]
   (when (map? option) (check-keys! "option" option-keys option #(invalid-field! field-id %)))
-  (let
-    [[value label]
-     (if (map? option) [(pick option "value" :value) (pick option "label" :label)] [option option])
+  (let [[value label]
+        (if (map? option)
+          [(pick option "value" :value) (pick option "label" :label)]
+          [option option])
 
-     value
-     (trimmed value)]
+        value
+        (trimmed value)]
 
     (when-not value (invalid-field! field-id "option values must be non-blank"))
     {:value value :label (or (trimmed label) value)}))
@@ -345,15 +345,17 @@
    by, NOT a validation rule: the engine only refuses a value outside the
    bounds, so a client that types an exact number is never argued with."
   [field-id field]
-  (let
-    [lo
-     (normalize-number field-id ":min" (pick field "min" :min) (:min hi-spec/range-defaults))
+  (let [lo
+        (normalize-number field-id ":min" (pick field "min" :min) (:min hi-spec/range-defaults))
 
-     hi
-     (normalize-number field-id ":max" (pick field "max" :max) (:max hi-spec/range-defaults))
+        hi
+        (normalize-number field-id ":max" (pick field "max" :max) (:max hi-spec/range-defaults))
 
-     step
-     (normalize-number field-id ":step" (pick field "step" :step) (:step hi-spec/range-defaults))]
+        step
+        (normalize-number field-id
+                          ":step"
+                          (pick field "step" :step)
+                          (:step hi-spec/range-defaults))]
 
     (when-not (< (double lo) (double hi))
       (invalid-field! field-id ":max must be greater than :min"))
@@ -366,13 +368,12 @@
    makes the code variable-length, which is what a spec asks for when the sender
    is not under its control."
   [field-id field]
-  (let
-    [hi
-     (or (normalize-length field-id ":max_length" (pick field "max_length" :max-length))
-         (long (:length hi-spec/otp-defaults)))
+  (let [hi
+        (or (normalize-length field-id ":max_length" (pick field "max_length" :max-length))
+            (long (:length hi-spec/otp-defaults)))
 
-     lo
-     (or (normalize-length field-id ":min_length" (pick field "min_length" :min-length)) hi)]
+        lo
+        (or (normalize-length field-id ":min_length" (pick field "min_length" :min-length)) hi)]
 
     (when (> (long lo) (long hi))
       (invalid-field! field-id ":max_length must be at least :min_length"))
@@ -436,105 +437,105 @@
                          " is a decoration, not a field — it holds no answer,"
                          " only the words it paints. Normalize a node of the tree with"
                          " normalize-node.")))
-  (let
-    [field-id
-     (trimmed (pick field "name" :name "id" :id))
+  (let [field-id
+        (trimmed (pick field "name" :name "id" :id))
 
-     _
-     ;; Layout keys are refused BEFORE the generic key check so the message can
-     ;; say what the author actually meant: `fields` on a `plaintext` is a group
-     ;; that forgot its `:type`, not a misspelling.
-     (when-let [k (first (sort (filter layout-keys (map snake-key (keys field)))))]
-       (invalid-field! field-id
-                       (str "key \""
-                            k
-                            "\" only exists on a group — a field that holds an answer has"
-                            " nothing to lay out. Put these fields inside"
-                            " {\"type\": \"group\", \"direction\": \"row\"} instead.")))
+        _
+        ;; Layout keys are refused BEFORE the generic key check so the message can
+        ;; say what the author actually meant: `fields` on a `plaintext` is a group
+        ;; that forgot its `:type`, not a misspelling.
+        (when-let [k (first (sort (filter layout-keys (map snake-key (keys field)))))]
+          (invalid-field! field-id
+                          (str "key \""
+                               k
+                               "\" only exists on a group — a field that holds an answer has"
+                               " nothing to lay out. Put these fields inside"
+                               " {\"type\": \"group\", \"direction\": \"row\"} instead.")))
 
-     _
-     (check-keys! "field" field-keys field #(invalid-field! field-id %))
+        _
+        (check-keys! "field" field-keys field #(invalid-field! field-id %))
 
-     _
-     (when-not field-id (invalid-field! nil "field needs a non-blank :name"))
+        _
+        (when-not field-id (invalid-field! nil "field needs a non-blank :name"))
 
-     type-name
-     (or (trimmed (pick field "type" :type)) "plaintext")
+        type-name
+        (or (trimmed (pick field "type" :type)) "plaintext")
 
-     field-type
-     (get hi-spec/field-types (str/lower-case type-name))
+        field-type
+        (get hi-spec/field-types (str/lower-case type-name))
 
-     _
-     (when-not field-type
-       (invalid-field! field-id
-                       (str "unknown type " (pr-str type-name)
-                            " — expected one of " (str/join ", "
-                                                            (sort (keys hi-spec/field-types))))))]
+        _
+        (when-not field-type
+          (invalid-field! field-id
+                          (str "unknown type " (pr-str type-name)
+                               " — expected one of "
+                               (str/join ", " (sort (keys hi-spec/field-types))))))]
 
     (checked-field
       field-id
-      (let
-        [description
-         (trimmed (pick field "description" :description))
+      (let [description
+            (trimmed (pick field "description" :description))
 
-         ;; An `:otp` derives its own lengths from the same two keys — how many
-         ;; boxes it draws IS its length — so it must not be length-checked twice.
-         min-length
-         (when-not (= :otp field-type)
-           (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
+            ;; An `:otp` derives its own lengths from the same two keys — how many
+            ;; boxes it draws IS its length — so it must not be length-checked twice.
+            min-length
+            (when-not (= :otp field-type)
+              (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
 
-         max-length
-         (when-not (= :otp field-type)
-           (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
+            max-length
+            (when-not (= :otp field-type)
+              (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
 
-         validate
-         (validation/normalize-validators (pick field "validate" :validate)
-                                          #(invalid-field! field-id %))
+            validate
+            (validation/normalize-validators (pick field "validate" :validate)
+                                             #(invalid-field! field-id %))
 
-         spec
-         (cond->
-           {:id field-id
-            ;; The same string under both keys: `:name` is the contract a spec
-            ;; writes, `:id` is what every surface has always keyed rows and errors
-            ;; by. One field identity, two spellings, no drift between them.
-            :name field-id
-            :type field-type
-            :label (or (trimmed (pick field "label" :label)) field-id)
-            ;; Optional unless the caller says otherwise — the same default every
-            ;; form API has, so a spec never blocks a human on a field the
-            ;; extension did not actually need.
-            :is-required
-            (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
-            :is-secret (contains? hi-spec/secret-types field-type)}
-           description
-           (assoc :description description)
+            spec
+            (cond-> {:id field-id
+                     ;; The same string under both keys: `:name` is the contract a spec
+                     ;; writes, `:id` is what every surface has always keyed rows and errors
+                     ;; by. One field identity, two spellings, no drift between them.
+                     :name field-id
+                     :type field-type
+                     :label (or (trimmed (pick field "label" :label)) field-id)
+                     ;; Optional unless the caller says otherwise — the same default every
+                     ;; form API has, so a spec never blocks a human on a field the
+                     ;; extension did not actually need.
+                     :is-required (normalize-bool field-id
+                                                  ":is-required"
+                                                  (pick field "is_required" :is-required)
+                                                  false)
+                     :is-secret (contains? hi-spec/secret-types field-type)}
+              description
+              (assoc :description description)
 
-           (trimmed (pick field "placeholder" :placeholder))
-           (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
+              (trimmed (pick field "placeholder" :placeholder))
+              (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
 
-           (contains? hi-spec/choice-types field-type)
-           (assoc :options (normalize-options field-id field-type (pick field "options" :options)))
+              (contains? hi-spec/choice-types field-type)
+              (assoc :options
+                (normalize-options field-id field-type (pick field "options" :options)))
 
-           (= :range field-type)
-           (merge (normalize-range field-id field))
+              (= :range field-type)
+              (merge (normalize-range field-id field))
 
-           (= :otp field-type)
-           (merge (normalize-otp field-id field))
+              (= :otp field-type)
+              (merge (normalize-otp field-id field))
 
-           min-length
-           (assoc :min-length min-length)
+              min-length
+              (assoc :min-length min-length)
 
-           max-length
-           (assoc :max-length max-length)
+              max-length
+              (assoc :max-length max-length)
 
-           (seq validate)
-           (assoc :validate validate))
+              (seq validate)
+              (assoc :validate validate))
 
-         raw-default
-         (pick field "default" :default)
+            raw-default
+            (pick field "default" :default)
 
-         [status default]
-         (coerce-value (assoc spec :is-required false) raw-default)]
+            [status default]
+            (coerce-value (assoc spec :is-required false) raw-default)]
 
         (when (= :error status) (invalid-field! field-id (str "invalid :default — " default)))
         (cond-> spec
@@ -553,22 +554,20 @@
   [group]
   (let [field-id (trimmed (pick group "name" :name "id" :id))]
     (check-keys! "group" group-keys group #(invalid-field! field-id %))
-    (let
-      [raw (pick group "fields" :fields)
-       _ (when-not (sequential? raw) (invalid-field! field-id "group needs a :fields sequence"))
-       children (mapv normalize-node raw)
-       _ (when (empty? children) (invalid-field! field-id "group needs at least one field"))
-       id (or field-id (str "group:" (str/join "+" (map :name children))))
-       description (trimmed (pick group "description" :description))]
+    (let [raw (pick group "fields" :fields)
+          _ (when-not (sequential? raw) (invalid-field! field-id "group needs a :fields sequence"))
+          children (mapv normalize-node raw)
+          _ (when (empty? children) (invalid-field! field-id "group needs at least one field"))
+          id (or field-id (str "group:" (str/join "+" (map :name children))))
+          description (trimmed (pick group "description" :description))]
 
       (checked-group id
-                     (cond->
-                       {:id id
-                        :name id
-                        :type hi-spec/group-type
-                        :direction (normalize-direction field-id
-                                                        (pick group "direction" :direction))
-                        :fields children}
+                     (cond-> {:id id
+                              :name id
+                              :type hi-spec/group-type
+                              :direction (normalize-direction field-id
+                                                              (pick group "direction" :direction))
+                              :fields children}
                        (trimmed (pick group "label" :label))
                        (assoc :label (trimmed (pick group "label" :label)))
 
@@ -669,27 +668,25 @@
    (and testable) without the extension runtime."
   []
   (try (when-let [v (resolve 'com.blockether.vis.internal.extension/*current-environment*)]
-         (let
-           [env (var-get v)
-            env (if (instance? clojure.lang.IDeref env) (deref env) env)]
+         (let [env (var-get v)
+               env (if (instance? clojure.lang.IDeref env) (deref env) env)]
 
            (when (map? env) (trimmed (:session-id env)))))
        (catch Throwable _ nil)))
 
 (defn- normalize-channel-ids
   [request fail!]
-  (let
-    [ids
-     (pick request "channel_ids" :channel-ids "channel_id" :channel-id)
+  (let [ids
+        (pick request "channel_ids" :channel-ids "channel_id" :channel-id)
 
-     ids
-     ;; Both surfaces by default: the TUI draws its dialog, and the gateway
-     ;; bridge turns the same event into a session event + push alert so a
-     ;; companion-app operator is not left staring at a stalled run.
-     (cond (nil? ids) [:tui :app]
-           (keyword? ids) [ids]
-           (sequential? ids) (vec ids)
-           :else (fail! ":channel-ids must be a keyword or a sequence of keywords"))]
+        ids
+        ;; Both surfaces by default: the TUI draws its dialog, and the gateway
+        ;; bridge turns the same event into a session event + push alert so a
+        ;; companion-app operator is not left staring at a stalled run.
+        (cond (nil? ids) [:tui :app]
+              (keyword? ids) [ids]
+              (sequential? ids) (vec ids)
+              :else (fail! ":channel-ids must be a keyword or a sequence of keywords"))]
 
     (when (empty? ids) (fail! ":channel-ids must not be empty"))
     (when-not (every? keyword? ids) (fail! ":channel-ids must be keywords"))
@@ -706,15 +703,14 @@
    so quietly shortening a stated budget would only lie about when the answer
    arrives."
   [spec fallback fail!]
-  (let
-    [raw
-     (pick spec "timeout_ms" :timeout-ms)
+  (let [raw
+        (pick spec "timeout_ms" :timeout-ms)
 
-     ms
-     (if (nil? raw)
-       fallback
-       (or (if (number? raw) (long raw) (parse-long (str raw)))
-           (fail! ":timeout-ms must be a number of milliseconds, or 0 to wait indefinitely")))]
+        ms
+        (if (nil? raw)
+          fallback
+          (or (if (number? raw) (long raw) (parse-long (str raw)))
+              (fail! ":timeout-ms must be a number of milliseconds, or 0 to wait indefinitely")))]
 
     (when (neg? (long ms)) (fail! ":timeout-ms must not be negative — 0 waits indefinitely"))
     (long ms)))
@@ -726,44 +722,44 @@
   [request]
   (when-not (map? request) (invalid-request! "request must be a map"))
   (check-keys! "request" request-keys request invalid-request!)
-  (let
-    [title
-     (trimmed (pick request "title" :title))
+  (let [title
+        (trimmed (pick request "title" :title))
 
-     _
-     (when-not title (invalid-request! "request needs a non-blank :title"))
+        _
+        (when-not title (invalid-request! "request needs a non-blank :title"))
 
-     raw-fields
-     (pick request "fields" :fields)
+        raw-fields
+        (pick request "fields" :fields)
 
-     _
-     (when-not (sequential? raw-fields) (invalid-request! ":fields must be a sequence"))
+        _
+        (when-not (sequential? raw-fields) (invalid-request! ":fields must be a sequence"))
 
-     fields
-     (mapv normalize-node raw-fields)
+        fields
+        (mapv normalize-node raw-fields)
 
-     _
-     (when (empty? fields) (invalid-request! ":fields must not be empty"))
+        _
+        (when (empty? fields) (invalid-request! ":fields must not be empty"))
 
-     _
-     (let [names (into [] (keep :name) (all-fields fields))]
-       (when-not (or (empty? names) (apply distinct? names))
-         (invalid-request! "field names must be distinct")))
+        _
+        (let [names (into [] (keep :name) (all-fields fields))]
+          (when-not (or (empty? names) (apply distinct? names))
+            (invalid-request! "field names must be distinct")))
 
-     session-id
-     (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
+        session-id
+        (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
 
     (checked-request
-      (cond->
-        {:id (or (trimmed (pick request "id" :id)) (str (random-uuid)))
-         :title title
-         :fields fields
-         :submit-label (or (trimmed (pick request "submit_label" :submit-label)) "Submit")
-         :cancel-label (or (trimmed (pick request "cancel_label" :cancel-label)) "Cancel")
-         :is-cancellable
-         (normalize-bool nil ":is-cancellable" (pick request "is_cancellable" :is-cancellable) true)
-         :timeout-ms (normalize-timeout request default-timeout-ms invalid-request!)
-         :channel-ids (normalize-channel-ids request invalid-request!)}
+      (cond-> {:id (or (trimmed (pick request "id" :id)) (str (random-uuid)))
+               :title title
+               :fields fields
+               :submit-label (or (trimmed (pick request "submit_label" :submit-label)) "Submit")
+               :cancel-label (or (trimmed (pick request "cancel_label" :cancel-label)) "Cancel")
+               :is-cancellable (normalize-bool nil
+                                               ":is-cancellable"
+                                               (pick request "is_cancellable" :is-cancellable)
+                                               true)
+               :timeout-ms (normalize-timeout request default-timeout-ms invalid-request!)
+               :channel-ids (normalize-channel-ids request invalid-request!)}
         session-id
         (assoc :session-id session-id)
 
@@ -898,10 +894,9 @@
 
 (defn- live-long
   [fail! what value]
-  (let
-    [n (if (number? value)
-         (when (== (double value) (Math/floor (double value))) (long value))
-         (parse-long (str/trim (str value))))]
+  (let [n (if (number? value)
+            (when (== (double value) (Math/floor (double value))) (long value))
+            (parse-long (str/trim (str value))))]
     (if (nil? n) (fail! (str what " must be a whole number")) (long n))))
 
 (defn- live-fraction
@@ -932,14 +927,13 @@
   (let [what (live-item-name kind)]
     (when-not (map? item) (fail! (str "a " what " must be a map")))
     (check-keys! what (live-item-keys kind) item fail!)
-    (let
-      [id (or (trimmed (pick* item :id))
-              (fail! (str "a " what " needs a non-blank :id — a patch addresses it by that id")))
-       item-fail! (fn [message]
-                    (fail! (str what " " id ": " message)))
-       label (trimmed (pick* item :label))
-       tone (some->> (pick* item :tone)
-                     (live-term item-fail! ":tone" hi-spec/live-tones))]
+    (let [id (or (trimmed (pick* item :id))
+                 (fail! (str "a " what " needs a non-blank :id — a patch addresses it by that id")))
+          item-fail! (fn [message]
+                       (fail! (str what " " id ": " message)))
+          label (trimmed (pick* item :label))
+          tone (some->> (pick* item :tone)
+                        (live-term item-fail! ":tone" hi-spec/live-tones))]
 
       (case kind
         :columns
@@ -953,16 +947,16 @@
           (assoc :tone tone))
 
         :stats
-        (cond->
-          {:id id
-           :label (or label (item-fail! "a stat needs a :label"))
-           :value-text (live-shown item-fail! ":value-text" (pick* item :value-text))}
+        (cond-> {:id id
+                 :label (or label (item-fail! "a stat needs a :label"))
+                 :value-text (live-shown item-fail! ":value-text" (pick* item :value-text))}
           tone
           (assoc :tone tone))
 
         :steps
-        (cond->
-          {:id id :label (or label (item-fail! "a step needs a :label")) :tone (or tone :idle)}
+        (cond-> {:id id
+                 :label (or label (item-fail! "a step needs a :label"))
+                 :tone (or tone :idle)}
           (trimmed (pick* item :detail))
           (assoc :detail (trimmed (pick* item :detail)))
 
@@ -971,11 +965,10 @@
 
         :links
         (let [target (live-text item-fail! ":target" (pick* item :target))]
-          (cond->
-            {:id id
-             :label (or label (item-fail! "a link needs a :label"))
-             :target target
-             :target-kind (live-target-kind item-fail! (pick* item :target-kind) target)}
+          (cond-> {:id id
+                   :label (or label (item-fail! "a link needs a :label"))
+                   :target target
+                   :target-kind (live-target-kind item-fail! (pick* item :target-kind) target)}
             tone
             (assoc :tone tone)))))))
 
@@ -1013,50 +1006,46 @@
                  node
                  fail!)
     (if is-group
-      (let
-        [id (or (trimmed (pick* node :id))
-                (fail! "a group needs a non-blank :id — `add-node :after` names it too"))
-         group-fail! (fn [message]
-                       (fail! (str "group " id ": " message)))
-         children (pick* node :fields)
-         label (trimmed (pick* node :label))]
+      (let [id (or (trimmed (pick* node :id))
+                   (fail! "a group needs a non-blank :id — `add-node :after` names it too"))
+            group-fail! (fn [message]
+                          (fail! (str "group " id ": " message)))
+            children (pick* node :fields)
+            label (trimmed (pick* node :label))]
 
         (when-not (and (sequential? children) (seq children))
           (group-fail! "a group needs a non-empty :fields — a row arranging nothing is a typo"))
         (checked-live-node group-fail!
-                           (cond->
-                             {:id id
-                              :type hi-spec/group-type
-                              :direction (live-term group-fail!
-                                                    ":direction"
-                                                    hi-spec/group-directions
-                                                    (or (pick* node :direction) "column"))
-                              :fields (mapv #(live-node group-fail! %) children)}
+                           (cond-> {:id id
+                                    :type hi-spec/group-type
+                                    :direction (live-term group-fail!
+                                                          ":direction"
+                                                          hi-spec/group-directions
+                                                          (or (pick* node :direction) "column"))
+                                    :fields (mapv #(live-node group-fail! %) children)}
                              label
                              (assoc :label label))))
-      (let
-        [id (or (trimmed (pick* node :id))
-                (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
-         node-fail! (fn [message]
-                      (fail! (str "node " id ": " message)))
-         type (live-term node-fail! ":type" hi-spec/live-node-types (pick* node :type))
-         label (trimmed (pick* node :label))
-         base (cond-> {:id id :type type}
-                label
-                (assoc :label label))
-         items (fn [kind]
-                 (normalize-live-items node-fail! kind (pick* node kind)))]
+      (let [id (or (trimmed (pick* node :id))
+                   (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
+            node-fail! (fn [message]
+                         (fail! (str "node " id ": " message)))
+            type (live-term node-fail! ":type" hi-spec/live-node-types (pick* node :type))
+            label (trimmed (pick* node :label))
+            base (cond-> {:id id :type type}
+                   label
+                   (assoc :label label))
+            items (fn [kind]
+                    (normalize-live-items node-fail! kind (pick* node kind)))]
 
         (checked-live-node
           node-fail!
           (case type
             :status
-            (cond->
-              (assoc base
-                :text (live-text node-fail! "a status' :text" (pick* node :text))
-                :tone (or (some->> (pick* node :tone)
-                                   (live-term node-fail! ":tone" hi-spec/live-tones))
-                          :idle))
+            (cond-> (assoc base
+                      :text (live-text node-fail! "a status' :text" (pick* node :text))
+                      :tone (or (some->> (pick* node :tone)
+                                         (live-term node-fail! ":tone" hi-spec/live-tones))
+                                :idle))
               (trimmed (pick* node :detail))
               (assoc :detail (trimmed (pick* node :detail))))
 
@@ -1141,38 +1130,38 @@
   [view]
   (when-not (map? view) (invalid-live-view! "a live view must be a map"))
   (check-keys! "live view" live-view-decl-keys view invalid-live-view!)
-  (let
-    [title
-     (or (trimmed (pick* view :title)) (invalid-live-view! "a live view needs a non-blank :title"))
+  (let [title
+        (or (trimmed (pick* view :title))
+            (invalid-live-view! "a live view needs a non-blank :title"))
 
-     raw-nodes
-     (pick* view :nodes)
+        raw-nodes
+        (pick* view :nodes)
 
-     _
-     (when-not (sequential? raw-nodes) (invalid-live-view! ":nodes must be a sequence"))
+        _
+        (when-not (sequential? raw-nodes) (invalid-live-view! ":nodes must be a sequence"))
 
-     nodes
-     (mapv #(live-node invalid-live-view! %) raw-nodes)
+        nodes
+        (mapv #(live-node invalid-live-view! %) raw-nodes)
 
-     _
-     (when (empty? nodes) (invalid-live-view! ":nodes must not be empty"))
+        _
+        (when (empty? nodes) (invalid-live-view! ":nodes must not be empty"))
 
-     _
-     (when-not (apply distinct? (mapv :id nodes))
-       (invalid-live-view! (str "node ids must be distinct — got "
-                                (str/join ", " (sort (mapv :id nodes))))))
+        _
+        (when-not (apply distinct? (mapv :id nodes))
+          (invalid-live-view! (str "node ids must be distinct — got "
+                                   (str/join ", " (sort (mapv :id nodes))))))
 
-     session-id
-     (or (trimmed (pick* view :session-id)) (ambient-session-id))]
+        session-id
+        (or (trimmed (pick* view :session-id)) (ambient-session-id))]
 
-    (checked-live-view (cond->
-                         {:id (str (random-uuid))
-                          :title title
-                          :nodes nodes
-                          :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
-                          :channel-ids (normalize-channel-ids view invalid-live-view!)
-                          :seq 0
-                          :created-at (System/currentTimeMillis)}
+    (checked-live-view (cond-> {:id (str (random-uuid))
+                                :title title
+                                :nodes nodes
+                                :timeout-ms
+                                (normalize-timeout view no-timeout-ms invalid-live-view!)
+                                :channel-ids (normalize-channel-ids view invalid-live-view!)
+                                :seq 0
+                                :created-at (System/currentTimeMillis)}
                          session-id
                          (assoc :session-id session-id)
 
@@ -1224,17 +1213,16 @@
    chooses."
   [fail! op]
   (when-not (map? op) (fail! "an operation must be a map"))
-  (let
-    [kind
-     (live-term fail! ":op" hi-spec/live-ops (pick* op :op))
+  (let [kind
+        (live-term fail! ":op" hi-spec/live-ops (pick* op :op))
 
-     ;; "an append op", "a set op" — the refusal is read out loud by whoever wrote it.
-     article
-     (if (contains? #{\a \e \i \o \u} (first (name kind))) "an " "a ")
+        ;; "an append op", "a set op" — the refusal is read out loud by whoever wrote it.
+        article
+        (if (contains? #{\a \e \i \o \u} (first (name kind))) "an " "a ")
 
-     op-fail!
-     (fn [message]
-       (fail! (str article (name kind) " op: " message)))]
+        op-fail!
+        (fn [message]
+          (fail! (str article (name kind) " op: " message)))]
 
     (check-keys! (str (name kind) " op") (live-op-decl-keys kind) op op-fail!)
     (reduce (fn [acc k]
@@ -1261,11 +1249,11 @@
    only: whether the node an op names EXISTS, and whether it would cross a
    bound, is `live/apply-patch`'s answer."
   [view patch]
-  (let
-    [ops (cond (map? patch) (do (check-keys! "patch" live-patch-decl-keys patch invalid-live-patch!)
-                                (pick* patch :ops))
-               (sequential? patch) patch
-               :else (invalid-live-patch! "a patch is a sequence of operations"))]
+  (let [ops (cond (map? patch)
+                  (do (check-keys! "patch" live-patch-decl-keys patch invalid-live-patch!)
+                      (pick* patch :ops))
+                  (sequential? patch) patch
+                  :else (invalid-live-patch! "a patch is a sequence of operations"))]
     (when-not (sequential? ops) (invalid-live-patch! ":ops must be a sequence of operations"))
     (when (empty? ops)
       (invalid-live-patch!
@@ -1278,20 +1266,19 @@
 
 (defn- coerce-text
   [{:keys [type is-required min-length max-length]} value]
-  (let
-    [text
-     (cond (nil? value) ""
-           ;; A JSON client can post an object or a list where a dialog can only
-           ;; ever type characters. `str` would hand the extension a Clojure
-           ;; printing of it, so the app would submit something the TUI cannot —
-           ;; reject it instead, like any other malformed value.
-           (coll? value) ::invalid
-           :else (str value))
+  (let [text
+        (cond (nil? value) ""
+              ;; A JSON client can post an object or a list where a dialog can only
+              ;; ever type characters. `str` would hand the extension a Clojure
+              ;; printing of it, so the app would submit something the TUI cannot —
+              ;; reject it instead, like any other malformed value.
+              (coll? value) ::invalid
+              :else (str value))
 
-     text
-     (cond (= ::invalid text) text
-           (= :multiline type) text
-           :else (str/trim text))]
+        text
+        (cond (= ::invalid text) text
+              (= :multiline type) text
+              :else (str/trim text))]
 
     (cond (= ::invalid text) [:error "must be text"]
           (and is-required (str/blank? text)) [:error "is required"]
@@ -1306,12 +1293,11 @@
 
 (defn- coerce-select
   [{:keys [is-required options]} value]
-  (let
-    [text
-     (trimmed value)
+  (let [text
+        (trimmed value)
 
-     allowed
-     (set (map :value options))]
+        allowed
+        (set (map :value options))]
 
     (cond (nil? text) (if is-required [:error "is required"] [:ok nil])
           (contains? allowed text) [:ok text]
@@ -1319,18 +1305,16 @@
 
 (defn- coerce-multiselect
   [{:keys [is-required options]} value]
-  (let
-    [values (cond (nil? value) []
-                  (string? value) [value]
-                  (sequential? value) (vec value)
-                  (set? value) (vec value)
-                  :else ::invalid)]
+  (let [values (cond (nil? value) []
+                     (string? value) [value]
+                     (sequential? value) (vec value)
+                     (set? value) (vec value)
+                     :else ::invalid)]
     (if (= ::invalid values)
       [:error "must be a list of option values"]
-      (let
-        [picked (into [] (comp (keep trimmed) (distinct)) values)
-         allowed (set (map :value options))
-         unknown (remove allowed picked)]
+      (let [picked (into [] (comp (keep trimmed) (distinct)) values)
+            allowed (set (map :value options))
+            unknown (remove allowed picked)]
 
         (cond (seq unknown) [:error (str "unknown option " (str/join ", " (sort unknown)))]
               (and is-required (empty? picked)) [:error "is required"]
@@ -1338,12 +1322,11 @@
 
 (defn- coerce-checkbox
   [{:keys [is-required]} value]
-  (let
-    [[status result] (cond (nil? value) [:ok false]
-                           (boolean? value) [:ok value]
-                           (contains? #{"true" "1"} (str/lower-case (str value))) [:ok true]
-                           (contains? #{"false" "0"} (str/lower-case (str value))) [:ok false]
-                           :else [:error "must be true or false"])]
+  (let [[status result] (cond (nil? value) [:ok false]
+                              (boolean? value) [:ok value]
+                              (contains? #{"true" "1"} (str/lower-case (str value))) [:ok true]
+                              (contains? #{"false" "0"} (str/lower-case (str value))) [:ok false]
+                              :else [:error "must be true or false"])]
     ;; A required checkbox is a consent box — "I agree", "yes, delete it". Leaving
     ;; it unticked is not an answer, so it is refused exactly like a blank
     ;; required text field. Without this the surfaces disagree: the app greys its
@@ -1353,19 +1336,18 @@
 
 (defn- coerce-range
   [{lo :min hi :max st :step} value]
-  (let
-    [lo
-     (if (number? lo) lo (:min hi-spec/range-defaults))
+  (let [lo
+        (if (number? lo) lo (:min hi-spec/range-defaults))
 
-     hi
-     (if (number? hi) hi (:max hi-spec/range-defaults))
+        hi
+        (if (number? hi) hi (:max hi-spec/range-defaults))
 
-     n
-     (cond (nil? value) lo
-           (number? value) value
-           (coll? value) ::invalid
-           :else (let [s (str/trim (str value))]
-                   (or (parse-long s) (parse-double s) ::invalid)))]
+        n
+        (cond (nil? value) lo
+              (number? value) value
+              (coll? value) ::invalid
+              :else (let [s (str/trim (str value))]
+                      (or (parse-long s) (parse-double s) ::invalid)))]
 
     (cond (= ::invalid n) [:error "must be a number"]
           (or (< (double n) (double lo)) (> (double n) (double hi)))
@@ -1382,17 +1364,16 @@
    are how every provider prints a code (`123 456`, `123-456`), so they are
    separators here rather than a typo the operator has to go back and delete."
   [{:keys [is-required min-length max-length]} value]
-  (let
-    [lo
-     (long (or min-length (:length hi-spec/otp-defaults)))
+  (let [lo
+        (long (or min-length (:length hi-spec/otp-defaults)))
 
-     hi
-     (long (or max-length (:length hi-spec/otp-defaults)))
+        hi
+        (long (or max-length (:length hi-spec/otp-defaults)))
 
-     digits
-     (cond (nil? value) ""
-           (coll? value) ::invalid
-           :else (str/replace (str value) #"[\s-]" ""))]
+        digits
+        (cond (nil? value) ""
+              (coll? value) ::invalid
+              :else (str/replace (str value) #"[\s-]" ""))]
 
     (cond (= ::invalid digits) [:error "must be a one-time code"]
           ;; Nothing typed is nothing answered — nil, exactly like an empty text
@@ -1423,42 +1404,39 @@
    every surface lands here, and the `assoc-in` this replaces rebuilt two nested
    persistent maps per field for an answer the caller only ever reads once."
   [fields values]
-  (let
-    [values
-     (or values {})
+  (let [values
+        (or values {})
 
-     fields
-     (vec fields)
+        fields
+        (vec fields)
 
-     n
-     (long (count fields))]
+        n
+        (long (count fields))]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       out
-       (transient {})
+           out
+           (transient {})
 
-       errs
-       (transient {})]
+           errs
+           (transient {})]
 
       (if-not (< i n)
         {:values (persistent! out) :errors (persistent! errs)}
-        (let
-          [{:keys [id] :as field}
-           (nth fields i)
+        (let [{:keys [id] :as field}
+              (nth fields i)
 
-           raw
-           (cond (contains? values id) (get values id)
-                 (contains? values (keyword id)) (get values (keyword id))
-                 ;; Absent means "the human left it alone" — the field's
-                 ;; declared default stands in, then gets validated like
-                 ;; any other value.
-                 :else (:default field))
+              raw
+              (cond (contains? values id) (get values id)
+                    (contains? values (keyword id)) (get values (keyword id))
+                    ;; Absent means "the human left it alone" — the field's
+                    ;; declared default stands in, then gets validated like
+                    ;; any other value.
+                    :else (:default field))
 
-           [status result]
-           (coerce-value field raw)]
+              [status result]
+              (coerce-value field raw)]
 
           (if (= :error status)
             (recur (inc i) out (assoc! errs id result))
@@ -1478,8 +1456,8 @@
    :errors (persistent! (reduce (fn [acc {:keys [id validate]}]
                                   (if (or (empty? validate) (some? (get acc id)))
                                     acc
-                                    (if-let
-                                      [message (validation/check validate (get values id) values)]
+                                    (if-let [message
+                                             (validation/check validate (get values id) values)]
                                       (assoc! acc id message)
                                       acc)))
                                 (transient errors)
@@ -1498,12 +1476,11 @@
    confirms the form, never on a keystroke; only a real submission goes through
    [[coerce-values]]."
   [fields values]
-  (let
-    [fields
-     (input-fields fields)
+  (let [fields
+        (input-fields fields)
 
-     {:keys [values errors]}
-     (check-all fields (coerce-all fields values))]
+        {:keys [values errors]}
+        (check-all fields (coerce-all fields values))]
 
     (if (seq errors) {:is-accepted false :errors errors} {:is-accepted true :values values})))
 
@@ -1555,12 +1532,11 @@
    which `normalize-request` refuses by contract, are lifted across unchanged."
   [wire]
   (when (map? wire)
-    (let
-      [stamps (into {}
-                    (keep (fn [[wire-key k]]
-                            (when-some [v (get wire wire-key)]
-                              [k v])))
-                    request-stamps)]
+    (let [stamps (into {}
+                       (keep (fn [[wire-key k]]
+                               (when-some [v (get wire wire-key)]
+                                 [k v])))
+                       request-stamps)]
       (merge (request->view (normalize-request (apply dissoc wire (keys request-stamps))))
              stamps))))
 
@@ -1619,32 +1595,37 @@
    is the one place a view differs from a request, which answers `undeliverable`
    at once because a form nobody can see is a thread parked forever."
   [view]
-  (let
-    [view
-     (live/materialize (normalize-live-view view))
+  (let [view
+        (live/materialize (normalize-live-view view))
 
-     view-id
-     (:id view)
+        view-id
+        (:id view)
 
-     _
-     (when-not (trimmed (:session-id view))
-       (invalid-live-view! (str "view " view-id
-                                " names no session — set :session-id, or open it "
-                                "from an extension environment that carries one")))
+        _
+        (when-not (trimmed (:session-id view))
+          (invalid-live-view! (str "view " view-id
+                                   " names no session — set :session-id, or open it "
+                                   "from an extension environment that carries one")))
 
-     entry
-     {:kind :live
-      :id view-id
-      :view (atom view)
-      :file (live-sink/open! view)
-      :promise (promise)
-      :session-id (:session-id view)
-      :channel-ids (:channel-ids view)
-      :created-at (:created-at view)
-      ;; The collector of the block that OPENED the view. A human's stop arrives on a
-      ;; gateway thread, which holds no artifacts of its own, and the record still
-      ;; belongs to the block whose run produced it.
-      :attachment-sink mpl-capture/*attachment-sink*}]
+        entry
+        {:kind :live
+         :id view-id
+         :view (atom view)
+         :file (live-sink/open! view)
+         :promise (promise)
+         :session-id (:session-id view)
+         :channel-ids (:channel-ids view)
+         :created-at (:created-at view)
+         ;; The collector of the block that OPENED the view. A human's stop arrives on a
+         ;; gateway thread, which holds no artifacts of its own, and the record still
+         ;; belongs to the block whose run produced it.
+         :attachment-sink mpl-capture/*attachment-sink*
+         ;; The eval wall of the block that opened it, held open for as long as the
+         ;; view is. A run SHOWING its work is watched for as long as the work takes
+         ;; — a CI run is fifteen minutes — while the Python watchdog around the
+         ;; block bills five and killed the watch mid-picture. Released at the close,
+         ;; whoever closes it.
+         :wall-hold (rt/hold-blocking-wall!)}]
 
     (swap! pending assoc view-id entry)
     (tel/log! {:level :debug
@@ -1663,6 +1644,31 @@
                            "and it still ends in the verdict the model reads")}))
     view))
 
+(defn- renew-wall-hold!
+  "Roll the eval wall forward on the block watching `view-id`: take a fresh hold,
+   then spend the one the last op took.
+
+   A hold is a fixed grant, not a promise — [[rt/hold-blocking-wall!]] buys the
+   engine's ceiling ONCE, and a build that outlasts the ceiling would still be
+   killed mid-picture. Every patch is proof the run is alive, so every patch buys
+   the ceiling again; a watch that stops patching stops being renewed, and the
+   backstop reaches it exactly as it reaches a block that fell silent."
+  [view-id]
+  (let [fresh
+        (rt/hold-blocking-wall!)
+
+        [before _]
+        (swap-vals!
+          pending
+          (fn [views]
+            (if (contains? views view-id) (assoc-in views [view-id :wall-hold] fresh) views)))]
+
+    (if (contains? before view-id)
+      (when-let [stale (get-in before [view-id :wall-hold])]
+        (stale))
+      ;; The view closed under this patch: the wall it held is nobody's now.
+      (fresh))))
+
 (defn patch-live!
   "Apply `patch` to live view `view-id` and return the view it made.
 
@@ -1671,20 +1677,18 @@
    trust. The line is written BEFORE any surface is told, so a crash keeps what
    the engine accepted rather than what a screen managed to paint."
   [view-id patch]
-  (let
-    [entry
-     (live-entry! view-id)
+  (let [entry
+        (live-entry! view-id)
 
-     cell
-     (:view entry)]
+        cell
+        (:view entry)]
 
     (locking cell
-      (let
-        [applied
-         (normalize-patch @cell patch)
+      (let [applied
+            (normalize-patch @cell patch)
 
-         patched
-         (live/apply-patch @cell applied)]
+            patched
+            (live/apply-patch @cell applied)]
 
         (reset! cell patched)
         (live-sink/append! (:file entry) applied)
@@ -1693,6 +1697,7 @@
                    :view-id view-id
                    :session-id (:session-id entry)
                    :patch applied})
+        (renew-wall-hold! view-id)
         patched))))
 
 (defn- human-note
@@ -1717,35 +1722,33 @@
   [view ending human fail!]
   (when-not (map? ending) (fail! "an ending must be a map"))
   (check-keys! "ending" live-ending-keys ending fail!)
-  (let
-    [reason
-     (live-term fail! ":reason" hi-spec/live-reasons (or (pick* ending :reason) :completed))
+  (let [reason
+        (live-term fail! ":reason" hi-spec/live-reasons (or (pick* ending :reason) :completed))
 
-     verdict
-     (cond->
-       {:view-id (:id view)
-        :is-completed (= :completed reason)
-        :reason reason
-        :is-from-human (some? human)}
-       (human-note (:note human))
-       (assoc :note (human-note (:note human)))
+        verdict
+        (cond-> {:view-id (:id view)
+                 :is-completed (= :completed reason)
+                 :reason reason
+                 :is-from-human (some? human)}
+          (human-note (:note human))
+          (assoc :note (human-note (:note human)))
 
-       (trimmed (pick* ending :summary))
-       (assoc :summary (trimmed (pick* ending :summary)))
+          (trimmed (pick* ending :summary))
+          (assoc :summary (trimmed (pick* ending :summary)))
 
-       (trimmed (pick* ending :error))
-       (assoc :error (trimmed (pick* ending :error)))
+          (trimmed (pick* ending :error))
+          (assoc :error (trimmed (pick* ending :error)))
 
-       (trimmed (pick* ending :artifact-id))
-       (assoc :artifact-id (trimmed (pick* ending :artifact-id))))
+          (trimmed (pick* ending :artifact-id))
+          (assoc :artifact-id (trimmed (pick* ending :artifact-id))))
 
-     picture
-     (live/picture view)
+        picture
+        (live/picture view)
 
-     result
-     (cond-> (assoc verdict :view (:view picture))
-       (seq (:elided picture))
-       (assoc :elided (:elided picture)))]
+        result
+        (cond-> (assoc verdict :view (:view picture))
+          (seq (:elided picture))
+          (assoc :elided (:elided picture)))]
 
     (if-let [why (hi-spec/live-result-error result)]
       (fail! why)
@@ -1780,28 +1783,26 @@
    patch — because the trailer that seals the record states the verdict, and the
    verdict is already `:reason` and `:view` here."
   [view result ^java.io.File file]
-  (let
-    [{:keys [size line-count]}
-     (live-sink/stats file)
+  (let [{:keys [size line-count]}
+        (live-sink/stats file)
 
-     artifact
-     (cond->
-       {:id (str (java.util.UUID/randomUUID))
-        :view-id (:view-id result)
-        :session-id (:session-id view)
-        :title (:title view)
-        :media-type hi-spec/live-artifact-media-type
-        :audience "user"
-        :ended-at (System/currentTimeMillis)
-        :reason (:reason result)
-        :view (:view result)
-        :storage-uri (live-sink/record-uri (:session-id view) (:view-id result))
-        :size size
-        :line-count line-count}
-       (<= (long size) (long hi-spec/live-artifact-inline-bytes))
-       (assoc :base64
-         (.encodeToString (java.util.Base64/getEncoder)
-                          (java.nio.file.Files/readAllBytes (.toPath file)))))]
+        artifact
+        (cond-> {:id (str (java.util.UUID/randomUUID))
+                 :view-id (:view-id result)
+                 :session-id (:session-id view)
+                 :title (:title view)
+                 :media-type hi-spec/live-artifact-media-type
+                 :audience "user"
+                 :ended-at (System/currentTimeMillis)
+                 :reason (:reason result)
+                 :view (:view result)
+                 :storage-uri (live-sink/record-uri (:session-id view) (:view-id result))
+                 :size size
+                 :line-count line-count}
+          (<= (long size) (long hi-spec/live-artifact-inline-bytes))
+          (assoc :base64
+            (.encodeToString (java.util.Base64/getEncoder)
+                             (java.nio.file.Files/readAllBytes (.toPath file)))))]
 
     (if-let [why (hi-spec/live-artifact-error artifact)]
       (invalid-live-view! why)
@@ -1832,32 +1833,34 @@
      ;; it, so the verdict renders the picture the record already ends with.
      (let [cell (:view entry)]
        (locking cell
-         (let
-           [verdict (live-result @cell ending human invalid-live-view!)
-            ;; Built BEFORE the registry drops the view, so a refusal leaves the
-            ;; view open and nameable rather than stranding whoever is holding it;
-            ;; REGISTERED after, inside the branch that won the close, so a second
-            ;; close files no second artifact.
-            artifact (live-artifact @cell verdict (:file entry))
-            [old _] (swap-vals! pending dissoc view-id)]
+         (let [verdict (live-result @cell ending human invalid-live-view!)
+               ;; Built BEFORE the registry drops the view, so a refusal leaves the
+               ;; view open and nameable rather than stranding whoever is holding it;
+               ;; REGISTERED after, inside the branch that won the close, so a second
+               ;; close files no second artifact.
+               artifact (live-artifact @cell verdict (:file entry))
+               [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
-             (let
-               [;; A human's stop arrives on a gateway thread, which collects no artifacts of
-                ;; its own: the row belongs to the block whose run produced it, so file into
-                ;; the collector that block captured when nothing is collecting here.
-                sink (or mpl-capture/*attachment-sink* (:attachment-sink entry))
-                artifact-id (when (binding [mpl-capture/*attachment-sink* sink]
-                                    (mpl-capture/record-attachment! (live-attachment artifact)))
-                              (:id artifact))
-                result (cond-> verdict
-                         artifact-id
-                         (assoc :artifact-id artifact-id))]
+             (let [;; A human's stop arrives on a gateway thread, which collects no artifacts of
+                   ;; its own: the row belongs to the block whose run produced it, so file into
+                   ;; the collector that block captured when nothing is collecting here.
+                   sink (or mpl-capture/*attachment-sink* (:attachment-sink entry))
+                   artifact-id (when (binding [mpl-capture/*attachment-sink* sink]
+                                       (mpl-capture/record-attachment! (live-attachment artifact)))
+                                 (:id artifact))
+                   result (cond-> verdict
+                            artifact-id
+                            (assoc :artifact-id artifact-id))]
 
                ;; The trailer carries the SAME verdict that is delivered and
                ;; published, artifact and all: `live-ended` reads the record for a
                ;; view the human interrupted, and it must not learn less than the
                ;; thread that was holding it.
+               ;; The wall the open pushed out belongs to the block again the moment
+               ;; the view stops being watched.
+               (when-let [release (:wall-hold entry)]
+                 (release))
                (live-sink/close! (:file entry) result)
                (deliver (:promise entry) result)
                ;; `:session-id` rides on every live event for the same reason it
@@ -1942,6 +1945,35 @@
        (filter #(= :live (:kind %)))
        (sort-by :created-at)
        (mapv entry->view)))
+
+(defn open-live-ids
+  "The id of every live view open right now.
+
+   The cheap half of [[live-views]]: a caller that only has to notice a view
+   APPEARING — the run that opened it, on its way out — never materializes one."
+  []
+  (into #{}
+        (keep (fn [[view-id entry]]
+                (when (= :live (:kind entry)) view-id)))
+        @pending))
+
+(defn close-abandoned!
+  "Close every live view open right now whose id is NOT in `known`, with
+   `ending`. Returns the ids it closed, oldest first.
+
+   The run that opens a view is the one that ends it — `with vis.live` closes on
+   the way out. A block killed at its eval wall or cancelled mid-flight reaches
+   no such line: its frames unwind through a context that no longer accepts host
+   calls, so the close never arrives and the view stays open with nothing left to
+   patch it — a pane painting a picture that will never move again, over a Stop
+   nobody is listening to. That end, and only that end, sweeps: a view
+   deliberately carried from one block to the next is `known` and stays open."
+  [known ending]
+  (let [known (set known)]
+    (into []
+          (keep (fn [view-id]
+                  (when (close-live! view-id ending) view-id)))
+          (remove known (mapv :id (live-views))))))
 
 (defn pending-request
   "The pending request `request-id`, as a view, or nil."
@@ -2076,15 +2108,14 @@
    to go, so only a surface mounted in this very process could ever answer it.
    That is refused here, before anything blocks."
   [request]
-  (let
-    [entry
-     (assoc (normalize-request request)
-       :kind :form
-       :promise (promise)
-       :created-at (System/currentTimeMillis))
+  (let [entry
+        (assoc (normalize-request request)
+          :kind :form
+          :promise (promise)
+          :created-at (System/currentTimeMillis))
 
-     request-id
-     (:id entry)]
+        request-id
+        (:id entry)]
 
     (when-not (trimmed (:session-id entry))
       (invalid-request! (str "request " request-id
@@ -2115,26 +2146,25 @@
           (settle! request-id {:is-submitted false :reason "undeliverable" :request-id request-id})
           ;; `settle!` delivered, unless a racing submit! got there first.
           @(:promise entry))
-      (let
-        [timeout-ms
-         (:timeout-ms entry)
+      (let [timeout-ms
+            (:timeout-ms entry)
 
-         result
-         ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
-         ;; bill: park every enclosing wall (Python eval watchdog, native-tool
-         ;; wall) for as long as the operator takes. Without this the surrounding
-         ;; wall kills the thread at `Timeout` with the dialog still up.
-         (rt/park-blocking-wall (fn []
-                                  (try (if (indefinite-timeout? timeout-ms)
-                                         ;; No deadline at all: only an answer, a cancel or an
-                                         ;; interrupt gets this thread back.
-                                         @(:promise entry)
-                                         (deref (:promise entry) timeout-ms ::timeout))
-                                       (catch Throwable t
-                                         ;; Interrupt/cancel of the surrounding turn: release the entry
-                                         ;; and close the dialog, never leave a zombie pending request.
-                                         (force-cancel! request-id "interrupted")
-                                         (throw t)))))]
+            result
+            ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
+            ;; bill: park every enclosing wall (Python eval watchdog, native-tool
+            ;; wall) for as long as the operator takes. Without this the surrounding
+            ;; wall kills the thread at `Timeout` with the dialog still up.
+            (rt/park-blocking-wall (fn []
+                                     (try (if (indefinite-timeout? timeout-ms)
+                                            ;; No deadline at all: only an answer, a cancel or an
+                                            ;; interrupt gets this thread back.
+                                            @(:promise entry)
+                                            (deref (:promise entry) timeout-ms ::timeout))
+                                          (catch Throwable t
+                                            ;; Interrupt/cancel of the surrounding turn: release the entry
+                                            ;; and close the dialog, never leave a zombie pending request.
+                                            (force-cancel! request-id "interrupted")
+                                            (throw t)))))]
 
         (if (identical? ::timeout result)
           (do (tel/log! {:level :warn
@@ -2169,15 +2199,14 @@
    Python was involved. Groups nest, so this walks the tree, not a flat list."
   [fields counts run]
   (mapv (fn [field]
-          (let
-            [field-name
-             (trimmed (or (get field "name") (get field "id")))
+          (let [field-name
+                (trimmed (or (get field "name") (get field "id")))
 
-             declared
-             (get counts field-name)
+                declared
+                (get counts field-name)
 
-             children
-             (get field "fields")]
+                children
+                (get field "fields")]
 
             (cond-> field
               (sequential? children)
@@ -2208,13 +2237,12 @@
    value being judged ever cross."
   ([request-json] (request-json! request-json nil nil))
   ([request-json validators-json run]
-   (let
-     [request
-      (json/read-json (str request-json) :key-fn identity)
+   (let [request
+         (json/read-json (str request-json) :key-fn identity)
 
-      counts
-      (when (and run (not (str/blank? (str validators-json))))
-        (json/read-json (str validators-json) :key-fn identity))]
+         counts
+         (when (and run (not (str/blank? (str validators-json))))
+           (json/read-json (str validators-json) :key-fn identity))]
 
      (when-not (map? request) (invalid-request! "request must be a JSON object"))
      (-> request
@@ -2299,9 +2327,13 @@
           (live-ended view-id)))
 
       "state"
+      ;; Reading the view is proof of life too — a watcher asking whether the human
+      ;; stopped is a watcher still watching — so it re-buys the wall exactly as a
+      ;; patch does. A run whose picture stands still for a whole ceiling while it
+      ;; asks nothing is the one the backstop is for.
       (let [view-id (live-handle-id opts op)]
         (if-let [view (live-view view-id)]
-          {:view-id view-id :is-open true :view view}
+          (do (renew-wall-hold! view-id) {:view-id view-id :is-open true :view view})
           (live-ended view-id)))
 
       "close"

@@ -22,6 +22,7 @@
     [com.blockether.vis.internal.env-python :as env]
     [com.blockether.vis.internal.egress-proxy :as egress]
     [com.blockether.vis.internal.form :as form]
+    [com.blockether.vis.internal.human-input :as human-input]
     [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
     [com.blockether.vis.internal.process-jail :as process-jail]
     [com.blockether.vis.internal.attachment-storage :as attachment-storage]
@@ -945,9 +946,28 @@
         (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
 
         ;; MOVABLE wall: a `human-input` pause inside the block parks this clock
-        ;; instead of dying at it (see rt/parkable-wall).
-        {eval-deadline :deadline eval-park :park}
+        ;; instead of dying at it, and a live view HOLDS it open for as long as the
+        ;; human is watching (see rt/parkable-wall).
+        {eval-deadline :deadline eval-park :park eval-hold :hold}
         (rt/parkable-wall (System/currentTimeMillis) timeout-ms)
+
+        ;; The views already open when this block started. Anything the block
+        ;; opens on top of them is the block's own, and dies with it.
+        views-before
+        (human-input/open-live-ids)
+
+        ;; A view the block opened and never closed. Sweeping it is the run's last
+        ;; act, so a wall or a cancel cannot leave a pane painting a picture that
+        ;; will never move again. Never at the cost of the block's own answer.
+        sweep-abandoned!
+        (fn [ending]
+          (try (seq (human-input/close-abandoned! views-before ending))
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::abandoned-live-sweep-failed
+                            :error t
+                            :msg "Could not close the live views this block abandoned"})
+                 nil)))
 
         exec-future
         (cancellation/worker-future
@@ -966,6 +986,9 @@
                 {:env env}
                 (binding [rt/*blocking-wall-park*
                           eval-park
+
+                          rt/*blocking-wall-hold*
+                          eval-hold
 
                           extension/*tool-event-sink*
                           record-tool-event
@@ -1019,6 +1042,13 @@
       ;; of it.
       (do (when-not (interrupt-guest! python-context)
             (.cancel ^java.util.concurrent.Future exec-future true))
+          ;; The unwinding guest cannot reach the host any more, so its `with` never
+          ;; closes: the wall that killed the block ends its views too, and the model
+          ;; still reads the picture they held.
+          (sweep-abandoned! {:reason :timeout
+                             :error (str "the run watching this view was stopped at its "
+                                         (/ timeout-ms 1000)
+                                         "s wall")})
           ;; What the block PRINTED before the wall is real work — progress lines
           ;; of a fetch loop, results already computed. The guest never reaches
           ;; its own `{:stdout}` outcome here, so drain the capture buffer onto
@@ -1037,7 +1067,14 @@
             (cond-> envelope
               out
               (assoc :stdout out))))
-      execution-result)))
+      (do (when (:error execution-result)
+            ;; A cancel unwinds the same way a wall does. An ordinary Python
+            ;; exception does NOT — `with vis.live` closes on its way out — so this
+            ;; finds nothing to sweep and says nothing.
+            (sweep-abandoned! {:reason :failed
+                               :error (or (:message (:error execution-result))
+                                          "the run that opened this view ended")}))
+          execution-result))))
 
 (defn- run-with-timing
   [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]

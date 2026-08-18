@@ -41,6 +41,8 @@ BACKOFF_AFTER_S = 300.0
 LOG_TAIL_LINES = 200
 
 # A watch that outlives this stops itself rather than polling a run nobody is waiting for.
+# The engine's eval wall is no longer the limit: an open view holds it, and every poll —
+# a patch, or the question of whether the human stopped — buys it again.
 DEFAULT_MINUTES = 90
 
 _RUNNING_STATES = ("queued", "in_progress", "waiting", "requested", "pending")

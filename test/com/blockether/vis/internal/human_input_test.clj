@@ -47,17 +47,15 @@
   "Open `request` on a fresh channel from another thread. Returns
    `{:future … :events … :request-id … :detach! …}` once the dialog event lands."
   [request]
-  (let
-    [chan
-     (fresh-channel)
+  (let [chan
+        (fresh-channel)
 
-     events
-     (atom [])]
+        events
+        (atom [])]
 
     (ce/add-channel-event-listener! chan ::collector #(swap! events conj %))
-    (let
-      [fut (future (hi/request! (merge {:session-id "test-session"}
-                                       (assoc request :channel-ids [chan]))))]
+    (let [fut (future (hi/request! (merge {:session-id "test-session"}
+                                          (assoc request :channel-ids [chan]))))]
       {:future fut
        :events events
        :request-id (await-request-id events)
@@ -77,10 +75,9 @@
         (expect (false? (:is-required field)))
         (expect (false? (:is-secret field)))))
   (it "keys the answer by :name, shows :label, explains with :description"
-      (let
-        [[field] (normalized-fields {:name "api_key"
-                                     :label "API key"
-                                     :description "Found on the provider dashboard"})]
+      (let [[field] (normalized-fields {:name "api_key"
+                                        :label "API key"
+                                        :description "Found on the provider dashboard"})]
         (expect (= "api_key" (:name field)))
         ;; The same string under `:id`, so every surface that has always keyed
         ;; rows, values and errors by `:id` keeps working unchanged.
@@ -112,13 +109,12 @@
         (expect (= {:is-accepted true :values {"note" "hi"}}
                    (hi/coerce-values fields {"note" "hi"})))))
   (it "reads string keys from the Python boundary"
-      (let
-        [[field] (normalized-fields {"id" "token"
-                                     "type" "password"
-                                     "label" "API token"
-                                     "is_required" true
-                                     "max_length" 40
-                                     "description" "from the dashboard"})]
+      (let [[field] (normalized-fields {"id" "token"
+                                        "type" "password"
+                                        "label" "API token"
+                                        "is_required" true
+                                        "max_length" 40
+                                        "description" "from the dashboard"})]
         (expect (= "token" (:id field)))
         (expect (= :password (:type field)))
         (expect (= "API token" (:label field)))
@@ -131,9 +127,8 @@
         (expect (= [{:value "staging" :label "staging"} {:value "prod" :label "prod"}]
                    (:options field)))))
   (it "keeps explicit option labels"
-      (let
-        [[field] (normalized-fields
-                   {:id "env" :type "select" :options [{"value" "prod" "label" "Production"}]})]
+      (let [[field] (normalized-fields
+                      {:id "env" :type "select" :options [{"value" "prod" "label" "Production"}]})]
         (expect (= [{:value "prod" :label "Production"}] (:options field)))))
   (it "validates a declared default against its own field"
       (let [[field] (normalized-fields {:id "env" :type "select" :options ["a" "b"] :default "b"})]
@@ -148,9 +143,8 @@
       (expect (throws? clojure.lang.ExceptionInfo #(normalized-fields "not-a-map")))
       (expect (throws? clojure.lang.ExceptionInfo #(normalized-fields {:id "x" :max-length 0}))))
   (it "carries the offending field id in the exception data"
-      (let
-        [data (try (normalized-fields {:id "env" :type "wat"})
-                   (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (let [data (try (normalized-fields {:id "env" :type "wat"})
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (expect (= :vis/human-input-invalid-field (:type data)))
         (expect (= "env" (:field-id data))))))
 
@@ -261,27 +255,26 @@
   spec-key-spelling-test
   (it
     "takes the snake_case string spelling a Python spec writes"
-    (let
-      [request
-       (hi/normalize-request {"title" "Deploy"
-                              "description" "Pick a target"
-                              "submit_label" "Go"
-                              "cancel_label" "Stop"
-                              "is_cancellable" false
-                              "timeout_ms" 20000
-                              "session_id" "sid-1"
-                              "source" "asker"
-                              "fields"
-                              [{"name" "env"
-                                "label" "Target"
-                                "description" "Where it lands."
-                                "type" "select"
-                                "options" [{"value" "prod" "label" "Production"}]
-                                "is_required" true}
-                               {"name" "note" "placeholder" "why" "max_length" 5 "default" "ok"}]})
+    (let [request
+          (hi/normalize-request
+            {"title" "Deploy"
+             "description" "Pick a target"
+             "submit_label" "Go"
+             "cancel_label" "Stop"
+             "is_cancellable" false
+             "timeout_ms" 20000
+             "session_id" "sid-1"
+             "source" "asker"
+             "fields" [{"name" "env"
+                        "label" "Target"
+                        "description" "Where it lands."
+                        "type" "select"
+                        "options" [{"value" "prod" "label" "Production"}]
+                        "is_required" true}
+                       {"name" "note" "placeholder" "why" "max_length" 5 "default" "ok"}]})
 
-       [env note]
-       (:fields request)]
+          [env note]
+          (:fields request)]
 
       (expect (= "Go" (:submit-label request)))
       (expect (= "Stop" (:cancel-label request)))
@@ -358,32 +351,31 @@
                                       ::json-seam
                                       (fn [_]))
       (try
-        (let
-          [title
-           (str "Deploy " (random-uuid))
+        (let [title
+              (str "Deploy " (random-uuid))
 
-           answer-json
-           (future (hi/request-json! (json/write-json-str {"title" title
-                                                           "session_id" "test-session"
-                                                           "description" "Pick a target"
-                                                           ;; Channel routing is host-side — a guest cannot aim the
-                                                           ;; dialog anywhere, so this key is dropped, not honoured.
-                                                           "channel_ids" ["nowhere"]
-                                                           "timeout_ms" 20000
-                                                           "fields"
-                                                           [{"name" "env"
-                                                             "label" "Target"
-                                                             "description" "Where it lands."
-                                                             "type" "select"
-                                                             "options" ["staging" "prod"]
-                                                             "is_required" true}
-                                                            {"name" "note" "type" "plaintext"}]})))
+              answer-json
+              (future (hi/request-json! (json/write-json-str
+                                          {"title" title
+                                           "session_id" "test-session"
+                                           "description" "Pick a target"
+                                           ;; Channel routing is host-side — a guest cannot aim the
+                                           ;; dialog anywhere, so this key is dropped, not honoured.
+                                           "channel_ids" ["nowhere"]
+                                           "timeout_ms" 20000
+                                           "fields" [{"name" "env"
+                                                      "label" "Target"
+                                                      "description" "Where it lands."
+                                                      "type" "select"
+                                                      "options" ["staging" "prod"]
+                                                      "is_required" true}
+                                                     {"name" "note" "type" "plaintext"}]})))
 
-           request-id
-           (await-pending-id title)
+              request-id
+              (await-pending-id title)
 
-           [env]
-           (:fields (hi/pending-request request-id))]
+              [env]
+              (:fields (hi/pending-request request-id))]
 
           ;; The dialog's OWN description crosses the seam, not just its fields': an
           ;; ask says what it is about before the operator reads a single label.
@@ -404,23 +396,21 @@
             (expect (= {"env" "prod" "note" "hi"} (get answer "values")))))
         (finally (ce/remove-channel-event-listener! :tui ::json-seam))))
   (it "reports a misspelled key from the JSON seam instead of dropping it"
-      (let
-        [message (refusal #(hi/request-json! (json/write-json-str
-                                               {"title" "t"
-                                                "fields" [{"name" "env" "isRequired" true}]})))]
+      (let [message (refusal #(hi/request-json! (json/write-json-str
+                                                  {"title" "t"
+                                                   "fields" [{"name" "env" "isRequired" true}]})))]
         (expect (some? message))
         (expect (str/includes? message "is_required")))))
 
 (defdescribe
   coerce-values-test
   (it "reports every failing field at once"
-      (let
-        [fields
-         (normalized-fields {:id "name" :is-required true :max-length 5}
-                            {:id "env" :type "select" :options ["a"] :is-required true})
+      (let [fields
+            (normalized-fields {:id "name" :is-required true :max-length 5}
+                               {:id "env" :type "select" :options ["a"] :is-required true})
 
-         outcome
-         (hi/coerce-values fields {"name" "abcdef" "env" "zzz"})]
+            outcome
+            (hi/coerce-values fields {"name" "abcdef" "env" "zzz"})]
 
         (expect (false? (:is-accepted outcome)))
         (expect (= #{"name" "env"} (set (keys (:errors outcome)))))))
@@ -432,12 +422,11 @@
       (let [fields (normalized-fields {:id "note" :type "multiline"})]
         (expect (= {:is-accepted true :values {"note" nil}} (hi/coerce-values fields {})))))
   (it "trims plaintext but preserves multiline bodies"
-      (let
-        [fields
-         (normalized-fields {:id "name"} {:id "body" :type "multiline"})
+      (let [fields
+            (normalized-fields {:id "name"} {:id "body" :type "multiline"})
 
-         outcome
-         (hi/coerce-values fields {"name" "  vis  " "body" "  line\n  two  "})]
+            outcome
+            (hi/coerce-values fields {"name" "  vis  " "body" "  line\n  two  "})]
 
         (expect (= "vis" (get-in outcome [:values "name"])))
         (expect (= "  line\n  two  " (get-in outcome [:values "body"])))))
@@ -446,12 +435,11 @@
       ;; terminal can only type characters. Stringifying it would hand the
       ;; extension a Clojure printing of the map and let the app submit an
       ;; answer the TUI can never produce.
-      (let
-        [fields
-         (normalized-fields {:id "name"} {:id "body" :type "multiline"})
+      (let [fields
+            (normalized-fields {:id "name"} {:id "body" :type "multiline"})
 
-         outcome
-         (hi/coerce-values fields {"name" {"a" 1} "body" ["x"]})]
+            outcome
+            (hi/coerce-values fields {"name" {"a" 1} "body" ["x"]})]
 
         (expect (false? (:is-accepted outcome)))
         (expect (= {"name" "must be text" "body" "must be text"} (:errors outcome)))
@@ -464,9 +452,8 @@
         (expect (= [] (get-in (hi/coerce-values fields {}) [:values "tags"])))
         (expect (false? (:is-accepted (hi/coerce-values fields {"tags" ["z"]}))))))
   (it "requires at least one option for a required multiselect"
-      (let
-        [fields (normalized-fields
-                  {:id "tags" :type "multiselect" :options ["a"] :is-required true})]
+      (let [fields (normalized-fields
+                     {:id "tags" :type "multiselect" :options ["a"] :is-required true})]
         (expect (false? (:is-accepted (hi/coerce-values fields {"tags" []}))))))
   (it "coerces checkbox strings and defaults to false"
       (let [fields (normalized-fields {:id "ok" :type "checkbox"})]
@@ -491,23 +478,21 @@
       (let [fields (normalized-fields {:id "ok" :type "checkbox" :default true})]
         (expect (true? (get-in (hi/coerce-values fields {}) [:values "ok"])))))
   (it "keeps only declared fields"
-      (let
-        [fields
-         (normalized-fields {:id "name"})
+      (let [fields
+            (normalized-fields {:id "name"})
 
-         outcome
-         (hi/coerce-values fields {"name" "vis" "smuggled" "nope"})]
+            outcome
+            (hi/coerce-values fields {"name" "vis" "smuggled" "nope"})]
 
         (expect (= {"name" "vis"} (:values outcome))))))
 
 (defdescribe secret-vault-test
              (it "hands back an opaque handle instead of the plaintext"
-                 (let
-                   [fields
-                    (normalized-fields {:id "token" :type "password" :is-required true})
+                 (let [fields
+                       (normalized-fields {:id "token" :type "password" :is-required true})
 
-                    handle
-                    (get-in (hi/coerce-values fields {"token" "hunter2"}) [:values "token"])]
+                       handle
+                       (get-in (hi/coerce-values fields {"token" "hunter2"}) [:values "token"])]
 
                    (expect (hs/secret-handle? handle))
                    (expect (not= "hunter2" handle))
@@ -520,12 +505,11 @@
              ;; typed, so a one-time code travelled as plaintext through the answer
              ;; map, the transcript and the logs.
              (it "hands a one-time code back as a handle too"
-                 (let
-                   [fields
-                    (normalized-fields {:id "code" :type "otp" :is-required true})
+                 (let [fields
+                       (normalized-fields {:id "code" :type "otp" :is-required true})
 
-                    handle
-                    (get-in (hi/coerce-values fields {"code" "123456"}) [:values "code"])]
+                       handle
+                       (get-in (hi/coerce-values fields {"code" "123456"}) [:values "code"])]
 
                    (expect (hs/secret-handle? handle))
                    (expect (not (str/includes? (pr-str handle) "123456")))
@@ -542,13 +526,12 @@
 (defdescribe
   request-lifecycle-test
   (it "publishes a dialog event, blocks, and returns the submitted values"
-      (let
-        [{:keys [future events request-id detach!]}
-         (start-request! {:title "Deploy"
-                          :description "Pick a target"
-                          :fields
-                          [{:id "env" :type "select" :options ["staging" "prod"] :is-required true}
-                           {:id "token" :type "password" :is-required true}]})]
+      (let [{:keys [future events request-id detach!]}
+            (start-request!
+              {:title "Deploy"
+               :description "Pick a target"
+               :fields [{:id "env" :type "select" :options ["staging" "prod"] :is-required true}
+                        {:id "token" :type "password" :is-required true}]})]
         (try (expect (= 1 (count (hi/pending-requests))))
              (expect (= {:is-accepted false :errors {"env" "must be one of prod, staging"}}
                         (hi/submit! request-id {"env" "nope" "token" "t"})))
@@ -565,10 +548,9 @@
              (expect (zero? (count (hi/pending-requests))))
              (finally (detach!)))))
   (it "never shows a channel the plaintext or the waiting promise"
-      (let
-        [{:keys [future events request-id detach!]}
-         (start-request! {:title "Deploy"
-                          :fields [{:id "token" :type "password" :is-required true}]})]
+      (let [{:keys [future events request-id detach!]}
+            (start-request! {:title "Deploy"
+                             :fields [{:id "token" :type "password" :is-required true}]})]
         (try (let [view (:request (first (filterv #(= :human-input/request (:op %)) @events)))]
                (expect (= request-id (:id view)))
                (expect (= "Deploy" (:title view)))
@@ -584,9 +566,8 @@
              (deref future 5000 ::blocked)
              (finally (detach!)))))
   (it "releases the waiter on cancel"
-      (let
-        [{:keys [future events request-id detach!]} (start-request! {:title "Deploy"
-                                                                     :fields [{:id "env"}]})]
+      (let [{:keys [future events request-id detach!]} (start-request! {:title "Deploy"
+                                                                        :fields [{:id "env"}]})]
         (try (expect (true? (hi/cancel! request-id)))
              (expect (= {:is-submitted false :reason "cancelled" :request-id request-id}
                         (deref future 5000 ::blocked)))
@@ -595,16 +576,14 @@
                         (:reason (first (filterv #(= :human-input/close (:op %)) @events)))))
              (finally (detach!)))))
   (it "carries a custom cancel reason"
-      (let
-        [{:keys [future request-id detach!]} (start-request! {:title "Deploy"
-                                                              :fields [{:id "env"}]})]
+      (let [{:keys [future request-id detach!]} (start-request! {:title "Deploy"
+                                                                 :fields [{:id "env"}]})]
         (try (hi/cancel! request-id "channel detached")
              (expect (= "channel detached" (:reason (deref future 5000 ::blocked))))
              (finally (detach!)))))
   (it "releases the waiter when the timeout elapses"
-      (let
-        [{:keys [future request-id detach!]}
-         (start-request! {:title "Deploy" :timeout-ms 120 :fields [{:id "env"}]})]
+      (let [{:keys [future request-id detach!]}
+            (start-request! {:title "Deploy" :timeout-ms 120 :fields [{:id "env"}]})]
         (try (expect (= {:is-submitted false :reason "timeout" :request-id request-id}
                         (deref future 5000 ::blocked)))
              (expect (nil? (hi/pending-request request-id)))
@@ -613,9 +592,8 @@
       ;; The twin of the test above: 120ms is a deadline, 0 is none. An
       ;; extension that must not guess an answer parks until the operator is
       ;; back at the keyboard, so nothing may settle this request on its own.
-      (let
-        [{:keys [future request-id detach!]}
-         (start-request! {:title "Deploy" :timeout-ms 0 :fields [{:id "env"}]})]
+      (let [{:keys [future request-id detach!]}
+            (start-request! {:title "Deploy" :timeout-ms 0 :fields [{:id "env"}]})]
         (try (expect (= ::blocked (deref future 400 ::blocked))
                      "an indefinite request never gives up on the human")
              (expect (some? (hi/pending-request request-id)) "the dialog is still on every surface")
@@ -629,12 +607,11 @@
       (expect (= {:is-accepted false :reason "unknown"} (hi/submit! "no-such-id" {})))
       (expect (false? (hi/cancel! "no-such-id"))))
   (it "releases every waiter on cancel-all!"
-      (let
-        [a
-         (start-request! {:title "A" :fields [{:id "x"}]})
+      (let [a
+            (start-request! {:title "A" :fields [{:id "x"}]})
 
-         b
-         (start-request! {:title "B" :fields [{:id "x"}]})]
+            b
+            (start-request! {:title "B" :fields [{:id "x"}]})]
 
         (try (expect (<= 2 (hi/cancel-all! "shutting down")))
              (expect (= "shutting down" (:reason (deref (:future a) 5000 ::blocked))))
@@ -647,10 +624,9 @@
   ;; warning, so the companion app never learned the run was blocked and only a
   ;; TUI mounted in this very process could release it.
   (it "refuses a request that names no session"
-      (let
-        [ex (try (hi/request! {:title "Deploy" :fields [{:id "env"}]})
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
+      (let [ex (try (hi/request! {:title "Deploy" :fields [{:id "env"}]})
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
         (expect (= :vis/human-input-invalid-request (:type (ex-data ex)))))))
 
 (defdescribe
@@ -659,32 +635,31 @@
       ;; `:is-cancellable false` has to be enforced where BOTH surfaces meet —
       ;; the engine — or the TUI and the app each have to remember it, and the
       ;; one that forgets dismisses a request the extension declared mandatory.
-      (let
-        [rid
-         (str "must-answer-" (random-uuid))
+      (let [rid
+            (str "must-answer-" (random-uuid))
 
-         chan
-         (fresh-channel)
+            chan
+            (fresh-channel)
 
-         _
-         (ce/add-channel-event-listener! chan
-                                         ::must-answer
-                                         (fn [_]))
+            _
+            (ce/add-channel-event-listener! chan
+                                            ::must-answer
+                                            (fn [_]))
 
-         answer
-         (future (hi/request! {:id rid
-                               :session-id "test-session"
-                               :title "Deploy"
-                               :is-cancellable false
-                               :timeout-ms 3000
-                               :channel-ids [chan]
-                               :fields [{:id "note" :is-required true}]}))
+            answer
+            (future (hi/request! {:id rid
+                                  :session-id "test-session"
+                                  :title "Deploy"
+                                  :is-cancellable false
+                                  :timeout-ms 3000
+                                  :channel-ids [chan]
+                                  :fields [{:id "note" :is-required true}]}))
 
-         parked?
-         (loop [attempts 200]
-           (cond (some? (hi/pending-request rid)) true
-                 (zero? attempts) false
-                 :else (do (Thread/sleep 5) (recur (dec attempts)))))]
+            parked?
+            (loop [attempts 200]
+              (cond (some? (hi/pending-request rid)) true
+                    (zero? attempts) false
+                    :else (do (Thread/sleep 5) (recur (dec attempts)))))]
 
         (try (expect parked?)
              (expect (false? (hi/cancel! rid)))
@@ -715,37 +690,35 @@
              ;; `Timeout (120s)` while the dialog was still on screen.
              (it
                "parks the enclosing timeout wall until the operator answers"
-               (let
-                 [chan
-                  (fresh-channel)
+               (let [chan
+                     (fresh-channel)
 
-                  events
-                  (atom [])
+                     events
+                     (atom [])
 
-                  depth
-                  (atom 0)
+                     depth
+                     (atom 0)
 
-                  entered
-                  (promise)
+                     entered
+                     (promise)
 
-                  park
-                  (fn [thunk]
-                    (swap! depth inc)
-                    (deliver entered true)
-                    (try (thunk) (finally (swap! depth dec))))]
+                     park
+                     (fn [thunk]
+                       (swap! depth inc)
+                       (deliver entered true)
+                       (try (thunk) (finally (swap! depth dec))))]
 
                  (ce/add-channel-event-listener! chan ::park-collector #(swap! events conj %))
-                 (try (let
-                        [fut
-                         (future (binding [rt/*blocking-wall-park* park]
-                                   (hi/request! {:title "Login"
-                                                 :session-id "test-session"
-                                                 :fields [{:id "otp" :label "OTP"}]
-                                                 :timeout-ms 5000
-                                                 :channel-ids [chan]})))
+                 (try (let [fut
+                            (future (binding [rt/*blocking-wall-park* park]
+                                      (hi/request! {:title "Login"
+                                                    :session-id "test-session"
+                                                    :fields [{:id "otp" :label "OTP"}]
+                                                    :timeout-ms 5000
+                                                    :channel-ids [chan]})))
 
-                         request-id
-                         (await-request-id events)]
+                            request-id
+                            (await-request-id events)]
 
                         ;; The wall is parked BEFORE anybody can possibly answer.
                         (expect (true? (deref entered 2000 false)))
@@ -763,9 +736,8 @@
              ;; `pending` forever — a zombie dialog no channel could dismiss and no later
              ;; request could reuse.
              (it "an interrupted wait releases the request and closes the dialog"
-                 (let
-                   [{fut :future events :events request-id :request-id detach! :detach!}
-                    (start-request! (spec {:id "otp"}))]
+                 (let [{fut :future events :events request-id :request-id detach! :detach!}
+                       (start-request! (spec {:id "otp"}))]
                    (try (expect (some? (hi/pending-request request-id)))
                         (future-cancel fut)
                         (expect (true? (await-true #(nil? (hi/pending-request request-id)))))
@@ -782,17 +754,16 @@
              ;; if a human had ignored a dialog that was never drawn — and not one log line
              ;; said the request had reached zero surfaces.
              (it "fails fast, and loudly, when no channel is listening"
-                 (let
-                   [rid
-                    (str "undeliverable-" (random-uuid))
+                 (let [rid
+                       (str "undeliverable-" (random-uuid))
 
-                    {answer :value signals :signals}
-                    (tel/with-signals (hi/request! {:id rid
-                                                    :session-id "test-session"
-                                                    :title "Deploy"
-                                                    :timeout-ms 2000
-                                                    :fields [{:id "env"}]
-                                                    :channel-ids [(fresh-channel)]}))]
+                       {answer :value signals :signals}
+                       (tel/with-signals (hi/request! {:id rid
+                                                       :session-id "test-session"
+                                                       :title "Deploy"
+                                                       :timeout-ms 2000
+                                                       :fields [{:id "env"}]
+                                                       :channel-ids [(fresh-channel)]}))]
 
                    (expect (= {:is-submitted false :reason "undeliverable" :request-id rid} answer))
                    (expect (nil? (hi/pending-request rid)))
@@ -942,26 +913,25 @@
   (it "checks the shape of an answer, never whether there IS one"
       ;; A validator and `:is-required` answer two different questions: an
       ;; optional email left blank is fine, a required one is refused as missing.
-      (let
-        [optional (hi/normalize-request {"title" "t"
-                                         "fields" [{"name" "email"
-                                                    "validate" #(when-not (re-find #"@" (str %))
-                                                                  "must be an email address")}]})]
+      (let [optional (hi/normalize-request {"title" "t"
+                                            "fields" [{"name" "email"
+                                                       "validate"
+                                                       #(when-not (re-find #"@" (str %))
+                                                          "must be an email address")}]})]
         (expect (= {} (errors optional {"email" ""})))
         (expect (= {} (errors optional {})))
         (expect (= {"email" "must be an email address"} (errors optional {"email" "nope"})))))
   (it "takes a validator's word for it, whatever shape that word arrives in"
-      (let
-        [request (hi/normalize-request {"title" "t"
-                                        "fields" [{"name" "team"
-                                                   :validate #(when-not (= "ops" %)
-                                                                "must be an ops team")}
-                                                  {"name" "quiet" :validate (constantly nil)}
-                                                  {"name" "sure" :validate (constantly true)}
-                                                  {"name" "flag" :validate (constantly false)}
-                                                  {"name" "boom"
-                                                   :validate (fn [_]
-                                                               (throw (ex-info "nope" {})))}]})]
+      (let [request (hi/normalize-request {"title" "t"
+                                           "fields" [{"name" "team"
+                                                      :validate #(when-not (= "ops" %)
+                                                                   "must be an ops team")}
+                                                     {"name" "quiet" :validate (constantly nil)}
+                                                     {"name" "sure" :validate (constantly true)}
+                                                     {"name" "flag" :validate (constantly false)}
+                                                     {"name" "boom"
+                                                      :validate (fn [_]
+                                                                  (throw (ex-info "nope" {})))}]})]
         (expect (= {} (errors request {"team" "ops" "flag" nil "boom" nil})))
         (expect (= {"team" "must be an ops team"
                     "flag" "is not valid"
@@ -971,20 +941,19 @@
       ;; Validation is CODE: an extension's function may be slow and may talk to
       ;; something, so it is never run speculatively while the human types. One
       ;; confirmation, one call per field with a value.
-      (let
-        [calls
-         (atom 0)
+      (let [calls
+            (atom 0)
 
-         request
-         (hi/normalize-request {"title" "t"
-                                "fields" [{"name" "a"
-                                           :validate (fn [_]
-                                                       (swap! calls inc)
-                                                       nil)}
-                                          {"name" "b"
-                                           :validate (fn [_]
-                                                       (swap! calls inc)
-                                                       "no")}]})]
+            request
+            (hi/normalize-request {"title" "t"
+                                   "fields" [{"name" "a"
+                                              :validate (fn [_]
+                                                          (swap! calls inc)
+                                                          nil)}
+                                             {"name" "b"
+                                              :validate (fn [_]
+                                                          (swap! calls inc)
+                                                          "no")}]})]
 
         (expect (= {"b" "no"} (errors request {"a" "x" "b" "y"})))
         (expect (= 2 @calls))
@@ -1011,27 +980,26 @@
   (it "never lets a validator near the wire"
       ;; A function cannot be serialized and a surface has no business owning a
       ;; rule: the view carries the field, never the check.
-      (let
-        [request
-         (hi/normalize-request {"title" "t" "fields" [{"name" "a" "validate" (constantly "no")}]})
+      (let [request
+            (hi/normalize-request {"title" "t"
+                                   "fields" [{"name" "a" "validate" (constantly "no")}]})
 
-         view-field
-         (first (:fields (hi/request->view request)))]
+            view-field
+            (first (:fields (hi/request->view request)))]
 
         (expect (not (contains? view-field :validate)))
         (expect (= {"a" "no"} (errors request {"a" "ada@example.com"})))))
   (it "never mints a vault handle just to answer whether a form is valid"
       ;; `validate-values` is pure: only a real submission fills the vault, so a
       ;; refused confirmation never leaves a password behind it.
-      (let
-        [request
-         (sign-in-request)
+      (let [request
+            (sign-in-request)
 
-         _
-         (hi/forget-secrets!)
+            _
+            (hi/forget-secrets!)
 
-         answer
-         (hi/validate-values (:fields request) good-sign-in)]
+            answer
+            (hi/validate-values (:fields request) good-sign-in)]
 
         (expect (= "hunter42" (get-in answer [:values "pw"])))
         (expect (zero? (long (hi/forget-secrets!))))
@@ -1060,12 +1028,11 @@
   "A `group` is layout only: it holds fields and the direction they run in, it
    holds no answer, and it nests — which is the whole composability claim."
   (it "keeps the tree on the request and flattens it for the answer"
-      (let
-        [{:keys [fields]}
-         (grouped-request)
+      (let [{:keys [fields]}
+            (grouped-request)
 
-         [group note]
-         fields]
+            [group note]
+            fields]
 
         (expect (= :group (:type group)))
         (expect (= :row (:direction group)))
@@ -1093,18 +1060,17 @@
       (let [[group] (normalized-fields {"type" "group" "fields" [{"name" "a"} {"name" "b"}]})]
         (expect (= :column (:direction group)))))
   (it "nests, so a row of stacks needs no new key"
-      (let
-        [[outer] (normalized-fields {"type" "group"
-                                     "direction" "row"
-                                     "fields" [{"type" "group" "fields" [{"name" "a"} {"name" "b"}]}
-                                               {"name" "c"}]})]
+      (let [[outer] (normalized-fields {"type" "group"
+                                        "direction" "row"
+                                        "fields" [{"type" "group"
+                                                   "fields" [{"name" "a"} {"name" "b"}]}
+                                                  {"name" "c"}]})]
         (expect (= :row (:direction outer)))
         (expect (= :column (:direction (first (:fields outer)))))
         (expect (= ["a" "b" "c"] (mapv :id (hi/input-fields [outer]))))))
   (it "names itself from its children when the spec does not name it"
-      (let
-        [[outer] (normalized-fields {"type" "group"
-                                     "fields" [{"type" "group" "fields" [{"name" "a"}]}]})]
+      (let [[outer] (normalized-fields {"type" "group"
+                                        "fields" [{"type" "group" "fields" [{"name" "a"}]}]})]
         (expect (= "group:group:a" (:id outer)))
         (expect (= "group:a" (:id (first (:fields outer)))))
         (expect (= (:id outer) (:name outer))))
@@ -1149,32 +1115,31 @@
                    (:values (hi/coerce-values (:fields request)
                                               {"host" "vis.example.com" "port" "8080"}))))))
   (it "reaches a sibling in another group, because `values` is flat"
-      (let
-        [request (hi/normalize-request
-                   {"title" "Sign in"
-                    "fields" [{"type" "group"
-                               "direction" "row"
-                               "fields" [{"name" "pw" "type" "password" "label" "Password"}]}
-                              {"name" "pw2"
-                               "type" "password"
-                               "validate" (fn [value values]
-                                            (when-not (= value (get values "pw"))
-                                              "must match Password"))}]})]
+      (let [request (hi/normalize-request
+                      {"title" "Sign in"
+                       "fields" [{"type" "group"
+                                  "direction" "row"
+                                  "fields" [{"name" "pw" "type" "password" "label" "Password"}]}
+                                 {"name" "pw2"
+                                  "type" "password"
+                                  "validate" (fn [value values]
+                                               (when-not (= value (get values "pw"))
+                                                 "must match Password"))}]})]
         (expect (= {} (errors request {"pw" "hunter42" "pw2" "hunter42"})))
         (expect (= {"pw2" "must match Password"} (errors request {"pw" "hunter42" "pw2" "nope"})))))
   (it "projects the tree onto the wire, direction and all, and never a validator"
-      (let
-        [view
-         (hi/request->view (hi/normalize-request {"title" "Deploy"
-                                                  "fields" [{"type" "group"
-                                                             "direction" "row"
-                                                             "label" "Target"
-                                                             "fields" [{"name" "host"
-                                                                        :validate [(fn [_]
-                                                                                     true)]}]}]}))
+      (let [view
+            (hi/request->view (hi/normalize-request {"title" "Deploy"
+                                                     "fields" [{"type" "group"
+                                                                "direction" "row"
+                                                                "label" "Target"
+                                                                "fields" [{"name" "host"
+                                                                           :validate
+                                                                           [(fn [_]
+                                                                              true)]}]}]}))
 
-         [group]
-         (:fields view)]
+            [group]
+            (:fields view)]
 
         (expect (= :group (:type group)))
         (expect (= :row (:direction group)))
@@ -1195,46 +1160,42 @@
 ;; form no surface could paint is refused even when the engine itself built it.
 (defdescribe
   declared-contract-test
-  (it
-    "every type a request can carry normalizes into the declared form"
-    (let
-      [request (hi/normalize-request
-                 {:title "Deploy"
-                  :description "everything at once"
-                  :source "test"
-                  :fields [{:id "name" :placeholder "who" :default "ada"}
-                           {:name "pw" :type "password"}
-                           {:name "notes" :type "multiline" :min-length 2 :max-length 40}
-                           {:name "env" :type "select" :options ["dev" "prod"] :default "prod"}
-                           {:name "tags"
-                            :type "multiselect"
-                            :options [{:value "a" :label "A"} {:value "b" :label "B"}]
-                            :default ["a"]} {:name "confirm" :type "checkbox" :default true}
-                           {:name "pct" :type "range" :min 0 :max 100 :step 5 :default 25}
-                           {:name "code" :type "otp"}
-                           {:name "grp"
-                            :type "group"
-                            :direction "row"
-                            :fields [{:name "a"} {:name "b" :type "checkbox"}]}]
-                  :timeout-ms 0})]
-      (expect (nil? (hs/request-error request)))
-      ;; The tree is checked as the two contracts it is: every leaf a field,
-      ;; the group that arranges them a group, and its children part of the
-      ;; same field contract — a nested field with no `:label` breaks the same
-      ;; painter.
-      (let
-        [nodes (:fields request)
-         group (last nodes)]
+  (it "every type a request can carry normalizes into the declared form"
+      (let [request (hi/normalize-request
+                      {:title "Deploy"
+                       :description "everything at once"
+                       :source "test"
+                       :fields [{:id "name" :placeholder "who" :default "ada"}
+                                {:name "pw" :type "password"}
+                                {:name "notes" :type "multiline" :min-length 2 :max-length 40}
+                                {:name "env" :type "select" :options ["dev" "prod"] :default "prod"}
+                                {:name "tags"
+                                 :type "multiselect"
+                                 :options [{:value "a" :label "A"} {:value "b" :label "B"}]
+                                 :default ["a"]} {:name "confirm" :type "checkbox" :default true}
+                                {:name "pct" :type "range" :min 0 :max 100 :step 5 :default 25}
+                                {:name "code" :type "otp"}
+                                {:name "grp"
+                                 :type "group"
+                                 :direction "row"
+                                 :fields [{:name "a"} {:name "b" :type "checkbox"}]}]
+                       :timeout-ms 0})]
+        (expect (nil? (hs/request-error request)))
+        ;; The tree is checked as the two contracts it is: every leaf a field,
+        ;; the group that arranges them a group, and its children part of the
+        ;; same field contract — a nested field with no `:label` breaks the same
+        ;; painter.
+        (let [nodes (:fields request)
+              group (last nodes)]
 
-        (expect (every? #(nil? (hs/field-error %)) (butlast nodes)))
-        (expect (nil? (hs/group-error group)))
-        (expect (every? #(nil? (hs/field-error %)) (:fields group))))))
+          (expect (every? #(nil? (hs/field-error %)) (butlast nodes)))
+          (expect (nil? (hs/group-error group)))
+          (expect (every? #(nil? (hs/field-error %)) (:fields group))))))
   (it "a request spelled the Python way lands in the very same form"
-      (let
-        [request (hi/normalize-request {"title" "Deploy"
-                                        "fields"
-                                        [{"name" "env" "type" "select" "options" ["dev" "prod"]}]
-                                        "timeout_ms" 1000})]
+      (let [request (hi/normalize-request {"title" "Deploy"
+                                           "fields"
+                                           [{"name" "env" "type" "select" "options" ["dev" "prod"]}]
+                                           "timeout_ms" 1000})]
         (expect (nil? (hs/request-error request)))))
   (it "the closed vocabulary has ONE home"
       ;; Two copies of the type table drift, and the copy the normalizer reads
@@ -1249,14 +1210,13 @@
       ;; normalizer would hand a dialog — a picker with no options, one identity
       ;; whose two spellings disagree, a password no longer marked secret, a
       ;; slider whose knob starts outside its own track.
-      (let
-        [legal {:id "env"
-                :name "env"
-                :type :select
-                :label "Env"
-                :is-required false
-                :is-secret false
-                :options [{:value "dev" :label "dev"}]}]
+      (let [legal {:id "env"
+                   :name "env"
+                   :type :select
+                   :label "Env"
+                   :is-required false
+                   :is-secret false
+                   :options [{:value "dev" :label "dev"}]}]
         (expect (nil? (hs/field-error legal)))
         (expect (str/includes? (refusal #(#'hi/checked-field "env" (dissoc legal :options)))
                                "options"))
@@ -1292,70 +1252,69 @@
       (expect (= :vis/human-input-invalid-answer
                  (refusal-type
                    #(#'hi/checked-answer "r1" nil {:is-submitted false :reason "cancelled"}))))
-      (let
-        [answer (hi/request! {:title "unmounted"
-                              :session-id "test-session"
-                              :fields [{:id "a"}]
-                              :channel-ids [(fresh-channel)]
-                              :timeout-ms 1000})]
+      (let [answer (hi/request! {:title "unmounted"
+                                 :session-id "test-session"
+                                 :fields [{:id "a"}]
+                                 :channel-ids [(fresh-channel)]
+                                 :timeout-ms 1000})]
         (expect (= "undeliverable" (:reason answer)))
         (expect (nil? (hs/answer-error nil answer)))))
-  (it
-    "checks a submitted answer against the very fields it answers"
-    ;; The values ARE the inputs' data, so they are declared like the inputs:
-    ;; a picker can only come back on an option it offered, a slider inside
-    ;; its own track, a code at its own width, and a `password` as a vault
-    ;; handle — the plaintext in an answer map is a leak, not a value. Nothing
-    ;; an extension writes reaches these: this is what a coercion bug would
-    ;; hand a blocked caller.
-    (let
-      [request
-       (hi/normalize-request
-         {:title "Deploy"
-          :fields [{:name "env" :type "select" :options ["dev" "prod"] :is-required true}
-                   {:name "pw" :type "password"} {:name "pct" :type "range" :min 0 :max 100 :step 5}
-                   {:name "grp"
-                    :type "group"
-                    :direction "row"
-                    :fields [{:name "code" :type "otp" :max-length 6}]}]
-          :timeout-ms 0})
+  (it "checks a submitted answer against the very fields it answers"
+      ;; The values ARE the inputs' data, so they are declared like the inputs:
+      ;; a picker can only come back on an option it offered, a slider inside
+      ;; its own track, a code at its own width, and a `password` as a vault
+      ;; handle — the plaintext in an answer map is a leak, not a value. Nothing
+      ;; an extension writes reaches these: this is what a coercion bug would
+      ;; hand a blocked caller.
+      (let [request
+            (hi/normalize-request
+              {:title "Deploy"
+               :fields [{:name "env" :type "select" :options ["dev" "prod"] :is-required true}
+                        {:name "pw" :type "password"}
+                        {:name "pct" :type "range" :min 0 :max 100 :step 5}
+                        {:name "grp"
+                         :type "group"
+                         :direction "row"
+                         :fields [{:name "code" :type "otp" :max-length 6}]}]
+               :timeout-ms 0})
 
-       fields
-       (:fields request)
+            fields
+            (:fields request)
 
-       answered
-       (fn [values]
-         {:is-submitted true :reason "submitted" :request-id "r1" :values values})
+            answered
+            (fn [values]
+              {:is-submitted true :reason "submitted" :request-id "r1" :values values})
 
-       legal
-       {"env" "dev" "pw" nil "pct" 25 "code" nil}]
+            legal
+            {"env" "dev" "pw" nil "pct" 25 "code" nil}]
 
-      (expect (nil? (hs/answer-error fields (answered legal))))
-      ;; A value outside the domain its OWN field declared, named in the
-      ;; reason so the bug is findable.
-      (expect (str/includes? (hs/answer-error fields (answered (assoc legal "env" "staging")))
-                             "env"))
-      (expect (str/includes? (hs/answer-error fields (answered (assoc legal "pct" 500))) "pct"))
-      (expect (some? (hs/answer-error fields (answered (assoc legal "code" "12")))))
-      ;; The leak this seam exists to catch, and the handle that is fine.
-      (expect (some? (hs/answer-error fields (answered (assoc legal "pw" "hunter2")))))
-      (expect (nil? (hs/answer-error fields
-                                     (answered (assoc legal
-                                                 "pw" (str hs/secret-handle-prefix "abc"))))))
-      ;; A field nobody asked about, and a question left unanswered: both lose
-      ;; a value silently once an extension reads the map.
-      (expect (some? (hs/answer-error fields (answered (assoc legal "sudo" "yes")))))
-      (expect (some? (hs/answer-error fields (answered (dissoc legal "pct")))))
-      ;; A layout group answers nothing, so naming one is naming no field.
-      (expect (some? (hs/answer-error fields (answered (assoc legal "grp" "x")))))
-      ;; Not every settlement carries values, and an answer whose request
-      ;; already settled has no fields left to check against.
-      (expect (nil? (hs/answer-error fields
-                                     {:is-submitted false :reason "cancelled" :request-id "r1"})))
-      (expect (nil? (hs/answer-error nil (answered {"whatever" "x"}))))
-      (expect (= :vis/human-input-invalid-answer
-                 (refusal-type
-                   #(#'hi/checked-answer "r1" fields (answered (assoc legal "env" "staging")))))))))
+        (expect (nil? (hs/answer-error fields (answered legal))))
+        ;; A value outside the domain its OWN field declared, named in the
+        ;; reason so the bug is findable.
+        (expect (str/includes? (hs/answer-error fields (answered (assoc legal "env" "staging")))
+                               "env"))
+        (expect (str/includes? (hs/answer-error fields (answered (assoc legal "pct" 500))) "pct"))
+        (expect (some? (hs/answer-error fields (answered (assoc legal "code" "12")))))
+        ;; The leak this seam exists to catch, and the handle that is fine.
+        (expect (some? (hs/answer-error fields (answered (assoc legal "pw" "hunter2")))))
+        (expect (nil? (hs/answer-error fields
+                                       (answered (assoc legal
+                                                   "pw" (str hs/secret-handle-prefix "abc"))))))
+        ;; A field nobody asked about, and a question left unanswered: both lose
+        ;; a value silently once an extension reads the map.
+        (expect (some? (hs/answer-error fields (answered (assoc legal "sudo" "yes")))))
+        (expect (some? (hs/answer-error fields (answered (dissoc legal "pct")))))
+        ;; A layout group answers nothing, so naming one is naming no field.
+        (expect (some? (hs/answer-error fields (answered (assoc legal "grp" "x")))))
+        ;; Not every settlement carries values, and an answer whose request
+        ;; already settled has no fields left to check against.
+        (expect (nil? (hs/answer-error fields
+                                       {:is-submitted false :reason "cancelled" :request-id "r1"})))
+        (expect (nil? (hs/answer-error nil (answered {"whatever" "x"}))))
+        (expect
+          (= :vis/human-input-invalid-answer
+             (refusal-type
+               #(#'hi/checked-answer "r1" fields (answered (assoc legal "env" "staging")))))))))
 
 ;; A form is more than its questions: a `heading` names a section and a
 ;; `paragraph` explains one. Neither can live in the vocabulary of ANSWERS and
@@ -1366,27 +1325,25 @@
   "A `heading` and a `paragraph` are pure DECORATION: ink on the form, with no
    answer, no children and no identity."
   (it "normalizes to just its type and the words it paints"
-      (let
-        [[head para field] (normalized-fields {"type" "heading" "text" "Connection"}
-                                              {"type" "paragraph" "text" "Where it runs."}
-                                              {"name" "host" "label" "Host"})]
+      (let [[head para field] (normalized-fields {"type" "heading" "text" "Connection"}
+                                                 {"type" "paragraph" "text" "Where it runs."}
+                                                 {"name" "host" "label" "Host"})]
         (expect (= {:type :heading :text "Connection"} head))
         (expect (= {:type :paragraph :text "Where it runs."} para))
         (expect (= "host" (:name field)))))
   (it "answers nothing, so it never keys the values map — not even inside a group"
-      (let
-        [fields (normalized-fields {"type" "heading" "text" "H"}
-                                   {"name" "host"}
-                                   {"type" "group"
-                                    "name" "g"
-                                    "fields" [{"type" "paragraph" "text" "P"}
-                                              {"name" "pw" "type" "password"}]})]
+      (let [fields (normalized-fields {"type" "heading" "text" "H"}
+                                      {"name" "host"}
+                                      {"type" "group"
+                                       "name" "g"
+                                       "fields" [{"type" "paragraph" "text" "P"}
+                                                 {"name" "pw" "type" "password"}]})]
         (expect (= ["host" "pw"] (mapv :name (hi/input-fields fields))))))
   (it "is neither a field nor a group, and the three contracts refuse each other"
-      (let
-        [[head field group] (normalized-fields {"type" "heading" "text" "H"}
-                                               {"name" "host"}
-                                               {"type" "group" "name" "g" "fields" [{"name" "a"}]})]
+      (let [[head field group] (normalized-fields
+                                 {"type" "heading" "text" "H"}
+                                 {"name" "host"}
+                                 {"type" "group" "name" "g" "fields" [{"name" "a"}]})]
         ;; One home for the vocabulary, as with the field and group tables.
         (expect (= #{:heading :paragraph} (set (vals hs/decor-types))))
         (expect (not (contains? (set (vals hs/field-types)) :heading)))
@@ -1406,10 +1363,9 @@
       (expect (str/includes? (refusal #(hi/normalize-field {"type" "heading" "text" "H"}))
                              "decoration")))
   (it "leaves a decorated request satisfying the declared contract"
-      (let
-        [request (hi/normalize-request (spec {"type" "heading" "text" "H"}
-                                             {"type" "paragraph" "text" "P"}
-                                             {"name" "host"}))]
+      (let [request (hi/normalize-request (spec {"type" "heading" "text" "H"}
+                                                {"type" "paragraph" "text" "P"}
+                                                {"name" "host"}))]
         (expect (nil? (hs/request-error request)))
         ;; Two headings reading the same words are two decorations, never a name
         ;; collision: there is no identity to collide.
@@ -1506,9 +1462,8 @@
    the node EXISTS and whether a bound would be crossed is the materializer's
    answer, not the spec's."
   (it "accepts each of the six operations"
-      (let
-        [patch (fn [op]
-                 (hs/live-patch-error {:view-id "view-1" :seq 1 :ops [op]}))]
+      (let [patch (fn [op]
+                    (hs/live-patch-error {:view-id "view-1" :seq 1 :ops [op]}))]
         (expect (nil? (patch {:op :set :node-id "state" :text "done" :tone :ok})))
         (expect (nil? (patch {:op :append :node-id "out" :lines ["one" ""]})))
         (expect (nil? (patch
@@ -1681,11 +1636,11 @@
         (let [view-id (:id view)]
           (expect (= 0 (:seq view)))
           (expect (= ["now" "tail"] (mapv :id (:nodes (hi/live-view view-id)))))
-          (let
-            [patched (hi/patch-live!
-                       view-id
-                       [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}
-                        {:op "append" :node-id "tail" :lines ["+ clojure -M:test" "18 passed"]}])]
+          (let [patched (hi/patch-live! view-id
+                                        [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}
+                                         {:op "append"
+                                          :node-id "tail"
+                                          :lines ["+ clojure -M:test" "18 passed"]}])]
             (expect (= 1 (:seq patched)))
             (expect (= "18 jobs" (:text (first (:nodes patched)))))
             (expect (= ["+ clojure -M:test" "18 passed"] (:lines (second (:nodes patched)))))
@@ -1722,10 +1677,9 @@
                   (expect (= ["hosts" "why"] (mapv :id (:fields (first (:nodes view))))))
                   ;; No op carries layout, so a run cannot rearrange what a human is
                   ;; already reading — the attempt is refused BY NAME, not ignored.
-                  (let
-                    [refused (live-refusal #(hi/patch-live!
-                                              (:id view)
-                                              [{:op "set" :node-id "why" :direction "column"}]))]
+                  (let [refused (live-refusal #(hi/patch-live!
+                                                 (:id view)
+                                                 [{:op "set" :node-id "why" :direction "column"}]))]
                     (expect (some? refused))
                     (expect (str/includes? refused "direction")))
                   ;; …and a patch still finds a node INSIDE the row by its id alone: the
@@ -1737,15 +1691,14 @@
     "keeps every ACCEPTED patch on disk, in the order the engine accepted them"
     (recorded
       (fn []
-        (let
-          [spec
-           (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
+        (let [spec
+              (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
 
-           view
-           (hi/open-live! spec)
+              view
+              (hi/open-live! spec)
 
-           view-id
-           (:id view)]
+              view-id
+              (:id view)]
 
           (hi/patch-live! view-id [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}])
           (hi/close-live! view-id {:summary "done"})
@@ -1781,13 +1734,12 @@
                                                       [{:op "clear" :node-id "tail"}])))))
   (it "closes ONCE: a second close is a no-op, not a second verdict"
       (recorded (fn []
-                  (let
-                    [view
-                     (hi/open-live! (live-spec
-                                      {:id "now" :type "status" :text "Sweeping" :tone "running"}))
+                  (let [view
+                        (hi/open-live!
+                          (live-spec {:id "now" :type "status" :text "Sweeping" :tone "running"}))
 
-                     view-id
-                     (:id view)]
+                        view-id
+                        (:id view)]
 
                     (expect (true? (:is-completed (hi/close-live! view-id))))
                     (expect (nil? (hi/close-live! view-id)))
@@ -1795,12 +1747,12 @@
   (it "interrupts into a verdict that carries what the human watched, and the words they left"
       (recorded
         (fn []
-          (let
-            [view
-             (hi/open-live! (live-spec {:id "now" :type "status" :text "Sweeping" :tone "running"}))
+          (let [view
+                (hi/open-live! (live-spec
+                                 {:id "now" :type "status" :text "Sweeping" :tone "running"}))
 
-             view-id
-             (:id view)]
+                view-id
+                (:id view)]
 
             (hi/patch-live! view-id
                             [{:op "set" :node-id "now" :text "12 of 40 hosts" :tone "warn"}])
@@ -1813,12 +1765,11 @@
   (it "stops a view that left no words, and one nobody may refuse to stop"
       (recorded
         (fn []
-          (let
-            [view
-             (hi/open-live! (live-spec {:id "now" :type "status" :text "Sweeping"}))
+          (let [view
+                (hi/open-live! (live-spec {:id "now" :type "status" :text "Sweeping"}))
 
-             result
-             (hi/interrupt-live! (:id view))]
+                result
+                (hi/interrupt-live! (:id view))]
 
             (expect (true? (:is-from-human result))
                     "a person stopped it whether or not they said why")
@@ -1833,36 +1784,34 @@
                   "the flag is not even a word the vocabulary still knows"))))
   (it "cuts a note longer than the field it was typed into instead of refusing the stop"
       (recorded (fn []
-                  (let
-                    [view
-                     (hi/open-live! (live-spec {:id "now" :type :status :text "Sweeping"}))
+                  (let [view
+                        (hi/open-live! (live-spec {:id "now" :type :status :text "Sweeping"}))
 
-                     result
-                     (hi/interrupt-live! (:id view)
-                                         (apply str (repeat (+ 40 (long hs/note-chars)) \x)))]
+                        result
+                        (hi/interrupt-live! (:id view)
+                                            (apply str (repeat (+ 40 (long hs/note-chars)) \x)))]
 
                     (expect (= (long hs/note-chars) (count (:note result))))
                     (expect (true? (:is-from-human result)))))))
   (it "hands a body the view id and answers the verdict"
       (recorded (fn []
-                  (let
-                    [result
-                     (hi/with-live!
-                       (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
-                       (fn [view-id]
-                         (hi/patch-live! view-id
-                                         [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}])))]
+                  (let [result (hi/with-live!
+                                 (live-spec
+                                   {:id "now" :type "status" :text "Polling…" :tone "running"})
+                                 (fn [view-id]
+                                   (hi/patch-live!
+                                     view-id
+                                     [{:op "set" :node-id "now" :text "18 jobs" :tone "ok"}])))]
                     (expect (= :completed (:reason result)))
                     (expect (= "18 jobs" (:text (first (:nodes (:view result))))))))))
   (it "closes what a body opened even when the body throws"
       (recorded
         (fn []
-          (let
-            [spec
-             (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
+          (let [spec
+                (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
 
-             opened
-             (atom nil)]
+                opened
+                (atom nil)]
 
             (expect (throws? clojure.lang.ExceptionInfo
                              #(hi/with-live! spec
@@ -1870,11 +1819,10 @@
                                                (reset! opened view-id)
                                                (throw (ex-info "the poll died" {}))))))
             (expect (nil? (hi/live-view @opened)))
-            (let
-              [result (:result (last (live-sink/read-range (live-sink/view-file (:session-id spec)
-                                                                                @opened)
-                                                           0
-                                                           10)))]
+            (let [result (:result (last (live-sink/read-range
+                                          (live-sink/view-file (:session-id spec) @opened)
+                                          0
+                                          10)))]
               (expect (= "failed" (:reason result)))
               (expect (= "the poll died" (:error result)))
               (expect (false? (:is-completed result))))))))
@@ -1907,32 +1855,30 @@
           (fn [_])))
   ([spec ending f]
    (recorded (fn []
-               (let
-                 [sink
-                  (atom [])
+               (let [sink
+                     (atom [])
 
-                  view
-                  (hi/open-live! spec)
+                     view
+                     (hi/open-live! spec)
 
-                  file
-                  (live-sink/view-file (:session-id spec) (:id view))]
+                     file
+                     (live-sink/view-file (:session-id spec) (:id view))]
 
                  (f (:id view))
-                 (let
-                   [result (binding [mpl/*attachment-sink* sink]
-                             (hi/close-live! (:id view) ending))]
+                 (let [result (binding [mpl/*attachment-sink* sink]
+                                (hi/close-live! (:id view) ending))]
                    {:result result :rows @sink :file file}))))))
 
 (defdescribe
   live-artifact-test
   (it "settles a finished view into ONE artifact this session owns, and names it in the verdict"
-      (let
-        [{:keys [result rows]}
-         (filed (live-spec {:id "tail" :type "log" :window-lines 50})
-                {:summary "18 of 18 jobs finished"}
-                (fn [view-id]
-                  (hi/patch-live! view-id
-                                  [{:op "append" :node-id "tail" :lines ["+ clojure -M:test"]}])))]
+      (let [{:keys [result rows]} (filed (live-spec {:id "tail" :type "log" :window-lines 50})
+                                         {:summary "18 of 18 jobs finished"}
+                                         (fn [view-id]
+                                           (hi/patch-live! view-id
+                                                           [{:op "append"
+                                                             :node-id "tail"
+                                                             :lines ["+ clojure -M:test"]}])))]
         (expect (= 1 (count rows)))
         (let [row (first rows)]
           (expect (= (:artifact-id result) (:id row)))
@@ -1949,27 +1895,25 @@
           ;; The picture stays in the VERDICT — a row is a row.
           (expect (nil? (:view row))))))
   (it "seals the record with the artifact it filed, so a view read back off disk names it too"
-      (let
-        [{:keys [result file]}
-         (filed (live-spec {:id "now" :type "status" :text "Polling…"}))
+      (let [{:keys [result file]}
+            (filed (live-spec {:id "now" :type "status" :text "Polling…"}))
 
-         sealed
-         (:result (last (live-sink/read-range file 0 100)))]
+            sealed
+            (:result (last (live-sink/read-range file 0 100)))]
 
         (expect (string? (:artifact-id result)))
         (expect (= (:artifact-id result) (:artifact-id sealed)))))
   (it "counts the RUN it recorded, not the verdict that sealed it"
-      (let
-        [{:keys [rows file]}
-         (filed (live-spec {:id "tail" :type "log" :window-lines 50})
-                {}
-                (fn [view-id]
-                  (dotimes [n 3]
-                    (hi/patch-live! view-id
-                                    [{:op "append" :node-id "tail" :lines [(str "line " n)]}]))))
+      (let [{:keys [rows file]}
+            (filed (live-spec {:id "tail" :type "log" :window-lines 50})
+                   {}
+                   (fn [view-id]
+                     (dotimes [n 3]
+                       (hi/patch-live! view-id
+                                       [{:op "append" :node-id "tail" :lines [(str "line " n)]}]))))
 
-         row
-         (first rows)]
+            row
+            (first rows)]
 
         ;; The declared view plus three accepted patches. The trailer the close then
         ;; writes states the verdict, and the verdict is already `:reason` here.
@@ -1978,13 +1922,11 @@
         (expect (pos? (long (:size row))))
         (expect (< (long (:size row)) (.length ^java.io.File file)))))
   (it "files an artifact however the view ended — the human's stop and the run's own death included"
-      (doseq
-        [[ending reason] [[{} :completed] [{:reason "failed" :error "the poll died"} :failed]
-                          [{:reason "interrupted"} :interrupted]]]
-        (let
-          [{:keys [result rows]} (filed (live-spec {:id "now" :type "status" :text "Polling…"})
-                                        ending
-                                        (fn [_]))]
+      (doseq [[ending reason] [[{} :completed] [{:reason "failed" :error "the poll died"} :failed]
+                               [{:reason "interrupted"} :interrupted]]]
+        (let [{:keys [result rows]} (filed (live-spec {:id "now" :type "status" :text "Polling…"})
+                                           ending
+                                           (fn [_]))]
           (expect (= reason (:reason result)))
           (expect (= 1 (count rows)))
           (expect (= reason (:reason (first rows))))
@@ -1999,26 +1941,25 @@
   (it "reads the record back through the very rail that addressed it"
       (recorded
         (fn []
-          (let
-            [sink
-             (atom [])
+          (let [sink
+                (atom [])
 
-             spec
-             (live-spec {:id "now" :type "status" :text "Polling…"})
+                spec
+                (live-spec {:id "now" :type "status" :text "Polling…"})
 
-             view
-             (hi/open-live! spec)
+                view
+                (hi/open-live! spec)
 
-             _
-             (binding [mpl/*attachment-sink* sink]
-               (with-redefs [hs/live-artifact-inline-bytes 8]
-                 (hi/close-live! (:id view))))
+                _
+                (binding [mpl/*attachment-sink* sink]
+                  (with-redefs [hs/live-artifact-inline-bytes 8]
+                    (hi/close-live! (:id view))))
 
-             row
-             (first @sink)
+                row
+                (first @sink)
 
-             file
-             (live-sink/view-file (:session-id spec) (:id view))]
+                file
+                (live-sink/view-file (:session-id spec) (:id view))]
 
             ;; Past the inline floor the row carries no bytes at all — only the
             ;; address — and an address no rail owns is a 404 on exactly the runs a
@@ -2029,52 +1970,99 @@
                                 "UTF-8")))))))
   (it "files the artifact into the block that opened the view when the stop lands elsewhere"
       (recorded (fn []
-                  (let
-                    [sink
-                     (atom [])
+                  (let [sink
+                        (atom [])
 
-                     view
-                     (binding [mpl/*attachment-sink* sink]
-                       (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
+                        view
+                        (binding [mpl/*attachment-sink* sink]
+                          (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
 
-                     ;; The human's stop: a gateway thread with no collector of its own. The
-                     ;; row still belongs to the block whose run produced it.
-                     result
-                     @(future (hi/interrupt-live! (:id view) "enough"))]
+                        ;; The human's stop: a gateway thread with no collector of its own. The
+                        ;; row still belongs to the block whose run produced it.
+                        result
+                        @(future (hi/interrupt-live! (:id view) "enough"))]
 
                     (expect (= :interrupted (:reason result)))
                     (expect (= 1 (count @sink)))
                     (expect (= (:artifact-id result) (:id (first @sink))))))))
   (it "ends a view opened where nothing collects artifacts without inventing one"
-      (recorded
-        (fn []
-          (let
-            [spec
-             (live-spec {:id "now" :type "status" :text "Polling…"})
+      (recorded (fn []
+                  (let [spec
+                        (live-spec {:id "now" :type "status" :text "Polling…"})
 
-             view
-             (hi/open-live! spec)
+                        view
+                        (hi/open-live! spec)
 
-             ;; Opened outside any block, so there is no collector to file
-             ;; into: the view still ends and the record is still sealed, the
-             ;; verdict simply names no artifact.
-             result
-             (hi/interrupt-live! (:id view))]
+                        ;; Opened outside any block, so there is no collector to file
+                        ;; into: the view still ends and the record is still sealed, the
+                        ;; verdict simply names no artifact.
+                        result
+                        (hi/interrupt-live! (:id view))]
 
-            (expect (= :interrupted (:reason result)))
-            (expect (not (contains? result :artifact-id)))
-            (expect (some? (live-sink/verdict (live-sink/view-file (:session-id spec)
-                                                                   (:id view)))))))))
+                    (expect (= :interrupted (:reason result)))
+                    (expect (not (contains? result :artifact-id)))
+                    (expect (some? (live-sink/verdict (live-sink/view-file (:session-id spec)
+                                                                           (:id view)))))))))
   (it "files ONE artifact even when the view is closed twice"
       (recorded (fn []
-                  (let
-                    [sink
-                     (atom [])
+                  (let [sink
+                        (atom [])
 
-                     view
-                     (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"}))]
+                        view
+                        (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"}))]
 
                     (binding [mpl/*attachment-sink* sink]
                       (expect (some? (hi/close-live! (:id view))))
                       (expect (nil? (hi/close-live! (:id view)))))
                     (expect (= 1 (count @sink))))))))
+
+(defdescribe
+  live-view-holds-the-watchers-wall-test
+  ;; Regression, reported from the phone: a `gh` watch of a CI run was killed at
+  ;; `Timeout (300s)` while the build was still going, and the pane it left
+  ;; behind never closed — hours later it still painted the last poll and still
+  ;; offered a Stop nobody was listening to.
+  (it "holds the wall of the block that opened it, and hands it back at the close"
+      (recorded (fn []
+                  (let [{:keys [deadline hold]}
+                        (rt/parkable-wall (System/currentTimeMillis) 20)
+
+                        view
+                        (binding [rt/*blocking-wall-hold* hold]
+                          (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
+
+                        held
+                        @deadline]
+
+                    ;; 20ms of budget, and the view bought the ceiling with it.
+                    (expect (> held (+ (System/currentTimeMillis) 60000)))
+                    (hi/close-live! (:id view))
+                    (expect (< @deadline (+ (System/currentTimeMillis) 1000)))))))
+  (it "buys that wall again with every patch, so a build outlasts the ceiling"
+      (recorded
+        (fn []
+          (let [{:keys [deadline hold]} (rt/parkable-wall (System/currentTimeMillis) 20)]
+            (binding [rt/*blocking-wall-hold* hold]
+              (let [view (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"}))
+                    opened @deadline]
+
+                (Thread/sleep 30)
+                (hi/patch-live! (:id view) {:ops [{:op "set" :node-id "now" :text "Polling… 2"}]})
+                ;; Every patch is proof the run is alive, so the wall moves with it.
+                (expect (> @deadline opened))
+                (hi/close-live! (:id view))
+                (expect (< @deadline (+ (System/currentTimeMillis) 1000)))))))))
+  (it "counts a watcher asking whether the human stopped as proof of life"
+      (recorded (fn []
+                  (let [{:keys [deadline hold]} (rt/parkable-wall (System/currentTimeMillis) 20)]
+                    (binding [rt/*blocking-wall-hold* hold]
+                      (let [view (hi/open-live! (live-spec
+                                                  {:id "now" :type "status" :text "Polling…"}))
+                            opened @deadline]
+
+                        (Thread/sleep 30)
+                        (hi/live-dispatch {"op" "state" "view_id" (:id view)})
+                        ;; A poll whose picture did not move still says the run is alive.
+                        (expect (> @deadline opened))
+                        (hi/close-live! (:id view))
+                        (expect (< @deadline (+ (System/currentTimeMillis) 1000))))))))))

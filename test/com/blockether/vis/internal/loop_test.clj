@@ -7,7 +7,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.providers :as providers]
+    [com.blockether.vis.internal.providers :as providers]
+    [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.titling :as titling]
@@ -5653,6 +5654,66 @@
                        (expect (> @deadline (+ (System/currentTimeMillis) -10))))
                      (finally (ce/remove-channel-event-listener! chan ::hitl-wall))))))
 
+(def ^:private live-views-dir
+  "The private var every view record hangs under, redefined per test so nothing
+   here writes anywhere near the developer's own `~/.vis`."
+  (requiring-resolve 'com.blockether.vis.internal.human-input.live-sink/views-dir))
+
+(defn- open-a-view
+  "Guest code opening a live view through the host bridge an extension crosses,
+   printing the id the engine minted for it."
+  []
+  (str "import json\n"
+       "answer = json.loads(__vis_host_live__(json.dumps("
+       "{'op': 'open', 'view': {'session_id': 'vis-test-wall', 'title': 'Watching', "
+       "'nodes': [{'id': 'run', 'type': 'status', 'text': 'polling'}]}})))\n"
+       "print(answer['view_id'])\n"))
+
+(defn- watching-block
+  "Run `code` in a python context of its own under the SHORTEST eval wall the
+   engine allows (`rt/MIN_EVAL_TIMEOUT_MS`, 3s), records under a temp directory,
+   and answer `[result ids-the-block-left-open]`. Anything left open is closed
+   here, so one test cannot leak a view into the next."
+  [code]
+  (with-redefs-fn
+    {live-views-dir (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
+                                              (str "vis-views-" (random-uuid))))}
+    (fn []
+      (let [pc (:python-context (env/create-python-context {}))
+            ;; The bridge an extension crosses for a view, on a context of its own.
+            _ (python-extensions/bind-host! pc "loop-test")
+            before (hi/open-live-ids)
+            left #(remove before (hi/open-live-ids))]
+        (try [(binding [rt/*eval-timeout-ms* rt/MIN_EVAL_TIMEOUT_MS]
+                ((deref #'lp/run-python-code) pc code))
+              (vec (left))]
+             (finally
+               (doseq [view-id (left)] (hi/close-live! view-id))
+               (try (.close ^org.graalvm.polyglot.Context pc true)
+                    (catch Throwable _ nil))))))))
+
+(defdescribe live-view-owns-the-eval-wall-test
+  ;; Regression, reported from the app: watching a CI run died at `Timeout (300s)` with the
+  ;; build still going — five minutes is the eval backstop, and a run worth
+  ;; showing a human takes fifteen. Worse, the pane the wall left behind never
+  ;; closed: hours later the phone still painted the last poll it had seen and
+  ;; still offered a Stop nobody was listening to.
+  (describe "a run SHOWING its work holds the wall, and the run's end ends the view"
+    (it "is not killed at the eval wall while a live view is open"
+      (let [[result left] (watching-block (str (open-a-view)
+                                               "import time\n"
+                                               "time.sleep(4.0)\n"
+                                               "print('watched to the end')\n"))]
+        ;; 4s of watching under a 3s wall: without the hold this is `Timeout (3s)`.
+        (expect (nil? (:timeout? result)))
+        (expect (some? (re-find #"watched to the end" (str (:stdout result)))))
+        (expect (= 1 (count left)))))
+
+    (it "closes a view the block never closed, so no pane outlives its run"
+      (let [[result left] (watching-block (str (open-a-view)
+                                               "raise RuntimeError('the poll blew up')\n"))]
+        (expect (some? (:error result)))
+        (expect (= [] left))))))
 (defdescribe normalize-tool-input-strings-only-test
   (describe "model-drift and extension EDN are stringified, keys AND values"
     (it "stringifies keyword/symbol values at every depth"

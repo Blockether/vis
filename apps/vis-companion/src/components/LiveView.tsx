@@ -91,19 +91,24 @@ function ToneMark({ tone }: { tone: LiveTone }) {
   );
 }
 
+/**
+ * The headline owns the whole column and its detail sits UNDER it. Sharing one
+ * line cost the headline every character the detail claimed: on a phone, "1 of 2
+ * jobs finished" beside a workflow and a job name broke to one word per line.
+ */
 function StatusRow({ node }: { node: LiveStatusNode }) {
   return (
-    <p className="flex min-w-0 items-baseline gap-2 font-mono text-ui">
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 gap-y-1 font-mono text-ui">
       <ToneMark tone={node.tone} />
-      <span className={`min-w-0 flex-1 ${PROSE} ${TONE_INK[node.tone]}`}>
+      <p className={`min-w-0 ${PROSE} ${TONE_INK[node.tone]}`}>
         <InlineMarkdown>{node.text}</InlineMarkdown>
-      </span>
+      </p>
       {node.detail && (
-        <span className="shrink-0 text-chip text-dialog-hint">
+        <p className="col-start-2 min-w-0 text-chip text-dialog-hint">
           <InlineMarkdown>{node.detail}</InlineMarkdown>
-        </span>
+        </p>
       )}
-    </p>
+    </div>
   );
 }
 
