@@ -7,6 +7,30 @@
     <meta name="theme-color" content="#faf3eb" />
     <link rel="icon" type="image/png" href="/vis-logo.png" />
     <title>Vis</title>
+    <!--
+      The palette, on the first frame the device paints.
+
+      Every palette ships as static CSS and the DEFAULT one doubles as `:root`,
+      so an app that learns its theme from JS paints LIGHT paper until it does.
+      The module bundle has to load and evaluate first, which on a resume — iOS
+      reloads the page whenever it recycled the backgrounded webview — showed a
+      white sheet, then the splash, then the real palette. This runs during
+      parse instead: one mirrored key (`storage.ts` writes `vis.themePref` into
+      localStorage beside the durable Preferences copy), one attribute, and the
+      generated stylesheet carries `color-scheme` inside the same block. An id
+      that is no longer in the catalog just misses every block and is corrected
+      by `paintStoredTheme()` a moment later.
+    -->
+    <script>
+      try {
+        var pref = localStorage.getItem('vis.themePref');
+        if (pref === 'light') pref = 'blockether-light';
+        else if (pref === 'dark') pref = 'blockether-dark';
+        if (pref && pref.trim()) document.documentElement.dataset.theme = pref.trim();
+      } catch (e) {
+        /* Private mode / storage disabled: the default palette is the answer. */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

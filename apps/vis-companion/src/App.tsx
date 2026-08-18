@@ -488,7 +488,10 @@ export function App() {
   }, [refresh]);
 
   // The palette is STATIC CSS shipped with the app, so the first frame paints from
-  // one stored id — no gateway is asked, and none can repaint this device.
+  // one stored id — no gateway is asked, and none can repaint this device. That
+  // frame is `index.html` + `paintStoredTheme()`; this is only the reconcile with
+  // the DURABLE store, which still holds the preference after a webview data
+  // reset wiped the localStorage mirror. It repaints nothing when they agree.
   useEffect(() => {
     void getThemePref().then((pref) => {
       applyTheme(resolveTheme(pref));

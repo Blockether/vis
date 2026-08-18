@@ -198,12 +198,31 @@ export async function getPrimaryConnection(): Promise<GatewayConn | null> {
   return primary;
 }
 
-/** The selected app-local palette, migrated from the old light/dark preference. */
-export async function getThemePref(): Promise<ThemePref> {
-  const raw = await getRaw(THEME_PREF_KEY);
+/** The stored id, migrated from the old light/dark preference. */
+function normalizeThemePref(raw: string | null): ThemePref {
   if (raw === "light") return "blockether-light";
   if (raw === "dark") return "blockether-dark";
   return raw?.trim() || DEFAULT_THEME_PREF;
+}
+
+/**
+ * The palette for the FIRST frame, read from the web mirror without waiting for
+ * the native bridge — the same trick `loadConnectionsSync` plays.
+ *
+ * `:root` in the generated stylesheet IS the light default, so a palette that
+ * arrives one await later is a palette the user watches ARRIVE: on a dark theme
+ * the app painted a full light sheet, splash included, and flipped. Awaiting
+ * the bridge made that moment up to `BRIDGE_TIMEOUT_MS` long, and iOS reloads
+ * the page whenever it recycled a backgrounded webview — so the flash came back
+ * on every return from the background, not only on a cold start.
+ */
+export function loadThemePrefSync(): ThemePref {
+  return normalizeThemePref(localGet(THEME_PREF_KEY));
+}
+
+/** The selected app-local palette, migrated from the old light/dark preference. */
+export async function getThemePref(): Promise<ThemePref> {
+  return normalizeThemePref(await getRaw(THEME_PREF_KEY));
 }
 
 export async function setThemePref(pref: ThemePref): Promise<void> {

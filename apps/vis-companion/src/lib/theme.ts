@@ -1,3 +1,4 @@
+import { loadThemePrefSync } from './storage';
 import { DEFAULT_THEME, THEMES, type ThemeChoice } from './themes.generated';
 
 /**
@@ -19,4 +20,18 @@ export function applyTheme(theme: ThemeChoice): void {
 /** The palette a stored preference names, or the default when it names none of them. */
 export function resolveTheme(pref: string): ThemeChoice {
   return THEMES.find((theme) => theme.id === pref) ?? DEFAULT_THEME;
+}
+
+/**
+ * Paint the stored palette BEFORE React renders, without asking the bridge.
+ *
+ * `index.html` stamps `data-theme` from the same mirrored key during parse, so
+ * the very first frame is already the right paper; this is the same decision
+ * made against the shipped catalog — an id no longer in it resolves to the
+ * default, and the colour scheme and the browser chrome follow it here.
+ */
+export function paintStoredTheme(): ThemeChoice {
+  const theme = resolveTheme(loadThemePrefSync());
+  applyTheme(theme);
+  return theme;
 }
