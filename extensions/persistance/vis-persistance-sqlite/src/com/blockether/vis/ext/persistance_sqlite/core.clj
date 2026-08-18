@@ -1909,6 +1909,29 @@
           (.put usage-rollup-cache sref {:fingerprint fingerprint :tally tally})
           tally)))))
 
+(defn- session-fold-count
+  "How many folds a session CARRIES: the length of the fold ledger
+   (`ctx` -> `\"session_summaries\"`) on its newest turn state that has a ctx.
+
+   Never the tool tally. A fold is `fold_session(...)` called INSIDE a
+   `python_execution` block, so no tool form is ever named `fold_session` and a
+   tally over `:vis/tool-name` reports 0 for every session that ever folded. The
+   ledger is also the number a reader means: superseded breadcrumbs are dropped
+   when a broader fold covers them, so it counts folds that still SHAPE the wire
+   rather than fold calls ever issued."
+  [db-info from join where]
+  (let
+    [row
+     (query-one! db-info
+                 {:select [:sts.ctx]
+                  :from from
+                  :join join
+                  :where (conj where [:<> :sts.ctx nil])
+                  :order-by [[:ts.created_at :desc] [:sts.version :desc]]
+                  :limit 1})]
+
+    (long (count (get (some-> (:ctx row) <-blob) "session_summaries")))))
+
 (defn db-session-usage-stats
   "ONE session's whole-life USAGE rollup, or nil when the session has no turns:
 
@@ -1919,17 +1942,21 @@
 
    Token/cost/iteration facts are SQL aggregates over the turn-state rollups
    (`session_turn_state`), which the turn writer already maintains — no
-   iteration scan. Tool and fold counts have no column: they live inside each
-   iteration's nippy `tool_calls` BLOB, so those are counted by `:vis/tool-name`
-   (a fold is the `fold_session` tool) through `usage-tally`, which thaws any one
-   row's blob at most ONCE per process and memoises the merged result per
-   session — a re-read costs two skinny id-only queries, a repeat read of an
-   unchanged session costs nothing beyond them, and a live session pays only for
-   the iterations added since the last read. It is still an ON-DEMAND
-   single-session read and never part of `list-sessions`.
+   iteration scan. The TOOL count has no column: it lives inside each
+   iteration's nippy `tool_calls` BLOB, so it is counted by `:vis/tool-name`
+   through `usage-tally`, which thaws any one row's blob at most ONCE per
+   process and memoises the merged result per session — a re-read costs two
+   skinny id-only queries, a repeat read of an unchanged session costs nothing
+   beyond them, and a live session pays only for the iterations added since the
+   last read. It is still an ON-DEMAND single-session read and never part of
+   `list-sessions`.
 
-   Only the two TOTALS survive the blob pass: per-tool and per-error rankings
-   had no reader left on any channel, so they are not computed."
+   The FOLD count is not in that blob at all — a fold is called INSIDE a
+   `python_execution` block, never as a tool of its own — so it is read from the
+   newest turn's fold ledger by `session-fold-count`.
+
+   Only the TOTALS survive the blob pass: per-tool and per-error rankings had no
+   reader left on any channel, so they are not computed."
   [db-info session-id]
   (when (and (ds db-info) session-id)
     (let
@@ -1989,7 +2016,7 @@
            (usage-tally db-info soul-id-s iter-ids)
 
            folds
-           (long (get counts "fold_session" 0))]
+           (session-fold-count db-info from join where)]
 
           (cond->
             {:turn-count (long (or (:turns agg) 0))

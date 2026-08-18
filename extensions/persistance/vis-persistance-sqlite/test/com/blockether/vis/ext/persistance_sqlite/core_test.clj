@@ -3226,7 +3226,7 @@
 
 (defdescribe
   usage-tool-rollup-is-decoded-once-test
-  "The tool/fold half of the rollup has no column — it lives inside each
+  "The TOOL half of the rollup has no column — it lives inside each
    iteration's Nippy `tool_calls` BLOB — and the companion refetches
    `/v1/sessions/:sid/usage` on every session-row expand. Re-thawing the whole
    history each time cost ~200 ms on a 2 900-call session, per open, per client.
@@ -3279,10 +3279,9 @@
                            :idx 1
                            :code "cat"
                            :forms [{:vis/tool-name "cat" :success? false}
-                                   {:vis/tool-name "fold_session" :result "folded"}]})
+                                    {:vis/tool-name "ls" :result "listed"}]})
       (let [u (stats)]
         (expect (= 4 (:tool-call-count u)))
-        (expect (= 1 (:fold-count u)))
         (expect (= 2 @decodes))
         ;; Same session, nothing written in between: the answer is identical
         ;; and not one blob is thawed again.
@@ -3298,8 +3297,43 @@
                            :forms [{:vis/tool-name "shell" :result "ok"}]})
       (let [u (stats)]
         (expect (= 5 (:tool-call-count u)))
-        (expect (= 1 (:fold-count u)))
         (expect (= 3 @decodes))))))
+
+;; Regression, user report: a session that had folded many times showed FOLDS 0 on the
+;; companion's usage card. The rollup counted a tool form named `fold_session`, and no
+;; such form is ever written: a fold is a call INSIDE a `python_execution` block, so the
+;; tally was 0 for every session that ever folded.
+(defdescribe
+  usage-fold-count-reads-the-ledger-test
+  "Folds are counted from the turn ctx's `session_summaries` ledger — the folds that
+   still shape the wire — never from the tool tally, which cannot see them."
+  (it "counts the newest turn's fold ledger, not tool forms"
+      (let
+        [s
+         (h/store)
+
+         sid
+         (h/store-session! s {:channel :api :title "usage"})
+
+         tid
+         (persistance/db-store-session-turn! s {:parent-session-id (str sid) :user-request "one"})]
+
+        (h/store-iteration! s
+                            {:session-turn-id tid
+                             :status :done
+                             :idx 0
+                             :code "fold"
+                             :forms [{:vis/tool-name "python_execution" :result "folded t1"}]})
+        ;; The tool pass alone sees nothing foldlike.
+        (expect (= 0 (:fold-count (persistance/db-session-usage-stats s (str sid)))))
+        (persistance/db-update-session-turn!
+          s
+          tid
+          {:status :done
+           :iteration-count 1
+           :ctx {"session_summaries" [{"scopes" ["t1"] "gist" "first"}
+                                      {"scopes" ["t2/i3"] "gist" "second"}]}})
+        (expect (= 2 (:fold-count (persistance/db-session-usage-stats s (str sid))))))))
 
 (defdescribe
   attachment-version-chain-test
