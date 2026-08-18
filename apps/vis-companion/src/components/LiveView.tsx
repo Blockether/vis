@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, LoadMore, Meter, Spinner } from './ui';
+import { Button, Input, LoadMore, Meter, PROSE, Spinner } from './ui';
+import { InlineMarkdown } from './ChatContent';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -94,8 +95,14 @@ function StatusRow({ node }: { node: LiveStatusNode }) {
   return (
     <p className="flex min-w-0 items-baseline gap-2 font-mono text-ui">
       <ToneMark tone={node.tone} />
-      <span className={`min-w-0 flex-1 ${TONE_INK[node.tone]}`}>{node.text}</span>
-      {node.detail && <span className="shrink-0 text-chip text-dialog-hint">{node.detail}</span>}
+      <span className={`min-w-0 flex-1 ${PROSE} ${TONE_INK[node.tone]}`}>
+        <InlineMarkdown>{node.text}</InlineMarkdown>
+      </span>
+      {node.detail && (
+        <span className="shrink-0 text-chip text-dialog-hint">
+          <InlineMarkdown>{node.detail}</InlineMarkdown>
+        </span>
+      )}
     </p>
   );
 }
@@ -136,7 +143,9 @@ function StatRow({ node }: { node: LiveStatNode }) {
     <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 font-mono">
       {node.stats.map((stat) => (
         <div key={stat.id} className="flex items-baseline gap-1.5">
-          <dt className="text-chip text-dialog-hint">{stat.label}</dt>
+          <dt className="text-chip text-dialog-hint">
+            <InlineMarkdown>{stat.label}</InlineMarkdown>
+          </dt>
           <dd className={`text-ui font-bold ${TONE_INK[stat.tone]}`}>{stat.value_text}</dd>
         </div>
       ))}
@@ -151,9 +160,15 @@ function StepsRows({ node }: { node: LiveStepsNode }) {
       {node.steps.map((step) => (
         <li key={step.id} className="flex min-w-0 items-baseline gap-2">
           <ToneMark tone={step.tone} />
-          <span className={`min-w-0 flex-1 truncate ${TONE_INK[step.tone]}`}>{step.label}</span>
+          <span className={`min-w-0 flex-1 truncate ${TONE_INK[step.tone]}`}>
+            <InlineMarkdown>{step.label}</InlineMarkdown>
+          </span>
           {step.value && <span className="shrink-0 font-bold text-white">{step.value}</span>}
-          {step.detail && <span className="shrink-0 text-dialog-hint">{step.detail}</span>}
+          {step.detail && (
+            <span className="shrink-0 text-dialog-hint">
+              <InlineMarkdown>{step.detail}</InlineMarkdown>
+            </span>
+          )}
         </li>
       ))}
     </ul>
@@ -246,7 +261,7 @@ function TableRows({ node }: { node: LiveTableNode }) {
                   column.align === 'right' ? 'text-right' : 'text-left'
                 }`}
               >
-                {column.label}
+                <InlineMarkdown>{column.label}</InlineMarkdown>
               </th>
             ))}
           </tr>
@@ -261,7 +276,7 @@ function TableRows({ node }: { node: LiveTableNode }) {
                     column.align === 'right' ? 'text-right tabular-nums' : 'text-left'
                   }`}
                 >
-                  {row.cells[cell] ?? ''}
+                  <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
                 </td>
               ))}
             </tr>
@@ -294,10 +309,12 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
               rel="noreferrer"
               className="min-w-0 flex-1 truncate text-accent-ink underline underline-offset-2"
             >
-              {link.label}
+              <InlineMarkdown>{link.label}</InlineMarkdown>
             </a>
           ) : (
-            <span className="min-w-0 flex-1 truncate text-white">{link.label}</span>
+            <span className="min-w-0 flex-1 truncate text-white">
+              <InlineMarkdown>{link.label}</InlineMarkdown>
+            </span>
           )}
           {link.target_kind !== 'url' && (
             <span className="min-w-0 shrink truncate text-dialog-hint">{link.target}</span>
@@ -308,7 +325,13 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
   );
 }
 
-function NodeRow({
+/**
+ * ONE node's own column: its name, then whatever it paints.
+ *
+ * It is not a ROW — several nodes share a row when the later ones were declared
+ * `is_aside` — so it owns no padding and no rule of its own.
+ */
+function NodeCell({
   node,
   load,
 }: {
@@ -316,7 +339,7 @@ function NodeRow({
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
 }) {
   return (
-    <li className="min-w-0 space-y-1.5 px-3 py-2.5">
+    <div className="min-w-0 space-y-1.5">
       {node.label && <NodeLabel>{node.label}</NodeLabel>}
       {node.type === 'status' && <StatusRow node={node} />}
       {node.type === 'progress' && <ProgressRow node={node} />}
@@ -330,8 +353,27 @@ function NodeRow({
       )}
       {node.type === 'table' && <TableRows node={node} />}
       {node.type === 'link' && <LinkRows node={node} />}
-    </li>
+    </div>
   );
+}
+
+/**
+ * The nodes as ROWS: a node declared `is_aside` stands BESIDE the one before it,
+ * so a run can put its sentence next to the table the sentence is about.
+ *
+ * That is the run's statement, not the screen's guess, and the terminal splits
+ * its band on the same key. A phone has no width to split, so below `sm` every
+ * cell is a row of its own — the reading order is the order the view declared
+ * either way.
+ */
+function nodeRows(nodes: LiveNode[]): LiveNode[][] {
+  const rows: LiveNode[][] = [];
+  for (const node of nodes) {
+    const last = rows[rows.length - 1];
+    if (node.is_aside && last) last.push(node);
+    else rows.push([node]);
+  }
+  return rows;
 }
 
 /**
@@ -359,6 +401,12 @@ export function LiveViewPanel({
   const [note, setNote] = useState<string | null>(null);
   const isArmed = note !== null;
   const typed = note ?? '';
+  // One armed stop, however it is sent: the comment travels trimmed, and an
+  // empty line is no comment at all rather than an empty one.
+  const sendStop = (send: (note: string | null) => void) => {
+    setNote(null);
+    send(typed.trim() === '' ? null : typed.trim());
+  };
   return (
     <section
       className="overflow-hidden border border-dialog-edge bg-panel"
@@ -373,7 +421,7 @@ export function LiveViewPanel({
           </span>
           {view.description && (
             <span className="block truncate font-mono text-chip text-dialog-hint">
-              {view.description}
+              <InlineMarkdown>{view.description}</InlineMarkdown>
             </span>
           )}
         </span>
@@ -388,12 +436,17 @@ export function LiveViewPanel({
           className="flex flex-wrap items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2"
           onSubmit={(event) => {
             event.preventDefault();
-            setNote(null);
-            onInterrupt(typed.trim() === '' ? null : typed.trim());
+            sendStop(onInterrupt);
           }}
           onKeyDown={(event) => {
-            // Escape keeps watching — the terminal's own second Escape.
-            if (event.key === 'Escape') setNote(null);
+            // Escape STOPS. It is the key that ARMED the interrupt, so it is the
+            // key that sends it, note and all — the terminal answers the same
+            // key the same way. `Keep watching` is the way back here, because a
+            // phone has no Backspace to fall out of an empty line with.
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            sendStop(onInterrupt);
           }}
         >
           <Input
@@ -415,8 +468,19 @@ export function LiveViewPanel({
       )}
       {error && <p className="border-b border-dialog-edge px-3 py-2 font-mono text-chip text-err">{error}</p>}
       <ul className="divide-y divide-dialog-edge">
-        {view.nodes.map((node) => (
-          <NodeRow key={node.id} node={node} load={load} />
+        {nodeRows(view.nodes).map((row) => (
+          <li
+            key={row[0].id}
+            className={`min-w-0 px-3 py-2.5 ${
+              row.length > 1
+                ? 'grid gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col'
+                : ''
+            }`}
+          >
+            {row.map((node) => (
+              <NodeCell key={node.id} node={node} load={load} />
+            ))}
+          </li>
         ))}
       </ul>
     </section>

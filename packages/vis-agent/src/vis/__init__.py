@@ -1368,6 +1368,11 @@ def live(title, nodes, **options):
 # extension writes later addresses that id. A builder is a plain dict: nothing
 # here talks to the host, and `vis.live` is what carries it to the engine that
 # judges it.
+#
+# Every builder also takes `is_aside=True` — the one key that says WHERE a node
+# stands: beside the node declared before it where the surface has room, stacked
+# where it does not. It is declared once and no op carries it, so a layout never
+# rearranges itself while a human is reading it.
 
 
 def _live_node(type_name, node_id, spec):

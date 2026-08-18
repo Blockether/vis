@@ -840,12 +840,31 @@ Done:
   across the engine, gateway and TUI suites.
 - The stop became a CONVERSATION, and `:is-cancellable` left the live vocabulary entirely. A question
   may be mandatory; a view asks nothing, so nothing may refuse to stop one. Escape in the terminal and
-  Interrupt on the phone both ARM the stop and open one line for a comment — Enter/Interrupt ends the
-  view with it, Escape/Keep watching returns to watching — and the verdict the model reads carries the
+  Interrupt on the phone both ARM the stop and open one line for a comment — Escape or Enter ends the
+  view with it, Backspace on an empty line (Keep watching on the phone) returns to watching — and the verdict the model reads carries the
   finished picture plus `is_from_human` and the human's `note` (trimmed, cut at `hi-spec/note-chars`
   500, never refused for length). `close-live!` takes the human as a THIRD argument the extension
   cannot forge: `:is-from-human` and `:note` are engine stamps, and the spec refuses a note nobody
   left, a human stop that does not read `interrupted`, and any verdict that will not say who ended it.
+- Five questions about the SURFACE, answered in the surface rather than argued about. (1) A table now
+  FILLS the band: `filled-widths` hands the slack back to the WIDEST column after `fitted-widths` has
+  taken it away, so the rule spans the pane instead of hugging the text. (2) Every human-facing string
+  paints INLINE markdown — code spans, bold, italic, links — on both surfaces (`md-runs`/`md-lines`
+  over the TUI's own markdown walker; `InlineMarkdown`, extracted from `ChatContent.tsx`, for the app),
+  while a log line stays VERBATIM because it is machine output. A markdown NODE stays refused: the
+  view's document is two-way, one markdown form per node type, so a fence IS a log and a pipe table IS
+  a table — a free-markdown node could not be read back as the type it was declared. (3) Escape STOPS.
+  It arms the stop and Escape again sends it; Backspace on an empty line is the way back. Enter still
+  sends, but the key a person reaches for to abandon something must be the key that abandons it. (4)
+  The armed note row is FENCED on both sides — `paint!` reserves two rows and rules above it as well as
+  below, so the line a human types into is not floating in the band. (5) `:is-aside` (wire `is_aside`)
+  is a declaration-only node key: the node stands BESIDE the one declared before it — the terminal
+  splits the band into columns (gutter 2, `aside-min-w` 24, stacking when the band is too narrow), a
+  wide phone splits the row, a narrow one stacks, the document lists them in order — and a status
+  node's prose now WRAPS and JUSTIFIES to its column, so a paragraph can stand to the right of the
+  table it explains. WHERE a node stands is declared once and no op may move it: `live-op-key-sets`
+  never names `:is-aside` and the spec refuses a `set` that tries, because a layout that jumps under
+  the reader is worse than no layout.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.

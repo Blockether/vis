@@ -134,9 +134,11 @@
    REFUSED here so review does not reopen them: `image`/`chart` (bytes on the
    event bus and a renderer neither surface has — a picture is an attachment a
    `link` points at), `markdown`/`html` (a closed vocabulary is the only reason
-   the terminal and the phone can agree), `button`/`field` (a view that ASKS is a
-   form; blocking belongs there), `spinner` (a `progress` with a nil value
-   already means indeterminate), `tree` (no caller)."
+   the terminal and the phone can agree — and every human-facing string a node
+   carries already paints INLINE markdown, so code spans, bold and italic need
+   no node of their own), `button`/`field` (a view that ASKS is a form; blocking
+   belongs there), `spinner` (a `progress` with a nil value already means
+   indeterminate), `tree` (no caller)."
   {"status" :status     ; one line, REPLACED: what is happening right now
    "progress" :progress ; a fraction, or indeterminate
    "stat" :stat         ; label -> value counters upserted by id: the score
@@ -244,6 +246,10 @@
    spellings from it, so no key is written down twice."
   #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
     :columns :rows :max-rows :order :links
+    ;; DECLARED once and never `set` — it is absent from every op in
+    ;; [[live-op-key-sets]]: WHERE a node stands, beside the node declared
+    ;; before it, so the layout a reader learned cannot jump while they read.
+    :is-aside
     ;; ENGINE stamp, never written in a spec: how many lines a `:log`'s RECORD
     ;; holds, so `… N earlier lines` is counted rather than guessed.
     :total-lines})
@@ -782,6 +788,7 @@
 (s/def ::done nat-int?)
 (s/def ::total pos-int?)
 (s/def ::align (set (vals live-aligns)))
+(s/def ::is-aside boolean?)                                 ; stands BESIDE the node before it, where a surface has the room
 (s/def ::cells (s/coll-of string? :kind vector?))
 (s/def ::value-text string?)                                ; a stat's value AS SHOWN ("3.4 MB/s")
 (s/def ::target non-blank-string?)                          ; attachment id, workspace path, or url
@@ -899,6 +906,9 @@
 (s/def ::live-node
   (s/and #(closed? live-node-keys %)
          live-node-typed?
+         ;; WHERE a node stands is one key for every type — the forms below say
+         ;; what a node IS, and no type may spell its own placement.
+         (s/keys :opt-un [::is-aside])
          (s/multi-spec live-node-form :type)
          ordered-by-declared-column?))
 

@@ -64,7 +64,16 @@ describe('a live view read off the wire', () => {
   it('reads the engine fixture node for node, in the order it was declared', () => {
     const view = opened();
     expect(view.title).toBe('Fleet scan');
-    expect(ids(view)).toEqual(['now', 'swept', 'score', 'phases', 'tail', 'hosts', 'links']);
+    expect(ids(view)).toEqual([
+      'now',
+      'swept',
+      'score',
+      'phases',
+      'tail',
+      'hosts',
+      'why',
+      'links',
+    ]);
     expect(view.nodes.map((node) => node.type)).toEqual([
       'status',
       'progress',
@@ -72,6 +81,7 @@ describe('a live view read off the wire', () => {
       'steps',
       'log',
       'table',
+      'status',
       'link',
     ]);
     expect(nodeOfType(view, 'hosts', 'table').rows.map((row) => row.id)).toEqual(['db-1', 'db-2']);
@@ -80,6 +90,16 @@ describe('a live view read off the wire', () => {
       value_text: '1',
       tone: 'error',
     });
+  });
+
+  // WHERE a node stands is the run's declaration, carried by no op: the engine
+  // stamps it once and the app reads it back, so both surfaces put the same
+  // sentence beside the same table.
+  it('reads which node stands beside the one before it', () => {
+    const view = opened();
+    expect(nodeOfType(view, 'why', 'status').is_aside).toBe(true);
+    expect(nodeOfType(view, 'hosts', 'table').is_aside).toBeUndefined();
+    expect(view.nodes.filter((node) => node.is_aside).map((node) => node.id)).toEqual(['why']);
   });
 
   // An app that paints half a node paints a lie. A node it cannot read is
@@ -158,7 +178,7 @@ describe('a patch frame', () => {
       { op: 'add-node', after: 'now', node_spec: { id: 'queued', type: 'status', text: 'Queued' } },
       { op: 'remove-node', node_id: 'links' },
     ]);
-    expect(ids(view)).toEqual(['now', 'queued', 'swept', 'score', 'phases', 'tail', 'hosts']);
+    expect(ids(view)).toEqual(['now', 'queued', 'swept', 'score', 'phases', 'tail', 'hosts', 'why']);
   });
 
   // The journal is re-read on every reconnect, so the same frame arrives twice.

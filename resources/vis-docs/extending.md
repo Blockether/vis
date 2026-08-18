@@ -699,6 +699,11 @@ def deploy(target):
                     {"id": "smoke", "label": "Smoke test"},
                 ],
             ),
+            vis.status(
+                "why",
+                f"Rolling `deploy.sh` at **{target}** — build, push, smoke test.",
+                is_aside=True,
+            ),
             vis.output("tail", label="deploy.sh"),
         ],
         description=f"{target} · deploy.sh",
@@ -758,10 +763,29 @@ shortcut refuses and names both ids rather than guessing. A view can also grow:
 `view.add(vis.table("failures", columns=[...]), after="tail")` mounts a node a
 run only discovers it needs, and `view.drop("failures")` takes it away.
 
+**Where a node stands is one key on the node: `is_aside=True`.** A node declared
+aside stands BESIDE the node declared before it wherever there is room — the
+terminal splits the band into columns, a wide phone splits the row, a narrow one
+stacks, and the document lists them in order. It is declared once and no op can
+move it; a layout that jumps under the eye of whoever is reading it is worse than
+no layout at all. That is how a paragraph stands to the right of the table it
+explains: `vis.status("why", "…", is_aside=True)` declared right after
+`vis.table("hosts", …)`.
+
+**Every human-facing string takes inline markdown** — `` `code` ``, `**bold**`,
+`_italic_`, a link. Both surfaces paint it: the terminal styles the runs in place,
+the phone renders them, and the document the model reads keeps the marks it was
+given. A status node's text wraps and justifies to its column, which is what a
+paragraph is for. Log lines are the exception that proves the rule: they are
+machine output and stay verbatim, byte for byte. There is no markdown NODE and
+there will not be one — the view's document is two-way (every node type has one
+markdown form, a fence IS a log, a pipe table IS a table), so a free-markdown node
+could not be read back as the type it was declared.
 **The human can always stop watching, and the extension finds out why.** A view
-asks nothing, so nothing can refuse the stop: Escape in the terminal and the
-Interrupt button on the phone both open one line for a comment and end the view
-with it. `view.is_interrupted` is true once the view ended without the extension
+asks nothing, so nothing can refuse the stop: `Escape` in the terminal arms it and
+opens one line for a comment — `Escape` or `Enter` sends the stop, `Backspace` on
+an empty line goes back to watching — and the Interrupt button on the phone opens
+the same line. `view.is_interrupted` is true once the view ended without the extension
 closing it, `view.is_from_human` says a PERSON ended it, and `view.note` carries
 the words they left — `None` when they left none. The flag asks the engine at
 most once per batching window, so a tight loop may poll it every iteration and

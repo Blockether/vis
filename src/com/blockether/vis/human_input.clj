@@ -207,7 +207,13 @@
   node)
 
 (defn- live-node
-  "One live node of `type-name`, addressed by `id`, carrying `opts`."
+  "One live node of `type-name`, addressed by `id`, carrying `opts`.
+
+   Every builder below takes `:label` and `:is-aside` through `opts`: the label
+   names the node, and `:is-aside true` stands it BESIDE the node declared
+   before it where the surface has the room — the terminal splits its band, a
+   wide phone splits the row, a narrow one and the document stack. It is
+   declared here and by no patch, so nothing rearranges under a reader."
   [type-name id opts]
   (checked-node (assoc opts
                   :id id

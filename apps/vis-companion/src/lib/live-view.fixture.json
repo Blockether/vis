@@ -4,7 +4,7 @@
     "tui",
     "app"
   ],
-  "id": "d6fd9e28-d6ea-4001-b39f-4f8dbf0c6098",
+  "id": "ea9e31b3-29f9-4ded-ada9-3d2f28c96b4a",
   "nodes": [
     {
       "id": "now",
@@ -116,6 +116,14 @@
       "order": "insertion"
     },
     {
+      "id": "why",
+      "type": "status",
+      "label": "Why",
+      "is_aside": true,
+      "text": "`db-2` needs **openssl 3.0.13**: its `libssl` is two releases behind the rest of the fleet, so the scan stopped short of writing the report.",
+      "tone": "warn"
+    },
+    {
       "id": "links",
       "type": "link",
       "label": "Elsewhere",
@@ -137,7 +145,7 @@
   ],
   "title": "Fleet scan",
   "source": "vis-fleet",
-  "created_at": 1787018782357,
+  "created_at": 1787033758509,
   "session_id": "5f0f4d0e-2f6f-4c8e-9a0e-2f9a1c0b7d31",
   "timeout_ms": 0,
   "description": "3 hosts · started 12:04"

@@ -102,6 +102,13 @@ interface LiveNodeBase {
   id: string;
   /** Absent on a bare status line: the sentence is its own label. */
   label?: string;
+  /**
+   * Stand BESIDE the node declared before this one, where the surface has room:
+   * a sentence next to the table it is about, counters next to their bar. The
+   * run declares it ONCE and no op carries it, so a layout never rearranges
+   * itself under a reader; a narrow screen stacks it anyway.
+   */
+  is_aside?: boolean;
 }
 
 /** One line that REPLACES itself — what the run is doing right now. */
@@ -370,12 +377,17 @@ export function liveNodeFromWire(raw: unknown): LiveNode | null {
   const id = text(node.id);
   const type = text(node.type);
   if (id === '' || !(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
-  const label = optionalText(node.label);
+  // What every node carries whatever it paints: its address, its heading, and
+  // whether it stands beside the node before it.
+  const base = {
+    id,
+    label: optionalText(node.label),
+    ...(node.is_aside === true ? { is_aside: true as const } : {}),
+  };
   switch (type as LiveNodeType) {
     case 'status':
       return {
-        id,
-        label,
+        ...base,
         type: 'status',
         text: text(node.text),
         detail: optionalText(node.detail),
@@ -383,21 +395,19 @@ export function liveNodeFromWire(raw: unknown): LiveNode | null {
       };
     case 'progress':
       return {
-        id,
-        label,
+        ...base,
         type: 'progress',
         value: optionalNumber(node.value),
         done: optionalNumber(node.done),
         total: optionalNumber(node.total),
       };
     case 'stat':
-      return { id, label, type: 'stat', stats: keyed(node.stats, statFromWire) };
+      return { ...base, type: 'stat', stats: keyed(node.stats, statFromWire) };
     case 'steps':
-      return { id, label, type: 'steps', steps: keyed(node.steps, stepFromWire) };
+      return { ...base, type: 'steps', steps: keyed(node.steps, stepFromWire) };
     case 'log':
       return {
-        id,
-        label,
+        ...base,
         type: 'log',
         lines: lines(node.lines),
         window_lines: count(node.window_lines, LIVE_LOG_WINDOW),
@@ -405,8 +415,7 @@ export function liveNodeFromWire(raw: unknown): LiveNode | null {
       };
     case 'table':
       return {
-        id,
-        label,
+        ...base,
         type: 'table',
         columns: keyed(node.columns, columnFromWire),
         rows: keyed(node.rows, rowFromWire),
@@ -414,7 +423,7 @@ export function liveNodeFromWire(raw: unknown): LiveNode | null {
         order: order(node.order),
       };
     case 'link':
-      return { id, label, type: 'link', links: keyed(node.links, linkFromWire) };
+      return { ...base, type: 'link', links: keyed(node.links, linkFromWire) };
   }
 }
 

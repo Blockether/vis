@@ -828,35 +828,44 @@
    :description "3 hosts · started 12:04"
    :session-id "5f0f4d0e-2f6f-4c8e-9a0e-2f9a1c0b7d31"
    :source "vis-fleet"
-   :nodes [{:id "now" :type "status" :text "Scanning db-2" :detail "host 2 of 3" :tone "running"}
-           {:id "swept" :type "progress" :label "Swept" :done 2 :total 3}
-           {:id "score"
-            :type "stat"
-            :label "Findings"
-            :stats [{:id "critical" :label "Critical" :value-text "1" :tone "error"}
-                    {:id "warnings" :label "Warnings" :value-text "4" :tone "warn"}]}
-           {:id "phases"
-            :type "steps"
-            :label "Phases"
-            :steps [{:id "collect" :label "Collect inventory" :tone "ok" :detail "3 hosts"}
-                    {:id "scan" :label "Scan packages" :tone "running"}
-                    {:id "report" :label "Write report" :tone "idle"}]}
-           {:id "tail"
-            :type "log"
-            :label "Output"
-            :lines ["db-1 · 0 critical" "db-2 · 1 critical (openssl)"]}
-           {:id "hosts"
-            :type "table"
-            :label "Hosts"
-            :columns [{:id "host" :label "Host"} {:id "state" :label "State"}
-                      {:id "findings" :label "Findings" :align "right"}]
-            :rows [{:id "db-1" :cells ["db-1" "clean" "0"] :tone "ok"}
-                   {:id "db-2" :cells ["db-2" "critical" "1"] :tone "error"}]}
-           {:id "links"
-            :type "link"
-            :label "Elsewhere"
-            :links
-            [{:id "run" :label "The run on GitHub" :target "https://example.com/run/42"}
+   :nodes
+   [{:id "now" :type "status" :text "Scanning db-2" :detail "host 2 of 3" :tone "running"}
+    {:id "swept" :type "progress" :label "Swept" :done 2 :total 3}
+    {:id "score"
+     :type "stat"
+     :label "Findings"
+     :stats [{:id "critical" :label "Critical" :value-text "1" :tone "error"}
+             {:id "warnings" :label "Warnings" :value-text "4" :tone "warn"}]}
+    {:id "phases"
+     :type "steps"
+     :label "Phases"
+     :steps [{:id "collect" :label "Collect inventory" :tone "ok" :detail "3 hosts"}
+             {:id "scan" :label "Scan packages" :tone "running"}
+             {:id "report" :label "Write report" :tone "idle"}]}
+    {:id "tail"
+     :type "log"
+     :label "Output"
+     :lines ["db-1 · 0 critical" "db-2 · 1 critical (openssl)"]}
+    {:id "hosts"
+     :type "table"
+     :label "Hosts"
+     :columns [{:id "host" :label "Host"} {:id "state" :label "State"}
+               {:id "findings" :label "Findings" :align "right"}]
+     :rows [{:id "db-1" :cells ["db-1" "clean" "0"] :tone "ok"}
+            {:id "db-2" :cells ["db-2" "critical" "1"] :tone "error"}]}
+    ;; The one node that stands BESIDE the node before it, so the fixture
+    ;; carries the aside law and the inline marks a human string may hold.
+    {:id "why"
+     :type "status"
+     :is-aside true
+     :label "Why"
+     :tone "warn"
+     :text
+     "`db-2` needs **openssl 3.0.13**: its `libssl` is two releases behind the rest of the fleet, so the scan stopped short of writing the report."}
+    {:id "links"
+     :type "link"
+     :label "Elsewhere"
+     :links [{:id "run" :label "The run on GitHub" :target "https://example.com/run/42"}
              {:id "report" :label "report.md" :target-kind "path" :target "/tmp/report.md"}]}]})
 
 (defn- live-fixture-file

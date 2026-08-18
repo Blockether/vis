@@ -1067,6 +1067,55 @@ function toolCards(form: TranscriptForm): TranscriptForm[] {
   return hiddenForm(form) ? [] : [form];
 }
 
+const INLINE_MARK = /[*_`~[]/;
+
+/**
+ * ONE LINE A HUMAN WROTE, WITH ITS MARKS — `code`, **bold**, _italic_, ~~struck~~.
+ *
+ * It renders no element of its own, so the row that carries it keeps its layout,
+ * its size and its colour and a mark only changes the WORDS. Block markdown has
+ * no inline meaning — a heading, a fence, a list or a table would fight the row
+ * it sits in — so the element list is CLOSED and anything else is unwrapped to
+ * its text. A link keeps its label and drops its target for the reason a live
+ * view keeps its targets in a `link` node: something a human can open is a
+ * declaration, never a word inside a sentence that scrolls away.
+ *
+ * A string carrying no mark never reaches the parser at all — the same fast path
+ * the terminal takes (`live_view/markdown-mark`), which is what makes this
+ * affordable once per table cell.
+ */
+export const InlineMarkdown = memo(function InlineMarkdown({
+  children,
+}: {
+  children: string;
+}) {
+  if (!INLINE_MARK.test(children)) return <>{children}</>;
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      allowedElements={["p", "strong", "em", "del", "code"]}
+      unwrapDisallowed
+      components={{
+        p: ({ children: content }) => <>{content}</>,
+        strong: ({ children: content }) => (
+          <strong className="font-bold">{content}</strong>
+        ),
+        em: ({ children: content }) => <em>{content}</em>,
+        del: ({ children: content }) => <del>{content}</del>,
+        // No size of its own: a code span reads at the size of the line it
+        // interrupts, in a summary row and in a live view's table cell alike.
+        code: ({ children: code }) => (
+          <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground">
+            {code}
+          </code>
+        ),
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+});
+
 function ToolSummary({
   children,
   className,
@@ -1079,26 +1128,7 @@ function ToolSummary({
       className={`min-w-0 flex-1 truncate text-chip font-medium ${className}`}
       title={children}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        allowedElements={["p", "strong", "em", "del", "code"]}
-        unwrapDisallowed
-        components={{
-          p: ({ children: content }) => <>{content}</>,
-          strong: ({ children: content }) => (
-            <strong className="font-bold">{content}</strong>
-          ),
-          em: ({ children: content }) => <em>{content}</em>,
-          del: ({ children: content }) => <del>{content}</del>,
-          code: ({ children: code }) => (
-            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono text-chip font-medium text-result-path-foreground">
-              {code}
-            </code>
-          ),
-        }}
-      >
-        {children}
-      </ReactMarkdown>
+      <InlineMarkdown>{children}</InlineMarkdown>
     </span>
   );
 }

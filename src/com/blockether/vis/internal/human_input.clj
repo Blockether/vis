@@ -1014,7 +1014,13 @@
      base
      (cond-> {:id id :type type}
        label
-       (assoc :label label))
+       (assoc :label label)
+
+       ;; Declared here and nowhere else: WHERE the node stands. No patch op
+       ;; carries it (see `live-op-key-sets`), so the layout a human learned
+       ;; cannot rearrange itself while they are reading it.
+       (bool-value node-fail! ":is-aside" (pick* node :is-aside) false)
+       (assoc :is-aside true))
 
      items
      (fn [kind]

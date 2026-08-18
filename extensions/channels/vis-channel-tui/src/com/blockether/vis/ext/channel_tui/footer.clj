@@ -1078,7 +1078,7 @@
    different stories.
 
    While that stop is ARMED the row says the two keys that end the typing instead:
-   Escape stops nothing then, it goes back to watching."
+   Escape and Enter both send it, and Backspace on an empty line is the way back."
   [panes]
   (let
     [front
@@ -1091,7 +1091,7 @@
               (remove str/blank?
                 [(when front
                    (if (lv/stopping front)
-                     "Enter interrupt · Esc keep watching"
+                     "Esc or Enter interrupt · Backspace keeps watching"
                      (str (keymap/abort-hint) " stop"))) (lv/footer-text front)
                  (when (> n 1) (str n " views open"))]))))
 

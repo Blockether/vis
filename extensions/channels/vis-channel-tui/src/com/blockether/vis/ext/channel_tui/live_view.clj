@@ -7,9 +7,10 @@
    PICTURE and owns nothing. The composer keeps focus while a view paints, the
    wheel over the band scrolls it, a click opens a link or expands a node, and
    the only key it takes is Escape — which ARMS a stop on the newest open view,
-   before it interrupts the turn: the band then takes one line for the comment the
-   human types, Enter interrupts with it, Escape keeps watching. A view is ALWAYS
-   stoppable; the note is what says why.
+   before it interrupts the turn: the band then takes one FENCED line for the
+   comment the human types, Escape or Enter interrupts with it, Backspace on an
+   empty line keeps watching. A view is ALWAYS stoppable; the note is what says
+   why.
 
    Everything except [[paint!]] is PURE: [[opened]] builds the pane from the
    engine's own materialized view, [[patched]] is the reducer over one patch,
@@ -36,8 +37,10 @@
    collapsed line still carries the title, the state, and the fact that Escape
    hits the newest one first."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -106,6 +109,89 @@
   (-> (str x)
       (str/replace #"\s*\n\s*" " ")
       str/trim))
+
+(def ^:private markdown-mark
+  "What could START inline markdown. Text holding none of these cannot hold any
+   and skips the walker entirely: a table repaints its whole window on every
+   patch, so the ordinary cell — a host name, a count — must not pay for a parse
+   it cannot need."
+  #"[*_`\[]")
+
+(defn- md-runs
+  "ONE line of styled runs: `text` read as INLINE markdown through the TUI's own
+   markdown walker — the same one the transcript above the band paints through —
+   so a `code span`, a **bold** word or a link inside a live node reads here
+   exactly as it reads there.
+
+   This is why the node vocabulary needs no `markdown` type and refuses one: the
+   markup lives INSIDE the strings a node already carries, where every surface
+   and the model's own document render it, instead of in a node whose shape only
+   one surface could paint."
+  [text]
+  (let [flat (flat-text text)]
+    (if (re-find markdown-mark flat)
+      (into [] (comp (map :runs) cat) (layout/ast->lines (vis/markdown->ast flat) 4096))
+      [{:text flat}])))
+
+(defn- md-lines
+  "`text` laid out into `width` columns as styled lines — [[md-runs]]'s walker
+   with its wrapping. A line the wrapper BROKE is justified edge to edge and the
+   last line of a paragraph stays ragged, which is the rule the transcript's own
+   prose follows and the reason a paragraph beside a table has a straight right
+   edge instead of four words and a hole."
+  [text width]
+  (let
+    [w
+     (max 1 (long width))
+
+     flat
+     (flat-text text)]
+
+    (if (str/blank? flat)
+      []
+      (->> (layout/ast->lines (vis/markdown->ast flat) w)
+           (remove (fn [{:keys [runs]}]
+                     (every? #(str/blank? (:text %)) runs)))
+           (mapv (fn [{:keys [runs wrap?]}]
+                   (if wrap? (layout/justify-line-runs runs w) runs)))))))
+
+(defn- runs-width
+  "How many columns `runs` (or segments — both are `:text` carriers) put down."
+  ^long [runs]
+  (reduce (fn [^long w r]
+            (+ w (long (p/display-width (str (:text r))))))
+          0
+          runs))
+
+(defn- runs-cut
+  "`runs` cut to `w` display columns, the last run that still fits ellipsized —
+   the styled twin of `primitives/ellipsize`, so a cell too long for its column
+   says so with the same `…` the rest of the TUI uses."
+  [runs w]
+  (loop
+    [out
+     []
+
+     used
+     0
+
+     rs
+     (seq runs)]
+
+    (if (or (nil? rs) (>= (long used) (long w)))
+      out
+      (let
+        [{:keys [text style]}
+         (first rs)
+
+         shown
+         (p/ellipsize (str text) (- (long w) (long used)))]
+
+        (recur (cond-> out
+                 (seq shown)
+                 (conj {:text shown :style style}))
+               (+ (long used) (long (p/display-width shown)))
+               (next rs))))))
 
 (defn elapsed-text
   "How long the view has been open, the way a person reads a duration — `13s`,
@@ -304,25 +390,84 @@
                         (map-indexed vector ws)))]
           (recur (update ws idx #(max 1 (dec (long %))))))))))
 
-(defn- table-line
-  "One table line — cells padded to their column and separated by the same `│`
-   the rest of the TUI's tables use."
-  [widths cells aligns]
-  (str " "
-       (str/join " │ "
-                 (map (fn [cell w align]
-                        (let
-                          [w
-                           (long w)
+(defn- filled-widths
+  "`widths` GROWN into the room the band gives them, the slack going to the WIDEST
+   column — the same column [[fitted-widths]] takes cells from first, so a table
+   that shrank and grew back is the table it was.
 
-                           text
-                           (p/ellipsize (str cell) w)]
+   A table fills the band because a rule that stops halfway across reads as a
+   table still loading, and because the column that holds free text is the one
+   that can use the room."
+  [widths text-w]
+  (let
+    [n
+     (count widths)
 
-                          (if (= :right align) (p/pad-left text w) (p/pad-right text w))))
-                      cells
-                      widths
-                      aligns))
-       " "))
+     chrome
+     (+ 2 (* 3 (max 0 (dec n))))
+
+     slack
+     (- (long text-w) chrome (long (reduce + 0 (map long widths))))]
+
+    (if (or (zero? n) (<= slack 0))
+      (vec widths)
+      (let
+        [idx (first (apply max-key
+                      (fn [[_ w]]
+                        (long w))
+                      (map-indexed vector widths)))]
+        (update (vec widths) idx #(+ (long %) slack))))))
+
+(defn- run-segments
+  "Styled markdown runs as [[paint-segments!]] segments over one base ink: a code
+   span or a link takes the accent the transcript gives it, bold adds BOLD and
+   italic adds ITALIC, and every other run wears the ink of the row it is on."
+  [runs fg styles]
+  (mapv (fn [{:keys [text style]}]
+          {:text text
+           :fg
+           (if (or (contains? style :code) (contains? style :link)) t/header-active-tab-accent fg)
+           :styles (cond-> (vec styles)
+                     (contains? style :bold)
+                     (conj p/BOLD)
+
+                     (contains? style :italic)
+                     (conj p/ITALIC))})
+        runs))
+
+(defn- segment-line
+  "The plain line a row of segments reads as — what a test, a screenshot and a
+   copied screen all see, taken FROM the segments instead of measured twice."
+  [segments]
+  (apply str (map :text segments)))
+
+(defn- cell-segments
+  "One table cell: its inline markdown cut to the column and padded to it, on the
+   side its declared alignment asks for."
+  [runs w align fg styles]
+  (let
+    [cut
+     (runs-cut runs w)
+
+     pad
+     (apply str (repeat (max 0 (- (long w) (runs-width cut))) \space))]
+
+    (if (= :right align)
+      (into [{:text pad}] (run-segments cut fg styles))
+      (conj (vec (run-segments cut fg styles)) {:text pad}))))
+
+(defn- table-segments
+  "One table line — cells padded to their columns and separated by the same `│`
+   the rest of the TUI's tables use, kept in the chrome's own dim ink so a toned
+   row does not drag the rules along with it."
+  [widths cells aligns fg styles]
+  (conj (into [{:text " "}]
+              (comp (map (fn [[runs w align]]
+                           (cell-segments runs w align fg styles)))
+                    (interpose [{:text " │ " :fg t/dialog-hint}])
+                    cat)
+              (map vector cells widths aligns))
+        {:text " "}))
 
 (defn- rule-line
   [widths]
@@ -340,10 +485,25 @@
     (:type node)))
 
 (defmethod node-rows :status
-  [{:keys [id text detail tone]} _]
-  (cond-> [{:kind :status :node-id id :text (flat-text text) :tone tone}]
-    (seq (flat-text detail))
-    (conj {:kind :prose :node-id id :text (flat-text detail)})))
+  [{:keys [id text detail tone]} {:keys [text-w]}]
+  (let
+    [glyph
+     (str (get tone-glyph tone "·") " ")
+
+     ;; The glyph's two columns become a hanging indent under it, so a statement
+     ;; that wraps reads as ONE paragraph and not as two unrelated rows.
+     body
+     (max 4 (- (long text-w) 2))]
+
+    (into (vec (map-indexed
+                 (fn [idx runs]
+                   (let [runs (into [{:text (if (zero? (long idx)) glyph "  ")}] runs)]
+                     {:kind :status :node-id id :tone tone :runs runs :text (segment-line runs)}))
+                 (md-lines text body)))
+          (map (fn [runs]
+                 (let [runs (into [{:text "  "}] runs)]
+                   {:kind :prose :node-id id :runs runs :text (segment-line runs)})))
+          (md-lines detail body))))
 
 (defmethod node-rows :progress
   [{:keys [id value done total]} _]
@@ -357,8 +517,8 @@
     (let
       [cells
        (mapv (fn [{:keys [label value-text tone] :as stat}]
-               {:label (flat-text label)
-                :value (flat-text value-text)
+               {:label (md-runs label)
+                :value (md-runs value-text)
                 :tone tone
                 :is-fresh (contains? fresh (:id stat))})
              stats)
@@ -367,7 +527,7 @@
        (fn [{:keys [label value]}]
          ;; What [[paint-entry!]] really puts down — `label value` and the gap
          ;; after it — so a row is measured by exactly what it costs.
-         (+ 4 (p/display-width label) (p/display-width value)))]
+         (+ 4 (runs-width label) (runs-width value)))]
 
       (->> cells
            (reduce (fn [rows cell]
@@ -383,20 +543,46 @@
     [{:kind :empty :node-id id :text (empty-text :stat)}]))
 
 (defmethod node-rows :steps
-  [{:keys [id steps]} {:keys [fresh is-expanded]}]
+  [{:keys [id steps]} {:keys [text-w fresh is-expanded]}]
   (if (seq steps)
     (let [{:keys [shown behind]} (windowed steps is-expanded false)]
       (cond->
-        (mapv (fn [step]
-                {:kind :step
-                 :node-id id
-                 :item-id (:id step)
-                 :text (flat-text (:label step))
-                 :detail (flat-text (:detail step))
-                 :value (:value step)
-                 :tone (:tone step)
-                 :is-fresh (contains? fresh (:id step))})
-              shown)
+        (mapv
+          (fn [{:keys [label detail value tone] :as step}]
+            (let
+              [is-fresh (contains? fresh (:id step))
+               ink (tone-fg tone)
+               styles (if is-fresh [p/BOLD] [])
+               said (into [{:text (str (get tone-glyph tone "·") " ") :fg ink :styles styles}]
+                          cat
+                          [(run-segments (md-runs label) ink styles)
+                           (when (seq (flat-text detail))
+                             (into [{:text " — " :fg t/dialog-hint}]
+                                   (run-segments (md-runs detail) t/dialog-hint [])))])
+               ;; What the step REPORTS rides the right edge, where a table
+               ;; keeps its numbers, so a checklist and a table beside it read
+               ;; down the same column.
+               reported (when (seq (flat-text value))
+                          (run-segments (md-runs value) t/dialog-hint []))
+               segments
+               (cond-> said
+                 reported
+                 (conj {:text (apply str
+                                (repeat
+                                  (max 1 (- (long text-w) (runs-width said) (runs-width reported)))
+                                  \space))})
+
+                 reported
+                 (into reported))]
+
+              {:kind :step
+               :node-id id
+               :item-id (:id step)
+               :tone tone
+               :is-fresh is-fresh
+               :segments segments
+               :text (segment-line segments)}))
+          shown)
         (pos? (long behind))
         (conj (more-row id behind "step"))))
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
@@ -438,28 +624,35 @@
      measured
      (grown-widths (get widths id) (desired-widths columns shown))
 
+     ;; Squeezed if it must be, then GROWN into whatever the band has left: a
+     ;; table is a block, and a block that ends in mid-air reads as unfinished.
      ws
-     (fitted-widths measured text-w)
+     (filled-widths (fitted-widths measured text-w) text-w)
 
      aligns
-     (mapv #(or (:align %) :left) columns)]
+     (mapv #(or (:align %) :left) columns)
+
+     line
+     (fn [cells fg styles]
+       (let [segments (table-segments ws cells aligns fg styles)]
+         {:segments segments :text (segment-line segments)}))]
 
     (with-meta (cond->
-                 (into [{:kind :thead
-                         :node-id id
-                         :text (table-line ws (mapv #(str (:label %)) columns) aligns)}
+                 (into [(merge {:kind :thead :node-id id}
+                               (line (mapv #(md-runs (:label %)) columns) t/dialog-hint [p/BOLD]))
                         {:kind :trule :node-id id :text (rule-line ws)}]
                        (map (fn [row]
-                              {:kind :trow
-                               :node-id id
-                               :item-id (:id row)
-                               :tone (:tone row)
-                               :is-fresh (contains? fresh (:id row))
-                               :text (table-line ws
-                                                 (map-indexed (fn [idx _]
-                                                                (cell-of row idx))
-                                                              columns)
-                                                 aligns)}))
+                              (let [is-fresh (contains? fresh (:id row))]
+                                (merge {:kind :trow
+                                        :node-id id
+                                        :item-id (:id row)
+                                        :tone (:tone row)
+                                        :is-fresh is-fresh}
+                                       (line (map-indexed (fn [idx _]
+                                                            (md-runs (cell-of row idx)))
+                                                          columns)
+                                             (tone-fg (:tone row))
+                                             (if is-fresh [p/BOLD] []))))))
                        shown)
                  (empty? ordered)
                  (conj {:kind :empty :node-id id :text (empty-text :table)})
@@ -478,6 +671,7 @@
                  :node-id id
                  :item-id (:id link)
                  :text (flat-text label)
+                 :runs (md-runs label)
                  :target (str target)
                  :target-kind target-kind
                  :tone tone
@@ -487,51 +681,153 @@
         (conj (more-row id behind "link"))))
     [{:kind :empty :node-id id :text (empty-text :link)}]))
 
+(def ^:private aside-gutter "Columns of air between two nodes standing side by side." 2)
+
+(def ^:private aside-min-w
+  "The narrowest column a node may be laid into. Under it the terminal has no room
+   for two of anything and the group STACKS: `:is-aside` says where a node stands
+   when there is room, never that a surface must cram."
+  24)
+
+(defn- node-section
+  "One node's own rows: its label, then what the node paints, `text-w` columns
+   wide. The row of air between sections belongs to the GROUP, not to the node, so
+   two nodes standing side by side start on the same line."
+  [node ctx fresh text-w]
+  (let
+    [rows
+     (node-rows node (ctx node text-w))
+
+     label
+     (flat-text (:label node))]
+
+    (with-meta (cond-> []
+                 (seq label)
+                 (conj {:kind :node
+                        :node-id (:id node)
+                        :text label
+                        :is-fresh (contains? (:nodes fresh) (:id node))})
+
+                 :always
+                 (into rows))
+      (meta rows))))
+
+(defn- grouped
+  "`nodes` gathered into the groups a surface lays out TOGETHER: a node that
+   declared `:is-aside` joins the group of the node before it, every other node
+   opens one. The first node cannot be an aside — nothing stands to the left of
+   it — so it opens a group whatever it declared."
+  [nodes]
+  (reduce (fn [groups node]
+            (if (and (seq groups) (:is-aside node))
+              (conj (pop groups) (conj (peek groups) node))
+              (conj groups [node])))
+          []
+          nodes))
+
+(defn- zipped
+  "Planned columns as ONE row list: row for row, each column's row in its own
+   cell, a column that ran out of rows leaving air. The row anchors on the first
+   cell that names a node, so the reading position still belongs to a node."
+  [columns widths]
+  (let [height (reduce max 0 (map count columns))]
+    (mapv (fn [idx]
+            (let
+              [cells (mapv #(get % idx) columns)
+               lead (first (filter :node-id cells))]
+
+              {:kind :columns
+               :node-id (:node-id lead)
+               :item-id (:item-id lead)
+               :cells cells
+               :widths widths}))
+          (range height))))
+
+(defn- stacked
+  "A group's nodes one under the next, a row of air between them — what a view
+   with no aside in it paints, and what a band too narrow to split falls back to."
+  [group ctx fresh text-w]
+  (let
+    [sections (map-indexed (fn [idx node]
+                             (let [rows (node-section node ctx fresh text-w)]
+                               (with-meta (cond-> []
+                                            (pos? (long idx))
+                                            (conj {:kind :blank})
+
+                                            :always
+                                            (into rows))
+                                 (meta rows))))
+                           group)]
+    (with-meta (into [] cat sections)
+      {:widths (reduce merge {} (map (comp :widths meta) sections))})))
+
+(defn- group-rows
+  "One group's rows: SIDE BY SIDE when it holds an aside and every column would
+   still be at least [[aside-min-w]] wide, stacked otherwise. This is how a table
+   gets prose down its right-hand side — and how the same view stays readable on a
+   terminal half as wide."
+  [group ctx fresh text-w]
+  (let
+    [k
+     (count group)
+
+     room
+     (- (long text-w) (* (long aside-gutter) (dec k)))
+
+     each
+     (quot room (max 1 k))]
+
+    (if (or (= 1 k) (< each (long aside-min-w)))
+      (stacked group ctx fresh text-w)
+      (let
+        [;; The remainder goes to the FIRST column: it is the node the aside was
+         ;; declared beside, and the annotated node is the wider one.
+         widths
+         (into [(+ each (rem room k))] (repeat (dec k) each))
+
+         columns
+         (mapv (fn [node w]
+                 (node-section node ctx fresh w))
+               group
+               widths)]
+
+        (with-meta (zipped columns widths)
+          {:widths (reduce merge {} (map (comp :widths meta) columns))})))))
+
 (defn plan
   "The pane's whole paint plan, `text-w` columns wide: one entry per painted row,
    nodes in DECLARATION order, each under its own label with a row of air above
-   it. Carries `{:widths …}` as metadata — what the tables measured this pass, on
-   its way back into the pane through [[painted]]."
+   it. A node that declared `:is-aside` stands BESIDE the one before it wherever
+   the band is wide enough for both. Carries `{:widths …}` as metadata — what the
+   tables measured this pass, on its way back into the pane through [[painted]]."
   [pane text-w]
   (let
     [{:keys [view widths fresh expanded]}
      pane
 
      ctx
-     (fn [node]
-       {:text-w text-w
+     (fn [node w]
+       {:text-w w
         :widths widths
         :fresh (get-in fresh [:items (:id node)] #{})
         :is-expanded (contains? (set expanded) (:id node))})
 
      head
-     (if (seq (flat-text (:description view)))
-       [{:kind :prose :text (flat-text (:description view))}]
-       [])
+     (mapv (fn [runs]
+             {:kind :prose :runs runs :text (segment-line runs)})
+           (md-lines (:description view) text-w))
 
      sections
-     (map-indexed (fn [idx node]
-                    (let
-                      [rows
-                       (node-rows node (ctx node))
-
-                       label
-                       (flat-text (:label node))]
-
+     (map-indexed (fn [idx group]
+                    (let [rows (group-rows group ctx fresh (long text-w))]
                       (with-meta (cond-> []
                                    (pos? (long idx))
                                    (conj {:kind :blank})
 
-                                   (seq label)
-                                   (conj {:kind :node
-                                          :node-id (:id node)
-                                          :text label
-                                          :is-fresh (contains? (:nodes fresh) (:id node))})
-
                                    :always
                                    (into rows))
                         (meta rows))))
-                  (:nodes view))]
+                  (grouped (:nodes view)))]
 
     (with-meta (into head cat sections)
       {:widths (reduce merge {} (map (comp :widths meta) sections))})))
@@ -644,9 +940,9 @@
 
 (defn armed
   "The pane with its stop ARMED: Escape asked to interrupt and the band takes the
-   keyboard for one line. NOTHING is stopped yet — the engine hears about it when
-   the human presses Enter, so the comment travels with the stop instead of
-   arriving after it."
+   keyboard for one line. NOTHING is stopped yet — Escape again (or Enter) sends it,
+   so the comment travels WITH the stop instead of arriving after it, and one
+   mistaken Escape never kills work the human still wanted."
   [pane]
   (cond-> pane
     (nil? (stopping pane))
@@ -664,20 +960,25 @@
    is `:stop` (interrupt it, carrying `note`), `:keep` (keep watching) or nil
    (still typing).
 
+   Escape is the key that STOPS, at both ends: it arms the note line and it sends
+   the stop, so the human who reached for Escape to kill the run gets exactly that
+   by pressing it twice. Enter sends too, for the human who came to write a reason.
+   Backspace on an empty line is the way BACK — the one key that can only ever
+   undo, so keeping watching is never one keystroke away from stopping.
+
    The note stops growing at `hi-spec/note-chars`: the engine cuts a longer one
    anyway, and a field that swallowed the words past the bound would lie about
    what the model is going to read."
   [pane {:keys [kind char]}]
   (let [note (or (stopping pane) "")]
     (case kind
-      :cancel
-      {:pane (disarmed pane) :action :keep}
-
-      (:enter :submit)
+      (:cancel :enter :submit)
       {:pane (disarmed pane) :action :stop :note (not-empty (str/trim note))}
 
       :backspace
-      {:pane (assoc pane :stop (subs note 0 (max 0 (dec (count note))))) :action nil}
+      (if (str/blank? note)
+        {:pane (disarmed pane) :action :keep}
+        {:pane (assoc pane :stop (subs note 0 (max 0 (dec (count note))))) :action nil})
 
       :char
       (let [full (>= (count note) (long hi-spec/note-chars))]
@@ -700,10 +1001,13 @@
   "The hint bar under the band. Escape is the ONE key a view takes, and while
    several are open it says WHICH one it will hit — the newest, the one the band
    is painting. Once the stop is armed the bar says the two keys that end the
-   typing: Enter interrupts with the note, Escape keeps watching."
+   typing: Escape or Enter interrupt with whatever was written, Backspace on an
+   empty line keeps watching."
   [pane others]
-  (if (stopping pane)
-    [["⏎" "interrupt"] ["Esc" "keep watching"]]
+  (if-let [note (stopping pane)]
+    (if (str/blank? note)
+      [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
+      [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
     (cond-> []
       (some? pane)
       (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
@@ -779,6 +1083,13 @@
           0
           segments))
 
+(defn- paint-runs!
+  "One row of styled markdown runs over a base ink. [[run-segments]] decides which
+   run leaves that ink — a code span and a link take the accent the transcript
+   gives them — so `code` inside a statement reads as code on every surface."
+  [g left row inner-w fg styles runs]
+  (paint-segments! g left row inner-w (run-segments runs fg styles)))
+
 (defn- paint-entry!
   "Paint ONE plan row and register whatever on it can be clicked. `left` is the
    band's rail and the body opens two columns inside it, exactly like the form's
@@ -799,11 +1110,7 @@
                    (:text entry))
 
     :status
-    (do (fill! g left row inner-w (tone-fg (:tone entry)))
-        (p/styled
-          g
-          [p/BOLD]
-          (put! g left row inner-w (str (get tone-glyph (:tone entry) "·") " " (:text entry)))))
+    (paint-runs! g left row inner-w (tone-fg (:tone entry)) [p/BOLD] (:runs entry))
 
     :progress
     (paint-plain! g
@@ -823,44 +1130,35 @@
                      inner-w
                      (into []
                            (mapcat (fn [{:keys [label value tone is-fresh]}]
-                                     [{:text label :fg t/dialog-hint} {:text " "}
-                                      {:text value
-                                       :fg (tone-fg tone)
-                                       :styles (when is-fresh [p/BOLD])} {:text "   "}])
+                                     (concat
+                                       (run-segments label t/dialog-hint [])
+                                       [{:text " "}]
+                                       (run-segments value (tone-fg tone) (if is-fresh [p/BOLD] []))
+                                       [{:text "   "}]))
                                    (:items entry))))
 
     :step
-    (paint-styled! g
-                   left
-                   row
-                   inner-w
-                   (tone-fg (:tone entry))
-                   (if (:is-fresh entry) [p/BOLD] [])
-                   (str (get tone-glyph (:tone entry) "·")
-                        " "
-                        (:text entry)
-                        (when (seq (str (:detail entry))) (str " — " (:detail entry)))))
+    (paint-segments! g left row inner-w (:segments entry))
 
     :log
     (paint-plain! g left row inner-w t/dialog-fg (:text entry))
 
     :thead
-    (paint-styled! g left row inner-w t/dialog-hint [p/BOLD] (:text entry))
+    (paint-segments! g left row inner-w (:segments entry))
 
     :trule
     (paint-plain! g left row inner-w t/dialog-hint (:text entry))
 
     :trow
-    (paint-styled! g
-                   left
-                   row
-                   inner-w
-                   (tone-fg (:tone entry))
-                   (if (:is-fresh entry) [p/BOLD] [])
-                   (:text entry))
+    (paint-segments! g left row inner-w (:segments entry))
 
     :link
-    (do (paint-plain! g left row inner-w t/link-chrome-fg (str "→ " (:text entry)))
+    (do (paint-segments! g
+                         left
+                         row
+                         inner-w
+                         (into [{:text "→ " :fg t/link-chrome-fg}]
+                               (run-segments (:runs entry) t/link-chrome-fg [])))
         ;; The terminal already knows how to open a URL and a path — a live link
         ;; registers as the SAME click region the transcript's own links do, so
         ;; there is no second opener to keep in step.
@@ -889,13 +1187,26 @@
                        :node-id (:node-id entry)
                        :enabled? true}))
 
+    ;; Nodes standing SIDE BY SIDE: one plan row carries one cell per column, and
+    ;; each cell is painted into its own slice of the band by THIS function — a
+    ;; table beside a paragraph is painted by the code that paints them alone.
+    :columns
+    (do (fill! g left row inner-w t/dialog-fg)
+        (reduce (fn [^long x [cell w]]
+                  (when cell (paint-entry! g (+ (long left) x) row (+ (long w) 3) view-id cell))
+                  (+ x (long w) (long aside-gutter)))
+                0
+                (map vector (:cells entry) (:widths entry))))
+
     :collapsed
     (paint-plain! g left row inner-w (tone-fg (:tone entry) t/dialog-hint) (:text entry))
 
     ;; Everything that is prose — the view's description, a status detail, a node
     ;; that holds nothing, the count of what the record kept — speaks in the dim
     ;; italic voice the rest of the TUI reserves for explanation.
-    (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry))))
+    (if-let [runs (:runs entry)]
+      (paint-runs! g left row inner-w t/dialog-hint [p/ITALIC] runs)
+      (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry)))))
 
 (defn collapsed-row
   "The ONE line an older open view keeps above the band: its title and where it
@@ -964,13 +1275,15 @@
             ;; Half the rows between the top of the transcript and the prompt, at
             ;; the most: the run this view reports on is still being read above it.
             room (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
-            ;; An ARMED stop takes one body row for the line the human types into,
-            ;; right above the fence: the band asks WHY it is being stopped where
-            ;; it is being stopped, and the answer rides along with the stop.
+            ;; An ARMED stop takes two body rows: the line the human types into and
+            ;; the rule that fences it off from the view above. The band asks WHY it
+            ;; is being stopped where it is being stopped, and the answer rides
+            ;; along with the stop — but the question is the BAND speaking, not one
+            ;; more row of the run's own report, so it is ruled off on both sides.
             stop (stop-prompt pane)
             ;; What the band WANTS: every collapsed line, the plan, the row the
             ;; fenced hint rule costs, and that note line when it is armed.
-            wanted (+ (count collapsed) (count rows-plan) 1 (if stop 1 0))
+            wanted (+ (count collapsed) (count rows-plan) 1 (if stop 2 0))
             {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
             (tr/band-geometry region (min wanted room) false)
             ;; The band CLOSES below its hint bar, exactly like the form's: the
@@ -981,7 +1294,7 @@
             rule-at (long foot-row)
             hint-rule-at (dec hint-at)
             visible (max 1 (dec (long visible)))
-            body-visible (max 1 (- visible (count collapsed) (if stop 1 0)))
+            body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
             total (count rows-plan)
             start (offset pane rows-plan body-visible)
             shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
@@ -1012,13 +1325,19 @@
                            view-id
                            {:kind :blank}))
            (when stop
-             (paint-segments! g
-                              left
-                              (dec (long hint-rule-at))
-                              body-w
-                              [{:text (:label stop) :fg t/dialog-hint}
-                               {:text (:note stop) :fg t/dialog-fg :styles [p/BOLD]}
-                               {:text "▏" :fg t/dialog-hint-key}]))
+             (let
+               [note-row (dec (long hint-rule-at))
+                note-rule-at (dec note-row)]
+
+               (when (> note-rule-at (max (long sep-row) (long top-limit)))
+                 (tr/draw-rule! g region note-rule-at))
+               (paint-segments! g
+                                left
+                                note-row
+                                body-w
+                                [{:text (:label stop) :fg t/dialog-hint}
+                                 {:text (:note stop) :fg t/dialog-fg :styles [p/BOLD]}
+                                 {:text "▏" :fg t/dialog-hint-key}])))
            (dialogs/draw-hint-bar! g left hint-at inner-w (hint pane others))
            ;; The gutter lane every scrollable dialog draws its bar in: the last
            ;; column inside the right rail, which the body's own lead keeps clear.

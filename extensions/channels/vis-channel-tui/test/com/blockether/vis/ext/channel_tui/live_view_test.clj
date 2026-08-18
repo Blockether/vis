@@ -380,14 +380,14 @@
                        "cancel"))))
 
 (deftest live-view-stop-note-test
-  (testing "Escape ARMS the stop instead of firing it — nothing ends until Enter"
+  (testing "Escape ARMS the stop — and Escape again is what sends it"
     (let [p (lv/armed (lv/opened (ci-view)))]
       (is (= "" (lv/stopping p)) "armed, with nothing typed into it yet")
       (is (= "" (:note (lv/stop-prompt p))))
       (is (str/includes? (:label (lv/stop-prompt p)) "CI · fix(loop): move the session pick")
           "the prompt names the view it would stop, because several may be open")
       (is (nil? (lv/stop-prompt (lv/opened (ci-view)))) "a watched view asks nothing")
-      (is (nil? (lv/stopping (lv/disarmed p))) "Escape again is watching again")))
+      (is (nil? (lv/stopping (lv/disarmed p))) "and `disarmed` is the way back")))
   (testing "the note is typed with the same keyboard a form's fields read"
     (let
       [typing
@@ -409,9 +409,17 @@
       (let [{:keys [action note]} (lv/typed (lv/armed (lv/opened (ci-view))) {:kind :enter})]
         (is (= :stop action) "a stop with no words is still a stop")
         (is (nil? note)))
-      (let [{:keys [pane action]} (lv/typed p {:kind :cancel})]
-        (is (= :keep action))
-        (is (nil? (lv/stopping pane)) "keeping watch forgets what was typed"))
+      (let [{:keys [pane action note]} (lv/typed p {:kind :cancel})]
+        (is (= :stop action)
+            "Escape STOPS: the key the human reached for to kill the run does that")
+        (is (= "wrong subnet" note) "and it carries whatever was written by then")
+        (is (nil? (lv/stopping pane))))
+      (let [{:keys [pane action]} (lv/typed p {:kind :backspace})]
+        (is (nil? action) "Backspace erases while there is something to erase")
+        (is (= "wrong subne" (lv/stopping pane))))
+      (let [{:keys [pane action]} (lv/typed (lv/armed (lv/opened (ci-view))) {:kind :backspace})]
+        (is (= :keep action) "Backspace on an EMPTY line is the one key that can only undo")
+        (is (nil? (lv/stopping pane)) "keeping watch forgets the armed stop"))
       (is (nil? (:action (lv/typed p {:kind :next})))
           "a key the line has no use for changes nothing")))
   (testing "the line stops growing where the engine cuts it"
@@ -434,14 +442,32 @@
        (painted-text [(:pane (reduce (fn [{:keys [pane]} c]
                                        (lv/typed pane {:kind :char :char c}))
                                      {:pane (lv/armed p)}
-                                     "wrong subnet"))])]
+                                     "wrong subnet"))])
+
+       empty-armed
+       (painted-text [(lv/armed p)])]
 
       (is (not (str/includes? watched "why?")) "a view being watched asks nothing")
       (is (str/includes? armed "why? wrong subnet") "the words are on screen as they are typed")
       (is (str/includes? armed "interrupt CI · fix(loop): move the session pick")
           "and the line says WHICH view they will stop")
-      (is (str/includes? armed "keep watching")
-          "the hint bar switches to the two keys that end the typing")
+      (is (str/includes? empty-armed "⌫ keep watching")
+          "with nothing typed the bar offers the way back")
+      (is (str/includes? armed "Esc / ⏎ interrupt with the note")
+          "once there are words the bar says they will travel with the stop")
+      (is (str/includes? armed "⌫ erase") "and Backspace is the key that takes them away again")
+      (let
+        [lines
+         (str/split-lines armed)
+
+         at
+         (first (keep-indexed (fn [idx line]
+                                (when (str/includes? line "why?") idx))
+                              lines))]
+
+        (is
+          (str/includes? (nth lines (dec (long at)) "") "─")
+          "the line is FENCED above as well as below: it is the band asking, not one more row of the report"))
       (is (str/includes? watched "Esc interrupt CI · fix(loop): move the session pick")
           "while it is only being watched the bar still advertises the one key it takes"))))
 
@@ -617,3 +643,146 @@
        (painted-text [(lv/opened (mounted {} (hi/progress "done" {:label "Scanning"})))] 80 20)]
       (is (str/includes? text "working"))
       (is (not (str/includes? text "▰"))))))
+
+;;; ── The width the band has, and who stands in it ────────────────────────────
+
+;; A table that hugs its widest word leaves the band half empty and the eye
+;; hunting across the gap: the surface IS the width the run was given, so the
+;; table takes all of it.
+(deftest live-view-table-width-test
+  (testing "head, rule and every row end on the column the band ends on"
+    (doseq [w [80 60]]
+      (let
+        [lines (->> (lv/plan (pane) w)
+                    (filter #(#{:thead :trule :trow} (:kind %)))
+                    (mapv :text))]
+        (is (seq lines))
+        (is (= [w] (distinct (mapv count lines))) (str "at " w " columns")))))
+  (testing "the slack lands on the column that was already the widest"
+    (let
+      [rule
+       (:text (first (filter #(= :trule (:kind %)) (lv/plan (pane) 80))))
+
+       cells
+       (mapv count (str/split (str/trim rule) #"┼"))]
+
+      (is (= 3 (count cells)))
+      (is
+        (= (apply max cells) (second cells))
+        "`state` holds the longest word, so `state` is the column that grows — the same judge that shrinks first")
+      (is (< (long (first cells)) (long (second cells)))))))
+
+;; Every string a human reads in this program is markdown already — the
+;; transcript, the form and the view's own document all speak it — so a live view
+;; that painted its strings flat would be the ONE surface where `code` is not code.
+(deftest live-view-inline-markdown-test
+  (testing "a statement reads as words, and the marks that styled them are gone"
+    (let
+      [row
+       (->> (lv/plan (lv/opened (mounted {}
+                                         (hi/status "now"
+                                                    "Bumped `openssl` on **db-2**"
+                                                    {:label "Now" :tone :ok})))
+                     80)
+            (filter #(= :status (:kind %)))
+            first)
+
+       run-of
+       (fn [text]
+         (first (filter #(= text (:text %)) (:runs row))))]
+
+      (is (str/includes? (:text row) "Bumped openssl on db-2"))
+      (is (not (str/includes? (:text row) "`")) "the syntax is not the sentence")
+      (is (contains? (:style (run-of "openssl")) :code))
+      (is (contains? (:style (run-of "db-2")) :bold))))
+  (testing "and the code span really wears another ink on the terminal"
+    (let
+      [frame (last (:frames (paint-frames [(lv/opened (mounted {}
+                                                               (hi/status "now"
+                                                                          "Bumped `openssl` now"
+                                                                          {:label "Now"})))]
+                                          80
+                                          20)))]
+      (is (not= (:fg (cell-under frame "Bumped openssl" 0))
+                (:fg (cell-under frame "Bumped openssl" 7)))
+          "the word and the code span beside it are not painted in one flat ink")))
+  (testing "a log line is machine output and stays VERBATIM"
+    (let
+      [text (str/join "\n"
+                      (map :text
+                           (lv/plan (lv/opened (mounted {}
+                                                        (hi/log "tail"
+                                                                {:label "Output"
+                                                                 :lines ["cat `x` **y**"]})))
+                                    80)))]
+      (is (str/includes? text "cat `x` **y**")
+          "backticks in a build log are the build's own characters, not styling"))))
+
+(defn- reading-pane
+  "A table with a paragraph declared BESIDE it — the shape `is-aside` exists for."
+  []
+  (lv/opened
+    (mounted
+      {}
+      (hi/table "jobs"
+                [(hi/table-column "job" "Job") (hi/table-column "state" "State")]
+                {:label "Jobs"
+                 :rows [(hi/table-row "j1" ["job-1" "success"])
+                        (hi/table-row "j2" ["job-2" "failed"])]})
+      (hi/status
+        "note"
+        "The `openssl` bump landed on db-2 only, so the sweep keeps going until every host answers on the new subnet."
+        {:label "Reading" :tone :warn :is-aside true}))))
+
+;; `is-aside` is the ONLY word an extension has for layout, and it says the least
+;; that can be said: stand beside the node declared before you where there is
+;; room. Everything else — how wide, whether at all — the surface decides.
+(deftest live-view-aside-test
+  (testing "an aside stands BESIDE the node it was declared after"
+    (let [columns (filterv #(= :columns (:kind %)) (lv/plan (reading-pane) 80))]
+      (is (seq columns))
+      (is (= [39 39] (:widths (first columns))) "the band splits, minus the gutter between them")
+      (is (= ["Jobs" "Reading"]
+             (mapv :text
+                   (:cells (first (filter #(every? (comp #{:node} :kind) (:cells %)) columns)))))
+          "each column opens under its own label")
+      (is (some #(and (= :thead (:kind (first (:cells %)))) (= :status (:kind (second (:cells %)))))
+                columns)
+          "the table's head and the paragraph's first line are on ONE row")))
+  (testing "the paragraph is JUSTIFIED to its column, so both its edges are straight"
+    (let
+      [texts (->> (lv/plan (reading-pane) 80)
+                  (filter #(= :columns (:kind %)))
+                  (keep #(second (:cells %)))
+                  (filter #(= :status (:kind %)))
+                  (mapv :text))]
+      (is (< 1 (count texts)) "the sentence wrapped")
+      (is (= [39] (distinct (mapv count (butlast texts))))
+          "every line but the last fills the column exactly")
+      (is (> 39 (count (last texts))) "and the last line of a paragraph is never stretched")))
+  (testing "a band too narrow to split stacks them instead"
+    (let [kinds (set (map :kind (lv/plan (reading-pane) 40)))]
+      (is (not (contains? kinds :columns))
+          "under the narrowest useful column there is nothing to split")
+      (is (contains? kinds :thead))
+      (is (contains? kinds :status) "both nodes are still there, one under the other")))
+  (testing "and the terminal really paints them on the same row"
+    (let
+      [line (->> (str/split-lines (painted-text [(reading-pane)]))
+                 (filter #(str/includes? % "Jobs"))
+                 first)]
+      (is (str/includes? (str line) "Reading") "one screen row carries both labels")))
+  ;; The proof a person can LOOK at: one band carrying a table that spans it and the
+  ;; paragraph that explains the table, marks and all.
+  (testing "a real PNG of a table with its paragraph beside it"
+    (let
+      [png (cap/shot! {:cols 96
+                       :rows 16
+                       :font-size 14
+                       :out "vis-live-view-aside"
+                       :paint! (fn [{:keys [screen]}]
+                                 (let [g (.newTextGraphics ^TerminalScreen screen)]
+                                   (lv/paint! g 96 16 [(reading-pane)] 1 3)
+                                   (.refresh ^TerminalScreen screen)))})]
+      (is (str/ends-with? png "vis-live-view-aside.png"))
+      (is (pos? (long (cap/ink png))) "the split band really painted"))))

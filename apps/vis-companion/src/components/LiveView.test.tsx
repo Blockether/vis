@@ -34,7 +34,7 @@ describe('a live view on the phone', () => {
     const html = paint();
     expect(html).toContain('Fleet scan');
     expect(html).toContain('3 hosts · started 12:04');
-    const labels = ['Swept', 'Findings', 'Phases', 'Output', 'Hosts', 'Elsewhere'];
+    const labels = ['Swept', 'Findings', 'Phases', 'Output', 'Hosts', 'Why', 'Elsewhere'];
     expect(labels.map((label) => html.indexOf(label))).toEqual(
       [...labels.map((label) => html.indexOf(label))].sort((a, b) => a - b),
     );
@@ -183,6 +183,23 @@ describe('stopping the run from the phone', () => {
     expect(screen.getByRole('textbox')).toHaveProperty('value', '');
   });
 
+  // The key that ARMED the stop is the key that sends it, note and all — the
+  // terminal answers Escape the same way, and a comment nobody typed is no
+  // comment rather than an empty one.
+  it('sends the stop when the human presses Escape over the note', () => {
+    const onInterrupt = vi.fn();
+    paint({ onInterrupt });
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'wrong subnet' } });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+    expect(onInterrupt).toHaveBeenCalledWith('wrong subnet');
+    expect(screen.queryByRole('textbox')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+    expect(onInterrupt).toHaveBeenLastCalledWith(null);
+  });
+
   it('says it is working on it, and offers every view a stop', () => {
     cleanup();
     paint({ onInterrupt: vi.fn(), isInterrupting: true });
@@ -194,6 +211,44 @@ describe('stopping the run from the phone', () => {
     const html = paint({ onInterrupt: vi.fn(), error: 'That view would not stop.' });
     expect(html).toContain('That view would not stop.');
     expect(html).toContain('text-err');
+  });
+});
+
+describe('what a run says about its own layout', () => {
+  // `is_aside` is the run's statement, not the screen's guess: the sentence
+  // about the table shares the table's row wherever there is width for it.
+  it('stands a node beside the one it was declared after', () => {
+    paint();
+    const list = screen.getByRole('status').querySelector('ul') as HTMLElement;
+    // Eight nodes, seven rows: `why` joined `hosts` instead of starting one.
+    expect(list.children.length).toBe(7);
+    const beside = [...list.children].find((row) => row.textContent?.includes('Hosts')) as HTMLElement;
+    expect(beside.textContent).toContain('Why');
+    expect(beside.className).toContain('sm:grid-flow-col');
+    // …and the sentence beside a table is set as prose, by the app's ONE rule.
+    expect(beside.innerHTML).toContain('text-justify');
+    const alone = [...list.children].find((row) => row.textContent?.includes('Elsewhere')) as HTMLElement;
+    expect(alone.className).not.toContain('grid');
+  });
+
+  it('paints the marks a human wrote, and nothing a block would bring', () => {
+    const panel = (paint(), screen.getByRole('status'));
+    expect([...panel.querySelectorAll('code')].map((mark) => mark.textContent)).toContain('db-2');
+    expect([...panel.querySelectorAll('strong')].map((mark) => mark.textContent)).toContain(
+      'openssl 3.0.13',
+    );
+    // A row stays a row: no heading, no quote, no list arrived with the marks.
+    expect(panel.querySelector('h1, h2, h3, blockquote')).toBeNull();
+  });
+
+  it('marks a table cell too, because a cell is a human string as well', () => {
+    const view = opened();
+    const hosts = view.nodes.find((node) => node.id === 'hosts');
+    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
+    paint({
+      view: withNode(view, { ...hosts, rows: [{ ...hosts.rows[0], cells: ['`db-1`', 'clean', '0'] }] }),
+    });
+    expect(screen.getAllByRole('cell')[0].querySelector('code')?.textContent).toBe('db-1');
   });
 });
 

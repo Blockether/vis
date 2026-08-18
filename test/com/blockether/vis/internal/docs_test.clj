@@ -97,4 +97,13 @@
         (doseq
           [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted" "flush_ms"
                    "view.is_from_human" "view.note"]]
+          (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
+  ;; Layout is the half an author cannot infer: without these two paragraphs a run writes a
+  ;; second node where one paragraph BESIDE the table was meant, and marks up a string the
+  ;; page never promised to paint.
+  (it "teaches where a node stands and what a human-facing string may carry"
+      (let [md (extending-md)]
+        (doseq
+          [needle ["is_aside=True" "inline markdown" "wraps and justifies" "stay verbatim"
+                   "`Escape` or `Enter` sends the stop"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))
