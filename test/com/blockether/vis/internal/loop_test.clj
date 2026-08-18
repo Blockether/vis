@@ -21,7 +21,6 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [taoensso.telemere :as tel]
             [com.blockether.vis.internal.session-model :as session-model]
-            [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.vision-describe :as vision-describe]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))

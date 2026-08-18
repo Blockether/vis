@@ -258,8 +258,8 @@
   [sid view-id node-id from limit]
   (live-sink/log-range (live-sink/view-file (str sid) (str view-id))
                        node-id
-                       (max 0 (or from 0))
-                       (min live-log-page (max 1 (or limit live-log-page)))))
+                       (max 0 (long (or from 0)))
+                       (min (long live-log-page) (max 1 (long (or limit live-log-page))))))
 
 (defn interrupt-live!
   "Stop live view `view-id` from the app, with `note` — the comment the person

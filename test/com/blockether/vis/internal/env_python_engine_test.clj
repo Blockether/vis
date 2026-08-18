@@ -166,7 +166,7 @@ import urllib.parse, argparse, logging, csv, unittest, traceback, inspect, ast
        eval-done
        (CountDownLatch. 1)
 
-       evaluator
+       _evaluator
        (Thread/startVirtualThread
          (fn []
            (.countDown started)
