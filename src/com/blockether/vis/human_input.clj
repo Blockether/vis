@@ -70,6 +70,37 @@
   (engine/normalize-node node)
   node)
 
+(defn- checked-node
+  "`node` itself, once the engine has agreed it is a live node — the normalized
+   form is DROPPED for the same reason [[checked]] drops it."
+  [node]
+  (engine/normalize-live-node node)
+  node)
+
+(defn- group-node
+  "A group arranging `nodes` along `direction`, opening with the id a live view
+   addresses it by when one is given.
+
+   A group is the ONE node both vocabularies share — upper control flow in a
+   form, arrangement in a live view — so its children say which check it is
+   dated against, and one pair of builders means `row` and `column` mean the
+   same thing wherever a human reads them."
+  [direction nodes]
+  (let
+    [id
+     (when (string? (first nodes)) (first nodes))
+
+     fields
+     (vec (if id (rest nodes) nodes))
+
+     group
+     (cond-> {:type "group" :direction direction :fields fields}
+       id
+       (assoc :id id))]
+
+    (if (engine/live-nodes? fields) (checked-node group) (checked group))
+    group))
+
 (defn- field
   "One answerable node of `type-name` named `field-name`, carrying `opts`."
   [type-name field-name opts]
@@ -151,15 +182,22 @@
 
 (defn row
   "Lay `nodes` out side by side. A group holds no value and never appears in
-   the answer map; groups nest freely."
+   the answer map; groups nest freely.
+
+   A LIVE view arranges its work with the same two builders, and there a group
+   is addressed like every other node, so it opens with its id:
+   `(hi/row \"reading\" (hi/table \"hosts\" …) (hi/status \"why\" …))` —
+   `add-node :after` names it, `remove-node` takes it with its children, and no
+   patch ever moves it."
   [& nodes]
-  (checked {:type "group" :direction "row" :fields (vec nodes)}))
+  (group-node "row" nodes))
 
 (defn column
   "Stack `nodes` one under the next — the default arrangement, worth saying
-   explicitly inside a [[row]]."
+   explicitly inside a [[row]]. Takes a leading id in a live view, exactly like
+   [[row]]."
   [& nodes]
-  (checked {:type "group" :direction "column" :fields (vec nodes)}))
+  (group-node "column" nodes))
 
 ;; Decoration — ink, so a long form reads like a page instead of a list
 
@@ -199,21 +237,14 @@
 ;; the one the wire, the phone and the terminal all read. `add-node` and
 ;; `remove-node` do get one — they change the view's SHAPE and carry a whole node.
 
-(defn- checked-node
-  "`node` itself, once the engine has agreed it is a live node — the normalized
-   form is DROPPED for the same reason [[checked]] drops it."
-  [node]
-  (engine/normalize-live-node node)
-  node)
-
 (defn- live-node
   "One live node of `type-name`, addressed by `id`, carrying `opts`.
 
-   Every builder below takes `:label` and `:is-aside` through `opts`: the label
-   names the node, and `:is-aside true` stands it BESIDE the node declared
-   before it where the surface has the room — the terminal splits its band, a
-   wide phone splits the row, a narrow one and the document stack. It is
-   declared here and by no patch, so nothing rearranges under a reader."
+   Every builder below takes a `:label` through `opts`, and none of them takes a
+   position: WHERE a node stands is said by [[row]] and [[column]], the form's
+   own arrangement, so a view lays its work out the way a request lays out its
+   questions. Layout is declared here and by no patch, so nothing rearranges
+   under a reader."
   [type-name id opts]
   (checked-node (assoc opts
                   :id id

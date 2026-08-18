@@ -16,6 +16,7 @@
    and one per select/multiselect OPTION — so ↑/↓/Tab walks the form the way
    the settings dialog walks its rows."
   (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.columns :as columns]
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -623,29 +624,6 @@
 
 (declare field-rows)
 
-(def ^:private column-gutter
-  "Columns between two fields sitting side by side — enough that a focused row's
-   selection marker never touches the field to its left."
-  2)
-
-(defn- zip-columns
-  "Zip one row-plan per COLUMN into one plan row per LINE: cell `i` of line `n`
-   is column `i`'s `n`-th row, or nothing when that column already ran out. The
-   painter divides the row's width by the number of cells, so a `row` group is
-   laid out at paint time and the plan stays pure."
-  [cells]
-  (let [height (long (reduce max 0 (map count cells)))]
-    (mapv (fn [i]
-            (let [entries (mapv #(nth % i nil) cells)]
-              {:kind :columns
-               :cells entries
-               ;; A composite row is a LABEL row when its columns start with
-               ;; their labels, so scrolling still lands on the words that say
-               ;; which fields are being edited.
-               :is-label (boolean (some #(= :label (:kind %)) entries))
-               :is-focused (boolean (some :is-focused entries))}))
-          (range height))))
-
 (def ^:private option-stop-kinds
   "Stop kinds that carry a `:value`: one focus stop per option, not per field."
   #{:select-option :multi-option})
@@ -690,8 +668,8 @@
 
      body
      (if (= :row direction)
-       (let [cell-w (when text-w (max 4 (- (quot (+ (long text-w) 2) n) 2 (long column-gutter))))]
-         (zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
+       (let [cell-w (columns/cell-width text-w n)]
+         (columns/zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
        (into [] (mapcat #(field-rows ctx text-w %)) fields))]
 
     (into (if (seq heading) (conj (vec heading) {:kind :blank}) []) body)))
@@ -1172,30 +1150,13 @@
     ;; plan carries no geometry and every painter below — including another
     ;; `:columns` row from a nested group — just paints into a narrower row.
     :columns
-    (let
-      [cells
-       (:cells entry)
-
-       n
-       (max 1 (count cells))
-
-       cell-w
-       (max 1 (quot (long inner-w) n))]
-
-      (reduce (fn [pos [i cell]]
+    (let [cells (:cells entry)]
+      (reduce (fn [pos [[x width] cell]]
                 (let
-                  [taken
-                   (* (long i) cell-w)
-
-                   width
-                   (if (= i (dec n)) (- (long inner-w) taken) cell-w)
-
-                   here
-                   (paint-row! g (+ (long left) taken) row (max 1 width) (or cell {:kind :blank}))]
-
+                  [here (paint-row! g (+ (long left) (long x)) row width (or cell {:kind :blank}))]
                   (or pos here)))
               nil
-              (map-indexed vector cells)))
+              (map vector (columns/slots inner-w (count cells)) cells)))
 
     :action
     (do (paint-actions! g left row inner-w (:buttons entry)) nil)

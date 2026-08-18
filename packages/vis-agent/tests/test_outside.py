@@ -342,6 +342,18 @@ def test_ask_knows_only_the_contracts_field_types(monkeypatch):
 # -- A live view -----------------------------------------------------------------
 
 
+def _painted(nodes):
+    # The nodes that PAINT, groups flattened — the same walk the host does when it
+    # hands the model a picture.
+    flat = {}
+    for node in nodes:
+        if node["type"] == "group":
+            flat.update(_painted(node["fields"]))
+        else:
+            flat[node["id"]] = node
+    return flat
+
+
 def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
     # Nobody is watching a pane out here, so stderr carries the story and the
     # host still holds the nodes: an extension polling its own view reads the
@@ -350,17 +362,21 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         "Deploy",
         [
             vis.status("now", "Starting", tone="running"),
-            vis.table(
-                "jobs",
-                columns=[
-                    vis.table_column("job", "Job"),
-                    vis.table_column("state", "State"),
-                ],
-            ),
-            vis.stat(
-                "why",
-                stats=[{"id": "queued", "label": "Queued", "value_text": "1"}],
-                is_aside=True,
+            # Layout is the FORM's own row, not a second vocabulary — and out
+            # here, where nothing paints, it still travels with the view.
+            vis.row(
+                "reading",
+                vis.table(
+                    "jobs",
+                    columns=[
+                        vis.table_column("job", "Job"),
+                        vis.table_column("state", "State"),
+                    ],
+                ),
+                vis.stat(
+                    "why",
+                    stats=[{"id": "queued", "label": "Queued", "value_text": "1"}],
+                ),
             ),
             vis.output("tail", label="Output"),
         ],
@@ -370,16 +386,19 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         view.row("api", ["api", "queued"])
         view.row("api", ["api", "done"], tone="ok")
         view.write("cloning", "compiling")
-        nodes = {node["id"]: node for node in view.state()["nodes"]}
+        state = view.state()
+        nodes = _painted(state["nodes"])
         # The row was upserted by its id, not appended twice.
         assert [row["cells"] for row in nodes["jobs"]["rows"]] == [["api", "done"]]
         assert nodes["jobs"]["rows"][0]["tone"] == "ok"
         assert nodes["tail"]["lines"] == ["cloning", "compiling"]
         assert nodes["now"]["text"] == "Building"
-        # WHERE a node stands travels with the view even out here, where nothing
-        # paints it: an extension is written once for both places.
-        assert nodes["why"]["is_aside"] is True
-        assert "is_aside" not in nodes["now"]
+        # A row is a node of its own in the state the host holds, and the ops
+        # above reached the table and the counter INSIDE it by id alone.
+        arranged = state["nodes"][1]
+        assert arranged["type"] == "group"
+        assert arranged["direction"] == "row"
+        assert [child["id"] for child in arranged["fields"]] == ["jobs", "why"]
 
     verdict = view.result
     assert verdict["is_completed"] is True
@@ -390,6 +409,14 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
     assert view.is_from_human is False
     assert view.note is None
     assert verdict["view"]["title"] == "Deploy"
+    # The verdict a MODEL reads is flat: a row is how a surface arranged the work,
+    # never part of what the work said.
+    assert [node["id"] for node in verdict["view"]["nodes"]] == [
+        "now",
+        "jobs",
+        "why",
+        "tail",
+    ]
     transcript = capsys.readouterr().err
     assert "== Deploy ==" in transcript
     assert "Building" in transcript

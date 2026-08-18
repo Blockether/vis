@@ -6,6 +6,7 @@
    engine, so a test can only paint shapes an extension can really produce."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
+            [com.blockether.vis.ext.channel-tui.columns :as columns]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.state :as state]
@@ -119,7 +120,7 @@
           "declaration order, not arrival order")))
   (testing "the view's own description opens the surface"
     (is (= "Blockether/vis · 32062760734" (:text (first (rows-of (pane)))))))
-  (testing "a table always paints its header and its rule, even holding nothing"
+  (testing "an empty table is still a box, and says so between its own rails"
     (let
       [p
        (lv/opened (mounted {} (jobs {} 0)))
@@ -127,9 +128,11 @@
        plan
        (rows-of p)]
 
-      (is (= [:prose :node :thead :trule :empty] (mapv :kind plan)))
-      (is (str/includes? (:text (nth plan 2)) "Job"))
-      (is (= "no rows yet" (:text (last plan)))))))
+      (is (= [:prose :node :trule :thead :trule :empty :trule] (mapv :kind plan))
+          "top rail, the header, a rail, the sentence, and the box closed under it")
+      (is (str/includes? (:text (nth plan 3)) "Job"))
+      (is (str/includes? (:text (nth plan 5)) "no rows yet")
+          "the sentence stands INSIDE the box, between its rails"))))
 
 (deftest live-view-window-test
   (testing "a node paints a window and says how much it is holding back"
@@ -246,8 +249,8 @@
       (is (str/starts-with? (str (second anchor)) "job-")
           "and the ROW ID under it, never a line offset")
       (is (not (:is-following parked)) "reading back is a deliberate intent")
-      (is (= 3 (- (long (lv/offset grown grown-rows 6)) (long eye)))
-          "three rows landed above it, so the viewport starts three rows later")
+      (is (= 6 (- (long (lv/offset grown grown-rows 6)) (long eye)))
+          "three rows landed above it, and each brings the rail that separates it")
       (is (= anchor (lv/anchor-at grown-rows (lv/offset grown grown-rows 6)))
           "and the same row is still the top visible one")))
   (testing "a removed row above the eye pulls the viewport back with it"
@@ -265,7 +268,8 @@
        cut-rows
        (rows-of cut)]
 
-      (is (= (- (long eye) 2) (long (lv/offset cut cut-rows 6))))
+      (is (= (- (long eye) 4) (long (lv/offset cut cut-rows 6)))
+          "two rows left, and the two rails between them left with them")
       (is (= anchor (lv/anchor-at cut-rows (lv/offset cut cut-rows 6))))))
   (testing "an anchor whose row is gone falls back to the node it belonged to"
     (let
@@ -519,7 +523,7 @@
   (testing "the band paints the whole view when it fits"
     (let
       [{:keys [frames geometry]}
-       (paint-frames [(pane)] 96 40)
+       (paint-frames [(pane)] 96 60)
 
        text
        (cap/frame-text (last frames))]
@@ -646,9 +650,11 @@
 
 ;;; ── The width the band has, and who stands in it ────────────────────────────
 
+
 ;; A table that hugs its widest word leaves the band half empty and the eye
 ;; hunting across the gap: the surface IS the width the run was given, so the
-;; table takes all of it.
+;; table takes all of it — and takes it inside a drawn box, because a live table
+;; is read while it fills and the eye needs the line saying where a row ends.
 (deftest live-view-table-width-test
   (testing "head, rule and every row end on the column the band ends on"
     (doseq [w [80 60]]
@@ -660,17 +666,39 @@
         (is (= [w] (distinct (mapv count lines))) (str "at " w " columns")))))
   (testing "the slack lands on the column that was already the widest"
     (let
-      [rule
-       (:text (first (filter #(= :trule (:kind %)) (lv/plan (pane) 80))))
+      [mid
+       (->> (lv/plan (pane) 80)
+            (filter #(= :trule (:kind %)))
+            (map :text)
+            (filter #(str/includes? % "┼"))
+            first)
 
        cells
-       (mapv count (str/split (str/trim rule) #"┼"))]
+       (->> (str/split mid #"[├┼┤]")
+            (remove str/blank?)
+            (mapv count))]
 
       (is (= 3 (count cells)))
       (is
         (= (apply max cells) (second cells))
         "`state` holds the longest word, so `state` is the column that grows — the same judge that shrinks first")
-      (is (< (long (first cells)) (long (second cells)))))))
+      (is (< (long (first cells)) (long (second cells))))))
+  (testing "and the table is a BOX, with a rail between every pair of rows"
+    (let
+      [rows
+       (filterv #(#{:thead :trule :trow} (:kind %)) (lv/plan (pane) 80))
+
+       texts
+       (mapv :text rows)]
+
+      (is (str/starts-with? (first texts) "┌"))
+      (is (str/ends-with? (first texts) "┐"))
+      (is (str/starts-with? (last texts) "└"))
+      (is (every? #(and (str/starts-with? % "│") (str/ends-with? % "│"))
+                  (map :text (filter #(#{:thead :trow} (:kind %)) rows)))
+          "every line of cells stands between the rails")
+      (is (= [:trule :thead :trule :trow :trule :trow] (subvec (mapv :kind rows) 0 6))
+          "a rule under the head AND between the rows, not only where the box ends"))))
 
 ;; Every string a human reads in this program is markdown already — the
 ;; transcript, the form and the view's own document all speak it — so a live view
@@ -719,47 +747,71 @@
           "backticks in a build log are the build's own characters, not styling"))))
 
 (defn- reading-pane
-  "A table with a paragraph declared BESIDE it — the shape `is-aside` exists for."
+  "A table with the paragraph that explains it declared BESIDE it, in the form's
+   own `row` — the shape an arrangement exists for."
   []
   (lv/opened
     (mounted
       {}
-      (hi/table "jobs"
-                [(hi/table-column "job" "Job") (hi/table-column "state" "State")]
-                {:label "Jobs"
-                 :rows [(hi/table-row "j1" ["job-1" "success"])
-                        (hi/table-row "j2" ["job-2" "failed"])]})
-      (hi/status
-        "note"
-        "The `openssl` bump landed on db-2 only, so the sweep keeps going until every host answers on the new subnet."
-        {:label "Reading" :tone :warn :is-aside true}))))
+      (hi/row
+        "reading"
+        (hi/table "jobs"
+                  [(hi/table-column "job" "Job") (hi/table-column "state" "State")]
+                  {:label "Jobs"
+                   :rows [(hi/table-row "j1" ["job-1" "success"])
+                          (hi/table-row "j2" ["job-2" "failed"])]})
+        (hi/status
+          "note"
+          "The `openssl` bump landed on db-2 only, so the sweep keeps going until every host answers on the new subnet."
+          {:label "Reading" :tone :warn})))))
 
-;; `is-aside` is the ONLY word an extension has for layout, and it says the least
-;; that can be said: stand beside the node declared before you where there is
-;; room. Everything else — how wide, whether at all — the surface decides.
-(deftest live-view-aside-test
-  (testing "an aside stands BESIDE the node it was declared after"
+;; A live view arranges its work with the REQUEST's own two words, so `row` and
+;; `column` mean one thing on every surface. They say the least that can be
+;; said — these stand together, those stack — and how wide, or whether there is
+;; room at all, the surface decides.
+(deftest live-view-group-test
+  (testing "a row stands the nodes declared in it side by side"
     (let [columns (filterv #(= :columns (:kind %)) (lv/plan (reading-pane) 80))]
       (is (seq columns))
-      (is (= [39 39] (:widths (first columns))) "the band splits, minus the gutter between them")
       (is (= ["Jobs" "Reading"]
              (mapv :text
                    (:cells (first (filter #(every? (comp #{:node} :kind) (:cells %)) columns)))))
           "each column opens under its own label")
-      (is (some #(and (= :thead (:kind (first (:cells %)))) (= :status (:kind (second (:cells %)))))
+      (is (some #(and (= :trule (:kind (first (:cells %)))) (= :status (:kind (second (:cells %)))))
                 columns)
-          "the table's head and the paragraph's first line are on ONE row")))
+          "the table's box and the paragraph explaining it start on ONE row")))
   (testing "the paragraph is JUSTIFIED to its column, so both its edges are straight"
     (let
-      [texts (->> (lv/plan (reading-pane) 80)
-                  (filter #(= :columns (:kind %)))
-                  (keep #(second (:cells %)))
-                  (filter #(= :status (:kind %)))
-                  (mapv :text))]
+      [cell-w
+       (columns/cell-width 80 2)
+
+       texts
+       (->> (lv/plan (reading-pane) 80)
+            (filter #(= :columns (:kind %)))
+            (keep #(second (:cells %)))
+            (filter #(= :status (:kind %)))
+            (mapv :text))]
+
+      (is (= 37 cell-w) "two columns and the gutter between them, out of an 80-column band")
       (is (< 1 (count texts)) "the sentence wrapped")
-      (is (= [39] (distinct (mapv count (butlast texts))))
-          "every line but the last fills the column exactly")
-      (is (> 39 (count (last texts))) "and the last line of a paragraph is never stretched")))
+      (is (every? #(<= (count %) cell-w) texts) "no line ever runs past its column")
+      (is (some #(= cell-w (count %)) (butlast texts))
+          "and a line with gaps enough to close is flush with both edges")
+      (is (> cell-w (count (last texts))) "the last line of a paragraph is never stretched")
+      ;; Justification stops where it would open a river: a line short by more
+      ;; than it has gaps to grow stays ragged. That is the terminal's ONE
+      ;; policy (`markdown-layout/justify-line-runs`), not this pane's opinion.
+      (is (every? (fn [line]
+                    (let
+                      [slack
+                       (- cell-w (count line))
+
+                       gaps
+                       (dec (count (str/split (str/trim line) #"\s+")))]
+
+                      (or (zero? slack) (>= slack gaps))))
+                  (butlast texts))
+          "a ragged line is a justification refused, because stretching it would open a river")))
   (testing "a band too narrow to split stacks them instead"
     (let [kinds (set (map :kind (lv/plan (reading-pane) 40)))]
       (is (not (contains? kinds :columns))
@@ -772,17 +824,17 @@
                  (filter #(str/includes? % "Jobs"))
                  first)]
       (is (str/includes? (str line) "Reading") "one screen row carries both labels")))
-  ;; The proof a person can LOOK at: one band carrying a table that spans it and the
-  ;; paragraph that explains the table, marks and all.
+  ;; The proof a person can LOOK at: one band carrying a boxed table that spans
+  ;; its column and the paragraph that explains it, marks and all.
   (testing "a real PNG of a table with its paragraph beside it"
     (let
       [png (cap/shot! {:cols 96
                        :rows 24
                        :font-size 14
-                       :out "vis-live-view-aside"
+                       :out "vis-live-view-group"
                        :paint! (fn [{:keys [screen]}]
                                  (let [g (.newTextGraphics ^TerminalScreen screen)]
                                    (lv/paint! g 96 24 [(reading-pane)] 1 3)
                                    (.refresh ^TerminalScreen screen)))})]
-      (is (str/ends-with? png "vis-live-view-aside.png"))
+      (is (str/ends-with? png "vis-live-view-group.png"))
       (is (pos? (long (cap/ink png))) "the split band really painted"))))

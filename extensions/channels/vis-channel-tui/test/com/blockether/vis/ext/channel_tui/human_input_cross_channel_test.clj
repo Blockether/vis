@@ -815,6 +815,11 @@
       (testing "what a view can be MADE of, and what one patch can do to it"
         (is (= (set (keys hi-spec/live-node-types)) (set (ts-strings source "LIVE_NODE_TYPES"))))
         (is (= (set (keys hi-spec/live-ops)) (set (ts-strings source "LIVE_OPS")))))
+      (testing "and the layout it borrows from the form, spelled the same on both surfaces"
+        (is (= hi-spec/group-type-name (ts-literal source "LIVE_GROUP_TYPE"))
+            "a view arranges with the FORM's own group, never a second word for the same thing")
+        (is (= (set (keys hi-spec/group-directions))
+               (set (ts-strings source "LIVE_GROUP_DIRECTIONS")))))
       (testing "how a surface colours a line, and why a view ended"
         (is (= (set (keys hi-spec/live-tones)) (set (ts-strings source "LIVE_TONES"))))
         (is (= (set (keys hi-spec/live-reasons)) (set (ts-strings source "LIVE_REASONS")))))

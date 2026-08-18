@@ -756,7 +756,18 @@ def _live_check_node(node, seen):
     if not isinstance(node, dict):
         return f"every node must be a map, got {node!r}"
     kind = node.get("type")
-    if kind not in _LIVE["node_types"]:
+    is_group = kind == _GROUP
+    if is_group:
+        # Layout is the FORM's own vocabulary: a view arranges its nodes with the
+        # same row and column a question does, and the group paints nothing itself.
+        direction = node.get("direction")
+        if direction is not None and direction not in _HUMAN["group_directions"]:
+            ways = ", ".join(_HUMAN["group_directions"])
+            return f"a {_GROUP} runs one of {ways}, got {direction!r}"
+        children = node.get("fields")
+        if not isinstance(children, (list, tuple)) or not children:
+            return f"a {_GROUP} must arrange at least one node"
+    elif kind not in _LIVE["node_types"]:
         types = ", ".join(_LIVE["node_types"])
         return f"a node is one of {types}, got {kind!r}"
     node_id = node.get("id")
@@ -765,6 +776,11 @@ def _live_check_node(node, seen):
     if node_id in seen:
         return f"two nodes answer to {node_id!r}"
     seen.add(node_id)
+    if is_group:
+        for child in node["fields"]:
+            complaint = _live_check_node(child, seen)
+            if complaint:
+                return complaint
     return None
 
 
@@ -777,20 +793,51 @@ def _check_view(view):
     nodes = view.get("nodes")
     if not isinstance(nodes, (list, tuple)) or not nodes:
         return "a live view needs at least one node"
-    if len(nodes) > _LIVE["max_nodes"]:
-        return "a live view holds at most {} nodes".format(_LIVE["max_nodes"])
     seen = set()
     for node in nodes:
         complaint = _live_check_node(node, seen)
         if complaint:
             return complaint
+    # The bound counts the TREE: a row holding twenty nodes is twenty nodes.
+    if len(seen) > _LIVE["max_nodes"]:
+        return "a live view holds at most {} nodes".format(_LIVE["max_nodes"])
     return None
 
 
-def _live_at(view, node_id):
-    for index, node in enumerate(view.get("nodes") or []):
+def _live_ids(nodes):
+    # Every id in the tree: a node added anywhere may not shadow one already here.
+    seen = set()
+    for node in nodes or []:
+        node_id = node.get("id")
+        if node_id is not None:
+            seen.add(node_id)
+        seen |= _live_ids(node.get("fields"))
+    return seen
+
+
+def _live_leaves(nodes):
+    # The nodes that PAINT, groups flattened: what a reader reads is CONTENT, and a
+    # row is only how a surface arranged it.
+    leaves = []
+    for node in nodes or []:
+        if node.get("type") == _GROUP:
+            leaves.extend(_live_leaves(node.get("fields")))
+        else:
+            leaves.append(node)
+    return leaves
+
+
+def _live_find(nodes, node_id):
+    # The list a node lives in and its index there, ANYWHERE in the tree: an op
+    # names a node by id and never says which row is holding it.
+    for index, node in enumerate(nodes or []):
         if node.get("id") == node_id:
-            return index
+            return nodes, index
+        children = node.get("fields")
+        if isinstance(children, list):
+            found = _live_find(children, node_id)
+            if found is not None:
+                return found
     return None
 
 
@@ -841,19 +888,25 @@ def _live_apply(view, op):
         raise Refused(f"a live op is one of {names}, got {name!r}")
     if name == "add-node":
         spec = op.get("node_spec")
-        complaint = _live_check_node(spec, {n.get("id") for n in view["nodes"]})
+        complaint = _live_check_node(spec, _live_ids(view["nodes"]))
         if complaint:
             raise Refused(complaint)
-        after = _live_at(view, op.get("after"))
-        at = len(view["nodes"]) if after is None else after + 1
-        view["nodes"].insert(at, dict(spec))
+        found = _live_find(view["nodes"], op.get("after"))
+        # A new node joins the row that holds the node it named, not the top of
+        # the view: `after` is a sibling, so the arrangement stays the one declared.
+        siblings, at = (
+            (view["nodes"], len(view["nodes"])) if found is None else (found[0], found[1] + 1)
+        )
+        siblings.insert(at, json.loads(json.dumps(spec)))
         return "+ {}".format(spec.get("label") or spec.get("id"))
-    index = _live_at(view, op.get("node_id"))
-    if index is None:
+    found = _live_find(view["nodes"], op.get("node_id"))
+    if found is None:
         raise Refused("no node {!r} in this view".format(op.get("node_id")))
-    node = dict(view["nodes"][index])
+    siblings, index = found
+    node = dict(siblings[index])
     if name == "remove-node":
-        view["nodes"].pop(index)
+        # A group leaves with its children: nothing outlives the row it stood in.
+        siblings.pop(index)
         return "- {}".format(node.get("label") or node.get("id"))
     if name == "set":
         node.update({k: v for k, v in op.items() if k not in ("op", "node_id")})
@@ -870,7 +923,7 @@ def _live_apply(view, op):
         key = _live_items_key(node, "item_ids")
         dropped = set(op.get("item_ids") or [])
         node[key] = [i for i in (node.get(key) or []) if i.get("id") not in dropped]
-    view["nodes"][index] = _live_bound(node)
+    siblings[index] = _live_bound(node)
     return _live_line(name, op, node)
 
 
@@ -932,7 +985,9 @@ def _live_verdict(held, ending):
     verdict["view"] = {
         "title": view.get("title"),
         "description": view.get("description"),
-        "nodes": view.get("nodes"),
+        # Flattened, exactly as the engine's own picture is: a reader reads
+        # CONTENT, and a row is only how a surface arranged it.
+        "nodes": _live_leaves(view.get("nodes")),
     }
     return verdict
 

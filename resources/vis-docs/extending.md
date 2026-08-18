@@ -691,18 +691,20 @@ def deploy(target):
         [
             vis.status("phase", "Starting", tone="running"),
             vis.progress("done", total=3),
-            vis.steps(
-                "plan",
-                steps=[
-                    {"id": "build", "label": "Build"},
-                    {"id": "push", "label": "Push image"},
-                    {"id": "smoke", "label": "Smoke test"},
-                ],
-            ),
-            vis.status(
-                "why",
-                f"Rolling `deploy.sh` at **{target}** — build, push, smoke test.",
-                is_aside=True,
+            vis.row(
+                "reading",
+                vis.steps(
+                    "plan",
+                    steps=[
+                        {"id": "build", "label": "Build"},
+                        {"id": "push", "label": "Push image"},
+                        {"id": "smoke", "label": "Smoke test"},
+                    ],
+                ),
+                vis.status(
+                    "why",
+                    f"Rolling `deploy.sh` at **{target}** — build, push, smoke test.",
+                ),
             ),
             vis.output("tail", label="deploy.sh"),
         ],
@@ -763,14 +765,19 @@ shortcut refuses and names both ids rather than guessing. A view can also grow:
 `view.add(vis.table("failures", columns=[...]), after="tail")` mounts a node a
 run only discovers it needs, and `view.drop("failures")` takes it away.
 
-**Where a node stands is one key on the node: `is_aside=True`.** A node declared
-aside stands BESIDE the node declared before it wherever there is room — the
-terminal splits the band into columns, a wide phone splits the row, a narrow one
-stacks, and the document lists them in order. It is declared once and no op can
-move it; a layout that jumps under the eye of whoever is reading it is worse than
-no layout at all. That is how a paragraph stands to the right of the table it
-explains: `vis.status("why", "…", is_aside=True)` declared right after
-`vis.table("hosts", …)`.
+**Where nodes stand is the form's own layout vocabulary, and a live view speaks
+it: `vis.row(...)` and `vis.column(...)`** — the same builders a question arranges
+its fields with, with one difference: a view's group carries an id, because every
+node in a view is addressable. A row stands its children side by side wherever
+there is room — the terminal splits the band into columns, a wide phone splits the
+row, a narrow one stacks, and the document lists them in order, because a row is an
+ARRANGEMENT and not content. Layout is declared once and no op moves it; a layout
+that jumps under the eye of whoever is reading it is worse than no layout at all.
+That is how a paragraph stands to the right of the table it explains:
+`vis.row("reading", vis.table("hosts", ...), vis.status("why", "..."))`. A group is
+part of the tree it arranges: `view.add(vis.stat("counts"), after="hosts")` lands
+inside the row that holds `hosts`, and `view.drop("reading")` takes the nodes it
+arranged with it.
 
 **Every human-facing string takes inline markdown** — `` `code` ``, `**bold**`,
 `_italic_`, a link. Both surfaces paint it: the terminal styles the runs in place,

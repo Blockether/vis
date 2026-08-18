@@ -138,6 +138,40 @@
                                  #(patched v {:op :append :node-id "t" :rows [(row "a" "A" "1")]}))
                                "no such node"))))
   (it
+    "grows and drops a node inside a ROW, because a group is layout — not another address space"
+    (let
+      [v
+       (view
+         {:id "state" :type :status :text "queued" :tone :idle}
+         {:id "reading" :type :group :direction :row :fields [(log-node) (table-node :insertion)]})
+
+       beside
+       (fn [w]
+         (mapv :id (:fields (second (:nodes w)))))
+
+       grown
+       (patched v
+                {:op :add-node
+                 :after "log"
+                 :node-spec {:id "extra" :type :status :text "scanning" :tone :running}})
+
+       written
+       (patched grown {:op :append :node-id "t" :rows [(row "a" "A" "1")]})
+
+       cut
+       (patched v {:op :remove-node :node-id "reading"})]
+
+      (expect (= ["log" "extra" "t"] (beside grown))
+              "`after` names a SIBLING, so the node lands in that sibling's own row")
+      (expect (nil? (hs/live-view-error grown)))
+      (expect (= ["a"] (mapv :id (:rows (last (:fields (second (:nodes written)))))))
+              "and a patch reaches a nested node by its id alone")
+      (expect (= ["state"] (mapv :id (:nodes cut)))
+              "dropping a row takes the nodes it was holding with it")
+      (expect (str/includes? (refusal
+                               #(patched cut {:op :append :node-id "t" :rows [(row "b" "B" "2")]}))
+                             "no such node"))))
+  (it
     "refuses a table past its bound with the bound, the node and the log named — and trims nothing"
     (let
       [v
@@ -334,6 +368,22 @@
 
         (expect (= ["a" "b"] (mapv :id (:rows (node view "t")))))
         (expect (= [{:node-id "t" :items 1}] elided))))
+  (it
+    "FLATTENS the rows a surface arranges, because the model reads content, not layout"
+    (let
+      [v
+       (view
+         {:id "state" :type :status :text "queued" :tone :idle}
+         {:id "reading" :type :group :direction :row :fields [(log-node) (table-node :insertion)]})
+
+       md
+       (live/->markdown v)]
+
+      (expect (= ["state" "log" "t"] (mapv :id (:nodes (:view (live/picture v)))))
+              "a group is not a node the model reads — its children are")
+      (expect (not (str/includes? md "reading")))
+      (expect (= md (live/->markdown (:view (live/parse-markdown md))))
+              "so the document read back renders identically, flat")))
   (it
     "applies the order the table declared and then says `insertion`, so mounting the picture again cannot sort it twice"
     (let

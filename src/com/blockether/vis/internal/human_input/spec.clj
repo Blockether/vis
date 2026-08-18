@@ -138,7 +138,9 @@
    carries already paints INLINE markdown, so code spans, bold and italic need
    no node of their own), `button`/`field` (a view that ASKS is a form; blocking
    belongs there), `spinner` (a `progress` with a nil value already means
-   indeterminate), `tree` (no caller)."
+   indeterminate), `tree` (no caller). Arranging nodes is refused as a type
+   too: a view lays its nodes out with the form's own [[group-type]], so `row`
+   and `column` mean ONE thing on every surface."
   {"status" :status     ; one line, REPLACED: what is happening right now
    "progress" :progress ; a fraction, or indeterminate
    "stat" :stat         ; label -> value counters upserted by id: the score
@@ -240,16 +242,25 @@
 (def live-link-keys "Every key one link may carry." #{:id :label :target-kind :target :tone})
 (def live-sorted-keys "Every key a `{:by …}` table order may carry." #{:by :dir})
 
+(def live-group-keys
+  "Every key a live layout GROUP may carry — the request's own [[group-type]]
+   node, reused verbatim rather than reinvented, so a `row` arranges the same way
+   whether a human is answering it or watching it.
+
+   No `:name`: a group of a VIEW holds no answer, so there is nothing to key."
+  #{:id :type :label :direction :fields})
+
 (def live-node-keys
   "Every key a live NODE may be written with, whatever its type. Closed as one
    set for the same reason [[field-keys]] is: the parser derives the snake_case
    spellings from it, so no key is written down twice."
   #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
     :columns :rows :max-rows :order :links
-    ;; DECLARED once and never `set` — it is absent from every op in
-    ;; [[live-op-key-sets]]: WHERE a node stands, beside the node declared
-    ;; before it, so the layout a reader learned cannot jump while they read.
-    :is-aside
+    ;; A layout GROUP's own two keys: which way its children run, and the
+    ;; children themselves. DECLARED once and never `set` — both are absent from
+    ;; every op in [[live-op-key-sets]], so the arrangement a reader learned
+    ;; cannot jump around while they are reading it.
+    :direction :fields
     ;; ENGINE stamp, never written in a spec: how many lines a `:log`'s RECORD
     ;; holds, so `… N earlier lines` is counted rather than guessed.
     :total-lines})
@@ -788,7 +799,6 @@
 (s/def ::done nat-int?)
 (s/def ::total pos-int?)
 (s/def ::align (set (vals live-aligns)))
-(s/def ::is-aside boolean?)                                 ; stands BESIDE the node before it, where a surface has the room
 (s/def ::cells (s/coll-of string? :kind vector?))
 (s/def ::value-text string?)                                ; a stat's value AS SHOWN ("3.4 MB/s")
 (s/def ::target non-blank-string?)                          ; attachment id, workspace path, or url
@@ -889,13 +899,23 @@
   [_]
   (s/keys :req-un [::id ::type ::columns ::rows ::max-rows ::order] :opt-un [::label]))
 (defmethod live-node-form :link [_] (s/keys :req-un [::id ::type ::links] :opt-un [::label]))
+;; Layout is the request's own group, so a view arranges its work with the
+;; vocabulary the form already speaks. `::type` is deliberately absent from the
+;; keys checked here, exactly as it is on [[::group]]: `:group` belongs to the
+;; layout vocabulary, not to either list of leaves.
+(defmethod live-node-form group-type
+  [_]
+  (s/and #(closed? live-group-keys %)
+         (s/keys :req-un [::id ::direction :live-view/fields] :opt-un [::label])))
 
 (defn- live-node-typed?
-  "A live node says so in its own `:type`. Spelled out because [[::type]] is the
-   union of both vocabularies — the one key both kinds of node dispatch on — and
-   nothing but this stops a form field from being read as a node of a view."
+  "A live node says so in its own `:type`: one of [[live-node-types]], or the
+   form's [[group-type]] when the node only ARRANGES the ones inside it. Spelled
+   out because [[::type]] is the union of both vocabularies — the one key both
+   kinds of node dispatch on — and nothing but this stops a form field from being
+   read as a node of a view."
   [{:keys [type]}]
-  (contains? (set (vals live-node-types)) type))
+  (or (contains? (set (vals live-node-types)) type) (= group-type type)))
 
 (defn- ordered-by-declared-column?
   "A `{:by \"col\"}` order names a column the table DECLARES. Refused here, at
@@ -903,21 +923,42 @@
   [{:keys [type columns order]}]
   (or (not= :table type) (not (map? order)) (contains? (set (map :id columns)) (:by order))))
 
+;; The children of a live group are live NODES, while [[::fields]] is the FORM
+;; tree's children — so a group's `:fields` is spelled under its own spec name
+;; and `s/keys` checks it against the right vocabulary.
+(s/def :live-view/fields (s/and (s/coll-of ::live-node :kind vector?) non-empty?))
+
+(defn- layout-only-when-grouped?
+  "Only a group arranges. `:direction` or `:fields` on a leaf would be layout no
+   painter reads, so it is refused where it was written rather than dropped."
+  [{:keys [type] :as node}]
+  (or (= group-type type) (and (not (contains? node :direction)) (not (contains? node :fields)))))
+
 (s/def ::live-node
   (s/and #(closed? live-node-keys %)
          live-node-typed?
-         ;; WHERE a node stands is one key for every type — the forms below say
-         ;; what a node IS, and no type may spell its own placement.
-         (s/keys :opt-un [::is-aside])
+         layout-only-when-grouped?
          (s/multi-spec live-node-form :type)
          ordered-by-declared-column?))
 
+(defn- live-tree
+  "Every node of a view depth first, the children of a layout group included. The
+   two laws that hold across the WHOLE view — ids are unique, and a view may only
+   declare so many nodes — count the tree rather than the top row."
+  [nodes]
+  (into []
+        (mapcat (fn [node]
+                  (cons node (live-tree (:fields node)))))
+        nodes))
+
 ;; `::id` is the ADDRESS: chosen by the extension, unique inside the view, and
-;; named by every patch. Two tables are two ids, not two views.
+;; named by every patch. Two tables are two ids, not two views. A group is
+;; addressed the same way: `add-node :after` and `remove-node` name it by id.
 (s/def ::nodes
-  (s/and (s/coll-of ::live-node :kind vector? :max-count (long (:max-nodes view-defaults)))
+  (s/and (s/coll-of ::live-node :kind vector?)
          non-empty?
-         #(apply distinct? (map :id %))))
+         #(<= (count (live-tree %)) (long (:max-nodes view-defaults)))
+         #(apply distinct? (map :id (live-tree %)))))
 
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)

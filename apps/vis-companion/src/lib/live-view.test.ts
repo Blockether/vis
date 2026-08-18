@@ -48,12 +48,17 @@ function patched(view: LiveView, seq: number, ops: unknown[], firstSeq = seq): L
   return applyLivePatch(view, frame(view, seq, ops, firstSeq));
 }
 
+/** Every node the view PAINTS, rows flattened — the engine's own `live/leaf-nodes`. */
+function leaves(nodes: LiveNode[]): LiveNode[] {
+  return nodes.flatMap((node) => (node.type === 'group' ? leaves(node.fields) : [node]));
+}
+
 function nodeOfType<K extends LiveNode['type']>(
   view: LiveView,
   id: string,
   type: K,
 ): Extract<LiveNode, { type: K }> {
-  const found = view.nodes.find((node) => node.id === id);
+  const found = [...view.nodes, ...leaves(view.nodes)].find((node) => node.id === id);
   if (!found || found.type !== type) throw new Error(`the view has no ${type} node ${id}`);
   return found as Extract<LiveNode, { type: K }>;
 }
@@ -64,24 +69,14 @@ describe('a live view read off the wire', () => {
   it('reads the engine fixture node for node, in the order it was declared', () => {
     const view = opened();
     expect(view.title).toBe('Fleet scan');
-    expect(ids(view)).toEqual([
-      'now',
-      'swept',
-      'score',
-      'phases',
-      'tail',
-      'hosts',
-      'why',
-      'links',
-    ]);
+    expect(ids(view)).toEqual(['now', 'swept', 'score', 'phases', 'tail', 'reading', 'links']);
     expect(view.nodes.map((node) => node.type)).toEqual([
       'status',
       'progress',
       'stat',
       'steps',
       'log',
-      'table',
-      'status',
+      'group',
       'link',
     ]);
     expect(nodeOfType(view, 'hosts', 'table').rows.map((row) => row.id)).toEqual(['db-1', 'db-2']);
@@ -92,14 +87,16 @@ describe('a live view read off the wire', () => {
     });
   });
 
-  // WHERE a node stands is the run's declaration, carried by no op: the engine
-  // stamps it once and the app reads it back, so both surfaces put the same
-  // sentence beside the same table.
-  it('reads which node stands beside the one before it', () => {
+  // WHERE a node stands is the run's declaration, carried by no op: a view lays
+  // itself out with the FORM's own group, so both surfaces put the same sentence
+  // beside the same table and neither guesses.
+  it('reads the row that stands two nodes side by side', () => {
     const view = opened();
-    expect(nodeOfType(view, 'why', 'status').is_aside).toBe(true);
-    expect(nodeOfType(view, 'hosts', 'table').is_aside).toBeUndefined();
-    expect(view.nodes.filter((node) => node.is_aside).map((node) => node.id)).toEqual(['why']);
+    const row = nodeOfType(view, 'reading', 'group');
+    expect(row.direction).toBe('row');
+    expect(row.fields.map((node) => node.id)).toEqual(['hosts', 'why']);
+    expect(ids(view)).not.toContain('hosts');
+    expect(leaves(view.nodes).map((node) => node.id)).toContain('why');
   });
 
   // An app that paints half a node paints a lie. A node it cannot read is
@@ -178,7 +175,27 @@ describe('a patch frame', () => {
       { op: 'add-node', after: 'now', node_spec: { id: 'queued', type: 'status', text: 'Queued' } },
       { op: 'remove-node', node_id: 'links' },
     ]);
-    expect(ids(view)).toEqual(['now', 'queued', 'swept', 'score', 'phases', 'tail', 'hosts', 'why']);
+    expect(ids(view)).toEqual(['now', 'queued', 'swept', 'score', 'phases', 'tail', 'reading']);
+    // A newcomer lands in the list its sibling lives in, so naming a node inside
+    // a row grows THAT row and not the column the view itself stands in.
+    const grown = patched(view, 2, [
+      { op: 'add-node', after: 'hosts', node_spec: { id: 'note', type: 'status', text: 'db-2 only' } },
+    ]);
+    expect(nodeOfType(grown, 'reading', 'group').fields.map((node) => node.id)).toEqual([
+      'hosts',
+      'note',
+      'why',
+    ]);
+    // …and dropping a row takes the nodes it arranges with it.
+    const dropped = patched(view, 2, [{ op: 'remove-node', node_id: 'reading' }]);
+    expect(leaves(dropped.nodes).map((node) => node.id)).toEqual([
+      'now',
+      'queued',
+      'swept',
+      'score',
+      'phases',
+      'tail',
+    ]);
   });
 
   // The journal is re-read on every reconnect, so the same frame arrives twice.

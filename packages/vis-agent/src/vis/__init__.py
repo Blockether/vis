@@ -762,16 +762,30 @@ def option(value, label=None):
     return {"value": value} if label is None else {"value": value, "label": label}
 
 
+def _group(direction, fields):
+    # A group answers nothing and never appears in `values`, which stays flat
+    # however deep the tree goes. A LEADING STRING is the group's id: a live view
+    # patches by id and `after=` names a group too, so the same builder serves a
+    # form (no id needed) and a live view (an id required).
+    group = {"type": "group", "direction": direction}
+    if fields and isinstance(fields[0], str):
+        group["id"] = fields[0]
+        fields = fields[1:]
+    group["fields"] = list(fields)
+    return group
+
+
 def row(*fields):
-    # Lay these nodes out side by side. A group answers nothing and never
-    # appears in `values`, which stays flat however deep the tree goes.
-    return {"type": "group", "direction": "row", "fields": list(fields)}
+    # Lay these nodes out side by side: `vis.row(vis.text("host"), vis.text("port"))`
+    # on a form, `vis.row("reading", vis.table("hosts", ...), vis.status("why"))`
+    # in a live view.
+    return _group("row", fields)
 
 
 def column(*fields):
     # Stack these nodes, the default arrangement: worth saying out loud inside a
     # `row`.
-    return {"type": "group", "direction": "column", "fields": list(fields)}
+    return _group("column", fields)
 
 
 def heading(text):
@@ -1065,8 +1079,18 @@ class LiveView:
             return
         self._nodes = {}
         self._order = []
+        self._index(nodes)
+
+    def _index(self, nodes):
+        # A group is LAYOUT: it holds no items and takes no op, so a row lends its
+        # place in the order to the nodes it arranges and never answers itself.
         for node in nodes:
-            if isinstance(node, dict) and node.get("id"):
+            if not isinstance(node, dict) or not node.get("id"):
+                continue
+            children = node.get("fields")
+            if isinstance(children, list):
+                self._index(children)
+            else:
                 self._nodes[str(node["id"])] = str(node.get("type") or "")
                 self._order.append(str(node["id"]))
 
@@ -1254,9 +1278,11 @@ class LiveView:
             op["after"] = str(after)
         self._push(op)
         self.flush()
-        self._nodes[str(node.get("id"))] = str(node.get("type") or "")
-        self._order.append(str(node.get("id")))
-        return self.node(node.get("id"))
+        self._index([node])
+        node_id = str(node.get("id"))
+        # Adding a ROW hands back the view: layout takes no op, and the nodes it
+        # arranged are addressable by their own ids.
+        return self.node(node_id) if node_id in self._nodes else self
 
     def drop(self, node_id):
         """Drop a whole node, its items with it."""
@@ -1369,10 +1395,10 @@ def live(title, nodes, **options):
 # here talks to the host, and `vis.live` is what carries it to the engine that
 # judges it.
 #
-# Every builder also takes `is_aside=True` — the one key that says WHERE a node
-# stands: beside the node declared before it where the surface has room, stacked
-# where it does not. It is declared once and no op carries it, so a layout never
-# rearranges itself while a human is reading it.
+# Layout is the FORM's own vocabulary, not a second one: `vis.row("reading",
+# table, status)` stands its nodes side by side and `vis.column(...)` stacks them,
+# with a live group taking the id every op addresses. It is DECLARED once and no
+# op carries it, so a layout never rearranges itself while a human is reading it.
 
 
 def _live_node(type_name, node_id, spec):

@@ -39,6 +39,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.columns :as columns]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -363,6 +364,19 @@
                        (max (long w) (long (get previous idx 0)))))
         desired))
 
+(def ^:private table-frame
+  "The glyphs a table is drawn with. A live table wears the same box the rest of
+   the TUI's tables wear, so the band reads it as ONE block instead of as a
+   header and some lines that happen to line up."
+  {:top ["┌" "┬" "┐"] :mid ["├" "┼" "┤"] :bottom ["└" "┴" "┘"]})
+
+(defn- table-chrome
+  "Columns a boxed table spends on its own frame: a rail at every column edge and
+   a space of air on each side of every cell. Measuring and painting read this
+   ONE number, so a table fitted to the band lands exactly on its right rail."
+  ^long [n]
+  (+ 1 (* 3 (max 1 (long n)))))
+
 (defn- fitted-widths
   "`widths` squeezed into `text-w` by taking cells off the WIDEST column first, so
    a narrow terminal costs the one long free-text column and not the four short
@@ -375,7 +389,7 @@
      (count widths)
 
      chrome
-     (+ 2 (* 3 (max 0 (dec n))))
+     (table-chrome n)
 
      room
      (max n (- (long text-w) chrome))]
@@ -404,7 +418,7 @@
      (count widths)
 
      chrome
-     (+ 2 (* 3 (max 0 (dec n))))
+     (table-chrome n)
 
      slack
      (- (long text-w) chrome (long (reduce + 0 (map long widths))))]
@@ -457,26 +471,39 @@
       (conj (vec (run-segments cut fg styles)) {:text pad}))))
 
 (defn- table-segments
-  "One table line — cells padded to their columns and separated by the same `│`
-   the rest of the TUI's tables use, kept in the chrome's own dim ink so a toned
-   row does not drag the rules along with it."
+  "One table line INSIDE its frame — cells padded to their columns, a rail at
+   every edge, all of it in the chrome's own dim ink so a toned row does not drag
+   the box along with it."
   [widths cells aligns fg styles]
-  (conj (into [{:text " "}]
+  (conj (into [{:text "│ " :fg t/dialog-hint}]
               (comp (map (fn [[runs w align]]
                            (cell-segments runs w align fg styles)))
                     (interpose [{:text " │ " :fg t/dialog-hint}])
                     cat)
               (map vector cells widths aligns))
-        {:text " "}))
+        {:text " │" :fg t/dialog-hint}))
+
+(defn- span-segments
+  "A line that spans the whole table inside its frame: what a table says when it
+   holds nothing yet."
+  [widths text fg styles]
+  (let [inner (+ (long (reduce + 0 (map long widths))) (* 3 (max 0 (dec (count widths)))))]
+    [{:text "│ " :fg t/dialog-hint}
+     {:text (p/pad-right (p/ellipsize (str text) inner) inner) :fg fg :styles (vec styles)}
+     {:text " │" :fg t/dialog-hint}]))
 
 (defn- rule-line
-  [widths]
-  (str " "
-       (str/join "─┼─"
-                 (map (fn [w]
-                        (apply str (repeat (long w) "─")))
-                      widths))
-       " "))
+  "One frame line of a table: the corner glyphs `edge` names and a dash for every
+   column the cells occupy, the pads included, so the rails of two lines stand in
+   the same columns."
+  [widths edge]
+  (let [[l m r] (get table-frame edge)]
+    (str l
+         (str/join m
+                   (map (fn [w]
+                          (apply str (repeat (+ 2 (long w)) "─")))
+                        widths))
+         r)))
 
 (defmulti ^:private node-rows
   "The rows ONE node contributes to the pane's single scroll surface — the whole
@@ -635,28 +662,44 @@
      line
      (fn [cells fg styles]
        (let [segments (table-segments ws cells aligns fg styles)]
-         {:segments segments :text (segment-line segments)}))]
+         {:segments segments :text (segment-line segments)}))
+
+     rule
+     (fn [edge]
+       {:kind :trule :node-id id :text (rule-line ws edge)})
+
+     ;; A rail between EVERY pair of rows: a live table is read while it fills,
+     ;; and the eye needs the line that says where one row's answer ends and the
+     ;; next one begins — especially when a cell wears a tone of its own.
+     body
+     (if (seq shown)
+       (into []
+             (comp (map-indexed (fn [idx row]
+                                  (let [is-fresh (contains? fresh (:id row))]
+                                    [(when (pos? (long idx)) (rule :mid))
+                                     (merge {:kind :trow
+                                             :node-id id
+                                             :item-id (:id row)
+                                             :tone (:tone row)
+                                             :is-fresh is-fresh}
+                                            (line (map-indexed (fn [col-idx _]
+                                                                 (md-runs (cell-of row col-idx)))
+                                                               columns)
+                                                  (tone-fg (:tone row))
+                                                  (if is-fresh [p/BOLD] [])))])))
+                   cat
+                   (remove nil?))
+             shown)
+       (let [segments (span-segments ws (empty-text :table) t/dialog-hint [p/ITALIC])]
+         [{:kind :empty :node-id id :segments segments :text (segment-line segments)}]))]
 
     (with-meta (cond->
-                 (into [(merge {:kind :thead :node-id id}
-                               (line (mapv #(md-runs (:label %)) columns) t/dialog-hint [p/BOLD]))
-                        {:kind :trule :node-id id :text (rule-line ws)}]
-                       (map (fn [row]
-                              (let [is-fresh (contains? fresh (:id row))]
-                                (merge {:kind :trow
-                                        :node-id id
-                                        :item-id (:id row)
-                                        :tone (:tone row)
-                                        :is-fresh is-fresh}
-                                       (line (map-indexed (fn [idx _]
-                                                            (md-runs (cell-of row idx)))
-                                                          columns)
-                                             (tone-fg (:tone row))
-                                             (if is-fresh [p/BOLD] []))))))
-                       shown)
-                 (empty? ordered)
-                 (conj {:kind :empty :node-id id :text (empty-text :table)})
-
+                 (-> [(rule :top)
+                      (merge {:kind :thead :node-id id}
+                             (line (mapv #(md-runs (:label %)) columns) t/dialog-hint [p/BOLD]))
+                      (rule :mid)]
+                     (into body)
+                     (conj (rule :bottom)))
                  (pos? (long behind))
                  (conj (more-row id behind "row")))
       {:widths {id measured}})))
@@ -681,22 +724,66 @@
         (conj (more-row id behind "link"))))
     [{:kind :empty :node-id id :text (empty-text :link)}]))
 
-(def ^:private aside-gutter "Columns of air between two nodes standing side by side." 2)
-
-(def ^:private aside-min-w
+(def ^:private min-column-w
   "The narrowest column a node may be laid into. Under it the terminal has no room
-   for two of anything and the group STACKS: `:is-aside` says where a node stands
-   when there is room, never that a surface must cram."
+   for two of anything and a `row` group STACKS: a row says where its nodes stand
+   when there IS room, never that a surface must cram."
   24)
 
+(defn- stacked-rows
+  "Sections one under the next, a row of air between them — what a `column` group
+   paints, what a view's own nodes do, and what a band too narrow to split falls
+   back to."
+  [sections]
+  (into []
+        (comp (map-indexed (fn [idx rows]
+                             (if (pos? (long idx)) (into [{:kind :blank}] rows) rows)))
+              cat)
+        sections))
+
+(defn- split-rows
+  "Sections side by side: [[columns/zip-columns]] lines them up line for line, and
+   the composite row takes its anchor from the first cell that names a node, so
+   the reading position still belongs to a node."
+  [sections]
+  (mapv (fn [row]
+          (let [lead (first (filter :node-id (:cells row)))]
+            (assoc row
+              :node-id (:node-id lead)
+              :item-id (:item-id lead))))
+        (columns/zip-columns sections)))
+
 (defn- node-section
-  "One node's own rows: its label, then what the node paints, `text-w` columns
-   wide. The row of air between sections belongs to the GROUP, not to the node, so
-   two nodes standing side by side start on the same line."
+  "One node's rows, `text-w` columns wide: its label, then what the node paints.
+
+   A LAYOUT GROUP paints its CHILDREN instead — side by side when it is a `:row`
+   and every column would still be at least [[min-column-w]] wide, one under the
+   next otherwise. That is how a table gets prose down its right-hand side, and
+   how the same view stays readable on a terminal half as wide. Groups nest, so
+   the two directions compose without another rule, and they are the FORM's own
+   groups: one layout vocabulary, one painter, [[columns/cell-width]] deciding
+   how wide a column is for both.
+
+   The row of air between two sections belongs to whoever stacks them, never to
+   the node, so two nodes standing side by side start on the same line."
   [node ctx fresh text-w]
   (let
-    [rows
-     (node-rows node (ctx node text-w))
+    [children
+     (not-empty (:fields node))
+
+     cell-w
+     (when children (columns/cell-width text-w (count children)))
+
+     is-split
+     (boolean (and children (= :row (:direction node)) (>= (long cell-w) (long min-column-w))))
+
+     parts
+     (when children (mapv #(node-section % ctx fresh (if is-split cell-w text-w)) children))
+
+     body
+     (cond (nil? children) (node-rows node (ctx node text-w))
+           is-split (split-rows parts)
+           :else (stacked-rows parts))
 
      label
      (flat-text (:label node))]
@@ -709,97 +796,16 @@
                         :is-fresh (contains? (:nodes fresh) (:id node))})
 
                  :always
-                 (into rows))
-      (meta rows))))
-
-(defn- grouped
-  "`nodes` gathered into the groups a surface lays out TOGETHER: a node that
-   declared `:is-aside` joins the group of the node before it, every other node
-   opens one. The first node cannot be an aside — nothing stands to the left of
-   it — so it opens a group whatever it declared."
-  [nodes]
-  (reduce (fn [groups node]
-            (if (and (seq groups) (:is-aside node))
-              (conj (pop groups) (conj (peek groups) node))
-              (conj groups [node])))
-          []
-          nodes))
-
-(defn- zipped
-  "Planned columns as ONE row list: row for row, each column's row in its own
-   cell, a column that ran out of rows leaving air. The row anchors on the first
-   cell that names a node, so the reading position still belongs to a node."
-  [columns widths]
-  (let [height (reduce max 0 (map count columns))]
-    (mapv (fn [idx]
-            (let
-              [cells (mapv #(get % idx) columns)
-               lead (first (filter :node-id cells))]
-
-              {:kind :columns
-               :node-id (:node-id lead)
-               :item-id (:item-id lead)
-               :cells cells
-               :widths widths}))
-          (range height))))
-
-(defn- stacked
-  "A group's nodes one under the next, a row of air between them — what a view
-   with no aside in it paints, and what a band too narrow to split falls back to."
-  [group ctx fresh text-w]
-  (let
-    [sections (map-indexed (fn [idx node]
-                             (let [rows (node-section node ctx fresh text-w)]
-                               (with-meta (cond-> []
-                                            (pos? (long idx))
-                                            (conj {:kind :blank})
-
-                                            :always
-                                            (into rows))
-                                 (meta rows))))
-                           group)]
-    (with-meta (into [] cat sections)
-      {:widths (reduce merge {} (map (comp :widths meta) sections))})))
-
-(defn- group-rows
-  "One group's rows: SIDE BY SIDE when it holds an aside and every column would
-   still be at least [[aside-min-w]] wide, stacked otherwise. This is how a table
-   gets prose down its right-hand side — and how the same view stays readable on a
-   terminal half as wide."
-  [group ctx fresh text-w]
-  (let
-    [k
-     (count group)
-
-     room
-     (- (long text-w) (* (long aside-gutter) (dec k)))
-
-     each
-     (quot room (max 1 k))]
-
-    (if (or (= 1 k) (< each (long aside-min-w)))
-      (stacked group ctx fresh text-w)
-      (let
-        [;; The remainder goes to the FIRST column: it is the node the aside was
-         ;; declared beside, and the annotated node is the wider one.
-         widths
-         (into [(+ each (rem room k))] (repeat (dec k) each))
-
-         columns
-         (mapv (fn [node w]
-                 (node-section node ctx fresh w))
-               group
-               widths)]
-
-        (with-meta (zipped columns widths)
-          {:widths (reduce merge {} (map (comp :widths meta) columns))})))))
+                 (into body))
+      {:widths (reduce merge {} (map (comp :widths meta) (or parts [body])))})))
 
 (defn plan
   "The pane's whole paint plan, `text-w` columns wide: one entry per painted row,
    nodes in DECLARATION order, each under its own label with a row of air above
-   it. A node that declared `:is-aside` stands BESIDE the one before it wherever
-   the band is wide enough for both. Carries `{:widths …}` as metadata — what the
-   tables measured this pass, on its way back into the pane through [[painted]]."
+   it. A node the run wrapped in a `row` group stands BESIDE its siblings wherever
+   the band is wide enough for all of them. Carries `{:widths …}` as metadata —
+   what the tables measured this pass, on its way back into the pane through
+   [[painted]]."
   [pane text-w]
   (let
     [{:keys [view widths fresh expanded]}
@@ -818,18 +824,9 @@
            (md-lines (:description view) text-w))
 
      sections
-     (map-indexed (fn [idx group]
-                    (let [rows (group-rows group ctx fresh (long text-w))]
-                      (with-meta (cond-> []
-                                   (pos? (long idx))
-                                   (conj {:kind :blank})
+     (mapv #(node-section % ctx fresh (long text-w)) (:nodes view))]
 
-                                   :always
-                                   (into rows))
-                        (meta rows))))
-                  (grouped (:nodes view)))]
-
-    (with-meta (into head cat sections)
+    (with-meta (into head (stacked-rows sections))
       {:widths (reduce merge {} (map (comp :widths meta) sections))})))
 
 ;;; ── Where the viewport sits ─────────────────────────────────────────────────
@@ -1192,11 +1189,13 @@
     ;; table beside a paragraph is painted by the code that paints them alone.
     :columns
     (do (fill! g left row inner-w t/dialog-fg)
-        (reduce (fn [^long x [cell w]]
-                  (when cell (paint-entry! g (+ (long left) x) row (+ (long w) 3) view-id cell))
-                  (+ x (long w) (long aside-gutter)))
-                0
-                (map vector (:cells entry) (:widths entry))))
+        (reduce (fn [pos [[x width] cell]]
+                  (let
+                    [here (when cell
+                            (paint-entry! g (+ (long left) (long x)) row width view-id cell))]
+                    (or pos here)))
+                nil
+                (map vector (columns/slots inner-w (count (:cells entry))) (:cells entry))))
 
     :collapsed
     (paint-plain! g left row inner-w (tone-fg (:tone entry) t/dialog-hint) (:text entry))
@@ -1204,9 +1203,9 @@
     ;; Everything that is prose — the view's description, a status detail, a node
     ;; that holds nothing, the count of what the record kept — speaks in the dim
     ;; italic voice the rest of the TUI reserves for explanation.
-    (if-let [runs (:runs entry)]
-      (paint-runs! g left row inner-w t/dialog-hint [p/ITALIC] runs)
-      (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry)))))
+    (cond (:segments entry) (paint-segments! g left row inner-w (:segments entry))
+          (:runs entry) (paint-runs! g left row inner-w t/dialog-hint [p/ITALIC] (:runs entry))
+          :else (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry)))))
 
 (defn collapsed-row
   "The ONE line an older open view keeps above the band: its title and where it

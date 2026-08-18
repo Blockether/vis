@@ -4,7 +4,7 @@
     "tui",
     "app"
   ],
-  "id": "ea9e31b3-29f9-4ded-ada9-3d2f28c96b4a",
+  "id": "461e6b49-4a4e-4402-a6d7-991d6f293025",
   "nodes": [
     {
       "id": "now",
@@ -74,54 +74,60 @@
       "total_lines": 2
     },
     {
-      "id": "hosts",
-      "type": "table",
-      "label": "Hosts",
-      "columns": [
+      "id": "reading",
+      "type": "group",
+      "direction": "row",
+      "fields": [
         {
-          "id": "host",
-          "label": "Host"
-        },
-        {
-          "id": "state",
-          "label": "State"
-        },
-        {
-          "id": "findings",
-          "label": "Findings",
-          "align": "right"
-        }
-      ],
-      "rows": [
-        {
-          "id": "db-1",
-          "cells": [
-            "db-1",
-            "clean",
-            "0"
+          "id": "hosts",
+          "type": "table",
+          "label": "Hosts",
+          "columns": [
+            {
+              "id": "host",
+              "label": "Host"
+            },
+            {
+              "id": "state",
+              "label": "State"
+            },
+            {
+              "id": "findings",
+              "label": "Findings",
+              "align": "right"
+            }
           ],
-          "tone": "ok"
+          "rows": [
+            {
+              "id": "db-1",
+              "cells": [
+                "db-1",
+                "clean",
+                "0"
+              ],
+              "tone": "ok"
+            },
+            {
+              "id": "db-2",
+              "cells": [
+                "db-2",
+                "critical",
+                "1"
+              ],
+              "tone": "error"
+            }
+          ],
+          "max_rows": 5000,
+          "order": "insertion"
         },
         {
-          "id": "db-2",
-          "cells": [
-            "db-2",
-            "critical",
-            "1"
-          ],
-          "tone": "error"
+          "id": "why",
+          "type": "status",
+          "label": "Why",
+          "text": "`db-2` needs **openssl 3.0.13**: its `libssl` is two releases behind the rest of the fleet, so the scan stopped short of writing the report.",
+          "tone": "warn"
         }
-      ],
-      "max_rows": 5000,
-      "order": "insertion"
-    },
-    {
-      "id": "why",
-      "type": "status",
-      "label": "Why",
-      "is_aside": true,
-      "text": "`db-2` needs **openssl 3.0.13**: its `libssl` is two releases behind the rest of the fleet, so the scan stopped short of writing the report.",
-      "tone": "warn"
+      ]
     },
     {
       "id": "links",
@@ -145,7 +151,7 @@
   ],
   "title": "Fleet scan",
   "source": "vis-fleet",
-  "created_at": 1787033758509,
+  "created_at": 1787037266531,
   "session_id": "5f0f4d0e-2f6f-4c8e-9a0e-2f9a1c0b7d31",
   "timeout_ms": 0,
   "description": "3 hosts · started 12:04"

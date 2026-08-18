@@ -846,22 +846,27 @@
      :type "log"
      :label "Output"
      :lines ["db-1 · 0 critical" "db-2 · 1 critical (openssl)"]}
-    {:id "hosts"
-     :type "table"
-     :label "Hosts"
-     :columns [{:id "host" :label "Host"} {:id "state" :label "State"}
-               {:id "findings" :label "Findings" :align "right"}]
-     :rows [{:id "db-1" :cells ["db-1" "clean" "0"] :tone "ok"}
-            {:id "db-2" :cells ["db-2" "critical" "1"] :tone "error"}]}
-    ;; The one node that stands BESIDE the node before it, so the fixture
-    ;; carries the aside law and the inline marks a human string may hold.
-    {:id "why"
-     :type "status"
-     :is-aside true
-     :label "Why"
-     :tone "warn"
-     :text
-     "`db-2` needs **openssl 3.0.13**: its `libssl` is two releases behind the rest of the fleet, so the scan stopped short of writing the report."}
+    ;; The one ROW in the fixture: the table and the paragraph that explains it
+    ;; stand together, so a surface's layout is the ENGINE's projection and not
+    ;; the app's guess — and the sentence carries the inline marks a human
+    ;; string may hold.
+    {:id "reading"
+     :type "group"
+     :direction "row"
+     :fields
+     [{:id "hosts"
+       :type "table"
+       :label "Hosts"
+       :columns [{:id "host" :label "Host"} {:id "state" :label "State"}
+                 {:id "findings" :label "Findings" :align "right"}]
+       :rows [{:id "db-1" :cells ["db-1" "clean" "0"] :tone "ok"}
+              {:id "db-2" :cells ["db-2" "critical" "1"] :tone "error"}]}
+      {:id "why"
+       :type "status"
+       :label "Why"
+       :tone "warn"
+       :text
+       "`db-2` needs **openssl 3.0.13**: its `libssl` is two releases behind the rest of the fleet, so the scan stopped short of writing the report."}]}
     {:id "links"
      :type "link"
      :label "Elsewhere"
@@ -902,6 +907,11 @@
       (testing "the two minted values are still there, because the app keys on them"
         (is (some? (parse-uuid (get fixture "id"))))
         (is (pos-int? (get fixture "created_at"))))
-      (testing "and it holds one node of every kind the engine can send"
-        (is (= (set (keys hi-spec/live-node-types))
-               (set (map #(get % "type") (get fixture "nodes")))))))))
+      (testing "and it holds one node of every kind the engine can send, wherever it stands"
+        (is (= (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)
+               (set (map #(get % "type")
+                         (mapcat #(tree-seq map?
+                                            (fn [node]
+                                              (get node "fields"))
+                                            %)
+                                 (get fixture "nodes"))))))))))

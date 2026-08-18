@@ -18,9 +18,17 @@ function opened(): LiveView {
   return view;
 }
 
-/** The same view with ONE node replaced — a run in a different moment. */
+/** The same view with ONE node replaced, wherever a row put it — a run in a different moment. */
 function withNode(view: LiveView, node: LiveNode): LiveView {
-  return { ...view, nodes: view.nodes.map((existing) => (existing.id === node.id ? node : existing)) };
+  const swap = (nodes: LiveNode[]): LiveNode[] =>
+    nodes.map((existing) =>
+      existing.id === node.id
+        ? node
+        : existing.type === 'group'
+          ? { ...existing, fields: swap(existing.fields) }
+          : existing,
+    );
+  return { ...view, nodes: swap(view.nodes) };
 }
 
 function paint(props: Partial<Parameters<typeof LiveViewPanel>[0]> = {}) {
@@ -215,20 +223,33 @@ describe('stopping the run from the phone', () => {
 });
 
 describe('what a run says about its own layout', () => {
-  // `is_aside` is the run's statement, not the screen's guess: the sentence
-  // about the table shares the table's row wherever there is width for it.
-  it('stands a node beside the one it was declared after', () => {
+  // A view lays itself out with the FORM's own group: the row is the run's
+  // statement, not the screen's guess, and the terminal splits its band on it.
+  it('stands the nodes a row holds side by side', () => {
     paint();
     const list = screen.getByRole('status').querySelector('ul') as HTMLElement;
-    // Eight nodes, seven rows: `why` joined `hosts` instead of starting one.
+    // Seven top-level nodes, seven rows: `hosts` and `why` share the one the
+    // group holds them in instead of taking one each.
     expect(list.children.length).toBe(7);
     const beside = [...list.children].find((row) => row.textContent?.includes('Hosts')) as HTMLElement;
     expect(beside.textContent).toContain('Why');
-    expect(beside.className).toContain('sm:grid-flow-col');
+    expect(beside.innerHTML).toContain('sm:grid-flow-col');
     // …and the sentence beside a table is set as prose, by the app's ONE rule.
     expect(beside.innerHTML).toContain('text-justify');
     const alone = [...list.children].find((row) => row.textContent?.includes('Elsewhere')) as HTMLElement;
-    expect(alone.className).not.toContain('grid');
+    expect(alone.innerHTML).not.toContain('grid-flow-col');
+  });
+
+  // A table is READ across, so every cell is fenced: the eye needs the rail to
+  // keep a row together, and the terminal paints the same box.
+  it('draws the table as a box with a rule between every pair of rows', () => {
+    paint();
+    const table = screen.getByRole('table');
+    expect(table.className).toContain('border border-dialog-edge');
+    const cells = [...table.querySelectorAll('th, td')];
+    // Three columns over a header and two rows: nine cells, every one fenced.
+    expect(cells.length).toBe(9);
+    expect(cells.every((cell) => cell.className.includes('border border-dialog-edge'))).toBe(true);
   });
 
   it('paints the marks a human wrote, and nothing a block would bring', () => {
@@ -243,7 +264,9 @@ describe('what a run says about its own layout', () => {
 
   it('marks a table cell too, because a cell is a human string as well', () => {
     const view = opened();
-    const hosts = view.nodes.find((node) => node.id === 'hosts');
+    const hosts = view.nodes
+      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     paint({
       view: withNode(view, { ...hosts, rows: [{ ...hosts.rows[0], cells: ['`db-1`', 'clean', '0'] }] }),

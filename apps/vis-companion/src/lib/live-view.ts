@@ -40,6 +40,15 @@ export const LIVE_NODE_TYPES = [
   'link',
 ] as const;
 
+/**
+ * The one node that paints NOTHING of its own: it ARRANGES the nodes it holds,
+ * and it is the FORM's group verbatim (`human-input.spec/group-type-name`), so
+ * a run lays a view out with the same words it lays a question out with.
+ */
+export const LIVE_GROUP_TYPE = 'group';
+
+/** How a group stands what it holds (`human-input.spec/group-directions`). CLOSED. */
+export const LIVE_GROUP_DIRECTIONS = ['row', 'column'] as const;
 /** How a surface COLOURS one line, row, step or stat (`live-tones`). CLOSED. */
 export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
 
@@ -94,6 +103,7 @@ export type LiveReason = (typeof LIVE_REASONS)[number];
 export type LiveLinkTarget = (typeof LIVE_LINK_TARGETS)[number];
 export type LiveAlign = (typeof LIVE_ALIGNS)[number];
 export type LiveSortDir = (typeof LIVE_SORT_DIRS)[number];
+export type LiveGroupDirection = (typeof LIVE_GROUP_DIRECTIONS)[number];
 
 /** `insertion`, `newest-first`, or one DECLARED column, ties kept in insertion order. */
 export type LiveOrder = (typeof LIVE_ORDERS)[number] | { by: string; dir?: LiveSortDir };
@@ -102,13 +112,6 @@ interface LiveNodeBase {
   id: string;
   /** Absent on a bare status line: the sentence is its own label. */
   label?: string;
-  /**
-   * Stand BESIDE the node declared before this one, where the surface has room:
-   * a sentence next to the table it is about, counters next to their bar. The
-   * run declares it ONCE and no op carries it, so a layout never rearranges
-   * itself under a reader; a narrow screen stacks it anyway.
-   */
-  is_aside?: boolean;
 }
 
 /** One line that REPLACES itself — what the run is doing right now. */
@@ -197,7 +200,18 @@ export interface LiveLinkNode extends LiveNodeBase {
   links: LiveLink[];
 }
 
-export type LiveNode =
+/**
+ * Nodes standing side by side (`row`) or one under the other (`column`). The run
+ * declares an arrangement ONCE and no op carries it, so a layout never
+ * rearranges itself under a reader; a narrow screen stacks a row anyway.
+ */
+export interface LiveGroupNode extends LiveNodeBase {
+  type: 'group';
+  direction: LiveGroupDirection;
+  fields: LiveNode[];
+}
+/** Every node that PAINTS — what an op may name and what a surface draws. */
+export type LiveLeafNode =
   | LiveStatusNode
   | LiveProgressNode
   | LiveStatNode
@@ -205,6 +219,9 @@ export type LiveNode =
   | LiveLogNode
   | LiveTableNode
   | LiveLinkNode;
+
+/** A node either paints something, or arranges the nodes it holds. */
+export type LiveNode = LiveLeafNode | LiveGroupNode;
 
 export interface LiveView {
   id: string;
@@ -376,14 +393,22 @@ export function liveNodeFromWire(raw: unknown): LiveNode | null {
   if (!node) return null;
   const id = text(node.id);
   const type = text(node.type);
-  if (id === '' || !(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
-  // What every node carries whatever it paints: its address, its heading, and
-  // whether it stands beside the node before it.
-  const base = {
-    id,
-    label: optionalText(node.label),
-    ...(node.is_aside === true ? { is_aside: true as const } : {}),
-  };
+  if (id === '') return null;
+  // What every node carries whatever it paints: its address and its heading.
+  const base = { id, label: optionalText(node.label) };
+  // A group is a layout, not content: an empty one is a hole rather than an
+  // arrangement, so it never reaches the screen (`:live-view/fields`).
+  if (type === LIVE_GROUP_TYPE) {
+    const fields = liveNodesFromWire(node.fields);
+    if (fields.length === 0) return null;
+    return {
+      ...base,
+      type: 'group',
+      direction: node.direction === 'row' ? 'row' : 'column',
+      fields,
+    };
+  }
+  if (!(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
   switch (type as LiveNodeType) {
     case 'status':
       return {
@@ -427,6 +452,12 @@ export function liveNodeFromWire(raw: unknown): LiveNode | null {
   }
 }
 
+/** The nodes of a view or of a group, unpaintable ones dropped. */
+export function liveNodesFromWire(raw: unknown): LiveNode[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map(liveNodeFromWire)
+    .filter((node): node is LiveNode => node !== null);
+}
 /** One view, or `null` when it carries no id, no title or nothing to paint. */
 export function liveViewFromWire(raw: unknown): LiveView | null {
   const view = record(raw);
@@ -434,9 +465,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
   const id = text(view.id);
   const title = text(view.title).trim();
   if (id === '' || title === '') return null;
-  const nodes = Array.isArray(view.nodes)
-    ? view.nodes.map(liveNodeFromWire).filter((node): node is LiveNode => node !== null)
-    : [];
+  const nodes = liveNodesFromWire(view.nodes);
   // A view IS its nodes — `human-input.spec/::nodes` refuses an empty vector — so
   // a frame this app cannot paint a single node of is dropped rather than painted
   // as an empty box the operator would read as "nothing is happening here".
@@ -504,7 +533,7 @@ function appendKey(node: LiveNode): 'lines' | 'rows' | 'stats' | 'steps' | 'link
 }
 
 /** `set` MERGES the keys it carries onto the node (`live/apply-set`). */
-function applySet(node: LiveNode, op: Record<string, unknown>): LiveNode {
+function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   switch (node.type) {
     case 'status':
       return {
@@ -551,7 +580,7 @@ function applySet(node: LiveNode, op: Record<string, unknown>): LiveNode {
  * lets the section say how much of the story is behind what it shows. Every
  * other node upserts by id.
  */
-function applyAppend(node: LiveNode, op: Record<string, unknown>): LiveNode {
+function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   const key = appendKey(node);
   if (!key) return node;
   if (node.type === 'log') {
@@ -579,7 +608,7 @@ function applyAppend(node: LiveNode, op: Record<string, unknown>): LiveNode {
   }
 }
 
-function applyRemove(node: LiveNode, op: Record<string, unknown>): LiveNode {
+function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   switch (node.type) {
     case 'table':
       return { ...node, rows: withoutIds(node.rows, op.item_ids) };
@@ -595,7 +624,7 @@ function applyRemove(node: LiveNode, op: Record<string, unknown>): LiveNode {
 }
 
 /** `clear` empties a log's WINDOW, never its record (`live/apply-clear`). */
-function applyClear(node: LiveNode): LiveNode {
+function applyClear(node: LiveLeafNode): LiveNode {
   switch (node.type) {
     case 'log':
       return { ...node, lines: [] };
@@ -612,31 +641,104 @@ function applyClear(node: LiveNode): LiveNode {
   }
 }
 
+/** Every id in the tree, groups included (`live/node-ids`). */
+function treeIds(nodes: LiveNode[]): string[] {
+  return nodes.flatMap((node) =>
+    node.type === 'group' ? [node.id, ...treeIds(node.fields)] : [node.id],
+  );
+}
+
+/**
+ * The tree with the node this op names rewritten wherever it stands, or the SAME
+ * array when nothing matched — a frame naming a node that is gone must leave the
+ * picture, and React's identity with it, exactly where it was (`live/node-path`).
+ */
+function mapNode(
+  nodes: LiveNode[],
+  id: string,
+  rewrite: (node: LiveNode) => LiveNode,
+): LiveNode[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.id === id) {
+      const patched = rewrite(node);
+      changed = changed || patched !== node;
+      return patched;
+    }
+    if (node.type !== 'group') return node;
+    const fields = mapNode(node.fields, id, rewrite);
+    if (fields === node.fields) return node;
+    changed = true;
+    return { ...node, fields };
+  });
+  return changed ? next : nodes;
+}
+
+/**
+ * A new node lands in the list its `after` sibling lives in, so a run grows a
+ * row by naming what the newcomer stands beside (`live/apply-add-node`); `null`
+ * when no such sibling exists anywhere in the tree.
+ */
+function insertAfter(nodes: LiveNode[], after: string, node: LiveNode): LiveNode[] | null {
+  const at = nodes.findIndex((existing) => existing.id === after);
+  if (at >= 0) {
+    const next = nodes.slice();
+    next.splice(at + 1, 0, node);
+    return next;
+  }
+  for (let index = 0; index < nodes.length; index += 1) {
+    const child = nodes[index];
+    if (child.type !== 'group') continue;
+    const fields = insertAfter(child.fields, after, node);
+    if (!fields) continue;
+    const next = nodes.slice();
+    next[index] = { ...child, fields };
+    return next;
+  }
+  return null;
+}
+
+/** Dropping a group takes the nodes it arranges with it (`live/apply-remove-node`). */
+function dropNode(nodes: LiveNode[], id: string): LiveNode[] {
+  const kept = nodes.filter((node) => node.id !== id);
+  if (kept.length !== nodes.length) return kept;
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.type !== 'group') return node;
+    const fields = dropNode(node.fields, id);
+    if (fields === node.fields) return node;
+    changed = true;
+    return { ...node, fields };
+  });
+  return changed ? next : nodes;
+}
+
 function applyOp(view: LiveView, raw: unknown): LiveView {
   const op = record(raw);
   if (!op) return view;
   const name = text(op.op);
   if (name === 'add-node') {
     const node = liveNodeFromWire(op.node_spec);
-    if (!node || view.nodes.some((existing) => existing.id === node.id)) return view;
+    if (!node) return view;
+    // Ids are unique across the whole TREE, so a newcomer carrying an id the
+    // view already knows — its own children included — is refused, not merged.
+    const taken = new Set(treeIds(view.nodes));
+    if (treeIds([node]).some((id) => taken.has(id))) return view;
     const after = optionalText(op.after);
-    const at = after ? view.nodes.findIndex((existing) => existing.id === after) : -1;
-    if (at < 0) return { ...view, nodes: [...view.nodes, node] };
-    const nodes = view.nodes.slice();
-    nodes.splice(at + 1, 0, node);
-    return { ...view, nodes };
+    const grown = after ? insertAfter(view.nodes, after, node) : null;
+    return { ...view, nodes: grown ?? [...view.nodes, node] };
   }
   const nodeId = text(op.node_id);
   if (nodeId === '') return view;
   if (name === 'remove-node') {
-    const kept = view.nodes.filter((node) => node.id !== nodeId);
-    return kept.length === view.nodes.length ? view : { ...view, nodes: kept };
+    const kept = dropNode(view.nodes, nodeId);
+    return kept === view.nodes ? view : { ...view, nodes: kept };
   }
-  const at = view.nodes.findIndex((node) => node.id === nodeId);
-  if (at < 0) return view;
-  const node = view.nodes[at];
-  const patched =
-    name === 'set'
+  const nodes = mapNode(view.nodes, nodeId, (node) => {
+    // Layout is declared and no op carries it (`live-op-key-sets` names no
+    // group), so a frame naming a row leaves the arrangement where it stands.
+    if (node.type === 'group') return node;
+    return name === 'set'
       ? applySet(node, op)
       : name === 'append'
         ? applyAppend(node, op)
@@ -645,10 +747,8 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
           : name === 'clear'
             ? applyClear(node)
             : node;
-  if (patched === node) return view;
-  const nodes = view.nodes.slice();
-  nodes[at] = patched;
-  return { ...view, nodes };
+  });
+  return nodes === view.nodes ? view : { ...view, nodes };
 }
 
 /**

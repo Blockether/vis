@@ -104,6 +104,6 @@
   (it "teaches where a node stands and what a human-facing string may carry"
       (let [md (extending-md)]
         (doseq
-          [needle ["is_aside=True" "inline markdown" "wraps and justifies" "stay verbatim"
+          [needle ["vis.row(" "vis.column(" "inline markdown" "wraps and justifies" "stay verbatim"
                    "`Escape` or `Enter` sends the stop"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))

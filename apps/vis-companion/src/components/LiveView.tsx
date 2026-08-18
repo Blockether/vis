@@ -250,14 +250,14 @@ function TableRows({ node }: { node: LiveTableNode }) {
   const rows = orderedRows(node);
   return (
     <div className="-mx-1 overflow-x-auto">
-      <table className="w-full min-w-0 border-collapse font-mono text-chip">
+      <table className="w-full min-w-0 border-collapse border border-dialog-edge font-mono text-chip">
         <thead>
-          <tr className="border-b border-dialog-edge">
+          <tr>
             {node.columns.map((column) => (
               <th
                 key={column.id}
                 scope="col"
-                className={`px-1 py-1 font-bold uppercase tracking-[0.08em] text-dialog-hint ${
+                className={`border border-dialog-edge px-1.5 py-1 font-bold uppercase tracking-[0.08em] text-dialog-hint ${
                   column.align === 'right' ? 'text-right' : 'text-left'
                 }`}
               >
@@ -267,12 +267,22 @@ function TableRows({ node }: { node: LiveTableNode }) {
           </tr>
         </thead>
         <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td
+                className="border border-dialog-edge px-1.5 py-1"
+                colSpan={Math.max(1, node.columns.length)}
+              >
+                <Empty>{EMPTY_LINE.table}</Empty>
+              </td>
+            </tr>
+          )}
           {rows.map((row) => (
             <tr key={row.id} className={TONE_INK[row.tone]}>
               {node.columns.map((column, cell) => (
                 <td
                   key={column.id}
-                  className={`px-1 py-1 align-top ${
+                  className={`border border-dialog-edge px-1.5 py-1 align-top ${
                     column.align === 'right' ? 'text-right tabular-nums' : 'text-left'
                   }`}
                 >
@@ -283,7 +293,6 @@ function TableRows({ node }: { node: LiveTableNode }) {
           ))}
         </tbody>
       </table>
-      {rows.length === 0 && <Empty>{EMPTY_LINE.table}</Empty>}
     </div>
   );
 }
@@ -326,10 +335,14 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
 }
 
 /**
- * ONE node's own column: its name, then whatever it paints.
+ * ONE node, painted where its view put it.
  *
- * It is not a ROW — several nodes share a row when the later ones were declared
- * `is_aside` — so it owns no padding and no rule of its own.
+ * A GROUP paints nothing of its own: it stands the nodes it holds side by side
+ * (`row`) or one under the other (`column`) — the FORM's own layout vocabulary,
+ * declared once and carried by no op, so an arrangement never rearranges itself
+ * under a reader. It is the run's statement, and the terminal splits its band on
+ * the same key. A phone has no width to split, so below `sm` a row stacks; the
+ * reading order is the declared order either way.
  */
 function NodeCell({
   node,
@@ -338,6 +351,24 @@ function NodeCell({
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
 }) {
+  if (node.type === 'group') {
+    return (
+      <div className="min-w-0 space-y-1.5">
+        {node.label && <NodeLabel>{node.label}</NodeLabel>}
+        <div
+          className={
+            node.direction === 'row'
+              ? 'grid min-w-0 gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col'
+              : 'min-w-0 space-y-3'
+          }
+        >
+          {node.fields.map((child) => (
+            <NodeCell key={child.id} node={child} load={load} />
+          ))}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="min-w-0 space-y-1.5">
       {node.label && <NodeLabel>{node.label}</NodeLabel>}
@@ -355,25 +386,6 @@ function NodeCell({
       {node.type === 'link' && <LinkRows node={node} />}
     </div>
   );
-}
-
-/**
- * The nodes as ROWS: a node declared `is_aside` stands BESIDE the one before it,
- * so a run can put its sentence next to the table the sentence is about.
- *
- * That is the run's statement, not the screen's guess, and the terminal splits
- * its band on the same key. A phone has no width to split, so below `sm` every
- * cell is a row of its own — the reading order is the order the view declared
- * either way.
- */
-function nodeRows(nodes: LiveNode[]): LiveNode[][] {
-  const rows: LiveNode[][] = [];
-  for (const node of nodes) {
-    const last = rows[rows.length - 1];
-    if (node.is_aside && last) last.push(node);
-    else rows.push([node]);
-  }
-  return rows;
 }
 
 /**
@@ -468,18 +480,9 @@ export function LiveViewPanel({
       )}
       {error && <p className="border-b border-dialog-edge px-3 py-2 font-mono text-chip text-err">{error}</p>}
       <ul className="divide-y divide-dialog-edge">
-        {nodeRows(view.nodes).map((row) => (
-          <li
-            key={row[0].id}
-            className={`min-w-0 px-3 py-2.5 ${
-              row.length > 1
-                ? 'grid gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col'
-                : ''
-            }`}
-          >
-            {row.map((node) => (
-              <NodeCell key={node.id} node={node} load={load} />
-            ))}
+        {view.nodes.map((node) => (
+          <li key={node.id} className="min-w-0 px-3 py-2.5">
+            <NodeCell node={node} load={load} />
           </li>
         ))}
       </ul>

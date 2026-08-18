@@ -67,19 +67,49 @@
   {:log {:key :lines :max (:max-patch-lines spec/log-defaults)}
    :table {:key :rows :max (:max-patch-rows spec/table-defaults)}})
 
+(defn- node-tree
+  "Every node of the view depth first, the children of a layout group included.
+   Ids are unique across the whole tree, so this is what an ADDRESS is looked up
+   in."
+  [nodes]
+  (into []
+        (mapcat (fn [node]
+                  (cons node (node-tree (:fields node)))))
+        nodes))
+
+(defn- leaf-nodes
+  "Every node that PAINTS something, depth first. A layout group holds no state of
+   its own — it says where the nodes inside it stand — so the model and the
+   document read the same content whether a status was stood beside a table or
+   under it."
+  [nodes]
+  (into []
+        (mapcat (fn [node]
+                  (if (seq (:fields node)) (leaf-nodes (:fields node)) [node])))
+        nodes))
+
 (defn- node-ids
   "Every node id in the view, in paint order — what a refusal lists when an op
-   named an address that is not there."
+   named an address that is not there. Groups are in it: `add-node :after` and
+   `remove-node` speak to a row by id too."
   [view]
-  (mapv :id (:nodes view)))
+  (mapv :id (node-tree (:nodes view))))
 
-(defn- node-position
-  "Where `node-id` sits in the view, or nil. Ids are addresses, so this is the
-   only lookup an op needs."
-  [view node-id]
+(defn- path-in
+  [nodes node-id]
   (first (keep-indexed (fn [i node]
-                         (when (= node-id (:id node)) i))
-                       (:nodes view))))
+                         (cond (= node-id (:id node)) [i]
+                               (seq (:fields node)) (when-let [sub (path-in (:fields node) node-id)]
+                                                      (into [i :fields] sub))))
+                       nodes)))
+
+(defn- node-path
+  "The path from the view down to `node-id` — `[:nodes 2 :fields 0]` for a node
+   arranged inside a layout group — or nil. Ids are addresses and unique across
+   the tree, so a node standing in a row is patched exactly like one at the top."
+  [view node-id]
+  (when-let [found (path-in (:nodes view) node-id)]
+    (into [:nodes] found)))
 
 (defn- item-bound
   "How many items this node may HOLD: a table declares its own `:max-rows`
@@ -137,12 +167,20 @@
     (= :log (:type node))
     (update :total-lines #(long (or % (count (:lines node)))))))
 
+(defn- stamped
+  "`node` stamped through: a layout group hands the stamp to the nodes inside it,
+   because a log arranged into a row is still a log."
+  [node]
+  (cond-> (stamped-log node)
+    (seq (:fields node))
+    (update :fields #(mapv stamped %))))
+
 (defn materialize
   "The declared view as the materializer holds it. Only stamps: every log node
    learns the size of its own record, so the first patch already knows what the
    window is a window ONTO."
   [view]
-  (update view :nodes #(mapv stamped-log %)))
+  (update view :nodes #(mapv stamped %)))
 
 (defn- checked-node
   "`node` once it still satisfies the declared contract, else the reason it does
@@ -241,47 +279,62 @@
         (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds nothing to clear")))
       (assoc node key []))))
 
+(defn- insert-after
+  "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
+   next to the node the op named."
+  [nodes idx node]
+  (into (conj (subvec nodes 0 (inc (long idx))) node) (subvec nodes (inc (long idx)))))
+
+(defn- drop-at
+  "`nodes` without the one at `idx`."
+  [nodes idx]
+  (into (subvec nodes 0 (long idx)) (subvec nodes (inc (long idx)))))
+
 (defn- apply-add-node
   "The view with one more node — the shape changing while it runs, because a
-   scan that discovers a seventh device should not have to have declared it."
+   scan that discovers a seventh device should not have to have declared it.
+   `:after` names the node the newcomer stands next to WHEREVER that node is, so
+   a node added after one inside a layout group joins that group; a group added
+   this way lands with everything inside it."
   [view {:keys [node-spec after]}]
   (let
     [node
-     (stamped-log (checked-node node-spec))
+     (stamped (checked-node node-spec))
 
      max-nodes
      (long (:max-nodes spec/view-defaults))
 
-     nodes
-     (:nodes view)]
+     taken
+     (set (node-ids view))
 
-    (when (node-position view (:id node))
-      (invalid-patch! (:id node) "a node with this id is already in the view; an id is an address"))
-    (when (>= (count nodes) max-nodes)
+     minted
+     (mapv :id (node-tree [node]))]
+
+    (doseq [id minted]
+      (when (taken id)
+        (invalid-patch! id "a node with this id is already in the view; an id is an address")))
+    (when (> (+ (count (node-ids view)) (count minted)) max-nodes)
       (invalid-patch! (:id node)
                       (str "a view holds at most "
                            max-nodes
                            " nodes; 200 devices are 200 ROWS in one table, not 200 panes")))
-    (let
-      [pos (when after
-             (or (node-position view after)
-                 (invalid-patch!
-                   (:id node)
-                   (str "cannot place it after " after ": the view has no such node"))))]
-      (assoc view
-        :nodes (if pos
-                 (into (conj (subvec nodes 0 (inc (long pos))) node)
-                       (subvec nodes (inc (long pos))))
-                 (conj nodes node))))))
+    (if-let
+      [path (when after
+              (or (node-path view after)
+                  (invalid-patch!
+                    (:id node)
+                    (str "cannot place it after " after ": the view has no such node"))))]
+      (update-in view (pop path) insert-after (peek path) node)
+      (update view :nodes conj node))))
 
 (defn- apply-remove-node
-  "The view without that node, its items with it. Dropping a node that is not
-   there is a NO-OP — teardown is idempotent, while a WRITE to a node that is
-   gone is a lost patch and refuses."
+  "The view without that node, its items with it — and a layout group without the
+   nodes it arranged, because dropping the row drops what stood in it. Dropping a
+   node that is not there is a NO-OP — teardown is idempotent, while a WRITE to a
+   node that is gone is a lost patch and refuses."
   [view {:keys [node-id]}]
-  (if-let [pos (node-position view node-id)]
-    (let [nodes (:nodes view)]
-      (assoc view :nodes (into (subvec nodes 0 (long pos)) (subvec nodes (inc (long pos))))))
+  (if-let [path (node-path view node-id)]
+    (update-in view (pop path) drop-at (peek path))
     view))
 
 (defn- apply-op
@@ -295,14 +348,14 @@
     (apply-remove-node view op)
 
     (let
-      [pos
-       (or (node-position view (:node-id op))
+      [path
+       (or (node-path view (:node-id op))
            (invalid-patch! (:node-id op)
                            (str "the view has no such node; it has "
                                 (str/join ", " (node-ids view)))))
 
        node
-       (get-in view [:nodes (long pos)])
+       (get-in view path)
 
        patched
        (case (:op op)
@@ -318,7 +371,7 @@
          :clear
          (apply-clear node))]
 
-      (assoc-in view [:nodes (long pos)] patched))))
+      (assoc-in view path patched))))
 
 (defn apply-patch
   "`view` after every operation in `patch`, or a refusal naming the first one
@@ -621,6 +674,10 @@
    `{:view {:title :description :nodes} :elided […]}`, the same pair
    [[parse-markdown]] answers, so data out and document in describe ONE shape.
 
+   LAYOUT is left behind with the bookkeeping: a group says where the nodes
+   inside it STAND, and where a node stands is the surface's business, so the
+   picture carries the nodes themselves, flattened in declaration order.
+
    Budgeted from the same `model-budget` [[->markdown]] renders with, so the two
    surfaces leave the same thing behind: a log answers its TAIL, a table the head
    of the order it declared, and `:elided` COUNTS what neither carried. The record
@@ -672,7 +729,7 @@
                 {:elided (- (count rows) (count shown))}))
 
             node))
-        (:nodes view))]
+        (leaf-nodes (:nodes view)))]
 
      {:view (cond-> {:title (:title view) :nodes budgeted}
               (:description view)
@@ -705,7 +762,9 @@
    (rendered first, because the verdict is what a reader needs before the detail)
    and may widen the same budget with `:log-tail-lines` and `:table-rows`. Both
    budgets truncate the RENDER and say so with the count they left behind; neither
-   touches the record."
+   touches the record. Layout is left behind for the same reason [[picture]]
+   leaves it: the page is the CONTENT of a view, so a group's nodes are rendered
+   in declaration order and a document read back is a flat view."
   ([view] (->markdown view nil))
   ([view {:keys [result] :as opts}]
    (let
@@ -726,7 +785,7 @@
                         ["" (str "### " label)]
                         [""])
                       (node->markdown node budget)))
-              (:nodes view))]
+              (leaf-nodes (:nodes view)))]
 
      (str/join "\n" (into head body)))))
 

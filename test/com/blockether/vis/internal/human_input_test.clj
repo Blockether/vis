@@ -1457,10 +1457,28 @@
                                            {:id "state" :type :status :text "b" :tone :ok})))))
   (it "refuses a key no live node declares"
       (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :options] [])))))
-  (it "takes the one key that says WHERE a node stands, on any type, and only as a boolean"
-      (expect (nil? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :is-aside] true))))
-      (expect (nil? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :is-aside] true))))
-      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :is-aside] "yes")))))
+  (it "takes the FORM's own row as a live node, and refuses layout declared on a leaf"
+      (expect (nil? (hs/live-view-error
+                      (live-view {:id "reading"
+                                  :type :group
+                                  :direction :row
+                                  :fields [{:id "beside" :type :status :text "b" :tone :ok}]}))))
+      (expect (some? (hs/live-view-error
+                       (live-view {:id "reading"
+                                   :type :group
+                                   :direction :sideways
+                                   :fields [{:id "beside" :type :status :text "b" :tone :ok}]}))))
+      (expect (some? (hs/live-view-error
+                       (live-view {:id "reading" :type :group :direction :row :fields []})))
+              "a row holding nothing is a layout with no content")
+      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :direction] :row)))
+              "only a group arranges")
+      (expect (some? (hs/live-view-error
+                       (live-view {:id "reading"
+                                   :type :group
+                                   :direction :row
+                                   :fields [{:id "state" :type :status :text "b" :tone :ok}]})))
+              "and an id is unique across the whole tree, because a patch names it alone"))
   (it "refuses a form field offered as a live node, and a live node offered as a field"
       (expect (some? (hs/live-node-error {:id "host"
                                           :name "host"
@@ -1510,7 +1528,7 @@
   (it "refuses an op that would MOVE a node, because where it stands is declared once"
       (expect (some? (hs/live-patch-error {:view-id "view-1"
                                            :seq 1
-                                           :ops [{:op :set :node-id "state" :is-aside true}]}))))
+                                           :ops [{:op :set :node-id "state" :direction :row}]}))))
   (it
     "refuses an `add-node` whose node is itself illegal, so a view cannot grow a shape it would have refused at declaration"
     (expect (some? (hs/live-patch-error {:view-id "view-1"
@@ -1686,23 +1704,33 @@
             ;; …and the document the human reopens renders from that same picture.
             (expect (str/includes? (live/->markdown (:view result) {:result result})
                                    "18 of 18 jobs finished")))))))
-  (it "opens a node that stands BESIDE the one before it, in the spelling the wire writes"
-      (watching
-        (live-spec
-          {"id" "hosts" "type" "table" "columns" [{"id" "host" "label" "Host"}]}
-          {"id" "why" "type" "status" "text" "`db-2` failed the `openssl` check" "is_aside" true})
-        (fn [view]
-          ;; WHERE a node stands is ONE boolean, written either legal way, and it
-          ;; reaches every surface as the engine's own `:is-aside`.
-          (expect (= [nil true] (mapv :is-aside (:nodes view))))
-          ;; No op carries it, so a run cannot rearrange the layout a human is
-          ;; already reading — the attempt is refused BY NAME, not ignored.
-          (let
-            [refused (live-refusal #(hi/patch-live! (:id view)
-                                                    [{:op "set" :node-id "why" :is_aside false}]))]
-            (expect (some? refused))
-            (expect (str/includes? refused "is_aside")))
-          (expect (= [nil true] (mapv :is-aside (:nodes (hi/live-view (:id view)))))))))
+  (it "opens a ROW that stands two nodes side by side, in the spelling the wire writes"
+      (watching (live-spec
+                  {"id" "reading"
+                   "type" "group"
+                   "direction" "row"
+                   "fields"
+                   [{"id" "hosts" "type" "table" "columns" [{"id" "host" "label" "Host"}]}
+                    {"id" "why" "type" "status" "text" "`db-2` failed the `openssl` check"}]})
+                (fn [view]
+                  ;; A view lays itself out with the FORM's own vocabulary — one `group`
+                  ;; carrying the nodes that stand together, in the direction it names.
+                  (expect (= ["reading"] (mapv :id (:nodes view))))
+                  (expect (= :row (:direction (first (:nodes view)))))
+                  (expect (= ["hosts" "why"] (mapv :id (:fields (first (:nodes view))))))
+                  ;; No op carries layout, so a run cannot rearrange what a human is
+                  ;; already reading — the attempt is refused BY NAME, not ignored.
+                  (let
+                    [refused (live-refusal #(hi/patch-live!
+                                              (:id view)
+                                              [{:op "set" :node-id "why" :direction "column"}]))]
+                    (expect (some? refused))
+                    (expect (str/includes? refused "direction")))
+                  ;; …and a patch still finds a node INSIDE the row by its id alone: the
+                  ;; tree is how it is PAINTED, never how it is addressed.
+                  (hi/patch-live! (:id view) [{:op "set" :node-id "why" :tone "error"}])
+                  (let [row (first (:nodes (hi/live-view (:id view))))]
+                    (expect (= :error (:tone (second (:fields row)))))))))
   (it
     "keeps every ACCEPTED patch on disk, in the order the engine accepted them"
     (recorded

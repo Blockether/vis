@@ -817,8 +817,15 @@
 
 (def ^:private live-node-decl-keys
   "Every key a NODE spec may write. `total_lines` is the engine's stamp on a log:
-   the size of the RECORD is counted, never claimed."
-  (wire-keys (disj hi-spec/live-node-keys :total-lines)))
+   the size of the RECORD is counted, never claimed. `direction` and `fields`
+   belong to a layout GROUP and are refused here BY NAME, so a `status` written
+   with children hears about them instead of having them dropped."
+  (wire-keys (reduce disj hi-spec/live-node-keys #{:total-lines :direction :fields})))
+
+(def ^:private live-group-decl-keys
+  "Every key a live layout GROUP spec may write: its own vocabulary, so `lines` on
+   a `row` is refused by name rather than quietly ignored."
+  (wire-keys hi-spec/live-group-keys))
 
 (def ^:private live-patch-decl-keys
   "The one key a patch spec may write. `view_id` and `seq` are stamps: a caller
@@ -992,90 +999,103 @@
 (defn- live-node
   "One declared node of a live view. `fail!` is the refusal of whoever declares
    it — a view spec, or the `add-node` op that introduces one mid-run — so one
-   node parser serves both without either learning the other's error type."
+   node parser serves both without either learning the other's error type.
+
+   A layout GROUP is parsed here too, by recursion: `row` and `column` are the
+   REQUEST's own vocabulary, so a view arranges its work exactly the way a form
+   arranges its questions, and a row inside a column costs no second grammar."
   [fail! node]
   (when-not (map? node) (fail! "a node must be a map"))
-  (check-keys! "node" live-node-decl-keys node fail!)
-  (let
-    [id
-     (or (trimmed (pick* node :id))
-         (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
+  (let [is-group (group-node? node)]
+    (check-keys! (if is-group "group" "node")
+                 (if is-group live-group-decl-keys live-node-decl-keys)
+                 node
+                 fail!)
+    (if is-group
+      (let
+        [id (or (trimmed (pick* node :id))
+                (fail! "a group needs a non-blank :id — `add-node :after` names it too"))
+         group-fail! (fn [message]
+                       (fail! (str "group " id ": " message)))
+         children (pick* node :fields)
+         label (trimmed (pick* node :label))]
 
-     node-fail!
-     (fn [message]
-       (fail! (str "node " id ": " message)))
+        (when-not (and (sequential? children) (seq children))
+          (group-fail! "a group needs a non-empty :fields — a row arranging nothing is a typo"))
+        (checked-live-node group-fail!
+                           (cond->
+                             {:id id
+                              :type hi-spec/group-type
+                              :direction (live-term group-fail!
+                                                    ":direction"
+                                                    hi-spec/group-directions
+                                                    (or (pick* node :direction) "column"))
+                              :fields (mapv #(live-node group-fail! %) children)}
+                             label
+                             (assoc :label label))))
+      (let
+        [id (or (trimmed (pick* node :id))
+                (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
+         node-fail! (fn [message]
+                      (fail! (str "node " id ": " message)))
+         type (live-term node-fail! ":type" hi-spec/live-node-types (pick* node :type))
+         label (trimmed (pick* node :label))
+         base (cond-> {:id id :type type}
+                label
+                (assoc :label label))
+         items (fn [kind]
+                 (normalize-live-items node-fail! kind (pick* node kind)))]
 
-     type
-     (live-term node-fail! ":type" hi-spec/live-node-types (pick* node :type))
+        (checked-live-node
+          node-fail!
+          (case type
+            :status
+            (cond->
+              (assoc base
+                :text (live-text node-fail! "a status' :text" (pick* node :text))
+                :tone (or (some->> (pick* node :tone)
+                                   (live-term node-fail! ":tone" hi-spec/live-tones))
+                          :idle))
+              (trimmed (pick* node :detail))
+              (assoc :detail (trimmed (pick* node :detail))))
 
-     label
-     (trimmed (pick* node :label))
+            :progress
+            (cond-> base
+              (some? (pick* node :value))
+              (assoc :value (live-fraction node-fail! ":value" (pick* node :value)))
 
-     base
-     (cond-> {:id id :type type}
-       label
-       (assoc :label label)
+              (some? (pick* node :done))
+              (assoc :done (live-long node-fail! ":done" (pick* node :done)))
 
-       ;; Declared here and nowhere else: WHERE the node stands. No patch op
-       ;; carries it (see `live-op-key-sets`), so the layout a human learned
-       ;; cannot rearrange itself while they are reading it.
-       (bool-value node-fail! ":is-aside" (pick* node :is-aside) false)
-       (assoc :is-aside true))
+              (some? (pick* node :total))
+              (assoc :total (live-long node-fail! ":total" (pick* node :total))))
 
-     items
-     (fn [kind]
-       (normalize-live-items node-fail! kind (pick* node kind)))]
+            :stat
+            (assoc base :stats (items :stats))
 
-    (checked-live-node
-      node-fail!
-      (case type
-        :status
-        (cond->
-          (assoc base
-            :text (live-text node-fail! "a status' :text" (pick* node :text))
-            :tone (or (some->> (pick* node :tone)
-                               (live-term node-fail! ":tone" hi-spec/live-tones))
-                      :idle))
-          (trimmed (pick* node :detail))
-          (assoc :detail (trimmed (pick* node :detail))))
+            :steps
+            (assoc base :steps (items :steps))
 
-        :progress
-        (cond-> base
-          (some? (pick* node :value))
-          (assoc :value (live-fraction node-fail! ":value" (pick* node :value)))
+            :log
+            (assoc base
+              :lines (if-some [lines (pick* node :lines)]
+                       (text-items node-fail! ":lines" lines)
+                       [])
+              :window-lines (if-some [window (pick* node :window-lines)]
+                              (live-long node-fail! ":window-lines" window)
+                              (long (:window-lines hi-spec/log-defaults))))
 
-          (some? (pick* node :done))
-          (assoc :done (live-long node-fail! ":done" (pick* node :done)))
+            :table
+            (assoc base
+              :columns (items :columns)
+              :rows (items :rows)
+              :max-rows (if-some [bound (pick* node :max-rows)]
+                          (live-long node-fail! ":max-rows" bound)
+                          (long (:max-rows hi-spec/table-defaults)))
+              :order (normalize-live-order node-fail! (pick* node :order)))
 
-          (some? (pick* node :total))
-          (assoc :total (live-long node-fail! ":total" (pick* node :total))))
-
-        :stat
-        (assoc base :stats (items :stats))
-
-        :steps
-        (assoc base :steps (items :steps))
-
-        :log
-        (assoc base
-          :lines (if-some [lines (pick* node :lines)]
-                   (text-items node-fail! ":lines" lines)
-                   [])
-          :window-lines (if-some [window (pick* node :window-lines)]
-                          (live-long node-fail! ":window-lines" window)
-                          (long (:window-lines hi-spec/log-defaults))))
-
-        :table
-        (assoc base
-          :columns (items :columns)
-          :rows (items :rows)
-          :max-rows (if-some [bound (pick* node :max-rows)]
-                      (live-long node-fail! ":max-rows" bound)
-                      (long (:max-rows hi-spec/table-defaults)))
-          :order (normalize-live-order node-fail! (pick* node :order)))
-
-        :link
-        (assoc base :links (items :links))))))
+            :link
+            (assoc base :links (items :links))))))))
 
 (defn normalize-live-node
   "One declared node, refused where it was BUILT — the seam the node builders in
@@ -1084,6 +1104,21 @@
    front of the human."
   [node]
   (live-node invalid-live-view! node))
+
+(defn live-nodes?
+  "Whether `nodes` are the picture a human WATCHES rather than the questions a
+   form asks. A layout group is the ONE node both vocabularies share, so a
+   builder composing one asks its children which check it is dated against — and
+   a group inside a group answers by its own children."
+  [nodes]
+  (boolean (some (fn [node]
+                   (when (map? node)
+                     (if (group-node? node)
+                       (live-nodes? (pick* node :fields))
+                       (contains? hi-spec/live-node-types
+                                  (some-> (trimmed (pick* node :type))
+                                          str/lower-case)))))
+                 nodes)))
 
 (defn normalize-live-view
   "Validate a live-view spec and return the view the materializer holds. Throws
