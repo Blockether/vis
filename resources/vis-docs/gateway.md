@@ -83,6 +83,50 @@ stale/rotated `gateway.token`. Fixes: run the client on the same host as the
 gateway, re-pair the remote client, or restart the gateway on loopback
 (`vis-agent gateway start`).
 
+## Driving a gateway on another machine (`--gateway`)
+
+Every command — `tui` included — talks to whichever gateway two **root flags**
+name, in front of the command itself:
+
+```sh
+vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
+vis-agent --gateway 10.0.0.5:7899 --gateway-token "$TOKEN" sessions list
+vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
+```
+
+`--gateway` takes `HOST`, `HOST:PORT` or a full `http(s)://HOST[:PORT][/prefix]`:
+a bare value is plain HTTP on port `7890`, and an `https://` URL with no port is
+`443`. `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` say the same thing for a whole
+shell.
+
+The token is the one that gateway printed when it started (`~/.vis/gateway.token`
+on **its** machine, or its `--token-file`). Drop `--gateway-token` when the target
+needs none — a loopback daemon you reached through an SSH tunnel:
+
+```sh
+ssh -N -L 7890:127.0.0.1:7890 you@10.0.0.5 &
+vis-agent --gateway 127.0.0.1 tui
+```
+
+What a remote target changes:
+
+- **vis never starts, restarts or stops a gateway it does not own.** Nothing is
+  auto-spawned for you, `vis-agent gateway stop` refuses (stop it on the machine
+  that runs it), and the `/ui` self-heal force-restart is never attempted.
+- **The client claims no pid.** Lease reaping judges pids on the gateway's own
+  machine, so a remote client sends none and is never reaped as "dead".
+- Your local registry and database are not consulted at all, so `--db` means
+  nothing next to `--gateway`.
+- An unreachable host, or a value that names no host, is an error — never a
+  silent fall back to your own daemon, which would run the work on the wrong
+  machine.
+
+Reachable means the gateway was started on a non-loopback bind
+(`--host 0.0.0.0`), which per the table above **requires** a token.
+
+One process drives one gateway: the TUI has no gateway switcher yet, so a second
+gateway means a second `vis-agent --gateway …`.
+
 ## Getting the companion app (public testing)
 
 The companion ships as one app for web, iOS and Android. Both mobile stores

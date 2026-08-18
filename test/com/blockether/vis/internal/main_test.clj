@@ -6,7 +6,7 @@
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (toggles/register-toggle!
   {:id "main_test_flag" :label "CLI toggle test flag" :default false :settings? false})
@@ -105,6 +105,22 @@
   (it "strips --stream-trace, which the wrapper consumes as a system property"
       (expect (= ["channels" "tui"]
                  (#'main/strip-global-args ["channels" "--stream-trace" "tui"])))))
+
+(defdescribe
+  gateway-flags-test
+  (it "splits --gateway and --gateway-token out of the args, in either order"
+      (expect (= {:gateway {:url "10.0.0.5:7890" :token "t"} :args ["tui"]}
+                 (#'main/split-gateway-flags
+                  ["--gateway" "10.0.0.5:7890" "tui" "--gateway-token" "t"]))))
+  (it "accepts the =-joined form and stops at a bare --"
+      (expect (= {:gateway {:url "gateway.example.com"} :args ["--" "--gateway" "prompt text"]}
+                 (#'main/split-gateway-flags
+                  ["--gateway=gateway.example.com" "--" "--gateway" "prompt text"]))))
+  (it "leaves an invocation that names no gateway completely alone"
+      (expect (= {:gateway nil :args ["channels" "tui"]}
+                 (#'main/split-gateway-flags ["channels" "tui"]))))
+  (it "refuses a token with no address instead of silently using the local daemon"
+      (expect (throws? clojure.lang.ExceptionInfo #(#'main/connect-gateway! {:token "t"})))))
 
 (defdescribe
   parse-run-args-test

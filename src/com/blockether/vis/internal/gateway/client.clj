@@ -5,7 +5,12 @@
    discover-or-starts the one daemon for the current DB, then speaks the same
    HTTP/SSE API every other client uses. This is the thin-client half of the
    gateway-daemon plan: token refresh, turn execution, and live streaming happen
-   in ONE process."
+   in ONE process.
+
+   WHICH daemon is a policy of this namespace: normally the one this machine
+   manages for the current DB, or — through `connect-remote!` (the `--gateway`
+   flag / `VIS_GATEWAY_URL`) — a gateway on another machine, attached to over HTTP
+   and never spawned, restarted or stopped from here."
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
@@ -14,7 +19,7 @@
             [com.blockether.vis.internal.gateway.protocol :as protocol]
             [com.blockether.vis.internal.gateway.wire :as wire])
   (:import (java.io BufferedReader InputStream InputStreamReader)
-           (java.net URLEncoder)
+           (java.net URI URLEncoder)
            (java.nio.charset StandardCharsets)))
 
 (def ^:private DEFAULT_PORT 7890)
@@ -73,9 +78,78 @@
 
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
 
+(def ^:private REMOTE_URL_ENV "VIS_GATEWAY_URL")
+
+(def ^:private REMOTE_TOKEN_ENV "VIS_GATEWAY_TOKEN")
+
+(defonce ^:private remote-gateway*
+  ;; The gateway this process drives INSTEAD of the daemon it manages for the
+  ;; local DB, or nil for that daemon. `::unset` means the environment has not
+  ;; been read yet: `remote-gateway` runs on every `ensure-gateway!` (dozens of
+  ;; times a second under the TUI), so the env lookup resolves exactly once.
+  (atom ::unset))
+
+(defn- remote-scheme-port
+  "Port for a `--gateway` value that named none: the HTTPS default for a TLS
+   endpoint (a tunnel or reverse proxy), else the standard gateway port."
+  [scheme]
+  (if (= "https" scheme) 443 DEFAULT_PORT))
+
+(defn- remote-entry
+  "The daemon entry for gateway `url`, or nil when `url` is blank.
+
+   `url` is a host (`10.0.0.5`), a host:port (`10.0.0.5:7890`) or a full
+   `http(s)://host[:port][/prefix]`; a bare value is plain HTTP on the standard
+   port. `token` is that gateway's bearer token, and nil is legitimate: a daemon
+   bound to loopback runs auth-free, so an SSH tunnel needs the host alone."
+  [url token]
+  (when-let [raw (not-empty (str/trim (str url)))]
+    (let
+      [trimmed (str/replace raw #"/+$" "")
+       absolute
+       (if (re-find #"^[A-Za-z][A-Za-z0-9+.-]*://" trimmed) trimmed (str "http://" trimmed))
+       ^URI uri (try (URI. absolute) (catch Exception _ nil))
+       scheme (when uri
+                (some-> (.getScheme uri)
+                        str/lower-case))
+       host (when uri (not-empty (.getHost uri)))
+       declared-port (long (if uri (.getPort uri) -1))
+       prefix (str/replace (str (when uri (.getRawPath uri))) #"/+$" "")]
+
+      (when-not (and host (contains? #{"http" "https"} scheme))
+        (throw (ex-info (str "not a gateway address: "
+                             (pr-str (str url))
+                             ". Use HOST, HOST:PORT or http(s)://HOST[:PORT].")
+                        {:type :gateway/invalid-remote-url :url (str url) :vis/user-error true})))
+      (let [port (if (pos? declared-port) declared-port (remote-scheme-port scheme))]
+        {:base-url (str scheme "://" host ":" port prefix)
+         :host host
+         :port port
+         :secret (not-empty (str/trim (str token)))
+         :remote? true}))))
+
+(defn connect-remote!
+  "Aim EVERY gateway call in this process at the gateway at `url` (the `--gateway`
+   flag, `VIS_GATEWAY_URL`) instead of the daemon this machine manages: attach over
+   HTTP, and never spawn, restart or stop it — a gateway on another machine is not
+   ours to run. Returns the target entry, or nil when `url` is blank (stay local)."
+  [{:keys [url token]}]
+  (reset! remote-gateway* (remote-entry url token)))
+
+(defn remote-gateway
+  "The remote gateway target for this process, or nil when the locally managed
+   daemon owns the work. `connect-remote!` wins; otherwise `VIS_GATEWAY_URL` and
+   `VIS_GATEWAY_TOKEN` are read exactly once."
+  []
+  (let [current @remote-gateway*]
+    (if (identical? ::unset current)
+      (reset! remote-gateway* (remote-entry (System/getenv REMOTE_URL_ENV)
+                                            (System/getenv REMOTE_TOKEN_ENV)))
+      current)))
+
 (defn- base-url
-  [{:keys [host port]}]
-  (str "http://" (or host DEFAULT_HOST) ":" (or port DEFAULT_PORT)))
+  [{:keys [host port] :as entry}]
+  (or (:base-url entry) (str "http://" (or host DEFAULT_HOST) ":" (or port DEFAULT_PORT))))
 
 (defn- gw-send!
   "Perform a babashka.http-client request against gateway `entry`. `method` is a
@@ -85,7 +159,7 @@
    `:status`) directly. A :stream request
    asks for `text/event-stream` with compression disabled so the SSE body stays
    byte-live for the line reader + idle watchdog."
-  [{:keys [secret] :as _entry} method path
+  [{:keys [secret remote?] :as _entry} method path
    {:keys [body as timeout-ms headers] :or {as :string timeout-ms 30000}}]
   (http/request
     (cond->
@@ -98,9 +172,22 @@
        :headers (cond->
                   (merge (protocol/client-headers client-label)
                          headers
-                         {"Accept" (if (= as :stream) "text/event-stream" "application/json")
-                          "X-Vis-Gateway-Secret" (str secret)
-                          "X-Vis-Client-Pid" (str (discovery/current-pid))})
+                         {"Accept" (if (= as :stream) "text/event-stream" "application/json")})
+                  ;; A remote client owns no process on the gateway's machine and the
+                  ;; daemon reaps every lease whose pid is dead THERE, so a remote call
+                  ;; must not claim one (server-side `request-client-pid`).
+                  (not remote?)
+                  (assoc "X-Vis-Client-Pid" (str (discovery/current-pid)))
+
+                  ;; One secret, both carriers: `Authorization` is what a token-gated
+                  ;; (non-loopback) gateway checks, `X-Vis-Gateway-Secret` is what
+                  ;; `/healthz` echoes back as `secret_match`. Blank means the target
+                  ;; is an auth-free loopback daemon — send neither.
+                  (seq (str secret))
+                  (assoc "Authorization"
+                    (str "Bearer " secret) "X-Vis-Gateway-Secret"
+                    (str secret))
+
                   (= as :stream)
                   (assoc "Accept-Encoding" "identity"))}
       (some? body)
@@ -155,19 +242,21 @@
       (or (get parsed "message") (get-in parsed ["error" "message"]))]
 
      (when (>= status 400)
-       (throw (if (= status 401)
-                (ex-info (str "could not authenticate to the gateway (HTTP 401: "
-                              (or reason "unauthorized")
-                              "). It is bound to a "
-                              "non-loopback host, so a bearer token is required and this "
-                              "client did not present a valid one. Run the TUI on the SAME "
-                              "machine as the gateway (it reads the token from ~/.vis), or "
-                              "restart the gateway on loopback (vis-agent gateway start).")
-                         (assoc parsed
-                           :http-status status
-                           :vis/user-error true))
-                (ex-info (or reason (str "gateway HTTP " status))
-                         (assoc parsed :http-status status)))))
+       (throw
+         (if (= status 401)
+           (ex-info
+             (str
+               "could not authenticate to the gateway (HTTP 401: "
+               (or reason "unauthorized")
+               "). It demands a bearer token and this client presented "
+               "none, or the wrong one. "
+               (if (:remote? entry)
+                 "Pass the token that gateway printed at startup: --gateway-token TOKEN (or VIS_GATEWAY_TOKEN)."
+                 "Run the client on the SAME machine as the gateway (it reads the token from ~/.vis), or reach it with --gateway HOST --gateway-token TOKEN."))
+             (assoc parsed
+               :http-status status
+               :vis/user-error true))
+           (ex-info (or reason (str "gateway HTTP " status)) (assoc parsed :http-status status)))))
      parsed)))
 
 (defn- send-json!
@@ -178,7 +267,7 @@
      (send-json-with-entry! entry method path body))))
 
 (defn- probe-entry?
-  [entry]
+  [{:keys [secret remote?] :as entry}]
   (try (let
          [response
           (gw-send! entry "GET" "/healthz" {:timeout-ms health-probe-timeout-ms})
@@ -186,9 +275,13 @@
           body
           (note-handshake! (parse-json-body (:body response)))]
 
-         (and (= 200 (:status response))
-              (= "ok" (get body "status"))
-              (true? (get body "secret_match"))))
+         (boolean (and (= 200 (:status response))
+                       (= "ok" (get body "status"))
+                       ;; `secret_match` is the daemon confirming OUR registry secret. A remote
+                       ;; target we hold no token for cannot match it and need not: an auth-free
+                       ;; gateway serves every route anyway, and a token-gated one answers 401.
+                       (or (true? (get body "secret_match"))
+                           (and remote? (str/blank? (str secret)))))))
        (catch Throwable _ false)))
 
 (defn- retire-loopback-orphan!
@@ -371,6 +464,26 @@
                          :db (str (discovery/db-target db))
                          :vis/user-error true}))))))
 
+(defn- ensure-remote-gateway!
+  "Attach to the REMOTE gateway `entry`: probe `/healthz` (debounced exactly like
+   the local path) and check the wire contract. Nothing else happens — a gateway on
+   another machine has no registry here, no pid to watch, and no lifecycle this
+   process may drive."
+  [entry]
+  (let [now (System/nanoTime)]
+    (when-not (< now (long @entry-fresh-until-ns))
+      (when-not (probe-entry? entry)
+        (throw (ex-info
+                 (str "no gateway answered at " (base-url entry)
+                      ". Check that it is running and reachable"
+                      (if (:secret entry)
+                        ", and that the token matches the one it was started with."
+                        "; a token-gated gateway also needs --gateway-token."))
+                 {:type :gateway/remote-unreachable :url (base-url entry) :vis/user-error true})))
+      (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000))))
+    (reset! cached-entry entry)
+    (assert-compatible! entry)))
+
 (defn ensure-gateway!
   "Return a fresh daemon registry entry for the current DB, auto-starting the
    detached gateway if needed. `:memory` is a programmer error for this client;
@@ -387,37 +500,40 @@
    every gateway call."
   ([] (ensure-gateway! nil))
   ([{:keys [port host]}]
-   (let [db (db-target)]
-     (when (discovery/memory-db? db)
-       (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
-     (let
-       [target-port (or port DEFAULT_PORT)
-        target-host (or host DEFAULT_HOST)
-        cached @cached-entry
-        now (System/nanoTime)
-        fresh-until (long @entry-fresh-until-ns)
-        fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
-                 true
-                 ;; Window elapsed (or no cached entry): pay for the real
-                 ;; HTTP probe once, then re-open the debounce window.
-                 (when (discovery/registry-fresh? cached probe-entry?)
-                   (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
-                   true))]
+   (if-let [remote (remote-gateway)]
+     ;; A remote gateway is ATTACHED to, never managed: no registry, no spawn.
+     (ensure-remote-gateway! remote)
+     (let [db (db-target)]
+       (when (discovery/memory-db? db)
+         (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
+       (let
+         [target-port (or port DEFAULT_PORT)
+          target-host (or host DEFAULT_HOST)
+          cached @cached-entry
+          now (System/nanoTime)
+          fresh-until (long @entry-fresh-until-ns)
+          fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
+                   true
+                   ;; Window elapsed (or no cached entry): pay for the real
+                   ;; HTTP probe once, then re-open the debounce window.
+                   (when (discovery/registry-fresh? cached probe-entry?)
+                     (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
+                     true))]
 
-       (if fresh?
-         (assert-compatible! cached)
-         (let
-           ;; First recover the exact failure mode where a live standard daemon
-           ;; owns 7890 but its registry was removed. Never enter discovery's
-           ;; spawn path while the requested port already has a listener.
-           [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
-           (if entry
-             (do (reset! cached-entry entry)
-                 (reset! entry-fresh-until-ns (+ (System/nanoTime)
-                                                 (* (long entry-probe-ttl-ms) 1000000)))
-                 (assert-compatible! entry))
-             (throw (ex-info "gateway daemon did not become ready"
-                             (assoc result :type :gateway/start-timeout))))))))))
+         (if fresh?
+           (assert-compatible! cached)
+           (let
+             ;; First recover the exact failure mode where a live standard daemon
+             ;; owns 7890 but its registry was removed. Never enter discovery's
+             ;; spawn path while the requested port already has a listener.
+             [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
+             (if entry
+               (do (reset! cached-entry entry)
+                   (reset! entry-fresh-until-ns (+ (System/nanoTime)
+                                                   (* (long entry-probe-ttl-ms) 1000000)))
+                   (assert-compatible! entry))
+               (throw (ex-info "gateway daemon did not become ready"
+                               (assoc result :type :gateway/start-timeout)))))))))))
 
 (defn- release-client!
   []
@@ -457,7 +573,11 @@
            (send-json-with-entry! entry
                                   "POST"
                                   "/v1/clients"
-                                  {:pid (discovery/current-pid) :kind "clojure-client"})
+                                  (cond-> {:kind "clojure-client"}
+                                    ;; A remote lease carries no pid: the daemon's
+                                    ;; reaper judges pids on ITS machine.
+                                    (not (:remote? entry))
+                                    (assoc :pid (discovery/current-pid))))
 
            registered-id
            (get response "client_id")]
@@ -1181,18 +1301,26 @@
   []
   nil)
 
+(defn- loopback-host?
+  "True for a bind a phone (or any other machine) can never reach."
+  [host]
+  (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
+
 (defn status
+  "Admin status of the gateway this process drives — the REMOTE target when one is
+   configured, else the daemon registered for the current DB. Always the daemon's
+   own wire map (STRING keys), including when nothing is running."
   []
-  (let
-    [db
-     (db-target)
+  (if-let [remote (remote-gateway)]
+    (send-json-with-entry! (ensure-remote-gateway! remote) "GET" "/v1/admin/status")
+    (let
+      [db (db-target)
+       entry (discovery/read-registry db)]
 
-     entry
-     (discovery/read-registry db)]
-
-    (if (discovery/registry-fresh? entry probe-entry?)
-      (send-json-with-entry! entry "GET" "/v1/admin/status")
-      {:status "stopped" :db (when-not (discovery/memory-db? db) (str (discovery/db-target db)))})))
+      (if (discovery/registry-fresh? entry probe-entry?)
+        (send-json-with-entry! entry "GET" "/v1/admin/status")
+        {"status" "stopped"
+         "db" (when-not (discovery/memory-db? db) (str (discovery/db-target db)))}))))
 
 (defn pairing-info
   "Connection details for the daemon registered for the current DB, so a caller
@@ -1201,26 +1329,28 @@
    fresh daemon is registered, and `:loopback?` flags a 127.0.0.1/::1/localhost
    bind that a phone can never reach."
   []
-  (let
-    [db
-     (db-target)
+  (if-let [{:keys [host port secret]} (remote-gateway)]
+    ;; A remote target is reachable BY DEFINITION — it just answered a probe — so
+    ;; its own connection details are what a pairing QR must carry.
+    {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
+    (let
+      [db (db-target)
+       {:keys [host port secret] :as entry} (discovery/read-registry db)]
 
-     {:keys [host port secret] :as entry}
-     (discovery/read-registry db)]
-
-    (if (discovery/registry-fresh? entry probe-entry?)
-      {:running? true
-       :host host
-       :port port
-       :token secret
-       :loopback? (contains? #{"127.0.0.1" "::1" "localhost"} (str host))}
-      {:running? false})))
+      (if (discovery/registry-fresh? entry probe-entry?)
+        {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
+        {:running? false}))))
 
 (defn stop-daemon!
   "Request the registered daemon to stop. When its registry is stale but its
    configured endpoint still accepts TCP connections, report the live orphan
    rather than falsely claiming it stopped."
   []
+  (when (remote-gateway)
+    (throw (ex-info (str "connected to a remote gateway (--gateway / VIS_GATEWAY_URL): "
+                         "vis stops only the daemon it manages for this DB. Stop that "
+                         "gateway on the machine that runs it.")
+                    {:type :gateway/remote-target :vis/user-error true})))
   (let
     [db
      (db-target)
@@ -1306,34 +1436,41 @@
   ([path] (ensure-gateway-serving! path nil))
   ([path opts]
    (let [entry (ensure-gateway! opts)]
-     (case (probe-route entry path)
-       ;; Mounted — or a transient transport blip we must not misread as "missing".
-       (:served :unreachable)
-       entry
+     (if (:remote? entry)
+       ;; A gateway on another machine is not ours to restart: name the missing
+       ;; route instead of running the local self-heal against it.
+       (if (= :absent (probe-route entry path))
+         (throw (ex-info (str "the remote gateway at " (base-url entry) " does not serve " path)
+                         {:type :gateway/route-missing :path path :vis/user-error true}))
+         entry)
+       (case (probe-route entry path)
+         ;; Mounted — or a transient transport blip we must not misread as "missing".
+         (:served :unreachable)
+         entry
 
-       :absent
-       (let
-         [st (status)
-          clients (long (or (get st "clients") 0))
-          running (long (or (get st "running_turns") 0))]
+         :absent
+         (let
+           [st (status)
+            clients (long (or (get st "clients") 0))
+            running (long (or (get st "running_turns") 0))]
 
-         (when (or (> clients 1) (pos? running))
-           (throw (ex-info (str "gateway daemon does not serve " path
-                                " but is in use (" clients
-                                " client(s), " running
-                                " running turn(s)); refusing" " to force-restart a shared daemon")
-                           {:type :gateway/route-missing-busy
-                            :path path
-                            :clients clients
-                            :running-turns running})))
-         (stop-daemon!)
-         (await-daemon-down! (db-target) (:host entry) (:port entry))
-         (let [entry (ensure-gateway! opts)]
-           (when-not (= :served (probe-route entry path))
-             (throw (ex-info
-                      (str "gateway daemon is not serving " path " even after a fresh restart")
-                      {:type :gateway/route-missing :path path})))
-           entry))))))
+           (when (or (> clients 1) (pos? running))
+             (throw (ex-info (str "gateway daemon does not serve " path
+                                  " but is in use (" clients
+                                  " client(s), " running
+                                  " running turn(s)); refusing" " to force-restart a shared daemon")
+                             {:type :gateway/route-missing-busy
+                              :path path
+                              :clients clients
+                              :running-turns running})))
+           (stop-daemon!)
+           (await-daemon-down! (db-target) (:host entry) (:port entry))
+           (let [entry (ensure-gateway! opts)]
+             (when-not (= :served (probe-route entry path))
+               (throw (ex-info
+                        (str "gateway daemon is not serving " path " even after a fresh restart")
+                        {:type :gateway/route-missing :path path})))
+             entry)))))))
 
 (defn provider-status
   [provider-id]

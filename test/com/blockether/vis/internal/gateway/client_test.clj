@@ -4,7 +4,8 @@
    The point under test is that the /ui 404 self-heal is NON-DESTRUCTIVE: it only
    force-restarts a stale daemon that is genuinely idle, treats a transport blip as
    \"leave it alone\", and never confuses either with a real 404."
-  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+  (:require [babashka.http-client :as http]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]))
 
@@ -916,3 +917,141 @@
       (is (= {:rpm 10} (get-in result [:openai :limits :static])))
       (is (= :requests (get-in result [:openai :limits :dynamic :limits 0 :id])))
       (is (nil? (get-in result [:anthropic :limits]))))))
+
+;;; ── Remote gateway target (`--gateway` / VIS_GATEWAY_URL) ─────────────────────
+
+(deftest remote-entry-reads-a-host-a-host-port-and-a-url
+  (let [remote-entry (rv 'remote-entry)]
+    (testing "a bare host is plain HTTP on the standard gateway port"
+      (is
+        (=
+          {:base-url "http://10.0.0.5:7890" :host "10.0.0.5" :port 7890 :secret "tok" :remote? true}
+          (remote-entry "10.0.0.5" "tok"))))
+    (testing "an explicit port wins, and https defaults to 443"
+      (is (= "http://10.0.0.5:7899" (:base-url (remote-entry "10.0.0.5:7899" nil))))
+      (is (= "https://gateway.example.com:443"
+             (:base-url (remote-entry "https://gateway.example.com/" nil))))
+      (is (= "https://gateway.example.com:8443/vis"
+             (:base-url (remote-entry "https://gateway.example.com:8443/vis/" nil)))))
+    (testing "a blank token is no token: a loopback daemon reached by tunnel needs none"
+      (is (nil? (:secret (remote-entry "127.0.0.1:7899" "   ")))))
+    (testing "no url is no remote target" (is (nil? (remote-entry "  " "tok"))))
+    (testing "a value that names no host is a user error, never a silent local fallback"
+      (is (= :gateway/invalid-remote-url
+             (:type (ex-data (try (remote-entry ":7890" nil)
+                                  (catch clojure.lang.ExceptionInfo e e)))))))))
+
+(deftest remote-target-attaches-without-registry-or-spawn
+  (let
+    [target
+     ((rv 'remote-entry) "10.0.0.5:7891" "tok")
+
+     fresh-until
+     @(rv 'entry-fresh-until-ns)
+
+     cached
+     @(rv 'cached-entry)
+
+     previous-fresh
+     @fresh-until
+
+     previous-cached
+     @cached]
+
+    (try (reset! fresh-until 0)
+         (with-redefs-fn {(rv 'remote-gateway) (constantly target)
+                          (rv 'probe-entry?) (constantly true)
+                          (rv 'assert-compatible!) identity
+                          #'discovery/discover-or-start!
+                          (fn [& _]
+                            (throw (AssertionError. "a remote gateway must never be spawned")))
+                          #'discovery/read-registry
+                          (fn [& _]
+                            (throw (AssertionError. "a remote gateway has no local registry")))}
+           (fn []
+             (is (= target (client/ensure-gateway!)))))
+         (finally (reset! fresh-until previous-fresh) (reset! cached previous-cached)))))
+
+(deftest remote-request-carries-the-bearer-token-and-claims-no-pid
+  (let
+    [captured
+     (atom nil)
+
+     target
+     ((rv 'remote-entry) "10.0.0.5:7891" "tok")
+
+     capture
+     (fn [request]
+       (reset! captured request)
+       {:status 200 :body "{}"})]
+
+    (with-redefs-fn {#'http/request capture}
+      (fn []
+        ((rv 'gw-send!) target "GET" "/healthz" {})
+        (testing "a gateway on another machine is reached at its own base url"
+          (is (= "http://10.0.0.5:7891/healthz" (:uri @captured))))
+        (testing "one secret, both carriers"
+          (is (= "Bearer tok" (get-in @captured [:headers "Authorization"])))
+          (is (= "tok" (get-in @captured [:headers "X-Vis-Gateway-Secret"]))))
+        (testing "no pid: this process owns none on the gateway's machine"
+          (is (nil? (get-in @captured [:headers "X-Vis-Client-Pid"]))))
+        ((rv 'gw-send!) fake-entry "GET" "/healthz" {})
+        (testing "the locally managed daemon still gets the pid its lease reaper needs"
+          (is (= (str (discovery/current-pid))
+                 (get-in @captured [:headers "X-Vis-Client-Pid"]))))))))
+
+(deftest tokenless-remote-probe-accepts-an-auth-free-gateway
+  (let
+    [handshake
+     @(rv 'gateway-handshake*)
+
+     previous
+     @handshake
+
+     body
+     "{\"status\":\"ok\",\"secret_match\":false}"]
+
+    (try (with-redefs-fn {(rv 'gw-send!) (fn [& _]
+                                           {:status 200 :body body})}
+           (fn []
+             (testing "a token-less target cannot match a secret and does not need to"
+               (is (true? ((rv 'probe-entry?) ((rv 'remote-entry) "127.0.0.1:7899" nil)))))
+             (testing "the local daemon must still prove it owns our registry secret"
+               (is (false? ((rv 'probe-entry?) fake-entry))))))
+         (finally (reset! handshake previous)))))
+
+(deftest remote-client-lease-carries-no-pid
+  (let
+    [client-id-atom
+     @(rv 'client-id)
+
+     previous
+     @client-id-atom
+
+     captured
+     (atom nil)
+
+     ensure-client
+     (rv 'ensure-client!)
+
+     register
+     (fn [_entry _method _path body]
+       (reset! captured body)
+       {"client_id" "cid"})]
+
+    (try (with-redefs-fn {(rv 'send-json-with-entry!) register}
+           (fn []
+             (reset! client-id-atom nil)
+             (ensure-client (assoc fake-entry :remote? true))
+             (is (= {:kind "clojure-client"} @captured))
+             (reset! client-id-atom nil)
+             (ensure-client fake-entry)
+             (is (= {:kind "clojure-client" :pid (discovery/current-pid)} @captured))))
+         (finally (reset! client-id-atom previous)))))
+
+(deftest a-remote-gateway-is-never-stopped-from-here
+  (with-redefs-fn {(rv 'remote-gateway) (constantly ((rv 'remote-entry) "10.0.0.5" "tok"))}
+    (fn []
+      (is (= :gateway/remote-target
+             (:type (ex-data (try (client/stop-daemon!)
+                                  (catch clojure.lang.ExceptionInfo e e)))))))))

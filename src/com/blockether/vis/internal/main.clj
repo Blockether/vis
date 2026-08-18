@@ -3214,7 +3214,7 @@
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
   (let
-    [{:keys [status pid host port db clients running_turns require_token] :as m}
+    [{:strs [status pid host port db clients running_turns require_token] :as m}
      ((requiring-resolve 'com.blockether.vis.internal.gateway.client/status))]
     (if (= "running" status)
       (stdout! (str "gateway running pid=" pid
@@ -3225,7 +3225,7 @@
                     " running-turns=" running_turns
                     " auth=" (if require_token "token" "loopback-disabled")))
       (stdout! (str "gateway stopped"
-                    (when-let [db (:db m)]
+                    (when-let [db (get m "db")]
                       (str " db=" db)))))))
 
 (defn- cli-gateway-pair!
@@ -4456,7 +4456,10 @@
      (help-row "--persist" "Persist as a :cli session.")
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
-     (help-row "--help, -h" "Show help.") "" "RUNTIME (WHAT RUNS)"
+     (help-row "--help, -h" "Show help.") "" "GATEWAY (WHICH DAEMON RUNS THE WORK)"
+     (help-row "--gateway HOST[:PORT]" "Drive a gateway on another machine (VIS_GATEWAY_URL).")
+     (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
+     "RUNTIME (WHAT RUNS)"
      (help-row "vis-agent runtime" "Name the runtime installed, and where it lives.")
      (help-row "vis-agent update" "Update vis-agent and that runtime together.") "" "CONFIGURATION"
      (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
@@ -4693,6 +4696,51 @@
 
 (defn- strip-global-args [args] (vec (remove global-arg? args)))
 
+(def ^:private gateway-flags
+  ;; Root flags that aim EVERY gateway call at a daemon this machine does not
+  ;; manage. They are consumed here, ahead of the command tree, because they are
+  ;; not one command's option: they decide WHICH gateway the whole invocation
+  ;; drives — `vis-agent --gateway 10.0.0.5 tui`, `--gateway ... sessions list`.
+  {"--gateway" :url "--gateway-token" :token})
+
+(defn- split-gateway-flags
+  "Split `--gateway URL` / `--gateway-token TOKEN` (space- or `=`-joined) out of
+   `args`. Returns `{:gateway {:url :token} :args [...]}` with `:gateway` nil when
+   neither appears. Parsing stops at a bare `--`, so prompt text is never eaten."
+  [args]
+  (loop
+    [remaining
+     (seq args)
+
+     kept
+     (transient [])
+
+     gateway
+     nil]
+
+    (let [arg (first remaining)]
+      (cond (nil? remaining) {:gateway gateway :args (persistent! kept)}
+            (= "--" arg) {:gateway gateway :args (into (persistent! kept) remaining)}
+            :else (let
+                    [[flag inline] (str/split (str arg) #"=" 2)
+                     k (get gateway-flags flag)]
+
+                    (cond (nil? k) (recur (next remaining) (conj! kept arg) gateway)
+                          inline (recur (next remaining) kept (assoc gateway k inline))
+                          :else
+                          (recur (nnext remaining) kept (assoc gateway k (fnext remaining)))))))))
+
+(defn- connect-gateway!
+  "Point every gateway call of this invocation at the `--gateway` target. A missing
+   address is a user error rather than a silent fall back to the local daemon —
+   falling back would run the work on the wrong machine."
+  [{:keys [url token]}]
+  (when (str/blank? (str url))
+    (throw (ex-info (str "--gateway needs a gateway address: HOST, HOST:PORT or "
+                         "http(s)://HOST[:PORT] (or set VIS_GATEWAY_URL).")
+                    {:vis/user-error true})))
+  (gateway-client/connect-remote! {:url url :token token}))
+
 (def ^:private session-shortcut-flags
   ;; Top-level `vis-agent --resume` / `vis-agent --continue` (pi-parity) are
   ;; ergonomic aliases for the `channels tui` session flags.
@@ -4803,9 +4851,11 @@
      measure?
      (startup-measure? raw-args)
 
+     {gateway :gateway stripped :args}
+     (split-gateway-flags (strip-global-args raw-args))
+
      args
-     (-> raw-args
-         strip-global-args
+     (-> stripped
          rewrite-session-shortcuts
          rewrite-tui-shortcut
          rewrite-ext-alias)]
@@ -4818,6 +4868,9 @@
            (if (= "gateway" (first args)) "gateway" "client"))
          (catch Throwable _ nil))
     (try
+      ;; `--gateway` decides WHICH daemon this invocation drives, so it is applied
+      ;; before anything can reach for one.
+      (when gateway (connect-gateway! gateway))
       ;; Quiet stdout BEFORE any extension load triggers Telemere registration
       ;; spam - the user only sees logs when they pass --debug / --verbose / -v
       ;; (or set VIS_DEBUG=1).
