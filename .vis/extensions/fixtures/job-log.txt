@@ -1,0 +1,48 @@
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6250751Z == Scan ==
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6251130Z =========================== short test summary info ============================
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6252327Z FAILED vis-agent/tests/test_outside.py::test_a_burst_of_pushes_crosses_the_boundary_once_per_window - AssertionError: assert ['open'] == ['open', 'patch']
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6253315Z
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6254105Z   Right contains one more item: 'patch'
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6254512Z
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6254782Z   Full diff:
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6255054Z     [
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6255326Z         'open',
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6255617Z   -     'patch',
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6255911Z     ]
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1.
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.6664331Z Post job cleanup.
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7549023Z [command]/usr/bin/git version
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7595211Z git version 2.54.0
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7634786Z Temporarily overriding HOME='/home/runner/work/_temp/92fb81cf-fe91-430d-b27b-ad9f19755387' before making global git config changes
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7636080Z Adding repository directory to the temporary git global config as a safe directory
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7650014Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/vis/vis
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7688350Z Removing SSH command configuration
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7696300Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.7736157Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8000900Z Removing HTTP extra header
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8018279Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8053740Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8336080Z Removing includeIf entries pointing to credentials config files
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8337086Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8376070Z includeif.gitdir:/home/runner/work/vis/vis/.git.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8377196Z includeif.gitdir:/home/runner/work/vis/vis/.git/worktrees/*.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8378315Z includeif.gitdir:/github/workspace/.git.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8379204Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8389334Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/vis/vis/.git.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8415485Z /home/runner/work/_temp/git-credentials-42527a2d-f498-4298-b7ec-76e41fc3c0ba.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8437599Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/vis/vis/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-42527a2d\-f498\-4298\-b7ec\-76e41fc3c0ba\.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8474351Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/vis/vis/.git/worktrees/*.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8513235Z /home/runner/work/_temp/git-credentials-42527a2d-f498-4298-b7ec-76e41fc3c0ba.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8526700Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/vis/vis/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-42527a2d\-f498\-4298\-b7ec\-76e41fc3c0ba\.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8602550Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8625508Z /github/runner_temp/git-credentials-42527a2d-f498-4298-b7ec-76e41fc3c0ba.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8636269Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-42527a2d\-f498\-4298\-b7ec\-76e41fc3c0ba\.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8682183Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8714377Z /github/runner_temp/git-credentials-42527a2d-f498-4298-b7ec-76e41fc3c0ba.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8727599Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-42527a2d\-f498\-4298\-b7ec\-76e41fc3c0ba\.config
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.8771918Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.9025833Z Removing credentials config '/home/runner/work/_temp/git-credentials-42527a2d-f498-4298-b7ec-76e41fc3c0ba.config'
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.9185508Z Cleaning up orphan processes
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.9478030Z Terminate orphan process: pid (2143) (sleep)
+tests / vis-agent + vis-contract (PyPI packages)	UNKNOWN STEP	2026-08-18T14:10:24.9522344Z Terminate orphan process: pid (2148) (sleep)

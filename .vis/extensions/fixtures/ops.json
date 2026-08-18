@@ -1,0 +1,382 @@
+[
+  {
+    "op": "open",
+    "view": {
+      "description": "docs(release): record the TestFlight build testers now have \u00b7 push",
+      "title": "CI \u00b7 run 32146686161",
+      "nodes": [
+        {
+          "tone": "running",
+          "detail": "workflow **CI** on `main` \u00b7 in focus **tests / macos-latest**",
+          "text": "4 of 6 jobs finished, 1 failed",
+          "type": "status",
+          "id": "run"
+        },
+        {
+          "done": 4,
+          "total": 6,
+          "type": "progress",
+          "id": "progress"
+        },
+        {
+          "stats": [
+            {
+              "id": "passed",
+              "value_text": "3",
+              "label": "passed",
+              "tone": "ok"
+            },
+            {
+              "id": "failed",
+              "value_text": "1",
+              "label": "failed",
+              "tone": "error"
+            },
+            {
+              "id": "skipped",
+              "value_text": "0",
+              "label": "skipped",
+              "tone": "idle"
+            },
+            {
+              "id": "queued",
+              "value_text": "2",
+              "label": "queued",
+              "tone": "running"
+            }
+          ],
+          "type": "stat",
+          "id": "score"
+        },
+        {
+          "rows": [
+            {
+              "id": "95742028721",
+              "tone": "running",
+              "cells": [
+                "tests / macos-latest",
+                "in progress",
+                "\u00b7"
+              ]
+            },
+            {
+              "id": "95742028770",
+              "tone": "error",
+              "cells": [
+                "tests / vis-agent + vis-contract (PyPI packages)",
+                "failure",
+                "12s"
+              ]
+            },
+            {
+              "id": "95742028781",
+              "tone": "running",
+              "cells": [
+                "tests / ubuntu-latest",
+                "in progress",
+                "\u00b7"
+              ]
+            },
+            {
+              "id": "95742028809",
+              "tone": "ok",
+              "cells": [
+                "lint / clj-kondo",
+                "success",
+                "44s"
+              ]
+            },
+            {
+              "id": "95742028943",
+              "tone": "ok",
+              "cells": [
+                "classpath / .",
+                "success",
+                "21s"
+              ]
+            },
+            {
+              "id": "95742029230",
+              "tone": "ok",
+              "cells": [
+                "classpath / extensions/channels/vis-channel-tui",
+                "success",
+                "22s"
+              ]
+            }
+          ],
+          "columns": [
+            {
+              "id": "job",
+              "label": "Job"
+            },
+            {
+              "id": "state",
+              "label": "Status"
+            },
+            {
+              "id": "took",
+              "label": "Took"
+            }
+          ],
+          "type": "table",
+          "id": "jobs"
+        },
+        {
+          "label": "Steps of the job in focus",
+          "steps": [
+            {
+              "id": "1",
+              "label": "Set up job",
+              "tone": "ok"
+            },
+            {
+              "id": "2",
+              "label": "Run actions/checkout@v7",
+              "tone": "ok"
+            },
+            {
+              "id": "3",
+              "label": "Run ./.github/actions/setup-graalvm-25",
+              "tone": "ok"
+            },
+            {
+              "id": "4",
+              "label": "Run DeLaGuardo/setup-clojure@13.6.1",
+              "tone": "ok"
+            },
+            {
+              "id": "5",
+              "label": "Run actions/cache@v6",
+              "tone": "ok"
+            },
+            {
+              "id": "6",
+              "label": "Seed a minimal AI provider config + harness fixtures",
+              "tone": "ok"
+            },
+            {
+              "id": "7",
+              "label": "Install bubblewrap + passt (Linux jail enforcer + filtered egress)",
+              "tone": "idle"
+            },
+            {
+              "id": "8",
+              "label": "Run actions/cache@v6",
+              "tone": "ok"
+            },
+            {
+              "id": "9",
+              "label": "Provision the sherpa-onnx native runtime",
+              "tone": "ok"
+            },
+            {
+              "id": "10",
+              "label": "Run test suite",
+              "tone": "running"
+            },
+            {
+              "id": "18",
+              "label": "Post Run actions/cache@v6",
+              "tone": "running"
+            },
+            {
+              "id": "19",
+              "label": "Post Run actions/cache@v6",
+              "tone": "running"
+            },
+            {
+              "id": "20",
+              "label": "Post Run actions/checkout@v7",
+              "tone": "running"
+            }
+          ],
+          "type": "steps",
+          "id": "failing"
+        },
+        {
+          "label": "Log of the job in focus",
+          "type": "log",
+          "id": "output"
+        },
+        {
+          "links": [
+            {
+              "id": "run",
+              "label": "This run",
+              "target": "https://github.com/Blockether/vis/actions/runs/32146686161"
+            },
+            {
+              "id": "95742028770",
+              "label": "Failed \u00b7 tests / vis-agent + vis-contract (PyPI packages)",
+              "target": "https://github.com/Blockether/vis/actions/runs/32146686161/job/95742028770"
+            }
+          ],
+          "type": "link",
+          "id": "links"
+        }
+      ]
+    }
+  },
+  {
+    "op": "patch",
+    "patch": {
+      "ops": [
+        {
+          "lines": [
+            "\u00b7 GitHub serves a job's log when the run finishes"
+          ],
+          "op": "append",
+          "node_id": "output"
+        }
+      ]
+    }
+  },
+  {
+    "op": "state"
+  },
+  {
+    "op": "patch",
+    "patch": {
+      "ops": [
+        {
+          "text": "6 of 6 jobs finished, 1 failed",
+          "tone": "error",
+          "detail": "workflow **CI** on `main` \u00b7 in focus **tests / vis-agent + vis-contract (PyPI packages)**",
+          "op": "set",
+          "node_id": "run"
+        },
+        {
+          "done": 6,
+          "total": 6,
+          "op": "set",
+          "node_id": "progress"
+        },
+        {
+          "stats": [
+            {
+              "id": "passed",
+              "value_text": "5",
+              "label": "passed",
+              "tone": "ok"
+            },
+            {
+              "id": "queued",
+              "value_text": "0",
+              "label": "queued",
+              "tone": "running"
+            }
+          ],
+          "op": "append",
+          "node_id": "score"
+        },
+        {
+          "rows": [
+            {
+              "id": "95742028721",
+              "cells": [
+                "tests / macos-latest",
+                "success",
+                "28m 33s"
+              ],
+              "tone": "ok"
+            },
+            {
+              "id": "95742028781",
+              "cells": [
+                "tests / ubuntu-latest",
+                "success",
+                "12m 54s"
+              ],
+              "tone": "ok"
+            }
+          ],
+          "op": "append",
+          "node_id": "jobs"
+        },
+        {
+          "op": "clear",
+          "node_id": "failing"
+        },
+        {
+          "steps": [
+            {
+              "id": "1",
+              "tone": "ok",
+              "label": "Set up job"
+            },
+            {
+              "id": "2",
+              "tone": "ok",
+              "label": "Run actions/checkout@v7"
+            },
+            {
+              "id": "3",
+              "tone": "ok",
+              "label": "Run actions/setup-python@v6"
+            },
+            {
+              "id": "4",
+              "tone": "ok",
+              "label": "Install the test tools"
+            },
+            {
+              "id": "5",
+              "tone": "error",
+              "label": "Run both package suites"
+            },
+            {
+              "id": "6",
+              "tone": "idle",
+              "label": "Lint and format-check both packages"
+            },
+            {
+              "id": "7",
+              "tone": "idle",
+              "label": "Build both wheels and import the installed pair"
+            },
+            {
+              "id": "13",
+              "tone": "idle",
+              "label": "Post Run actions/setup-python@v6"
+            },
+            {
+              "id": "14",
+              "tone": "ok",
+              "label": "Post Run actions/checkout@v7"
+            },
+            {
+              "id": "15",
+              "tone": "ok",
+              "label": "Complete job"
+            }
+          ],
+          "op": "append",
+          "node_id": "failing"
+        },
+        {
+          "op": "clear",
+          "node_id": "output"
+        },
+        {
+          "lines": [
+            "2026-08-18T14:10:24.6255054Z     [",
+            "2026-08-18T14:10:24.6255326Z         'open',",
+            "2026-08-18T14:10:24.6255617Z   -     'patch',",
+            "2026-08-18T14:10:24.6255911Z     ]",
+            "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
+            "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
+          ],
+          "op": "append",
+          "node_id": "output"
+        }
+      ]
+    }
+  },
+  {
+    "op": "close",
+    "ending": {
+      "summary": "6 of 6 jobs finished, 1 failed \u2014 workflow **CI** on `main` \u00b7 in focus **tests / vis-agent + vis-contract (PyPI packages)**, finished \u00b7 https://github.com/Blockether/vis/actions/runs/32146686161"
+    }
+  }
+]

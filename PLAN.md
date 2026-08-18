@@ -769,7 +769,7 @@ payload (assumed yes) or its own view.
 
 ## State of the plan
 
-**IN FLIGHT** — Phases 1-5 are DONE and green; Phase 6 is written and not yet started.
+**DONE** — Phases 1-6 are landed and green; the plan is finished.
 
 Done:
 
@@ -902,11 +902,20 @@ Done:
   two wire parsers behind `liveViewFromWire`. The one dead thing kept is a CALL that was missing:
   `gateway/server.clj` `stop!` now calls `gw-human-input/uninstall!`, so a gateway going away
   publishes the patches it buffered instead of swallowing them.
+- Phase 6 COMPLETE — the first live view a person actually watches, and the end-to-end proof of the chain.
+  `.vis/extensions/gh.py` watches a GitHub Actions run through the `gh` CLI: seven declared nodes (`run` status,
+  `progress`, the four-counter `score`, a `jobs` table upserted by `databaseId`, the failing job's `failing` steps,
+  the `output` log and the `links`), a 5s tick that backs off to 15s after five minutes, and a 90-minute cap. Only
+  what MOVED since the last poll crosses the wire, focus follows the job that failed (its checklist cleared before
+  the new job's steps land), and `gh_watch_checks` maps a pull request's checks onto the same seven answers. The
+  Unknown is settled by the CLI itself: `gh` refuses a job log while the run is in progress, so the log pane holds
+  one line until the end and then shows a window cut at the last `##[error]`. Proof is two REAL polls of one real
+  run — `.vis/extensions/test_gh.py` (13 tests) pins the mapper and the envelopes the extension SAYS, and
+  `test/com/blockether/vis/internal/human_input/gh_live_test.clj` (4 tests) replays those very envelopes through
+  `live-dispatch` and `live-json!` and asserts the picture and the markdown the model reads, so a drift between the
+  Python surface and the engine is red in Clojure. `resources/vis-docs/extending.md` now teaches this extension.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.
 
-TODO, in order:
-
-1. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
-   proof of the chain.
+TODO, in order: nothing remains.

@@ -677,57 +677,62 @@ answers is what the extension pushes into for as long as the job lasts, and the
 human watches it in the terminal, in the companion app, or both.
 
 ```python
+import json
 import time
 
 import vis
 
+TONES = {"": "running", "success": "ok", "skipped": "idle"}  # anything else is an error
 
-def deploy(target):
-    run = vis.shell(
-        {"op": "background", "id": "deploy", "command": f"./deploy.sh {target}"}
-    )
+
+def poll(run_id):
+    # Every GitHub call is the `gh` CLI through the shell verb: no hand-built HTTPS, no token.
+    done = vis.shell(
+        {"op": "background", "id": "gh", "command": f"gh run view {run_id} --json jobs,status,url"}
+    ).wait(60)
+    return json.loads(done["stdout"])
+
+
+def watch_run(run_id):
+    run = poll(run_id)
     with vis.live(
-        f"Deploy · {target}",
+        f"CI · run {run_id}",
         [
-            vis.status("phase", "Starting", tone="running"),
-            vis.progress("done", total=3),
-            vis.row(
-                "reading",
-                vis.steps(
-                    "plan",
-                    steps=[
-                        {"id": "build", "label": "Build"},
-                        {"id": "push", "label": "Push image"},
-                        {"id": "smoke", "label": "Smoke test"},
-                    ],
-                ),
-                vis.status(
-                    "why",
-                    f"Rolling `deploy.sh` at **{target}** — build, push, smoke test.",
-                ),
+            vis.status("run", "Watching", tone="running"),
+            vis.progress("progress", done=0, total=len(run["jobs"])),
+            vis.table(
+                "jobs",
+                columns=[vis.table_column("job", "Job"), vis.table_column("state", "Status")],
             ),
-            vis.output("tail", label="deploy.sh"),
+            vis.link("links", links=[{"id": "run", "label": "This run", "target": run["url"]}]),
         ],
-        description=f"{target} · deploy.sh",
+        description=f"{len(run['jobs'])} jobs",
     ) as view:
-        view["plan"].set("build", tone="running")
-        offset = 0
-        while True:
-            chunk = run.logs(offset)
-            offset = chunk["next_offset"]
-            if chunk["stdout"]:
-                view["tail"].write(chunk["stdout"].splitlines())
-            if view.is_interrupted:           # the human stopped watching
-                vis.log(f"stopped by a human: {view.note or 'no reason given'}")
-                run.stop()
-                break
-            if chunk["status"] != "running":
-                break
-            time.sleep(0.2)
-        view["done"].set(done=3, total=3)
-        view["phase"].set("Deployed", tone="ok")
-        return view.close(summary=f"{target} is deployed")
+        said = {}
+        while run["status"] != "completed":
+            if view.is_interrupted:               # the human stopped watching
+                return view.close(summary="stopped while the run was still going")
+            for job in run["jobs"]:
+                state = job["conclusion"] or job["status"]
+                # A row is addressed by the job's own id, so a job that changes state keeps its
+                # slot — and only what MOVED since the last poll crosses the wire.
+                if said.get(job["databaseId"]) != state:
+                    said[job["databaseId"]] = state
+                    view["jobs"].upsert(
+                        str(job["databaseId"]),
+                        [job["name"], state.replace("_", " ")],
+                        tone=TONES.get(job["conclusion"], "error"),
+                    )
+            view["progress"].set(done=sum(1 for j in run["jobs"] if j["status"] == "completed"))
+            time.sleep(5)
+            run = poll(run_id)
+        view["run"].set(run["conclusion"], tone=TONES.get(run["conclusion"], "error"))
+        return view.close(summary=f"the run {run['conclusion']}")
 ```
+
+The Vis repository ships the whole version of this as `.vis/extensions/gh.py` — seven nodes, a
+failing job's log tail, and `gh pr checks` read through the same mapping — with its tests beside
+it and a Clojure test replaying its captured ops through the engine.
 
 **A view declares its nodes once and addresses them by id ever after** — which
 is why the id is the first argument of every builder, exactly as a field name is

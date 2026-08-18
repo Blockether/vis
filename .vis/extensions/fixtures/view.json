@@ -1,0 +1,215 @@
+{
+  "title": "CI \u00b7 run 32146686161",
+  "nodes": [
+    {
+      "id": "run",
+      "type": "status",
+      "text": "6 of 6 jobs finished, 1 failed",
+      "tone": "error",
+      "detail": "workflow **CI** on `main` \u00b7 in focus **tests / vis-agent + vis-contract (PyPI packages)**"
+    },
+    {
+      "id": "progress",
+      "type": "progress",
+      "done": 6,
+      "total": 6
+    },
+    {
+      "id": "score",
+      "type": "stat",
+      "stats": [
+        {
+          "id": "passed",
+          "label": "passed",
+          "value_text": "5",
+          "tone": "ok"
+        },
+        {
+          "id": "failed",
+          "label": "failed",
+          "value_text": "1",
+          "tone": "error"
+        },
+        {
+          "id": "skipped",
+          "label": "skipped",
+          "value_text": "0",
+          "tone": "idle"
+        },
+        {
+          "id": "queued",
+          "label": "queued",
+          "value_text": "0",
+          "tone": "running"
+        }
+      ]
+    },
+    {
+      "id": "jobs",
+      "type": "table",
+      "columns": [
+        {
+          "id": "job",
+          "label": "Job"
+        },
+        {
+          "id": "state",
+          "label": "Status"
+        },
+        {
+          "id": "took",
+          "label": "Took"
+        }
+      ],
+      "rows": [
+        {
+          "id": "95742028721",
+          "cells": [
+            "tests / macos-latest",
+            "success",
+            "28m 33s"
+          ],
+          "tone": "ok"
+        },
+        {
+          "id": "95742028770",
+          "cells": [
+            "tests / vis-agent + vis-contract (PyPI packages)",
+            "failure",
+            "12s"
+          ],
+          "tone": "error"
+        },
+        {
+          "id": "95742028781",
+          "cells": [
+            "tests / ubuntu-latest",
+            "success",
+            "12m 54s"
+          ],
+          "tone": "ok"
+        },
+        {
+          "id": "95742028809",
+          "cells": [
+            "lint / clj-kondo",
+            "success",
+            "44s"
+          ],
+          "tone": "ok"
+        },
+        {
+          "id": "95742028943",
+          "cells": [
+            "classpath / .",
+            "success",
+            "21s"
+          ],
+          "tone": "ok"
+        },
+        {
+          "id": "95742029230",
+          "cells": [
+            "classpath / extensions/channels/vis-channel-tui",
+            "success",
+            "22s"
+          ],
+          "tone": "ok"
+        }
+      ],
+      "max_rows": 5000,
+      "order": "insertion"
+    },
+    {
+      "id": "failing",
+      "type": "steps",
+      "label": "Steps of the job in focus",
+      "steps": [
+        {
+          "id": "1",
+          "label": "Set up job",
+          "tone": "ok"
+        },
+        {
+          "id": "2",
+          "label": "Run actions/checkout@v7",
+          "tone": "ok"
+        },
+        {
+          "id": "3",
+          "label": "Run actions/setup-python@v6",
+          "tone": "ok"
+        },
+        {
+          "id": "4",
+          "label": "Install the test tools",
+          "tone": "ok"
+        },
+        {
+          "id": "5",
+          "label": "Run both package suites",
+          "tone": "error"
+        },
+        {
+          "id": "6",
+          "label": "Lint and format-check both packages",
+          "tone": "idle"
+        },
+        {
+          "id": "7",
+          "label": "Build both wheels and import the installed pair",
+          "tone": "idle"
+        },
+        {
+          "id": "13",
+          "label": "Post Run actions/setup-python@v6",
+          "tone": "idle"
+        },
+        {
+          "id": "14",
+          "label": "Post Run actions/checkout@v7",
+          "tone": "ok"
+        },
+        {
+          "id": "15",
+          "label": "Complete job",
+          "tone": "ok"
+        }
+      ]
+    },
+    {
+      "id": "output",
+      "type": "log",
+      "label": "Log of the job in focus",
+      "lines": [
+        "2026-08-18T14:10:24.6255054Z     [",
+        "2026-08-18T14:10:24.6255326Z         'open',",
+        "2026-08-18T14:10:24.6255617Z   -     'patch',",
+        "2026-08-18T14:10:24.6255911Z     ]",
+        "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
+        "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
+      ],
+      "window_lines": 2000,
+      "total_lines": 7
+    },
+    {
+      "id": "links",
+      "type": "link",
+      "links": [
+        {
+          "id": "run",
+          "label": "This run",
+          "target": "https://github.com/Blockether/vis/actions/runs/32146686161",
+          "target_kind": "url"
+        },
+        {
+          "id": "95742028770",
+          "label": "Failed \u00b7 tests / vis-agent + vis-contract (PyPI packages)",
+          "target": "https://github.com/Blockether/vis/actions/runs/32146686161/job/95742028770",
+          "target_kind": "url"
+        }
+      ]
+    }
+  ],
+  "description": "docs(release): record the TestFlight build testers now have \u00b7 push"
+}

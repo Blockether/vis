@@ -1,0 +1,498 @@
+"""gh — watch a GitHub Actions run on a live view, and hand the model the picture at the end.
+
+A CI run is the archetype a live view exists for: it takes fifteen minutes, the extension can see
+exactly when it ends, a person wants to WATCH it, and the model needs one paragraph afterwards.
+Today that run is observed the expensive way — a log poll per provider round trip — or not at all.
+
+**Everything GitHub is the `gh` CLI through the sandbox shell verb.** No hand-built HTTPS, no token
+read, copied or printed: authentication is the operator's own `gh` session, and a missing or
+unauthenticated `gh` refuses in ONE line before any view opens — nothing to watch beats an empty
+pane.
+
+Seven nodes, one per question a person asks about a run: what is happening (`run`), how far
+(`progress`), how many of each (`score`), which jobs (`jobs`), which steps of the job in focus
+(`failing`), what it printed (`output`), where to open it (`links`). One mapping serves all of them:
+`queued`/`in_progress` is `running`, `success` is `ok`, `skipped` and `neutral` are `idle`, anything
+else is `error`. Rows are upserted by the job's `databaseId`, so a job that changes state keeps its
+slot and the eye keeps its place, and only what CHANGED since the last poll crosses the wire.
+
+GitHub serves a job's log only once the whole RUN is complete — `gh run view --job N --log` answers
+"still in progress" until then — so the log node carries one line while the run is live and fills
+with the tail of the job in focus when it ends. The tail is what the model reads; the view's record
+keeps every line that was written.
+"""
+
+import json
+import os
+import tempfile
+import time
+
+import vis
+
+# `gh run view --json <these>` is the whole payload the view is built from: one call per poll.
+RUN_FIELDS = "jobs,status,conclusion,workflowName,headBranch,url,displayTitle,number,event,databaseId"
+
+# The tick a person can watch without it costing anything, and the one a long run settles into.
+FAST_TICK_S = 5.0
+SLOW_TICK_S = 15.0
+BACKOFF_AFTER_S = 300.0
+
+# The model's copy of a failing job's log is a TAIL: the whole log stays in the view's record.
+LOG_TAIL_LINES = 200
+
+# A watch that outlives this stops itself rather than polling a run nobody is waiting for.
+DEFAULT_MINUTES = 90
+
+_RUNNING_STATES = ("queued", "in_progress", "waiting", "requested", "pending")
+
+
+class GhMissing(RuntimeError):
+    """`gh` is absent or signed out — the one refusal that happens before a view opens."""
+
+
+# -- the mapping: a `gh run view` payload, read as the seven answers --------------------
+
+
+def tone_of(status, conclusion):
+    """The one tone mapping every node uses: a job's state read as `running`/`ok`/`idle`/`error`."""
+    if str(status or "") in _RUNNING_STATES:
+        return "running"
+    finished = str(conclusion or "")
+    if finished == "success":
+        return "ok"
+    if finished in ("skipped", "neutral"):
+        return "idle"
+    return "error"
+
+
+def _elapsed(job):
+    """`1m 12s` between a job's start and its end — `·` while it is still running."""
+    started, ended = str(job.get("startedAt") or ""), str(job.get("completedAt") or "")
+    if not started or not ended or ended.startswith("0001-01-01"):
+        return "·"
+    try:
+        began = time.strptime(started[:19], "%Y-%m-%dT%H:%M:%S")
+        over = time.strptime(ended[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return "·"
+    seconds = max(0, int(time.mktime(over) - time.mktime(began)))
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+
+
+def _state_text(job):
+    return (
+        str(job.get("conclusion") or job.get("status") or "").replace("_", " ") or "·"
+    )
+
+
+def run_shape(payload):
+    """Everything the seven nodes show, derived from one `gh run view --json` payload.
+
+    Pure: the same payload always answers the same shape, which is what makes the mapping
+    testable without a network and the patches computable by comparing two of them.
+    """
+    jobs = [j for j in (payload.get("jobs") or []) if isinstance(j, dict)]
+    tones = [tone_of(j.get("status"), j.get("conclusion")) for j in jobs]
+    finished = [j for j in jobs if str(j.get("status") or "") == "completed"]
+    failed = [j for j, tone in zip(jobs, tones, strict=True) if tone == "error"]
+    running = [j for j in jobs if str(j.get("status") or "") in _RUNNING_STATES]
+    counted = {
+        "passed": sum(1 for t in tones if t == "ok"),
+        "failed": len(failed),
+        "skipped": sum(1 for t in tones if t == "idle"),
+        "queued": sum(1 for t in tones if t == "running"),
+    }
+    headline = f"{len(finished)} of {len(jobs)} jobs finished"
+    if failed:
+        headline += f", {len(failed)} failed"
+    is_over = str(payload.get("status") or "") == "completed"
+    focus = (running or failed or jobs or [None])[0]
+    in_focus = str(focus.get("name") or "?") if focus else ""
+    return {
+        "is_over": is_over,
+        "run_url": str(payload.get("url") or ""),
+        "headline": headline,
+        # A node's LABEL is declared once and never patched, so the job whose steps and log are
+        # shown is named here, where it can change with the focus.
+        "detail": "workflow **{}** on `{}` · in focus **{}**".format(
+            payload.get("workflowName") or "?",
+            payload.get("headBranch") or "?",
+            in_focus,
+        ),
+        "tone": tone_of(payload.get("status"), payload.get("conclusion")),
+        "done": len(finished),
+        "total": len(jobs),
+        "score": [
+            {"id": name, "value_text": str(counted[name]), "label": name, "tone": tone}
+            for name, tone in (
+                ("passed", "ok"),
+                ("failed", "error"),
+                ("skipped", "idle"),
+                ("queued", "running"),
+            )
+        ],
+        "rows": [
+            {
+                "id": str(job.get("databaseId") or job.get("name") or index),
+                "cells": [str(job.get("name") or "?"), _state_text(job), _elapsed(job)],
+                "tone": tone,
+            }
+            for index, (job, tone) in enumerate(zip(jobs, tones, strict=True))
+        ],
+        "focus": in_focus,
+        "focus_id": str(focus.get("databaseId") or "") if focus else "",
+        "steps": [
+            {
+                "id": str(step.get("number") or step.get("name") or index),
+                "label": str(step.get("name") or "?"),
+                "tone": tone_of(step.get("status"), step.get("conclusion")),
+            }
+            for index, step in enumerate(focus.get("steps") or [] if focus else [])
+        ],
+        "links": [
+            {"id": "run", "label": "This run", "target": str(payload.get("url") or "")},
+        ]
+        + [
+            {
+                "id": str(job.get("databaseId") or job.get("name")),
+                "label": f"Failed · {job.get('name')}",
+                "target": str(job.get("url") or payload.get("url") or ""),
+            }
+            for job in failed
+        ],
+    }
+
+
+def declared_nodes(shape):
+    """The seven nodes, declared once from the first poll and addressed by id ever after."""
+    return [
+        vis.status(
+            "run", shape["headline"], tone=shape["tone"], detail=shape["detail"]
+        ),
+        vis.progress("progress", done=shape["done"], total=shape["total"]),
+        vis.stat("score", stats=[dict(one) for one in shape["score"]]),
+        vis.table(
+            "jobs",
+            columns=[
+                vis.table_column("job", "Job"),
+                vis.table_column("state", "Status"),
+                vis.table_column("took", "Took"),
+            ],
+            rows=[
+                vis.table_row(row["id"], row["cells"], tone=row["tone"])
+                for row in shape["rows"]
+            ],
+        ),
+        vis.steps(
+            "failing",
+            steps=[dict(one) for one in shape["steps"]],
+            label="Steps of the job in focus",
+        ),
+        vis.output("output", label="Log of the job in focus"),
+        vis.link("links", links=[dict(one) for one in shape["links"]]),
+    ]
+
+
+def push_changes(view, before, after):
+    """Patch ONLY what moved between two polls — the whole point of upserting by id.
+
+    A run of eighteen jobs settles one row at a time; re-pushing the table every five seconds
+    would reshuffle nothing but would cost the wire (and the reader's place) every tick.
+    """
+    if (
+        before.get("headline") != after["headline"]
+        or before.get("tone") != after["tone"]
+        or before.get("detail") != after["detail"]
+    ):
+        view["run"].set(after["headline"], tone=after["tone"], detail=after["detail"])
+    if before.get("done") != after["done"] or before.get("total") != after["total"]:
+        view["progress"].set(done=after["done"], total=after["total"])
+    was = {one["id"]: one for one in before.get("score") or []}
+    for one in after["score"]:
+        if was.get(one["id"], {}).get("value_text") != one["value_text"]:
+            view["score"].set(
+                one["id"], one["value_text"], label=one["label"], tone=one["tone"]
+            )
+    rows = {one["id"]: one for one in before.get("rows") or []}
+    for row in after["rows"]:
+        if rows.get(row["id"]) != row:
+            view["jobs"].upsert(row["id"], row["cells"], tone=row["tone"])
+    steps = {one["id"]: one for one in before.get("steps") or []}
+    if before.get("focus_id") != after["focus_id"]:
+        steps = {}
+        view["failing"].clear()
+    for step in after["steps"]:
+        if steps.get(step["id"]) != step:
+            view["failing"].set(step["id"], tone=step["tone"], label=step["label"])
+    known = {one["id"] for one in before.get("links") or []}
+    for one in after["links"]:
+        if one["id"] not in known:
+            view["links"].add(one["id"], one["label"], one["target"])
+
+
+# -- gh, and nothing but gh ------------------------------------------------------------
+
+
+def _shell(command, seconds=120):
+    """One command through the sandbox shell verb, waited out, answered as its result map."""
+    handle = vis.shell(
+        {
+            "op": "background",
+            "id": f"gh-{int(time.monotonic() * 1000)}",
+            "command": command,
+        }
+    )
+    return handle.wait(int(seconds))
+
+
+def _capture(command, seconds=120):
+    """Run `command` with stdout on a file, answering `(exit, text)`.
+
+    A run's JSON and a job's log are both far past what a shell result carries inline, so the
+    bytes land on disk and are read back whole rather than through a truncated tail.
+    """
+    handle, path = tempfile.mkstemp(prefix="vis-gh-", suffix=".out")
+    os.close(handle)
+    try:
+        done = _shell(f"{command} > {path} 2>&1", seconds)
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return int(done.get("exit") or 0), f.read()
+    finally:
+        os.unlink(path)
+
+
+def require_gh():
+    """Refuse in one line when `gh` is absent or signed out — before anything is opened."""
+    exit_code, text = _capture("gh auth status", 60)
+    if exit_code != 0:
+        first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        raise GhMissing(
+            "gh is not usable here: "
+            + (first or "`gh auth status` failed")
+            + " — install GitHub CLI and run `gh auth login`, then ask again"
+        )
+
+
+def _repo_flag(repo):
+    return f" --repo {repo}" if repo else ""
+
+
+def fetch_run(run_id, repo=None):
+    """One poll: the run as `gh` reports it, or a raised failure carrying gh's own words."""
+    exit_code, text = _capture(
+        f"gh run view {run_id}{_repo_flag(repo)} --json {RUN_FIELDS}"
+    )
+    if exit_code != 0:
+        raise RuntimeError(f"gh run view {run_id} failed: {text.strip()[:400]}")
+    return json.loads(text)
+
+
+def newest_run(repo=None):
+    """The run id of the newest run on the current branch — what `gh run watch` would pick."""
+    exit_code, branch = _capture("git branch --show-current", 30)
+    on = f" --branch {branch.strip()}" if exit_code == 0 and branch.strip() else ""
+    exit_code, text = _capture(
+        f"gh run list{_repo_flag(repo)}{on} -L 1 --json databaseId"
+    )
+    rows = json.loads(text) if exit_code == 0 and text.strip().startswith("[") else []
+    if not rows:
+        raise RuntimeError(
+            f"no GitHub Actions run to watch{on or ''} — push a commit, or pass a run id"
+        )
+    return rows[0]["databaseId"]
+
+
+def log_window(text, lines=LOG_TAIL_LINES):
+    """The lines worth showing out of a job's whole log.
+
+    `gh` repeats the job and step name on every line — noise in a pane three columns wide — so
+    only the timestamped text is kept. And a failing job's LAST lines are the runner cleaning up
+    orphan processes, while the reason it failed is above them: when the log carries an
+    `##[error]` marker, the window ENDS at the last one, so the tail a person reads is what led
+    to the failure rather than what happened after it.
+    """
+    written = [
+        line.split("\t")[-1].rstrip() for line in text.splitlines() if line.strip()
+    ]
+    marked = [at for at, line in enumerate(written) if "##[error]" in line]
+    end = marked[-1] + 1 if marked else len(written)
+    return written[max(0, end - int(lines)) : end]
+
+
+def job_log_tail(run_id, job_id, repo=None, lines=LOG_TAIL_LINES):
+    """The tail of one job's log, or nil while GitHub still refuses to serve it."""
+    if not job_id:
+        return None
+    exit_code, text = _capture(
+        f"gh run view {run_id}{_repo_flag(repo)} --job {job_id} --log", 180
+    )
+    if exit_code != 0:
+        return None
+    return log_window(text, lines)
+
+
+# -- what the human watches ------------------------------------------------------------
+
+
+def _tick(since):
+    return FAST_TICK_S if since < BACKOFF_AFTER_S else SLOW_TICK_S
+
+
+def _summary(shape):
+    ending = "finished" if shape["is_over"] else "still running"
+    return "{} — {}, {} · {}".format(
+        shape["headline"], shape["detail"], ending, shape["run_url"]
+    )
+
+
+def watch(title, description, poll, minutes=DEFAULT_MINUTES, log_tail=None):
+    """Open the view on the first poll, patch it until the run ends, answer the picture.
+
+    Whatever ends it, the model gets the same shape: a human's stop answers the state they were
+    looking at plus their note, a finished run answers the finished run.
+    """
+    shape = run_shape(poll())
+    began = time.monotonic()
+    with vis.live(title, declared_nodes(shape), description=description) as view:
+        try:
+            view["output"].write("· GitHub serves a job's log when the run finishes")
+            while not shape["is_over"]:
+                if view.is_interrupted or (time.monotonic() - began) > minutes * 60:
+                    break
+                time.sleep(_tick(time.monotonic() - began))
+                try:
+                    fresh = run_shape(poll())
+                except RuntimeError as failure:
+                    view["run"].set(str(failure)[:200], tone="error")
+                    break
+                push_changes(view, shape, fresh)
+                shape = fresh
+            if shape["is_over"]:
+                tail = log_tail(shape["focus_id"]) if log_tail else None
+                if tail:
+                    view["output"].clear()
+                    view["output"].write(*tail)
+        except vis.Interrupted:
+            # The human stopped watching. The view already holds its verdict, `close` answers
+            # it, and `shape` is the last poll that reached them — which is the picture they
+            # were looking at when they stopped.
+            pass
+        return view.close(summary=_summary(shape))
+
+
+def gh_watch_run(run=None, repo=None, minutes=DEFAULT_MINUTES):
+    """What is this CI run doing, and how did it end? Watch a GitHub Actions run to its verdict.
+
+    Opens a live view a person can watch (and stop) while it polls `gh run view` every five
+    seconds, easing to fifteen past the first five minutes, and answers the picture at the end:
+    the jobs, the score, the failing job's steps and the tail of its log. `run` is a run id or
+    URL; without one, the newest run on the current branch. `repo` is `owner/name` for a repo
+    other than the working directory's.
+    """
+    require_gh()
+    run_id = run or newest_run(repo)
+    first = fetch_run(run_id, repo)
+    title = str(first.get("workflowName") or "GitHub Actions")
+    described = "{} · {}".format(
+        first.get("displayTitle") or run_id, first.get("event") or ""
+    )
+    return watch(
+        f"{title} · run {run_id}",
+        described.strip(" ·"),
+        lambda: fetch_run(run_id, repo),
+        minutes,
+        lambda job_id: job_log_tail(run_id, job_id, repo),
+    )
+
+
+def checks_payload(rows, pull):
+    """`gh pr checks --json` rows read as a run payload, so ONE mapping serves both views."""
+    states = {
+        "pass": ("completed", "success"),
+        "fail": ("completed", "failure"),
+        "skipping": ("completed", "skipped"),
+        "cancel": ("completed", "cancelled"),
+        "pending": ("in_progress", ""),
+    }
+    jobs = []
+    for row in rows or []:
+        status, conclusion = states.get(
+            str(row.get("bucket") or ""), ("completed", "neutral")
+        )
+        jobs.append(
+            {
+                "databaseId": str(row.get("link") or row.get("name") or ""),
+                "name": str(row.get("name") or "?"),
+                "status": status,
+                "conclusion": conclusion,
+                "startedAt": row.get("startedAt") or "",
+                "completedAt": row.get("completedAt") or "",
+                "url": row.get("link") or "",
+                "steps": [],
+            }
+        )
+    is_over = all(str(job["status"]) == "completed" for job in jobs) if jobs else False
+    failed = [job for job in jobs if job["conclusion"] == "failure"]
+    return {
+        "jobs": jobs,
+        "status": "completed" if is_over else "in_progress",
+        "conclusion": ("failure" if failed else "success") if is_over else "",
+        "workflowName": "checks",
+        "headBranch": str(pull or "pull request"),
+        "displayTitle": f"Checks on {pull}" if pull else "Checks",
+        "url": str((rows or [{}])[0].get("link") or ""),
+        "event": "pull_request",
+    }
+
+
+def fetch_checks(pull, repo=None):
+    """One poll of `gh pr checks`, mapped into the payload `run_shape` already understands."""
+    named = f" {pull}" if pull else ""
+    command = (
+        f"gh pr checks{named}{_repo_flag(repo)} "
+        "--json name,state,bucket,startedAt,completedAt,link,workflow"
+    )
+    exit_code, text = _capture(command)
+    # `gh pr checks` exits 8 while checks are pending and 1 when one failed: both are ANSWERS,
+    # and only a payload that is not JSON is a failure worth stopping for.
+    if not text.strip().startswith("["):
+        raise RuntimeError(f"gh pr checks failed: {text.strip()[:400]}")
+    return checks_payload(json.loads(text), pull)
+
+
+def gh_watch_checks(pr=None, repo=None, minutes=DEFAULT_MINUTES):
+    """Are this pull request's checks green yet? Watch `gh pr checks` to its verdict.
+
+    The same seven-node view as `gh_watch_run` over a pull request's checks — each check is a
+    row, upserted by its link, and the steps node stays empty because a check has none. `pr` is
+    a number, branch or URL; without one, the pull request for the current branch.
+    """
+    require_gh()
+    first = fetch_checks(pr, repo)
+    return watch(
+        f"Checks · {pr}" if pr else "Checks",
+        str(first.get("displayTitle") or "checks"),
+        lambda: fetch_checks(pr, repo),
+        minutes,
+    )
+
+
+PROMPT = """gh_ surface active — watch a GitHub Actions run on a live view the human can see.
+  gh_watch_run(run=None, repo=None)     gh_watch_checks(pr=None, repo=None)
+Both open a view, poll `gh` until the run ends, and answer the picture (jobs, score, failing
+steps, log tail) — use them instead of a shell loop over `gh run view`."""
+
+
+vis.extension(
+    name="gh",
+    description="Watch a GitHub Actions run or a pull request's checks on a live view.",
+    version="0.1.0",
+    kind="integration",
+    alias="gh",
+    symbols=[
+        vis.symbol(gh_watch_run, tag="observation"),
+        vis.symbol(gh_watch_checks, tag="observation"),
+    ],
+    prompt=PROMPT,
+)
