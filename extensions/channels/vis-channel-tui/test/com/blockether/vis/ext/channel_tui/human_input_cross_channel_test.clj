@@ -820,9 +820,8 @@
             "a view arranges with the FORM's own group, never a second word for the same thing")
         (is (= (set (keys hi-spec/group-directions))
                (set (ts-strings source "LIVE_GROUP_DIRECTIONS")))))
-      (testing "how a surface colours a line, and why a view ended"
-        (is (= (set (keys hi-spec/live-tones)) (set (ts-strings source "LIVE_TONES"))))
-        (is (= (set (keys hi-spec/live-reasons)) (set (ts-strings source "LIVE_REASONS")))))
+      (testing "how a surface colours a line"
+        (is (= (set (keys hi-spec/live-tones)) (set (ts-strings source "LIVE_TONES")))))
       (testing "what a link points at, and how a table is ordered under it"
         (is (= (set (keys hi-spec/link-targets)) (set (ts-strings source "LIVE_LINK_TARGETS"))))
         (is (= (set (keys hi-spec/live-orders)) (set (ts-strings source "LIVE_ORDERS"))))

@@ -194,7 +194,7 @@
                (+ (long used) (long (p/display-width shown)))
                (next rs))))))
 
-(defn elapsed-text
+(defn- elapsed-text
   "How long the view has been open, the way a person reads a duration — `13s`,
    `1m 12s`, `2h 4m`. It rides the band's own rule beside the title, because the
    first question about a running thing is how long it has been running."
@@ -271,7 +271,7 @@
       (update :view live/apply-patch patch)
       (assoc :fresh (touched patch))))
 
-(defn max-offset
+(defn- max-offset
   "The last row the viewport may start on, from what the last paint measured."
   ^long [pane]
   (max 0 (- (long (or (:total pane) 0)) (long (or (:visible pane) 0)))))
@@ -875,7 +875,7 @@
 
 ;;; ── Chrome ──────────────────────────────────────────────────────────────────
 
-(defn title-line
+(defn- title-line
   "What rides the band's opening rule: the view's title and how long it has been
    open. `source` — the extension that opened it — comes after the title, because
    the first thing the human asks a picture that appeared on its own is who put
@@ -1207,7 +1207,7 @@
           (:runs entry) (paint-runs! g left row inner-w t/dialog-hint [p/ITALIC] (:runs entry))
           :else (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry)))))
 
-(defn collapsed-row
+(defn- collapsed-row
   "The ONE line an older open view keeps above the band: its title and where it
    got to. Newest last, so the pane in front is the one the human is watching."
   [pane]

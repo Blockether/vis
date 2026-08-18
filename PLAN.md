@@ -873,6 +873,13 @@ Done:
   paints its own rails — `┌┬┐ │ ├┼┤ └┴┘` with a rule between every pair of rows in the terminal,
   `border-collapse` with a border on every cell in the app, the empty sentence INSIDE the box. An IMAGE
   node stays refused: a picture is an attachment a `link` points at.
+- Nothing in this feature is deprecated on the way out: a var, type or constant with no reader is
+  DELETED. This pass took the four TUI pane fns and the two gateway live constants nobody calls
+  outside their file down to private, deleted the app's `LiveVerdict`, `LIVE_REASONS` and `LiveReason`
+  (the phone never paints why a view ended — the transcript carries the verdict) and un-exported the
+  two wire parsers behind `liveViewFromWire`. The one dead thing kept is a CALL that was missing:
+  `gateway/server.clj` `stop!` now calls `gw-human-input/uninstall!`, so a gateway going away
+  publishes the patches it buffered instead of swallowing them.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.

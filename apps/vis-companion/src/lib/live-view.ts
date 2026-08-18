@@ -62,15 +62,6 @@ export const LIVE_OPS = [
   'remove-node',
 ] as const;
 
-/** Why a view ended (`live-reasons`). CLOSED. */
-export const LIVE_REASONS = [
-  'completed',
-  'interrupted',
-  'timeout',
-  'undeliverable',
-  'failed',
-] as const;
-
 /** What a link POINTS AT (`live-link-targets`). CLOSED. */
 export const LIVE_LINK_TARGETS = ['attachment', 'path', 'url'] as const;
 
@@ -99,7 +90,6 @@ export const LIVE_NOTE_CHARS = 500;
 
 export type LiveNodeType = (typeof LIVE_NODE_TYPES)[number];
 export type LiveTone = (typeof LIVE_TONES)[number];
-export type LiveReason = (typeof LIVE_REASONS)[number];
 export type LiveLinkTarget = (typeof LIVE_LINK_TARGETS)[number];
 export type LiveAlign = (typeof LIVE_ALIGNS)[number];
 export type LiveSortDir = (typeof LIVE_SORT_DIRS)[number];
@@ -253,19 +243,6 @@ export interface LiveLogPage {
   total: number;
 }
 
-/** Why a view ended, as the close event carries it. */
-export interface LiveVerdict {
-  view_id: string;
-  reason: LiveReason;
-  is_completed: boolean;
-  /** A PERSON ended it — Escape in the terminal, Interrupt here. */
-  is_from_human: boolean;
-  /** The comment they left with that stop, when they left one. */
-  note?: string;
-  summary?: string;
-  error?: string;
-}
-
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -388,7 +365,7 @@ function keyed<T>(value: unknown, parse: (raw: Record<string, unknown>) => T | n
  * One node, or `null` when the app cannot paint it: an unknown type is a NEWER
  * engine talking to an older phone, and half a node is worse than none.
  */
-export function liveNodeFromWire(raw: unknown): LiveNode | null {
+function liveNodeFromWire(raw: unknown): LiveNode | null {
   const node = record(raw);
   if (!node) return null;
   const id = text(node.id);
@@ -453,7 +430,7 @@ export function liveNodeFromWire(raw: unknown): LiveNode | null {
 }
 
 /** The nodes of a view or of a group, unpaintable ones dropped. */
-export function liveNodesFromWire(raw: unknown): LiveNode[] {
+function liveNodesFromWire(raw: unknown): LiveNode[] {
   return (Array.isArray(raw) ? raw : [])
     .map(liveNodeFromWire)
     .filter((node): node is LiveNode => node !== null);

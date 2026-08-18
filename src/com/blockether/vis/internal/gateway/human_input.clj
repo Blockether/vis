@@ -95,7 +95,7 @@
 
 ;; --- Live views (a run the human WATCHES) ---
 
-(def live-flush-ms
+(def ^:private live-flush-ms
   "How long a view's patches are held before they are published as ONE session
    event.
 
@@ -239,7 +239,7 @@
   (let [view (human-input/live-view (str view-id))]
     (when (and view (= (str sid) (session-of view))) view)))
 
-(def live-log-page
+(def ^:private live-log-page
   "Lines one log page answers: a WINDOW, the same amount a surface holds live
    ([[hi-spec/log-defaults]]). It is both the default and the ceiling — a client
    asking for more than a window is asking for the file, and the record IS the
