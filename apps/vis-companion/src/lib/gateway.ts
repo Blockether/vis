@@ -56,6 +56,7 @@ import type {
   McpServerInput,
   McpServersResponse,
   McpTestResult,
+  ForkPoint,
   WorkspaceDraft,
   BrowseEntry,
   BrowseListing,
@@ -2430,6 +2431,36 @@ export class GatewayClient {
         workspace_id: workspaceId,
       },
     );
+  }
+
+  /**
+   * Every turn of `sid` a fork can be cut at, oldest-first — `GET
+   * /v1/sessions/:sid/forks`. Lean rows on purpose: the picker paints one line
+   * per turn and must not pull a transcript to do it.
+   */
+  async forkPoints(sid: string, signal?: AbortSignal): Promise<ForkPoint[]> {
+    const res = await this.request<{ turns?: ForkPoint[] }>(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}/forks`,
+      undefined,
+      signal,
+    );
+    return res.turns ?? [];
+  }
+
+  /**
+   * Fork `sid` into a NEW INDEPENDENT session — the wire twin of the TUI's fork
+   * and fork-at-turn. `throughTurnId` is the LAST turn the fork keeps; omitted,
+   * the fork carries the whole conversation. The source session is untouched,
+   * and the answer is the fork's own row, ready to open.
+   */
+  async forkSession(sid: string, throughTurnId?: string): Promise<Session> {
+    const res = await this.request<{ session: Session }>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sid)}/forks`,
+      throughTurnId ? { through_turn_id: throughTurnId } : {},
+    );
+    return res.session;
   }
 
   async session(

@@ -2671,6 +2671,21 @@
              (error-response 409 (:type (ex-data e) :draft-abandon-failed) (ex-message e)))))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- fork-points-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:turns (state/fork-points sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- fork-session-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [{through "through_turn_id"} (body-json request)]
+      (try (json-response {:session (state/fork-session! sid through)})
+           (catch clojure.lang.ExceptionInfo e
+             (error-response 409 (:type (ex-data e) :session/fork-failed) (ex-message e)))))
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- seq-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -3879,6 +3894,7 @@
         [(sid-route "/workspace/drafts/:workspace-id") {:delete abandon-draft-handler}]
         [(sid-route "/workspace/stash") {:post stash-draft-handler}]
         [(sid-route "/workspace/resume") {:post resume-draft-handler}]
+        [(sid-route "/forks") {:get fork-points-handler :post fork-session-handler}]
         [(sid-route "/suggest") {:get suggest-handler}]
         [(sid-route "/turns") {:get list-turns-handler :post submit-turn-handler}]
         [(sid-route "/turns/:tid")

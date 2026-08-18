@@ -41,7 +41,7 @@ import {
 } from '../components/Menu';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
+import type { ForkPoint, GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
 import { homeifyPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
@@ -65,6 +65,7 @@ import {
   type ManagedProject,
 } from '../components/ManageProjectsSheet';
 import {
+  ForkIcon,
   PencilIcon,
   StarIcon,
   TrashIcon,
@@ -323,6 +324,12 @@ interface Props {
   onSearch: (() => void) | null;
 }
 
+/**
+ * The busy key for the fork that takes the WHOLE session: a turn's own id marks
+ * a fork cut at that turn, and no turn id can collide with this word.
+ */
+const WHOLE_SESSION_FORK = 'whole-session';
+
 export function SessionsScreen({
   conns,
   query,
@@ -418,6 +425,26 @@ export function SessionsScreen({
   // The verbs the slide uncovers on a row, plus the group header's project delete. One dialog
   // serves all three: renaming asks for the new title, both deletes ask for consent
   // — a destructive tap two pixels from a thumb rest position must never be one-way.
+  // FORKING one session, from that row's own slide. The order is one value like
+  // the start order above it: which row, on which machine, and where the panel
+  // hangs — leaving it forgets all three.
+  const [forkFlow, setForkFlow] = useState<{
+    session: Session;
+    conn: GatewayConn;
+    at: { top: number; left: number };
+  } | null>(null);
+  // The turns that row can be cut at. `null` = still reading; the panel says so
+  // rather than claiming the session has none.
+  const [forkPoints, setForkPoints] = useState<{ rows: ForkPoint[] | null; error: string | null }>({
+    rows: null,
+    error: null,
+  });
+  // Which choice in the panel is running — the whole session, or one turn's id.
+  const [forkBusy, setForkBusy] = useState<string | null>(null);
+  // WHICH row the open panel is reading turns for, out of the render loop: the fleet
+  // poll hands this screen a new machine object every few seconds and an effect that
+  // depended on it would abort its own read on the frame it started.
+  const forkSourceRef = useRef<{ sid: string; conn: GatewayConn } | null>(null);
   const [rowAction, setRowAction] = useState<RowAction | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
@@ -1518,6 +1545,71 @@ export function SessionsScreen({
     setActionError(null);
   }, []);
 
+  /**
+   * The slide's `Fork` verb: hang the fork question under the cell the thumb
+   * touched, exactly like the project header's draft half — the row's own strip
+   * is gone by the time the panel paints, so the anchor comes with the verb.
+   */
+  const startFork = useCallback((session: Session, conn: GatewayConn, anchor: HTMLElement) => {
+    startAnchorEl.current = anchor;
+    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+    if (!at) return;
+    forkSourceRef.current = { sid: session.id, conn };
+    setForkPoints({ rows: null, error: null });
+    setForkBusy(null);
+    setForkFlow({ session, conn, at });
+  }, []);
+
+  const leaveFork = useCallback((restoreFocus = false) => {
+    setForkFlow(null);
+    setForkBusy(null);
+    if (restoreFocus) startAnchorEl.current?.focus();
+  }, []);
+
+  // The turns are read ONCE per opening, keyed by the ROW — never by the flow
+  // object or the machine, both of which the 5.5s fleet poll replaces under an
+  // open panel (the drafts menu learned this the hard way and never left
+  // "Reading drafts..."), so the source travels in a ref like that one's does.
+  const forkSid = forkFlow?.session.id ?? null;
+  const forkMachine = forkFlow ? machineKey(forkFlow.conn) : null;
+  useEffect(() => {
+    const source = forkSourceRef.current;
+    if (!forkSid || !forkMachine || !source) return;
+    const controller = new AbortController();
+    void clientFor(source.conn)
+      .forkPoints(source.sid, controller.signal)
+      .then((rows) => setForkPoints({ rows, error: null }))
+      .catch((cause) => {
+        if (controller.signal.aborted) return;
+        setForkPoints({ rows: [], error: (cause as Error).message });
+      });
+    return () => controller.abort();
+  }, [forkSid, forkMachine]);
+
+  /**
+   * Cut the fork. `throughTurnId` is the LAST turn it keeps; without one the
+   * fork carries the whole conversation. The fork is a session of its own, so
+   * the app goes straight into it — the source row is untouched behind it.
+   */
+  const runFork = useCallback(
+    async (throughTurnId?: string) => {
+      if (!forkFlow) return;
+      const { session, conn } = forkFlow;
+      setForkBusy(throughTurnId ?? WHOLE_SESSION_FORK);
+      setForkPoints((points) => ({ ...points, error: null }));
+      try {
+        const forked = await clientFor(conn).forkSession(session.id, throughTurnId);
+        setForkFlow(null);
+        setForkBusy(null);
+        await onOpen(conn, forked.id);
+      } catch (cause) {
+        setForkBusy(null);
+        setForkPoints((points) => ({ ...points, error: (cause as Error).message }));
+      }
+    },
+    [forkFlow, onOpen],
+  );
+
   const startDelete = useCallback((session: Session, conn: GatewayConn) => {
     setRowAction({ mode: 'delete', session, conn });
     setActionError(null);
@@ -1959,6 +2051,7 @@ export function SessionsScreen({
           needle={searchNeedle}
           onOpen={onOpen}
           onRename={startRename}
+          onFork={startFork}
           onDelete={startDelete}
           onToggleStar={toggleStar}
           rowAction={rowAction}
@@ -2121,6 +2214,7 @@ export function SessionsScreen({
                           needle={searchNeedle}
                           onOpen={onOpen}
                           onRename={startRename}
+                          onFork={startFork}
                           onDelete={startDelete}
                           onToggleStar={toggleStar}
                           pendingDeleteId={
@@ -2321,6 +2415,49 @@ export function SessionsScreen({
         </Menu>
       )}
 
+      {/* THE FORK QUESTION, under the row's own slide.
+
+          It rises from the same anchored panel the drafts question uses, because
+          it asks the same shape of thing: one default at the top, then the list
+          the reader may cut at instead. Forking is never destructive — the row
+          it was started from is untouched — so there is no confirm in front of
+          it, only the choice of WHERE the copy stops. */}
+      {forkFlow && (
+        <Menu label="Fork this session" at={forkFlow.at} onDismiss={() => leaveFork(true)}>
+          <MenuHeading>
+            Fork · {forkFlow.session.title?.trim() || 'Untitled session'}
+          </MenuHeading>
+          <MenuItem
+            title="The whole session"
+            hint="A new session carrying every turn of this one, continuing from the end. This session stays exactly as it is."
+            badge={forkBusy === WHOLE_SESSION_FORK ? 'Forking...' : 'Default'}
+            onSelect={() => void runFork()}
+          />
+          <MenuHeading tone="quiet">Or fork at a turn</MenuHeading>
+          {forkPoints.rows === null ? (
+            <MenuNote>
+              <Spinner tone="accent" />
+              Reading turns...
+            </MenuNote>
+          ) : forkPoints.rows.length === 0 ? (
+            <MenuNote>{forkPoints.error ?? 'This session has no turns to fork yet.'}</MenuNote>
+          ) : (
+            <>
+              {forkPoints.error && <MenuNote>{forkPoints.error}</MenuNote>}
+              {forkPoints.rows.map((point, index) => (
+                <MenuItem
+                  key={point.turn_id}
+                  title={`Turn ${index + 1} · ${firstLine(point.request ?? '') || 'No words on this turn'}`}
+                  hint="The fork keeps this turn and everything before it, and nothing after."
+                  badge={forkBusy === point.turn_id ? 'Forking...' : undefined}
+                  onSelect={() => void runFork(point.turn_id)}
+                />
+              ))}
+            </>
+          )}
+        </Menu>
+      )}
+
       {/* The folder browser the start flow falls through to when a machine has no
           project yet. `manageProjects` below is the same sheet, reached deliberately
           from the projects mark on the row above the list. */}
@@ -2482,6 +2619,7 @@ const NeedsYou = memo(function NeedsYou({
   needle,
   onOpen,
   onRename,
+  onFork,
   onDelete,
   onToggleStar,
   rowAction,
@@ -2497,6 +2635,7 @@ const NeedsYou = memo(function NeedsYou({
   needle: string;
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
+  onFork: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
   onToggleStar: (session: Session, conn: GatewayConn) => void;
   /** The row anywhere in the fleet that is currently asking to be deleted, if any. */
@@ -2534,6 +2673,7 @@ const NeedsYou = memo(function NeedsYou({
             needle={needle}
             onOpen={onOpen}
             onRename={(row) => onRename(row, conn)}
+            onFork={(row, anchor) => onFork(row, conn, anchor)}
             onDelete={(row) => onDelete(row, conn)}
             onToggleStar={(row) => onToggleStar(row, conn)}
             isConfirmingDelete={pending}
@@ -2559,6 +2699,7 @@ const ProjectGroup = memo(function ProjectGroup({
   drafts,
   onOpen,
   onRename,
+  onFork,
   onDelete,
   onToggleStar,
   pendingDeleteId,
@@ -2581,6 +2722,7 @@ const ProjectGroup = memo(function ProjectGroup({
   drafts: DraftMessageStore;
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
+  onFork: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
   onToggleStar: (session: Session, conn: GatewayConn) => void;
   /** The row of THIS machine that is currently asking to be deleted, if any. */
@@ -2610,6 +2752,10 @@ const ProjectGroup = memo(function ProjectGroup({
   // Row actions must reach the machine that OWNS the row. Bound here so a
   // memoized row does not re-render on every paint of its parent.
   const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
+  const forkRow = useCallback(
+    (session: Session, anchor: HTMLElement) => onFork(session, conn, anchor),
+    [onFork, conn],
+  );
   const deleteRow = useCallback((session: Session) => onDelete(session, conn), [onDelete, conn]);
   const starRow = useCallback(
     (session: Session) => onToggleStar(session, conn),
@@ -2771,6 +2917,7 @@ const ProjectGroup = memo(function ProjectGroup({
               needle={needle}
               onOpen={onOpen}
               onRename={renameRow}
+              onFork={forkRow}
               onDelete={deleteRow}
               onToggleStar={starRow}
               isConfirmingDelete={pendingDeleteId === session.id}
@@ -2801,6 +2948,7 @@ const SessionRow = memo(function SessionRow({
   needle,
   onOpen,
   onRename,
+  onFork,
   onDelete,
   onToggleStar,
   isConfirmingDelete,
@@ -2817,6 +2965,8 @@ const SessionRow = memo(function SessionRow({
   needle: string;
   onOpen: Props['onOpen'];
   onRename: (session: Session) => void;
+  /** Opens the fork question under the very cell that was pressed. */
+  onFork: (session: Session, anchor: HTMLElement) => void;
   onDelete: (session: Session) => void;
   onToggleStar: (session: Session) => void;
   /** This row IS the confirm: it asks in place instead of behind a dialog. */
@@ -2910,6 +3060,17 @@ const SessionRow = memo(function SessionRow({
             label: 'Rename',
             icon: <PencilIcon className="size-4" />,
             onSelect: () => onRename(session),
+          },
+          {
+            key: 'fork',
+            // The strip is 72px wide, so the caption is the one word; the whole
+            // sentence lives in `name` for a reader who cannot see the row.
+            label: 'Fork',
+            name: `Fork ${title}`,
+            icon: <ForkIcon className="size-4" />,
+            // Forking COPIES — it takes nothing away from the row it starts on —
+            // so it stays a neutral verb beside Rename, never the red one.
+            onSelect: (anchor) => onFork(session, anchor),
           },
           {
             key: 'delete',

@@ -370,6 +370,24 @@ export function DraftIcon({ className }: { className?: string }) {
   );
 }
 
+/**
+ * A FORK of a conversation: the trunk standing on the left with one branch
+ * leaving it and stopping. Deliberately NOT `DraftIcon` — that one is a folder
+ * with the same stem inside it and means a copy of a PROJECT on disk; this is a
+ * copy of a TALK, so the fork stands alone with no folder around it.
+ */
+export function ForkIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <circle cx="8" cy="6" r="1.7" />
+      <circle cx="8" cy="18" r="1.7" />
+      <circle cx="16" cy="6" r="1.7" />
+      <path d="M8 7.7v8.6" />
+      <path d="M16 7.7v1.5c0 2.4-8 1.4-8 3.9" />
+    </Icon>
+  );
+}
+
 export function SettingsIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>

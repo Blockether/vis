@@ -110,6 +110,18 @@ export interface WorkspaceDraft {
 }
 
 /**
+ * One turn a fork can be cut AT, straight off `GET /v1/sessions/:sid/forks` —
+ * the id and the words that OPENED that turn, and nothing of the transcript
+ * hanging off it, because the picker paints one line per turn.
+ */
+export interface ForkPoint {
+  turn_id: string;
+  /** What the user asked on that turn. Absent for a turn that carried no words. */
+  request?: string | null;
+  created_at?: number | null;
+}
+
+/**
  * One FOLDER on a machine's own disk, straight off `GET /v1/fs`. Directories only:
  * a session runs IN a folder, so a file is never an answer to "which project".
  */

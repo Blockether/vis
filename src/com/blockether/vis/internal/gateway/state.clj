@@ -4385,6 +4385,63 @@
           (and current-turn-id (nat-int? (:started_at current-turn)))
           (assoc :running_started_at (:started_at current-turn)))))))
 
+(defn fork-points
+  "Every turn of `sid` a fork can be cut AT, oldest-first, as lean wire rows
+   `{turn_id request created_at}`.
+
+   The picker needs the id and the words that OPENED each turn, never the
+   transcript hanging off it — `list-turns` carries whole content vectors and a
+   long session's picker would pull megabytes to paint one list of lines."
+  [sid]
+  (let [db (try (lp/db-info) (catch Throwable _ nil))
+        rows (when db
+               (try (persistance/db-list-session-turns db sid) (catch Throwable _ nil)))]
+    (mapv (fn [row]
+            (wire/canonical {:turn_id (str (:id row))
+                             :request (:user-request row)
+                             :created_at (date->ms (:created-at row))}))
+          (or rows []))))
+
+(defn fork-session!
+  "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn
+   from the start THROUGH `through-turn-id` — nil means the session's last turn,
+   which is the plain \"fork this session\" the TUI's `y` runs. The source is left
+   untouched; the fork gets its own soul (so it opens as its own row/tab) and its
+   own trunk workspace at the source's root, because a session_state owns its
+   workspace 1:1.
+
+   Returns the fork's wire `soul`. Throws `ex-info` with `:type`
+   `:session/no-turns`, `:session/unknown-turn` or `:session/fork-failed`."
+  [sid through-turn-id]
+  (let [db (lp/db-info)
+        turns (or (when db
+                    (try (vec (persistance/db-list-session-turns db sid))
+                         (catch Throwable _ nil)))
+                  [])
+        ids (into #{} (map #(str (:id %))) turns)
+        through (or (some-> through-turn-id
+                            str
+                            not-empty)
+                    (some-> (peek turns)
+                            :id
+                            str))]
+    (when (empty? turns)
+      (throw (ex-info "This session has no turns to fork yet" {:type :session/no-turns})))
+    (when-not (contains? ids through)
+      (throw (ex-info "That turn does not belong to this session"
+                      {:type :session/unknown-turn :turn-id through-turn-id})))
+    (let [current (resolve-workspace db sid)
+          root (or (:repo-root current) (:root current) (workspace/trunk-root))
+          workspace-id (:id (workspace/create-trunk-at! db root))
+          forked (persistance/db-fork-session-at-turn! db
+                                                       sid
+                                                       {:workspace-id workspace-id
+                                                        :through-turn-id through})]
+      (when-not forked
+        (throw (ex-info "Could not fork this session" {:type :session/fork-failed})))
+      (put-session! forked {:next-seq 0 :last-active (System/currentTimeMillis)})
+      (soul forked))))
+
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +
    `modified_at` (from the ONE grouped `db-session-turn-stats` query `stats`
