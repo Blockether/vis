@@ -472,7 +472,15 @@
                                         {:status 200 :body "{}"})}
         (fn []
           (gw-send! {:host "127.0.0.1" :port 7890 :secret "s"} "GET" "/v1/events" {:as :stream})
-          (is (= (str (discovery/current-pid)) (get-in @sent [:headers "X-Vis-Client-Pid"]))))))))
+          (is (= (str (discovery/current-pid)) (get-in @sent [:headers "X-Vis-Client-Pid"])))
+          (is (nil? (get-in @sent [:headers "X-Vis-Client-Id"]))
+              "a process holding no lease has none to name")
+          (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.gateway.client 'client-id)
+                           (atom "lease-1")}
+            (fn []
+              (gw-send! {:host "127.0.0.1" :port 7890 :secret "s"} "GET" "/healthz" {})
+              (is (= "lease-1" (get-in @sent [:headers "X-Vis-Client-Id"]))
+                  "the lease id is what lets the daemon see a REMOTE client is still here"))))))))
 
 (deftest client-count-is-constant-time-and-does-not-probe-pids
   (testing "status reads the already-reaped lease map without OS liveness work"
@@ -484,13 +492,19 @@
                             (is (= 3 ((rv 'client-count)))))))))
 
 (deftest compact-client-leases-removes-dead-and-duplicate-pids
-  (testing "one sweep probes each pid once, keeps nil-pid leases, and preserves identity when clean"
+  (testing "one sweep probes each pid once, keeps a lease that is still talking, and preserves identity when clean"
     (let
       [checks
        (atom [])
 
+       now
+       (System/currentTimeMillis)
+
        clients
-       {"live-old" {:pid 10} "live-duplicate" {:pid 10} "dead" {:pid 20} "browser" {:pid nil}}
+       {"live-old" {:pid 10}
+        "live-duplicate" {:pid 10}
+        "dead" {:pid 20}
+        "browser" {:pid nil :last-seen-at now}}
 
        compact
        (rv 'compact-client-leases)]
@@ -499,19 +513,78 @@
         [discovery/pid-alive-cached? (fn [pid]
                                        (swap! checks conj pid)
                                        (= 10 pid))]
-        (let [{after :clients :keys [dead duplicates]} (compact clients)]
+        (let [{after :clients :keys [dead duplicates expired]} (compact clients now)]
           (is (= 1 dead))
           (is (= 1 duplicates))
+          (is (zero? expired))
           (is (= #{"browser"} (set (filter #(nil? (get-in after [% :pid])) (keys after)))))
           (is (= 2 (count after)))
           (is (= #{10 20} (set @checks))))
         (let
-          [clean {"live" {:pid 10} "browser" {:pid nil}}
-           {after :clients :keys [dead duplicates]} (compact clean)]
+          [clean {"live" {:pid 10} "browser" {:pid nil :last-seen-at now}}
+           {after :clients :keys [dead duplicates expired]} (compact clean now)]
 
           (is (identical? clean after))
           (is (zero? dead))
-          (is (zero? duplicates)))))))
+          (is (zero? duplicates))
+          (is (zero? expired)))))))
+
+;; Regression: a lease with no pid (a phone, a `--gateway` CLI on another machine)
+;; could never be retired, so ONE client that vanished mid-flight pinned the daemon
+;; for the life of the machine — `daemon-idle?` answered `:clients` forever and no
+;; update could ever replace that build.
+(deftest a-lease-with-no-pid-is-retired-once-it-stops-talking
+  (let [now (System/currentTimeMillis)
+        ttl (long @(rv 'CLIENT_LEASE_TTL_MS))
+        compact (rv 'compact-client-leases)]
+
+    (testing "silence past the TTL is the only evidence a remote client leaves behind"
+      (let [clients {"phone-gone" {:pid nil :last-seen-at (- now ttl 1)}
+                     "phone-here" {:pid nil :last-seen-at (- now 1000)}
+                     "local-quiet" {:pid 10 :connected-at (- now ttl ttl)}}
+            {after :clients :keys [dead duplicates expired]}
+            (with-redefs-fn {#'discovery/pid-alive-cached? (constantly true)}
+              (fn [] (compact clients now)))]
+
+        (is (= 1 expired))
+        (is (zero? dead))
+        (is (zero? duplicates))
+        (is (= #{"phone-here" "local-quiet"} (set (keys after)))
+            "a local process proves itself by being alive, not by talking")))
+
+    (testing "a lease that never recorded a sighting is judged from when it registered"
+      (let [{after :clients :keys [expired]}
+            (compact {"old" {:pid nil :connected-at (- now ttl 1)}} now)]
+
+        (is (= 1 expired))
+        (is (empty? after))))))
+
+(deftest a-request-refreshes-the-lease-of-the-client-that-made-it
+  (let [touch (rv 'touch-client-lease!)
+        granularity (long @(rv 'CLIENT_LEASE_TOUCH_MS))
+        now (System/currentTimeMillis)]
+
+    (testing "the header a client stamps on every request is what keeps its lease alive"
+      (with-server-state! {:clients {"c1" {:pid nil :last-seen-at (- now granularity 1)}}}
+                          (fn []
+                            (let [handler ((rv 'wrap-client-lease) (constantly {:status 200}))]
+                              (handler {:uri "/v1/sessions"
+                                        :headers {"x-vis-client-id" "c1"}})
+                              (is (<= now (long (get-in @(server-state) [:clients "c1" :last-seen-at]))))))))
+
+    (testing "an id this daemon never issued creates nothing"
+      (with-server-state! {:clients {}}
+                          (fn []
+                            (touch "forged" now)
+                            (is (empty? (:clients @(server-state)))))))
+
+    (testing "a lease seen a moment ago is not written again"
+      (let [fresh (- now 1)]
+        (with-server-state! {:clients {"c1" {:pid nil :last-seen-at fresh}}}
+                            (fn []
+                              (touch "c1" now)
+                              (is (= fresh (get-in @(server-state) [:clients "c1" :last-seen-at]))
+                                  "a busy client must not cost a swap! per request")))))))
 
 (deftest registering-a-pid-upserts-its-single-process-lease
   (testing "re-registration replaces the old opaque id but preserves other processes and browsers"

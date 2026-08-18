@@ -63,6 +63,19 @@
 
 (defonce ^:private client-finalizing? (atom false))
 
+;; Multiplexed subscription: ONE SSE connection for MANY sessions.
+;;
+;; A channel watching N sessions previously opened N SSE sockets (+N client
+;; futures +N server heartbeat threads). `mux-subscribe!` instead folds every
+;; watched session down a SINGLE process-wide connection to `/v1/events?sids=…`,
+;; demuxed by each event's `:session_id`. Opening/closing a tab just edits the
+;; session set and reconnects (resuming each session from its advanced cursor).
+
+(defonce ^:private mux
+  ;; {:subs {sid {:sinks {sub-id fn} :cursor-atom atom<long>}}
+  ;;  :epoch long :future f :stream in}
+  (atom {:subs {} :epoch 0 :future nil :stream nil}))
+
 (def ^:private client-label
   "How this process names itself in the version handshake — what the mismatch
    panel prints as the client half."
@@ -181,6 +194,12 @@
                         (not remote?)
                         (assoc "X-Vis-Client-Pid" (str (discovery/current-pid)))
 
+                        ;; The lease this process holds. A REMOTE lease carries no pid
+                        ;; the daemon could look up, so this header is the only
+                        ;; liveness it has: without it, a client that vanished
+                        ;; mid-flight counted as a client until the daemon died.
+                        (some? @client-id)
+                        (assoc "X-Vis-Client-Id" (str @client-id))
                         ;; One secret, both carriers: `Authorization` is what a token-gated
                         ;; (non-loopback) gateway checks, `X-Vis-Gateway-Secret` is what
                         ;; `/healthz` echoes back as `secret_match`. Blank means the target
@@ -222,8 +241,6 @@
     (when-not (:is-compatible v) (throw (protocol/incompatible-ex v)))
     entry))
 
-(declare ensure-gateway! ensure-client! ensure-gateway-serving! port-free? shutdown-subscriptions!)
-
 (defn- send-json-with-entry!
   ([entry method path] (send-json-with-entry! entry method path nil))
   ([entry method path body]
@@ -260,13 +277,6 @@
            (ex-info (or reason (str "gateway HTTP " status)) (assoc parsed :http-status status)))))
      parsed)))
 
-(defn- send-json!
-  ([method path] (send-json! method path nil))
-  ([method path body]
-   (let [entry (ensure-gateway!)]
-     (ensure-client! entry)
-     (send-json-with-entry! entry method path body))))
-
 (defn- probe-entry?
   [{:keys [secret remote?] :as entry}]
   (try (let [response
@@ -283,6 +293,15 @@
                        (or (true? (get body "secret_match"))
                            (and remote? (str/blank? (str secret)))))))
        (catch Throwable _ false)))
+
+(defn- port-free?
+  "True when nothing is accepting TCP connections on host:port — i.e. a previous
+   daemon has fully released it, so a respawn on the same port won't bind-race."
+  [^String host port]
+  (try (with-open [sock (java.net.Socket.)]
+         (.connect sock (java.net.InetSocketAddress. host (int port)) 200)
+         false)
+       (catch Throwable _ true)))
 
 (defn- retire-loopback-orphan!
   "Stop a registry-less standard loopback gateway before replacing it.
@@ -481,6 +500,38 @@
     (reset! cached-entry entry)
     (assert-compatible! entry)))
 
+(defn- shutdown-subscriptions!
+  "Close every client-owned SSE stream exactly once without reconnecting.
+
+   Called by the single process shutdown hook after `client-finalizing?` flips.
+   Clearing both registries before closing their streams makes every reader's
+   EOF/reconnect guard observe terminal state, even though JVM hooks and socket
+   callbacks race concurrently."
+  []
+  (reset! client-finalizing? true)
+  (let [[legacy _]
+        (swap-vals! subscriptions (constantly {}))
+
+        [mux-before _]
+        (swap-vals! mux
+                    (fn [m]
+                      (-> m
+                          (update :epoch inc)
+                          (assoc :subs {}
+                                 :future nil
+                                 :stream nil))))]
+
+    (doseq [[_ {:keys [future stream]}] legacy]
+      (try (some-> ^java.io.Closeable @stream
+                   .close)
+           (catch Throwable _ nil))
+      (when future (future-cancel future)))
+    (when-let [stream (:stream mux-before)]
+      (try (.close ^java.io.Closeable stream) (catch Throwable _ nil)))
+    (when-let [future (:future mux-before)]
+      (future-cancel future)))
+  nil)
+
 (defn- release-client!
   []
   (when-let [cid @client-id]
@@ -533,6 +584,408 @@
           (reset! client-id registered-id)
           (ensure-release-hook!)))))
   @client-id)
+
+(defn- loopback-host?
+  "True for a bind a phone (or any other machine) can never reach."
+  [host]
+  (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
+
+(defn status
+  "Admin status of the gateway this process drives — the REMOTE target when one is
+   configured, else the daemon registered for the current DB. Always the daemon's
+   own wire map (STRING keys), including when nothing is running."
+  []
+  (if-let [remote (remote-gateway)]
+    (send-json-with-entry! (ensure-remote-gateway! remote) "GET" "/v1/admin/status")
+    (let [db (db-target)
+          entry (discovery/read-registry db)]
+
+      (if (discovery/registry-fresh? entry probe-entry?)
+        (send-json-with-entry! entry "GET" "/v1/admin/status")
+        {"status" "stopped"
+         "db" (when-not (discovery/memory-db? db) (str (discovery/db-target db)))}))))
+
+(defn pairing-info
+  "Connection details for the daemon registered for the current DB, so a caller
+   can build a companion pairing QR on demand (not only at `--pair` boot time).
+   Returns {:running? :host :port :token :loopback?}; `:running?` is false when no
+   fresh daemon is registered, and `:loopback?` flags a 127.0.0.1/::1/localhost
+   bind that a phone can never reach."
+  []
+  (if-let [{:keys [host port secret]} (remote-gateway)]
+    ;; A remote target is reachable BY DEFINITION — it just answered a probe — so
+    ;; its own connection details are what a pairing QR must carry.
+    {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
+    (let [db (db-target)
+          {:keys [host port secret] :as entry} (discovery/read-registry db)]
+
+      (if (discovery/registry-fresh? entry probe-entry?)
+        {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
+        {:running? false}))))
+
+(defn- await-port-free!
+  "Block (bounded) until nothing is listening on host:port. True when the port was
+   released, false on timeout."
+  [host port timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+    (loop []
+
+      (cond (port-free? (str host) port) true
+            (>= (System/currentTimeMillis) deadline) false
+            :else (do (Thread/sleep 50) (recur))))))
+
+(defn- registered-daemon-handle
+  "The OS handle for the pid a registry entry names, or nil when signalling it
+   would be a guess. Two facts must agree: the pid is alive, and that process
+   started BEFORE the registry entry naming it was written. A vis daemon writes
+   its entry at boot, so a pid the OS recycled after that daemon died is YOUNGER
+   than the file and is never signalled - the one way a stranger's process could
+   otherwise inherit both the pid and the port. A platform that hides start times
+   yields nothing to compare, and the liveness + port evidence stands alone."
+  [db pid]
+  (when (and pid (discovery/pid-alive? pid))
+    (when-let [handle (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
+      (let [registry-ms
+            (.lastModified ^java.io.File (discovery/registry-file db))
+
+            started
+            (.orElse (.startInstant (.info ^java.lang.ProcessHandle handle)) nil)]
+
+        (when (or (nil? started)
+                  (not (pos? registry-ms))
+                  (<= (.toEpochMilli ^java.time.Instant started) (+ (long registry-ms) 1000)))
+          handle)))))
+
+(defn- kill-registered-daemon!
+  "Last resort for a daemon that stopped answering: signal the pid its own registry
+   entry claims. A wedged daemon - event loop stuck, shutdown hook deadlocked, JVM
+   thrashing - still holds the port, so nothing else can start there and
+   `POST /v1/admin/stop` never returns; that is the state a human otherwise leaves
+   with `lsof -nP -iTCP:<port>` and a manual kill.
+
+   Ownership evidence is the registry entry vis itself wrote for THIS db plus the
+   port still being held; [[registered-daemon-handle]] refuses everything else, so
+   a stranger is never signalled. SIGTERM first, because the daemon's own shutdown
+   hook is what releases sessions, sandboxes and child processes; SIGKILL only if
+   the port is still held after it. Returns {:signal :term|:kill|nil :stopped? bool}."
+  [db {:keys [host port pid]}]
+  (if-let [handle (registered-daemon-handle db pid)]
+    (do (.destroy ^java.lang.ProcessHandle handle)
+        (if (await-port-free! host port 3000)
+          {:signal :term :stopped? true}
+          (do (.destroyForcibly ^java.lang.ProcessHandle handle)
+              {:signal :kill :stopped? (await-port-free! host port 3000)})))
+    {:signal nil :stopped? false}))
+(defn stop-daemon!
+  "Stop the daemon registered for this DB, escalating when it stops answering.
+   `POST /v1/admin/stop` first; when that is met with silence from a daemon that
+   still holds its port, signal the pid the registry names ([[kill-registered-daemon!]])
+   rather than reporting a live orphan and handing the human an `lsof`. A port held
+   by a process this registry cannot claim is still reported, never signalled."
+  []
+  (when (remote-gateway)
+    (throw (ex-info (str "connected to a remote gateway (--gateway / VIS_GATEWAY_URL): "
+                         "vis stops only the daemon it manages for this DB. Stop that "
+                         "gateway on the machine that runs it.")
+                    {:type :gateway/remote-target :vis/user-error true})))
+  (let [db
+        (db-target)
+
+        entry
+        (discovery/read-registry db)
+
+        forget!
+        (fn [] (reset! cached-entry nil) (reset! client-id nil))
+
+        escalate!
+        (fn []
+          (let [{:keys [signal stopped?]} (kill-registered-daemon! db entry)]
+            (forget!)
+            (if stopped?
+              {:status "stopped" :stopping false :escalated signal :pid (:pid entry)}
+              {:status "orphaned"
+               :type :gateway/orphaned-daemon
+               :host (:host entry)
+               :port (:port entry)
+               :pid (:pid entry)
+               :recovery (str "It answered neither /v1/admin/stop nor a signal. Inspect it with "
+                              "`lsof -nP -iTCP:"
+                              (:port entry)
+                              " -sTCP:LISTEN`, stop that process, then retry "
+                              "`vis-agent gateway stop`.")})))]
+
+    (if (discovery/registry-fresh? entry probe-entry?)
+      (let [res (try (send-json-with-entry! entry "POST" "/v1/admin/stop")
+                     (catch Throwable _ ::unreachable))]
+        (if (= ::unreachable res)
+          (escalate!)
+          (do (forget!) res)))
+      (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
+        (escalate!)
+        {:status "stopped" :stopping false}))))
+
+(defn- await-daemon-down!
+  "Block (bounded) until the daemon for `db` is provably gone: its registry entry
+   cleared by the shutdown hook AND host:port released. [[stop-daemon!]] only
+   *asks* the daemon to stop (the stop handler sleeps ~25ms, then shutdown work
+   runs async), so without this the immediate re-ensure would rediscover the
+   still-fresh registry and attach to the DYING daemon — then bind-race its corpse
+   on respawn. Returns true when down, false on timeout (the caller still
+   proceeds: discover-or-start! deletes a stale registry and tolerates a race)."
+  [db host port]
+  (let [deadline (+ (System/currentTimeMillis) 3000)]
+    (loop []
+
+      (let [entry (discovery/read-registry db)]
+        (cond (and (not (discovery/registry-fresh? entry probe-entry?)) (port-free? host port)) true
+              (> (System/currentTimeMillis) deadline) false
+              :else (do (Thread/sleep 50) (recur)))))))
+
+(defn- wire-count
+  "A count read off a peer's status map, or nil when this build cannot read it. An
+   absent key is zero (a stopped daemon reports no counts and is refused on its
+   `status` field instead), but a value of a shape this build does not know is
+   NEVER rounded down to zero: zero is the only reading that would let a caller
+   stop a daemon somebody is using, and the peer whose status matters most here is
+   by definition a build this one did not ship with."
+  [x]
+  (cond (nil? x) 0
+        (number? x) (max 0 (long x))
+        (string? x) (try (max 0 (Long/parseLong (str/trim x))) (catch Exception _ nil))
+        :else nil))
+(defn daemon-idle?
+  "THE one definition of \"this daemon may be bounced\", read off an admin status
+   map (canonical STRING keys, e.g. from [[status]]).
+
+   A managed daemon with no client and no running turn is free to release: it was
+   auto-spawned for whoever needed it, it self-reaps anyway, and the next client
+   spawns a fresh one from whatever is on disk. A busy one holds work - someone's
+   TUI, someone's turn - that a stop would abort. A user-owned one
+   (`vis-agent gateway start`, nohup, systemd) is never ours to stop, whatever it
+   is doing.
+
+   `opts` calibrates that one rule for a caller that is itself attached:
+   `:tolerate-clients` is how many of the leases belong to the caller, and
+   `:user-owned-ok?` admits the self-heal path that must replace a daemon whose
+   classpath lacks a route no matter who started it.
+
+   Returns {:idle? :reason :clients :running-turns :managed? :pid}, where `:reason`
+   is one of :idle :not-running :user-owned :clients :running-turns. A status this
+   build cannot read - no map at all, or a count in a shape it does not know
+   ([[wire-count]]) - is :not-running: never evidence that stopping is free."
+  ([status] (daemon-idle? status nil))
+  ([status {:keys [tolerate-clients user-owned-ok?]}]
+   (let [clients
+         (wire-count (get status "clients"))
+
+         turns
+         (wire-count (get status "running_turns"))
+
+         managed?
+         (boolean (get status "managed"))
+
+         ;; A count this build cannot read comes FIRST, then USE: a daemon somebody
+         ;; is working on is off limits whoever started it and whatever its status
+         ;; field says, so no caller can talk itself past a live client or a turn.
+         reason
+         (cond (or (nil? clients) (nil? turns)) :not-running
+               (> (long clients) (long (or tolerate-clients 0))) :clients
+               (pos? (long turns)) :running-turns
+               (not= "running" (get status "status")) :not-running
+               (and (not managed?) (not user-owned-ok?)) :user-owned
+               :else :idle)]
+
+     {:idle? (= :idle reason)
+      :reason reason
+      :clients clients
+      :running-turns turns
+      :managed? managed?
+      :pid (get status "pid")})))
+
+(defn stop-daemon-if-idle!
+  "Release the daemon registered for this DB when releasing it is free, and leave
+   it strictly alone otherwise. This is what runs after `vis-agent update`: every
+   live daemon is then older than the runtime on disk, and stopping an unused
+   managed one costs nothing because the next client spawns the new build. A
+   --gateway target belongs to another machine and is never touched.
+
+   Returns the [[daemon-idle?]] verdict plus `:stopped?` and, when it acted, the
+   `:stop` result."
+  []
+  (if (remote-gateway)
+    {:idle? false :reason :remote :stopped? false}
+    (let [verdict (daemon-idle? (status))]
+      (if (:idle? verdict)
+        (let [res (stop-daemon!)]
+          (assoc verdict
+            :stopped? (not= "orphaned" (:status res))
+            :stop res))
+        (assoc verdict :stopped? false)))))
+(defn stale-bounce-verdict
+  "THE rule for replacing a daemon that is merely OLD - a pure decision over what
+   the two halves advertise about themselves and an admin status map (canonical
+   STRING keys).
+
+   `vis-agent update` releases an idle daemon itself, but one a TUI held open
+   survives the install and would keep serving the old image to every session after
+   it. The next client to attach is the one that can fix that: it learns the other
+   half's version AND build out of the `/healthz` handshake every attach already
+   pays for. [[protocol/superseded?]] owns that comparison - the release version
+   where the two carry an order, the build commit where they do not - which is what
+   makes this work for a `dev` checkout and for two builds of one VIS_VERSION, in a
+   native image exactly as in a source JVM.
+
+   Use decides the rest, exactly as everywhere else: [[daemon-idle?]] over the status
+   map, tolerating NO client, because this runs before this process takes its lease.
+   Nobody's open session or running turn is ever aborted to pick up a build, and a
+   status that could not be read is not evidence of an idle daemon.
+
+   Returns {:bounce? :reason :from :to}: `:reason` is `:fresh` when there is nothing
+   to pick up, otherwise the [[daemon-idle?]] reason."
+  [{:keys [ours theirs our-build their-build status]}]
+  (if-not (protocol/superseded?
+            {:our-version ours :their-version theirs :our-build our-build :their-build their-build})
+    {:bounce? false :reason :fresh :from theirs :to ours}
+    (let [{:keys [reason]} (daemon-idle? status)]
+      {:bounce? (= :idle reason) :reason reason :from theirs :to ours})))
+
+(defn- report-version-bounce!
+  "One stderr line before a restart nobody asked for, so the extra seconds read as a
+   build pickup and not as a hang. The commit is shown only where the versions alone
+   cannot tell the two apart (`dev` against `dev`), which is exactly the dev case.
+   Never throws."
+  [{:keys [from to from-build to-build]}]
+  (let [ambiguous?
+        (= from to)
+
+        label
+        (fn [version build]
+          (str (or version "an older build") (when (and ambiguous? build) (str " (" build ")"))))]
+
+    (try (.println ^java.io.PrintStream System/err
+                   (str "vis-agent: gateway is running "
+                        (label from from-build)
+                        " - restarting it on "
+                        (label to to-build)
+                        "…"))
+         (catch Throwable _ nil))))
+
+(defn- bounce-stale-daemon!
+  "Act on [[stale-bounce-verdict]] for the daemon `entry` this process just attached
+   to: stop it, so the caller starts THIS build in its place.
+
+   At most ONCE per process. A daemon that comes back old anyway - a client whose
+   own classpath predates the update spawning it again, or two checkouts sharing one
+   DB - then costs exactly one restart instead of a loop, which is what bounds the
+   build-identity half of [[protocol/superseded?]] (an identity is symmetric where a
+   version order is not). The comparison happens first and is free (the handshake is
+   already in hand, the build id is computed once per process), so an up-to-date
+   daemon never pays for the status round trip. Returns the verdict with `:bounced?`."
+  [entry]
+  (let [ours
+        (protocol/release-version)
+
+        our-build
+        (protocol/build-id)
+
+        {theirs :version their-build :build}
+        @gateway-handshake*
+
+        identity*
+        {:our-version ours :their-version theirs :our-build our-build :their-build their-build}]
+
+    (cond (not (protocol/superseded? identity*)) {:bounced? false :reason :fresh}
+          (not (compare-and-set! stale-bounce-attempted? false true)) {:bounced? false
+                                                                       :reason :checked}
+          :else (let [status
+                      (try (send-json-with-entry! entry "GET" "/v1/admin/status")
+                           (catch Throwable _ nil))
+
+                      verdict
+                      (stale-bounce-verdict {:ours ours
+                                             :theirs theirs
+                                             :our-build our-build
+                                             :their-build their-build
+                                             :status status})]
+
+                  (if (:bounce? verdict)
+                    (do (report-version-bounce!
+                          {:from theirs :to ours :from-build their-build :to-build our-build})
+                        (stop-daemon!)
+                        (await-daemon-down! (db-target) (:host entry) (:port entry))
+                        (assoc verdict :bounced? true))
+                    (assoc verdict :bounced? false))))))
+
+(defn ensure-gateway!
+  "Return a fresh daemon registry entry for the current DB, auto-starting the
+   detached gateway if needed. `:memory` is a programmer error for this client;
+   headless one-shots stay in-process and should not call here.
+
+   Optional `:port`/`:host` overrides the bind used WHEN THIS CALL SPAWNS a fresh
+   daemon (e.g. `vis-agent channels web --port`); a fresh daemon already registered for
+   the DB is a singleton and is attached to as-is, so the override is moot there.
+
+   Freshness is DEBOUNCED: the full HTTP /healthz probe (via `probe-entry?`)
+   runs at most once per `entry-probe-ttl-ms`. Within that window a cached entry
+   whose pid is still alive is trusted directly, so the TUI's chatty poll loop
+   stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
+   every gateway call.
+
+   A daemon running a DIFFERENT build than this one is also replaced here when
+   replacing it is free ([[bounce-stale-daemon!]]) - that is how the first vis
+   started after `vis-agent update`, or after a rebuild of a dev checkout, comes up
+   on the new code with nobody stopping anything by hand. That decision comes BEFORE
+   the compatibility assert: a daemon too old to speak this build's wire protocol is
+   the one most worth replacing, so the mismatch screen is left for the daemon
+   somebody is still using."
+  ([] (ensure-gateway! nil))
+  ([{:keys [port host] :as opts}]
+   (if-let [remote (remote-gateway)]
+     ;; A remote gateway is ATTACHED to, never managed: no registry, no spawn.
+     (ensure-remote-gateway! remote)
+     (let [db (db-target)]
+       (when (discovery/memory-db? db)
+         (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
+       (let [target-port (or port DEFAULT_PORT)
+             target-host (or host DEFAULT_HOST)
+             cached @cached-entry
+             now (System/nanoTime)
+             fresh-until (long @entry-fresh-until-ns)
+             fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
+                      true
+                      ;; Window elapsed (or no cached entry): pay for the real
+                      ;; HTTP probe once, then re-open the debounce window.
+                      (when (discovery/registry-fresh? cached probe-entry?)
+                        (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
+                        true))]
+
+         (if fresh?
+           (assert-compatible! cached)
+           (let
+             ;; First recover the exact failure mode where a live standard daemon
+             ;; owns 7890 but its registry was removed. Never enter discovery's
+             ;; spawn path while the requested port already has a listener.
+             [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
+             (if entry
+               (do (reset! cached-entry entry)
+                   (reset! entry-fresh-until-ns (+ (System/nanoTime)
+                                                   (* (long entry-probe-ttl-ms) 1000000)))
+                    ;; Staleness BEFORE compatibility: a daemon too old to speak this
+                    ;; build's wire protocol is exactly the one worth replacing, and
+                    ;; the mismatch screen is for the daemon somebody is still using.
+                    (if (:bounced? (bounce-stale-daemon! entry))
+                      ;; The old image released the port; start this build in its place.
+                      (ensure-gateway! opts)
+                      (assert-compatible! entry)))
+               (throw (ex-info "gateway daemon did not become ready"
+                               (assoc result :type :gateway/start-timeout)))))))))))
+
+(defn- send-json!
+  ([method path] (send-json! method path nil))
+  ([method path body]
+   (let [entry (ensure-gateway!)]
+     (ensure-client! entry)
+     (send-json-with-entry! entry method path body))))
 
 (defn request!
   "Canonical authenticated HTTP request for gateway development and diagnostics.
@@ -1241,410 +1694,6 @@
   []
   nil)
 
-(defn- loopback-host?
-  "True for a bind a phone (or any other machine) can never reach."
-  [host]
-  (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
-
-(defn status
-  "Admin status of the gateway this process drives — the REMOTE target when one is
-   configured, else the daemon registered for the current DB. Always the daemon's
-   own wire map (STRING keys), including when nothing is running."
-  []
-  (if-let [remote (remote-gateway)]
-    (send-json-with-entry! (ensure-remote-gateway! remote) "GET" "/v1/admin/status")
-    (let [db (db-target)
-          entry (discovery/read-registry db)]
-
-      (if (discovery/registry-fresh? entry probe-entry?)
-        (send-json-with-entry! entry "GET" "/v1/admin/status")
-        {"status" "stopped"
-         "db" (when-not (discovery/memory-db? db) (str (discovery/db-target db)))}))))
-
-(defn pairing-info
-  "Connection details for the daemon registered for the current DB, so a caller
-   can build a companion pairing QR on demand (not only at `--pair` boot time).
-   Returns {:running? :host :port :token :loopback?}; `:running?` is false when no
-   fresh daemon is registered, and `:loopback?` flags a 127.0.0.1/::1/localhost
-   bind that a phone can never reach."
-  []
-  (if-let [{:keys [host port secret]} (remote-gateway)]
-    ;; A remote target is reachable BY DEFINITION — it just answered a probe — so
-    ;; its own connection details are what a pairing QR must carry.
-    {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
-    (let [db (db-target)
-          {:keys [host port secret] :as entry} (discovery/read-registry db)]
-
-      (if (discovery/registry-fresh? entry probe-entry?)
-        {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
-        {:running? false}))))
-
-(defn- await-port-free!
-  "Block (bounded) until nothing is listening on host:port. True when the port was
-   released, false on timeout."
-  [host port timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
-    (loop []
-
-      (cond (port-free? (str host) port) true
-            (>= (System/currentTimeMillis) deadline) false
-            :else (do (Thread/sleep 50) (recur))))))
-
-(defn- registered-daemon-handle
-  "The OS handle for the pid a registry entry names, or nil when signalling it
-   would be a guess. Two facts must agree: the pid is alive, and that process
-   started BEFORE the registry entry naming it was written. A vis daemon writes
-   its entry at boot, so a pid the OS recycled after that daemon died is YOUNGER
-   than the file and is never signalled - the one way a stranger's process could
-   otherwise inherit both the pid and the port. A platform that hides start times
-   yields nothing to compare, and the liveness + port evidence stands alone."
-  [db pid]
-  (when (and pid (discovery/pid-alive? pid))
-    (when-let [handle (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
-      (let [registry-ms
-            (.lastModified ^java.io.File (discovery/registry-file db))
-
-            started
-            (.orElse (.startInstant (.info ^java.lang.ProcessHandle handle)) nil)]
-
-        (when (or (nil? started)
-                  (not (pos? registry-ms))
-                  (<= (.toEpochMilli ^java.time.Instant started) (+ (long registry-ms) 1000)))
-          handle)))))
-
-(defn- kill-registered-daemon!
-  "Last resort for a daemon that stopped answering: signal the pid its own registry
-   entry claims. A wedged daemon - event loop stuck, shutdown hook deadlocked, JVM
-   thrashing - still holds the port, so nothing else can start there and
-   `POST /v1/admin/stop` never returns; that is the state a human otherwise leaves
-   with `lsof -nP -iTCP:<port>` and a manual kill.
-
-   Ownership evidence is the registry entry vis itself wrote for THIS db plus the
-   port still being held; [[registered-daemon-handle]] refuses everything else, so
-   a stranger is never signalled. SIGTERM first, because the daemon's own shutdown
-   hook is what releases sessions, sandboxes and child processes; SIGKILL only if
-   the port is still held after it. Returns {:signal :term|:kill|nil :stopped? bool}."
-  [db {:keys [host port pid]}]
-  (if-let [handle (registered-daemon-handle db pid)]
-    (do (.destroy ^java.lang.ProcessHandle handle)
-        (if (await-port-free! host port 3000)
-          {:signal :term :stopped? true}
-          (do (.destroyForcibly ^java.lang.ProcessHandle handle)
-              {:signal :kill :stopped? (await-port-free! host port 3000)})))
-    {:signal nil :stopped? false}))
-(defn stop-daemon!
-  "Stop the daemon registered for this DB, escalating when it stops answering.
-   `POST /v1/admin/stop` first; when that is met with silence from a daemon that
-   still holds its port, signal the pid the registry names ([[kill-registered-daemon!]])
-   rather than reporting a live orphan and handing the human an `lsof`. A port held
-   by a process this registry cannot claim is still reported, never signalled."
-  []
-  (when (remote-gateway)
-    (throw (ex-info (str "connected to a remote gateway (--gateway / VIS_GATEWAY_URL): "
-                         "vis stops only the daemon it manages for this DB. Stop that "
-                         "gateway on the machine that runs it.")
-                    {:type :gateway/remote-target :vis/user-error true})))
-  (let [db
-        (db-target)
-
-        entry
-        (discovery/read-registry db)
-
-        forget!
-        (fn [] (reset! cached-entry nil) (reset! client-id nil))
-
-        escalate!
-        (fn []
-          (let [{:keys [signal stopped?]} (kill-registered-daemon! db entry)]
-            (forget!)
-            (if stopped?
-              {:status "stopped" :stopping false :escalated signal :pid (:pid entry)}
-              {:status "orphaned"
-               :type :gateway/orphaned-daemon
-               :host (:host entry)
-               :port (:port entry)
-               :pid (:pid entry)
-               :recovery (str "It answered neither /v1/admin/stop nor a signal. Inspect it with "
-                              "`lsof -nP -iTCP:"
-                              (:port entry)
-                              " -sTCP:LISTEN`, stop that process, then retry "
-                              "`vis-agent gateway stop`.")})))]
-
-    (if (discovery/registry-fresh? entry probe-entry?)
-      (let [res (try (send-json-with-entry! entry "POST" "/v1/admin/stop")
-                     (catch Throwable _ ::unreachable))]
-        (if (= ::unreachable res)
-          (escalate!)
-          (do (forget!) res)))
-      (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
-        (escalate!)
-        {:status "stopped" :stopping false}))))
-
-(defn- port-free?
-  "True when nothing is accepting TCP connections on host:port — i.e. a previous
-   daemon has fully released it, so a respawn on the same port won't bind-race."
-  [^String host port]
-  (try (with-open [sock (java.net.Socket.)]
-         (.connect sock (java.net.InetSocketAddress. host (int port)) 200)
-         false)
-       (catch Throwable _ true)))
-
-(defn- await-daemon-down!
-  "Block (bounded) until the daemon for `db` is provably gone: its registry entry
-   cleared by the shutdown hook AND host:port released. [[stop-daemon!]] only
-   *asks* the daemon to stop (the stop handler sleeps ~25ms, then shutdown work
-   runs async), so without this the immediate re-ensure would rediscover the
-   still-fresh registry and attach to the DYING daemon — then bind-race its corpse
-   on respawn. Returns true when down, false on timeout (the caller still
-   proceeds: discover-or-start! deletes a stale registry and tolerates a race)."
-  [db host port]
-  (let [deadline (+ (System/currentTimeMillis) 3000)]
-    (loop []
-
-      (let [entry (discovery/read-registry db)]
-        (cond (and (not (discovery/registry-fresh? entry probe-entry?)) (port-free? host port)) true
-              (> (System/currentTimeMillis) deadline) false
-              :else (do (Thread/sleep 50) (recur)))))))
-
-(defn- wire-count
-  "A count read off a peer's status map, or nil when this build cannot read it. An
-   absent key is zero (a stopped daemon reports no counts and is refused on its
-   `status` field instead), but a value of a shape this build does not know is
-   NEVER rounded down to zero: zero is the only reading that would let a caller
-   stop a daemon somebody is using, and the peer whose status matters most here is
-   by definition a build this one did not ship with."
-  [x]
-  (cond (nil? x) 0
-        (number? x) (max 0 (long x))
-        (string? x) (try (max 0 (Long/parseLong (str/trim x))) (catch Exception _ nil))
-        :else nil))
-(defn daemon-idle?
-  "THE one definition of \"this daemon may be bounced\", read off an admin status
-   map (canonical STRING keys, e.g. from [[status]]).
-
-   A managed daemon with no client and no running turn is free to release: it was
-   auto-spawned for whoever needed it, it self-reaps anyway, and the next client
-   spawns a fresh one from whatever is on disk. A busy one holds work - someone's
-   TUI, someone's turn - that a stop would abort. A user-owned one
-   (`vis-agent gateway start`, nohup, systemd) is never ours to stop, whatever it
-   is doing.
-
-   `opts` calibrates that one rule for a caller that is itself attached:
-   `:tolerate-clients` is how many of the leases belong to the caller, and
-   `:user-owned-ok?` admits the self-heal path that must replace a daemon whose
-   classpath lacks a route no matter who started it.
-
-   Returns {:idle? :reason :clients :running-turns :managed? :pid}, where `:reason`
-   is one of :idle :not-running :user-owned :clients :running-turns. A status this
-   build cannot read - no map at all, or a count in a shape it does not know
-   ([[wire-count]]) - is :not-running: never evidence that stopping is free."
-  ([status] (daemon-idle? status nil))
-  ([status {:keys [tolerate-clients user-owned-ok?]}]
-   (let [clients
-         (wire-count (get status "clients"))
-
-         turns
-         (wire-count (get status "running_turns"))
-
-         managed?
-         (boolean (get status "managed"))
-
-         ;; A count this build cannot read comes FIRST, then USE: a daemon somebody
-         ;; is working on is off limits whoever started it and whatever its status
-         ;; field says, so no caller can talk itself past a live client or a turn.
-         reason
-         (cond (or (nil? clients) (nil? turns)) :not-running
-               (> (long clients) (long (or tolerate-clients 0))) :clients
-               (pos? (long turns)) :running-turns
-               (not= "running" (get status "status")) :not-running
-               (and (not managed?) (not user-owned-ok?)) :user-owned
-               :else :idle)]
-
-     {:idle? (= :idle reason)
-      :reason reason
-      :clients clients
-      :running-turns turns
-      :managed? managed?
-      :pid (get status "pid")})))
-
-(defn stop-daemon-if-idle!
-  "Release the daemon registered for this DB when releasing it is free, and leave
-   it strictly alone otherwise. This is what runs after `vis-agent update`: every
-   live daemon is then older than the runtime on disk, and stopping an unused
-   managed one costs nothing because the next client spawns the new build. A
-   --gateway target belongs to another machine and is never touched.
-
-   Returns the [[daemon-idle?]] verdict plus `:stopped?` and, when it acted, the
-   `:stop` result."
-  []
-  (if (remote-gateway)
-    {:idle? false :reason :remote :stopped? false}
-    (let [verdict (daemon-idle? (status))]
-      (if (:idle? verdict)
-        (let [res (stop-daemon!)]
-          (assoc verdict
-            :stopped? (not= "orphaned" (:status res))
-            :stop res))
-        (assoc verdict :stopped? false)))))
-(defn stale-bounce-verdict
-  "THE rule for replacing a daemon that is merely OLD - a pure decision over what
-   the two halves advertise about themselves and an admin status map (canonical
-   STRING keys).
-
-   `vis-agent update` releases an idle daemon itself, but one a TUI held open
-   survives the install and would keep serving the old image to every session after
-   it. The next client to attach is the one that can fix that: it learns the other
-   half's version AND build out of the `/healthz` handshake every attach already
-   pays for. [[protocol/superseded?]] owns that comparison - the release version
-   where the two carry an order, the build commit where they do not - which is what
-   makes this work for a `dev` checkout and for two builds of one VIS_VERSION, in a
-   native image exactly as in a source JVM.
-
-   Use decides the rest, exactly as everywhere else: [[daemon-idle?]] over the status
-   map, tolerating NO client, because this runs before this process takes its lease.
-   Nobody's open session or running turn is ever aborted to pick up a build, and a
-   status that could not be read is not evidence of an idle daemon.
-
-   Returns {:bounce? :reason :from :to}: `:reason` is `:fresh` when there is nothing
-   to pick up, otherwise the [[daemon-idle?]] reason."
-  [{:keys [ours theirs our-build their-build status]}]
-  (if-not (protocol/superseded?
-            {:our-version ours :their-version theirs :our-build our-build :their-build their-build})
-    {:bounce? false :reason :fresh :from theirs :to ours}
-    (let [{:keys [reason]} (daemon-idle? status)]
-      {:bounce? (= :idle reason) :reason reason :from theirs :to ours})))
-
-(defn- report-version-bounce!
-  "One stderr line before a restart nobody asked for, so the extra seconds read as a
-   build pickup and not as a hang. The commit is shown only where the versions alone
-   cannot tell the two apart (`dev` against `dev`), which is exactly the dev case.
-   Never throws."
-  [{:keys [from to from-build to-build]}]
-  (let [ambiguous?
-        (= from to)
-
-        label
-        (fn [version build]
-          (str (or version "an older build") (when (and ambiguous? build) (str " (" build ")"))))]
-
-    (try (.println ^java.io.PrintStream System/err
-                   (str "vis-agent: gateway is running "
-                        (label from from-build)
-                        " - restarting it on "
-                        (label to to-build)
-                        "…"))
-         (catch Throwable _ nil))))
-
-(defn- bounce-stale-daemon!
-  "Act on [[stale-bounce-verdict]] for the daemon `entry` this process just attached
-   to: stop it, so the caller starts THIS build in its place.
-
-   At most ONCE per process. A daemon that comes back old anyway - a client whose
-   own classpath predates the update spawning it again, or two checkouts sharing one
-   DB - then costs exactly one restart instead of a loop, which is what bounds the
-   build-identity half of [[protocol/superseded?]] (an identity is symmetric where a
-   version order is not). The comparison happens first and is free (the handshake is
-   already in hand, the build id is computed once per process), so an up-to-date
-   daemon never pays for the status round trip. Returns the verdict with `:bounced?`."
-  [entry]
-  (let [ours
-        (protocol/release-version)
-
-        our-build
-        (protocol/build-id)
-
-        {theirs :version their-build :build}
-        @gateway-handshake*
-
-        identity*
-        {:our-version ours :their-version theirs :our-build our-build :their-build their-build}]
-
-    (cond (not (protocol/superseded? identity*)) {:bounced? false :reason :fresh}
-          (not (compare-and-set! stale-bounce-attempted? false true)) {:bounced? false
-                                                                       :reason :checked}
-          :else (let [status
-                      (try (send-json-with-entry! entry "GET" "/v1/admin/status")
-                           (catch Throwable _ nil))
-
-                      verdict
-                      (stale-bounce-verdict {:ours ours
-                                             :theirs theirs
-                                             :our-build our-build
-                                             :their-build their-build
-                                             :status status})]
-
-                  (if (:bounce? verdict)
-                    (do (report-version-bounce!
-                          {:from theirs :to ours :from-build their-build :to-build our-build})
-                        (stop-daemon!)
-                        (await-daemon-down! (db-target) (:host entry) (:port entry))
-                        (assoc verdict :bounced? true))
-                    (assoc verdict :bounced? false))))))
-
-(defn ensure-gateway!
-  "Return a fresh daemon registry entry for the current DB, auto-starting the
-   detached gateway if needed. `:memory` is a programmer error for this client;
-   headless one-shots stay in-process and should not call here.
-
-   Optional `:port`/`:host` overrides the bind used WHEN THIS CALL SPAWNS a fresh
-   daemon (e.g. `vis-agent channels web --port`); a fresh daemon already registered for
-   the DB is a singleton and is attached to as-is, so the override is moot there.
-
-   Freshness is DEBOUNCED: the full HTTP /healthz probe (via `probe-entry?`)
-   runs at most once per `entry-probe-ttl-ms`. Within that window a cached entry
-   whose pid is still alive is trusted directly, so the TUI's chatty poll loop
-   stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
-   every gateway call.
-
-   A daemon running a DIFFERENT build than this one is also replaced here when
-   replacing it is free ([[bounce-stale-daemon!]]) - that is how the first vis
-   started after `vis-agent update`, or after a rebuild of a dev checkout, comes up
-   on the new code with nobody stopping anything by hand. That decision comes BEFORE
-   the compatibility assert: a daemon too old to speak this build's wire protocol is
-   the one most worth replacing, so the mismatch screen is left for the daemon
-   somebody is still using."
-  ([] (ensure-gateway! nil))
-  ([{:keys [port host] :as opts}]
-   (if-let [remote (remote-gateway)]
-     ;; A remote gateway is ATTACHED to, never managed: no registry, no spawn.
-     (ensure-remote-gateway! remote)
-     (let [db (db-target)]
-       (when (discovery/memory-db? db)
-         (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
-       (let [target-port (or port DEFAULT_PORT)
-             target-host (or host DEFAULT_HOST)
-             cached @cached-entry
-             now (System/nanoTime)
-             fresh-until (long @entry-fresh-until-ns)
-             fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
-                      true
-                      ;; Window elapsed (or no cached entry): pay for the real
-                      ;; HTTP probe once, then re-open the debounce window.
-                      (when (discovery/registry-fresh? cached probe-entry?)
-                        (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
-                        true))]
-
-         (if fresh?
-           (assert-compatible! cached)
-           (let
-             ;; First recover the exact failure mode where a live standard daemon
-             ;; owns 7890 but its registry was removed. Never enter discovery's
-             ;; spawn path while the requested port already has a listener.
-             [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
-             (if entry
-               (do (reset! cached-entry entry)
-                   (reset! entry-fresh-until-ns (+ (System/nanoTime)
-                                                   (* (long entry-probe-ttl-ms) 1000000)))
-                    ;; Staleness BEFORE compatibility: a daemon too old to speak this
-                    ;; build's wire protocol is exactly the one worth replacing, and
-                    ;; the mismatch screen is for the daemon somebody is still using.
-                    (if (:bounced? (bounce-stale-daemon! entry))
-                      ;; The old image released the port; start this build in its place.
-                      (ensure-gateway! opts)
-                      (assert-compatible! entry)))
-               (throw (ex-info "gateway daemon did not become ready"
-                               (assoc result :type :gateway/start-timeout)))))))))))
-
 (defn- probe-route
   "Probe whether the daemon actually SERVES `path`, distinguishing three cases so
    the caller only ever force-restarts on a genuine missing-route 404:
@@ -2158,21 +2207,6 @@
     (swap! subscriptions dissoc sub-id))
   nil)
 
-;; Multiplexed subscription: ONE SSE connection for MANY sessions.
-;;
-;; A channel watching N sessions previously opened N SSE sockets (+N client
-;; futures +N server heartbeat threads). `mux-subscribe!` instead folds every
-;; watched session down a SINGLE process-wide connection to `/v1/events?sids=…`,
-;; demuxed by each event's `:session_id`. Opening/closing a tab just edits the
-;; session set and reconnects (resuming each session from its advanced cursor).
-
-(defonce ^:private mux
-  ;; {:subs {sid {:sinks {sub-id fn} :cursor-atom atom<long>}}
-  ;;  :epoch long :future f :stream in}
-  (atom {:subs {} :epoch 0 :future nil :stream nil}))
-
-(declare mux-unsubscribe!)
-
 (defn- mux-sids-param
   "Comma list of `sid:cursor` for the current session set (UUIDs are URL-safe,
    so no encoding needed). Cursors are read live, so a reconnect resumes each
@@ -2316,6 +2350,35 @@
       (swap! mux assoc :future (mux-run! epoch) :stream nil)
       (swap! mux assoc :future nil :stream nil))))
 
+(defn mux-unsubscribe!
+  "Drop one local listener from the multiplexed stream and reconnect only when
+   the last listener for that sid is gone (or tear the connection down when it
+   was the last watched session)."
+  ([sid] (mux-unsubscribe! sid nil))
+  ([sid sub-id]
+   (let [sid
+         (str sid)
+
+         changed-session-set?
+         (volatile! false)]
+
+     (swap! mux (fn [m]
+                  (let [path
+                        [:subs sid]
+
+                        entry
+                        (get-in m path)
+
+                        entry'
+                        (if sub-id (update entry :sinks dissoc sub-id) nil)]
+
+                    (if (seq (:sinks entry'))
+                      (assoc-in m path entry')
+                      (do (when entry (vreset! changed-session-set? true))
+                          (update m :subs dissoc sid))))))
+     (when @changed-session-set? (restart-mux!))
+     nil)))
+
 (defn mux-subscribe!
   "Add `sid`'s `sink` to the ONE process-wide multiplexed event stream, starting
    at `cursor` (its `current-seq` for a live-only stream). The connection is
@@ -2348,67 +2411,6 @@
             (try (sink {:type "gateway.connected"}) (catch Throwable _ nil)))
           (fn []
             (mux-unsubscribe! sid sub-id))))))
-
-(defn mux-unsubscribe!
-  "Drop one local listener from the multiplexed stream and reconnect only when
-   the last listener for that sid is gone (or tear the connection down when it
-   was the last watched session)."
-  ([sid] (mux-unsubscribe! sid nil))
-  ([sid sub-id]
-   (let [sid
-         (str sid)
-
-         changed-session-set?
-         (volatile! false)]
-
-     (swap! mux (fn [m]
-                  (let [path
-                        [:subs sid]
-
-                        entry
-                        (get-in m path)
-
-                        entry'
-                        (if sub-id (update entry :sinks dissoc sub-id) nil)]
-
-                    (if (seq (:sinks entry'))
-                      (assoc-in m path entry')
-                      (do (when entry (vreset! changed-session-set? true))
-                          (update m :subs dissoc sid))))))
-     (when @changed-session-set? (restart-mux!))
-     nil)))
-
-(defn- shutdown-subscriptions!
-  "Close every client-owned SSE stream exactly once without reconnecting.
-
-   Called by the single process shutdown hook after `client-finalizing?` flips.
-   Clearing both registries before closing their streams makes every reader's
-   EOF/reconnect guard observe terminal state, even though JVM hooks and socket
-   callbacks race concurrently."
-  []
-  (reset! client-finalizing? true)
-  (let [[legacy _]
-        (swap-vals! subscriptions (constantly {}))
-
-        [mux-before _]
-        (swap-vals! mux
-                    (fn [m]
-                      (-> m
-                          (update :epoch inc)
-                          (assoc :subs {}
-                                 :future nil
-                                 :stream nil))))]
-
-    (doseq [[_ {:keys [future stream]}] legacy]
-      (try (some-> ^java.io.Closeable @stream
-                   .close)
-           (catch Throwable _ nil))
-      (when future (future-cancel future)))
-    (when-let [stream (:stream mux-before)]
-      (try (.close ^java.io.Closeable stream) (catch Throwable _ nil)))
-    (when-let [future (:future mux-before)]
-      (future-cancel future)))
-  nil)
 
 (defn sse-event-action
   "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.

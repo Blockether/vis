@@ -83,6 +83,24 @@
    sandbox is never mistaken for one; short enough that a wedged daemon releases
    the port while a human is still looking at it."
   60000)
+(def ^:private CLIENT_LEASE_TTL_MS
+  "How long a lease that carries NO pid may go without a single request before this
+   daemon stops counting it as a client.
+
+   Only a remote client registers one - a phone, or a `--gateway` CLI on another
+   machine - and its process lives where this daemon cannot look, so its own traffic
+   is the entire proof it is still there ([[touch-client-lease!]]). Long enough that
+   a human reading a screen between two requests keeps their lease, and an ATTACHED
+   remote client is counted through its open SSE stream anyway (that one dies with
+   its socket). Short enough that a client which vanished mid-flight stops pinning
+   the daemon past an update."
+  120000)
+
+(def ^:private CLIENT_LEASE_TOUCH_MS
+  "Granularity of the lease refresh. A lease already seen this recently is not
+   written again, so a busy client costs no `swap!` per request."
+  5000)
+
 (defonce ^:private server-state (atom nil))
 
 ;; Delivered by `stop!`; `serve-main!` parks on it so a stopped daemon process
@@ -106,11 +124,20 @@
     (.println System/err (str (java.time.Instant/now) " WARN " message))))
 
 (defn- compact-client-leases
-  "Drop dead-pid leases and collapse duplicate live leases to one per process.
-   Returns the original map by identity when no cleanup is needed, keeping the
-   once-per-second steady-state sweep allocation-light. Nil-pid leases remain
-   independent because they cannot be associated with an OS process."
-  [clients]
+  "Drop every lease whose owner is gone and collapse duplicate live leases to one
+   per process. Returns the original map by identity when no cleanup is needed,
+   keeping the once-per-second steady-state sweep allocation-light.
+
+   An owner proves itself in exactly one of two ways, because only one of them
+   exists on this machine:
+
+     a pid    the process is alive HERE - a killed TUI is gone within the second
+     no pid   a REMOTE client, judged by its own traffic: every request it makes
+              refreshes the lease ([[touch-client-lease!]]), so silence past
+              `CLIENT_LEASE_TTL_MS` is the only evidence a phone or a `--gateway`
+              CLI that vanished mid-flight will ever leave. Before this, one such
+              lease pinned the daemon for the life of the machine."
+  [clients now]
   (let [seen-pids
         (java.util.HashSet.)
 
@@ -118,24 +145,29 @@
         (transient [])
 
         counts
-        (long-array 2)]
+        (long-array 3)]
 
-    ; [dead duplicates]
-    (reduce-kv (fn [_ client-id {:keys [pid]}]
-                 (when (some? pid)
+    ; [dead duplicates expired]
+    (reduce-kv (fn [_ client-id {:keys [pid last-seen-at connected-at]}]
+                 (if (some? pid)
                    (cond (not (.add seen-pids pid))
                          (do (aset-long counts 1 (unchecked-inc (aget counts 1)))
                              (conj! removed-ids client-id))
                          (not (discovery/pid-alive-cached? pid))
                          (do (aset-long counts 0 (unchecked-inc (aget counts 0)))
-                             (conj! removed-ids client-id))))
+                             (conj! removed-ids client-id)))
+                   (when (> (- (long now) (long (or last-seen-at connected-at 0)))
+                            (long CLIENT_LEASE_TTL_MS))
+                     (aset-long counts 2 (unchecked-inc (aget counts 2)))
+                     (conj! removed-ids client-id)))
                  nil)
                nil
                clients)
     (let [removed-ids (persistent! removed-ids)]
       {:clients (if (seq removed-ids) (reduce dissoc clients removed-ids) clients)
        :dead (aget counts 0)
-       :duplicates (aget counts 1)})))
+       :duplicates (aget counts 1)
+       :expired (aget counts 2)})))
 
 (defn- reap-client-leases!
   "Compact the process-lease map without clobbering a concurrent register or
@@ -143,8 +175,14 @@
   []
   (when-let [state @server-state]
     (let [before (:clients state)
-          {:keys [clients dead duplicates]} (compact-client-leases before)
-          removed (+ (long dead) (long duplicates))]
+          {:keys [clients dead duplicates expired]}
+          (compact-client-leases before (System/currentTimeMillis))
+
+          ;; An expired lease IS a dead owner - the pid it would have been judged by
+          ;; lives on another machine.
+          gone (+ (long dead) (long expired))
+
+          removed (+ gone (long duplicates))]
 
       (when (pos? removed)
         (let [applied? (volatile! false)]
@@ -154,7 +192,7 @@
                                       (-> current
                                           (assoc :clients clients)
                                           (update :client-leases-reaped-total (fnil + 0) removed)
-                                          (update :client-dead-reaped-total (fnil + 0) dead)
+                                          (update :client-dead-reaped-total (fnil + 0) gone)
                                           (update :client-duplicates-reaped-total
                                                   (fnil + 0)
                                                   duplicates)))
@@ -164,6 +202,7 @@
                                        {:before (count before)
                                         :after (count clients)
                                         :dead dead
+                                        :expired expired
                                         :duplicates duplicates})))))))
 
 (defn- reap-sse-clients!
@@ -906,6 +945,24 @@
                      :status "ok"
                      :secret_match (= token supplied)))))
 
+(defn- touch-client-lease!
+  "Record that the client holding `client-id` was seen NOW.
+
+   Refreshes an EXISTING lease only: a reaped or invented id never creates one, so
+   the lease map stays exactly as big as `POST /v1/clients` made it. Writes at most
+   once per `CLIENT_LEASE_TOUCH_MS`, so a busy client costs one map lookup per
+   request and no `swap!` at all."
+  [client-id now]
+  (when (seq (str client-id))
+    (let [lease (get-in @server-state [:clients client-id])]
+      (when (and lease
+                 (> (- (long now) (long (or (:last-seen-at lease) (:connected-at lease) 0)))
+                    (long CLIENT_LEASE_TOUCH_MS)))
+        (swap! server-state (fn [current]
+                              (if (contains? (:clients current) client-id)
+                                (assoc-in current [:clients client-id :last-seen-at] now)
+                                current)))))))
+
 (defn- register-client-lease
   "Insert one opaque client lease while enforcing the process invariant: at
    most one lease per non-nil pid. Returns replacement count for observability."
@@ -929,7 +986,8 @@
         (str (java.util.UUID/randomUUID))
 
         lease
-        {:pid pid :kind kind :connected-at (System/currentTimeMillis)}
+        (let [now (System/currentTimeMillis)]
+          {:pid pid :kind kind :connected-at now :last-seen-at now})
 
         replacement-stats
         (long-array 2)]
@@ -3995,6 +4053,22 @@
 
         (if multipart? (mp-handler request) (handler request))))))
 
+(defn- wrap-client-lease
+  "Every request a client makes is proof that client is still there: refresh its
+   lease. `X-Vis-Client-Id` is what a client stamps on every request once
+   `POST /v1/clients` gave it one.
+
+   This is the ONLY liveness a remote lease has - it carries no pid this daemon
+   could look up - and it is what lets `CLIENT_LEASE_TTL_MS` retire a phone or a
+   `--gateway` CLI that vanished mid-flight instead of counting it as a client
+   forever. Innermost wrapper on purpose: an unauthenticated or protocol-refused
+   request never reaches it, so no stranger can keep a lease warm."
+  [handler]
+  (fn [request]
+    (touch-client-lease! (get-in request [:headers "x-vis-client-id"])
+                         (System/currentTimeMillis))
+    (handler request)))
+
 (defn- app
   [^String token contribs]
   (->
@@ -4019,6 +4093,7 @@
                               (error-response 404 :not-found "no such route"))))
            :method-not-allowed (fn [_]
                                  (error-response 405 :method-not-allowed "method not allowed"))})))
+    (wrap-client-lease)
     (wrap-auth token contribs)
     ;; Runs BEFORE the token gate: an out-of-date client deserves the version
     ;; verdict, not a 401 that hides it.
