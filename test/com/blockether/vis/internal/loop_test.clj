@@ -277,9 +277,8 @@
         (expect (= [5273] (get-in snapshot [:process-jail :inbound-ports])))
         (expect (= ["approved.example"] (get-in snapshot [:network :allowed-domains])))
         (expect (not= @cfg snapshot))))
-  (it "fails closed when a child is created without its parent's snapshot"
-      (expect (throws? clojure.lang.ExceptionInfo
-                       #(lp/create-environment ::router {:child {:parent-db-info ::borrowed}})))))
+  (it "fails closed when no router is supplied"
+      (expect (throws? clojure.lang.ExceptionInfo #(lp/create-environment nil {})))))
 
 (defdescribe
   prose-beyond-code-test

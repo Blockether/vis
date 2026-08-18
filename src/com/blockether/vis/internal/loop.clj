@@ -6493,12 +6493,6 @@
             :serving-provider sp
             :serving-model (when sp (provider-root-model router sp))}))))))
 
-(defn subctx->seed-ctx
-  "Seed ctx for a child env's ctx-atom from the model-supplied `subctx`.
-   Child contexts start from an empty engine ctx. PURE. Kept as the named seed site."
-  [_subctx]
-  {})
-
 ;; System var helpers
 ;;
 ;; There is no cross-turn var snapshotting: the engine does not parse the
@@ -9282,22 +9276,17 @@
        ;; truly lands on the chosen provider+model. A caller-supplied
        ;; `:routing` (e.g. a caller's own pin) wins on merge.
        routing (let [merged (merge pref-forced (or routing {}))]
-                 ;; MAIN turn (depth 0): pin the ACTIVE provider+model so a provider
-                 ;; failure surfaces as an error the USER acts on (retry / switch
-                 ;; provider — TUI Ctrl+K) instead of svar silently hopping across the
-                 ;; whole configured fleet (`with-provider-fallback` → the confusing
-                 ;; "tried every provider" card). A session pick already pins this way;
-                 ;; this makes the DEFAULT (no-pick) turn behave identically. CHILD
-                 ;; turns (depth > 0) are EXEMPT — they legitimately
-                 ;; optimize / fall back across the `models` list they were given.
+                 ;; Pin the ACTIVE provider+model so a provider failure surfaces as
+                 ;; an error the USER acts on (retry / switch provider — TUI Ctrl+K)
+                 ;; instead of svar silently hopping across the whole configured fleet
+                 ;; (`with-provider-fallback` → the confusing "tried every provider"
+                 ;; card). A session pick already pins this way; this makes the DEFAULT
+                 ;; (no-pick) turn behave identically.
                  (cond-> merged
                    (and root-provider
                         root-model
                         (not (contains? merged :provider))
-                        (not (contains? merged :model))
-                        (zero? (long (or (some-> (:depth-atom env)
-                                                 deref)
-                                         0))))
+                        (not (contains? merged :model)))
                    (merge (forced-routing-for-pref (:router env) root-provider root-model))))
        db-info (:db-info env)
        custom-bindings (custom-bindings env)
@@ -9781,8 +9770,7 @@
    (created with `:path`), data is preserved. For disposable DBs, all
    data is deleted.
 
-   A CHILD env BORROWS the parent's DB connection (`:owns-db?` false) —
-   disposing the child must NOT close it, or the parent loses its DB mid-turn."
+   Every env owns its DB connection, so disposing one always closes it."
   [environment]
   ;; Drop this session from the SHARED gateway egress proxy's registry. The shared
   ;; proxy + CA are daemon-lifetime (internal.gateway-sandbox/shutdown!), not
@@ -9800,7 +9788,7 @@
   ;; `env-python/new-engine!`).
   (when-let [engine (:python-engine environment)]
     (try (.close ^org.graalvm.polyglot.Engine engine true) (catch Throwable _ nil)))
-  (when (and (:db-info environment) (not (false? (:owns-db? environment))))
+  (when (:db-info environment)
     (persistance/db-dispose-connection! (:db-info environment))))
 
 (defonce ^:private last-good-security-snapshot
@@ -9876,28 +9864,11 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id child prewarm?]}]
+  [router {:keys [db session channel external-id title workspace-id prewarm?]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
-  (when (and (:parent-db-info child) (nil? (:security-policy child)))
-    (throw (ex-info "Child environment requires the parent's security-policy snapshot"
-                    {:type :vis/missing-child-security-policy})))
-  ;; `child` (a child env) carries:
-  ;;   :parent-db-info  reuse the parent's DB connection (don't open/close one)
-  ;;   :security-policy inherit the parent's immutable policy (required)
-  ;;   :depth           starting recursion depth (parent depth + 1)
-  ;;   :seed-ctx        initial ctx-atom value (the model-supplied subctx) — used
-  ;;                    instead of a DB restore
-  ;; A different `router` (model) can be passed for the child to optimize cost
-  ;; (cheap/fast model for an easy subtask) — first-class, nothing special needed.
   (let
-    [depth-atom
-     (atom (or (:depth child) 0))
-
-     owns-db?
-     (nil? (:parent-db-info child))
-
-     db-info
-     (or (:parent-db-info child) (persistance/db-create-connection! db))
+    [db-info
+     (persistance/db-create-connection! db)
 
      state-atom
      (atom {:custom-bindings {} :environment nil :session-id nil})
@@ -10004,11 +9975,6 @@
                                            :title title
                                            :system-prompt system-prompt
                                            :workspace-id (:id active-workspace)
-                                           ;; child env → link this whole soul
-                                           ;; to the parent's session_state (cross-
-                                           ;; soul), keeping it out of the top-level
-                                           ;; list; nil for a normal session.
-                                           :parent-state-id (:parent-state-id child)
                                            ;; Unadopted TUI warm-pool sessions are
                                            ;; created UNCLAIMED (:claimed? false) so
                                            ;; they stay out of the cross-channel list
@@ -10211,12 +10177,12 @@
        ;; bindings are installed here.
        (resources/sandbox-bindings session-id))
 
-     ;; Security configuration is resolved exactly once for a root environment.
-     ;; A child env receives the parent's value through `:child`; it never
-     ;; re-reads model-writable vis.yml. `/reload` bumps `policy-reload-epoch`,
-     ;; so each live env recycles at its next turn and rebuilds this snapshot.
+     ;; Security configuration is resolved exactly once per environment; it never
+     ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
+     ;; `policy-reload-epoch`, so each live env recycles at its next turn and
+     ;; rebuilds this snapshot.
      security-config
-     (or (:security-policy child) (security-config-snapshot))
+     (security-config-snapshot)
 
      configured-rw-roots
      (security-policy/read-write-roots security-config)
@@ -10404,10 +10370,6 @@
         ;; run-turn! resets it after its per-turn workspace
         ;; re-resolve so `sandbox-roots-fn` tracks /draft + /root.
         :workspace-atom workspace-atom
-        :depth-atom depth-atom
-        ;; false for a child env reusing the parent's connection
-        ;; — dispose-environment! must NOT close a borrowed DB.
-        :owns-db? owns-db?
         ;; routing digest → rendered into ctx as `routing`
         ;; (current model + provider only).
         :routing routing-digest
@@ -10470,16 +10432,9 @@
 
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
-    ;; A CHILD env seeds its in-memory ctx straight from the model-supplied
-    ;; subctx (its focused bigger-picture slice) — no DB restore.
-    (when-let [seed (:seed-ctx child)]
-      (reset! ctx-atom (assoc seed
-                         "session_id" session-id
-                         "engine_warnings" []
-                         "engine_pending_satisfies" [])))
     ;; Restore the context state when resuming. Sandbox defs do NOT persist
     ;; across turns (the `definition_*` sidecar tables were dropped).
-    (when (and resolved-session-id (nil? (:seed-ctx child)))
+    (when resolved-session-id
       ;; The latest session_turn_state.ctx (Nippy BLOB) carries the persisted
       ;; context snapshot. Cursor is iter-local so we don't restore it; the
       ;; renderer stamps a fresh one from the loop counters.
