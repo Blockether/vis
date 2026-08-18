@@ -2582,6 +2582,148 @@ function LiveProgress({
 // a 24-turn transcript that really stands 443 315 px measured 100 701 px.
 const PAINT_SKIP_QUIET_MS = 400;
 
+// How far outside the scroller a turn still counts as the reader's own, and on
+// top of it the turn on either SIDE of anything inside that band is kept warm
+// too (see `Neighbourhood`).
+//
+// A skipped subtree is not laid out at all, so the frame that reveals it pays
+// for its layout AND its rasterization at once — reported as the request and
+// response before the current one appearing to load themselves in, with a
+// flash on the way up. `IntersectionObserver` answers proximity off the scroll
+// path, since a rect read per turn per frame is the forced layout this file
+// exists to avoid. Beyond the neighbourhood the transcript is skipped exactly
+// as it was.
+const PAINT_SKIP_NEAR_MARGIN = "100%";
+
+/**
+ * The scroller a turn hangs in, and it has to be the OBSERVER'S ROOT: a root
+ * margin only ever expands the ROOT's own rect, so a band measured against the
+ * window is still clipped by this scroller and would buy nothing at all. Every
+ * turn hangs in its own wrapper, so the walk — `getComputedStyle` up four or
+ * five ancestors — is cached against that wrapper, which is what a turn that
+ * stops streaming and re-runs this effect asks against.
+ */
+const boxScrollers = new WeakMap<Element, Element | null>();
+
+function scrollerOf(box: Element): Element | null {
+  const wrapper = box.parentElement;
+  if (!wrapper) return null;
+  if (boxScrollers.has(wrapper)) return boxScrollers.get(wrapper) ?? null;
+  let scroller: Element | null = null;
+  if (typeof window !== "undefined") {
+    for (
+      let parent: Element | null = wrapper;
+      parent;
+      parent = parent.parentElement
+    ) {
+      const overflow = window.getComputedStyle(parent).overflowY;
+      if (overflow === "auto" || overflow === "scroll") {
+        scroller = parent;
+        break;
+      }
+    }
+  }
+  boxScrollers.set(wrapper, scroller);
+  return scroller;
+}
+
+/**
+ * The neighbourhood of one scroller: its turns, whether the band can see each
+ * one, and what each was last told.
+ *
+ * Warmth is not the band alone. Measured in the browser on a 30-turn session,
+ * a turn of this transcript stands 16 000 to 22 000 px in a 708 px viewport —
+ * so the turn BEFORE the one being read has its near edge a whole screen away
+ * while the reader is one flick from its body, which is exactly the report
+ * this answers. The turn on either SIDE of a turn the band can see is
+ * therefore warm as well, however tall it is: the reader always holds one
+ * whole turn in each direction. Dropping a skip and laying that turn out
+ * measured 2-54 ms per turn, and it is spent where nobody is looking.
+ */
+type Neighbourhood = {
+  observer: IntersectionObserver;
+  /** Every turn of this scroller, and whether the band can see it. */
+  seen: Map<Element, boolean>;
+  /** What each turn was last told, so nothing is told it twice. */
+  told: Map<Element, boolean>;
+  report: Map<Element, (near: boolean) => void>;
+};
+
+const scrollerNeighbourhoods = new WeakMap<Element, Neighbourhood>();
+let windowNeighbourhood: Neighbourhood | null = null;
+
+/** The turns of one scroller, top to bottom. */
+function inDocumentOrder(boxes: Element[]): Element[] {
+  return boxes.sort((a, b) =>
+    a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+  );
+}
+
+function settle(hood: Neighbourhood): void {
+  const order = inDocumentOrder([...hood.seen.keys()]);
+  const warm = new Set<Element>();
+  order.forEach((box, at) => {
+    if (!hood.seen.get(box)) return;
+    const before = order[at - 1];
+    const after = order[at + 1];
+    warm.add(box);
+    if (before) warm.add(before);
+    if (after) warm.add(after);
+  });
+  for (const box of order) {
+    const near = warm.has(box);
+    if (hood.told.get(box) === near) continue;
+    hood.told.set(box, near);
+    hood.report.get(box)?.(near);
+  }
+}
+
+function neighbourhoodFor(root: Element | null): Neighbourhood | null {
+  if (typeof IntersectionObserver === "undefined") return null;
+  const known = root ? scrollerNeighbourhoods.get(root) : windowNeighbourhood;
+  if (known) return known;
+  const seen = new Map<Element, boolean>();
+  const told = new Map<Element, boolean>();
+  const report = new Map<Element, (near: boolean) => void>();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (seen.has(entry.target)) seen.set(entry.target, entry.isIntersecting);
+      }
+      settle(hood);
+    },
+    { root, rootMargin: PAINT_SKIP_NEAR_MARGIN },
+  );
+  const hood: Neighbourhood = { observer, seen, told, report };
+  if (root) scrollerNeighbourhoods.set(root, hood);
+  else windowNeighbourhood = hood;
+  return hood;
+}
+
+/**
+ * Report whether the reader has this turn in hand: inside the band, or beside
+ * a turn that is. Nothing is reported until the observer's first answer, so a
+ * turn counts as far away until proven otherwise — that answer lands frames
+ * before the quiet period the skip waits out, and warmth gates nothing but
+ * arming.
+ */
+function observeNear(
+  box: Element,
+  onNear: (near: boolean) => void,
+): () => void {
+  const hood = neighbourhoodFor(scrollerOf(box));
+  if (!hood) return () => {};
+  hood.seen.set(box, false);
+  hood.report.set(box, onNear);
+  hood.observer.observe(box);
+  return () => {
+    hood.observer.unobserve(box);
+    hood.seen.delete(box);
+    hood.told.delete(box);
+    hood.report.delete(box);
+    settle(hood);
+  };
+}
 /**
  * Lets WebKit skip a finished turn it is not painting, at that turn's OWN size.
  *
@@ -2609,6 +2751,10 @@ const PAINT_SKIP_QUIET_MS = 400;
  * measured in WebKit, everything below that turn stepped 8 px every ~533 ms for
  * as long as the turn stayed on screen.
  *
+ * The turn beside the viewport is never armed, and one that WAS armed drops the
+ * skip a screenful before the reader reaches it (`PAINT_SKIP_NEAR_MARGIN`): a
+ * reveal must never be the frame that lays a turn out.
+ *
  * See the note at the top of this file for what the guess did instead.
  */
 function useMeasuredPaintSkip(live: boolean) {
@@ -2625,6 +2771,9 @@ function useMeasuredPaintSkip(live: boolean) {
     let seen: (Size & { at: number }) | null = null;
     let recheck: number | null = null;
     let content: MutationObserver | null = null;
+
+    /** True while this turn is within a screenful of what the reader sees. */
+    let near = false;
 
     const same = (a: Size, b: Size) =>
       Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
@@ -2682,6 +2831,14 @@ function useMeasuredPaintSkip(live: boolean) {
     const measure = () => {
       const width = box.offsetWidth;
 
+      // The reader's own neighbourhood is never skipped, and a turn that walked
+      // into it gives its skip back: from here it is one reveal away, and a
+      // reveal is not a moment to be laying a turn out in.
+      if (near) {
+        if (!armed && !seen) return;
+        return drop;
+      }
+
       if (isPaintSkipped(box)) {
         // Everything a skipped turn reports is the placeholder it was given —
         // except the WIDTH, which is still the layout's own answer.
@@ -2722,12 +2879,19 @@ function useMeasuredPaintSkip(live: boolean) {
       };
     };
 
+    const unwatchNear = observeNear(box, (isNear) => {
+      if (isNear === near) return;
+      near = isNear;
+      scheduleBoxes([box]);
+    });
+
     const stop = observeBox(box, measure);
     scheduleBoxes([box]);
     return () => {
       if (recheck !== null && typeof window !== "undefined")
         window.clearTimeout(recheck);
       stop();
+      unwatchNear();
       drop();
     };
   }, [live]);

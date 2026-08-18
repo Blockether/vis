@@ -51,6 +51,53 @@ vi.stubGlobal(
   },
 );
 
+// The neighbourhood observer, made once per scroller and kept for the module's
+// lifetime like the box observer above. A test moves the reader by hand: jsdom
+// scrolls nothing and intersects nothing.
+const neighbours: {
+  target: Element;
+  root: Element | null;
+  rootMargin: string;
+  report: (near: boolean) => void;
+}[] = [];
+
+vi.stubGlobal(
+  "IntersectionObserver",
+  class {
+    private readonly callback: (
+      entries: { target: Element; isIntersecting: boolean }[],
+    ) => void;
+    private readonly options: { root?: Element | null; rootMargin?: string };
+    constructor(
+      callback: (
+        entries: { target: Element; isIntersecting: boolean }[],
+      ) => void,
+      options: { root?: Element | null; rootMargin?: string } = {},
+    ) {
+      this.callback = callback;
+      this.options = options;
+    }
+    observe(target: Element) {
+      neighbours.push({
+        target,
+        root: this.options.root ?? null,
+        rootMargin: this.options.rootMargin ?? "",
+        report: (near: boolean) =>
+          this.callback([{ target, isIntersecting: near }]),
+      });
+    }
+    unobserve(target: Element) {
+      const at = neighbours.findIndex(
+        (neighbour) => neighbour.target === target,
+      );
+      if (at >= 0) neighbours.splice(at, 1);
+    }
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  },
+);
 const frames: FrameRequestCallback[] = [];
 
 vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -80,6 +127,13 @@ function resized(target: Element): void {
   }
 }
 
+/** Move the reader: this turn is (or is no longer) inside the warm band. */
+function nearby(target: Element, near: boolean): void {
+  for (const neighbour of neighbours) {
+    if (neighbour.target === target) neighbour.report(near);
+  }
+  flushFrames();
+}
 /** The box the browser would report for this turn. */
 function layout(box: HTMLElement, width: number, height: number): void {
   Object.defineProperty(box, "offsetWidth", {
@@ -109,6 +163,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // The module keeps ONE frame in flight for the whole transcript, and clearing
+  // the queue here cannot clear THAT: a test that ends with a look still queued
+  // would leave every later test's measurement scheduled against a frame that
+  // is never coming. Drain first, then clear.
+  for (let pass = 0; pass < 5 && frames.length > 0; pass += 1) flushFrames();
   vi.useRealTimers();
   frames.length = 0;
   watchers.length = 0;
@@ -295,5 +354,116 @@ describe("a finished turn is skipped at its own measured height", () => {
     picture.dispatchEvent(new Event("load"));
 
     expect(box.style.contentVisibility).toBe("");
+  });
+});
+
+// Regression, user report ("scrolling up, the request and response before the
+// one I am looking at only load then, and there is a flicker"): a finished turn
+// was armed wherever it stood, so the turn one pixel above the viewport was
+// skipped — not laid out at all — and the frame that revealed it had to lay it
+// out and rasterize it before it could paint anything. What a reader scrolling
+// up saw was the placeholder: a correctly sized box of bare paper, and the turn
+// a frame or two later.
+describe("the turn beside the one being read is never skipped", () => {
+  it("measures the band against the scroller, not the window", () => {
+    const scroller = document.createElement("div");
+    scroller.style.overflowY = "auto";
+    const column = document.createElement("div");
+    scroller.append(column);
+    document.body.append(scroller);
+
+    const view = render(<AssistantMessage turn={turn} />, {
+      container: column,
+    });
+    const box = view.container.querySelector("article") as HTMLElement;
+    flushFrames();
+
+    // A root margin only ever expands the ROOT's own rect. Rooted at the
+    // window, this band would still be clipped by the scroller — the turn
+    // would count as near only once it was already on screen, which is the
+    // reveal this exists to get ahead of.
+    const watching = neighbours.find((neighbour) => neighbour.target === box);
+    expect(watching?.root).toBe(scroller);
+    expect(watching?.rootMargin).toBe("100%");
+
+    view.unmount();
+    scroller.remove();
+  });
+
+  it("refuses to arm the turn the reader is about to reach", () => {
+    const { box } = mount();
+    layout(box, 390, 4321);
+    flushFrames();
+
+    // A screenful below and coming up: this turn is next.
+    nearby(box, true);
+    waitOut();
+
+    // It then holds still for another whole quiet period, which for a turn
+    // anywhere else is the entirety of what arming waits for.
+    resized(box);
+    waitOut();
+
+    expect(box.style.contentVisibility).toBe("");
+    expect(box.style.containIntrinsicSize).toBe("");
+  });
+
+  it("gives the skip back a screen before the reader arrives", () => {
+    const { box } = mount();
+    layout(box, 390, 4321);
+    flushFrames();
+    waitOut();
+    expect(box.style.contentVisibility).toBe("auto");
+
+    nearby(box, true);
+
+    // Laid out now, on a frame nobody is reading, instead of on the frame that
+    // puts it under the reader's eyes.
+    expect(box.style.contentVisibility).toBe("");
+    expect(box.style.containIntrinsicSize).toBe("");
+  });
+
+  it("arms again once the reader has left it a screen behind", () => {
+    const { box } = mount();
+    layout(box, 390, 4321);
+    flushFrames();
+    nearby(box, true);
+    waitOut();
+    expect(box.style.contentVisibility).toBe("");
+
+    // Far again — and armed from a fresh measurement, never from the size it
+    // was carrying when the reader walked past it.
+    layout(box, 390, 5000);
+    nearby(box, false);
+    waitOut();
+
+    expect(box.style.containIntrinsicSize).toBe("auto 5000px");
+  });
+
+  it("holds the whole turn before the one on screen, however tall it is", () => {
+    const view = render(
+      <>
+        <AssistantMessage turn={turn} />
+        <AssistantMessage turn={{ ...turn, id: "turn-2" }} />
+      </>,
+    );
+    const [above, reading] = [
+      ...view.container.querySelectorAll("article"),
+    ] as HTMLElement[];
+    layout(above, 390, 21778);
+    layout(reading, 390, 10694);
+    flushFrames();
+    waitOut();
+    expect(above.style.contentVisibility).toBe("auto");
+
+    // Measured in the browser, one turn of a 30-turn session stands 16 000 to
+    // 22 000 px in a 708 px viewport: the reader is inside the turn below this
+    // one, so its near edge is a screen and more away while its body is one
+    // flick up. The band alone would leave it skipped; being the turn NEXT to
+    // the one on screen is what keeps it laid out.
+    nearby(reading, true);
+
+    expect(above.style.contentVisibility).toBe("");
+    expect(reading.style.contentVisibility).toBe("");
   });
 });
