@@ -1013,6 +1013,28 @@
                                  (take 6 (.digest (MessageDigest/getInstance "SHA-256")
                                                   (.getBytes (str v) "UTF-8"))))))]))
         values))
+(defn env-difference
+  "Variable NAMES whose value differs between the env a live process is running
+   with and the one a new start asked for. Both sides are FINGERPRINTS, so this
+   compares digests and answers names — the only thing either side may keep."
+  [running requested]
+  (vec (sort (into #{}
+                   (remove (fn [k] (= (get running k) (get requested k))))
+                   (concat (keys running) (keys requested))))))
+
+(defn env-mismatch-refusal
+  "`{:message :differing}` when a REPL is already running with an env OTHER than
+   the one this start named, else nil. Every language pack answers this same
+   refusal, because `repl_start` must mean ONE thing across languages: a live
+   REPL is reused, never silently replaced, and an env it was not started with
+   is a different REPL. Names and digests only — a value never reaches it."
+  [id running requested]
+  (when-let [differing (seq (env-difference running requested))]
+    {:differing (vec differing)
+     :message (str "repl_start for " id " is already running with a different env ("
+                   (str/join ", " differing) "). There is no restart:"
+                   " repl_stop that REPL, then start it with this env.")}))
+
 ;; ── Standard language-process jail contract ────────────────────────────────
 ;; Language packs spawn managed REPLs and project test runners via raw
 ;; ProcessBuilder calls outside the shell executors. Every such spawn obtains its

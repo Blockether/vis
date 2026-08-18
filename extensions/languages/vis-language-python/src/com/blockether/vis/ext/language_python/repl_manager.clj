@@ -111,20 +111,39 @@ _main()
   (boolean (some-> ^Process (:process info)
                    .isAlive)))
 
+(defn status
+  "STRING-keyed lifecycle view (crosses as a tool `:result`): `result`, `cwd`,
+   `status`, plus `pid` / `cmd` / `env` while the interpreter is up. `env` is the
+   delta this REPL was STARTED with, by NAME and digest only — the same shape
+   every language answers, and never a value."
+  [dir]
+  (let
+    [info
+     (get @processes dir)
+
+     running?
+     (alive? info)]
+
+    (cond->
+      {"result" "status"
+       "cwd" dir
+       "status" (if running? "up" "down")
+       "pid" (some-> ^Process (:process info)
+                     .pid)
+       "cmd" (:cmd info)}
+      (and running? (seq (:env-fingerprint info)))
+      (assoc "env" (:env-fingerprint info)))))
+
 (declare request!)
 
-(defn start!
-  "Spawn (or replace) the managed Python REPL for `dir`. A start succeeds only
-   after the child answers its protocol ping; failed children never masquerade
-   as usable REPLs. Returns a STRING-keyed lifecycle map.
-
-   `opts` carries THIS start's own `env` delta over the project environment
-   (the `env` key, string-keyed like every other model-facing option). A start
-   always REPLACES the running REPL, so the delta needs no identity check: the
-   process that answers the ping is the one this call spawned."
-  [dir {:keys [session-id] :as opts}]
+(defn- spawn!
+  "Replace whatever is cached for `dir` with a freshly spawned interpreter,
+   stamped with the env delta it was started with. Only `start!` calls this: a
+   LIVE REPL is reused, never respawned."
+  [dir {:keys [session-id] :as opts} env-fingerprint]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
+
   (let
     [cmd
      (vec (concat (interp/resolve-command dir) ["-c" server-script]))
@@ -154,17 +173,23 @@ _main()
       :writer (io/writer (.getOutputStream p))
       :reader (io/reader (.getInputStream p))
       :error-reader (io/reader (.getErrorStream p))
-      :cmd cmd
+      ;; The DISPLAYED argv: the inlined driver source is elided here, because
+      ;; this cmd rides into `status`, the resource registry and the footer.
+      :cmd (conj (vec (butlast cmd)) "<vis python driver>")
       :pid (.pid p)
-      :started-at (System/currentTimeMillis)}
+      :started-at (System/currentTimeMillis)
+      ;; WHAT THIS REPL RUNS WITH, by name and digest: what the next start is
+      ;; compared against, so a reuse can be refused without a value ever
+      ;; reaching a result, a log or the transcript.
+      :env-fingerprint env-fingerprint}
 
      shown-cmd
-     (conj (vec (butlast cmd)) "<vis python driver>")]
+     (:cmd info)]
 
     (swap! processes assoc dir info)
     (try (let [ping (request! dir {"op" "ping"} 5000)]
            (if (true? (get ping "pong"))
-             {"status" "up" "pid" (.pid p) "cmd" shown-cmd "cwd" dir}
+             (assoc (status dir) "result" "started")
              (throw (ex-info "Python REPL did not acknowledge its startup ping"
                              {:type :py/bad-handshake :response ping}))))
          (catch Throwable e
@@ -179,13 +204,48 @@ _main()
               (try (.exitValue p) (catch Throwable _ nil))]
 
              (swap! processes dissoc dir)
-             {"status" "failed"
+             {"result" "failed"
+              "status" "failed"
               "pid" (.pid p)
               "cmd" shown-cmd
               "cwd" dir
               "stderr" stderr
               "exit_code" exit-code
               "error" (str "Python REPL failed its startup handshake: " (.getMessage e))})))))
+
+(defn start!
+  "Start the managed Python REPL for `dir` — or REUSE the one already running.
+
+   A live REPL is NEVER silently replaced: its globals ARE the session's work,
+   so a second start answers \"already-running\", exactly as every other Vis
+   language answers it. A start succeeds only after the child answers its
+   protocol ping; failed children never masquerade as usable REPLs.
+
+   `opts` carries THIS start's own `env` delta over the project environment (the
+   `env` key, string-keyed like every other model-facing option), and that env
+   BELONGS to the REPL: a start naming a different one is refused by the keys
+   that differ, because there is no restart — stop it, then start it.
+
+   Returns a STRING-keyed lifecycle map."
+  [dir opts]
+  (let
+    [id
+     (or (get opts "id") (str "pyrepl:" dir))
+
+     env-fingerprint
+     (vis/env-fingerprint (vis/call-env-values (get opts "env")))]
+
+    (if (alive? (get @processes dir))
+      (let [refusal (vis/env-mismatch-refusal id
+                                              (:env-fingerprint (get @processes dir))
+                                              env-fingerprint)]
+        (when refusal
+          (throw (ex-info (:message refusal)
+                          {:type :py/repl-env-mismatch
+                           :id id
+                           :env (:differing refusal)})))
+        (assoc (status dir) "result" "already-running"))
+      (spawn! dir opts env-fingerprint))))
 
 (defn- request!
   [dir req timeout-ms]
@@ -246,20 +306,14 @@ _main()
   (request! dir {"code" (str code)} (or timeout-ms 30000)))
 
 (defn stop!
-  [dir]
-  (when-let [info (get @processes dir)]
-    (try (.destroy ^Process (:process info)) (catch Throwable _ nil))
-    (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
-         (catch Throwable _ nil)))
-  (swap! processes dissoc dir)
-  {"status" "stopped" "cwd" dir})
-
-(defn status
-  "STRING-keyed lifecycle view (crosses as a tool `:result`)."
+  "Stop THIS dir's managed interpreter. No-op-safe: with nothing managed the
+   result says `not-managed` rather than claiming a stop that never happened."
   [dir]
   (let [info (get @processes dir)]
-    {"cwd" dir
-     "status" (if (alive? info) "up" "down")
-     "pid" (some-> ^Process (:process info)
-                   .pid)
-     "cmd" (:cmd info)}))
+    (when info
+      (try (.destroy ^Process (:process info)) (catch Throwable _ nil))
+      (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
+           (catch Throwable _ nil)))
+    (swap! processes dissoc dir)
+    {"result" (if info "stopped" "not-managed") "cwd" dir "status" "down"}))
+

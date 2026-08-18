@@ -575,15 +575,6 @@
           (get @attachments [session-id dir]) (attachment-health session-id dir)
            :else :down)))
 
-(defn- env-difference
-  "Variable NAMES whose value differs between the env a REPL is running with and
-   the one a new start asked for. Both sides are fingerprints, so this compares
-   digests and answers names — the only thing either side is allowed to keep."
-  [running requested]
-  (vec (sort (into #{}
-                   (remove (fn [k] (= (get running k) (get requested k))))
-                   (concat (keys running) (keys requested))))))
-
 (defn start!
   "Self-start a project nREPL subprocess OWNED by `session-id` in `dir`.
    Always allowed — never flag-gated. Default `:aliases` are [:dev :test] (merged
@@ -627,12 +618,18 @@
      #_{:clj-kondo/ignore [:locking-suspicious-lock]}
      (locking (start-lock k)
        (if (proc-alive? (get @processes k))
-         (let [differing (env-difference (:env-fingerprint (get @processes k)) env-fingerprint)]
-           (when (seq differing)
-             (throw (ex-info (str "repl_start for " (id-of dir) " is already running with a"
-                                  " different env (" (str/join ", " differing) "). There is no"
-                                  " restart: repl_stop that REPL, then start it with this env.")
-                             {:type :clj/repl-env-mismatch :id (id-of dir) :env differing})))
+         ;; ONE refusal, minted by the host and answered identically by every
+         ;; pack: a REPL running with another env is a DIFFERENT REPL, and
+         ;; reusing it would report success for a process that never saw the
+         ;; variables this call asked for.
+         (let [refusal (vis/env-mismatch-refusal (id-of dir)
+                                                 (:env-fingerprint (get @processes k))
+                                                 env-fingerprint)]
+           (when refusal
+             (throw (ex-info (:message refusal)
+                             {:type :clj/repl-env-mismatch
+                              :id (id-of dir)
+                              :env (:differing refusal)})))
            (assoc (status session-id dir) "result" "already-running"))
          (let [port (free-port!)]
            (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
@@ -806,11 +803,12 @@
                     (swap! processes dissoc k)
                     (.destroy process)
                     (when-not (.waitFor process 3 TimeUnit/SECONDS) (.destroyForcibly process))
-                    {"result" "stopped" "id" (id-of dir) "cwd" dir})
+                    {"result" "stopped" "id" (id-of dir) "cwd" dir "status" "down"})
           (get @attachments k) (detach! session-id dir)
           :else {"result" "not-managed"
                  "id" (id-of dir)
                  "cwd" dir
+                 "status" "down"
                  "message" "No Vis-managed nREPL for this directory in this session."})))
 
 (defn connect!

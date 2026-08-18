@@ -1246,4 +1246,28 @@
       (is (not (str/includes? (pr-str fp) "s3cret-value")))
       (is (= "unset" (get fp "GONE")))
       (is (= fp (pj/env-fingerprint {"TOKEN" "s3cret-value" "GONE" nil})))
-      (is (not= fp (pj/env-fingerprint {"TOKEN" "another-value" "GONE" nil}))))))
+      (is (not= fp (pj/env-fingerprint {"TOKEN" "another-value" "GONE" nil})))))
+  ;; Regression, issue #repl-consistency: only the Clojure pack compared a REUSED
+  ;; REPL's env, so `repl_start` meant "reuse or refuse" in one language and
+  ;; "silently kill and respawn" in the others. The refusal is minted HERE now,
+  ;; so every pack answers the same words.
+  (testing "one refusal, shared: a live REPL's env is compared by NAME, never by value"
+    (let
+      [running (pj/env-fingerprint {"TZ" "UTC" "TOKEN" "s3cret-value"})
+
+       same (pj/env-fingerprint {"TZ" "UTC" "TOKEN" "s3cret-value"})
+
+       other (pj/env-fingerprint {"TZ" "UTC" "TOKEN" "other-value"})
+
+       refusal (pj/env-mismatch-refusal "pyrepl:~/proj" running other)]
+
+      (is (empty? (pj/env-difference running same)))
+      (is (nil? (pj/env-mismatch-refusal "pyrepl:~/proj" running same)))
+      (is (= ["TOKEN"] (:differing refusal)))
+      (is (str/includes? (:message refusal) "pyrepl:~/proj"))
+      (is (str/includes? (:message refusal) "repl_stop"))
+      ;; names and digests only — no value reaches the message
+      (is (not (str/includes? (:message refusal) "s3cret-value")))
+      (is (not (str/includes? (:message refusal) "other-value")))
+      ;; an ADDED or DROPPED name differs too
+      (is (= ["EXTRA"] (pj/env-difference running (assoc running "EXTRA" "d")))))))

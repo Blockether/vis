@@ -675,7 +675,11 @@
              ;; fingerprinted, so a pack can compare a REUSED process against the
              ;; environment this start asked for without ever holding a value.
              [call-env-values process-jail/call-env-values]
-             [env-fingerprint process-jail/env-fingerprint])
+             [env-fingerprint process-jail/env-fingerprint]
+             ;; ONE refusal, shared: a live REPL started with another env is a
+             ;; DIFFERENT REPL in every language, never a silent replacement.
+             [env-difference process-jail/env-difference]
+             [env-mismatch-refusal process-jail/env-mismatch-refusal])
 
 ;; Turn runtime / iteration loop / environment / sessions
 (import-vars [turn! lp/turn!]

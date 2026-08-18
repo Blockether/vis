@@ -1101,10 +1101,10 @@
 ;; A REPL IS its environment. `start!` REUSES a live one for the same
 ;; `[session-id dir]`, so a start naming a different `env` would answer
 ;; "already-running" for a process that never saw the variables it asked for —
-;; and there is no restart op to fall back on.
+;; and there is no restart op to fall back on. The DIFFERENCE and the words
+;; of the refusal are minted once, in process-jail, so every language answers
+;; the same sentence; this pins that the Clojure pack asks for them.
 (def ^:private manager-processes @#'rm/processes)
-
-(def ^:private env-difference @#'rm/env-difference)
 
 (defn- refusal-message
   "The message `thunk` throws, or nil when it returns — a refusal is only useful
@@ -1114,12 +1114,6 @@
 
 (defdescribe
   repl-env-identity-test
-  (it "names the variables whose value differs and nothing else"
-      (expect (= ["ONLY_NEW" "OVER"]
-                 (env-difference {"KEEP" "aaaaaa" "OVER" "bbbbbb"}
-                                 {"KEEP" "aaaaaa" "OVER" "cccccc" "ONLY_NEW" "dddddd"})))
-      (expect (empty? (env-difference {"KEEP" "aaaaaa"} {"KEEP" "aaaaaa"})))
-      (expect (empty? (env-difference nil nil))))
   (it "reuses a live REPL started with the SAME env and refuses a different one BY NAME"
       (let
         [dir (tmp-dir)

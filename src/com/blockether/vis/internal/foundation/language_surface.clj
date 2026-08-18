@@ -625,16 +625,19 @@
     {:symbol 'repl_start
      :result
      (str
-       "String-keyed result stamped with `op`: `result,id,cwd,status` plus "
-       "`running,port,pid,cmd,tool,aliases,external,host,log,message` when known, and "
+       "String-keyed result stamped with `op` — the SAME shape in every language: `result` "
+       "(`started` | `already-running` | `starting` | `failed` | `no-launcher`), `id`, `cwd`, "
+       "`status`, plus `running,port,pid,cmd,tool,aliases,env,log,message` when known, and "
        "`build,target,dialect,runtime` for a shadow-cljs attachment.")
      :description
      (str
        "Start a project REPL — `repl_start(\"clojure\")`, or "
        "`repl_start({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. `cwd` chooses the "
        "project. Nothing lists live REPLs for you: `repl_status` is the only answer — reuse `up`, "
-       "recheck `starting`, start when absent/down/failed. There is NO restart: a wedged REPL is "
-       "`repl_stop` then `repl_start`. "
+       "recheck `starting`, start when absent/down/failed. A LIVE REPL IS REUSED, never replaced: "
+       "a second start answers `already-running` in every language, because that process' state is "
+       "the work you are standing on. There is NO restart: a wedged REPL is `repl_stop` then "
+       "`repl_start`. "
        "`env` carries THIS REPL's own variables over the project's — a literal for a switch, a "
        "source map ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}) for a secret, null to unset "
        "— and that env BELONGS to the REPL: a start naming a different one is refused by the keys "
@@ -653,8 +656,8 @@
     {:symbol 'repl_status
      :result
      (str
-       "String-keyed and stamped with `op`. The project REPL: Clojure `result,id,cwd,status`, "
-       "Python/Bun `cwd,status`; a running one adds `running,port,pid,build` and its `env` key "
+       "String-keyed and stamped with `op`. The project REPL answers the same keys in every "
+       "language — `result,id,cwd,status` — and a running one adds `pid,cmd,running,port,build` and its `env` key "
        "NAMES (never values). `resources` lists EVERY live REPL of this session — `id`, `kind`, "
        "`language`, `status`, `label` — including ones under another `cwd`. Asking by id answers "
        "`id,status,resources`, `status` `unknown` when nothing has that id.")
@@ -699,7 +702,8 @@
     #'repl-stop
     {:symbol 'repl_stop
      :result
-     "String-keyed `{result, id, message}` stamped with `op`; an external REPL is only detached."
+     (str "String-keyed `{result, id, cwd, status}` stamped with `op` — `result` is `stopped`, "
+          "`not-managed` or `detached`, and an external REPL is only detached.")
      :description
      (str
        "Stop a REPL after verification, so nothing is left running — `repl_stop(id)` with the exact "

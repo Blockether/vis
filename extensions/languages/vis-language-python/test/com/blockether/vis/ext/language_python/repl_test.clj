@@ -197,6 +197,40 @@
                (repl/stop! dir)
                (expect (= "down" (get (repl/status dir) "status")))
                (finally (repl/stop! dir))))))
+  ;; Regression, issue #repl-consistency: a second `repl_start` KILLED the live
+  ;; Python process and spawned a new one, so the session's globals vanished while
+  ;; the call reported plain success — where Clojure answered "already-running".
+  ;; A live REPL is reused in EVERY language now, and the env it was started with
+  ;; is part of its identity.
+  (it "reuses a live REPL and refuses a start naming a different env"
+      (when (has-python?)
+        (let [dir (.getPath (tmp-dir))]
+          (try
+            (let [first-start (repl/start! dir {:session-id test-session-id
+                                                "env" {"VIS_REPL_MARK" "one"}})]
+              (expect (= "started" (get first-start "result")))
+              ;; the env rides by NAME + digest, never by value
+              (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
+              (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
+              ;; and it really reached the child
+              (expect (re-find #"one" (str (get (repl/eval! dir "import os; os.environ['VIS_REPL_MARK']" 10000) "value"))))
+              (repl/eval! dir "vis_mark = 7" 10000)
+              (let [same (repl/start! dir {:session-id test-session-id
+                                          "env" {"VIS_REPL_MARK" "one"}})]
+                (expect (= "already-running" (get same "result")))
+                ;; SAME process — the state the session stands on survived
+                (expect (= "7" (get (repl/eval! dir "vis_mark" 10000) "value"))))
+              (let [refused (try (repl/start! dir {:session-id test-session-id
+                                                  "env" {"VIS_REPL_MARK" "two"}})
+                                 nil
+                                 (catch clojure.lang.ExceptionInfo e e))]
+                (expect (some? refused))
+                (expect (= :py/repl-env-mismatch (:type (ex-data refused))))
+                (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
+                ;; the refusal names the KEY, never the value
+                (expect (not (str/includes? (.getMessage refused) "two")))
+                (expect (str/includes? (.getMessage refused) "repl_stop"))))
+            (finally (repl/stop! dir))))))
   ;; Regression, issue #123: a pinned `vis-agent python` command rejected `-u`,
   ;; but start still reported an unusable process as up and exposed its driver source.
   (it "fails startup when the child cannot complete the ping handshake"

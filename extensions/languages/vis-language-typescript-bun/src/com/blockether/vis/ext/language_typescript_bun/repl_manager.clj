@@ -41,14 +41,59 @@
           (if (< 200 (count arg)) "<repl_server.js>" arg))
         cmd))
 
-(defn start!
-  "Spawn (or replace) the managed Bun REPL for `dir`. Returns a STRING-keyed
-   status map (crosses the strings-only boundary as a tool `:result`).
+(defn status
+  "STRING-keyed lifecycle view (crosses as a tool `:result`): `result`, `cwd`,
+   `status`, plus `pid` / `cmd` / `env` while the runtime is up. `env` is the
+   delta this REPL was STARTED with, by NAME and digest only — the same shape
+   every language answers, and never a value."
+  [dir]
+  (let
+    [info
+     (get @processes dir)
 
-   `opts` carries THIS start's own `env` delta over the project environment
-   (the `env` key, string-keyed like every other model-facing option). A start
-   REPLACES the running REPL here, so the delta needs no identity check."
-  [dir {:keys [session-id] :as opts}]
+     running?
+     (alive? info)]
+
+    (cond->
+      {"result" "status"
+       "cwd" dir
+       "status" (if running? "up" "down")
+       "pid" (some-> ^Process (:process info)
+                     .pid)
+       "cmd" (:cmd info)}
+      (and running? (seq (:env-fingerprint info)))
+      (assoc "env" (:env-fingerprint info)))))
+
+(defn- request!
+  [dir req timeout-ms]
+  (let [info (get @processes dir)]
+    (when-not (alive? info)
+      (throw (ex-info "Bun REPL is not running for this dir — repl_start(\"typescript\") first."
+                      {:type :ts/no-repl :dir dir})))
+    (locking info
+      (let
+        [^BufferedWriter w (:writer info)
+         ^BufferedReader r (:reader info)]
+
+        (.write w (str (json/write-json-str req) "\n"))
+        (.flush w)
+        (let
+          [fut (future (.readLine r))
+           line (deref fut timeout-ms ::timeout)]
+
+          (if (= line ::timeout)
+            (do (future-cancel fut)
+                (throw (ex-info "Bun eval timed out" {:type :ts/timeout :dir dir})))
+            (if (nil? line)
+              (throw (ex-info "Bun REPL closed the connection (process died)"
+                              {:type :ts/closed :dir dir}))
+              (json/read-json line))))))))
+
+(defn- spawn!
+  "Replace whatever is cached for `dir` with a freshly spawned Bun runtime,
+   stamped with the env delta it was started with. Only `start!` calls this: a
+   LIVE REPL is reused, never respawned."
+  [dir {:keys [session-id] :as opts} env-fingerprint]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let
@@ -83,35 +128,65 @@
       :reader (io/reader (.getInputStream p))
       :cmd (display-cmd cmd)
       :pid (.pid p)
-      :started-at (System/currentTimeMillis)}]
+      :started-at (System/currentTimeMillis)
+      ;; WHAT THIS REPL RUNS WITH, by name and digest: what the next start is
+      ;; compared against, so a reuse can be refused without a value ever
+      ;; reaching a result, a log or the transcript.
+      :env-fingerprint env-fingerprint}]
 
     (swap! processes assoc dir info)
-    {"status" "up" "pid" (.pid p) "cmd" (display-cmd cmd) "cwd" dir}))
+    ;; "up" only once the child ANSWERS — the same handshake the Python REPL
+    ;; makes, so a runtime that died on its first line can never masquerade as
+    ;; a usable REPL.
+    (try (let [ping (request! dir {"op" "ping"} 10000)]
+           (if (true? (get ping "pong"))
+             (assoc (status dir) "result" "started")
+             (throw (ex-info "Bun REPL did not acknowledge its startup ping"
+                             {:type :ts/bad-handshake :response ping}))))
+         (catch Throwable e
+           (try (.destroy p) (catch Throwable _ nil))
+           (try (when (.isAlive p) (.destroyForcibly p)) (catch Throwable _ nil))
+           (swap! processes dissoc dir)
+           {"result" "failed"
+            "status" "failed"
+            "pid" (.pid p)
+            "cmd" (display-cmd cmd)
+            "cwd" dir
+            "error" (str "Bun REPL failed its startup handshake: " (.getMessage e))}))))
 
-(defn- request!
-  [dir req timeout-ms]
-  (let [info (get @processes dir)]
-    (when-not (alive? info)
-      (throw (ex-info "Bun REPL is not running for this dir — repl_start(\"typescript\") first."
-                      {:type :ts/no-repl :dir dir})))
-    (locking info
-      (let
-        [^BufferedWriter w (:writer info)
-         ^BufferedReader r (:reader info)]
+(defn start!
+  "Start the managed Bun REPL for `dir` — or REUSE the one already running.
 
-        (.write w (str (json/write-json-str req) "\n"))
-        (.flush w)
-        (let
-          [fut (future (.readLine r))
-           line (deref fut timeout-ms ::timeout)]
+   A live REPL is NEVER silently replaced: its globals ARE the session's work,
+   so a second start answers \"already-running\", exactly as every other Vis
+   language answers it. A start succeeds only after the runtime answers its
+   protocol ping; failed children never masquerade as usable REPLs.
 
-          (if (= line ::timeout)
-            (do (future-cancel fut)
-                (throw (ex-info "Bun eval timed out" {:type :ts/timeout :dir dir})))
-            (if (nil? line)
-              (throw (ex-info "Bun REPL closed the connection (process died)"
-                              {:type :ts/closed :dir dir}))
-              (json/read-json line))))))))
+   `opts` carries THIS start's own `env` delta over the project environment (the
+   `env` key, string-keyed like every other model-facing option), and that env
+   BELONGS to the REPL: a start naming a different one is refused by the keys
+   that differ, because there is no restart — stop it, then start it.
+
+   Returns a STRING-keyed lifecycle map."
+  [dir opts]
+  (let
+    [id
+     (or (get opts "id") (str "bunrepl:" dir))
+
+     env-fingerprint
+     (vis/env-fingerprint (vis/call-env-values (get opts "env")))]
+
+    (if (alive? (get @processes dir))
+      (let [refusal (vis/env-mismatch-refusal id
+                                              (:env-fingerprint (get @processes dir))
+                                              env-fingerprint)]
+        (when refusal
+          (throw (ex-info (:message refusal)
+                          {:type :ts/repl-env-mismatch
+                           :id id
+                           :env (:differing refusal)})))
+        (assoc (status dir) "result" "already-running"))
+      (spawn! dir opts env-fingerprint))))
 
 (defn eval!
   "Evaluate `code` (TypeScript or JavaScript) in the REPL for `dir`. Returns
@@ -124,20 +199,14 @@
   (request! dir {"code" (str code)} (or timeout-ms 30000)))
 
 (defn stop!
-  [dir]
-  (when-let [info (get @processes dir)]
-    (try (.destroy ^Process (:process info)) (catch Throwable _ nil))
-    (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
-         (catch Throwable _ nil)))
-  (swap! processes dissoc dir)
-  {"status" "stopped" "cwd" dir})
-
-(defn status
-  "STRING-keyed lifecycle view (crosses as a tool `:result`)."
+  "Stop THIS dir's managed runtime. No-op-safe: with nothing managed the result
+   says `not-managed` rather than claiming a stop that never happened."
   [dir]
   (let [info (get @processes dir)]
-    {"cwd" dir
-     "status" (if (alive? info) "up" "down")
-     "pid" (some-> ^Process (:process info)
-                   .pid)
-     "cmd" (:cmd info)}))
+    (when info
+      (try (.destroy ^Process (:process info)) (catch Throwable _ nil))
+      (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
+           (catch Throwable _ nil)))
+    (swap! processes dissoc dir)
+    {"result" (if info "stopped" "not-managed") "cwd" dir "status" "down"}))
+

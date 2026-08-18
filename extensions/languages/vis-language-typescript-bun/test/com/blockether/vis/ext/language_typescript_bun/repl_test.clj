@@ -67,6 +67,40 @@
                (repl/stop! dir)
                (expect (= "down" (get (repl/status dir) "status")))
                (finally (repl/stop! dir))))))
+  ;; Regression, issue #repl-consistency: a second `repl_start` KILLED the live
+  ;; Bun process and spawned a new one, so the session's globals vanished while
+  ;; the call reported plain success — where Clojure answered "already-running".
+  ;; A live REPL is reused in EVERY language now, and the env it was started with
+  ;; is part of its identity.
+  (it "reuses a live REPL and refuses a start naming a different env"
+      (when (has-bun?)
+        (let [dir (.getPath (tmp-dir))]
+          (try
+            (let [first-start (repl/start! dir {:session-id test-session-id
+                                                "env" {"VIS_REPL_MARK" "one"}})]
+              (expect (= "started" (get first-start "result")))
+              ;; the env rides by NAME + digest, never by value
+              (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
+              (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
+              ;; and it really reached the child
+              (expect (re-find #"one" (str (get (repl/eval! dir "process.env.VIS_REPL_MARK" 15000) "value"))))
+              (repl/eval! dir "globalThis.__vis_mark = 7" 15000)
+              (let [same (repl/start! dir {:session-id test-session-id
+                                          "env" {"VIS_REPL_MARK" "one"}})]
+                (expect (= "already-running" (get same "result")))
+                ;; SAME process — the state the session stands on survived
+                (expect (= "7" (get (repl/eval! dir "globalThis.__vis_mark" 15000) "value"))))
+              (let [refused (try (repl/start! dir {:session-id test-session-id
+                                                  "env" {"VIS_REPL_MARK" "two"}})
+                                 nil
+                                 (catch clojure.lang.ExceptionInfo e e))]
+                (expect (some? refused))
+                (expect (= :ts/repl-env-mismatch (:type (ex-data refused))))
+                (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
+                ;; the refusal names the KEY, never the value
+                (expect (not (str/includes? (.getMessage refused) "two")))
+                (expect (str/includes? (.getMessage refused) "repl_stop"))))
+            (finally (repl/stop! dir))))))
   (it "eval before start fails closed with a clear error"
       (let [dir (str (System/getProperty "java.io.tmpdir") "/vis-bun-never-started")]
         (expect (= :ts/no-repl

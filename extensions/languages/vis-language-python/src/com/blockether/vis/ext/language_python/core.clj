@@ -85,18 +85,21 @@
 ;; Language-facade handlers
 
 (defn py-start-repl-fn
-  "REPL-lifecycle handler for Python. The facade's `repl_start` / `repl_status` /
-   `repl_stop` verbs reach a pack as a positional `op` STRING (default \"start\")
-   plus opts `{dir, id}` — there is NO restart (stop, then start). `op` arrives as
-   a STRING from the model (strings-only boundary) — dispatch on it, no keyword
-   minting."
+   "REPL-lifecycle handler for Python. The facade's `repl_start` / `repl_status` /
+   `repl_stop` verbs reach a pack as a positional `op` STRING plus opts
+   `{dir, id, env}` — there is NO restart (stop, then start), and a `repl_start`
+   for a REPL that is already running REUSES it, refusing only when this call
+   named a different `env`. `op` arrives as a STRING from the model
+   (strings-only boundary) — dispatch on it, no keyword minting."
   [env op opts]
   (let
     [root
      (env-root env)
 
-     op
-     (if (string? op) op "start")
+      ;; A MISSING op must never spawn: every pack defaults to "status", the one
+      ;; step with no side effect.
+      op
+      (if (string? op) op "status")
 
      id
      (or (get opts "id") (get opts "repl_id"))
@@ -104,19 +107,22 @@
      dir
      (resolve-dir root (get opts "cwd"))]
 
-    (case op
-      "status"
-      (extension/success {:result (repl/status dir)})
+     (case op
+       "status"
+       (extension/success {:result (assoc (repl/status dir) "id" (repl-resource-id dir id))})
 
-      "stop"
-      (let [r (repl/stop! dir)]
-        (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
-        (extension/success {:result r}))
+       "stop"
+       (let [r (assoc (repl/stop! dir) "id" (repl-resource-id dir id))]
+         (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
+         (extension/success {:result r}))
 
-      "start"
-      (let [r (repl/start! dir (assoc (or opts {}) :session-id (:session-id env)))]
-        (register-repl-resource! (:session-id env) dir r id)
-        (extension/success {:result r}))
+       "start"
+       (let [r (assoc (repl/start! dir (assoc (or opts {})
+                                         "id" (repl-resource-id dir id)
+                                         :session-id (:session-id env)))
+                 "id" (repl-resource-id dir id))]
+         (register-repl-resource! (:session-id env) dir r id)
+         (extension/success {:result r}))
 
       (throw (ex-info (str "python REPL lifecycle: unknown op "
                            (pr-str op)
