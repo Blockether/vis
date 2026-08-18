@@ -168,8 +168,11 @@
                (let [r (core/ts-test-fn (test-env root) nil)]
                  (expect (:success? r))
                  (expect (= 0 (get-in r [:result "exit"])))
-                 (expect (= 1 (get-in r [:result "passed"])))
-                 (expect (contains? #{0 nil} (get-in r [:result "failed"]))))
+                 ;; Regression, issue #test-count-keys: these read bun's counts as
+                 ;; "passed"/"failed" — keys the pack never emits — so the assertion
+                 ;; compared nil to 1 and the run was red for a spelling, not a bug.
+                 (expect (= 1 (get-in r [:result "pass"])))
+                 (expect (contains? #{0 nil} (get-in r [:result "fail"]))))
                (finally (cleanup root)))))))
 
 (def ^:private activation-fn @#'core/activation-fn)

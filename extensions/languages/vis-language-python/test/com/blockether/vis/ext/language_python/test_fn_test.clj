@@ -471,7 +471,9 @@
                  (expect (= "project" (get res "runner")))
                  ;; pytest itself may be absent on the machine running this suite;
                  ;; assert the faults only for a run that actually reported one.
-                 (when (= 1 (get res "failed"))
+                 ;; Regression, issue #test-count-keys: this guarded on "failed", a key
+                 ;; the contract renamed to "fail", so the four assertions below never ran.
+                 (when (= 1 (get res "fail"))
                    (expect (= 1 (count (get res "failures"))))
                    (expect (= "test_bad" (get-in res ["failures" 0 "test"])))
                    (expect (str/includes? (get-in res ["failures" 0 "file"]) "test_sample.py"))
