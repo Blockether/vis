@@ -267,40 +267,157 @@
                                                   :status (assoc idle-status "managed" false)})))))
   (testing "same build, an older client, or a dev checkout: nothing to pick up"
     (is (= :fresh
-           (:reason (client/stale-bounce-verdict {:ours "0.1.40" :theirs "0.1.40" :status idle-status}))))
+           (:reason (client/stale-bounce-verdict
+                      {:ours "0.1.40" :theirs "0.1.40" :status idle-status}))))
     (is (= :fresh
-           (:reason (client/stale-bounce-verdict {:ours "0.1.39" :theirs "0.1.40" :status idle-status}))))
+           (:reason (client/stale-bounce-verdict
+                      {:ours "0.1.39" :theirs "0.1.40" :status idle-status}))))
     (is (= :fresh
-           (:reason (client/stale-bounce-verdict {:ours "dev" :theirs "0.1.39" :status idle-status})))))
+           (:reason (client/stale-bounce-verdict
+                      {:ours "dev" :theirs "0.1.39" :status idle-status})))))
+  (testing "a dev checkout has no release to be ordered by, so its commit decides"
+    (is (true? (:bounce? (client/stale-bounce-verdict {:ours "dev"
+                                                       :theirs "dev"
+                                                       :our-build "aaa111aaa111"
+                                                       :their-build "bbb222bbb222"
+                                                       :status idle-status}))))
+    (is (= :clients
+           (:reason (client/stale-bounce-verdict {:ours "dev"
+                                                  :theirs "dev"
+                                                  :our-build "aaa111aaa111"
+                                                  :their-build "bbb222bbb222"
+                                                  :status (assoc idle-status "clients" 1)})))
+        "a commit is worth no more of somebody's work than a version is")
+    (is (= :fresh
+           (:reason (client/stale-bounce-verdict {:ours "dev"
+                                                  :theirs "dev"
+                                                  :our-build "aaa111aaa111"
+                                                  :their-build "aaa111aaa111"
+                                                  :status idle-status}))))
+    (is (= :fresh
+           (:reason (client/stale-bounce-verdict
+                      {:ours "dev" :theirs "dev" :our-build "aaa111aaa111" :status idle-status})))
+        "a daemon too old to advertise a build says nothing about being stale"))
   (testing "a status nobody could read is not evidence of an idle daemon"
-    (is (false? (:bounce? (client/stale-bounce-verdict {:ours "0.1.40"
-                                                        :theirs "0.1.39"
-                                                        :status nil}))))))
+    (is (false? (:bounce? (client/stale-bounce-verdict
+                            {:ours "0.1.40" :theirs "0.1.39" :status nil}))))))
 
 (deftest a-stale-daemon-is-bounced-once-per-process-never-in-a-loop
-  (let [stops (atom 0)
-        guard @(rv 'stale-bounce-attempted?)
-        handshake @(rv 'gateway-handshake*)
-        previous @handshake]
+  (let [stops
+        (atom 0)
+
+        guard
+        @(rv 'stale-bounce-attempted?)
+
+        handshake
+        @(rv 'gateway-handshake*)
+
+        previous
+        @handshake]
+
     (reset! guard false)
     (reset! handshake {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.39"})
+    (try (with-redefs-fn {(requiring-resolve
+                            'com.blockether.vis.internal.gateway.protocol/release-version)
+                          (constantly "0.1.40")
+                          (rv 'report-version-bounce!) (constantly nil)
+                          (rv 'send-json-with-entry!) (fn [& _]
+                                                        idle-status)
+                          (rv 'db-target) (constantly "/tmp/vis-stale-bounce-test.db")
+                          (rv 'await-daemon-down!) (constantly true)
+                          #'client/stop-daemon! (fn []
+                                                  (swap! stops inc)
+                                                  {:status "stopped" :stopping false})}
+           (fn []
+             (let [bounce! (rv 'bounce-stale-daemon!)]
+               (is (true? (:bounced? (bounce! fake-entry))))
+               (is (= :checked (:reason (bounce! fake-entry)))
+                   "a daemon that comes back old costs one restart, never a restart loop")
+               (is (= 1 @stops)))))
+         (finally (reset! guard false) (reset! handshake previous)))))
+
+;; The same pickup for a source checkout, where both halves say "dev": the daemon's
+;; advertised commit is the whole difference, and it must work with no native image
+;; and no release version anywhere in sight.
+(deftest a-dev-daemon-on-another-commit-is-replaced-by-its-build-id
+  (let [stops
+        (atom 0)
+
+        guard
+        @(rv 'stale-bounce-attempted?)
+
+        handshake
+        @(rv 'gateway-handshake*)
+
+        previous
+        @handshake]
+
+    (reset! guard false)
+    (reset! handshake
+      {:protocol 2 :min-client 2 :min-gateway 2 :version "dev" :build "bbb222bbb222"})
+    (try (with-redefs-fn {(requiring-resolve
+                            'com.blockether.vis.internal.gateway.protocol/release-version)
+                          (constantly "dev")
+                          (requiring-resolve 'com.blockether.vis.internal.gateway.protocol/build-id)
+                          (constantly "aaa111aaa111")
+                          (rv 'report-version-bounce!) (constantly nil)
+                          (rv 'send-json-with-entry!) (fn [& _]
+                                                        idle-status)
+                          (rv 'db-target) (constantly "/tmp/vis-dev-bounce-test.db")
+                          (rv 'await-daemon-down!) (constantly true)
+                          #'client/stop-daemon! (fn []
+                                                  (swap! stops inc)
+                                                  {:status "stopped" :stopping false})}
+           (fn []
+             (let [bounce! (rv 'bounce-stale-daemon!)]
+               (is (true? (:bounced? (bounce! fake-entry))))
+               (is (= 1 @stops)))))
+         (finally (reset! guard false) (reset! handshake previous)))))
+
+;; The daemon `vis-agent update` could not release is usually one whose wire protocol
+;; this build no longer speaks; the mismatch screen belongs to a daemon somebody is
+;; USING, never to an idle one this process is free to replace.
+(deftest an-idle-daemon-too-old-to-speak-to-is-replaced-not-refused
+  (let [guard @(rv 'stale-bounce-attempted?)
+        handshake @(rv 'gateway-handshake*)
+        cached @(rv 'cached-entry)
+        previous-handshake @handshake
+        previous-entry @cached
+        stops (atom 0)
+        attaches (atom 0)
+        new-entry (assoc fake-entry :pid 4243)]
+    (reset! guard false)
+    (reset! cached nil)
+    (reset! handshake {:protocol 1 :min-client 1 :min-gateway 1 :version "0.1.39"})
     (try
       (with-redefs-fn
         {(requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version)
          (constantly "0.1.40")
          (rv 'report-version-bounce!) (constantly nil)
-         (rv 'send-json-with-entry!) (fn [& _] idle-status)
+         (rv 'remote-gateway) (constantly nil)
          (rv 'db-target) (constantly "/tmp/vis-stale-bounce-test.db")
+         (rv 'send-json-with-entry!) (fn [& _] idle-status)
          (rv 'await-daemon-down!) (constantly true)
-         #'client/stop-daemon! (fn [] (swap! stops inc) {:status "stopped" :stopping false})}
+         #'discovery/registry-fresh? (constantly false)
+         (rv 'discover-or-recover!)
+         (fn [& _]
+           (let [attach (swap! attaches inc)]
+             (when (> attach 1)
+               ;; What this process starts in its place speaks this build's protocol.
+               (reset! handshake {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.40"}))
+             {:entry (if (> attach 1) new-entry fake-entry)}))
+         #'client/stop-daemon! (fn []
+                                 (swap! stops inc)
+                                 (reset! cached nil)
+                                 {:status "stopped" :stopping false})}
         (fn []
-          (let [bounce! (rv 'bounce-stale-daemon!)]
-            (is (true? (:bounced? (bounce! fake-entry))))
-            (is (= :checked (:reason (bounce! fake-entry)))
-                "a daemon that comes back old costs one restart, never a restart loop")
-            (is (= 1 @stops)))))
-      (finally (reset! guard false) (reset! handshake previous)))))
-
+          (is (= new-entry (client/ensure-gateway!))
+              "an idle daemon older than this build is replaced, not refused as incompatible")
+          (is (= 1 @stops))
+          (is (= 2 @attaches))))
+      (finally (reset! guard false)
+               (reset! handshake previous-handshake)
+               (reset! cached previous-entry)))))
 ;; Regression (reported: a gateway that stopped answering had to be killed by hand):
 ;; `stop-daemon!` reported a live orphan and handed the human an `lsof` line, with
 ;; the daemon's pid sitting in the registry entry it had just read.

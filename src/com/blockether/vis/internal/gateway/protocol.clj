@@ -105,6 +105,192 @@
 
                  (pos? (compare (pad x) (pad y))))))))
 
+(defn- resource-file
+  "The FILE a classpath resource resolves to, or nil when it lives inside a jar or
+   a native image, or is absent."
+  [path]
+  (try (let [^java.net.URL url (io/resource path)]
+         (when (and url (= "file" (.getProtocol url))) (io/file (.toURI url))))
+       (catch Throwable _ nil)))
+
+(defn- checkout-root
+  "The git checkout this process LOADED its code from: the first ancestor of this
+   namespace's own source file that holds a `.git`. nil for anything running out of
+   a jar or an image, which carries its identity in `vis/BUILD` instead."
+  []
+  (when-let [^java.io.File f (resource-file "com/blockether/vis/internal/gateway/protocol.clj")]
+    (loop [^java.io.File dir (.getParentFile f)]
+      (when dir (if (.exists (io/file dir ".git")) dir (recur (.getParentFile dir)))))))
+
+(defn- git-dir
+  "The directory holding `HEAD` for `root`: `.git` itself, or the path a linked
+   worktree's `.git` FILE points at."
+  [^java.io.File root]
+  (let [^java.io.File dot (io/file root ".git")]
+    (cond (.isDirectory dot) dot
+          (.isFile dot) (let [line (str/trim (slurp dot))]
+                          (when (str/starts-with? line "gitdir:")
+                            (let [p (str/trim (subs line (count "gitdir:")))
+                                  ^java.io.File f (io/file p)
+                                  ^java.io.File d (if (.isAbsolute f) f (io/file root p))]
+
+                              (when (.isDirectory d) d))))
+          :else nil)))
+
+(defn- ref-dirs
+  "`gitdir` plus, for a linked worktree, the COMMON dir where its refs really live."
+  [^java.io.File gitdir]
+  (let [^java.io.File c (io/file gitdir "commondir")]
+    (distinct [gitdir
+               (if (.isFile c)
+                 (let [p (str/trim (slurp c))
+                       ^java.io.File f (io/file p)]
+
+                   (if (.isAbsolute f) f (io/file gitdir p)))
+                 gitdir)])))
+
+(defn- ref-sha
+  "The commit a ref names, loose file first and then `packed-refs`."
+  [dirs ref]
+  (or (some (fn [^java.io.File d]
+              (let [^java.io.File loose (io/file d ref)]
+                (when (.isFile loose) (not-empty (str/trim (slurp loose))))))
+            dirs)
+      (some (fn [^java.io.File d]
+              (let [^java.io.File packed (io/file d "packed-refs")]
+                (when (.isFile packed)
+                  (some (fn [line]
+                          (let [[sha named] (str/split (str/trim line) #"\s+")]
+                            (when (= named ref) sha)))
+                        (str/split-lines (slurp packed))))))
+            dirs)))
+
+(defn- head-sha
+  "The commit `HEAD` names, read straight off disk - no `git` process on a path
+   every client start pays for."
+  [^java.io.File gitdir]
+  (let [^java.io.File head (io/file gitdir "HEAD")]
+    (when (.isFile head)
+      (let [line (str/trim (slurp head))]
+        (if (str/starts-with? line "ref:")
+          (ref-sha (ref-dirs gitdir) (str/trim (subs line (count "ref:"))))
+          (not-empty line))))))
+
+(defn- short-commit
+  "A commit in the ONE shape both distributions compare in: twelve hex characters,
+   keeping a `-dirty` marker a build stamped onto it. A native image records the full
+   sha and a source run reads it off `HEAD` - the same commit must not look like two
+   builds because one half wrote more characters. Anything that is not a sha
+   (`unknown`) has no identity and answers nil."
+  [commit]
+  (when-let [c (some-> commit
+                       str
+                       str/trim
+                       not-empty)]
+    (let [[sha & marks] (str/split c #"-")]
+      (when (re-matches #"[0-9a-f]{7,40}" sha)
+        (str/join "-" (cons (subs sha 0 (min 12 (count sha))) marks))))))
+(defn- newest-source-mtime
+  "Newest modification time under the classpath DIRECTORIES that live inside
+   `root` - `src`, `resources`, an extension's own path: exactly the code a source
+   run loads, and nothing outside the checkout."
+  [^java.io.File root]
+  (let [prefix
+        (str (.getCanonicalPath root) java.io.File/separator)
+
+        dirs
+        (->> (str/split (or (System/getProperty "java.class.path") "")
+                        (re-pattern (java.util.regex.Pattern/quote java.io.File/pathSeparator)))
+             (map io/file)
+             (filter (fn [^java.io.File f]
+                       (.isDirectory f)))
+             (filter (fn [^java.io.File f]
+                       (str/starts-with? (.getCanonicalPath f) prefix))))
+
+        stamps
+        (for [d
+              dirs
+
+              ^java.io.File f
+              (file-seq d)
+
+              :when (.isFile f)]
+
+          (.lastModified f))]
+
+    (when (seq stamps) (reduce max stamps))))
+
+(defn- checkout-build-id
+  "The identity of a SOURCE run: the short `HEAD` sha, plus the newest source
+   mtime when the worktree has moved past the index (`git` writes the index on
+   checkout, so anything newer than it is an edit this process is running and the
+   next one may not be). One value, so a dev daemon and a dev client compare the
+   same way a released pair does."
+  [^java.io.File root]
+  (when-let [gitdir (git-dir root)]
+    (let [sha (head-sha gitdir)
+          short (short-commit sha)
+          ^java.io.File index (io/file gitdir "index")
+          indexed (when (.isFile index) (.lastModified index))
+          newest (newest-source-mtime root)]
+
+      (cond (and short newest indexed (> (long newest) (long indexed))) (str short "+wip." newest)
+            short short
+            newest (str "wip." newest)
+            :else nil))))
+
+(def ^:private build-identity
+  (delay (try (let [stamped (some-> (io/resource "vis/BUILD")
+                                    slurp
+                                    str/trim
+                                    not-empty
+                                    (str/split #"\s+")
+                                    second
+                                    not-empty)]
+                (or (short-commit stamped)
+                    (some-> (checkout-root)
+                            checkout-build-id)))
+              (catch Throwable _ nil))))
+
+(defn build-id
+  "WHICH CODE this process is running, as an opaque identity - never an order, and
+   nil when this build cannot say. It answers the question a release version cannot:
+   two `dev` runs, or two builds of the same VIS_VERSION, are the same build only
+   when they came from the same commit.
+
+   One value across both distributions, because a daemon is replaced by whichever
+   client finds it and the two halves need not be the same shape:
+     native/uberjar  the commit stamped into `vis/BUILD` at build time
+     source (JVM)    `HEAD` of the checkout on the classpath, marked when the
+                     worktree has been edited past it ([[checkout-build-id]])
+
+   Computed ONCE per process ON PURPOSE: a daemon must keep advertising the build
+   it LOADED, not whatever is on disk minutes later, or nothing would ever look
+   stale."
+  []
+  @build-identity)
+
+(defn superseded?
+  "True when a peer running `their-version` / `their-build` is running code THIS
+   build replaces. The two inputs answer different questions and are consulted in
+   that order:
+
+     version  an ORDER ([[newer-release?]]). A strictly newer peer is never
+              replaced, so an old client can never downgrade a fresh daemon.
+     build    an IDENTITY, and only where the versions carry no order between them
+              (`dev` against `dev`, or the same VIS_VERSION built twice). Different
+              commit means different code; an unknown build on either side means
+              no verdict at all.
+
+   Identity is symmetric where an order is not, so acting on it MUST be bounded by
+   the caller - `client/bounce-stale-daemon!` replaces a daemon at most once per
+   process, which turns the worst case into one restart instead of two builds
+   trading a daemon back and forth."
+  [{:keys [our-version their-version our-build their-build]}]
+  (cond (newer-release? our-version their-version) true
+        (newer-release? their-version our-version) false
+        :else (boolean (and our-build their-build (not= our-build their-build)))))
+
 (defn handshake
   "What THIS build advertises about itself. Emitted by the gateway on
    `/healthz`, `/v1/admin/status`, and `/v1/capabilities` so even the cheapest
@@ -113,7 +299,8 @@
   {:protocol protocol-version
    :min-client min-client-protocol
    :min-gateway min-gateway-protocol
-   :version (release-version)})
+   :version (release-version)
+   :build (build-id)})
 
 (defn client-headers
   "Headers every Vis client stamps on every gateway request so the gateway can
@@ -142,7 +329,10 @@
    :min-gateway (->int (get m "min_gateway"))
    :version (some-> (get m "version")
                     str
-                    not-empty)})
+                    not-empty)
+   :build (some-> (get m "build")
+                  str
+                  not-empty)})
 
 (defn request->client
   "Read the client's advertised protocol out of a Ring request's headers.

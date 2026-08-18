@@ -7,11 +7,14 @@
 
 (deftest handshake-wire-roundtrip-test
   (testing "canonical string-keyed handshakes parse into engine keys"
-    (is (= {:protocol 3 :min-client 2 :min-gateway 1 :version "1.2.3"}
-           (protocol/wire->handshake
-             {"protocol" 3 "min_client" "2" "min_gateway" 1.0 "version" "1.2.3"}))))
+    (is (= {:protocol 3 :min-client 2 :min-gateway 1 :version "1.2.3" :build "abc123def456"}
+           (protocol/wire->handshake {"protocol" 3
+                                      "min_client" "2"
+                                      "min_gateway" 1.0
+                                      "version" "1.2.3"
+                                      "build" "abc123def456"}))))
   (testing "an old peer with no handshake is rejected"
-    (is (= {:protocol nil :min-client nil :min-gateway nil :version nil}
+    (is (= {:protocol nil :min-client nil :min-gateway nil :version nil :build nil}
            (protocol/wire->handshake {})))
     (let [verdict (protocol/client-verdict "vis-test" nil)]
       (is (= "unknown" (:reason verdict)))
@@ -56,14 +59,15 @@
     [handshake-atom
      @(client-var 'gateway-handshake*)
 
-     previous
-     @handshake-atom
+        previous
+        @handshake-atom
 
-     body
-     {"status" "ok" "protocol" {"protocol" 3 "min_client" 3 "min_gateway" 2 "version" "3.0.0"}}]
+        body
+        {"status" "ok" "protocol" {"protocol" 3 "min_client" 3 "min_gateway" 2 "version" "3.0.0"}}]
 
     (try (is (= body ((client-var 'note-handshake!) body)))
-         (is (= {:protocol 3 :min-client 3 :min-gateway 2 :version "3.0.0"} @handshake-atom))
+         (is (= {:protocol 3 :min-client 3 :min-gateway 2 :version "3.0.0" :build nil}
+                @handshake-atom))
          (is (= "client-too-old" (:reason (client/compatibility))))
          (finally (reset! handshake-atom previous)))))
 
@@ -88,3 +92,51 @@
     (is (false? (protocol/newer-release? "0.1.40" "dev")))
     (is (false? (protocol/newer-release? "0.1.40" nil)))
     (is (false? (protocol/newer-release? nil nil)))))
+
+;; A dev build has no release to be ordered by, so its commit is what says whether a
+;; daemon is running the code in front of you.
+(deftest build-identity-supersedes-an-unorderable-version-test
+  (testing "a version order decides first, in both directions"
+    (is (true? (protocol/superseded? {:our-version "0.1.40" :their-version "0.1.39"})))
+    (is (false? (protocol/superseded? {:our-version "0.1.39"
+                                       :their-version "0.1.40"
+                                       :our-build "aaa111aaa111"
+                                       :their-build "bbb222bbb222"}))
+        "a newer daemon is never pulled back to this build's commit"))
+  (testing "where the versions carry no order, the commit does"
+    (is (true? (protocol/superseded? {:our-version "dev"
+                                      :their-version "dev"
+                                      :our-build "aaa111aaa111"
+                                      :their-build "bbb222bbb222"})))
+    (is (false? (protocol/superseded? {:our-version "dev"
+                                       :their-version "dev"
+                                       :our-build "aaa111aaa111"
+                                       :their-build "aaa111aaa111"})))
+    (is (true? (protocol/superseded? {:our-version "0.1.40"
+                                      :their-version "0.1.40"
+                                      :our-build "aaa111aaa111"
+                                      :their-build "bbb222bbb222"}))
+        "one VIS_VERSION built twice is still two builds"))
+  (testing "a build nobody could name is no evidence at all"
+    (is (false? (protocol/superseded?
+                  {:our-version "dev" :their-version "dev" :our-build "aaa111aaa111"})))
+    (is (false? (protocol/superseded?
+                  {:our-version "dev" :their-version "dev" :their-build "bbb222bbb222"})))
+    (is (false? (protocol/superseded? {:our-version "dev" :their-version "dev"})))))
+
+(deftest build-id-is-one-value-per-process-test
+  (testing "a source run identifies itself by HEAD, with no git process to pay for"
+    (let [id (protocol/build-id)]
+      (is (string? id))
+      (is (re-matches #"[0-9a-f]{12}(\+wip\.\d+)?" id))
+      (is (identical? id (protocol/build-id))
+          "computed once: a daemon must advertise the code it LOADED, not today's disk")))
+  (testing "the handshake carries it, so the probe every attach already pays for answers it"
+    (is (= (protocol/build-id) (:build (protocol/handshake)))))
+  (testing "a native image and a source checkout name one commit the same way"
+    (let [short-commit #'protocol/short-commit]
+      (is (= "bcc0c8208350" (short-commit "bcc0c8208350bd0e9e6c1a5a6f4d3c2b1a098765")))
+      (is (= "bcc0c8208350" (short-commit "bcc0c8208350")))
+      (is (= "bcc0c8208350-dirty" (short-commit "bcc0c8208350bd0e9e6c1a5a6f4d3c2b1a098765-dirty")))
+      (is (nil? (short-commit "unknown"))
+          "a build that could not read its own commit has no identity to compare"))))

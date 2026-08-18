@@ -1472,59 +1472,79 @@
             :stop res))
         (assoc verdict :stopped? false)))))
 (defn stale-bounce-verdict
-  "THE rule for replacing a daemon that is merely OLD - a pure decision over the two
-   release versions and an admin status map (canonical STRING keys).
+  "THE rule for replacing a daemon that is merely OLD - a pure decision over what
+   the two halves advertise about themselves and an admin status map (canonical
+   STRING keys).
 
    `vis-agent update` releases an idle daemon itself, but one a TUI held open
    survives the install and would keep serving the old image to every session after
-   it. The next client to attach is the one that can fix that: it learns both
-   versions from the `/healthz` handshake every attach already pays for. Only a
-   STRICTLY older daemon is replaced ([[protocol/newer-release?]]), so an old client
-   never downgrades a newer daemon and two builds can never bounce each other in
-   turn; a `dev` build on either side is unordered and bounces nothing.
+   it. The next client to attach is the one that can fix that: it learns the other
+   half's version AND build out of the `/healthz` handshake every attach already
+   pays for. [[protocol/superseded?]] owns that comparison - the release version
+   where the two carry an order, the build commit where they do not - which is what
+   makes this work for a `dev` checkout and for two builds of one VIS_VERSION, in a
+   native image exactly as in a source JVM.
 
    Use decides the rest, exactly as everywhere else: [[daemon-idle?]] over the status
    map, tolerating NO client, because this runs before this process takes its lease.
-   Nobody's open session or running turn is ever aborted to pick up a version, and a
+   Nobody's open session or running turn is ever aborted to pick up a build, and a
    status that could not be read is not evidence of an idle daemon.
 
    Returns {:bounce? :reason :from :to}: `:reason` is `:fresh` when there is nothing
    to pick up, otherwise the [[daemon-idle?]] reason."
-  [{:keys [ours theirs status]}]
-  (if-not (protocol/newer-release? ours theirs)
+  [{:keys [ours theirs our-build their-build status]}]
+  (if-not (protocol/superseded?
+            {:our-version ours :their-version theirs :our-build our-build :their-build their-build})
     {:bounce? false :reason :fresh :from theirs :to ours}
     (let [{:keys [reason]} (daemon-idle? status)]
       {:bounce? (= :idle reason) :reason reason :from theirs :to ours})))
 
 (defn- report-version-bounce!
   "One stderr line before a restart nobody asked for, so the extra seconds read as a
-   version pickup and not as a hang. Never throws."
-  [from to]
-  (try (.println ^java.io.PrintStream System/err
-                 (str "vis-agent: gateway is running "
-                      (or from "an older build")
-                      " - restarting it on "
-                      to
-                      "…"))
-       (catch Throwable _ nil)))
+   build pickup and not as a hang. The commit is shown only where the versions alone
+   cannot tell the two apart (`dev` against `dev`), which is exactly the dev case.
+   Never throws."
+  [{:keys [from to from-build to-build]}]
+  (let [ambiguous?
+        (= from to)
+
+        label
+        (fn [version build]
+          (str (or version "an older build") (when (and ambiguous? build) (str " (" build ")"))))]
+
+    (try (.println ^java.io.PrintStream System/err
+                   (str "vis-agent: gateway is running "
+                        (label from from-build)
+                        " - restarting it on "
+                        (label to to-build)
+                        "…"))
+         (catch Throwable _ nil))))
 
 (defn- bounce-stale-daemon!
   "Act on [[stale-bounce-verdict]] for the daemon `entry` this process just attached
    to: stop it, so the caller starts THIS build in its place.
 
    At most ONCE per process. A daemon that comes back old anyway - a client whose
-   own classpath predates the update spawning it again - then costs exactly one
-   restart instead of a loop. The version comparison happens first and is free (the
-   handshake is already in hand), so an up-to-date daemon never pays for the status
-   round trip. Returns the verdict with `:bounced?`."
+   own classpath predates the update spawning it again, or two checkouts sharing one
+   DB - then costs exactly one restart instead of a loop, which is what bounds the
+   build-identity half of [[protocol/superseded?]] (an identity is symmetric where a
+   version order is not). The comparison happens first and is free (the handshake is
+   already in hand, the build id is computed once per process), so an up-to-date
+   daemon never pays for the status round trip. Returns the verdict with `:bounced?`."
   [entry]
   (let [ours
         (protocol/release-version)
 
-        theirs
-        (:version @gateway-handshake*)]
+        our-build
+        (protocol/build-id)
 
-    (cond (not (protocol/newer-release? ours theirs)) {:bounced? false :reason :fresh}
+        {theirs :version their-build :build}
+        @gateway-handshake*
+
+        identity*
+        {:our-version ours :their-version theirs :our-build our-build :their-build their-build}]
+
+    (cond (not (protocol/superseded? identity*)) {:bounced? false :reason :fresh}
           (not (compare-and-set! stale-bounce-attempted? false true)) {:bounced? false
                                                                        :reason :checked}
           :else (let [status
@@ -1532,10 +1552,15 @@
                            (catch Throwable _ nil))
 
                       verdict
-                      (stale-bounce-verdict {:ours ours :theirs theirs :status status})]
+                      (stale-bounce-verdict {:ours ours
+                                             :theirs theirs
+                                             :our-build our-build
+                                             :their-build their-build
+                                             :status status})]
 
                   (if (:bounce? verdict)
-                    (do (report-version-bounce! theirs ours)
+                    (do (report-version-bounce!
+                          {:from theirs :to ours :from-build their-build :to-build our-build})
                         (stop-daemon!)
                         (await-daemon-down! (db-target) (:host entry) (:port entry))
                         (assoc verdict :bounced? true))
@@ -1556,10 +1581,13 @@
    stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
    every gateway call.
 
-   A daemon OLDER than this build is also replaced here when replacing it is free
-   ([[bounce-stale-daemon!]]) - that is how the first vis started after
-   `vis-agent update` comes up on the new version with nobody stopping anything by
-   hand."
+   A daemon running a DIFFERENT build than this one is also replaced here when
+   replacing it is free ([[bounce-stale-daemon!]]) - that is how the first vis
+   started after `vis-agent update`, or after a rebuild of a dev checkout, comes up
+   on the new code with nobody stopping anything by hand. That decision comes BEFORE
+   the compatibility assert: a daemon too old to speak this build's wire protocol is
+   the one most worth replacing, so the mismatch screen is left for the daemon
+   somebody is still using."
   ([] (ensure-gateway! nil))
   ([{:keys [port host] :as opts}]
    (if-let [remote (remote-gateway)]
@@ -1592,11 +1620,13 @@
                (do (reset! cached-entry entry)
                    (reset! entry-fresh-until-ns (+ (System/nanoTime)
                                                    (* (long entry-probe-ttl-ms) 1000000)))
-                   (assert-compatible! entry)
-                   (if (:bounced? (bounce-stale-daemon! entry))
-                     ;; The old image released the port; start this build in its place.
-                     (ensure-gateway! opts)
-                     entry))
+                    ;; Staleness BEFORE compatibility: a daemon too old to speak this
+                    ;; build's wire protocol is exactly the one worth replacing, and
+                    ;; the mismatch screen is for the daemon somebody is still using.
+                    (if (:bounced? (bounce-stale-daemon! entry))
+                      ;; The old image released the port; start this build in its place.
+                      (ensure-gateway! opts)
+                      (assert-compatible! entry)))
                (throw (ex-info "gateway daemon did not become ready"
                                (assoc result :type :gateway/start-timeout)))))))))))
 

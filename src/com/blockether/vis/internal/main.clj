@@ -3276,10 +3276,19 @@
         ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon-if-idle!))
 
         version
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version))
+        (let [release
+              ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version))
+
+              build
+              ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/build-id))]
+
+          ;; A source checkout has no release to name, so name the commit instead -
+          ;; that IS what a dev build is picked up by.
+          (if (and (= "dev" release) build) (str release " (" build ")") release))
 
         plural
-        (fn [n one] (str n " " one (when (not= 1 (long n)) "s")))]
+        (fn [n one]
+          (str n " " one (when (not= 1 (long n)) "s")))]
 
     (cond
       stopped?
