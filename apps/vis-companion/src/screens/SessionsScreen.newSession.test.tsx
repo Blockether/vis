@@ -69,6 +69,38 @@ describe('where "New session" lives', () => {
     view.releaseList();
   });
 
+  // Regression, user report (paraphrased: why must I tap a banner to see the session
+  // I just created — it should simply be on the list): the row this device had just
+  // minted was counted as a promotion from elsewhere and parked behind the
+  // "1 newer session" pill.
+  it("puts the session it just created on the list without a tap", async () => {
+    const opened: string[] = [];
+    const view = renderSessionsScreen({
+      machines: alpha(),
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+
+    view.holdList();
+    await userEvent.click(screen.getByRole("button", { name: "New session on alpha" }));
+    await waitFor(() => expect(opened).toHaveLength(1));
+
+    // The gateway now carries the created session, fresher than everything held.
+    view.setRows(0, [
+      listSession({
+        id: opened[0]!,
+        title: "Just made",
+        modified_at: new Date("2024-05-01T11:00:00Z").toISOString(),
+      }),
+      listSession({ id: "a1", title: "First" }),
+    ]);
+    view.releaseList();
+
+    await screen.findByText("Just made");
+    expect(named(/newer session/)).toHaveLength(0);
+  });
+
   it("sends the canonical workspace root, never the home-shortened display path", async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;

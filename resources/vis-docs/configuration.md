@@ -187,6 +187,40 @@ names one by one: the confined child keeps the operator's whole environment,
 secrets included, while every other confinement stays on. The default is
 `declared`.
 
+### One call's own environment
+
+`environment:` says what **every** child of Vis gets. A verb that *spawns* one
+also carries what **this** child gets on top, as an argument of the call:
+
+```python
+sh = await shell("npm test", {"env": {"NODE_ENV": "test"}})
+r  = await repl({"language": "python", "op": "start",
+                 "env": {"DJANGO_SETTINGS_MODULE": "app.settings.test",
+                         "STRIPE_KEY": {"keychain": "vis-stripe"}}})
+```
+
+It is a **delta, not a replacement**: the workspace's `.env` and its
+`environment:` declarations still reach that child, this map wins where a name
+collides, and `null` unsets one name for this child only.
+
+A value is either a **literal** — string, number or boolean — or the same
+`{env|dotenv|keychain|command}` source map `environment:` takes. That split
+matters because, unlike a config file, this map is an *argument*: a literal is
+written into the session journal and stays in the transcript for good. Literals
+are for switches (`NODE_ENV`, `RUST_LOG`, `PYTHONHASHSEED`); a secret names its
+source, and only the child ever sees the value.
+
+Every refusal names the key: a name that is not an environment variable name, a
+pre-exec hijack name (`LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV`…), a map that names
+no source, and a source that produced nothing. A standing declaration that
+resolves to nothing is simply unset — one *call* asking for that variable is an
+error, because the call said it needed it.
+
+For a REPL the env is part of that REPL's **identity**. `repl`'s `status` reports
+it by name and digest, never by value, and a `start` for a REPL that is already
+running with a different env is refused by the keys that differ: there is no
+restart op, so stop it and start it again.
+
 ## Providers and models
 
 The `providers` vector holds your configured AI providers; **the first entry is the active one**. You normally manage this through the TUI (provider picker / "Add Provider") or the companion app (**Settings → Providers → Add provider**), which know the presets — OpenAI, Anthropic (API and coding plan), OpenAI Codex, GitHub Copilot, Z.AI, plus local Ollama and LM Studio — and handle OAuth where needed. The on-disk shape, if you do edit it:

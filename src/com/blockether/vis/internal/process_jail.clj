@@ -24,7 +24,9 @@
       :inbound-ports    [<int> …]            ; extra local ports a child may ACCEPT on
                                              ; (bind is local-only; accept is port-gated)
       :env-values       {<NAME> <value>}     ; RESOLVED project env (`.env` +
-                                             ; `environment:`), attached per spawn
+                                             ; `environment:`) with ONE call's own
+                                             ; `env` delta merged on, per spawn
+      :env-removals     #{<NAME> …}          ; names THAT call asked to UNSET
       :inherit-host-env? <bool>}             ; `jail.environment: inherit` — the child
                                              ; also keeps the operator's ambient env
 
@@ -54,9 +56,11 @@
         reads are denied and every binary aborts before `main`."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.paths :as paths])
   (:import (java.io File)
            (java.nio.file LinkOption Paths)
+           (java.security MessageDigest)
            (java.util.concurrent TimeUnit)))
 
 (def ^:private link-opts (make-array LinkOption 0))
@@ -857,12 +861,17 @@
                          (map identity)
                          (filter (fn [[k _]]
                                    (env-passthrough? k))))
-                       (System/getenv))]
+                       (System/getenv))
+
+       ;; A name ONE call asked to unset is simply never built into the map —
+       ;; a confined child's environment is assembled here from nothing, so
+       ;; there is nothing to remove later.
+       removals (set (:env-removals policy))]
       ;; Total: the scrub also covers the declared + proxy additions, so no later
       ;; edit to either can reintroduce a pre-exec hijack name.
       (into {}
             (remove (fn [[k _]]
-                      (pre-exec-hijack? k)))
+                      (or (pre-exec-hijack? k) (contains? removals k))))
             (merge inherited (declared-env policy) (proxy-env policy))))))
 
 (defn child-env-additions
@@ -874,6 +883,136 @@
   [policy]
   (merge (declared-env policy) (proxy-env policy)))
 
+;; ── ONE call's own environment ──────────────────────────────────────────────
+;; `environment:` says what EVERY child of Vis gets. A verb that SPAWNS also
+;; carries what THIS child gets on top, and it carries it as an ARGUMENT of the
+;; call — `shell(cmd, {"env": …})`, `repl({"op": "start", "env": …})` — never as
+;; an ambient binding wrapped around a block. The record of the call is what
+;; says which variables the child ran with: a scope opened three lines earlier
+;; is gone the moment that block is folded, and independent spawns awaited
+;; together would turn "which one saw the variable" into a question about
+;; coroutines instead of about arguments.
+
+(def ^:private call-env-name-pattern
+  "A POSIX environment variable name — nothing else can be exported at all."
+  #"[A-Za-z_][A-Za-z0-9_]*")
+
+(def ^:private call-env-source-keys
+  "Declaration keys ONE call's value may name — `environment:`'s own vocabulary,
+   resolved by its own funnel (`config/inline-environment-value`)."
+  ["env" "dotenv" "keychain" "command"])
+
+(defn- refuse-call-env
+  "Refuse the spawn and NAME the key. A per-call delta is the author's own line
+   of code, so a variable dropped quietly here would be debugged as a bug in the
+   program that never received it — the opposite of the `environment:` scrub,
+   which filters a standing declaration nobody is watching."
+  [name reason]
+  (throw (ex-info (str "env " name ": " reason)
+                  {:type ::call-env-refused :name name})))
+
+(defn- call-env-value
+  "ONE delta value: nil to unset, a literal as its string, or a source map
+   resolved exactly as the `environment:` block resolves the same shape."
+  [k v]
+  (cond (nil? v) nil
+        (string? v) v
+        (or (number? v) (boolean? v)) (str v)
+        (map? v)
+        (let [entry (into {}
+                          (map (fn [[ek ev]] [(if (keyword? ek) (name ek) (str ek)) ev]))
+                          v)
+              source (some (fn [sk] (when (some? (get entry sk)) sk)) call-env-source-keys)]
+          (when-not source
+            (refuse-call-env k (str "a map value must name its source — "
+                                    (str/join ", " (map #(str "{\"" % "\": …}") call-env-source-keys))
+                                    " — got " (pr-str v) ".")))
+          (or (config/inline-environment-value k entry)
+              (refuse-call-env k (str "the " source ": source resolved to no value."))))
+        :else (refuse-call-env k (str "value must be a literal (string, number, boolean), a source"
+                                      " map, or null to unset — got " (pr-str v) "."))))
+
+(defn call-env-values
+  "Resolve ONE call's `env` delta into `{NAME value-or-nil}`, where nil means
+   UNSET that name for this child. A DELTA: it is merged over the project
+   environment (`config/child-environment-values`), never a replacement for it,
+   so a workspace `.env` still reaches a child whose call names one variable.
+
+   A value is either a LITERAL (string/number/boolean) or a SOURCE map — the
+   same `{env|dotenv|keychain|command}` shape `environment:` declares. That
+   split is not style: this map is an ARGUMENT, so a literal is written into the
+   session journal and the transcript for good. Literals are for SWITCHES
+   (`NODE_ENV`, `RUST_LOG`, `PYTHONHASHSEED`); a secret names its source and
+   only the child ever sees the value.
+
+   Every refusal is LOUD and names the key: a name that is not a variable name,
+   a [[pre-exec-hijack?]] name (which the jail would drop anyway, silently), a
+   map naming no source, and a source that produced nothing — an explicit
+   request for ONE variable that resolved to nothing is an error here, not the
+   quiet `:unset` a standing declaration is allowed."
+  [env]
+  (cond
+    (nil? env) {}
+
+    (not (map? env))
+    (throw (ex-info (str "env must be a map of NAME → value (a literal, or"
+                         " {\"env\"|\"dotenv\"|\"keychain\"|\"command\": …}), got "
+                         (pr-str env))
+                    {:type ::call-env-refused}))
+
+    :else
+    (into {}
+          (map (fn [[k v]]
+                 (let [k (str/trim (str (if (keyword? k) (name k) k)))]
+                   (when-not (re-matches call-env-name-pattern k)
+                     (refuse-call-env (pr-str k) "not an environment variable name."))
+                   (when (pre-exec-hijack? k)
+                     (refuse-call-env k (str "runs code in the unconfined detacher/enforcer hops,"
+                                             " before the jail exists — no call may set it.")))
+                   [k (call-env-value k v)])))
+          env)))
+
+(defn with-call-env
+  "`policy` with ONE call's resolved delta merged over its project environment.
+   Names set to nil become `:env-removals`: a confined child's environment is
+   built from nothing so they are simply never added, while an UNCONFINED child
+   inherits this process' environment and must have them removed by name at the
+   spawn ([[session-process-launch]] reports them as `:env-remove`).
+
+   A nil policy is a spawn with no jail at all, and the delta still applies —
+   a caller cannot lose its own variables by running where the jail is off."
+  [policy overrides]
+  (if (empty? overrides)
+    policy
+    (let
+      [policy (or policy {:disabled? true})
+
+       base (into {} (map (fn [[k v]] [(str k) v])) (:env-values policy))
+
+       removals (into #{} (comp (filter (comp nil? val)) (map key)) overrides)
+
+       sets (into {} (remove (comp nil? val)) overrides)]
+
+      (assoc policy
+        :env-values (merge (apply dissoc base removals) sets)
+        :env-removals (into (set (:env-removals policy)) removals)))))
+
+(defn env-fingerprint
+  "`{NAME \"<digest>\"}` for one resolved delta — its SHAPE without its values.
+   This is what a status prints and what a REUSED process is compared against,
+   and both of those are read by a model and written to a log, so the value
+   itself can never appear: a name set from a keychain must compare equal to
+   itself and to nothing else. An unset name fingerprints as \"unset\"."
+  [values]
+  (into (sorted-map)
+        (map (fn [[k v]]
+               [(str k)
+                (if (nil? v)
+                  "unset"
+                  (str/join (map (fn [b] (format "%02x" b))
+                                 (take 6 (.digest (MessageDigest/getInstance "SHA-256")
+                                                  (.getBytes (str v) "UTF-8"))))))]))
+        values))
 ;; ── Standard language-process jail contract ────────────────────────────────
 ;; Language packs spawn managed REPLs and project test runners via raw
 ;; ProcessBuilder calls outside the shell executors. Every such spawn obtains its
@@ -986,10 +1125,15 @@
    nREPL pgid == gateway pid). One `kill 0` inside it took the gateway down with
    it, cancelling every other session's live turn."
   ([session-id argv] (session-process-launch session-id argv nil))
-  ([session-id argv {:keys [loopback-port]}]
+  ([session-id argv {:keys [loopback-port env]}]
    (let
      [policy
-      (language-process-policy (session-base-policy! session-id) loopback-port)
+      (-> (session-base-policy! session-id)
+          (language-process-policy loopback-port)
+          ;; THIS launch's own `env` delta, on top of the project environment —
+          ;; the argument a `repl`/`run_tests` call carried, resolved and
+          ;; scrubbed by the one contract that owns both.
+          (with-call-env (call-env-values env)))
 
       full
       (jailed-child-env policy)]
@@ -997,7 +1141,13 @@
      ;; Confined child ⇒ FULL scrubbed env replaces the operator's (secrets dropped);
      ;; unenforced platform ⇒ additions merged onto the inherited env (unchanged).
      (if full
-       {:argv (detached-argv (wrap-argv argv policy)) :env full :replace-env? true}
+       {:argv (detached-argv (wrap-argv argv policy))
+        :env full
+        :replace-env? true
+        :env-remove []}
        {:argv (detached-argv (wrap-argv argv policy))
         :env (child-env-additions policy)
-        :replace-env? false}))))
+        :replace-env? false
+        ;; The inherited environment is kept, so an unset name is only unset if
+        ;; the spawn REMOVES it from the child's map.
+        :env-remove (vec (sort (:env-removals policy)))}))))

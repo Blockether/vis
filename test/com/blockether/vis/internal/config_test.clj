@@ -1361,3 +1361,65 @@
                        (System/setProperty "user.home" old-home)
                        (System/setProperty "user.dir" old-dir)
                        (config/invalidate-config-cache!))))))
+
+
+;; Regression, issue: two writers of `~/.vis/state.yml` read the whole map,
+;; changed one key and wrote it back. Nothing was ever corrupt — the second
+;; write simply reinstated the block the first had just replaced, so adding a
+;; provider quietly undid a toggle flip (and the reverse).
+(defdescribe machine-store-writes-never-lose-each-other-test
+             "`update-machine-config!` is the locked read-modify-write of the machine store."
+             (it "keeps both blocks when providers and toggles are written concurrently"
+                 (let [dir (.toFile (Files/createTempDirectory
+                                      "vis-store-race"
+                                      (make-array java.nio.file.attribute.FileAttribute 0)))
+                       home (io/file dir "home")
+                       store-dir (io/file home ".vis")
+                       old-home (System/getProperty "user.home")]
+                   (try
+                     (.mkdirs store-dir)
+                     (System/setProperty "user.home" (.getPath home))
+                     (config/invalidate-config-cache!)
+                     (let [rounds 30
+                           providers (future
+                                       (dotimes [i rounds]
+                                         (config/update-machine-config!
+                                           (fn [raw]
+                                             (assoc raw "providers"
+                                               (conj (vec (get raw "providers"))
+                                                     {"id" (str "p" i) "api_key" "k"})))
+                                           :test))
+                                       :done)
+                           toggles (future
+                                     (dotimes [i rounds]
+                                       (config/save-toggles! {"introspection" (even? i)}))
+                                     :done)]
+                       (expect (= :done (deref providers 30000 :timeout)))
+                       (expect (= :done (deref toggles 30000 :timeout)))
+                       (let [store (config/load-global-config-raw)]
+                         ;; Every provider survived AND the last toggle write is still there.
+                         (expect (= rounds (count (get store "providers"))))
+                         (expect (some? (get store "toggles")))))
+                     (finally
+                       (System/setProperty "user.home" old-home)
+                       (config/invalidate-config-cache!)))))
+
+             (it "answers nil and writes nothing when the update changes nothing"
+                 (let [dir (.toFile (Files/createTempDirectory
+                                      "vis-store-noop"
+                                      (make-array java.nio.file.attribute.FileAttribute 0)))
+                       home (io/file dir "home")
+                       store-dir (io/file home ".vis")
+                       old-home (System/getProperty "user.home")]
+                   (try
+                     (.mkdirs store-dir)
+                     (spit (io/file store-dir "state.yml") "default_provider: machine-provider\n")
+                     (System/setProperty "user.home" (.getPath home))
+                     (config/invalidate-config-cache!)
+                     (let [before (slurp (io/file store-dir "state.yml"))]
+                       (expect (nil? (config/update-machine-config! (fn [raw] raw) :test)))
+                       (expect (nil? (config/update-machine-config! (fn [_] nil) :test)))
+                       (expect (= before (slurp (io/file store-dir "state.yml")))))
+                     (finally
+                       (System/setProperty "user.home" old-home)
+                       (config/invalidate-config-cache!))))))

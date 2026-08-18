@@ -951,10 +951,14 @@
   "Write `settings` back into `~/.vis/state.yml` under
    `:tui-settings`, preserving every other key in the file. Failures
    are swallowed - a config-save failure should never crash a TUI
-   that's already otherwise healthy."
+   that's already otherwise healthy.
+
+   The MERGED config must never be the base: writing it back would copy the
+   hand-written and project tiers into the machine store, where they then
+   outrank the files they came from. `update-machine-config!` reads the machine
+   tier alone, under the store's lock."
   [settings]
-  (try (let [raw (or (vis/load-config-raw) {})]
-         (vis/save-config! (assoc raw "tui-settings" settings)))
+  (try (vis/update-machine-config! (fn [raw] (assoc raw "tui-settings" settings)))
        (catch Throwable _ nil)))
 
 (defn- apply-settings-update!

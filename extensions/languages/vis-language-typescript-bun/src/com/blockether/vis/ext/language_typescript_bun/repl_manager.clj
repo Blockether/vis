@@ -43,8 +43,12 @@
 
 (defn start!
   "Spawn (or replace) the managed Bun REPL for `dir`. Returns a STRING-keyed
-   status map (crosses the strings-only boundary as a tool `:result`)."
-  [dir {:keys [session-id]}]
+   status map (crosses the strings-only boundary as a tool `:result`).
+
+   `opts` carries THIS start's own `env` delta over the project environment
+   (the `env` key, string-keyed like every other model-facing option). A start
+   REPLACES the running REPL here, so the delta needs no identity check."
+  [dir {:keys [session-id] :as opts}]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let
@@ -54,7 +58,7 @@
      ;; Resolve argv + proxy env atomically. Unknown/disposed sessions are denied
      ;; before spawn, and direct outbound traffic remains behind Seatbelt.
      launch
-     (vis/session-process-launch session-id cmd)
+     (vis/session-process-launch session-id cmd {:env (get opts "env")})
 
      pb
      (doto (ProcessBuilder. ^java.util.List (:argv launch))
@@ -65,7 +69,10 @@
      (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
        (when (:replace-env? launch) (.clear e))
        (doseq [[k v] (:env launch)]
-         (.put e ^String k ^String v)))
+         (.put e ^String k ^String v))
+       ;; An inherited environment still carries what this start asked to UNSET.
+       (doseq [k (:env-remove launch)]
+         (.remove e ^String k)))
 
      p
      (.start pb)

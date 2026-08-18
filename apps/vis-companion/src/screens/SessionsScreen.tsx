@@ -148,6 +148,9 @@ const SESSION_LIST_EVENTS = new Set([
 // this is treated as lost.
 const STALE_POLL_MS = 20_000;
 
+/** How many just-created sessions stay admitted past the held order at once. */
+const MINTED_KEEP = 8;
+
 // A query can name more sessions than a phone will ever scroll. Hydrating the
 // unloaded hits is one GET each, so the tail is cut rather than paid for.
 const SEARCH_HYDRATE_MAX = 40;
@@ -537,6 +540,10 @@ export function SessionsScreen({
   // The order the list is HELD in is renewed by reader actions that legitimately
   // move a row, and this ref is how a callback declared above the hook reaches it.
   const adoptRef = useRef<() => void>(() => {});
+
+  // Ids this device just created, freshest first. `MINTED_KEEP` is past any burst
+  // of taps and keeps the set from growing for the life of the screen.
+  const [minted, setMinted] = useState<readonly string[]>([]);
 
   // The star belongs to the GATEWAY, and this is the one place that asks it to move.
   // The row is repainted first so the mark lands in the SAME commit as the tap, the
@@ -1193,16 +1200,28 @@ export function SessionsScreen({
   );
   adoptRef.current = adopt;
 
+  // Regression, user report (paraphrased: a session I just started should not
+  // need a tap to appear): the pill is for rows ANOTHER machine wrote under a
+  // still thumb. A session this device just created is the reader's own action,
+  // so it is admitted into the held order at once. A few are kept, because the
+  // ones before the last are not necessarily in the epoch yet either.
+  const mintedSet = useMemo(() => new Set(minted), [minted]);
+
   const heldRows = useMemo(
     () =>
       filtered.map((entry) => ({
         machine: entry.machine,
-        ...holdOrder(epoch, entry.sessions, (session) => ({
-          id: session.id,
-          millis: sessionMillis(session),
-        })),
+        ...holdOrder(
+          epoch,
+          entry.sessions,
+          (session) => ({
+            id: session.id,
+            millis: sessionMillis(session),
+          }),
+          mintedSet,
+        ),
       })),
-    [epoch, filtered],
+    [epoch, filtered, mintedSet],
   );
 
   const pendingCount = useMemo(
@@ -1513,6 +1532,9 @@ export function SessionsScreen({
       // a list the user is leaving. Open FIRST, then refresh in the background: this
       // screen stays mounted behind the session, so the rows are already reconciled
       // by the time anyone comes back to them.
+      // The row the reader just asked for is theirs, so it joins the list without
+      // waiting behind the pill (see `mintedSet`).
+      if (session.id) setMinted((was) => [session.id, ...was].slice(0, MINTED_KEEP));
       if (session.id) await onOpen(on, session.id, true);
       void load();
     } catch (cause) {

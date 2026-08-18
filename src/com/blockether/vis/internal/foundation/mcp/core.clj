@@ -654,24 +654,29 @@
 
     (ensure-managed! name)
     (let
-      [machine
-       (or (config/load-global-config-raw) {})
+      [spec
+       (volatile! nil)]
 
-       spec
-       (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)
+      ;; `update-machine-config!` is the LOCKED read-modify-write of the machine
+      ;; store — a second writer would otherwise drop this server — and the
+      ;; `save-config!` inside it stays the strict schema and secret-preserving
+      ;; write boundary.
+      (config/update-machine-config!
+        (fn [machine]
+          (let
+            [spec*
+             (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)]
 
-       next-config
-       (assoc-in machine ["mcp" "servers" name] spec)]
-
-      ;; save-config! is the strict schema and secret-preserving write boundary.
-      (config/save-config! next-config :gateway-mcp)
+            (vreset! spec spec*)
+            (assoc-in machine ["mcp" "servers" name] spec*)))
+        :gateway-mcp)
       (reset-server-cache!)
       ;; Saving a server is an explicit start: never leave it pinned down by a
       ;; kill the user has plainly moved on from.
       (revive! name)
       (disconnect! name)
       (reconcile-async!)
-      (server-summary name spec true))))
+      (server-summary name @spec true))))
 
 (defn set-gateway-server-enabled!
   "Persist an enabled/disabled override without exposing or accepting secrets."
@@ -704,23 +709,24 @@
       ;; back on the next merge. Say so instead.
       (ensure-managed! name)
       (throw (ex-info "Unknown MCP server in gateway state" {:type :mcp/not-found :server name})))
-    (let
-      [servers
-       (dissoc (get-in machine ["mcp" "servers"]) name)
+    (config/update-machine-config!
+      (fn [machine]
+        (let
+          [servers
+           (dissoc (get-in machine ["mcp" "servers"]) name)
 
-       machine*
-       (if (seq servers)
-         (assoc-in machine ["mcp" "servers"] servers)
-         (update machine "mcp" dissoc "servers"))
+           machine*
+           (if (seq servers)
+             (assoc-in machine ["mcp" "servers"] servers)
+             (update machine "mcp" dissoc "servers"))]
 
-       next-config
-       (if (seq (get machine* "mcp")) machine* (dissoc machine* "mcp"))]
+          (if (seq (get machine* "mcp")) machine* (dissoc machine* "mcp"))))
+      :gateway-mcp)
 
-      (config/save-config! next-config :gateway-mcp)
-      (reset-server-cache!)
-      (revive! name)
-      (disconnect! name)
-      {"name" name "is_deleted" true})))
+    (reset-server-cache!)
+    (revive! name)
+    (disconnect! name)
+    {"name" name "is_deleted" true}))
 
 (defn kill-gateway-server!
   "Stop `name` NOW and keep it stopped: close the connection (for stdio that

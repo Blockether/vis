@@ -528,7 +528,13 @@
         ;; recomputed: `log-file` mints a fresh name per call, so a derived path
         ;; would name a file nothing has ever written.
         (and running? (:log info))
-        (assoc "log" (:log info))
+         (assoc "log" (:log info))
+
+         ;; WHAT THIS REPL RUNS WITH, by name and digest only: the delta its
+         ;; start named, so a caller can see why a reuse was refused without a
+         ;; value ever reaching a result, a log or the transcript.
+         (and running? (seq (:env-fingerprint info)))
+         (assoc "env" (:env-fingerprint info))
 
         att
         (assoc "attached" (attachment-view att))))))
@@ -567,7 +573,16 @@
                                :starting)
           (last-failure session-id dir) :failed
           (get @attachments [session-id dir]) (attachment-health session-id dir)
-          :else :down)))
+           :else :down)))
+
+(defn- env-difference
+  "Variable NAMES whose value differs between the env a REPL is running with and
+   the one a new start asked for. Both sides are fingerprints, so this compares
+   digests and answers names — the only thing either side is allowed to keep."
+  [running requested]
+  (vec (sort (into #{}
+                   (remove (fn [k] (= (get running k) (get requested k))))
+                   (concat (keys running) (keys requested))))))
 
 (defn start!
   "Self-start a project nREPL subprocess OWNED by `session-id` in `dir`.
@@ -578,20 +593,30 @@
    still-alive-but-slow boot can outlive `start-deadline-ms` (then :starting,
    with an `.onExit` watcher recording any later death as a failure).
 
-   - Already ours + alive for `[session-id dir]` → :already-running.
+   - Already ours + alive for `[session-id dir]` → :already-running — unless this
+     start named a DIFFERENT `:env`, which is refused by the keys that differ: a
+     REPL IS its environment, and reusing one started with another would report
+     success for a process that never saw the variables this call asked for.
    - No known build file → :no-launcher.
    - Launcher exits before binding → :failed with exit code + log tail.
    - Else :started (port up) or :starting (still coming up; ctx will show it).
 
    Model-facing: STRING keys + STRING enum values (crosses as a tool `:result`)."
   ([session-id dir] (start! session-id dir nil))
-  ([session-id dir {:keys [aliases]}]
+  ([session-id dir {:keys [aliases env]}]
    (let
      [k
       [session-id dir]
 
       aliases
-      (launch-aliases aliases)]
+      (launch-aliases aliases)
+
+      ;; This start's own env delta, resolved ONCE into its shape: what the
+      ;; process is stamped with, what `status` shows, and what the next start
+      ;; is compared against. A refused name (a pre-exec hijack, a source that
+      ;; produced nothing) denies the start here, before any JVM exists.
+      env-fingerprint
+      (vis/env-fingerprint (vis/call-env-values env))]
 
      ;; SERIALIZE the check-then-spawn per [session-id dir]: without this a
      ;; racing second start! (e.g. the repl tool + an eval-autostart)
@@ -602,7 +627,13 @@
      #_{:clj-kondo/ignore [:locking-suspicious-lock]}
      (locking (start-lock k)
        (if (proc-alive? (get @processes k))
-         (assoc (status session-id dir) "result" "already-running")
+         (let [differing (env-difference (:env-fingerprint (get @processes k)) env-fingerprint)]
+           (when (seq differing)
+             (throw (ex-info (str "repl \"start\" for " (id-of dir) " is already running with a"
+                                  " different env (" (str/join ", " differing) "). There is no"
+                                  " restart: stop that REPL, then start it with this env.")
+                             {:type :clj/repl-env-mismatch :id (id-of dir) :env differing})))
+           (assoc (status session-id dir) "result" "already-running"))
          (let [port (free-port!)]
            (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
              (try
@@ -611,16 +642,21 @@
                   ;; Resolve argv + proxy env atomically through the shared,
                   ;; fail-closed language-process contract. nREPL alone may bind a
                   ;; loopback listener; direct outbound traffic remains jailed.
-                  launch (vis/session-process-launch session-id cmd {:loopback-port port})
+                   launch (vis/session-process-launch session-id cmd {:loopback-port port
+                                                                     :env env})
                   jailed-cmd (:argv launch)
                   pb (doto (ProcessBuilder. ^java.util.List jailed-cmd)
                        (.directory (io/file dir))
                        (.redirectErrorStream true)
                        (.redirectOutput log))
-                  _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-                         (when (:replace-env? launch) (.clear e))
-                         (doseq [[k v] (:env launch)]
-                           (.put e ^String k ^String v)))
+                   _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+                          (when (:replace-env? launch) (.clear e))
+                          (doseq [[k v] (:env launch)]
+                            (.put e ^String k ^String v))
+                          ;; An inherited environment still carries what this
+                          ;; start asked to UNSET; a replaced one never built it.
+                          (doseq [k (:env-remove launch)]
+                            (.remove e ^String k)))
                   proc (.start pb)
                   pid (try (.pid proc) (catch Throwable _ nil))
                   info {:id (id-of dir)
@@ -633,7 +669,8 @@
                         :dir dir
                         :log (.getAbsolutePath log)
                         :started-at (System/currentTimeMillis)
-                        :last-touch (System/currentTimeMillis)}]
+                         :last-touch (System/currentTimeMillis)
+                         :env-fingerprint env-fingerprint}]
 
                  (swap! processes assoc k info)
                  (ensure-reaper!)

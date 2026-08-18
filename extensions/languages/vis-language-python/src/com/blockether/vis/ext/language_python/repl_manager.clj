@@ -116,8 +116,13 @@ _main()
 (defn start!
   "Spawn (or replace) the managed Python REPL for `dir`. A start succeeds only
    after the child answers its protocol ping; failed children never masquerade
-   as usable REPLs. Returns a STRING-keyed lifecycle map."
-  [dir {:keys [session-id]}]
+   as usable REPLs. Returns a STRING-keyed lifecycle map.
+
+   `opts` carries THIS start's own `env` delta over the project environment
+   (the `env` key, string-keyed like every other model-facing option). A start
+   always REPLACES the running REPL, so the delta needs no identity check: the
+   process that answers the ping is the one this call spawned."
+  [dir {:keys [session-id] :as opts}]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let
@@ -125,7 +130,7 @@ _main()
      (vec (concat (interp/resolve-command dir) ["-c" server-script]))
 
      launch
-     (vis/session-process-launch session-id cmd)
+     (vis/session-process-launch session-id cmd {:env (get opts "env")})
 
      pb
      (doto (ProcessBuilder. ^java.util.List (:argv launch))
@@ -136,7 +141,10 @@ _main()
      (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
        (when (:replace-env? launch) (.clear e))
        (doseq [[k v] (:env launch)]
-         (.put e ^String k ^String v)))
+         (.put e ^String k ^String v))
+       ;; An inherited environment still carries what this start asked to UNSET.
+       (doseq [k (:env-remove launch)]
+         (.remove e ^String k)))
 
      p
      (.start pb)

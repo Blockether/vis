@@ -197,6 +197,44 @@
                  (expect (= "from-the-project-file" (get r "stdout")))))
              (finally (io/delete-file env-path true))))))
 
+
+;; ONE call's own `env`: the delta a spawning verb carries as an ARGUMENT of the
+;; call, over the project environment. Never an ambient scope — the record of
+;; the call is what has to say which variables the child ran with, and a binding
+;; opened three lines earlier is gone as soon as that block is folded.
+(defdescribe
+  shell-per-call-env-test
+  (it "the call's own `env` outranks the project's, adds a name, and null unsets one"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [r (shell-run* {:session-id "t"
+                          :jail-policy-fn (constantly {:disabled? true
+                                                       :env-values {"VIS_TEST_DECLARED" "from-project"
+                                                                    "VIS_TEST_DROPPED" "still-here"}})}
+                         "printf '%s|%s|%s' \"$VIS_TEST_DECLARED\" \"$VIS_TEST_CALL\" \"${VIS_TEST_DROPPED-unset}\""
+                         {"env" {"VIS_TEST_DECLARED" "from-the-call"
+                                 "VIS_TEST_CALL" "only-this-run"
+                                 "VIS_TEST_DROPPED" nil}})]
+
+          (expect (= "from-the-call|only-this-run|unset" (get r "stdout"))))))
+  (it "a value may name its SOURCE instead of carrying a secret into the transcript"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)
+                config/*extension-getenv* (constantly "resolved-elsewhere")]
+        (let
+          [r (shell-run* {:session-id "t" :jail-policy-fn (constantly {:disabled? true})}
+                         "printf %s \"$VIS_TEST_SOURCED\""
+                         {"env" {"VIS_TEST_SOURCED" {"env" "SOME_HOST_NAME"}}})]
+
+          (expect (= "resolved-elsewhere" (get r "stdout"))))))
+  (it "a name that would run code before the jail exists is refused BY NAME, not dropped"
+      (let
+        [msg (throw-message #(shell-run* {:session-id "t"
+                                          :jail-policy-fn (constantly {:disabled? true})}
+                                         "printf never"
+                                         {"env" {"DYLD_INSERT_LIBRARIES" "/tmp/x.dylib"}}))]
+
+        (expect (str/includes? (str msg) "DYLD_INSERT_LIBRARIES")))))
+
 ;; Regression: the sandbox shell handed its children `TERM` and a no-op pager but
 ;; nothing about locks, so every agent-run `git status` / `git diff` REFRESHED the
 ;; index — which takes `.git/index.lock` — and fought Vis' own footer poll,

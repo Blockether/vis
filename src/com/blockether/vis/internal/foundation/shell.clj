@@ -419,6 +419,17 @@
         (throw (ex-info "Shell process denied: session jail policy is unavailable"
                         {:type ::jail-policy-missing :session-id (:session-id env)})))))
 
+(defn- call-jail-policy
+  "The policy for ONE spawn: this session's jail policy carrying THIS call's own
+   `env` delta. The delta is an argument of the call that spawns, so it resolves
+   here, at the spawn boundary — and a refused name (not a variable name, a
+   pre-exec hijack, a source that produced nothing) denies that command by name
+   instead of running it without the variable it asked for."
+  [env opts]
+  (process-jail/with-call-env
+    (jail-policy env)
+    (process-jail/call-env-values (or (get opts "env") (get opts :env)))))
+
 (defn- command-note
   "The single advisory line a command result carries. Truncation wins — it changes
    whether the text parses at all; otherwise a denied macOS Keychain lookup is
@@ -535,6 +546,11 @@
           (.putAll e ^java.util.Map full))
         (let [pe (process-jail/child-env-additions policy)]
           (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
+      ;; A name THIS call asked to unset leaves the map before Vis's own
+      ;; variables land: the confined branch never built it, but the inherited
+      ;; one still carries the parent's.
+      (let [^java.util.Map e (.environment pb)]
+        (doseq [k (:env-removals policy)] (.remove e ^String k)))
       ;; AFTER the policy branch on purpose: the confined one REPLACED the map.
       (.putAll (.environment pb) ^java.util.Map child-env)
       ;; ONE stream, exactly like the pty path every model-facing run takes: a
@@ -596,15 +612,22 @@
                                                                  "--norc" "-lc" (str cmd)]
                                                                 policy)
                                :dir (.getPath ^File dir)
-                               :env (doto ^HashMap
-                                          (if-let [full (process-jail/jailed-child-env policy)]
-                                            ;; Confined child: allowlisted env + declared
-                                            ;; `environment:` values (secrets dropped).
-                                            (HashMap. ^java.util.Map full)
-                                            (doto (HashMap. ^java.util.Map (System/getenv))
-                                              (.putAll ^java.util.Map
-                                                       (process-jail/child-env-additions policy))))
-                                      (.putAll ^java.util.Map pty-child-env))
+                               :env (let
+                                      [^HashMap e
+                                       (if-let [full (process-jail/jailed-child-env policy)]
+                                         ;; Confined child: allowlisted env + declared
+                                         ;; `environment:` values (secrets dropped).
+                                         (HashMap. ^java.util.Map full)
+                                         (doto (HashMap. ^java.util.Map (System/getenv))
+                                           (.putAll ^java.util.Map
+                                                    (process-jail/child-env-additions policy))))]
+
+                                      ;; Unset what this call asked to unset, then let the pty's
+                                      ;; own variables land on top: `TERM` and the pagers are what
+                                      ;; make a pty a pty, so they stay Vis's to set.
+                                      (doseq [k (:env-removals policy)] (.remove e ^String k))
+                                      (.putAll e ^java.util.Map pty-child-env)
+                                      e)
                                :cols 120
                                :rows 40})))
          ::cleanup (::cleanup policy))
@@ -799,7 +822,7 @@
         (clamp-timeout-secs (get opts "timeout_secs"))
 
         policy
-        (jail-policy env)
+        (call-jail-policy env opts)
 
         dir
         (resolve-dir-for-policy opts env policy)
@@ -1489,7 +1512,7 @@
       (drop-bg-entry! session id))
     (let
       [policy
-       (jail-policy env)
+        (call-jail-policy env opts)
 
        dir
        (resolve-dir-for-policy opts env policy)
@@ -3119,10 +3142,13 @@
           "twice. NEVER trim inside the command: `| head`, "
           "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
           "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
-          "then slice on the handle or filter `log_path` in Python. "
-          "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
+           "then slice on the handle or filter `log_path` in Python. "
+           "`env` carries THIS run's variables over the project's — a literal for a switch, a "
+           "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}, since a "
+           "literal stays in the transcript for good), null to unset. "
+           "`print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"stdout\"])`.")
      :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
-              {:name "timeout_secs"}]
+              {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}]
      :ticker-fn (shell-ticker "run")
      :inject-env? true
      :tag :mutation

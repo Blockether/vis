@@ -310,41 +310,41 @@
    never the turn that was learning."
   []
   (try
-    (let
-      [raw
-       (or (config/load-global-config-raw) {})
+    (config/update-machine-config!
+      (fn [raw]
+        (let
+          [stored
+           (get raw MEMORY_KEY)
 
-       stored
-       (get raw MEMORY_KEY)
+           providers
+           (merge (wire->blind-providers (get stored "blind_providers")) @image-blind-providers)
 
-       providers
-       (merge (wire->blind-providers (get stored "blind_providers")) @image-blind-providers)
+           models
+           (merge-with (fn [a b]
+                         {:learned-at (max (long (:learned-at a)) (long (:learned-at b)))
+                          :providers (into (or (:providers a) #{}) (:providers b))})
+                       (wire->blind-models (get stored "blind_models"))
+                       @image-blind-models)
 
-       models
-       (merge-with (fn [a b]
-                     {:learned-at (max (long (:learned-at a)) (long (:learned-at b)))
-                      :providers (into (or (:providers a) #{}) (:providers b))})
-                   (wire->blind-models (get stored "blind_models"))
-                   @image-blind-models)
+           eye
+           (eye->wire @proven-eye)
 
-       eye
-       (eye->wire @proven-eye)
+           wire
+           (cond-> {}
+             (seq providers)
+             (assoc "blind_providers" (blind-providers->wire providers))
 
-       wire
-       (cond-> {}
-         (seq providers)
-         (assoc "blind_providers" (blind-providers->wire providers))
+             (seq models)
+             (assoc "blind_models" (blind-models->wire models))
 
-         (seq models)
-         (assoc "blind_models" (blind-models->wire models))
+             (some? eye)
+             (assoc "working_eye" eye))
 
-         (some? eye)
-         (assoc "working_eye" eye))
+           next-raw
+           (if (seq wire) (assoc raw MEMORY_KEY wire) (dissoc raw MEMORY_KEY))]
 
-       next-raw
-       (if (seq wire) (assoc raw MEMORY_KEY wire) (dissoc raw MEMORY_KEY))]
-
-      (when (not= raw next-raw) (config/save-config! next-raw :vision-memory)))
+          (when (not= raw next-raw) next-raw)))
+      :vision-memory)
     (catch Throwable t
       (tel/log! {:level :warn :id ::memory-persist-failed :data {:error (ex-message t)}}
                 "Could not persist what this session learned about image support"))))

@@ -10896,7 +10896,15 @@
         new-cfg
         {:providers prioritized}]
 
-    (config/save-config! new-cfg :set-provider!)
+    ;; The machine store carries far more than providers — toggles, the vision
+    ;; memory, the MCP servers, the selection tags. Handing `save-config!` a map
+    ;; that holds ONLY `:providers` replaced the file with that one key and
+    ;; silently erased the rest, so the write goes through the locked
+    ;; read-modify-write and touches nothing else.
+    (config/update-machine-config!
+      (fn [raw]
+        (assoc raw "providers" (mapv providers/persisted-provider-config prioritized)))
+      :set-provider!)
     (reset! @#'config/active-config new-cfg)
     (try (let [r (rebuild-router! new-cfg)]
            (refresh-cached-routers! r))

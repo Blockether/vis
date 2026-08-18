@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.40 (4468) — 2026-08-18
+<!-- commit: f6c4265518a97932a824d004263011eafbf794e6 -->
+
+- Fork a session from its own slide, whole or at a turn
+- Store settings without folding the config tiers
+- Cross a live view's first op on a freshly booted machine
+- Watch a GitHub Actions run in one live view
+
+## 0.1.40 (4464) — 2026-08-18
+<!-- commit: c2e5d4122f2f264579e471f2429ace609687a4d7 -->
+
+- Open the projects mark on the inventory, not the browser
+- Keep a failed block's printed output on the wire
+- Name the remote gateway flags in help, not only in the docs
+- Unbox the log page window and drop two dead test bindings
+- Repair the PIL envelope arity, and stop repeating the scope
+- A shim declares what it lends the guest, and gets the lifetime free
+- Tie a guest's host objects to the session that opened them
+- Name the double-registration trap in the shared sandbox
+- Delete the child-env plumbing sub_loop was the only user of
+- One GraalPy Engine per session, not one per process
+- Drop the agent() verb and every sub_loop caller
+- Record the TestFlight build testers now have
+
 ## 0.1.40 (4452) — 2026-08-18
 <!-- commit: f03e0ddb8f5d41288d0730dc9d4c17e83e55c843 -->
 
@@ -25,6 +49,30 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Open live views from a Python extension
 - Paint a live view as one scroll surface in the band
 - Hand the model a live view's picture as data, not markdown
+
+## 0.1.40 (4423) — 2026-08-17
+<!-- commit: 52ce0b0877ce8ac03d0d0ce577c51dc1fef65704 -->
+
+- Hold the project shelf at its paged height
+- Refuse a missing path as missing, and select .cljc tests
+- Select clojure tests by namespace, not just paths
+- Press the composer on the tap, not on the click
+- Keep a safety refusal inside the provider that refused
+- Re-place images when a live tick shifts the transcript
+- Let the human refuse fallback and measure who served
+- Bound the post-block defs snapshot on the GIL
+- Make vis.state a whole mapping
+- Move the session pick when a provider's auth stays dead
+- Keep slash commands out of the input history ring
+- Read the document corpus live in the sandbox
+- Spel session discipline is one session per task
+- Settle a tool handed to to_thread inside its gather slot
+- Drop the structural editing scenarios
+- Drop the last structural editing references
+- Keep a default root tagged as the fleet changes
+- Drop the structural editing tools
+- Give every deps.edn one shape
+- Cover asyncio queues, locks, futures and timeouts
 
 ## 0.1.38 (4319) — 2026-08-16
 <!-- commit: 8088f819e680b5526f62f9616b44f629a28029c9 -->

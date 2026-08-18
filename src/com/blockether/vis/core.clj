@@ -624,6 +624,7 @@
              [load-config config/load-config]
              [save-config! config/save-config!]
              [save-toggles! config/save-toggles!]
+             [update-machine-config! config/update-machine-config!]
              [remove-config-provider! config/remove-config-provider!]
              [extension-env-status config/extension-env-status]
              [extension-env-value config/extension-env-value]
@@ -669,7 +670,12 @@
 ;; Standard language-process jail contract — packs obtain argv + proxy env in one
 ;; fail-closed policy resolution before spawning a managed REPL or test runner.
 (import-vars [prepare-session-jail! process-jail/prepare-session-jail!]
-             [session-process-launch process-jail/session-process-launch])
+             [session-process-launch process-jail/session-process-launch]
+             ;; ONE call's own `env` delta: resolved (literal or source map) and
+             ;; fingerprinted, so a pack can compare a REUSED process against the
+             ;; environment this start asked for without ever holding a value.
+             [call-env-values process-jail/call-env-values]
+             [env-fingerprint process-jail/env-fingerprint])
 
 ;; Turn runtime / iteration loop / environment / sessions
 (import-vars [turn! lp/turn!]

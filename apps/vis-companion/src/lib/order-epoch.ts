@@ -44,34 +44,65 @@ export interface HeldRows<T> {
   pending: string[];
 }
 
+/** No row admitted: the default, and the shape every caller before `admit` had. */
+const EMPTY_ADMIT: ReadonlySet<string> = new Set<string>();
+
 /**
  * Apply `epoch` to `rows` (the answer's own order, freshest first).
  *
  * An epoch that holds nothing on screen is not held at all: a first paint, a
  * scope the reader just switched to, or a window whose every row was deleted
  * adopts what it was given, because there is no reading position to protect.
+ *
+ * `admit` names rows this reader is not surprised by — the session THIS device
+ * just started. The pill exists for rows another machine wrote under a still
+ * thumb; a row the reader asked for a second ago is not one of those, and making
+ * them tap to see what they just created is the complaint that added this
+ * argument. An admitted row is spliced into the held order at the position the
+ * answer's own order gives it (freshest first, so normally the top) and is never
+ * counted as pending.
  */
 export function holdOrder<T>(
   epoch: OrderEpoch | null,
   rows: readonly T[],
   of: (row: T) => EpochRow,
+  admit: ReadonlySet<string> = EMPTY_ADMIT,
 ): HeldRows<T> {
   if (!epoch || epoch.length === 0) return { rows: [...rows], pending: [] };
 
   const byId = new Map<string, T>();
   for (const row of rows) byId.set(of(row).id, row);
 
-  const held: T[] = [];
+  const order: string[] = [];
   for (const id of epoch) {
-    const row = byId.get(id);
-    if (row !== undefined) held.push(row);
+    if (byId.has(id)) order.push(id);
   }
-  if (held.length === 0) return { rows: [...rows], pending: [] };
+  if (order.length === 0) return { rows: [...rows], pending: [] };
+
+  // An admitted row joins the held order where the answer would have put it: after
+  // the last held row that is above it naturally, so the freshest lands on top.
+  if (admit.size > 0) {
+    let cursor = 0;
+    for (const row of rows) {
+      const id = of(row).id;
+      const at = order.indexOf(id);
+      if (at >= 0) {
+        cursor = at + 1;
+        continue;
+      }
+      if (admit.has(id)) {
+        order.splice(cursor, 0, id);
+        cursor += 1;
+      }
+    }
+  }
+
+  const held: T[] = order.map((id) => byId.get(id) as T);
 
   // The deepest row the reader has agreed to see. Anything at or below it can
   // only be MORE of the same list, so it appends without moving a thing.
   const deepest = held.reduce((oldest, row) => Math.min(oldest, of(row).millis), Infinity);
-  const known = new Set(epoch);
+  const known = new Set(order);
   const appended: T[] = [];
   const pending: string[] = [];
   for (const row of rows) {

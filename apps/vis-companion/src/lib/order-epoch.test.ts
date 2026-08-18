@@ -33,6 +33,30 @@ describe('holdOrder', () => {
     expect(held.pending).toEqual([]);
   });
 
+  // Regression, user report (paraphrased: a session I start on the phone should
+  // just be in the list — having to tap a banner to see what I just created is
+  // silly). The new row was counted as a promotion like any other machine's.
+  it('admits a row this reader just created, at its natural place', () => {
+    const rows = answer(['mine', 900], ['a', 300], ['b', 200]);
+    const held = holdOrder(['a', 'b'], rows, of, new Set(['mine']));
+    expect(ids(held.rows)).toEqual(['mine', 'a', 'b']);
+    expect(held.pending).toEqual([]);
+  });
+
+  it('still holds back everything the reader did not create', () => {
+    const rows = answer(['theirs', 950], ['mine', 900], ['a', 300], ['b', 200]);
+    const held = holdOrder(['a', 'b'], rows, of, new Set(['mine']));
+    expect(ids(held.rows)).toEqual(['mine', 'a', 'b']);
+    expect(held.pending).toEqual(['theirs']);
+  });
+
+  it('splices an admitted row below the held rows it is older than', () => {
+    const rows = answer(['a', 300], ['mine', 250], ['b', 200]);
+    const held = holdOrder(['a', 'b'], rows, of, new Set(['mine']));
+    expect(ids(held.rows)).toEqual(['a', 'mine', 'b']);
+    expect(held.pending).toEqual([]);
+  });
+
   it('holds a brand new row back and counts it', () => {
     const held = holdOrder(['a', 'b'], answer(['new', 900], ['a', 300], ['b', 200]), of);
     expect(ids(held.rows)).toEqual(['a', 'b']);

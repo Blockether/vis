@@ -273,7 +273,12 @@
       (resolve-repl-dir root (get opts "cwd"))
 
       aliases
-      (coerce-aliases (get opts "aliases"))]
+       (coerce-aliases (get opts "aliases"))
+
+       ;; THIS start's own environment, over the project's. An ARGUMENT of the
+       ;; call, so the record of the call says what the REPL was started with.
+       repl-env
+       (get opts "env")]
 
      (case op
        "status"
@@ -324,7 +329,7 @@
            ;; No "restart": start! REUSES a healthy REPL ("already-running") and
            ;; a REPL you actually want replaced is stopped explicitly first, so a
            ;; hung relaunch can never leave the caller with nothing.
-           (let [result (repl-manager/start! sid dir {:aliases aliases})]
+            (let [result (repl-manager/start! sid dir {:aliases aliases :env repl-env})]
              ;; Mirror the live REPL into the session resource registry → ctx +
              ;; footer + stoppable by id.
              (register-repl-resource! sid dir aliases result)

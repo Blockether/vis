@@ -8,6 +8,7 @@
             [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer
              [deftest is testing thrown? thrown-with-msg?]]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.process-jail :as pj]))
 
 (deftest macos-profile-compiler
@@ -1182,3 +1183,67 @@
   (testing "unrelated output is never annotated"
     (is (false? (pj/keychain-denial? "hello world")))
     (is (nil? (pj/keychain-denial-hint {:disabled? false :mach-services []} "hello world")))))
+
+;; ONE call's own `env`: the delta a SPAWNING verb carries as an ARGUMENT, over
+;; the project environment. Ambient scope is what this contract refuses — the
+;; record of the call is what says which variables the child ran with.
+(deftest one-calls-own-env-delta
+  (testing "literals become strings, null unsets, and a source map resolves through `environment:`"
+    (is (= {"NODE_ENV" "test" "PORT" "8080" "DEBUG" "true" "GONE" nil}
+           (pj/call-env-values {"NODE_ENV" "test" "PORT" 8080 "DEBUG" true "GONE" nil})))
+    (is (= {} (pj/call-env-values nil)))
+    (is (= {"TOKEN" "from-the-host"}
+           (binding [config/*extension-getenv* (constantly "from-the-host")]
+             (pj/call-env-values {"TOKEN" {"env" "SOME_HOST_NAME"}})))))
+  (testing "every refusal NAMES the key — a per-call delta is the author's own line of code"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"env DYLD_INSERT_LIBRARIES"
+                          (pj/call-env-values {"DYLD_INSERT_LIBRARIES" "/tmp/x.dylib"})))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"env BASH_ENV"
+                          (pj/call-env-values {"BASH_ENV" "/tmp/rc"})))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"not an environment variable name"
+                          (pj/call-env-values {"not a name" "x"})))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"must name its source"
+                          (pj/call-env-values {"TOKEN" {"vault" "prod"}})))
+    ;; A standing `environment:` declaration that resolves to nothing is simply
+    ;; unset; ONE call that asked for that variable is an error instead.
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"resolved to no value"
+                          (binding [config/*extension-getenv* (constantly nil)]
+                            (pj/call-env-values {"TOKEN" {"env" "NOTHING_EXPORTS_THIS"}}))))
+    (is (thrown? clojure.lang.ExceptionInfo (pj/call-env-values {"A" ["not" "a" "value"]})))
+    (is (thrown? clojure.lang.ExceptionInfo (pj/call-env-values "NODE_ENV=test"))))
+  (testing "the delta MERGES over the project environment and records what it unset"
+    (let
+      [policy
+       (pj/with-call-env {:disabled? true :env-values {"KEEP" "1" "OVER" "project" "DROP" "2"}}
+                         (pj/call-env-values {"OVER" "call" "NEW" "3" "DROP" nil}))]
+
+      (is (= {"KEEP" "1" "OVER" "call" "NEW" "3"} (:env-values policy)))
+      (is (= #{"DROP"} (:env-removals policy)))
+      (is (= {"KEEP" "1" "OVER" "call" "NEW" "3"} (pj/child-env-additions policy)))
+      ;; No policy at all is still a spawn, and it still gets its own variables.
+      (is (= {"NEW" "3"} (:env-values (pj/with-call-env nil {"NEW" "3"}))))
+      (is (= {:disabled? true} (pj/with-call-env {:disabled? true} {})))))
+  (testing "a confined child's environment is BUILT, so an unset name is never in it"
+    (when-let
+      [full (pj/jailed-child-env {:roots-fn (constantly [])
+                                  :net-enabled? false
+                                  :env-values {"KEEP" "1"}
+                                  :env-removals #{"DROP" "PATH"}})]
+      (is (= "1" (get full "KEEP")))
+      (is (nil? (get full "DROP")))
+      ;; PATH is on the inherit allowlist: the removal outranks it.
+      (is (nil? (get full "PATH")))))
+  (testing "a fingerprint carries the SHAPE of a delta and never a value"
+    (let
+      [fp (pj/env-fingerprint {"TOKEN" "s3cret-value" "GONE" nil})]
+
+      (is (= #{"TOKEN" "GONE"} (set (keys fp))))
+      (is (not (str/includes? (pr-str fp) "s3cret-value")))
+      (is (= "unset" (get fp "GONE")))
+      (is (= fp (pj/env-fingerprint {"TOKEN" "s3cret-value" "GONE" nil})))
+      (is (not= fp (pj/env-fingerprint {"TOKEN" "another-value" "GONE" nil}))))))

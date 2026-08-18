@@ -33,7 +33,8 @@
             [yamlstar.core :as yamlstar])
   (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)
            (java.nio.charset StandardCharsets)
-           (java.nio.file CopyOption Files OpenOption Path StandardCopyOption)
+           (java.nio.channels FileChannel FileLock)
+           (java.nio.file CopyOption Files OpenOption Path StandardCopyOption StandardOpenOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
 (defn config-dir
@@ -1503,6 +1504,73 @@
                                    :config runtime-config
                                    :source source}))))))
 
+(defonce ^:private machine-store-monitor
+  ;; A FileLock belongs to the JVM, not to the thread: two threads of THIS
+  ;; process locking the same file collide with OverlappingFileLockException
+  ;; instead of queueing. The monitor serializes them, the file lock serializes
+  ;; this process against other Vis processes.
+  (Object.))
+
+(defn update-machine-config!
+  "Read-modify-write the machine store `~/.vis/state.yml` under a lock: apply `f`
+   to the raw string-keyed map (an absent store arrives as `{}`) and persist the
+   result through `save-config!`.
+
+   THE write pattern for everything Vis persists about itself. Every writer here
+   rewrites the WHOLE map, so the read and the write have to be ONE critical
+   section: a provider added while a toggle flipped used to write back the toggle
+   block the other writer had just replaced. The file was never corrupt — the
+   update was simply lost, silently, and the loser only found out much later.
+
+   The lock lives in a sibling `state.yml.lock` because the store itself is
+   REPLACED by an atomic move, and a lock taken on a replaced inode guards
+   nothing.
+
+   Returns the written map, or nil when `f` answered nil or changed nothing (no
+   write, no provider-selected event). A lock the filesystem refuses (a network
+   mount) degrades to the plain read-modify-write rather than to no write at all."
+  ([f] (update-machine-config! f nil))
+  ([f source]
+   (locking machine-store-monitor
+     (ensure-private-dir! (config-dir))
+     (let
+       [^Path lock-path
+        (.toPath (io/file (str (state-path) ".lock")))
+
+        apply-update!
+        (fn []
+          (let
+            [raw
+             (or (load-global-config-raw) {})
+
+             raw*
+             (f raw)]
+
+            (when (and raw* (not= raw raw*))
+              (save-config! raw* source)
+              raw*)))]
+
+       (try
+         (with-open
+           [^FileChannel channel
+            (FileChannel/open lock-path
+                              (into-array OpenOption
+                                          [StandardOpenOption/CREATE
+                                           StandardOpenOption/WRITE]))]
+           (let
+             [^FileLock lock
+              (.lock channel)]
+
+             (try
+               (apply-update!)
+               (finally (.release lock)))))
+         (catch Throwable t
+           (tel/log! {:level :debug
+                      :id ::machine-store-lock-unavailable
+                      :data {:path (str lock-path) :error (ex-message t)}}
+                     "Writing the machine store without a file lock")
+           (apply-update!)))))))
+
 (defn save-toggles!
   "Persist a `{id value}` feature-toggle snapshot into the MACHINE store, folding
    NOTHING else in.
@@ -1515,10 +1583,13 @@
    file silently stopped taking effect. Read the machine tier, replace one key,
    write it back. No-op (and false) when the block is already identical."
   [snapshot]
-  (let [raw (or (load-global-config-raw) {})]
-    (boolean (when (not= (get raw "toggles") snapshot)
-               (save-config! (assoc raw "toggles" snapshot) :toggles)
-               true))))
+  (boolean
+   (update-machine-config!
+    (fn [raw]
+      (when (not= (get raw "toggles") snapshot)
+        (assoc raw "toggles" snapshot)))
+    :toggles)))
+
 (defn remove-config-provider!
   "Remove every persisted provider entry for `provider-id` from the string-keyed
    machine config, preserving unrelated keys.
@@ -1529,60 +1600,61 @@
    silently resurrects the moment that provider is authenticated again."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
-   (let
-     [raw
-      (or (load-global-config-raw) {})
+   (boolean
+    (update-machine-config!
+     (fn [raw]
+       (let
+         [providers
+          (vec (get raw "providers"))
 
-      providers
-      (vec (get raw "providers"))
+          provider-id'
+          (if (keyword? provider-id) (name provider-id) (str provider-id))
 
-      provider-id'
-      (if (keyword? provider-id) (name provider-id) (str provider-id))
+          providers*
+          (vec (remove #(= provider-id' (get % "id")) providers))
 
-      providers*
-      (vec (remove #(= provider-id' (get % "id")) providers))
-
-      ;; `fallback_model` may carry the qualified `provider/model` form, which
-      ;; WINS over `fallback_provider` on the read path, so both spellings have
-      ;; to be consulted before deciding whose tag this is.
-      fallback-model
-      (some-> (get raw "fallback_model")
-              str
-              str/trim
-              not-empty)
-
-      provider-ids
-      (into #{}
-            (keep #(some-> (get % "id")
-                           str
-                           str/trim
-                           not-empty))
-            providers)
-
-      ;; A slash INSIDE a model id (`z-ai/glm-4.6v`) is not a provider tag: the
-      ;; prefix only tags a provider when the config actually has that provider.
-      tagged-provider
-      (or (when-let
-            [prefix (when (str/includes? (str fallback-model) "/")
-                      (not-empty (str/trim (first (str/split fallback-model #"/" 2)))))]
-            (when (contains? provider-ids prefix) prefix))
-          (some-> (get raw "fallback_provider")
+          ;; `fallback_model` may carry the qualified `provider/model` form, which
+          ;; WINS over `fallback_provider` on the read path, so both spellings have
+          ;; to be consulted before deciding whose tag this is.
+          fallback-model
+          (some-> (get raw "fallback_model")
                   str
                   str/trim
-                  not-empty))
+                  not-empty)
 
-      raw*
-      (cond-> raw
-        (seq providers*)
-        (assoc "providers" providers*)
+          provider-ids
+          (into #{}
+                (keep #(some-> (get % "id")
+                               str
+                               str/trim
+                               not-empty))
+                providers)
 
-        (empty? providers*)
-        (dissoc "providers")
+          ;; A slash INSIDE a model id (`z-ai/glm-4.6v`) is not a provider tag: the
+          ;; prefix only tags a provider when the config actually has that provider.
+          tagged-provider
+          (or (when-let
+                [prefix (when (str/includes? (str fallback-model) "/")
+                          (not-empty (str/trim (first (str/split fallback-model #"/" 2)))))]
+                (when (contains? provider-ids prefix) prefix))
+              (some-> (get raw "fallback_provider")
+                      str
+                      str/trim
+                      not-empty))
 
-        (= provider-id' tagged-provider)
-        (dissoc "fallback_provider" "fallback_model"))]
+          raw*
+          (cond-> raw
+            (seq providers*)
+            (assoc "providers" providers*)
 
-     (when (not= raw raw*) (save-config! raw* source) true))))
+            (empty? providers*)
+            (dissoc "providers")
+
+            (= provider-id' tagged-provider)
+            (dissoc "fallback_provider" "fallback_model"))]
+
+          (when (not= raw raw*) raw*)))
+     source))))
 
 (def no-provider-error-type
   "Wire `error.type` the gateway answers when a request failed because no AI
@@ -1941,6 +2013,16 @@
   "Resolved value for `name`, or nil when no source produced a non-blank one."
   [name]
   (:value (extension-env-status name)))
+
+(defn inline-environment-value
+  "Resolved value for ONE INLINE declaration — the same
+   `{env|dotenv|keychain|command}` map `environment:` takes, for a name nobody
+   declared in the config at all. This is how a per-CALL `env` delta names a
+   SOURCE instead of carrying a literal: the caller writes down where the value
+   comes from, this block's own funnel produces it, and the value itself never
+   enters the record of the call. nil when the named source produced nothing."
+  [name entry]
+  (:value (declared-env-status (str name) entry)))
 
 (defn declared-environment-values
   "`{\"NAME\" \"value\"}` for every `environment:` declaration that resolves, the

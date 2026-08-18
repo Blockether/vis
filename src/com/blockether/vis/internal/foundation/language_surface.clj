@@ -655,10 +655,15 @@
        "`connect` with `build` attaches to the `shadow-cljs watch` running under `cwd` — it publishes "
        "its own port, so `port` is optional — and SELECTS that build, so later `repl_eval` is "
        "ClojureScript in its JS runtime. It rides BESIDE the managed JVM REPL for the same `cwd`, each "
-       "under its own id (`nrepl:~/proj` and `nrepl:~/proj#app`); `stop` with `build` detaches only it.")
+       "under its own id (`nrepl:~/proj` and `nrepl:~/proj#app`); `stop` with `build` detaches only it. "
+       "`start` may carry its own `env` over the project's — a literal for a switch, a source map "
+       "({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}) for a secret, null to unset — and that env "
+       "BELONGS to the REPL: a `start` naming a different one is refused by the keys that differ, "
+       "since there is no restart. `repl_eval` never takes `env`: a live process' environment is its own.")
      :params [{:name "language"} {:name "op" :note "start | status | stop | connect"} {:name "cwd"}
               {:name "id" :note "which REPL a stop ends"} {:name "port"} {:name "host"}
-              {:name "build" :note "shadow-cljs build to attach + select (ClojureScript)"}]
+              {:name "build" :note "shadow-cljs build to attach + select (ClojureScript)"}
+              {:name "env" :note "start — THIS REPL's variables, over the project's"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))

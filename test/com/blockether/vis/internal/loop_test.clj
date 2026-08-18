@@ -2714,6 +2714,13 @@
           (expect (str/includes? b "LISTED_THE_TREE"))
           (expect (str/includes? b "no_such_call"))
           (expect (< (str/index-of b "LISTED_THE_TREE") (str/index-of b "no_such_call")))))
+    (it "an awaited host verb that failed keeps the output too — phase is irrelevant"
+        (let [b (body {:stdout "GREPPED_47_HITS"
+                       :error {:message "No lint-fn handler for language nonexistent-lang"
+                               :data {:phase :python/host}}})]
+          (expect (str/includes? b "GREPPED_47_HITS"))
+          (expect (str/includes? b "No lint-fn handler"))
+          (expect (< (str/index-of b "GREPPED_47_HITS") (str/index-of b "No lint-fn handler")))))
     (it "a failure that printed nothing answers with the error alone"
         (expect (str/includes? (body {:error {:message "ValueError: boom"}})
                                "✗ error: ValueError: boom")))))
@@ -6118,3 +6125,35 @@
             written (first @writes)]
         (expect (= 1 (count @writes)))
         (expect (= "upstream refused" (get (first (:content written)) "message"))))))
+
+
+;; Regression: `set-provider!` handed `save-config!` a map holding ONLY
+;; `:providers`, so persisting one provider replaced the whole machine store —
+;; toggles, the vision memory, the MCP servers and the selection tags were gone.
+(defdescribe set-provider-keeps-the-rest-of-the-store-test
+             "Persisting a provider is an update of the machine store, not a replacement."
+             (it "leaves every unrelated machine key in place"
+                 (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                                      "vis-set-provider"
+                                      (make-array java.nio.file.attribute.FileAttribute 0)))
+                       home (java.io.File. dir "home")
+                       store-dir (java.io.File. home ".vis")
+                       old-home (System/getProperty "user.home")]
+                   (try
+                     (.mkdirs store-dir)
+                     (spit (java.io.File. store-dir "state.yml")
+                           "toggles:\n  introspection: true\ndefault_provider: keep-me\n")
+                     (System/setProperty "user.home" (.getPath home))
+                     (config/invalidate-config-cache!)
+                     (with-redefs-fn {#'lp/rebuild-router! (fn [_] :router)
+                                      #'lp/refresh-cached-routers! (fn [_] nil)
+                                      #'config/current-config (fn [] {:providers []})}
+                       (fn []
+                         (lp/set-provider! {:id :probe :api-key "k" :models [{:name "m"}]})))
+                     (let [store (config/load-global-config-raw)]
+                       (expect (= {"introspection" true} (get store "toggles")))
+                       (expect (= "keep-me" (get store "default_provider")))
+                       (expect (= ["probe"] (mapv #(get % "id") (get store "providers")))))
+                     (finally
+                       (System/setProperty "user.home" old-home)
+                       (config/invalidate-config-cache!))))))

@@ -1037,48 +1037,69 @@
      (first (resolve-model-ref (:default-model cfg) (:default-provider cfg) fleet))]
 
     (when-not (some #(= tagged (:id %)) fleet)
-      (let
-        [{:keys [provider-id model]}
-         (resolve-default-selection cfg fleet)
+      (when
+        (config/update-machine-config!
+          (fn [raw]
+            (let
+              [{:keys [provider-id model]}
+               (resolve-default-selection cfg fleet)
 
-         {provider-key :provider model-key :model}
-         (:primary selection-keys)
+               {provider-key :provider model-key :model}
+               (:primary selection-keys)
 
-         raw
-         (or (config/load-global-config-raw) {})
+               raw*
+               (if (and provider-id model)
+                 (assoc raw
+                   provider-key (name provider-id)
+                   model-key model)
+                 (apply dissoc raw (vals (:primary selection-keys))))]
 
-         raw*
-         (if (and provider-id model)
-           (assoc raw
-             provider-key (name provider-id)
-             model-key model)
-           (apply dissoc raw (vals (:primary selection-keys))))]
+              (when (not= raw raw*) raw*)))
+          source)
 
-        (when (not= raw raw*)
-          (config/save-config! raw* source)
-          (try (config/reload-config!) (catch Throwable _ nil))
-          true)))))
+        (try (config/reload-config!) (catch Throwable _ nil))
+        true))))
+
+(defn update-providers!
+  "Read-modify-write the persisted provider fleet under the machine-store lock:
+   `f` receives the CURRENT provider vector and answers the next one.
+
+   The read has to happen inside the lock. Reading the fleet, adding one provider
+   and writing the whole vector back is a lost update the moment a second session
+   (or the gateway's own toggle writer) does the same: both saw the same fleet and
+   the last write silently dropped the other's provider."
+  ([f] (update-providers! f nil))
+  ([f source]
+   (let
+     [written
+      (volatile! nil)]
+
+     (config/update-machine-config!
+       (fn [raw]
+         (let
+           [current
+            (vec (:providers (config/runtime-config raw)))
+
+            providers*
+            (mapv persisted-provider-config (vec (f current)))]
+
+           (vreset! written providers*)
+           (if (seq providers*)
+             (assoc raw "providers" providers*)
+             (dissoc raw "providers"))))
+       source)
+
+     (try (config/reload-config!) (catch Throwable _ nil))
+     (invalidate-configured-providers!)
+     (ensure-default-selection! source)
+     (rebuild-shared-router!)
+     @written)))
 
 (defn save-providers!
   "Replace the provider vector in the global string-keyed config while preserving
    unrelated keys, then refresh runtime provider state."
   ([providers] (save-providers! providers nil))
-  ([providers source]
-   (let
-     [raw
-      (or (config/load-global-config-raw) {})
-
-      providers*
-      (mapv persisted-provider-config providers)]
-
-     (config/save-config!
-       (if (seq providers*) (assoc raw "providers" providers*) (dissoc raw "providers"))
-       source)
-     (try (config/reload-config!) (catch Throwable _ nil))
-     (invalidate-configured-providers!)
-     (ensure-default-selection! source)
-     (rebuild-shared-router!)
-     providers*)))
+  ([providers source] (update-providers! (constantly providers) source)))
 
 (defn- raw-tagged-provider
   "The provider a RAW config's `<role>_provider`/`<role>_model` pair names, as a
@@ -1155,51 +1176,49 @@
     (when-let [{:keys [reason env-vars]} (config/provider-credential-gap selected)]
       (throw (ex-info reason
                       {:type :vis/provider-env-unset :provider provider-id* :env-vars env-vars})))
-    (let
-      [raw
-       (or (config/load-global-config-raw) {})
+    (config/update-machine-config!
+      (fn [raw]
+        (let
+          [current
+           (vec (:providers (config/runtime-config raw)))
 
-       current
-       (vec (:providers (config/runtime-config raw)))
+           existing
+           (some #(when (= provider-id* (:id %)) %) current)
 
-       existing
-       (some #(when (= provider-id* (:id %)) %) current)
+           ;; A model picked from the LIVE catalog is written into the provider's
+           ;; persisted models: `default-selection` resolves `default_model` against
+           ;; that catalog only, so an unlisted name would silently revert to the
+           ;; provider's first model on the very next read.
+           catalog
+           (let [models (vec (:models selected))]
+             (if (some #(= model* (config/model-name %)) models) models (conj models {:name model*})))
 
-       ;; A model picked from the LIVE catalog is written into the provider's
-       ;; persisted models: `default-selection` resolves `default_model` against
-       ;; that catalog only, so an unlisted name would silently revert to the
-       ;; provider's first model on the very next read.
-       catalog
-       (let [models (vec (:models selected))]
-         (if (some #(= model* (config/model-name %)) models) models (conj models {:name model*})))
+           selected-config
+           (merge selected existing {:models catalog})
 
-       selected-config
-       (merge selected existing {:models catalog})
+           providers*
+           (if existing
+             (mapv #(if (= provider-id* (:id %)) selected-config %) current)
+             (conj current selected-config))
 
-       providers*
-       (if existing
-         (mapv #(if (= provider-id* (:id %)) selected-config %) current)
-         (conj current selected-config))
+           raw*
+           (assoc raw
+             "providers" (mapv persisted-provider-config providers*)
+             provider-key (name provider-id*)
+             model-key model*)
 
-       raw*
-       (assoc raw
-         "providers" (mapv persisted-provider-config providers*)
-         provider-key (name provider-id*)
-         model-key model*)
+           raw*
+           (if (and (= role :primary)
+                    (= provider-id* (raw-tagged-provider raw* (:fallback selection-keys) fleet)))
+             (apply dissoc raw* (vals (:fallback selection-keys)))
+              raw*)]
 
-       raw*
-       (if (and (= role :primary)
-                (= provider-id* (raw-tagged-provider raw* (:fallback selection-keys) fleet)))
-         (apply dissoc raw* (vals (:fallback selection-keys)))
-         raw*)
+          raw*))
+      source)
 
-       selection
-       {:provider-id provider-id* :model model*}]
-
-      (config/save-config! raw* source)
-      (try (config/reload-config!) (catch Throwable _ nil))
-      (rebuild-shared-router!)
-      selection)))
+    (try (config/reload-config!) (catch Throwable _ nil))
+    (rebuild-shared-router!)
+    {:provider-id provider-id* :model model*}))
 
 (defn save-default-selection!
   "Persist exactly one PRIMARY provider/model pair — the router root every turn
@@ -1222,26 +1241,29 @@
    primary."
   ([] (clear-fallback-selection! nil))
   ([source]
-   (let [raw (or (config/load-global-config-raw) {})]
-     (config/save-config! (apply dissoc raw (vals (:fallback selection-keys))) source)
-     (try (config/reload-config!) (catch Throwable _ nil))
-     (rebuild-shared-router!)
-     nil)))
+   (config/update-machine-config!
+     (fn [raw] (apply dissoc raw (vals (:fallback selection-keys))))
+     source)
+   (try (config/reload-config!) (catch Throwable _ nil))
+   (rebuild-shared-router!)
+   nil))
 
 (defn add-config-provider!
   "Append a provider config to the persisted fleet (no-op when its id exists)."
   ([provider-cfg] (add-config-provider! provider-cfg nil))
   ([provider-cfg source]
-   (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
-     (when-not (some #(= (:id provider-cfg) (:id %)) current)
-       (save-providers! (conj current provider-cfg) source)))))
+   (update-providers!
+     (fn [current]
+       (if (some #(= (:id provider-cfg) (:id %)) current)
+         current
+         (conj current provider-cfg)))
+     source)))
 
 (defn update-config-provider!
   "Apply `f` to one persisted provider and save the resulting fleet."
   ([provider-id f] (update-config-provider! provider-id f nil))
   ([provider-id f source]
-   (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
-     (save-providers! (mapv #(if (= provider-id (:id %)) (f %) %) current) source))))
+   (update-providers! (fn [current] (mapv #(if (= provider-id (:id %)) (f %) %) current)) source)))
 
 (defn save-provider-api-key!
   "Persist `api-key` for `provider-id` in THIS process' config — the headless
@@ -1250,21 +1272,22 @@
    provider from its preset when the fleet does not carry it yet."
   ([provider-id api-key] (save-provider-api-key! provider-id api-key nil))
   ([provider-id api-key source]
-   (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
-     (if (some #(= provider-id (:id %)) current)
-       (update-config-provider! provider-id #(assoc % :api-key api-key) source)
-       (let
-         [tmpl (config/provider-template provider-id)
-          models (default-model-configs tmpl)]
+   (update-providers!
+     (fn [current]
+       (if (some #(= provider-id (:id %)) current)
+         (mapv #(if (= provider-id (:id %)) (assoc % :api-key api-key) %) current)
+         (let
+           [tmpl (config/provider-template provider-id)
+            models (default-model-configs tmpl)]
 
-         (save-providers! (conj current
-                                (cond-> {:id provider-id :api-key api-key}
-                                  (seq models)
-                                  (assoc :models models)
+           (conj current
+                 (cond-> {:id provider-id :api-key api-key}
+                   (seq models)
+                   (assoc :models models)
 
-                                  (:base-url tmpl)
-                                  (assoc :base-url (:base-url tmpl))))
-                          source))))))
+                   (:base-url tmpl)
+                   (assoc :base-url (:base-url tmpl)))))))
+     source)))
 
 (defn clear-provider-api-key!
   "Forget `provider-id`'s stored API key while KEEPING its config entry.
@@ -1275,15 +1298,19 @@
   ([provider-id] (clear-provider-api-key! provider-id nil))
   ([provider-id source]
    (let
-     [current
-      (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))
+     [cleared
+      (volatile! false)]
 
-      entry
-      (some #(when (= provider-id (:id %)) %) current)]
+     (update-providers!
+       (fn [current]
+         (mapv (fn [entry]
+                 (if (and (= provider-id (:id entry)) (some? (:api-key entry)))
+                   (do (vreset! cleared true) (dissoc entry :api-key))
+                   entry))
+               current))
+       source)
 
-     (boolean (when (some? (:api-key entry))
-                (update-config-provider! provider-id #(dissoc % :api-key) source)
-                true)))))
+     @cleared)))
 
 (defn remove-provider!
   "Remove a provider from the persisted fleet AND run the registered

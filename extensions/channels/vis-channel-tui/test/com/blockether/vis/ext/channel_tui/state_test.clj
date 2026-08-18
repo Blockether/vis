@@ -665,6 +665,9 @@
               vis/save-config!
               (fn [_])
 
+              vis/update-machine-config!
+              (fn [& _])
+
               vis/get-router
               (constantly :router)
 
@@ -701,6 +704,7 @@
                [vis/load-config-raw (fn []
                                       {})
                 vis/save-config! (fn [_])
+                vis/update-machine-config! (fn [& _])
                 vis/get-router (constantly :router)
                 vis/resolve-effective-model
                 (fn [_]
@@ -722,6 +726,9 @@
 
               vis/save-config!
               (fn [_])
+
+              vis/update-machine-config!
+              (fn [& _])
 
               vis/get-router
               (constantly :router)
@@ -785,6 +792,9 @@
 
          vis/save-config!
          (fn [_])
+
+         vis/update-machine-config!
+         (fn [& _])
 
          vis/get-router
          (constantly :router)

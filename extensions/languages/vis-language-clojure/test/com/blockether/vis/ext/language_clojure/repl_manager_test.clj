@@ -1097,3 +1097,54 @@
           (expect (= "cljs.user" (get-in res [:result "ns"])))
           (expect (= "app" (get-in res [:result "build"])))
           (expect (= "nrepl:/p#app" (get-in res [:result "repl"])))))))
+
+;; A REPL IS its environment. `start!` REUSES a live one for the same
+;; `[session-id dir]`, so a start naming a different `env` would answer
+;; "already-running" for a process that never saw the variables it asked for —
+;; and there is no restart op to fall back on.
+(def ^:private manager-processes @#'rm/processes)
+
+(def ^:private env-difference @#'rm/env-difference)
+
+(defn- refusal-message
+  "The message `thunk` throws, or nil when it returns — a refusal is only useful
+   if it NAMES what differs."
+  [thunk]
+  (try (thunk) nil (catch Throwable e (.getMessage e))))
+
+(defdescribe
+  repl-env-identity-test
+  (it "names the variables whose value differs and nothing else"
+      (expect (= ["ONLY_NEW" "OVER"]
+                 (env-difference {"KEEP" "aaaaaa" "OVER" "bbbbbb"}
+                                 {"KEEP" "aaaaaa" "OVER" "cccccc" "ONLY_NEW" "dddddd"})))
+      (expect (empty? (env-difference {"KEEP" "aaaaaa"} {"KEEP" "aaaaaa"})))
+      (expect (empty? (env-difference nil nil))))
+  (it "reuses a live REPL started with the SAME env and refuses a different one BY NAME"
+      (let
+        [dir (tmp-dir)
+         ;; A real, alive child: `proc-alive?` asks the Process itself.
+         proc (.start (ProcessBuilder. ["sleep" "30"]))]
+
+        (try
+          (swap! manager-processes assoc
+                 ["sess-env" dir]
+                 {:id "nrepl:sess-env"
+                  :process proc
+                  :port 65001
+                  :env-fingerprint (process-jail/env-fingerprint
+                                     (process-jail/call-env-values {"NODE_ENV" "test"}))})
+          (let
+            [same (rm/start! "sess-env" dir {:env {"NODE_ENV" "test"}})]
+
+            (expect (= "already-running" (get same "result")))
+            ;; The status carries the SHAPE of that env: names and digests, so a
+            ;; refusal can be understood without a value ever being printed.
+            (expect (= ["NODE_ENV"] (keys (get same "env"))))
+            (expect (not (str/includes? (pr-str (get same "env")) "test"))))
+          (expect (str/includes? (str (refusal-message #(rm/start! "sess-env" dir
+                                                                  {:env {"NODE_ENV" "dev"}})))
+                                 "NODE_ENV"))
+          (finally
+            (.destroy proc)
+            (swap! manager-processes dissoc ["sess-env" dir]))))))
