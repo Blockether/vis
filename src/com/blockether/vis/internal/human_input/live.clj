@@ -815,9 +815,10 @@
                [line type]))
         empty-line))
 
-(defn- slug
-  "The address a label earns when the picture never painted one: lower case, one
-   dash for every run of anything else."
+(defn slug
+  "The address a label earns when nobody wrote one: lower case, one dash for every
+   run of anything else, nil when nothing legible is left. What [[addressed]] gives
+   a picture's items, and what a settled view is filed under."
   [text]
   (let
     [id (-> (str text)

@@ -121,6 +121,19 @@ export function attachmentIsDoc(attachment: IterationAttachment): boolean {
   );
 }
 
+/**
+ * The settled record of a live view — a run that SHOWED its work, sealed under
+ * the media type the engine files it with. It is not a file the app can only
+ * name: the picture the run ended on is in it, and its log is still readable a
+ * page at a time from the gateway.
+ */
+export const LIVE_ARTIFACT_MEDIA = "application/vnd.vis.live+json";
+
+export function attachmentIsLive(
+  attachment: Partial<IterationAttachment>,
+): boolean {
+  return baseMedia(attachment.media_type) === LIVE_ARTIFACT_MEDIA;
+}
 // A still and a clip belong to the SAME rail: both are something the user asked
 // to SEE, so both paint where they were made. Everything else is a recorded file.
 export function attachmentIsPlayable(attachment: IterationAttachment): boolean {
@@ -136,15 +149,17 @@ export function attachmentBytes(bytes?: number): string {
 }
 
 /**
- * The four things an artifact can BE, in the order of how much the app can do
- * with one: a picture it can zoom and draw on, a clip it can play, a document it
- * can read in a sandboxed frame, and a file it can only name.
+ * The five things an artifact can BE, in the order of how much the app can do
+ * with one: a picture it can zoom and draw on, a clip it can play, a settled live
+ * view it can re-open and page the log of, a document it can read in a sandboxed
+ * frame, and a file it can only name.
  */
-export type ArtifactKind = "image" | "video" | "doc" | "file";
+export type ArtifactKind = "image" | "video" | "live" | "doc" | "file";
 
 export function artifactKind(attachment: IterationAttachment): ArtifactKind {
   if (attachmentIsImage(attachment)) return "image";
   if (attachmentIsVideo(attachment)) return "video";
+  if (attachmentIsLive(attachment)) return "live";
   if (attachmentIsDoc(attachment)) return "doc";
   return "file";
 }
@@ -157,6 +172,7 @@ export function artifactKind(attachment: IterationAttachment): ArtifactKind {
  * at all.
  */
 export function artifactMedia(attachment: Partial<IterationAttachment>): string {
+  if (attachmentIsLive(attachment)) return "RUN";
   const extension = (attachment.filename ?? "").split(".").pop() ?? "";
   if (extension && /^[a-z0-9]{1,5}$/i.test(extension))
     return extension.toUpperCase();
@@ -391,8 +407,9 @@ export function withSavedAttachment(
  * sheet loudly instead of only from one chip.
  */
 export const ARTIFACT_FILTERS: { label: string; kinds: ArtifactKind[] }[] = [
-  { label: "All", kinds: ["image", "video", "doc", "file"] },
+  { label: "All", kinds: ["image", "video", "live", "doc", "file"] },
   { label: "Pictures", kinds: ["image", "video"] },
+  { label: "Runs", kinds: ["live"] },
   { label: "Documents", kinds: ["doc"] },
   { label: "Files", kinds: ["file"] },
 ];

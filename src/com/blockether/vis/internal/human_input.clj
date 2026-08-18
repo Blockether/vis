@@ -39,6 +39,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.human-input.live-sink :as live-sink]
@@ -1746,6 +1747,62 @@
       (fail! why)
       result)))
 
+(defn- live-attachment
+  "The settled view as ONE row of `db-store-iteration!`'s `:attachments` — the only
+   shape the engine stores an artifact in. It IS the artifact, given the two keys a
+   row is filed under (`:kind`, `:filename`) and stripped of `:view`: the final
+   picture is the VERDICT's, handed to the model as data on the close, and a row is
+   a row. Everything a gallery needs to list one — which view it was, how it ended,
+   how much record there is and where — travels with it."
+  [artifact]
+  (-> artifact
+      (dissoc :view)
+      (assoc :kind "file"
+             :filename (str (or (live/slug (:title artifact)) "live-view") ".live.json"))))
+
+(defn- live-artifact
+  "The closed view as an ARTIFACT the human can reopen: what they watched,
+   ADDRESSED rather than copied.
+
+   Nothing here reads the log. The record has been the store of truth since
+   `open`, so the artifact points at that file (`:storage-uri`) and states how much
+   of it there is; only a view small enough to survive a session sync
+   (`hi-spec/live-artifact-inline-bytes`) also travels as bytes, because holding a
+   build log in memory as base64 is the cost this whole design removes. `:view` is
+   the final materialized state — the summary a surface opens instantly, and the
+   very state `live/->markdown` re-renders the model's document from.
+
+   `:size` and `:line-count` count the RUN — the declared view and every accepted
+   patch — because the trailer that seals the record states the verdict, and the
+   verdict is already `:reason` and `:view` here."
+  [view result ^java.io.File file]
+  (let
+    [{:keys [size line-count]}
+     (live-sink/stats file)
+
+     artifact
+     (cond->
+       {:id (str (java.util.UUID/randomUUID))
+        :view-id (:view-id result)
+        :session-id (:session-id view)
+        :title (:title view)
+        :media-type hi-spec/live-artifact-media-type
+        :audience "user"
+        :ended-at (System/currentTimeMillis)
+        :reason (:reason result)
+        :view (:view result)
+        :storage-uri (str "file://" (.getAbsolutePath file))
+        :size size
+        :line-count line-count}
+       (<= (long size) (long hi-spec/live-artifact-inline-bytes))
+       (assoc :base64
+         (.encodeToString (java.util.Base64/getEncoder)
+                          (java.nio.file.Files/readAllBytes (.toPath file)))))]
+
+    (if-let [why (hi-spec/live-artifact-error artifact)]
+      (invalid-live-view! why)
+      artifact)))
+
 (defn close-live!
   "End live view `view-id` and return its verdict — the ONE thing the model
    reads. nil when the view was already closed, so a `finally` closing what an
@@ -1754,7 +1811,15 @@
    `ending` says how it ended: `:reason` (`completed` by default), `:summary`,
    `:error`, `:artifact-id`. `human` is the person who stopped it — `{:note …}`,
    which only [[interrupt-live!]] passes, because a run does not get to claim a
-   human ended it."
+   human ended it.
+
+   The close SETTLES the view: the record it has been writing since `open` becomes
+   an artifact this session owns, and its id rides back in the verdict — so the
+   human can reopen the log after the pane is gone instead of it being dumped into
+   the transcript. A close reached from somewhere that holds no artifacts (a
+   human's stop arriving on a gateway thread, a unit test) still ends the view and
+   still writes the record; the verdict then simply names no artifact, and every
+   surface still reaches the log by view id."
   ([view-id] (close-live! view-id {} nil))
   ([view-id ending] (close-live! view-id ending nil))
   ([view-id ending human]
@@ -1764,28 +1829,45 @@
      (let [cell (:view entry)]
        (locking cell
          (let
-           [result (live-result @cell ending human invalid-live-view!)
+           [verdict (live-result @cell ending human invalid-live-view!)
+            ;; Built BEFORE the registry drops the view, so a refusal leaves the
+            ;; view open and nameable rather than stranding whoever is holding it;
+            ;; REGISTERED after, inside the branch that won the close, so a second
+            ;; close files no second artifact.
+            artifact (live-artifact @cell verdict (:file entry))
             [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
-             (live-sink/close! (:file entry) result)
-             (deliver (:promise entry) result)
-             ;; `:session-id` rides on every live event for the same reason it
-             ;; rides on a form's close: by the time this one is published the
-             ;; entry is out of the registry, and a listener that has to route
-             ;; the ending to a session can no longer look it up.
-             (publish! (:channel-ids entry)
-                       {:op :human-input/live-close
-                        :view-id view-id
-                        :session-id (:session-id entry)
-                        :result result})
-             (tel/log! {:level :debug
-                        :id ::live-closed
-                        :data {:view-id view-id
-                               :reason (:reason result)
-                               :is-from-human (:is-from-human result)}
-                        :msg "Live view closed"})
-             result)))))))
+             (let
+               [artifact-id (when (mpl-capture/record-attachment! (live-attachment artifact))
+                              (:id artifact))
+                result (cond-> verdict
+                         artifact-id
+                         (assoc :artifact-id artifact-id))]
+
+               ;; The trailer carries the SAME verdict that is delivered and
+               ;; published, artifact and all: `live-ended` reads the record for a
+               ;; view the human interrupted, and it must not learn less than the
+               ;; thread that was holding it.
+               (live-sink/close! (:file entry) result)
+               (deliver (:promise entry) result)
+               ;; `:session-id` rides on every live event for the same reason it
+               ;; rides on a form's close: by the time this one is published the
+               ;; entry is out of the registry, and a listener that has to route
+               ;; the ending to a session can no longer look it up.
+               (publish! (:channel-ids entry)
+                         {:op :human-input/live-close
+                          :view-id view-id
+                          :session-id (:session-id entry)
+                          :result result})
+               (tel/log! {:level :debug
+                          :id ::live-closed
+                          :data {:view-id view-id
+                                 :reason (:reason result)
+                                 :is-from-human (:is-from-human result)
+                                 :artifact-id artifact-id}
+                          :msg "Live view closed"})
+               result))))))))
 
 (defn interrupt-live!
   "End live view `view-id` because a human stopped watching — Escape in the

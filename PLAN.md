@@ -766,7 +766,7 @@ payload (assumed yes) or its own view.
 
 ## State of the plan
 
-**IN FLIGHT** — Phases 1-4 are DONE and green; Phases 5 and 6 are written and not yet started.
+**IN FLIGHT** — Phases 1-5 are DONE and green; Phase 6 is written and not yet started.
 
 Done:
 
@@ -838,6 +838,25 @@ Done:
   `human_input_cross_channel_test.clj` fails a Clojure test the day the TypeScript vocabulary drifts
   from `hi-spec`. 1491 app tests over 134 files with `npm run lint` and `npm run build` clean, 386 green
   across the engine, gateway and TUI suites.
+- Phase 5 COMPLETE — a finished view SETTLES into an artifact instead of vanishing. `close-live!`
+  builds the artifact BEFORE it retires the view, so what it addresses is the record the run itself
+  wrote: `hi-spec/live-artifact-media-type` (`application/vnd.vis.live+json`), `:storage-uri`
+  pointing at the sink's NDJSON, `:size` / `:line-count` from one streamed pass
+  (`live-sink/stats`), the materialized `:view` as the summary a surface opens instantly, and bytes
+  ONLY under `hi-spec/live-artifact-inline-bytes` (256 KiB) — holding a build log in memory as
+  base64 is the cost this design removes. The verdict gains `:artifact-id`, that same verdict seals
+  the record as its trailer, and the close event carries the result, so every surface settles from
+  ONE frame. The TUI collapses a settled pane to one line — tone glyph, title, reason, the record's
+  line count, elapsed FROZEN at the end — that clicks back open, keeps only the newest settled pane
+  beside the open ones, and stops offering to interrupt what has already ended. The app sorts the
+  row by MEDIA TYPE into a new `live` artifact kind with its own filter and plate (`RUN`, never
+  `LIVE`: a finished run is not a live one), and `LiveArtifact.tsx` folds the record back into a
+  picture — the TRAILER's own view wins over any replay of it, a record past 1 MB is read at its
+  two ENDS and never in the middle, and the log is still paged from
+  `…/human-input/live/:view-id/log/:node-id`, which reads the FILE and therefore answers for a view
+  that has already closed. 151 green in `human_input_test.clj`, 15 in the TUI's `live_view_test.clj`
+  (with a PNG gate on the settled pane), 1526 app tests over 135 files, `npm run lint` and
+  `npm run build` clean.
 - The stop became a CONVERSATION, and `:is-cancellable` left the live vocabulary entirely. A question
   may be mandatory; a view asks nothing, so nothing may refuse to stop one. Escape in the terminal and
   Interrupt on the phone both ARM the stop and open one line for a comment — Escape or Enter ends the
@@ -886,6 +905,5 @@ Done:
 
 TODO, in order:
 
-1. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
-2. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
+1. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
    proof of the chain.

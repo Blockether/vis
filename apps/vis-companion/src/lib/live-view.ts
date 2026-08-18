@@ -801,6 +801,68 @@ export function staleLiveViews(views: LiveView[]): LiveView[] {
 }
 
 /**
+ * The RECORD of one settled view, folded back into the picture it ended on.
+ *
+ * A view LEAVES the screen when it closes, and what outlives it is the NDJSON the
+ * engine appended while it ran (`human-input.live-sink`): the declared view, one
+ * line per ACCEPTED patch, and the verdict that sealed it. Folding those lines
+ * here is the same reduction `applyLiveViewEvent` runs over the stream, run over a
+ * file instead — which is what lets an artifact opened months later paint the run
+ * without the gateway ever having held a frame of it.
+ *
+ * The trailer's own picture WINS when it carries one: that is the state the model
+ * was handed on the close, so the app shows exactly it rather than its own replay.
+ * An unreadable line ENDS the fold instead of voiding it — a run killed mid-write
+ * still shows everything it managed to record.
+ */
+export interface LiveRecord {
+  view: LiveView;
+  /** How it ended, in the engine's own word — `completed`, `interrupted`, `failed`. */
+  reason?: string;
+  /** Whether it reached its own end rather than being stopped or failing. */
+  is_completed?: boolean;
+  /** The comment the human left with a stop, when they left one. */
+  note?: string;
+  /** When the record was sealed, epoch ms. */
+  ended_at?: number;
+}
+
+/** The NDJSON record of one view, or `null` when not one line of it is paintable. */
+export function liveRecordFromText(source: string): LiveRecord | null {
+  let view: LiveView | null = null;
+  let sealed: Omit<LiveRecord, 'view'> = {};
+  for (const line of source.split('\n')) {
+    if (line.trim() === '') continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      break;
+    }
+    const frame = record(parsed);
+    if (!frame) break;
+    const kind = text(frame.kind);
+    if (kind === 'open') {
+      view = liveViewFromWire(frame.view) ?? view;
+    } else if (kind === 'patch' && view) {
+      view = applyLivePatch(view, frame);
+    } else if (kind === 'close') {
+      const result = record(frame.result);
+      if (!result) continue;
+      // The verdict states the reason; `is_completed` is the engine's own answer
+      // to "did it finish", and a stop carries the note the human typed into it.
+      view = liveViewFromWire(result.view) ?? view;
+      sealed = {
+        reason: optionalText(result.reason),
+        is_completed: result.is_completed === true,
+        note: optionalText(result.note),
+        ended_at: optionalNumber(frame.at),
+      };
+    }
+  }
+  return view ? { view, ...sealed } : null;
+}
+/**
  * How far a progress has come, as a fraction of one (`live/fraction`): its
  * declared `value`, or what `done` of `total` works out to. `null` is
  * INDETERMINATE — started, size unknown — which is the honest picture while a

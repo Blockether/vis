@@ -6,6 +6,7 @@
    engine, so a test can only paint shapes an extension can really produce."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
+            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.columns :as columns]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.live-view :as lv]
@@ -495,8 +496,11 @@
                     (engine/normalize-patch view [{:op :set :node-id "now" :text "Done"}])])
                  (is (= "Done" (:text (first (:nodes (:view (first (:live-views @state/app-db)))))))
                      "the ENGINE advanced the view; the terminal never interprets a patch itself")
-                 (state/dispatch [:live-view-close "view-1"])
-                 (is (empty? (:live-views @state/app-db)))))))
+                 (state/dispatch [:live-view-close "view-1" {:reason :completed}])
+                 (is (lv/settled? (first (:live-views @state/app-db)))
+                     "the close ends the view and leaves the line that reopens it")
+                 (is (lv/dormant? (first (:live-views @state/app-db)))
+                     "collapsed until the human presses it: the band's rows go back to the transcript")))))
   (testing "one view mounted twice keeps the pane the human is scrolling"
     (with-db (fn []
                (let [view (assoc (ci-view :rows 20) :session-id "s1")]
@@ -838,3 +842,102 @@
                                    (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-group.png"))
       (is (pos? (long (cap/ink png))) "the split band really painted"))))
+
+;;; ── A finished view: one line, and the door back ─────────────────────────────
+
+(defn- ended
+  "The pane a close leaves behind, stamped a minute after the view opened — the
+   engine's own verdict shape, so nothing here paints a state a run cannot end in."
+  ([p] (ended p {}))
+  ([p result]
+   (lv/settled p (merge {:reason :completed} result) (+ (long (:created-at (:view p))) 60000))))
+
+(defn- regions-of
+  "Every click region ONE paint of `panes` published — how a test reads what the
+   human can press, through the same registry the mouse is answered from."
+  [panes]
+  (cr/reset!)
+  (cr/begin-frame!)
+  (paint-frames panes)
+  (cr/commit-frame!)
+  (cr/current))
+
+;; Phase 5 of the live-view plan: a view used to vanish the moment it ended, so
+;; the log the human had been watching became unreachable one frame after it
+;; finished — and the only way back would have been dumping it into the transcript.
+(deftest live-view-settled-test
+  (testing "a finished view collapses to ONE line: how it ended, what it left, how long it took"
+    (let [p (ended (patched (pane) {:op :append :node-id "tail" :lines ["one" "two" "three"]}))
+
+          text (painted-text [p])]
+      (is (str/includes? text "✓") "the tone is said without colour, for a terminal that has none")
+      (is (str/includes? text "completed"))
+      (is (str/includes? text "5 lines") "the record it left, not the window it painted")
+      (is (str/includes? text "1m 0s") "and how long the run took, frozen at the close")
+      (is (not (str/includes? text "Ran 314 tests"))
+          "the band gave its BODY back to the transcript the moment the view ended")
+      (is (zero? (long (:total (:geometry (paint-frames [p])))))
+          "a settled view plans no rows at all")))
+  (testing "pressing that line reads the record back, and pressing it again puts it away"
+    (let [p (ended (pane))
+
+          open (lv/reopened p)]
+      (is (str/includes? (painted-text [open]) "Ran 314 tests") "read-only, but all of it")
+      (is (not (str/includes? (painted-text [(lv/reopened open)]) "Ran 314 tests"))
+          "the same press closes it")
+      (is (lv/settled? open) "reopening does not un-end the view")))
+  (testing "the whole line is the control, registered where the mouse is answered"
+    (let [hits (filterv #(= :live-reopen (:kind %)) (regions-of [(ended (pane :id "done-1"))]))
+
+          bounds (:bounds (first hits))]
+      (is (= 1 (count hits)))
+      (is (= "done-1" (:view-id (first hits))) "it names the view it reopens, not the pane in front")
+      (is (< 1 (long (:width bounds))) "a one-line control is pressed anywhere on the line")
+      (is (= :live-reopen (:kind (cr/lookup (:col bounds) (:row bounds)))))))
+  (testing "an open view still paints in front of a settled one, and Escape still hits IT"
+    (let [running (pane :id "running-1")
+
+          done (ended (pane :id "done-1"))
+
+          text (painted-text [done running])]
+      (is (str/includes? text "Ran 314 tests") "the open view keeps the body")
+      (is (str/includes? text "completed") "the settled one keeps its line above it")
+      (is (= "running-1" (lv/view-id (lv/interruptible [done running])))
+          "a stop can only reach work that is still running")
+      (is (nil? (lv/interruptible [done]))
+          "and with nothing running there is nothing left to interrupt")))
+  (testing "the ops the channel carries: a close settles the pane, it does not drop it"
+    (with-db (fn []
+               (let [view (assoc (ci-view) :session-id "s1")]
+                 (state/dispatch [:live-view-open view])
+                 (state/dispatch [:live-view-close "view-1" {:reason :interrupted :artifact-id "art-1"}])
+                 (let [p (first (:live-views @state/app-db))]
+                   (is (lv/settled? p))
+                   (is (= :interrupted (:reason (:settled p))))
+                   (is (= "art-1" (:artifact-id (:settled p)))
+                       "the pane knows the artifact it was filed as"))
+                 (state/dispatch [:live-view-reopen "view-1"])
+                 (is (not (lv/dormant? (first (:live-views @state/app-db)))))
+                 (state/dispatch [:live-view-reopen "view-1"])
+                 (is (lv/dormant? (first (:live-views @state/app-db))))))))
+  (testing "settling a second view retires the first, so the band cannot grow without bound"
+    (with-db (fn []
+               (state/dispatch [:live-view-open (assoc (ci-view :id "a") :session-id "s1")])
+               (state/dispatch [:live-view-open (assoc (ci-view :id "b") :session-id "s1")])
+               (state/dispatch [:live-view-close "a" {:reason :completed}])
+               (state/dispatch [:live-view-close "b" {:reason :failed}])
+               (is (= ["b"] (mapv lv/view-id (:live-views @state/app-db)))
+                   "the run they were watching a moment ago; every older one is the artifact"))))
+  ;; The proof a person can LOOK at: a finished run collapsed onto the band, and
+  ;; the still-running one painting in full above it.
+  (testing "a real PNG of a settled line under an open view"
+    (let [png (cap/shot! {:cols 96
+                          :rows 24
+                          :font-size 14
+                          :out "vis-live-view-settled"
+                          :paint! (fn [{:keys [screen]}]
+                                    (let [g (.newTextGraphics ^TerminalScreen screen)]
+                                      (lv/paint! g 96 24 [(ended (pane :id "done-1")) (pane :id "running-1")] 1 3)
+                                      (.refresh ^TerminalScreen screen)))})]
+      (is (str/ends-with? png "vis-live-view-settled.png"))
+      (is (pos? (long (cap/ink png))) "the collapsed line really painted"))))

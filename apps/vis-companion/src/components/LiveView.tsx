@@ -398,6 +398,7 @@ export function LiveViewPanel({
   isInterrupting = false,
   error,
   load,
+  isSettled = false,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -405,6 +406,12 @@ export function LiveViewPanel({
   isInterrupting?: boolean;
   error?: string | null;
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
+  /**
+   * The run is OVER and this is its record. Nothing spins, and the section stops
+   * being a live region: a picture that cannot change again must not announce
+   * itself to a screen reader as one that can.
+   */
+  isSettled?: boolean;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -422,11 +429,11 @@ export function LiveViewPanel({
   return (
     <section
       className="overflow-hidden border border-dialog-edge bg-panel"
-      role="status"
-      aria-live="polite"
+      role={isSettled ? undefined : 'status'}
+      aria-live={isSettled ? undefined : 'polite'}
     >
       <header className="flex items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
-        <Spinner tone="accent" />
+        {!isSettled && <Spinner tone="accent" />}
         <span className="min-w-0 flex-1">
           <span className="block truncate font-mono text-body font-bold text-white">
             {view.title}

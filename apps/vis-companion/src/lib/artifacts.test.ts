@@ -7,6 +7,7 @@ import {
   attachmentBytes,
   attachmentIsDoc,
   attachmentIsImage,
+  attachmentIsLive,
   attachmentIsPlayable,
   attachmentIsVideo,
   collapseArtifactVersions,
@@ -20,6 +21,7 @@ import {
   isMarkdownMedia,
   isTextMedia,
   pageBySize,
+  LIVE_ARTIFACT_MEDIA,
   RAIL_PAGE,
   SHEET_PAGE,
   isPdfMedia,
@@ -114,6 +116,26 @@ describe("attachment classification", () => {
     expect(
       attachmentIsPlayable({ index: 0, media_type: "application/pdf" }),
     ).toBe(false);
+  });
+
+  const run = {
+    index: 0,
+    kind: "file",
+    media_type: LIVE_ARTIFACT_MEDIA,
+    filename: "fleet-scan.live.json",
+  };
+
+  // A settled live view is filed as a FILE carrying the engine's own media type
+  // (`hi-spec/live-artifact-media-type`), so the media type — never the `.json`
+  // the record happens to be written in — is what sorts it.
+  it("sorts a settled run by the media type the engine sealed it with", () => {
+    expect(attachmentIsLive(run)).toBe(true);
+    expect(attachmentIsLive({ ...run, media_type: `${LIVE_ARTIFACT_MEDIA}; charset=utf-8` })).toBe(true);
+    expect(attachmentIsLive({ index: 0, filename: "notes.live.json" })).toBe(false);
+    expect(artifactKind(run)).toBe("live");
+    expect(artifactMedia(run)).toBe("RUN");
+    expect(attachmentIsDoc(run)).toBe(false);
+    expect(attachmentIsPlayable(run)).toBe(false);
   });
 
   it("sorts every attachment into exactly one kind", () => {
@@ -241,10 +263,17 @@ describe("collecting what a session produced", () => {
         (filter) => filter.kinds,
       ),
     );
-    expect([...covered].sort()).toEqual(["doc", "file", "image", "video"]);
+    expect([...covered].sort()).toEqual([
+      "doc",
+      "file",
+      "image",
+      "live",
+      "video",
+    ]);
     expect(ARTIFACT_FILTERS[0].kinds).toEqual([
       "image",
       "video",
+      "live",
       "doc",
       "file",
     ]);

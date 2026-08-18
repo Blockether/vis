@@ -97,6 +97,17 @@ const note = artifact({
   turn: 1,
   iterationId: "i4",
 });
+const run = artifact({
+  key: "i5:0",
+  kind: "live",
+  name: "fleet-scan.live.json",
+  media: "RUN",
+  mediaType: "application/vnd.vis.live+json",
+  size: 12800,
+  sizeLabel: "12.5KB",
+  turn: 3,
+  iterationId: "i5",
+});
 
 const sheet = (artifacts: SessionArtifact[]) =>
   renderToStaticMarkup(
@@ -418,12 +429,23 @@ describe("the artifacts sheet", () => {
     expect(text(html)).toContain("LOG");
   });
 
+  // A settled live view is the one recorded file the app can PAINT, so its tile is
+  // a control — and its plate says RUN, because a finished run is not a live one.
+  it("opens a settled run instead of calling a finished one live", () => {
+    const html = sheet([run]);
+    expect(html).toContain(
+      'aria-label="Open fleet-scan.live.json, RUN, 12.5KB, produced in turn 3"',
+    );
+    expect(text(html)).toContain("RUN");
+    expect(text(html)).not.toContain("LIVE");
+  });
+
   it("draws a filter with nothing behind it disabled, never hidden", () => {
     const html = sheet([document]);
     expect(html).toContain('aria-label="Pictures, 0 artifacts"');
     expect(html).toContain('aria-label="Documents, 1 artifacts"');
-    // The strip keeps its shape: a disabled chip is still four chips wide.
-    expect(html.match(/aria-pressed=/g)).toHaveLength(4);
+    // The strip keeps its shape: a disabled chip is still five chips wide.
+    expect(html.match(/aria-pressed=/g)).toHaveLength(5);
     expect(html).toContain('disabled=""');
   });
 
@@ -450,8 +472,8 @@ describe("the artifacts sheet", () => {
     expect(html).not.toContain("build.log, LOG");
     expect(text(html)).toContain("build.log");
     expect(html.match(/<button/g)).toHaveLength(
-      // close + four filters + two openable tiles
-      7,
+      // close + five filters + two openable tiles
+      8,
     );
   });
 

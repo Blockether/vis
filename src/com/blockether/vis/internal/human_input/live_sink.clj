@@ -68,6 +68,24 @@
   ^File [^File file result]
   (append-line! file {:kind :close :at (System/currentTimeMillis) :result result}))
 
+(defn stats
+  "How much of the run the record in `file` holds: `:size` bytes and `:line-count`
+   NDJSON lines. `{:size 0 :line-count 0}` for a record nothing ever wrote.
+
+   Read at CLOSE, BEFORE the trailer, so what it counts is the run — the declared
+   view and every accepted patch — and not the verdict that seals it. One streamed
+   pass; the log itself never comes into memory, which is the whole reason the
+   artifact addresses this file instead of carrying it."
+  [^File file]
+  (if-not (and file (.isFile file))
+    {:size 0 :line-count 0}
+    (with-open [reader (io/reader file)]
+      {:size (.length file)
+       :line-count (reduce (fn [n _]
+                             (inc (long n)))
+                           0
+                           (line-seq reader))})))
+
 (defn read-range
   "`limit` lines of the record from 0-based `from`, each decoded into the
    engine's keyword-keyed shape.

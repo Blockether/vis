@@ -567,7 +567,7 @@
     ;; Close arrives for EVERY ending — done, interrupted, timed out, the run
     ;; that raised it dying — so a pane can never outlive the work it reports on.
     :human-input/live-close
-    (state/dispatch [:live-view-close (:view-id event)])
+    (state/dispatch [:live-view-close (:view-id event) (:result event)])
 
     nil))
 
@@ -6717,11 +6717,18 @@
                                  (state/dispatch [:select-preview-mode (:session-id hit)
                                                   (:node-id hit) (:mode hit)])
 
-                                  ;; `+ N more` on a live node: the pane takes no keyboard,
-                                  ;; so opening a node is a click and nothing else.
-                                  :live-expand
-                                  (do (state/dispatch [:live-view-expand (:view-id hit) (:node-id hit)])
-                                      (state/dispatch [:bump-render-version]))
+                                   ;; `+ N more` on a live node: the pane takes no keyboard,
+                                   ;; so opening a node is a click and nothing else.
+                                   :live-expand
+                                   (do (state/dispatch [:live-view-expand (:view-id hit) (:node-id hit)])
+                                       (state/dispatch [:bump-render-version]))
+
+                                   ;; The one line a FINISHED view leaves on the band. It is
+                                   ;; the only way back to the log the human was watching, so
+                                   ;; it opens read-only and the same press puts it away.
+                                   :live-reopen
+                                   (do (state/dispatch [:live-view-reopen (:view-id hit)])
+                                       (state/dispatch [:bump-render-version]))
 
                                   (open-click-target! screen hit))
                                (let

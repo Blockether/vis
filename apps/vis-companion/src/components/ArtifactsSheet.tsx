@@ -41,6 +41,7 @@ import { editedFilename } from "../lib/image-file";
 import type { GatewayClient } from "../lib/gateway";
 import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
+import { LiveArtifact } from "./LiveArtifact";
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
 import { readArtifactText } from "./TextArtifact";
@@ -428,6 +429,25 @@ function Thumb({
     );
   }
 
+  if (artifact.kind === "live") {
+    // A run has no raster and no first page to peek at: its record is NDJSON. The
+    // plate names it, and the meta line under the tile already carries the size
+    // and the turn — nothing here downloads a single byte of the record.
+    return (
+      <span
+        className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-panel-2 px-2 ${box}`}
+      >
+        <span className={`h-1 w-2/3 ${artifactHue(artifact.key)}`} />
+        <span className="h-0.5 w-full bg-dialog-hint/50" />
+        <span className="h-0.5 w-1/2 bg-dialog-hint/50" />
+        <span className="h-0.5 w-3/4 bg-dialog-hint/50" />
+        <span className="absolute right-1 bottom-1 bg-ink/80 px-1 font-mono text-chip text-white">
+          RUN
+        </span>
+      </span>
+    );
+  }
+
   if (artifact.kind === "doc") {
     // The note itself, clipped by the box rather than summarised: a page continues
     // past the bottom of a thumbnail exactly as it does in the reader. It DISSOLVES
@@ -761,6 +781,28 @@ function ArtifactDetail({
           className="min-h-0 flex-1 bg-code object-contain"
         />
       </DetailOverlay>
+    );
+  }
+
+  // A settled run is opened from its RECORD: the picture it ended on, and a log
+  // still paged out of the file on the gateway rather than out of this document.
+  if (artifact.kind === "live") {
+    return (
+      <LiveArtifact
+        client={client}
+        sid={sid}
+        url={url}
+        chrome={({ subtitle, body }) => (
+          <DetailOverlay
+            name={artifact.name}
+            subtitle={subtitle}
+            onClose={onClose}
+            fill
+          >
+            {body}
+          </DetailOverlay>
+        )}
+      />
     );
   }
 

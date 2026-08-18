@@ -2972,16 +2972,33 @@
 
 (reg-event-db :live-view-close
               ;; The verdict is the RUN's answer, not the pane's: the extension reads
-              ;; it, the record keeps it, and the band gives its rows back to the
+              ;; it, the record keeps it, and the band gives its BODY back to the
               ;; transcript the moment the view ends.
-              (fn [db [_ view-id]]
+              ;;
+              ;; What stays is ONE line, and only for the view that just ended —
+              ;; settling a second one retires the first. The band is bounded by
+              ;; that rule, and the human keeps the door back to the run they were
+              ;; watching a moment ago; every older one is reached as the artifact
+              ;; the close filed, which is what an artifact is FOR.
+              (fn [db [_ view-id result]]
                 (across-tabs db
                              (fn [w]
                                (cond-> w
                                  (seq (:live-views w))
                                  (update :live-views
                                          (fn [panes]
-                                           (vec (remove #(= view-id (lv/view-id %)) panes)))))))))
+                                           (->> panes
+                                                (mapv #(cond-> % (= view-id (lv/view-id %))
+                                                         (lv/settled result)))
+                                                (filterv #(or (not (lv/settled? %))
+                                                              (= view-id (lv/view-id %))))))))))))
+
+(reg-event-db :live-view-reopen
+              ;; The collapsed line of a settled view is a CONTROL: pressing it reads
+              ;; the record back into the band read-only, pressing it again puts it
+              ;; away. Nothing is re-run and nothing is answered — the view is over.
+              (fn [db [_ view-id]]
+                (update-live-pane db view-id lv/reopened)))
 
 (reg-event-db :live-view-scroll
               (fn [db [_ view-id delta]]

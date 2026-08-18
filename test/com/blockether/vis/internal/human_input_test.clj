@@ -3,6 +3,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as ce]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl]
             [com.blockether.vis.internal.human-input :as hi]
             [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.human-input.live-sink :as live-sink]
@@ -1889,3 +1890,138 @@
                     (expect (nil? (:fields (hi/pending-request view-id))))
                     (expect (re-find #"live view, not a form"
                                      (live-refusal #(hi/submit! view-id {})))))))))
+
+;; A settled view: Phase 5 of the live-view plan. Before it, dismissing the pane
+;; lost the log the human had been watching — the only way back would have been
+;; dumping it into the transcript, which is the cost the whole design removes.
+
+(defn- filed
+  "Open `spec`, run `f` against its id, then close it with `ending` while the
+   per-block artifact sink is bound — the very collector a producing python block
+   binds around `attach`. Answers `{:result … :rows … :file …}`: the verdict, every
+   artifact the close filed, and the record they point at."
+  ([spec]
+   (filed spec
+          {}
+          (fn [_])))
+  ([spec ending f]
+   (recorded (fn []
+               (let
+                 [sink
+                  (atom [])
+
+                  view
+                  (hi/open-live! spec)
+
+                  file
+                  (live-sink/view-file (:session-id spec) (:id view))]
+
+                 (f (:id view))
+                 (let
+                   [result (binding [mpl/*attachment-sink* sink]
+                             (hi/close-live! (:id view) ending))]
+                   {:result result :rows @sink :file file}))))))
+
+(defdescribe
+  live-artifact-test
+  (it "settles a finished view into ONE artifact this session owns, and names it in the verdict"
+      (let
+        [{:keys [result rows file]}
+         (filed (live-spec {:id "tail" :type "log" :window-lines 50})
+                {:summary "18 of 18 jobs finished"}
+                (fn [view-id]
+                  (hi/patch-live! view-id
+                                  [{:op "append" :node-id "tail" :lines ["+ clojure -M:test"]}])))]
+        (expect (= 1 (count rows)))
+        (let [row (first rows)]
+          (expect (= (:artifact-id result) (:id row)))
+          (expect (= hs/live-artifact-media-type (:media-type row)))
+          ;; Human-only: the model is TOLD the artifact exists and reads the picture
+          ;; the verdict already carries, never the log.
+          (expect (= "user" (:audience row)))
+          (expect (= "ci.live.json" (:filename row)))
+          ;; ADDRESSED, never re-encoded: the row points at the very file the run has
+          ;; been writing since `open`.
+          (expect (= (str "file://" (.getAbsolutePath ^java.io.File file)) (:storage-uri row)))
+          (expect (= (:view-id result) (:view-id row)))
+          ;; The picture stays in the VERDICT — a row is a row.
+          (expect (nil? (:view row))))))
+  (it "seals the record with the artifact it filed, so a view read back off disk names it too"
+      (let
+        [{:keys [result file]}
+         (filed (live-spec {:id "now" :type "status" :text "Polling…"}))
+
+         sealed
+         (:result (last (live-sink/read-range file 0 100)))]
+
+        (expect (string? (:artifact-id result)))
+        (expect (= (:artifact-id result) (:artifact-id sealed)))))
+  (it "counts the RUN it recorded, not the verdict that sealed it"
+      (let
+        [{:keys [rows file]}
+         (filed (live-spec {:id "tail" :type "log" :window-lines 50})
+                {}
+                (fn [view-id]
+                  (dotimes [n 3]
+                    (hi/patch-live! view-id
+                                    [{:op "append" :node-id "tail" :lines [(str "line " n)]}]))))
+
+         row
+         (first rows)]
+
+        ;; The declared view plus three accepted patches. The trailer the close then
+        ;; writes states the verdict, and the verdict is already `:reason` here.
+        (expect (= 4 (:line-count row)))
+        (expect (= 5 (count (live-sink/read-range file 0 100))))
+        (expect (pos? (long (:size row))))
+        (expect (< (long (:size row)) (.length ^java.io.File file)))))
+  (it "files an artifact however the view ended — the human's stop and the run's own death included"
+      (doseq
+        [[ending reason] [[{} :completed] [{:reason "failed" :error "the poll died"} :failed]
+                          [{:reason "interrupted"} :interrupted]]]
+        (let
+          [{:keys [result rows]} (filed (live-spec {:id "now" :type "status" :text "Polling…"})
+                                        ending
+                                        (fn [_]))]
+          (expect (= reason (:reason result)))
+          (expect (= 1 (count rows)))
+          (expect (= reason (:reason (first rows))))
+          (expect (= (:artifact-id result) (:id (first rows)))))))
+  (it "inlines a small record on top of the file, and leaves a big one where it is"
+      (let [spec (live-spec {:id "now" :type "status" :text "Polling…"})]
+        (expect (some? (:base64 (first (:rows (filed spec))))))
+        ;; Past the floor the bytes stay on disk: holding a build log in memory as
+        ;; base64 is exactly what addressing the record avoids.
+        (expect (nil? (with-redefs [hs/live-artifact-inline-bytes 8]
+                        (:base64 (first (:rows (filed spec)))))))))
+  (it "ends a view from somewhere that holds no artifacts without inventing one"
+      (recorded (fn []
+                  (let
+                    [spec
+                     (live-spec {:id "now" :type "status" :text "Polling…"})
+
+                     view
+                     (hi/open-live! spec)
+
+                     ;; A human's stop arriving on a gateway thread: the view still ends and
+                     ;; the record is still sealed, the verdict simply names no artifact.
+                     result
+                     (hi/interrupt-live! (:id view))]
+
+                    (expect (= :interrupted (:reason result)))
+                    (expect (not (contains? result :artifact-id)))
+                    (expect (some? (live-sink/verdict (live-sink/view-file (:session-id spec)
+                                                                           (:id view)))))))))
+  (it "files ONE artifact even when the view is closed twice"
+      (recorded (fn []
+                  (let
+                    [sink
+                     (atom [])
+
+                     view
+                     (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"}))]
+
+                    (binding [mpl/*attachment-sink* sink]
+                      (expect (some? (hi/close-live! (:id view))))
+                      (expect (nil? (hi/close-live! (:id view)))))
+                    (expect (= 1 (count @sink))))))))

@@ -1085,7 +1085,9 @@
      (lv/interruptible panes)
 
      n
-     (count panes)]
+     ;; A view that has SETTLED is not open: its line is on the band to be
+     ;; reopened, and Escape has nothing left to stop on it.
+     (count (remove lv/settled? panes))]
 
     (str/join " · "
               (remove str/blank?
@@ -1111,7 +1113,7 @@
         ;; A live view outranks the turn's own abort hint because ESCAPE DOES:
         ;; while one is open the abort key stops the VIEW (screen.clj's `:cancel`
         ;; branch), so the row advertising that key has to name what it will hit.
-        (seq live-views) [(hint-segment (live-view-hint live-views) 1)]
+        (some? (lv/interruptible live-views)) [(hint-segment (live-view-hint live-views) 1)]
         loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
         (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
         :else []))

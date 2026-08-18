@@ -271,6 +271,46 @@
       (update :view live/apply-patch patch)
       (assoc :fresh (touched patch))))
 
+(defn settled
+  "The pane a close leaves behind — the run's FINAL picture and the verdict that
+   ended it, stamped `ended-at`.
+
+   A settled pane is not dropped: it collapses to ONE line the human can press.
+   Dismissing the pane the instant the work finishes is exactly what made a
+   watched log unreachable — the artifact the close files exists so it never is,
+   and this line is the door to it."
+  ([pane result] (settled pane result (System/currentTimeMillis)))
+  ([pane result ended-at]
+   (-> pane
+       (dissoc :stop)
+       (update :view merge (:view result))
+       (assoc :settled (-> (select-keys result [:reason :artifact-id :is-from-human])
+                           (assoc :ended-at ended-at))
+              :is-reopened false))))
+
+(defn settled?
+  "True when this view has ENDED and the pane is its record."
+  [pane]
+  (contains? pane :settled))
+
+(defn dormant?
+  "True when the pane is settled and nobody has reopened it: it paints as one
+   collapsed line and takes none of the band's body."
+  [pane]
+  (and (settled? pane) (not (:is-reopened pane))))
+
+(defn reopened
+  "The pane after the human pressed its collapsed line: a settled view reads
+   again, READ-ONLY — every node it ended with, the wheel over the band, and the
+   same press to put it away. Nothing about it can be stopped or answered; the
+   run it reports on is over."
+  [pane]
+  (cond-> pane
+    (settled? pane)
+    (-> (update :is-reopened not)
+        (assoc :is-following true
+               :offset 0))))
+
 (defn- max-offset
   "The last row the viewport may start on, from what the last paint measured."
   ^long [pane]
@@ -881,11 +921,19 @@
    the first thing the human asks a picture that appeared on its own is who put
    it there."
   [pane now-ms]
-  (let [{:keys [title source created-at]} (:view pane)]
+  (let
+    [{:keys [title source created-at]}
+     (:view pane)
+
+     ;; A settled view stops counting: what a finished run wears is how long it
+     ;; TOOK, not how long ago it ended.
+     end
+     (long (or (:ended-at (:settled pane)) now-ms))]
+
     (str/join " · "
               (remove str/blank?
                 [(flat-text title) (flat-text source)
-                 (elapsed-text (- (long now-ms) (long (or created-at now-ms))))]))))
+                 (elapsed-text (- end (long (or created-at end))))]))))
 
 (defn- status-summary
   "The one line a view is worth when it is not the pane in front: its newest
@@ -927,7 +975,7 @@
    and the terminal's abort branch acts by asking here, so the row the human reads
    and the key they press can never name different views."
   [panes]
-  (last panes))
+  (last (remove settled? panes)))
 
 (defn stopping
   "The note the human is typing into an ARMED stop on `pane` — `\"\"` the moment
@@ -1001,16 +1049,22 @@
    typing: Escape or Enter interrupt with whatever was written, Backspace on an
    empty line keeps watching."
   [pane others]
-  (if-let [note (stopping pane)]
-    (if (str/blank? note)
-      [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
-      [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
-    (cond-> []
-      (some? pane)
-      (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
+  (let [open (remove settled? others)]
+    (if-let [note (stopping pane)]
+      (if (str/blank? note)
+        [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
+        [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
+      (cond-> []
+        (some? pane)
+        (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-      (seq others)
-      (conj [(str (inc (count others))) "views open"]))))
+        ;; Nothing is running and a finished view is still on the band: the only
+        ;; thing left to say is that its line opens again.
+        (and (nil? pane) (some settled? others))
+        (conj ["click" "reopen"])
+
+        (seq open)
+        (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
 
@@ -1197,8 +1251,17 @@
                 nil
                 (map vector (columns/slots inner-w (count (:cells entry))) (:cells entry))))
 
+    ;; A SETTLED view is one line and a door: pressing it reads the record back,
+    ;; read-only. It is all that is left of a pane that has given its rows to the
+    ;; transcript, so the click that reopens it belongs to the whole line.
     :collapsed
-    (paint-plain! g left row inner-w (tone-fg (:tone entry) t/dialog-hint) (:text entry))
+    (do (paint-plain! g left row inner-w (tone-fg (:tone entry) t/dialog-hint) (:text entry))
+        (when (:is-settled entry)
+          (cr/register! {:bounds
+                         {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                         :kind :live-reopen
+                         :view-id (:view-id entry)
+                         :enabled? true})))
 
     ;; Everything that is prose — the view's description, a status detail, a node
     ;; that holds nothing, the count of what the record kept — speaks in the dim
@@ -1208,16 +1271,55 @@
           :else (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry)))))
 
 (defn- collapsed-row
-  "The ONE line an older open view keeps above the band: its title and where it
-   got to. Newest last, so the pane in front is the one the human is watching."
+  "The ONE line a view keeps above the band: its title and where it got to.
+   Newest last, so the pane in front is the one the human is watching.
+
+   A SETTLED view says instead how it ENDED, how much record it left and how long
+   it ran — the three things asked of a finished run — and its line is pressable."
   [pane]
-  (let [{:keys [text tone]} (status-summary pane)]
+  (let
+    [{:keys [reason ended-at]}
+     (:settled pane)
+
+     view
+     (:view pane)
+
+     lines
+     (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
+
+     tone
+     (if (settled? pane)
+       (case reason
+         :completed
+         :ok
+
+         :failed
+         :error
+
+         :interrupted
+         :warn
+
+         :idle)
+       (:tone (status-summary pane)))]
+
     {:kind :collapsed
      :node-id nil
+     :view-id (:id view)
+     :is-settled (settled? pane)
      :tone tone
-     :text (str "▸ "
+     :text (str (or (tone-glyph tone) "▸")
+                " "
                 (str/join " · "
-                          (remove str/blank? [(flat-text (get-in pane [:view :title])) text])))}))
+                          (remove str/blank?
+                            (if (settled? pane)
+                              [(flat-text (:title view))
+                               (some-> reason
+                                       name)
+                               (when (pos? (long lines))
+                                 (str lines (if (= 1 (long lines)) " line" " lines")))
+                               (elapsed-text (- (long (or ended-at 0))
+                                                (long (or (:created-at view) ended-at 0))))]
+                              [(flat-text (:title view)) (:text (status-summary pane))]))))}))
 
 (defn band-rows
   "The rows the band covers on a `cols`×`rows` terminal, as `[from to]`
@@ -1267,10 +1369,14 @@
             ;; take the next one, so nothing a view paints ever touches a rail —
             ;; and the right lane stays clear for the scrollbar.
             text-w (max 8 (- body-w 4))
-            pane (last panes)
-            others (vec (butlast panes))
+            ;; The pane IN FRONT is the newest view still RUNNING. A settled one has
+            ;; already given its rows back to the transcript and keeps only the
+            ;; line that reopens it — so when every view has settled the band IS
+            ;; that line, until the human presses it.
+            front (last (remove dormant? panes))
+            others (if front (vec (remove #(identical? % front) panes)) (vec panes))
             collapsed (mapv collapsed-row others)
-            rows-plan (plan pane text-w)
+            rows-plan (if front (plan front text-w) [])
             ;; Half the rows between the top of the transcript and the prompt, at
             ;; the most: the run this view reports on is still being read above it.
             room (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
@@ -1279,7 +1385,7 @@
             ;; is being stopped where it is being stopped, and the answer rides
             ;; along with the stop — but the question is the BAND speaking, not one
             ;; more row of the run's own report, so it is ruled off on both sides.
-            stop (stop-prompt pane)
+            stop (stop-prompt front)
             ;; What the band WANTS: every collapsed line, the plan, the row the
             ;; fenced hint rule costs, and that note line when it is armed.
             wanted (+ (count collapsed) (count rows-plan) 1 (if stop 2 0))
@@ -1295,15 +1401,15 @@
             visible (max 1 (dec (long visible)))
             body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
             total (count rows-plan)
-            start (offset pane rows-plan body-visible)
+            start (if front (offset front rows-plan body-visible) 0)
             shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
-            view-id (view-id pane)]
+            view-id (view-id front)]
 
            (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
            ;; The title is the rule's own label — `── CI · 1m 12s ──` — so the
            ;; first row is chrome and every row under it is the view.
            (when (>= (long sep-row) (long top-limit))
-             (tr/draw-rule! g region sep-row (title-line pane now-ms)))
+             (tr/draw-rule! g region sep-row (title-line (or front (last panes)) now-ms)))
            (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
            (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
              (tr/draw-rule! g region hint-rule-at))
@@ -1337,7 +1443,7 @@
                                 [{:text (:label stop) :fg t/dialog-hint}
                                  {:text (:note stop) :fg t/dialog-fg :styles [p/BOLD]}
                                  {:text "▏" :fg t/dialog-hint-key}])))
-           (dialogs/draw-hint-bar! g left hint-at inner-w (hint pane others))
+           (dialogs/draw-hint-bar! g left hint-at inner-w (hint front others))
            ;; The gutter lane every scrollable dialog draws its bar in: the last
            ;; column inside the right rail, which the body's own lead keeps clear.
            (when (> total body-visible)

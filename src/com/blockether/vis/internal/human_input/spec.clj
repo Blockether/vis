@@ -317,6 +317,33 @@
    app — and `:note` carries the words they left with that stop, so a run cut short
    reads WHO cut it, and why, before it reads the picture."
   #{:view-id :is-completed :reason :is-from-human :note :view :elided :summary :artifact-id :error})
+
+(def live-artifact-media-type
+  "The media type a settled live view carries. Its bytes are the view's RECORD —
+   the append-only NDJSON `human-input.live-sink` has been writing since `open` —
+   so the artifact IS that file rather than a re-encoded copy of it."
+  "application/vnd.vis.live+json")
+
+(def live-artifact-inline-bytes
+  "Byte size under which a settled view ALSO travels inline, on top of the file it
+   already points at (256 KiB — the same floor
+   `attachment-storage/default-offload-floor-bytes` uses to decide that a small
+   payload never earns an external round-trip; stated here because the HITL
+   contract may not drag the imaging stack in to read it).
+
+   A view this small survives a session sync to another machine; a build log does
+   not, and must not — holding one in memory as base64 is the cost this whole
+   phase exists to remove."
+  (* 256 1024))
+
+(def live-artifact-keys
+  "Every key a settled view carries as an ARTIFACT: what it WAS (`:view-id`,
+   `:session-id`, `:title`), how it ENDED (`:ended-at`, `:reason`), what a surface
+   opens instantly (`:view`, the final materialized state) and where the bytes are
+   (`:storage-uri`, `:size`, `:line-count`, and `:base64` only under
+   [[live-artifact-inline-bytes]])."
+  #{:id :view-id :session-id :title :media-type :audience :ended-at :reason :view :storage-uri :size
+    :line-count :base64})
 (defn contract-vocabulary
   "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
    into `vis_contract/contract.json` — the document every surface that cannot
@@ -813,6 +840,19 @@
 (s/def ::summary non-blank-string?)
 (s/def ::total-lines nat-int?)                              ; the size of a log's record, engine-stamped
 (s/def ::artifact-id non-blank-string?)
+
+;; What a SETTLED view is: the record it wrote, addressed rather than copied.
+(s/def ::media-type #{live-artifact-media-type})            ; one kind of artifact, one media type
+(s/def ::audience
+  ;; From `attachments/audiences`, narrowed to the ONE member a settled view may
+  ;; carry: it is human-only. The model is told the artifact exists and reads
+  ;; `::view`; a build log never reaches a provider request.
+  #{"user"})
+(s/def ::ended-at pos-int?)                                 ; epoch millis the verdict was sealed at
+(s/def ::storage-uri (s/and non-blank-string? #(str/includes? % "://")))
+(s/def ::size nat-int?)                                     ; bytes of the record the run wrote
+(s/def ::line-count nat-int?)                               ; NDJSON lines of that record
+(s/def ::base64 non-blank-string?)                          ; only under `live-artifact-inline-bytes`
 (s/def ::error non-blank-string?)
 (s/def ::op (set (vals live-ops)))
 (s/def ::after (s/nilable ::node-id))                       ; place it after this node; nil means last
@@ -1020,6 +1060,19 @@
          #(= (:is-completed %) (= :completed (:reason %)))
          #(or (:is-from-human %) (not (contains? % :note)))
          #(or (not (:is-from-human %)) (= :interrupted (:reason %)))))
+
+;; The SETTLED view: reachability after the pane is gone. Nothing here copies a
+;; buffer — the sink has been the record since `open`, so the artifact addresses
+;; that file and carries the final materialized state a surface opens instantly.
+(s/def ::live-artifact
+  (s/and #(closed? live-artifact-keys %)
+         (s/keys :req-un [::id ::view-id ::session-id ::title ::media-type ::audience ::ended-at
+                          ::reason ::view ::storage-uri ::size ::line-count]
+                 :opt-un [::base64])
+         #(live-reason? (:reason %))
+         ;; Inlining is a SIZE decision, never a preference: past the floor the
+         ;; bytes stay on disk, which is the whole point of addressing the record.
+         #(or (not (contains? % :base64)) (<= (long (:size %)) (long live-artifact-inline-bytes)))))
 ;; Explaining a violation
 
 (defn- brief
@@ -1125,3 +1178,8 @@
    is not."
   [result]
   (error ::live-result result))
+
+(defn live-artifact-error
+  "nil when `artifact` is a legal settled view, else why it is not."
+  [artifact]
+  (error ::live-artifact artifact))

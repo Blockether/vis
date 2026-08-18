@@ -14,6 +14,7 @@ import {
   isLiveViewEvent,
   liveFraction,
   livePercent,
+  liveRecordFromText,
   liveViewFromWire,
   liveViewsFromWire,
   orderedRows,
@@ -323,5 +324,99 @@ describe('what a table and a progress state', () => {
     expect(liveFraction({ id: 'p', type: 'progress', done: 2, total: 3 })).toBeCloseTo(2 / 3);
     expect(liveFraction({ id: 'p', type: 'progress', value: 0.5, done: 2, total: 3 })).toBe(0.5);
     expect(livePercent(2 / 3)).toBe(67);
+  });
+});
+
+/**
+ * A record is the only thing a settled view leaves behind, so what it folds back
+ * into is the whole contract of re-opening one: the picture the run ENDED on, and
+ * the verdict that says how. `human-input.live-sink` writes these three lines.
+ */
+describe('the record of a settled view', () => {
+  const openLine = JSON.stringify({ kind: 'open', at: 1, view: fixture });
+  const status = (id: string, text: string) => ({
+    id,
+    type: 'status',
+    text,
+    tone: 'ok',
+  });
+  const patchLine = (seq: number, ops: unknown[]) =>
+    JSON.stringify({
+      kind: 'patch',
+      at: 1 + seq,
+      patch: { view_id: opened().id, seq, ops },
+    });
+  const closeLine = (result: Record<string, unknown>) =>
+    JSON.stringify({ kind: 'close', at: 99, result });
+
+  it('folds the declared view and every accepted patch, in file order', () => {
+    const record = liveRecordFromText(
+      [
+        openLine,
+        patchLine(1, [{ op: 'add-node', node_spec: status('one', 'first') }]),
+        patchLine(2, [{ op: 'add-node', node_spec: status('two', 'second') }]),
+        '',
+      ].join('\n'),
+    );
+    expect(record?.view.seq).toBe(2);
+    expect(ids(record!.view)).toEqual([...ids(opened()), 'one', 'two']);
+  });
+
+  it("takes the verdict's own picture over its replay of the patches", () => {
+    // The trailer carries the state the MODEL was handed, so the app shows that
+    // one — a record read at its two ends never folded the middle at all.
+    const sealed = {
+      ...fixture,
+      nodes: [status('sealed', 'the run ended here')],
+    };
+    const record = liveRecordFromText(
+      [
+        openLine,
+        patchLine(1, [{ op: 'add-node', node_spec: status('one', 'first') }]),
+        closeLine({ view_id: opened().id, reason: 'completed', is_completed: true, view: sealed }),
+      ].join('\n'),
+    );
+    expect(ids(record!.view)).toEqual(['sealed']);
+    expect(record?.reason).toBe('completed');
+    expect(record?.is_completed).toBe(true);
+    expect(record?.ended_at).toBe(99);
+  });
+
+  it('carries the comment the human left with a stop', () => {
+    const record = liveRecordFromText(
+      [
+        openLine,
+        closeLine({
+          view_id: opened().id,
+          reason: 'interrupted',
+          is_completed: false,
+          note: 'flaky on rerun',
+          view: fixture,
+        }),
+      ].join('\n'),
+    );
+    expect(record?.reason).toBe('interrupted');
+    expect(record?.is_completed).toBe(false);
+    expect(record?.note).toBe('flaky on rerun');
+  });
+
+  it('keeps what it managed to read when the record was cut mid-write', () => {
+    // A run killed while appending leaves half a line. Everything before it is
+    // still the truth, and a view with no trailer simply has no verdict yet.
+    const record = liveRecordFromText(
+      [
+        openLine,
+        patchLine(1, [{ op: 'add-node', node_spec: status('one', 'first') }]),
+        '{"kind":"patch","at":3,"pat',
+      ].join('\n'),
+    );
+    expect(ids(record!.view)).toEqual([...ids(opened()), 'one']);
+    expect(record?.reason).toBeUndefined();
+  });
+
+  it('is null when not one line of it is paintable', () => {
+    expect(liveRecordFromText('')).toBeNull();
+    expect(liveRecordFromText('not json at all')).toBeNull();
+    expect(liveRecordFromText(JSON.stringify({ kind: 'open', view: { id: 'x' } }))).toBeNull();
   });
 });
