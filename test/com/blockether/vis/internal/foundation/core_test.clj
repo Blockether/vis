@@ -14,7 +14,7 @@
       (expect (every? (set (map :ext.symbol/symbol
                                 (get-in foundation/vis-extension
                                         [:ext/engine :ext.engine/symbols])))
-                      ['format_code 'lint_code 'run_tests 'repl_eval 'repl 'repl_stop])))
+                      ['format_code 'lint_code 'run_tests 'repl_eval 'repl_start 'repl_status 'repl_stop])))
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
   ;; assertion drifted from the live extension shape.
@@ -119,7 +119,7 @@
         (expect (not (str/includes? without "python : repl_eval")))))
   (it "ctx surfaces \"session_language_tools\", recomputed each turn from activation"
       (let [ctx ((:ext/ctx-fn foundation/vis-extension) (env-with-langs clj-pack))]
-        (expect (= ["format_code" "run_tests" "repl_eval" "repl"]
+        (expect (= ["format_code" "run_tests" "repl_eval" "repl_start"]
                    (get-in ctx ["session_language_tools" "clojure"])))))
   (it "ctx GAINS a language the turn its pack activates, drops it when it deactivates"
       (let
@@ -129,5 +129,5 @@
          inactive
          ((:ext/ctx-fn foundation/vis-extension) (env-with-langs []))]
 
-        (expect (= ["repl_eval" "repl"] (get-in active ["session_language_tools" "python"])))
+        (expect (= ["repl_eval" "repl_start"] (get-in active ["session_language_tools" "python"])))
         (expect (nil? (get inactive "session_language_tools"))))))

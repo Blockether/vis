@@ -1,11 +1,12 @@
 (ns com.blockether.vis.internal.foundation.language-surface
-  "Language-neutral FORMAT / TEST / REPL_EVAL / START_REPL dispatch.
+  "Language-neutral FORMAT / TEST / REPL_EVAL / REPL-LIFECYCLE dispatch.
 
   Language extensions register handlers under `:ext/language-tools`; this
   foundation surface exposes stable bare tool names and dispatches to the
   active handler for the requested/current language. REPL lifecycle is resource
-  backed: `repl` creates a language-owned session resource and `repl_stop`
-  stops one by id. Live REPLs also surface in the ctx `resources` block."
+   backed: `repl_start` creates a language-owned session resource, `repl_status`
+   reports it and `repl_stop` ends one. Live REPLs also surface in the ctx
+   `resources` block."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
@@ -77,9 +78,9 @@
    :lint-fn "lint_code"
    :test-fn "run_tests"
    :repl-eval-fn "repl_eval"
-   :start-repl-fn "repl"})
+   :start-repl-fn "repl_start"})
 
-(def ^:private tool-order ["format_code" "lint_code" "run_tests" "repl_eval" "repl"])
+(def ^:private tool-order ["format_code" "lint_code" "run_tests" "repl_eval" "repl_start"])
 
 (defn capability-data
   "STRUCTURED capability map for the ACTIVE language packs:
@@ -107,8 +108,8 @@
   "AUTO capability matrix for the system prompt — the active packs' facade verbs
    + a CERTAIN statement of when each is the tool. nil when no pack is active.
      LANGUAGE TOOLS (active packs; language first):
-       clojure : format_code · run_tests · repl_eval · repl
-       python  : repl_eval · repl"
+       clojure : format_code · run_tests · repl_eval · repl_start
+       python  : repl_eval · repl_start"
   [env]
   (when-let [data (capability-data env)]
     (str
@@ -119,11 +120,11 @@
       (when (contains? data "clojure")
         (str
           "\n  clojure run_tests NEVER starts a REPL: with none running it shells the project's"
-          " own test command in a CLEAN JVM, so the run always sees the code on disk. When THIS"
+          " own test command in a CLEAN JVM, so the run sees the code on disk. When THIS"
           " session already has a REPL up for that project it REUSES it — and that path reloads"
-          " the namespaces it RUNS but NEVER their dependencies, so a changed PRODUCTION ns still"
-          " serves the Vars already loaded: `repl_eval` `(require 'my.prod.ns :reload)` for each"
-          " one you edited, or `repl` stop and let the clean JVM run them."
+          " the namespaces it RUNS but NEVER their dependencies, so a changed PRODUCTION ns"
+          " still serves the Vars already loaded: `repl_eval` `(require 'my.prod.ns :reload)` for"
+          " each one you edited, or `repl_stop` and let a clean JVM run them."
           "\n  clojure lint_code runs clj-kondo + `general` REFLECTION/BOXED-MATH checks;"
           " whole-project lint (omit code/paths) includes both; no separate reflection check.")))))
 
@@ -278,148 +279,65 @@
      (when (#{:test-fn :repl-eval-fn} capability) (vis/prepare-session-jail! env))
      (post handler ((:handler handler) env payload)))))
 
-(def ^:private repl-ops #{"status" "start" "stop" "connect"})
-
-;; `restart` is GONE — not an op, not in the schema, not a silent alias for
-;; start. It was a stop+start pretending to be one atomic step: it tore down the
-;; REPL the turn was standing on, and when the relaunch hung (a slow cold boot,
-;; a wedged JVM) the caller was left with NO repl and no usable error. Stop and
-;; start are two decisions; the agent makes them separately.
-;;
-;; The token stays RECOGNIZED as an op purely so a stale `repl(lang, "restart")`
-;; is refused loudly instead of being parsed as a REPL *id* and silently
-;; starting something.
-(def ^:private removed-repl-ops #{"restart"})
-
-(defn- repl-op? [x] (and (string? x) (or (contains? repl-ops x) (contains? removed-repl-ops x))))
-
-(defn- reject-removed-op!
-  "Fail closed on an op that no longer exists, naming the two calls that replace it."
-  [op]
-  (when (contains? removed-repl-ops op)
-    (throw (ex-info (str "repl op " (pr-str op)
-                         " was REMOVED. Stop the REPL, then start a new one"
-                         " — two calls, so a failed start cannot masquerade as a live REPL.")
-                    {:type :language-surface/removed-op
-                     :got op
-                     :allowed (vec (sort repl-ops))
-                     :examples ["repl('clojure', 'stop', {'cwd': 'extensions/foo'})"
-                                "repl('clojure', 'start', {'cwd': 'extensions/foo'})"]}))))
-
-(defn- start-repl-payload
+;; An `op` STRING is GONE from this surface: every lifecycle step is its own
+;; verb — `repl_start`, `repl_status`, `repl_stop`, `repl_connect` — so the call
+;; itself says what it did, in the transcript and in a refusal. `restart` is
+;; gone with it: it was a stop+start pretending to be one atomic step, tearing
+;; down the REPL the turn was standing on, and when the relaunch hung the caller
+;; was left with NO repl and no usable error. Stop and start are two decisions.
+(defn- language+opts
+  "Split `(language?, opts?)` into `[language opts-map]`."
   [args]
+  (let [[language more] (if (and (seq args) (language-like? (first args)))
+                          [(first args) (next args)]
+                          [nil args])]
+    [language (coerce-opts (first more))]))
+
+(defn- dispatch-repl!
+  "Run the active pack's REPL-lifecycle handler for `op` (start/status/stop/connect)."
+  [env op args]
   (let
-    [[language more]
-     (if (and (seq args) (language-like? (first args)) (not (repl-op? (first args))))
-       [(first args) (next args)]
-       [nil args])]
-    (case (count more)
-      0
-      {:language language :id nil :op "start" :opts {}}
+    [[language opts]
+     (language+opts args)
 
-      1
-      (let [arg (first more)]
-        (cond (nil? arg) {:language language :id nil :op "start" :opts {}}
-              (map? arg) {:language (or language (opts-language arg))
-                          :id (or (get arg "id") (get arg "repl_id"))
-                          :op (or (get arg "op") "start")
-                          :opts (dissoc arg "op")}
-              :else {:language language :id nil :op arg :opts nil}))
+     dispatch-opts
+     (cond-> opts
+       language
+       (assoc "language" language))
 
-      2
-      (let [[a b] more]
-        (if (map? b)
-          {:language (or language (opts-language b))
-           :id (when-not (repl-op? a) a)
-           :op (if (repl-op? a) a "start")
-           :opts b}
-          {:language language :id a :op b :opts nil}))
+     handler
+     (choose-handler env :start-repl-fn dispatch-opts)]
 
-      3
-      (let [[id op opts] more]
-        {:language (or language (opts-language opts)) :id id :op op :opts opts})
-
-      (throw
-        (ex-info
-          "repl expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
-          {:type :language-surface/bad-args
-           :got args
-           :examples ["repl('clojure')" "repl('clojure', {'op': 'start', 'cwd': 'extensions/foo'})"
-                      "repl('clojure', 'status')"
-                      "repl('clojure', 'main', 'stop', {'cwd': 'extensions/foo'})"]})))))
+    ;; Refresh from the live env at the process boundary. This also repairs the
+    ;; registry after a process-jail namespace reload without weakening
+    ;; fail-closed handling for missing session identity or policy.
+    (when (= "start" op) (vis/prepare-session-jail! env))
+    ((:handler handler) env op opts)))
 
 (defn repl-stop
-  "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
-  [env id]
-  ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
-  ;; :id ...}); project it to a strings-only model payload (enum value stringified
-  ;; at the source) so nothing keyword crosses the boundary.
-  (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) id)]
-    (extension/success {:result {"result" (name result)
-                                 "id" (str id)
-                                 ;; TOTAL: `message` is nil rather than absent, so
-                                 ;; r["message"] reads on EVERY stop instead of
-                                 ;; KeyErroring on the clean path.
-                                 "message" message}})))
+  "Stop a REPL: `repl_stop(id)` by session resource id, or `repl_stop(language,{cwd})`
+   for the pack's REPL under that directory."
+  [env & args]
+  (if (and (string? (first args)) (nil? (second args)))
+    ;; By-id stop is a generic session-resource op — no pack dispatch needed,
+    ;; and it works even when the owning language pack is gone.
+    ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
+    ;; :id ...}); project it to a strings-only model payload (enum value stringified
+    ;; at the source) so nothing keyword crosses the boundary.
+    (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) (first args))]
+      (extension/success {:result {"result" (name result)
+                                   "id" (str id)
+                                   ;; TOTAL: `message` is nil rather than absent, so
+                                   ;; r["message"] reads on EVERY stop instead of
+                                   ;; KeyErroring on the clean path.
+                                   "message" message}}))
+    (dispatch-repl! env "stop" args)))
 
-(defn- dispatch-start-repl!
-  [env args]
-  (let [{:keys [language id op opts]} (start-repl-payload args)]
-    (reject-removed-op! op)
-    (if (and (= "stop" op) id)
-      ;; By-id stop is a generic session-resource op — no pack dispatch needed,
-      ;; and it works even when the owning language pack is gone.
-      (repl-stop env id)
-      (let
-        [dispatch-opts (cond-> (coerce-opts opts)
-                         language
-                         (assoc "language" language)
-
-                         id
-                         (assoc "id" id))
-         handler (choose-handler env :start-repl-fn dispatch-opts)
-         opts (cond-> (or opts {})
-                id
-                (assoc "id" id))]
-
-        ;; Refresh from the live env at the process boundary. This also repairs the
-        ;; registry after a process-jail namespace reload without weakening fail-closed
-        ;; handling for missing session identity or policy.
-        (when (= "start" op) (vis/prepare-session-jail! env))
-        ((:handler handler) env op opts)))))
-
-(defn- repl-resources
-  [env language]
-  (let [lang (normalize-language language)]
-    ;; `list-resources` returns string-keyed DATA maps with string enum VALUES
-    ;; ("kind" "nrepl", "status" "up"), so filter on strings.
-    (->> (vis/list-resources (:session-id env))
-         (filter #(let [kind (str (get % "kind"))]
-
-                    (or (= "repl" kind) (= "nrepl" kind) (str/ends-with? kind "repl"))))
-         (filter #(or (nil? lang) (= lang (normalize-language (get % "language")))))
-         vec)))
 
 (defn repl-status
-  "List REPL resources, optionally filtered by language or id."
-  ([env] (repl-status env nil))
-  ([env arg]
-   (let
-     [opts
-      (coerce-opts arg)
-
-      lang
-      (or (opts-language opts) (when (language-like? arg) arg))
-
-      id
-      (or (get opts "id") (get opts "repl_id"))]
-
-     (extension/success {:result {"resources" (cond->> (repl-resources env lang)
-                                                id
-                                                (filter #(= (str id) (get % "id")))
-
-                                                true
-                                                vec)}}))))
+  "Report the pack's REPL state: `repl_status(language,{cwd})`."
+  [env & args]
+  (dispatch-repl! env "status" args))
 
 ;; Call-selection helpers — what a CALL asked for, read off its input map. A pack
 ;; reports what it RAN; only the call knows what was SELECTED, so `run_tests`
@@ -508,30 +426,15 @@
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
-(defn start-repl
-  "Start a language REPL resource: `repl(language,{op,cwd,id,...})`. Pass `language` first; `op` defaults to `start`. There is no restart: `stop`, then `start`."
+(defn repl-start
+  "Start a language REPL resource: `repl_start(language,{cwd,env,...})`. There is no restart: `repl_stop`, then `repl_start`."
   [env & args]
-  (dispatch-start-repl! env args))
+  (dispatch-repl! env "start" args))
 
 (defn connect-repl
   "Attach to an external running REPL: `repl_connect(language,{port|build,host?,cwd?})`. A `build` attaches to the project's `shadow-cljs watch` and selects it, making eval ClojureScript. Registers it for eval, tests, and context but never owns or kills its process; stop only detaches."
   [env & args]
-  (let
-    [[language more]
-     (if (and (seq args) (language-like? (first args))) [(first args) (next args)] [nil args])
-
-     opts
-     (coerce-opts (first more))
-
-     dispatch-opts
-     (cond-> opts
-       language
-       (assoc "language" language))
-
-     handler
-     (choose-handler env :start-repl-fn dispatch-opts)]
-
-    ((:handler handler) env "connect" opts)))
+  (dispatch-repl! env "connect" args))
 
 (def format-symbol
   (vis/symbol
@@ -620,7 +523,7 @@
        "Evaluate `code` in an already-running project REPL — "
        "`repl_eval({\"language\": \"clojure\", \"code\": \"(+ 1 1)\"})`. `code` is REQUIRED and "
        "`language` may lead the call; `id`/`repl_id` picks one of several REPLs, `cwd` its project, "
-       "`timeout_ms` its budget. Lifecycle — start, status, stop — is `repl`. A REPL attached to a "
+       "`timeout_ms` its budget. Lifecycle is `repl_start` / `repl_status` / `repl_stop`. A REPL attached to a "
        "shadow-cljs `build` evaluates ClojureScript inside that build's JS runtime and the result "
        "names the `build` it landed in.")
      :params [{:name "language"} {:name "code" :required? true} {:name "id" :note "or `repl_id`"}
@@ -633,56 +536,71 @@
      :inject-env? true
      :tag :mutation}))
 
-(def start-repl-symbol
+(def repl-start-symbol
   (vis/symbol
-    #'start-repl
-    {:symbol 'repl
+    #'repl-start
+    {:symbol 'repl_start
      :result
      (str
-       "String-keyed result stamped with `op`; never a `{resources: [...]}` list. Status: Clojure "
-       "`result,id,cwd,status`, Python/Bun `cwd,status`. Start/connect may add "
-       "`running,port,pid,cmd,tool,aliases,external,host,log,message`, and a shadow-cljs attachment "
-       "adds `build,target,dialect,runtime`; stop by id returns `{result,id,message}`.")
+       "String-keyed result stamped with `op`: `result,id,cwd,status` plus "
+       "`running,port,pid,cmd,tool,aliases,external,host,log,message` when known, and "
+       "`build,target,dialect,runtime` for a shadow-cljs attachment.")
      :description
      (str
-       "REPL lifecycle — `repl(\"clojure\", {\"op\": \"status\"})`, or `repl({\"language\": ..., "
-       "\"op\": \"start\"})`. `op` is `start` (the default) | `status` | `stop` | `connect`; `cwd` "
-       "chooses the project and `id` the REPL a `stop` ends. "
-       "Nothing lists live REPLs for you: `status` is the only answer — reuse `up`, "
-       "recheck `starting`, start when absent/down/failed. There is NO restart op: a wedged REPL is "
-       "`stop` then `start`. `status` reports that "
-       "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it. "
-       "`connect` with `build` attaches to the `shadow-cljs watch` running under `cwd` — it publishes "
-       "its own port, so `port` is optional — and SELECTS that build, so later `repl_eval` is "
-       "ClojureScript in its JS runtime. It rides BESIDE the managed JVM REPL for the same `cwd`, each "
-       "under its own id (`nrepl:~/proj` and `nrepl:~/proj#app`); `stop` with `build` detaches only it. "
-       "`start` may carry its own `env` over the project's — a literal for a switch, a source map "
-       "({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}) for a secret, null to unset — and that env "
-       "BELONGS to the REPL: a `start` naming a different one is refused by the keys that differ, "
-       "since there is no restart. `repl_eval` never takes `env`: a live process' environment is its own.")
-     :params [{:name "language"} {:name "op" :note "start | status | stop | connect"} {:name "cwd"}
-              {:name "id" :note "which REPL a stop ends"} {:name "port"} {:name "host"}
+       "Start a project REPL — `repl_start(\"clojure\")`, or "
+       "`repl_start({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. `cwd` chooses the "
+       "project. Nothing lists live REPLs for you: `repl_status` is the only answer — reuse `up`, "
+       "recheck `starting`, start when absent/down/failed. There is NO restart: a wedged REPL is "
+       "`repl_stop` then `repl_start`. "
+       "`env` carries THIS REPL's own variables over the project's — a literal for a switch, a "
+       "source map ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}) for a secret, null to unset "
+       "— and that env BELONGS to the REPL: a start naming a different one is refused by the keys "
+       "that differ, since there is no restart. `repl_eval` never takes `env`: a live process' "
+       "environment is its own.")
+     :params [{:name "language"} {:name "cwd"} {:name "id"} {:name "port"} {:name "host"}
               {:name "build" :note "shadow-cljs build to attach + select (ClojureScript)"}
-              {:name "env" :note "start — THIS REPL's variables, over the project's"}]
+              {:name "env" :note "THIS REPL's variables, over the project's"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
+
+(def repl-status-symbol
+  (vis/symbol
+    #'repl-status
+    {:symbol 'repl_status
+     :result
+     (str
+       "String-keyed and stamped with `op`. Clojure `result,id,cwd,status`, Python/Bun "
+       "`cwd,status`; a running REPL adds `running,port,pid,build` and its `env` key NAMES "
+       "(never values).")
+     :description
+     (str
+       "State of the project's REPL — `repl_status(\"clojure\")`, or "
+       "`repl_status({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. Nothing else lists "
+       "live REPLs: this is the only answer — reuse `up`, recheck `starting`, `repl_start` when "
+       "absent/down/failed. `cwd` chooses the project.")
+     :params [{:name "language"} {:name "cwd"} {:name "id"}]
+     :call {:lead-opt "language" :rest :always}
+     :inject-env? true
+     :tag :observation}))
 
 (def connect-repl-symbol
   (vis/symbol
     #'connect-repl
     {:symbol 'repl_connect
      :result (str
-               "String-keyed and stamped with `op` — the shape `repl`'s own `connect` answers: "
-               "`result,id,cwd,status` plus `running,port,host,external,message` when known, and "
+               "String-keyed and stamped with `op`: `result,id,cwd,status` plus "
+               "`running,port,host,external,message` when known, and "
                "`build,target,dialect,runtime` for a shadow-cljs build.")
      :description
      (str
        "Attach an external running REPL — `repl_connect(\"clojure\", {\"port\": 56428})`. `port` names "
        "it, `host` (default localhost) and `cwd` say where it lives. `build` instead attaches to the "
        "`shadow-cljs watch` under `cwd` — it publishes its own port, so `port` is optional there — and "
-       "selects that build, making `repl_eval` ClojureScript in its JS runtime. Vis registers it for "
-       "eval, tests and context but never owns or kills it, so stopping it only detaches.")
+       "selects that build, making `repl_eval` ClojureScript in its JS runtime. It rides BESIDE the "
+       "managed JVM REPL for the same `cwd`, each under its own id (`nrepl:~/proj` and "
+       "`nrepl:~/proj#app`). Vis registers it for eval, tests and context but never owns or kills it, "
+       "so stopping it only detaches.")
      :params [{:name "language"} {:name "port" :note "or `build`"} {:name "host"} {:name "cwd"}
               {:name "build" :note "shadow-cljs build to attach + select"}]
      :call {:lead-opt "language" :rest :always}
@@ -697,17 +615,20 @@
      "String-keyed `{result, id, message}` stamped with `op`; an external REPL is only detached."
      :description
      (str
-       "Stop the managed REPL you started, by the exact `id` `repl` answered with — after verification, "
-       "so nothing is left running. The id is REQUIRED. An external REPL attached by `repl_connect` "
-       "is only detached, never killed.")
-     ;; repl_stop(id) — one positional id, unlike the language-led verbs above.
-     :call {:pos ["id"]}
+       "Stop a REPL after verification, so nothing is left running — `repl_stop(id)` with the exact "
+       "id `repl_start`/`repl_status` answered with, or `repl_stop(\"clojure\", {\"cwd\": \"…\"})` for "
+       "the pack's REPL under that directory. A REPL attached by `repl_connect` is only detached, "
+       "never killed. `build` detaches just that shadow-cljs attachment.")
+     ;; repl_stop(id) — one positional id, or the language-led form the other
+     ;; lifecycle verbs take.
+     :params [{:name "id"} {:name "language"} {:name "cwd"} {:name "build"}]
+     :call {:lead-opt "id" :rest :always}
      :inject-env? true
      :tag :mutation}))
 
 (def symbols
-  [format-symbol lint-symbol test-symbol repl-eval-symbol start-repl-symbol connect-repl-symbol
-   repl-stop-symbol])
+  [format-symbol lint-symbol test-symbol repl-eval-symbol repl-start-symbol repl-status-symbol
+   connect-repl-symbol repl-stop-symbol])
 
 (defn prompt
   "The language-facade reference: the AUTO capability matrix (active packs only)

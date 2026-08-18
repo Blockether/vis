@@ -1600,61 +1600,62 @@
    silently resurrects the moment that provider is authenticated again."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
-   (boolean
-    (update-machine-config!
-     (fn [raw]
-       (let
-         [providers
-          (vec (get raw "providers"))
+   (when
+     (update-machine-config!
+       (fn [raw]
+         (let
+           [providers
+            (vec (get raw "providers"))
 
-          provider-id'
-          (if (keyword? provider-id) (name provider-id) (str provider-id))
+            provider-id'
+            (if (keyword? provider-id) (name provider-id) (str provider-id))
 
-          providers*
-          (vec (remove #(= provider-id' (get % "id")) providers))
+            providers*
+            (vec (remove #(= provider-id' (get % "id")) providers))
 
-          ;; `fallback_model` may carry the qualified `provider/model` form, which
-          ;; WINS over `fallback_provider` on the read path, so both spellings have
-          ;; to be consulted before deciding whose tag this is.
-          fallback-model
-          (some-> (get raw "fallback_model")
-                  str
-                  str/trim
-                  not-empty)
+            ;; `fallback_model` may carry the qualified `provider/model` form, which
+            ;; WINS over `fallback_provider` on the read path, so both spellings have
+            ;; to be consulted before deciding whose tag this is.
+            fallback-model
+            (some-> (get raw "fallback_model")
+                    str
+                    str/trim
+                    not-empty)
 
-          provider-ids
-          (into #{}
-                (keep #(some-> (get % "id")
-                               str
-                               str/trim
-                               not-empty))
-                providers)
+            provider-ids
+            (into #{}
+                  (keep #(some-> (get % "id")
+                                 str
+                                 str/trim
+                                 not-empty))
+                  providers)
 
-          ;; A slash INSIDE a model id (`z-ai/glm-4.6v`) is not a provider tag: the
-          ;; prefix only tags a provider when the config actually has that provider.
-          tagged-provider
-          (or (when-let
-                [prefix (when (str/includes? (str fallback-model) "/")
-                          (not-empty (str/trim (first (str/split fallback-model #"/" 2)))))]
-                (when (contains? provider-ids prefix) prefix))
-              (some-> (get raw "fallback_provider")
-                      str
-                      str/trim
-                      not-empty))
+            ;; A slash INSIDE a model id (`z-ai/glm-4.6v`) is not a provider tag: the
+            ;; prefix only tags a provider when the config actually has that provider.
+            tagged-provider
+            (or (when-let
+                  [prefix (when (str/includes? (str fallback-model) "/")
+                            (not-empty (str/trim (first (str/split fallback-model #"/" 2)))))]
+                  (when (contains? provider-ids prefix) prefix))
+                (some-> (get raw "fallback_provider")
+                        str
+                        str/trim
+                        not-empty))
 
-          raw*
-          (cond-> raw
-            (seq providers*)
-            (assoc "providers" providers*)
+            raw*
+            (cond-> raw
+              (seq providers*)
+              (assoc "providers" providers*)
 
-            (empty? providers*)
-            (dissoc "providers")
+              (empty? providers*)
+              (dissoc "providers")
 
-            (= provider-id' tagged-provider)
-            (dissoc "fallback_provider" "fallback_model"))]
+              (= provider-id' tagged-provider)
+              (dissoc "fallback_provider" "fallback_model"))]
 
-          (when (not= raw raw*) raw*)))
-     source))))
+            (when (not= raw raw*) raw*)))
+        source)
+     true)))
 
 (def no-provider-error-type
   "Wire `error.type` the gateway answers when a request failed because no AI

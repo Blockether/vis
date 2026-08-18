@@ -268,7 +268,7 @@
     "- A helper that recurs across turns becomes a TOOL: propose a Python extension — one file in\n"
     "  `.vis/extensions/*.py`, `doc(\"extending\")`; write it when asked.\n"
     "- `session` is host-owned and REBUILT before every block: inspect it, never store in it — a\n"
-    "  write there is silently erased. Reuse a live REPL — nothing lists one for you; `repl` `status` does.\n\n"
+    "  write there is silently erased. Reuse a live REPL — nothing lists one for you; `repl_status` does.\n\n"
     "## 3. Inspect\n"
     "- **Filesystem work is Python**: `grep(...)` searches, `shell(...)` runs programs, `ls(dir)` maps an\n"
     "  unknown tree FIRST (`depth` descends) so no path is guessed. READING a region you will EDIT is\n"

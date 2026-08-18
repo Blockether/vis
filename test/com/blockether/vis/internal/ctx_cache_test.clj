@@ -32,7 +32,7 @@
   {"session_id" "s1"
    "session_workspace" {"root" "/repo" "isolated" false "vcs_kind" "git"}
    "session_env" {"host" {"os" "macos"} "project" {"kind" "single"}}
-   "session_language_tools" {"clojure" ["repl_eval" "repl"]}
+   "session_language_tools" {"clojure" ["repl_eval" "repl_start"]}
    "session_routing" {"model" "gpt-5.5"}})
 
 ;; A realistic cross-turn state change: the session title changed.

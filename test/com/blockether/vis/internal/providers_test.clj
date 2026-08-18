@@ -546,9 +546,14 @@
        (some #(when (= id (:id %)) %) providers))]
 
     (with-redefs-fn {#'config/load-global-config-raw (constantly {:providers fleet})
-                     (rv 'save-providers!) (fn [providers _source]
-                                             (reset! saved (vec providers))
-                                             true)}
+                     (rv 'update-providers!) (fn [f _source]
+                                               ;; The fleet is now read INSIDE the
+                                               ;; locked update, so the stub hands
+                                               ;; it in and records only a change.
+                                               (let [next* (vec (f (vec fleet)))]
+                                                 (when (not= (vec fleet) next*)
+                                                   (reset! saved next*))
+                                                 next*))}
       (fn []
         (is (= true (providers/clear-provider-api-key! :zai-coding-plan :test)))
         (let [cleared (entry @saved :zai-coding-plan)]

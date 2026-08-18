@@ -194,9 +194,9 @@ also carries what **this** child gets on top, as an argument of the call:
 
 ```python
 sh = await shell("npm test", {"env": {"NODE_ENV": "test"}})
-r  = await repl({"language": "python", "op": "start",
-                 "env": {"DJANGO_SETTINGS_MODULE": "app.settings.test",
-                         "STRIPE_KEY": {"keychain": "vis-stripe"}}})
+r  = await repl_start({"language": "python",
+                       "env": {"DJANGO_SETTINGS_MODULE": "app.settings.test",
+                               "STRIPE_KEY": {"keychain": "vis-stripe"}}})
 ```
 
 It is a **delta, not a replacement**: the workspace's `.env` and its
@@ -216,10 +216,10 @@ no source, and a source that produced nothing. A standing declaration that
 resolves to nothing is simply unset — one *call* asking for that variable is an
 error, because the call said it needed it.
 
-For a REPL the env is part of that REPL's **identity**. `repl`'s `status` reports
+For a REPL the env is part of that REPL's **identity**. `repl_status` reports
 it by name and digest, never by value, and a `start` for a REPL that is already
 running with a different env is refused by the keys that differ: there is no
-restart op, so stop it and start it again.
+restart verb, so `repl_stop` it and start it again.
 
 ## Providers and models
 
@@ -641,7 +641,7 @@ python:
   runner: project                    # default run_tests backend
 ```
 
-The pin is used by `repl` / `repl_eval` and by the `project` test runner, ahead
+The pin is used by `repl_start` / `repl_eval` and by the `project` test runner, ahead
 of all detection. A list is the argv prefix verbatim; a bare string is **one**
 argument and is never word-split, so a path may contain spaces. A path-like
 entry resolves against the project directory, `~` expands, and a bare name is

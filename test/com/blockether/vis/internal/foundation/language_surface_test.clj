@@ -67,46 +67,43 @@
         (expect (= 2 (get result "total")))
         (expect (nat-int? (get result "ms")))
         (expect (nil? (get envelope "ms")))))
-  (it "passes clj_repl-shaped repl op and opts to language handlers"
+  (it "dispatches each lifecycle VERB to the language handler with its own op"
       (let
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
                                           {:success? true :result {:op op :opts opts}})}])]
         (expect (= {:op "connect" :opts {"cwd" "ext" "aliases" ["dev"]}}
                    (:result
-                     (language-surface/start-repl env "connect" {"cwd" "ext" "aliases" ["dev"]}))))
+                     (language-surface/connect-repl env "clojure" {"cwd" "ext" "aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {"aliases" ["dev"]}}
-                   (:result (language-surface/start-repl env {"aliases" ["dev"]}))))
+                   (:result (language-surface/repl-start env {"aliases" ["dev"]}))))
         (expect (= {:op "status" :opts {"cwd" "ext"}}
-                   (:result (language-surface/start-repl env {"op" "status" "cwd" "ext"}))))
-        (expect (= {:op "start" :opts {}} (:result (language-surface/start-repl env))))))
-  (it "REFUSES the removed `restart` op on every arity instead of silently starting a REPL"
+                   (:result (language-surface/repl-status env {"cwd" "ext"}))))
+        (expect (= {:op "stop" :opts {"cwd" "ext"}}
+                   (:result (language-surface/repl-stop env "clojure" {"cwd" "ext"}))))
+        (expect (= {:op "start" :opts {}} (:result (language-surface/repl-start env))))))
+  ;; Regression, issue #repl-ops: one `repl` verb carried an `op` STRING, so a
+  ;; call read as a lifecycle step only after resolving its second argument —
+  ;; and a stale `op` (`restart`) could be parsed as a REPL id and start one.
+  (it "takes no `op` at all — an op string is just this verb's language or id"
       (let
         [env
          (fake-env [{:language "clojure"
                      :start-repl-fn (fn [_ op opts]
-                                      {:success? true :result {:op op :opts opts}})}])
-
-         ;; `restart` must stay RECOGNIZED as an op: parsed as a repl *id* it
-         ;; would silently start a REPL, which is the bug we are removing.
-         refuses
-         (fn [& args]
-           (try (apply language-surface/start-repl env args)
-                nil
-                (catch clojure.lang.ExceptionInfo e (ex-data e))))]
-
-        (expect (= :language-surface/removed-op (:type (refuses "restart" {"cwd" "ext"}))))
-        (expect (= :language-surface/removed-op (:type (refuses "clojure" "restart" {}))))
-        (expect (= :language-surface/removed-op (:type (refuses "clojure" "main" "restart" {}))))
-        (expect (= :language-surface/removed-op (:type (refuses {"op" "restart" "cwd" "ext"}))))
-        (expect (= ["connect" "start" "status" "stop"] (:allowed (refuses "restart"))))))
+                                      {:success? true :result {:op op :opts opts}})}])]
+        (expect (= "start" (:op (:result (language-surface/repl-start env {"op" "restart"})))))
+        (expect (= "status" (:op (:result (language-surface/repl-status env)))))
+        (expect (nil? (resolve 'com.blockether.vis.internal.foundation.language-surface/start-repl)))))
   (it "documents the explicit REPL lifecycle in its own doc text"
       (let
         [start
-         (:ext.symbol/description language-surface/start-repl-symbol)
+         (:ext.symbol/description language-surface/repl-start-symbol)
 
          result
-         (:ext.symbol/result language-surface/start-repl-symbol)
+         (:ext.symbol/result language-surface/repl-start-symbol)
+
+         status
+         (:ext.symbol/description language-surface/repl-status-symbol)
 
          stop
          (:ext.symbol/description language-surface/repl-stop-symbol)]
@@ -114,11 +111,10 @@
         ;; Regression, issue #ctx-resources: the doc used to send the model to
         ;; `session["resources"]["repls"][language][cwd]`, a ctx key that no longer exists.
         (expect (not (str/includes? start "session[\"resources\"]")))
-        (expect (str/includes? start "`status` is the only answer"))
+        (expect (str/includes? start "`repl_status` is the only answer"))
         (expect (str/includes? start "absent/down/failed"))
-        (expect (str/includes? start "`stop` ends a managed REPL"))
-        (expect (str/includes? start "`status` reports that directory's state"))
-        (expect (str/includes? result "never a `{resources: [...]}` list"))
+        (expect (str/includes? start "`repl_stop` then `repl_start`"))
+        (expect (str/includes? status "the only answer"))
         (expect (str/includes? result "stamped with `op`"))
         (expect (str/includes? (:ext.symbol/result language-surface/repl-eval-symbol)
                                "stamped with `op`"))
@@ -126,7 +122,7 @@
                                "absent fields mean not applicable"))
         (expect (not (str/includes? (:ext.symbol/result language-surface/test-symbol)
                                     "always present")))
-        (expect (str/includes? stop "managed REPL you started"))
+        (expect (str/includes? stop "after verification"))
         (expect (str/includes? stop "never killed"))))
   (it "accepts language-first calls for repl eval"
       (let
@@ -141,19 +137,19 @@
 
         (expect (= {:value "3"} (:result (language-surface/repl-eval env "clojure" "(+ 1 2)"))))
         (expect (= "(+ 1 2)" @seen))))
-  (it "passes language-first repl id and opts to language handlers"
+  (it "passes a language-first repl id and opts to language handlers"
       (let
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
                                           {:success? true :result {:op op :opts opts}})}])]
         (expect (= {:op "connect" :opts {"id" "main" "cwd" "ext"}}
                    (:result
-                     (language-surface/start-repl env "clojure" "main" "connect" {"cwd" "ext"}))))
+                     (language-surface/connect-repl env "clojure" {"id" "main" "cwd" "ext"}))))
         (expect (= {:op "start" :opts {"id" "main" "aliases" ["dev"]}}
-                   (:result (language-surface/start-repl env
+                   (:result (language-surface/repl-start env
                                                          "clojure"
                                                          {"id" "main" "aliases" ["dev"]}))))))
-  (it "reports and stops repl resources through the resource model"
+  (it "stops a repl resource BY ID through the resource model, with no pack at all"
       (let
         [stopped?
          (atom false)
@@ -168,10 +164,6 @@
                                   {:id "main-repl" :kind :nrepl :language "clojure" :label "main"}
                                   {:stop-fn (fn []
                                               (reset! stopped? true))})
-             (expect (= ["main-repl"]
-                        (mapv #(get % "id")
-                              (get-in (language-surface/repl-status env "clojure")
-                                      [:result "resources"]))))
              (expect (= "stopped"
                         (get-in (language-surface/repl-stop env "main-repl") [:result "result"])))
              (expect (true? @stopped?))
@@ -378,7 +370,7 @@
          (:session-id env)
 
          result
-         (try (language-surface/start-repl env "start")
+         (try (language-surface/repl-start env)
               (finally (process-jail/unregister-session-jail! session-id)))]
 
         (expect (true? (get-in result [:result :launch?]))))))

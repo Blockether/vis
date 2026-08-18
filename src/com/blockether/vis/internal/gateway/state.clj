@@ -41,10 +41,9 @@
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
-  (delay (let
-           [configured (some-> (System/getenv "VIS_GATEWAY_EVENT_RING_MAX")
-                               str/trim
-                               parse-long)]
+  (delay (let [configured (some-> (System/getenv "VIS_GATEWAY_EVENT_RING_MAX")
+                                  str/trim
+                                  parse-long)]
            (if (pos? (long (or configured 0))) (long configured) 2000))))
 
 (def ^:private RESULT_PR_LIMIT 4000)
@@ -101,15 +100,14 @@
    whitespace/end, or a newline. This flushes the live stream one COMPLETE
    sentence at a time instead of per token."
   [text ^long prev-len]
-  (let
-    [s
-     (str text)
+  (let [s
+        (str text)
 
-     n
-     (count s)
+        n
+        (count s)
 
-     tail
-     (if (and (pos? prev-len) (<= prev-len n)) (subs s prev-len) s)]
+        tail
+        (if (and (pos? prev-len) (<= prev-len n)) (subs s prev-len) s)]
 
     (boolean (re-find strutil/sentence-boundary-pattern tail))))
 
@@ -250,10 +248,9 @@
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
-  (delay (let
-           [configured (some-> (System/getenv "VIS_GATEWAY_MAX_CONCURRENT_TURNS")
-                               str/trim
-                               parse-long)]
+  (delay (let [configured (some-> (System/getenv "VIS_GATEWAY_MAX_CONCURRENT_TURNS")
+                                  str/trim
+                                  parse-long)]
            (if (pos? (long (or configured 0))) (long configured) 50))))
 
 ;; A `delay`: the permit count is read from the environment, so the semaphore
@@ -293,10 +290,9 @@
    avoided: its view retains the entire historical backing vector and turns a
    nominally bounded replay ring into an unbounded heap retention path."
   [events]
-  (loop
-    [ring (if (instance? clojure.lang.PersistentQueue events)
-            events
-            (into clojure.lang.PersistentQueue/EMPTY events))]
+  (loop [ring (if (instance? clojure.lang.PersistentQueue events)
+                events
+                (into clojure.lang.PersistentQueue/EMPTY events))]
     (if (> (count ring) (long @EVENT_RING_MAX)) (recur (pop ring)) ring)))
 
 (defn- fan-out!
@@ -363,73 +359,70 @@
    must never poison the appender or sibling subscribers."
   ([sid type payload] (append-event! sid type payload {:store? true}))
   ([sid type payload {:keys [store?]}]
-   (let
-     [captured
-      (volatile! nil)
+   (let [captured
+         (volatile! nil)
 
-      ;; Canonicalize the payload ONCE, OUTSIDE the swap!. `wire/canonical` is a
-      ;; FULL recursive walk of the payload, and tool results reach megabytes —
-      ;; while a `swap!` body is re-run from scratch on EVERY CAS retry. There is
-      ;; ONE `registry` atom for every session in the process, so concurrent
-      ;; appends (SSE fan-out, several live turns, the cross-process bus mirror)
-      ;; collide constantly: measured 15155 walks to append 2400 events — 84%
-      ;; of the work thrown away, 8x the wall time. Nothing in the stamp depends
-      ;; on `entry`, so only `seq` has to be decided inside the loop.
-      canonical-payload
-      (wire/canonical payload)
+         ;; Canonicalize the payload ONCE, OUTSIDE the swap!. `wire/canonical` is a
+         ;; FULL recursive walk of the payload, and tool results reach megabytes —
+         ;; while a `swap!` body is re-run from scratch on EVERY CAS retry. There is
+         ;; ONE `registry` atom for every session in the process, so concurrent
+         ;; appends (SSE fan-out, several live turns, the cross-process bus mirror)
+         ;; collide constantly: measured 15155 walks to append 2400 events — 84%
+         ;; of the work thrown away, 8x the wall time. Nothing in the stamp depends
+         ;; on `entry`, so only `seq` has to be decided inside the loop.
+         canonical-payload
+         (wire/canonical payload)
 
-      ;; Stamped once as well: a CAS retry must not drift the event's timestamp.
-      stamp-ts
-      (System/currentTimeMillis)
+         ;; Stamped once as well: a CAS retry must not drift the event's timestamp.
+         stamp-ts
+         (System/currentTimeMillis)
 
-      stamp-sid
-      (str sid)
+         stamp-sid
+         (str sid)
 
-      stamp-type
-      (wire/->wire type)]
+         stamp-type
+         (wire/->wire type)]
 
      (update-session!
        sid
        (fn [entry]
-         (let
-           [entry
-            (or entry (fresh-entry sid))
+         (let [entry
+               (or entry (fresh-entry sid))
 
-            n
-            (inc (long (:next-seq entry 0)))
+               n
+               (inc (long (:next-seq entry 0)))
 
-            event
-            ;; The identity stamp is applied LAST and a payload can NEVER override
-            ;; it: `:session_id`, `:seq`, `:ts`, `:type` and `:schema` are facts
-            ;; of the RING this event is being appended to, not free payload
-            ;; fields. Both dedup guards on the wire key off that pair — the
-            ;; multiplexed SSE body's per-session `last-seqs` and every client's
-            ;; per-session cursor — so an event stamped with ANOTHER session's
-            ;; id while carrying THIS ring's seq taught both sides that the other
-            ;; session had already reached this (much higher) seq. Every later
-            ;; event of that session then looked "already seen" and was dropped:
-            ;; a live turn stopped streaming mid-flight and never delivered its
-            ;; terminal, leaving the channel spinning forever. Cross-session
-            ;; payloads carry their subject under their OWN key (see
-            ;; `broadcast-title-event!`'s `:titled_session_id`).
-            ;;
-            ;; The stamp keys are ALREADY in canonical spelling, so assoc-ing
-            ;; them onto the canonicalized payload is identical to canonicalizing
-            ;; the stamped payload — and it enforces the rule above outright: a
-            ;; payload key that merely CANONICALIZES onto a stamp key
-            ;; (`:session-id` -> `session_id`) can no longer race it.
-            (assoc canonical-payload
-              "schema" 1
-              "seq" n
-              "ts" stamp-ts
-              "session_id" stamp-sid
-              "type" stamp-type)]
+               event
+               ;; The identity stamp is applied LAST and a payload can NEVER override
+               ;; it: `:session_id`, `:seq`, `:ts`, `:type` and `:schema` are facts
+               ;; of the RING this event is being appended to, not free payload
+               ;; fields. Both dedup guards on the wire key off that pair — the
+               ;; multiplexed SSE body's per-session `last-seqs` and every client's
+               ;; per-session cursor — so an event stamped with ANOTHER session's
+               ;; id while carrying THIS ring's seq taught both sides that the other
+               ;; session had already reached this (much higher) seq. Every later
+               ;; event of that session then looked "already seen" and was dropped:
+               ;; a live turn stopped streaming mid-flight and never delivered its
+               ;; terminal, leaving the channel spinning forever. Cross-session
+               ;; payloads carry their subject under their OWN key (see
+               ;; `broadcast-title-event!`'s `:titled_session_id`).
+               ;;
+               ;; The stamp keys are ALREADY in canonical spelling, so assoc-ing
+               ;; them onto the canonicalized payload is identical to canonicalizing
+               ;; the stamped payload — and it enforces the rule above outright: a
+               ;; payload key that merely CANONICALIZES onto a stamp key
+               ;; (`:session-id` -> `session_id`) can no longer race it.
+               (assoc canonical-payload
+                 "schema" 1
+                 "seq" n
+                 "ts" stamp-ts
+                 "session_id" stamp-sid
+                 "type" stamp-type)]
 
            (vreset! captured event)
-           (cond->
-             (assoc entry
-               :next-seq n
-               :last-active (System/currentTimeMillis))
+           (cond-> (assoc entry
+                     :next-seq n
+                     :last-active (System/currentTimeMillis))
              (and (= type "turn.started") (get-in entry [:turns (:turn_id payload)]))
              (assoc-in [:turns (:turn_id payload) :event_start_seq] n)
 
@@ -469,46 +462,43 @@
    no state accrues for conversations nobody here is watching."
   [sid store? event]
   (when (session-known? sid)
-    (let
-      [type
-       (get event "type")
+    (let [type
+          (get event "type")
 
-       tid
-       (get event "turn_id")
+          tid
+          (get event "turn_id")
 
-       terminal?
-       (contains? #{"turn.completed" "turn.failed" "turn.cancelled"} type)
+          terminal?
+          (contains? #{"turn.completed" "turn.failed" "turn.cancelled"} type)
 
-       ;; The registry's internal turn records are keyword-keyed engine
-       ;; state, so the string-keyed wire event is re-keyed at THIS ingress
-       ;; (the one place foreign wire data meets internal records).
-       term-patch
-       (-> (into {}
-                 (map (fn [[k v]]
-                        [(keyword k) v]))
-                 (dissoc event "type" "seq" "turn_id"))
-           (assoc :status (or (get event "status")
-                              (if (= type "turn.failed") "failed" "completed"))))
+          ;; The registry's internal turn records are keyword-keyed engine
+          ;; state, so the string-keyed wire event is re-keyed at THIS ingress
+          ;; (the one place foreign wire data meets internal records).
+          term-patch
+          (-> (into {}
+                    (map (fn [[k v]]
+                           [(keyword k) v]))
+                    (dissoc event "type" "seq" "turn_id"))
+              (assoc :status (or (get event "status")
+                                 (if (= type "turn.failed") "failed" "completed"))))
 
-       captured
-       (volatile! nil)]
+          captured
+          (volatile! nil)]
 
       (update-session!
         sid
         (fn [entry]
           (if entry
-            (let
-              [n
-               (inc (long (:next-seq entry 0)))
+            (let [n
+                  (inc (long (:next-seq entry 0)))
 
-               ev
-               (assoc event "seq" n)]
+                  ev
+                  (assoc event "seq" n)]
 
               (vreset! captured ev)
-              (cond->
-                (assoc entry
-                  :next-seq n
-                  :last-active (System/currentTimeMillis))
+              (cond-> (assoc entry
+                        :next-seq n
+                        :last-active (System/currentTimeMillis))
                 store?
                 (update :events #(trim-ring (conj (or % []) ev)))
 
@@ -631,15 +621,14 @@
    locally or its start seq wasn't recorded (a foreign turn is handled instead by
    `subscribe!`'s hydrate, which appends it above the live-only cursor)."
   [sid]
-  (let
-    [entry
-     (session-entry sid)
+  (let [entry
+        (session-entry sid)
 
-     tid
-     (:current-turn entry)
+        tid
+        (:current-turn entry)
 
-     start-seq
-     (get-in entry [:turns tid :event_start_seq])]
+        start-seq
+        (get-in entry [:turns tid :event_start_seq])]
 
     (when (pos-int? start-seq) (dec (long start-seq)))))
 
@@ -711,15 +700,14 @@
   ;; `fresh-entry`, never a bare zero: an entry seeded at 0 restarts the seq
   ;; counter below a live client's cursor and silently kills its stream.
   (update-session! sid #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
-  (let
-    [db
-     (lp/db-info)
+  (let [db
+        (lp/db-info)
 
-     before
-     (smodel/model-of db sid)
+        before
+        (smodel/model-of db sid)
 
-     result
-     (smodel/set-model! db sid provider model)]
+        result
+        (smodel/set-model! db sid provider model)]
 
     (smodel/record-switch! db sid before result :gateway)
     result))
@@ -831,9 +819,8 @@
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [u (persistance/db-session-usage-stats db sid)]
-           (let
-             [input (long (or (:input-tokens u) 0))
-              cached (long (or (:input-cache-read-tokens u) 0))]
+           (let [input (long (or (:input-tokens u) 0))
+                 cached (long (or (:input-cache-read-tokens u) 0))]
 
              (wire/canonical (cond-> u
                                (pos? input)
@@ -897,9 +884,8 @@
   [sid workspace-id]
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
-      (let
-        [current (resolve-workspace db sid)
-         target (workspace/get db workspace-id)]
+      (let [current (resolve-workspace db sid)
+            target (workspace/get db workspace-id)]
 
         (when (and current target (not= (:repo-id current) (:repo-id target)))
           (throw (ex-info "Draft belongs to a different repository"
@@ -918,17 +904,15 @@
    COMMITTED HEAD, leaving the user's uncommitted work behind in their repo.
    Returns refreshed canonical workspace info."
   [sid label clean?]
-  (let
-    [label (some-> label
-                   str
-                   str/trim)]
+  (let [label (some-> label
+                      str
+                      str/trim)]
     (when (str/blank? label)
       (throw (ex-info "Draft name cannot be blank" {:type :workspace/blank-draft-label})))
     (when-let [db (lp/db-info)]
       (when-let [state-id (resolve-state-id db sid)]
-        (let
-          [current (resolve-workspace db sid)
-           repo-root (or (:repo-root current) (:root current) (workspace/trunk-root))]
+        (let [current (resolve-workspace db sid)
+              repo-root (or (:repo-root current) (:root current) (workspace/trunk-root))]
 
           (when-not (workspace/isolated-workspaces-supported? repo-root)
             (throw (ex-info "No workspace backend can create an isolated draft here"
@@ -951,9 +935,8 @@
   [sid workspace-id reason]
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
-      (let
-        [target (workspace/get db workspace-id)
-         current (resolve-workspace db sid)]
+      (let [target (workspace/get db workspace-id)
+            current (resolve-workspace db sid)]
 
         (when-not (workspace/draft? target)
           (throw (ex-info "Not an active draft"
@@ -967,9 +950,8 @@
                            :workspace-id workspace-id
                            :repo-id (:repo-id current)
                            :draft-repo-id (:repo-id target)})))
-        (let
-          [pinned-elsewhere (remove #(= (str state-id) (str (:id %)))
-                              (persistance/db-session-state-list-for-workspace db workspace-id))]
+        (let [pinned-elsewhere (remove #(= (str state-id) (str (:id %)))
+                                 (persistance/db-session-state-list-for-workspace db workspace-id))]
           (when (seq pinned-elsewhere)
             (throw (ex-info "Draft is in use by another session"
                             {:type :workspace/draft-in-use :workspace-id workspace-id}))))
@@ -988,18 +970,17 @@
   [error]
   (if-not (map? error)
     (str error)
-    (let
-      [msg
-       (or (:message error)
-           (some-> (:type error)
-                   str)
-           "error")
+    (let [msg
+          (or (:message error)
+              (some-> (:type error)
+                      str)
+              "error")
 
-       hint
-       (:hint error)
+          hint
+          (:hint error)
 
-       {:keys [line column]}
-       (:data error)]
+          {:keys [line column]}
+          (:data error)]
 
       (cond-> msg
         (and line column)
@@ -1022,10 +1003,9 @@
    only going to describe, and serving image N of a gallery re-read all N — a
    9-image gallery paid 81 image reads for 9. nil/unparsable id -> `[]`."
   [iid]
-  (try (if-let
-         [iid (some-> iid
-                      str
-                      parse-uuid)]
+  (try (if-let [iid (some-> iid
+                            str
+                            parse-uuid)]
          (vec (persistance/db-list-iteration-attachments-meta (lp/db-info) iid))
          [])
        (catch Throwable t
@@ -1124,16 +1104,14 @@
    `att` is `{:filename :media-type :base64}`. nil when the iteration is unknown
    or the payload could not be stored."
   [iid att]
-  (try (when-let
-         [iid (some-> iid
-                      str
-                      parse-uuid)]
+  (try (when-let [iid (some-> iid
+                              str
+                              parse-uuid)]
          (when-let [stored (persistance/db-append-iteration-attachment! (lp/db-info) iid att)]
-           (let
-             [rows (user-iteration-attachments iid)
-              idx (first (keep-indexed (fn [i row]
-                                         (when (= (str (:id row)) (str (:id stored))) i))
-                                       rows))]
+           (let [rows (user-iteration-attachments iid)
+                 idx (first (keep-indexed (fn [i row]
+                                            (when (= (str (:id row)) (str (:id stored))) i))
+                                          rows))]
 
              (when idx (nth (attachment-descriptors iid rows) idx nil)))))
        (catch Throwable t
@@ -1154,22 +1132,21 @@
   [{:keys [phase cmd iteration reason] :as chunk}]
   (when (and (activity-phases phase)
              (not (and (= phase :response-parse) (= :done (:status chunk)))))
-    (let
-      [op
-       (some-> (:op (:tool-event chunk))
-               name)
+    (let [op
+          (some-> (:op (:tool-event chunk))
+                  name)
 
-       label
-       (:label (:tool-event chunk))
+          label
+          (:label (:tool-event chunk))
 
-       ;; The tool's OWN sentence, when it declared a `:ticker-fn`. Channels print
-       ;; it verbatim instead of assembling `op` + `label` themselves, so the
-       ;; terminal and the app say the same thing about the same call.
-       phrase
-       (:phrase (:tool-event chunk))
+          ;; The tool's OWN sentence, when it declared a `:ticker-fn`. Channels print
+          ;; it verbatim instead of assembling `op` + `label` themselves, so the
+          ;; terminal and the app say the same thing about the same call.
+          phrase
+          (:phrase (:tool-event chunk))
 
-       activity
-       (if (= phase :tool-start) "tool" (name phase))]
+          activity
+          (if (= phase :tool-start) "tool" (name phase))]
 
       ["activity" false
        (cond-> {:activity activity}
@@ -1208,98 +1185,97 @@
   ;; `block.output` once lost their forms.
   (or
     (activity-chunk->event chunk)
-    (let
-      [payload
-       (case phase
-         (:tool-preview :form-start)
-         (merge
-           ;; Carry the display fields the block already has while it RUNS — its
-           ;; formatted source and pending headline — so the live bubble paints
-           ;; the same card it keeps once the block lands.
-           (form/->display (form/with-display chunk))
-           (cond-> {:block_id position :code code}
-             (:svar/tool-call-id chunk)
-             (assoc :tool_call_id (:svar/tool-call-id chunk))))
+    (let [payload
+          (case phase
+            (:tool-preview :form-start)
+            (merge
+              ;; Carry the display fields the block already has while it RUNS — its
+              ;; formatted source and pending headline — so the live bubble paints
+              ;; the same card it keeps once the block lands.
+              (form/->display (form/with-display chunk))
+              (cond-> {:block_id position :code code}
+                (:svar/tool-call-id chunk)
+                (assoc :tool_call_id (:svar/tool-call-id chunk))))
 
-         :form-result
-         (merge
-           ;; The card fields (pre-rendered body + headline + the printed
-           ;; result's own op) — projected from ONE canonical list.
-           (form/->display (form/with-display chunk))
-           {:block_id position
-            :code code
-            :result result
-            :stdout (when-let [s (:stdout chunk)]
-                      (wire/bounded-str s RESULT_PR_LIMIT))
-            :error (when (some? error) (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-            :silent (boolean (or silent? (and (nil? error) (contains? #{"vis_silent"} result))))
-            :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
-                           (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                             (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
+            :form-result
+            (merge
+              ;; The card fields (pre-rendered body + headline + the printed
+              ;; result's own op) — projected from ONE canonical list.
+              (form/->display (form/with-display chunk))
+              {:block_id position
+               :code code
+               :result result
+               :stdout (when-let [s (:stdout chunk)]
+                         (wire/bounded-str s RESULT_PR_LIMIT))
+               :error (when (some? error)
+                        (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+               :silent (boolean (or silent? (and (nil? error) (contains? #{"vis_silent"} result))))
+               :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
+                              (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+                                (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
 
-         ;; Live thinking, on its OWN wire event so a client paints it as the
-         ;; thinking trace — distinct from prose. `:text` is the INCREMENT
-         ;; since the last emit; `:cumulative` is the bounded full text for
-         ;; replace-style consumers (web ticker, TUI live bands).
-         :reasoning
-         {:block_id stream-block-id
-          :field "text"
-          :text (or stream-delta "")
-          :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
+            ;; Live thinking, on its OWN wire event so a client paints it as the
+            ;; thinking trace — distinct from prose. `:text` is the INCREMENT
+            ;; since the last emit; `:cumulative` is the bounded full text for
+            ;; replace-style consumers (web ticker, TUI live bands).
+            :reasoning
+            {:block_id stream-block-id
+             :field "text"
+             :text (or stream-delta "")
+             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
-         ;; Live provider Markdown appends to the canonical prose block.
-         :content
-         {:block_id stream-block-id
-          :field "markdown"
-          :text (or stream-delta "")
-          :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
+            ;; Live provider Markdown appends to the canonical prose block.
+            :content
+            {:block_id stream-block-id
+             :field "markdown"
+             :text (or stream-delta "")
+             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
-         :assistant-prose
-         {:block_id stream-block-id
-          :field "markdown"
-          :text (or stream-delta "")
-          :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
+            :assistant-prose
+            {:block_id stream-block-id
+             :field "markdown"
+             :text (or stream-delta "")
+             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
-         ;; The iteration's complete reasoning + complete assistant prose ride
-         ;; the boundary event too — the canonical, PERSISTED final text.
-         :iteration-final
-         (cond-> {:done (boolean done?) :thinking (strutil/settled-thinking-text thinking)}
-           (some-> assistant-prose
-                   str
-                   str/trim
-                   not-empty)
-           (assoc :assistant-prose (str/trim (str assistant-prose)))
+            ;; The iteration's complete reasoning + complete assistant prose ride
+            ;; the boundary event too — the canonical, PERSISTED final text.
+            :iteration-final
+            (cond-> {:done (boolean done?) :thinking (strutil/settled-thinking-text thinking)}
+              (some-> assistant-prose
+                      str
+                      str/trim
+                      not-empty)
+              (assoc :assistant-prose (str/trim (str assistant-prose)))
 
-           (and iteration-id (pos? (long (or attachment-count 0))))
-           (assoc :attachments (live-attachment-descriptors iteration-id)))
+              (and iteration-id (pos? (long (or attachment-count 0))))
+              (assoc :attachments (live-attachment-descriptors iteration-id)))
 
-         :iteration-error
-         ;; Carry the SAME canonical provider-error map the final settled turn
-         ;; bubble paints the styled CARD from (`provider-error-info` →
-         ;; `:vis/provider-error-data`).
-         (cond->
-           {:error (when (some? error) (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-            :thinking (strutil/settled-thinking-text thinking)}
-           (map? error)
-           (assoc :error-data (select-keys error [:type :message :status :cause-class]))
+            :iteration-error
+            ;; Carry the SAME canonical provider-error map the final settled turn
+            ;; bubble paints the styled CARD from (`provider-error-info` →
+            ;; `:vis/provider-error-data`).
+            (cond-> {:error (when (some? error)
+                              (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+                     :thinking (strutil/settled-thinking-text thinking)}
+              (map? error)
+              (assoc :error-data (select-keys error [:type :message :status :cause-class]))
 
-           (some? error)
-           (assoc :provider-error-data (provider-error/provider-error-info error)))
+              (some? error)
+              (assoc :provider-error-data (provider-error/provider-error-info error)))
 
-         (if (= phase :provider-retry-reset)
-           (cond->
-             {:attempt (:attempt chunk)
-              :max-retries (:max-retries chunk)
-              :delay-ms (:delay-ms chunk)}
-             (map? (:error chunk))
-             (assoc :error (select-keys (:error chunk) [:type :message :status :cause-class]))
+            (if (= phase :provider-retry-reset)
+              (cond-> {:attempt (:attempt chunk)
+                       :max-retries (:max-retries chunk)
+                       :delay-ms (:delay-ms chunk)}
+                (map? (:error chunk))
+                (assoc :error (select-keys (:error chunk) [:type :message :status :cause-class]))
 
-             (map? (:event chunk))
-             (assoc :event
-               (select-keys (:event chunk)
-                            [:event/type :reason :provider :model :from-provider :from-model
-                             :attempt :delay-ms :status :error])))
-           {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)}))]
+                (map? (:event chunk))
+                (assoc :event
+                  (select-keys (:event chunk)
+                               [:event/type :reason :provider :model :from-provider :from-model
+                                :attempt :delay-ms :status :error])))
+              {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)}))]
       [(case phase
          :tool-preview
          "block.preview"
@@ -1359,19 +1335,18 @@
 (defn- inline-attachment-preview
   "Byte-free chip payload for ONE inline (already base64-encoded) upload."
   [a]
-  (let
-    [pick
-     (fn [& ks]
-       (some (fn [k]
-               (let [v (or (get a k) (get a (keyword k)))]
-                 (when-not (str/blank? (str v)) (str v))))
-             ks))
+  (let [pick
+        (fn [& ks]
+          (some (fn [k]
+                  (let [v (or (get a k) (get a (keyword k)))]
+                    (when-not (str/blank? (str v)) (str v))))
+                ks))
 
-     b64
-     (str (or (get a "base64") (get a :base64) ""))
+        b64
+        (str (or (get a "base64") (get a :base64) ""))
 
-     size
-     (long (* 3 (quot (count b64) 4)))]
+        size
+        (long (* 3 (quot (count b64) 4)))]
 
     (when-let [filename (pick "filename" "name")]
       {:filename filename
@@ -1390,22 +1365,21 @@
    as before, showing a raw `/var/folders/.../clipboard-....png`).
    De-duped by filename; never throws."
   [request inline workspace]
-  (let
-    [root
-     (or (:root workspace) (get workspace "root"))
+  (let [root
+        (or (:root workspace) (get workspace "root"))
 
-     from-inline
-     (keep inline-attachment-preview (or inline []))
+        from-inline
+        (keep inline-attachment-preview (or inline []))
 
-     from-text
-     (try (map (fn [d]
-                 {:filename (:filename d)
-                  :media_type (:media-type d)
-                  :size (:size d)
-                  :size_label (:size-label d)
-                  :path (:path d)})
-               (attachments/scan-image-descriptors request {:workspace-root root}))
-          (catch Throwable _ nil))]
+        from-text
+        (try (map (fn [d]
+                    {:filename (:filename d)
+                     :media_type (:media-type d)
+                     :size (:size d)
+                     :size_label (:size-label d)
+                     :path (:path d)})
+                  (attachments/scan-image-descriptors request {:workspace-root root}))
+             (catch Throwable _ nil))]
 
     (->> (concat from-inline from-text)
          (reduce (fn [acc p]
@@ -1472,17 +1446,16 @@
   key is :engine_turn_id; the fallback covers terminal turns that finished before
   the gateway learned/cached that engine id."
   [live row]
-  (let
-    [engine-id
-     (some-> (:engine_turn_id live)
-             str)
+  (let [engine-id
+        (some-> (:engine_turn_id live)
+                str)
 
-     row-id
-     (some-> (:id row)
-             str)
+        row-id
+        (some-> (:id row)
+                str)
 
-     status
-     (str (:status live))]
+        status
+        (str (:status live))]
 
     (or (and (seq engine-id) (= engine-id row-id))
         (and (contains? terminal-turn-statuses status)
@@ -1512,12 +1485,11 @@
    the byte-free chips; this is that same resolution with the pixels, in the
    shape a transcript row carries. Never throws."
   [turn]
-  (try (let
-         [workspace
-          (:workspace turn)
+  (try (let [workspace
+             (:workspace turn)
 
-          root
-          (or (:root workspace) (get workspace "root"))]
+             root
+             (or (:root workspace) (get workspace "root"))]
 
          (into []
                (map-indexed (fn [position {:keys [path media-type base64 size]}]
@@ -1584,19 +1556,17 @@
 (defn- persisted-turn->wire
   "Project one durable engine turn into the canonical role/content message shape."
   [sid row]
-  (let
-    [id
-     (str (:id row))
+  (let [id
+        (str (:id row))
 
-     status
-     (let
-       [raw (some-> (:status row)
-                    name)]
-       (get persisted-status->wire raw raw))
+        status
+        (let [raw (some-> (:status row)
+                          name)]
+          (get persisted-status->wire raw raw))
 
-     created-at
-     (some-> (:created-at row)
-             date->ms)]
+        created-at
+        (some-> (:created-at row)
+                date->ms)]
 
     {:id id
      :turn_id id
@@ -1636,76 +1606,74 @@
   persisted row rendered the last request/response twice after refresh, with the
   transient duplicate missing the iterations disclosure."
   [sid]
-  (let
-    [{:keys [turns turn-order]}
-     (session-entry sid)
+  (let [{:keys [turns turn-order]}
+        (session-entry sid)
 
-     live0
-     (->> (or turn-order [])
-          (keep #(some-> (get turns %)
-                         wire-turn))
-          vec)
+        live0
+        (->> (or turn-order [])
+             (keep #(some-> (get turns %)
+                            wire-turn))
+             vec)
 
-     run-start
-     (some #(when (= "streaming" (:status %)) (long (or (:started_at %) 0))) live0)
+        run-start
+        (some #(when (= "streaming" (:status %)) (long (or (:started_at %) 0))) live0)
 
-     in-flight?
-     (fn [row]
-       (boolean (and run-start
-                     (or (= :running (:status row))
-                         (when-let [d (:created-at row)]
-                           (and (instance? java.util.Date d)
-                                (>= (.getTime ^java.util.Date d) (long run-start))))))))
+        in-flight?
+        (fn [row]
+          (boolean (and run-start
+                        (or (= :running (:status row))
+                            (when-let [d (:created-at row)]
+                              (and (instance? java.util.Date d)
+                                   (>= (.getTime ^java.util.Date d) (long run-start))))))))
 
-     persisted-rows
-     (try (->> (persistance/db-list-session-turns (lp/db-info) sid)
-               (remove in-flight?)
-               vec)
-          (catch Throwable t
-            (tel/log! :warn ["gateway: turn-history hydration failed" (ex-message t)])
-            []))
+        persisted-rows
+        (try (->> (persistance/db-list-session-turns (lp/db-info) sid)
+                  (remove in-flight?)
+                  vec)
+             (catch Throwable t
+               (tel/log! :warn ["gateway: turn-history hydration failed" (ex-message t)])
+               []))
 
-     persisted-ids
-     ;; The PRIMARY dedup key is an exact id match, so it belongs in a SET. The
-     ;; old `some` rescanned every persisted row for every live row, and the
-     ;; fallback arm compares whole `:content` vectors, so hydrating a session
-     ;; with many turns paid O(live x persisted) DEEP comparisons.
-     (into #{}
-           (keep #(some-> (:id %)
-                          str
-                          not-empty))
-           persisted-rows)
+        persisted-ids
+        ;; The PRIMARY dedup key is an exact id match, so it belongs in a SET. The
+        ;; old `some` rescanned every persisted row for every live row, and the
+        ;; fallback arm compares whole `:content` vectors, so hydrating a session
+        ;; with many turns paid O(live x persisted) DEEP comparisons.
+        (into #{}
+              (keep #(some-> (:id %)
+                             str
+                             not-empty))
+              persisted-rows)
 
-     live
-     (->> live0
-          (remove (fn [t]
-                    (let
-                      [engine-id (some-> (:engine_turn_id t)
-                                         str)]
-                      (if (seq engine-id)
-                        ;; A non-blank engine id decides it outright: the fallback
-                        ;; arm of `persisted-duplicate-of-live?` REQUIRES a blank
-                        ;; one, so it can never fire here.
-                        (contains? persisted-ids engine-id)
-                        (some #(persisted-duplicate-of-live? t %) persisted-rows)))))
-          vec)
+        live
+        (->> live0
+             (remove (fn [t]
+                       (let [engine-id (some-> (:engine_turn_id t)
+                                               str)]
+                         (if (seq engine-id)
+                           ;; A non-blank engine id decides it outright: the fallback
+                           ;; arm of `persisted-duplicate-of-live?` REQUIRES a blank
+                           ;; one, so it can never fire here.
+                           (contains? persisted-ids engine-id)
+                           (some #(persisted-duplicate-of-live? t %) persisted-rows)))))
+             vec)
 
-     live-ids
-     (into (set (map :turn_id live)) (keep :engine_turn_id live))
+        live-ids
+        (into (set (map :turn_id live)) (keep :engine_turn_id live))
 
-     att-by-soul
-     (try (persistance/db-list-turns-attachments (lp/db-info) (map :id persisted-rows))
-          (catch Throwable _ {}))
+        att-by-soul
+        (try (persistance/db-list-turns-attachments (lp/db-info) (map :id persisted-rows))
+             (catch Throwable _ {}))
 
-     persisted
-     (->> persisted-rows
-          (map (fn [row]
-                 (let [wire (persisted-turn->wire sid row)]
-                   (if-let [atts (seq (get att-by-soul (:turn_id wire)))]
-                     (assoc wire :attachments atts)
-                     wire))))
-          (remove #(contains? live-ids (:turn_id %)))
-          vec)]
+        persisted
+        (->> persisted-rows
+             (map (fn [row]
+                    (let [wire (persisted-turn->wire sid row)]
+                      (if-let [atts (seq (get att-by-soul (:turn_id wire)))]
+                        (assoc wire :attachments atts)
+                        wire))))
+             (remove #(contains? live-ids (:turn_id %)))
+             vec)]
 
     ;; persisted rows arrive oldest-first; live overlay rows (running/queued,
     ;; newer) chronologically follow. The wire contract is oldest-first, so a
@@ -1736,9 +1704,8 @@
    rendered result BODY, re-derived from the result the row DID keep. The wire
    therefore remains identical after reconnects."
   [iteration]
-  (cond->
-    (-> iteration
-        (update :thinking strutil/settled-thinking-text))
+  (cond-> (-> iteration
+              (update :thinking strutil/settled-thinking-text))
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display %))))
 
@@ -1753,116 +1720,116 @@
    strings. Remote channels consume these verbatim; older clients can still use
    the underlying usage/routing fields."
   [db att-by-soul turn]
-  (let
-    [iteration-rows
-     (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
-               (mapv with-display-iteration))
-          (catch Throwable t
-            (tel/log! :warn ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
-            []))
+  (let [iteration-rows
+        (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
+                  (mapv with-display-iteration))
+             (catch Throwable t
+               (tel/log! :warn
+                         ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
+               []))
 
-     ;; Produced artifacts (matplotlib figures, `attach`ed images) as the
-     ;; SAME lean descriptors the live `iteration.completed` frame carries —
-     ;; byte-free, so history costs nothing on the wire, and a remote client
-     ;; lazy-fetches the bytes from the attachment endpoint. Without this a
-     ;; produced image existed only for the seconds the live frame was on
-     ;; screen and vanished on the next transcript read.
-     atts-by-iter
-     (if (seq iteration-rows)
-       (try (into {}
-                  (map (fn [[iter-id rows]]
-                         ;; The HUMAN's own list, filtered once — the very door
-                         ;; the live frame and the byte endpoint go through — so
-                         ;; a model-only artifact is absent from history too and
-                         ;; index N names the same picture on every surface.
-                         [(str iter-id) (into [] (remove attachments/hidden-from-user?) rows)]))
-                  (persistance/db-list-iterations-attachments-meta db (keep :id iteration-rows)))
-            (catch Throwable _ {}))
-       {})
+        ;; Produced artifacts (matplotlib figures, `attach`ed images) as the
+        ;; SAME lean descriptors the live `iteration.completed` frame carries —
+        ;; byte-free, so history costs nothing on the wire, and a remote client
+        ;; lazy-fetches the bytes from the attachment endpoint. Without this a
+        ;; produced image existed only for the seconds the live frame was on
+        ;; screen and vanished on the next transcript read.
+        atts-by-iter
+        (if (seq iteration-rows)
+          (try (into {}
+                     (map (fn [[iter-id rows]]
+                            ;; The HUMAN's own list, filtered once — the very door
+                            ;; the live frame and the byte endpoint go through — so
+                            ;; a model-only artifact is absent from history too and
+                            ;; index N names the same picture on every surface.
+                            [(str iter-id) (into [] (remove attachments/hidden-from-user?) rows)]))
+                     (persistance/db-list-iterations-attachments-meta db (keep :id iteration-rows)))
+               (catch Throwable _ {}))
+          {})
 
-     iterations
-     (mapv (fn [it]
-             (if-let [rows (seq (get atts-by-iter (str (:id it))))]
-               (assoc it :attachments (attachment-descriptors (:id it) rows))
-               it))
-           iteration-rows)
+        iterations
+        (mapv (fn [it]
+                (if-let [rows (seq (get atts-by-iter (str (:id it))))]
+                  (assoc it :attachments (attachment-descriptors (:id it) rows))
+                  it))
+              iteration-rows)
 
-     last-it
-     (last iterations)
+        last-it
+        (last iterations)
 
-     tokens
-     (cond-> {}
-       (:input-tokens turn)
-       (assoc "input" (:input-tokens turn))
+        tokens
+        (cond-> {}
+          (:input-tokens turn)
+          (assoc "input" (:input-tokens turn))
 
-       (:input-regular-tokens turn)
-       (assoc "input_regular" (:input-regular-tokens turn))
+          (:input-regular-tokens turn)
+          (assoc "input_regular" (:input-regular-tokens turn))
 
-       (:input-cache-write-tokens turn)
-       (assoc "cache_created" (:input-cache-write-tokens turn))
+          (:input-cache-write-tokens turn)
+          (assoc "cache_created" (:input-cache-write-tokens turn))
 
-       (:input-cache-read-tokens turn)
-       (assoc "cached" (:input-cache-read-tokens turn))
+          (:input-cache-read-tokens turn)
+          (assoc "cached" (:input-cache-read-tokens turn))
 
-       (:output-tokens turn)
-       (assoc "output" (:output-tokens turn))
+          (:output-tokens turn)
+          (assoc "output" (:output-tokens turn))
 
-       (:output-reasoning-tokens turn)
-       (assoc "reasoning" (:output-reasoning-tokens turn)))
+          (:output-reasoning-tokens turn)
+          (assoc "reasoning" (:output-reasoning-tokens turn)))
 
-     cost
-     (when-let [total-cost (or (:total-cost turn) (:cost turn))]
-       (cond-> {"total_cost" total-cost}
-         (:provider turn)
-         (assoc "provider" (:provider turn))
+        cost
+        (when-let [total-cost (or (:total-cost turn) (:cost turn))]
+          (cond-> {"total_cost" total-cost}
+            (:provider turn)
+            (assoc "provider" (:provider turn))
 
-         (:model turn)
-         (assoc "model" (:model turn))))
+            (:model turn)
+            (assoc "model" (:model turn))))
 
-     meta-source
-     (cond-> {:duration-ms (:duration-ms turn)}
-       (seq tokens)
-       (assoc :tokens tokens)
+        meta-source
+        (cond-> {:duration-ms (:duration-ms turn)}
+          (seq tokens)
+          (assoc :tokens tokens)
 
-       cost
-       (assoc :cost cost)
+          cost
+          (assoc :cost cost)
 
-       (:provider turn)
-       (assoc :provider (:provider turn))
+          (:provider turn)
+          (assoc :provider (:provider turn))
 
-       (:model turn)
-       (assoc :model (:model turn))
+          (:model turn)
+          (assoc :model (:model turn))
 
-       (:llm-selected last-it)
-       (assoc :llm-selected (:llm-selected last-it))
+          (:llm-selected last-it)
+          (assoc :llm-selected (:llm-selected last-it))
 
-       (:llm-actual last-it)
-       (assoc :llm-actual (:llm-actual last-it))
+          (:llm-actual last-it)
+          (assoc :llm-actual (:llm-actual last-it))
 
-       (contains? last-it :llm-fallback?)
-       (assoc :llm-fallback? (:llm-fallback? last-it))
+          (contains? last-it :llm-fallback?)
+          (assoc :llm-fallback? (:llm-fallback? last-it))
 
-       (seq (:llm-routing-trace last-it))
-       (assoc :llm-routing-trace (:llm-routing-trace last-it)))
+          (seq (:llm-routing-trace last-it))
+          (assoc :llm-routing-trace (:llm-routing-trace last-it)))
 
-     ;; The footer summarises a FINISHED turn. A row that is still RUNNING
-     ;; already carries the last completed iteration's `:llm-actual`, so
-     ;; hydrating one mid-turn shipped a bare "provider/model" line — no
-     ;; tokens, no cost, no duration — and every channel painted a
-     ;; settled-looking footer under work that is still in flight.
-     ;; The engine's terminal status is an OPEN set (`:success`, `:error`, …),
-     ;; so ask the negative question: only a row the engine still has in flight
-     ;; is withheld.
-     in-flight?
-     (contains? in-flight-turn-statuses
-                (some-> (:status turn)
-                        name))
+        ;; The footer summarises a FINISHED turn. A row that is still RUNNING
+        ;; already carries the last completed iteration's `:llm-actual`, so
+        ;; hydrating one mid-turn shipped a bare "provider/model" line — no
+        ;; tokens, no cost, no duration — and every channel painted a
+        ;; settled-looking footer under work that is still in flight.
+        ;; The engine's terminal status is an OPEN set (`:success`, `:error`, …),
+        ;; so ask the negative question: only a row the engine still has in flight
+        ;; is withheld.
+        in-flight?
+        (contains? in-flight-turn-statuses
+                   (some-> (:status turn)
+                           name))
 
-     meta-summary
-     (when-not in-flight? (fmt/meta-summary-line meta-source))
+        meta-summary
+        (when-not in-flight? (fmt/meta-summary-line meta-source))
 
-     fallback-note
-     (when-not in-flight? (fmt/meta-fallback-note meta-source))]
+        fallback-note
+        (when-not in-flight? (fmt/meta-fallback-note meta-source))]
 
     (cond-> (assoc turn :iterations iterations)
       (seq (get att-by-soul (str (:id turn))))
@@ -1882,15 +1849,15 @@
   mobile) see the SAME maps, so there is exactly ONE transcript shape and a
   channel can never again be written against a shape only one transport sees."
   [sid]
-  (try (let
-         [db
-          (lp/db-info)
+  (try (let [db
+             (lp/db-info)
 
-          turns
-          (persistance/db-list-session-turns db sid)
+             turns
+             (persistance/db-list-session-turns db sid)
 
-          att-by-soul
-          (try (persistance/db-list-turns-attachments db (map :id turns)) (catch Throwable _ {}))]
+             att-by-soul
+             (try (persistance/db-list-turns-attachments db (map :id turns))
+                  (catch Throwable _ {}))]
 
          (wire/canonical (mapv (partial transcript-turn db att-by-soul) turns)))
        (catch Throwable t
@@ -1913,10 +1880,9 @@
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
-  (delay (let
-           [configured (some-> (System/getenv "VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES")
-                               str/trim
-                               parse-long)]
+  (delay (let [configured (some-> (System/getenv "VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES")
+                                  str/trim
+                                  parse-long)]
            (if (pos? (long (or configured 0))) (long configured) (* 2 1024 1024)))))
 
 (defn- budgeted-page-turns
@@ -1928,26 +1894,24 @@
    oldest-first, `dropped` the number of OLDEST window rows left out, which the
    caller adds to `:offset`."
   [db att-by-soul window]
-  (loop
-    [i
-     (dec (count window))
+  (loop [i
+         (dec (count window))
 
-     rows
-     '()
+         rows
+         '()
 
-     bytes
-     0]
+         bytes
+         0]
 
     (if (neg? i)
       [(vec rows) 0]
-      (let
-        [row
-         (wire/canonical (transcript-turn db att-by-soul (nth window i)))
+      (let [row
+            (wire/canonical (transcript-turn db att-by-soul (nth window i)))
 
-         bytes'
-         (+ (long bytes)
-            (long (alength (.getBytes ^String (wire/json-str row)
-                                      java.nio.charset.StandardCharsets/UTF_8))))]
+            bytes'
+            (+ (long bytes)
+               (long (alength (.getBytes ^String (wire/json-str row)
+                                         java.nio.charset.StandardCharsets/UTF_8))))]
 
         ;; The busting row is KEPT, not deferred. Deferring it silently ate the
         ;; newest turn that carried a user image: one 3 MB inline upload two
@@ -1984,38 +1948,37 @@
   start> :has-more <older rows exist>}`."
   [sid {:keys [limit offset]}]
   (try
-    (let
-      [db
-       (lp/db-info)
+    (let [db
+          (lp/db-info)
 
-       all
-       (vec (persistance/db-list-session-turns db sid))
+          all
+          (vec (persistance/db-list-session-turns db sid))
 
-       total
-       (long (count all))
+          total
+          (long (count all))
 
-       lim
-       (long (if limit (max 0 (min (long limit) total)) total))
+          lim
+          (long (if limit (max 0 (min (long limit) total)) total))
 
-       start
-       (long (if offset (max 0 (min (long offset) total)) (max 0 (- total lim))))
+          start
+          (long (if offset (max 0 (min (long offset) total)) (max 0 (- total lim))))
 
-       end
-       (long (min total (+ start lim)))
+          end
+          (long (min total (+ start lim)))
 
-       window
-       (subvec all start end)
+          window
+          (subvec all start end)
 
-       att-by-soul
-       (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))
+          att-by-soul
+          (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))
 
-       [rows dropped]
-       (if limit
-         (budgeted-page-turns db att-by-soul window)
-         [(wire/canonical (mapv (partial transcript-turn db att-by-soul) window)) 0])
+          [rows dropped]
+          (if limit
+            (budgeted-page-turns db att-by-soul window)
+            [(wire/canonical (mapv (partial transcript-turn db att-by-soul) window)) 0])
 
-       from
-       (long (+ start (long dropped)))]
+          from
+          (long (+ start (long dropped)))]
 
       {:turns rows :total total :offset from :has-more (pos? from)})
     (catch Throwable t
@@ -2041,39 +2004,37 @@
    ([[user-iteration-attachments]]), and a user's own uploaded image is not an
    artifact the model produced, so it is not here either."
   [sid]
-  (try
-    (let
-      [db
-       (lp/db-info)
+  (try (let [db
+             (lp/db-info)
 
-       ordinal
-       (into {}
-             (map-indexed (fn [i turn]
-                            [(str (:id turn)) (inc (long i))]))
-             (persistance/db-list-session-turns db sid))
+             ordinal
+             (into {}
+                   (map-indexed (fn [i turn]
+                                  [(str (:id turn)) (inc (long i))]))
+                   (persistance/db-list-session-turns db sid))
 
-       rows
-       (->> (persistance/db-list-session-attachments-meta db sid)
-            (filter :iteration-id)
-            (remove attachments/hidden-from-user?))]
+             rows
+             (->> (persistance/db-list-session-attachments-meta db sid)
+                  (filter :iteration-id)
+                  (remove attachments/hidden-from-user?))]
 
-      (->> (group-by #(str (:iteration-id %)) rows)
-           (mapcat (fn [[iid group]]
-                     ;; `(tool_call_id, position)` is the order
-                     ;; `db-list-iteration-attachments-meta` serves, so index N is
-                     ;; the same N the byte endpoint resolves.
-                     (let
-                       [ordered (vec (sort-by (juxt #(str (:tool-call-id %)) #(or (:position %) 0))
-                                              group))]
-                       (map (fn [descriptor row]
-                              (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
-                            (attachment-descriptors iid ordered)
-                            ordered))))
-           (sort-by (juxt :turn :iteration_id :index))
-           vec))
-    (catch Throwable t
-      (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
-      [])))
+         (->> (group-by #(str (:iteration-id %)) rows)
+              (mapcat (fn [[iid group]]
+                        ;; `(tool_call_id, position)` is the order
+                        ;; `db-list-iteration-attachments-meta` serves, so index N is
+                        ;; the same N the byte endpoint resolves.
+                        (let [ordered (vec (sort-by (juxt #(str (:tool-call-id %))
+                                                          #(or (:position %) 0))
+                                                    group))]
+                          (map (fn [descriptor row]
+                                 (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
+                               (attachment-descriptors iid ordered)
+                               ordered))))
+              (sort-by (juxt :turn :iteration_id :index))
+              vec))
+       (catch Throwable t
+         (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
+         [])))
 
 (defn turn-trace
   "THE canonical wire trace of ONE persisted turn: its iteration rows (each
@@ -2084,21 +2045,19 @@
   vector for a valid turn id, nil for an unparsable id or a read failure —
   callers use nil to fall back / retry."
   [tid]
-  (try (when-let
-         [turn-id (some-> tid
-                          str
-                          parse-uuid)]
-         (let
-           [db (lp/db-info)
-            iters (->> (persistance/db-list-session-turn-iterations db turn-id)
-                       (mapv with-display-iteration))
-            atts-by-iter (when (seq iters)
-                           (try (into {}
-                                      (map (fn [[iter-id rows]]
-                                             [(str iter-id) (attachment-storage/hydrate-all rows)]))
-                                      (persistance/db-list-iterations-attachments db
-                                                                                  (keep :id iters)))
-                                (catch Throwable _ {})))]
+  (try (when-let [turn-id (some-> tid
+                                  str
+                                  parse-uuid)]
+         (let [db (lp/db-info)
+               iters (->> (persistance/db-list-session-turn-iterations db turn-id)
+                          (mapv with-display-iteration))
+               atts-by-iter
+               (when (seq iters)
+                 (try (into {}
+                            (map (fn [[iter-id rows]]
+                                   [(str iter-id) (attachment-storage/hydrate-all rows)]))
+                            (persistance/db-list-iterations-attachments db (keep :id iters)))
+                      (catch Throwable _ {})))]
 
            (wire/canonical (mapv (fn [it]
                                    (if-let [atts (seq (get atts-by-iter (str (:id it))))]
@@ -2135,28 +2094,27 @@
    exactly the case it exists for: the spinner kept running and the answer
    painted late, when the stranded worker finally returned."
   [sid tid status]
-  (let
-    [turn
-     (turn-record sid tid)
+  (let [turn
+        (turn-record sid tid)
 
-     key
-     (:idempotency_key turn)
+        key
+        (:idempotency_key turn)
 
-     ;; A failed turn ships its settled content and reason, so the event alone
-     ;; describes the failure. A completed turn ships its visual prose together
-     ;; with the semantic speech projection. The terminal frame can overtake a
-     ;; client's throttled body deltas (notably in browsers), so speech alone
-     ;; would settle the bubble with a footer but no visible answer until transcript
-     ;; persistence catches up. Code/tool payloads remain transcript-only.
-     content
-     (not-empty (if (= "failed" status)
-                  (vec (:content turn))
-                  (filterv #(contains? #{"prose" "speech"} (get % "type")) (:content turn))))
+        ;; A failed turn ships its settled content and reason, so the event alone
+        ;; describes the failure. A completed turn ships its visual prose together
+        ;; with the semantic speech projection. The terminal frame can overtake a
+        ;; client's throttled body deltas (notably in browsers), so speech alone
+        ;; would settle the bubble with a footer but no visible answer until transcript
+        ;; persistence catches up. Code/tool payloads remain transcript-only.
+        content
+        (not-empty (if (= "failed" status)
+                     (vec (:content turn))
+                     (filterv #(contains? #{"prose" "speech"} (get % "type")) (:content turn))))
 
-     error
-     (when (= "failed" status)
-       (not-empty (some-> (:error turn)
-                          str)))]
+        error
+        (when (= "failed" status)
+          (not-empty (some-> (:error turn)
+                             str)))]
 
     (cond-> {:turn_id tid :status status}
       key
@@ -2185,21 +2143,20 @@
 
 (defn- record-metrics!
   [sid {:keys [tokens cost duration-ms status]}]
-  (let
-    [input
-     (long (or (get tokens "input") 0))
+  (let [input
+        (long (or (get tokens "input") 0))
 
-     output
-     (long (or (get tokens "output") 0))
+        output
+        (long (or (get tokens "output") 0))
 
-     cost-total
-     (double (or (get cost "total_cost") 0.0))
+        cost-total
+        (double (or (get cost "total_cost") 0.0))
 
-     duration
-     (long (or duration-ms 0))
+        duration
+        (long (or duration-ms 0))
 
-     failed?
-     (contains? #{:error :cancelled} status)]
+        failed?
+        (contains? #{:error :cancelled} status)]
 
     (swap! metrics (fn [m]
                      (-> m
@@ -2277,22 +2234,21 @@
    provider at all — attribution is stamped BY that marker, so there is nothing
    truthful to say before it."
   [stall]
-  (let
-    [{:keys [provider model]}
-     (some-> stall
-             deref)
+  (let [{:keys [provider model]}
+        (some-> stall
+                deref)
 
-     p
-     (some-> provider
-             name
-             str/trim
-             not-empty)
+        p
+        (some-> provider
+                name
+                str/trim
+                not-empty)
 
-     m
-     (some-> model
-             str
-             str/trim
-             not-empty)]
+        m
+        (some-> model
+                str
+                str/trim
+                not-empty)]
 
     (cond (and p m) (str p " / " m)
           :else (or p m))))
@@ -2304,9 +2260,8 @@
    involved at all: queueing for the execution permit, or building/entering its
    own session engine."
   [stall]
-  (let
-    [{:keys [provider produced?]} (some-> stall
-                                          deref)]
+  (let [{:keys [provider produced?]} (some-> stall
+                                             deref)]
     (boolean (or provider produced?))))
 
 (defn- stall-failure-text
@@ -2352,12 +2307,11 @@
    never a [[stall-lifecycle-phases]] marker. It is the flag that separates a turn
    the provider is answering slowly from one it never answered at all."
   [state chunk now]
-  (let
-    [meaningful?
-     (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))
+  (let [meaningful?
+        (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))
 
-     output?
-     (and meaningful? (not (contains? stall-lifecycle-phases (:phase chunk))))]
+        output?
+        (and meaningful? (not (contains? stall-lifecycle-phases (:phase chunk))))]
 
     (cond-> (assoc state :phase (:phase chunk))
       ;; Attribution is stamped by the `:provider-call` marker and kept: the
@@ -2412,18 +2366,17 @@
   [sid tid cancel-token]
   (if-not (current-turn-run? sid tid cancel-token)
     false
-    (let
-      [^java.util.concurrent.ConcurrentHashMap claims
-       turn-terminal-claims
+    (let [^java.util.concurrent.ConcurrentHashMap claims
+          turn-terminal-claims
 
-       k
-       [sid tid]
+          k
+          [sid tid]
 
-       claim
-       (turn-terminal-claim-key cancel-token)
+          claim
+          (turn-terminal-claim-key cancel-token)
 
-       prev
-       (.putIfAbsent claims k claim)]
+          prev
+          (.putIfAbsent claims k claim)]
 
       (cond (nil? prev) true
             (= prev claim) false
@@ -2527,12 +2480,11 @@
    terminal. Guarding on the pin ALONE let the watchdog exit silently and leave
    the orphan behind."
   [sid tid cancel-token]
-  (let
-    [entry
-     (session-entry sid)
+  (let [entry
+        (session-entry sid)
 
-     turn
-     (get-in entry [:turns tid])]
+        turn
+        (get-in entry [:turns tid])]
 
     (and (current-turn-run? sid tid cancel-token)
          (or (= tid (:current-turn entry)) (= "running" (:status turn))))))
@@ -2584,64 +2536,63 @@
 
    Self-terminating: exits as soon as the turn no longer owes a terminal."
   [sid tid cancel-token stall]
-  (let
-    [check-ms (-> (min (long TURN_STALL_TIMEOUT_MS)
-                       (long TURN_FIRST_OUTPUT_TIMEOUT_MS)
-                       (long TURN_LAUNCH_TIMEOUT_MS))
-                  (quot 8)
-                  (max 25)
-                  (min 20000))]
+  (let [check-ms (-> (min (long TURN_STALL_TIMEOUT_MS)
+                          (long TURN_FIRST_OUTPUT_TIMEOUT_MS)
+                          (long TURN_LAUNCH_TIMEOUT_MS))
+                     (quot 8)
+                     (max 25)
+                     (min 20000))]
     (doto
       (Thread.
         ^Runnable
         (fn []
-          (try
-            (loop []
+          (try (loop []
 
-              (Thread/sleep check-ms)
-              (when (turn-watchdog-live? sid tid cancel-token)
-                (let
-                  [{:keys [phase last-ms started? produced?]} @stall
-                   idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
-                   ;; Nothing from the model yet — and not merely queueing
-                   ;; for the execution permit.
-                   silent?
-                   (and started? (not produced?) (not (contains? first-output-exempt-phases phase)))
-                   ceiling (long (cond (not started?) TURN_LAUNCH_TIMEOUT_MS
-                                       silent? TURN_FIRST_OUTPUT_TIMEOUT_MS
-                                       :else TURN_STALL_TIMEOUT_MS))
-                   tripped? (if started?
-                              (and (not (contains? stall-exempt-phases phase)) (>= idle-ms ceiling))
-                              (>= idle-ms ceiling))]
+                 (Thread/sleep check-ms)
+                 (when (turn-watchdog-live? sid tid cancel-token)
+                   (let [{:keys [phase last-ms started? produced?]} @stall
+                         idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
+                         ;; Nothing from the model yet — and not merely queueing
+                         ;; for the execution permit.
+                         silent? (and started?
+                                      (not produced?)
+                                      (not (contains? first-output-exempt-phases phase)))
+                         ceiling (long (cond (not started?) TURN_LAUNCH_TIMEOUT_MS
+                                             silent? TURN_FIRST_OUTPUT_TIMEOUT_MS
+                                             :else TURN_STALL_TIMEOUT_MS))
+                         tripped? (if started?
+                                    (and (not (contains? stall-exempt-phases phase))
+                                         (>= idle-ms ceiling))
+                                    (>= idle-ms ceiling))]
 
-                  (if tripped?
-                    (let
-                      [detail (cond (not started?) (str "no worker activity for " idle-ms "ms")
-                                    silent? (str "no output at all for " idle-ms
-                                                 "ms since the turn started, in phase " phase)
-                                    :else (str "no output for " idle-ms "ms in phase " phase))
-                       _ (swap! stall assoc :stalled? true :stall-detail detail)
-                       reason (if started?
-                                (stall-failure-text stall)
-                                (str "turn never started running: " detail))]
+                     (if tripped?
+                       (let [detail (cond (not started?)
+                                          (str "no worker activity for " idle-ms "ms")
+                                          silent? (str "no output at all for " idle-ms
+                                                       "ms since the turn started, in phase " phase)
+                                          :else (str "no output for " idle-ms "ms in phase " phase))
+                             _ (swap! stall assoc :stalled? true :stall-detail detail)
+                             reason (if started?
+                                      (stall-failure-text stall)
+                                      (str "turn never started running: " detail))]
 
-                      (tel/log! :warn
-                                ["gateway: turn made no progress — force-cancelling" tid reason])
-                      (cancellation/cancel! cancel-token
-                                            (if started? :stall-watchdog :launch-watchdog))
-                      ;; Last line of defence: the cancel normally makes the
-                      ;; worker (or the cancel hook) land the terminal. When
-                      ;; neither can, land it here — a `turn.started` with no
-                      ;; terminal is what wedges a session forever. A turn
-                      ;; that produced nothing has nothing to flush, so it
-                      ;; gets the short grace.
-                      (Thread/sleep (cancel-terminal-grace-ms stall))
-                      (when (turn-watchdog-live? sid tid cancel-token)
-                        (fail-orphaned-turn! sid tid cancel-token reason)))
-                    (recur)))))
-            (catch InterruptedException _ nil)
-            (catch Throwable t
-              (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
+                         (tel/log! :warn
+                                   ["gateway: turn made no progress — force-cancelling" tid reason])
+                         (cancellation/cancel! cancel-token
+                                               (if started? :stall-watchdog :launch-watchdog))
+                         ;; Last line of defence: the cancel normally makes the
+                         ;; worker (or the cancel hook) land the terminal. When
+                         ;; neither can, land it here — a `turn.started` with no
+                         ;; terminal is what wedges a session forever. A turn
+                         ;; that produced nothing has nothing to flush, so it
+                         ;; gets the short grace.
+                         (Thread/sleep (cancel-terminal-grace-ms stall))
+                         (when (turn-watchdog-live? sid tid cancel-token)
+                           (fail-orphaned-turn! sid tid cancel-token reason)))
+                       (recur)))))
+               (catch InterruptedException _ nil)
+               (catch Throwable t
+                 (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
         (str "gateway-turn-stall-watchdog-" tid))
       (.setDaemon true)
       (.start))
@@ -2655,247 +2606,244 @@
   [sid tid request
    {:keys [messages model reasoning-default cancel-token extra-body turn-features workspace
            engine-opts attachments display-request stall]}]
-  (let
-    [caller-on-chunk
-     (get-in engine-opts [:hooks :on-chunk])
+  (let [caller-on-chunk
+        (get-in engine-opts [:hooks :on-chunk])
 
-     ;; phase -> last emitted cumulative length and timestamp
-     last-delta-ms
-     (volatile! {})
+        ;; phase -> last emitted cumulative length and timestamp
+        last-delta-ms
+        (volatile! {})
 
-     started-blocks
-     (volatile! #{})
+        started-blocks
+        (volatile! #{})
 
-     ;; Blocks opened and NOT yet closed. An iteration's reasoning/prose block
-     ;; used to stay open until the TERMINAL flush, so a 72-iteration turn
-     ;; streamed 146 half-open blocks for ten minutes and closed them all in one
-     ;; 3ms burst at the end: every consumer that renders an open reasoning
-     ;; block as live kept the LAST thinking on screen, as if the work never
-     ;; finished. Close them at the iteration boundary that actually ended them.
-     open-blocks
-     (volatile! #{})
+        ;; Blocks opened and NOT yet closed. An iteration's reasoning/prose block
+        ;; used to stay open until the TERMINAL flush, so a 72-iteration turn
+        ;; streamed 146 half-open blocks for ten minutes and closed them all in one
+        ;; 3ms burst at the end: every consumer that renders an open reasoning
+        ;; block as live kept the LAST thinking on screen, as if the work never
+        ;; finished. Close them at the iteration boundary that actually ended them.
+        open-blocks
+        (volatile! #{})
 
-     close-blocks!
-     (fn [block-ids]
-       (doseq [block-id block-ids]
-         (vswap! open-blocks disj block-id)
-         (append-event! sid "content.block.completed" {:turn_id tid :block_id block-id})))
+        close-blocks!
+        (fn [block-ids]
+          (doseq [block-id block-ids]
+            (vswap! open-blocks disj block-id)
+            (append-event! sid "content.block.completed" {:turn_id tid :block_id block-id})))
 
-     close-iteration-blocks!
-     (fn [iteration]
-       (let [suffix (str ":" (long (or iteration 0)))]
-         (close-blocks! (filter #(str/ends-with? (str %) suffix) @open-blocks))))
+        close-iteration-blocks!
+        (fn [iteration]
+          (let [suffix (str ":" (long (or iteration 0)))]
+            (close-blocks! (filter #(str/ends-with? (str %) suffix) @open-blocks))))
 
-     on-chunk
-     (fn [chunk]
-       ;; Empty cumulative stream callbacks are transport heartbeats, not model
-       ;; progress. Keep their live phase for diagnostics without moving the
-       ;; stall deadline.
-       (when stall (swap! stall advance-turn-stall-state chunk (System/currentTimeMillis)))
-       (try
-         (when caller-on-chunk
-           (try (caller-on-chunk chunk)
-                (catch Throwable t
-                  (tel/log! :warn ["gateway: caller chunk hook failed" (ex-message t)]))))
-         (let
-           [phase
-            (:phase chunk)
+        on-chunk
+        (fn [chunk]
+          ;; Empty cumulative stream callbacks are transport heartbeats, not model
+          ;; progress. Keep their live phase for diagnostics without moving the
+          ;; stall deadline.
+          (when stall (swap! stall advance-turn-stall-state chunk (System/currentTimeMillis)))
+          (try
+            (when caller-on-chunk
+              (try (caller-on-chunk chunk)
+                   (catch Throwable t
+                     (tel/log! :warn ["gateway: caller chunk hook failed" (ex-message t)]))))
+            (let [phase
+                  (:phase chunk)
 
-            now
-            (System/currentTimeMillis)]
+                  now
+                  (System/currentTimeMillis)]
 
-           (when-not (coalesce-delta? @last-delta-ms chunk now)
-             (let
-               [streaming?
-                (contains? streaming-text-phases phase)
+              (when-not (coalesce-delta? @last-delta-ms chunk now)
+                (let [streaming?
+                      (contains? streaming-text-phases phase)
 
-                cumulative
-                (str (delta-text chunk))
+                      cumulative
+                      (str (delta-text chunk))
 
-                stream-key
-                (when streaming? [phase (long (or (:iteration chunk) 0))])
+                      stream-key
+                      (when streaming? [phase (long (or (:iteration chunk) 0))])
 
-                previous-len
-                (long (get-in @last-delta-ms [stream-key :len] 0))
+                      previous-len
+                      (long (get-in @last-delta-ms [stream-key :len] 0))
 
-                block-id
-                (when streaming? (str tid ":" (name phase) ":" (long (or (:iteration chunk) 0))))
+                      block-id
+                      (when streaming?
+                        (str tid ":" (name phase) ":" (long (or (:iteration chunk) 0))))
 
-                delta
-                (when streaming? (subs cumulative (min previous-len (count cumulative))))
+                      delta
+                      (when streaming? (subs cumulative (min previous-len (count cumulative))))
 
-                chunk
-                (cond-> chunk
-                  streaming?
-                  (assoc :stream-block-id
-                    block-id :stream-delta
-                    delta))
+                      chunk
+                      (cond-> chunk
+                        streaming?
+                        (assoc :stream-block-id
+                          block-id :stream-delta
+                          delta))
 
-                ;; A streaming phase that has said NOTHING yet is not content.
-                ;; Opening its block on the first empty tick is what filled the
-                ;; journals with reasoning noise: 1009 of 1227 reasoning blocks
-                ;; were `started -> "" delta -> completed` inside ~200ms, one
-                ;; per iteration, whether or not the model thought at all. Stay
-                ;; silent until the provider actually says something — the first
-                ;; non-blank tick opens the block AND carries its text, so no
-                ;; consumer ever sees a delta for a block it was not told about.
-                nothing-said?
-                (and streaming?
-                     (not= phase :tool-preview)
-                     (not (contains? @started-blocks block-id))
-                     (str/blank? cumulative))]
+                      ;; A streaming phase that has said NOTHING yet is not content.
+                      ;; Opening its block on the first empty tick is what filled the
+                      ;; journals with reasoning noise: 1009 of 1227 reasoning blocks
+                      ;; were `started -> "" delta -> completed` inside ~200ms, one
+                      ;; per iteration, whether or not the model thought at all. Stay
+                      ;; silent until the provider actually says something — the first
+                      ;; non-blank tick opens the block AND carries its text, so no
+                      ;; consumer ever sees a delta for a block it was not told about.
+                      nothing-said?
+                      (and streaming?
+                           (not= phase :tool-preview)
+                           (not (contains? @started-blocks block-id))
+                           (str/blank? cumulative))]
 
-               (when-not nothing-said?
-                 (when streaming?
-                   (when (and (not= phase :tool-preview) (not (contains? @started-blocks block-id)))
-                     (vswap! started-blocks conj block-id)
-                     (vswap! open-blocks conj block-id)
-                     (append-event! sid
-                                    "content.block.started"
-                                    {:turn_id tid
-                                     :block (if (= phase :reasoning)
-                                              (content/reasoning block-id "" "private")
-                                              (content/prose block-id ""))}))
-                   (vswap! last-delta-ms assoc stream-key {:ms now :len (count cumulative)}))
-                 (let [[type store? payload] (chunk->event chunk)]
-                   (append-event! sid type (assoc payload :turn_id tid) {:store? store?})))
-               ;; The iteration is over — its live blocks are settled text now.
-               (when (= phase :iteration-final) (close-iteration-blocks! (:iteration chunk))))))
-         (catch Throwable t
-           (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)]))))]
+                  (when-not nothing-said?
+                    (when streaming?
+                      (when (and (not= phase :tool-preview)
+                                 (not (contains? @started-blocks block-id)))
+                        (vswap! started-blocks conj block-id)
+                        (vswap! open-blocks conj block-id)
+                        (append-event! sid
+                                       "content.block.started"
+                                       {:turn_id tid
+                                        :block (if (= phase :reasoning)
+                                                 (content/reasoning block-id "" "private")
+                                                 (content/prose block-id ""))}))
+                      (vswap! last-delta-ms assoc stream-key {:ms now :len (count cumulative)}))
+                    (let [[type store? payload] (chunk->event chunk)]
+                      (append-event! sid type (assoc payload :turn_id tid) {:store? store?})))
+                  ;; The iteration is over — its live blocks are settled text now.
+                  (when (= phase :iteration-final) (close-iteration-blocks! (:iteration chunk))))))
+            (catch Throwable t
+              (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)]))))]
 
     (try
-      (let
-        [opts
-         (cond->
-           (assoc (or engine-opts {})
-             :hooks {:on-chunk on-chunk}
-             :cancel-token cancel-token)
-           model
-           (assoc :model model)
+      (let [opts
+            (cond-> (assoc (or engine-opts {})
+                      :hooks {:on-chunk on-chunk}
+                      :cancel-token cancel-token)
+              model
+              (assoc :model model)
 
-           display-request
-           (assoc :display-text display-request)
+              display-request
+              (assoc :display-text display-request)
 
-           reasoning-default
-           (assoc :reasoning-default reasoning-default)
+              reasoning-default
+              (assoc :reasoning-default reasoning-default)
 
-           extra-body
-           (assoc :extra-body extra-body)
+              extra-body
+              (assoc :extra-body extra-body)
 
-           turn-features
-           (assoc :turn/features turn-features)
+              turn-features
+              (assoc :turn/features turn-features)
 
-           (seq workspace)
-           (merge workspace)
+              (seq workspace)
+              (merge workspace)
 
-           (seq attachments)
-           (assoc :user/attachments attachments))
+              (seq attachments)
+              (assoc :user/attachments attachments))
 
-         result
-         (lp/send! sid (or messages request) opts)
+            result
+            (lp/send! sid (or messages request) opts)
 
-         answer
-         (:answer result)
+            answer
+            (:answer result)
 
-         needs-input?
-         (= :needs-input (:vis/answer-mode answer))
+            needs-input?
+            (= :needs-input (:vis/answer-mode answer))
 
-         ;; The REAL cause of a failed turn: an explicit result :error, else the
-         ;; last iteration error in the trace — the provider failure (429 quota,
-         ;; 529 overload, rate-limit, retries exhausted) that actually killed the
-         ;; turn. Used for BOTH the content card AND the headline so neither ever
-         ;; shows the misleading "Final answer must be canonical content or
-         ;; Markdown prose" that a non-answer-shaped fallback would otherwise
-         ;; produce.
-         terminal-error
-         (or (:error result) (some :error (reverse (:trace result))))
+            ;; The REAL cause of a failed turn: an explicit result :error, else the
+            ;; last iteration error in the trace — the provider failure (429 quota,
+            ;; 529 overload, rate-limit, retries exhausted) that actually killed the
+            ;; turn. Used for BOTH the content card AND the headline so neither ever
+            ;; shows the misleading "Final answer must be canonical content or
+            ;; Markdown prose" that a non-answer-shaped fallback would otherwise
+            ;; produce.
+            terminal-error
+            (or (:error result) (some :error (reverse (:trace result))))
 
-         content-blocks
-         (try (answer-content answer)
-              (catch Throwable _
-                ;; answer-content threw — the loop's terminal fallback didn't
-                ;; pass content validation. Build readable content from the real
-                ;; provider failure instead of the misleading validation string.
-                (or (when (some? terminal-error)
-                      (seq (provider-error/provider-error-content terminal-error)))
-                    [(content/error "turn_failed" "Turn failed" false)])))
+            content-blocks
+            (try (answer-content answer)
+                 (catch Throwable _
+                   ;; answer-content threw — the loop's terminal fallback didn't
+                   ;; pass content validation. Build readable content from the real
+                   ;; provider failure instead of the misleading validation string.
+                   (or (when (some? terminal-error)
+                         (seq (provider-error/provider-error-content terminal-error)))
+                       [(content/error "turn_failed" "Turn failed" false)])))
 
-         stalled?
-         (boolean (and stall (:stalled? @stall)))
+            stalled?
+            (boolean (and stall (:stalled? @stall)))
 
-         status
-         (cond stalled? "failed"
-               (= :cancelled (:status result)) "cancelled"
-               (= :error (:status result)) "failed"
-               needs-input? "suspended"
-               :else "completed")
+            status
+            (cond stalled? "failed"
+                  (= :cancelled (:status result)) "cancelled"
+                  (= :error (:status result)) "failed"
+                  needs-input? "suspended"
+                  :else "completed")
 
-         ;; A "failed" turn must NEVER ship empty. Channels reconcile the
-         ;; terminal event independently of the blocking worker; with no content
-         ;; and no :error all they can paint is a fabricated bare "Turn failed."
-         ;; row - the unstyled line reported next to a lost answer.
-         failure-code
-         (cond stalled?
-               (if (stall-reached-provider? stall) "provider_stream_stalled" "turn_stalled")
-               (and (= "failed" status) (empty? content-blocks)) "turn_failed")
+            ;; A "failed" turn must NEVER ship empty. Channels reconcile the
+            ;; terminal event independently of the blocking worker; with no content
+            ;; and no :error all they can paint is a fabricated bare "Turn failed."
+            ;; row - the unstyled line reported next to a lost answer.
+            failure-code
+            (cond stalled?
+                  (if (stall-reached-provider? stall) "provider_stream_stalled" "turn_stalled")
+                  (and (= "failed" status) (empty? content-blocks)) "turn_failed")
 
-         failure-text
-         (cond stalled? (stall-failure-text stall)
-               failure-code (or ;; Prefer the real provider failure's headline
-                                ;; (e.g. "Provider rate-limited") over a raw
-                                ;; result :error, which on a validation-throw
-                                ;; path is the misleading canonical-content
-                                ;; string rather than the actual cause.
-                              (when (some? terminal-error)
-                                (some-> (provider-error/provider-error-title terminal-error)
-                                        str/trim
-                                        not-empty))
-                              (some-> (:error result)
-                                      str
-                                      str/trim
-                                      not-empty)
-                              (some-> (:message result)
-                                      str
-                                      str/trim
-                                      not-empty)
-                              "The turn failed before producing any output."))
+            failure-text
+            (cond stalled? (stall-failure-text stall)
+                  failure-code (or ;; Prefer the real provider failure's headline
+                                   ;; (e.g. "Provider rate-limited") over a raw
+                                   ;; result :error, which on a validation-throw
+                                   ;; path is the misleading canonical-content
+                                   ;; string rather than the actual cause.
+                                 (when (some? terminal-error)
+                                   (some-> (provider-error/provider-error-title terminal-error)
+                                           str/trim
+                                           not-empty))
+                                 (some-> (:error result)
+                                         str
+                                         str/trim
+                                         not-empty)
+                                 (some-> (:message result)
+                                         str
+                                         str/trim
+                                         not-empty)
+                                 "The turn failed before producing any output."))
 
-         patch
-         {:status status
-          :role "assistant"
-          :content (cond-> content-blocks
-                     failure-code
-                     (conj (content/error failure-code failure-text true)))
-          :is_needs_input needs-input?
-          ;; the ENGINE's persisted row id - list-turns dedups the
-          ;; DB hydration against it (the gateway tid differs).
-          :engine_turn_id (some-> (:session-turn-id result)
-                                  str)
-          :model (or (get-in result [:cost "model"])
-                     (:model result)
-                     (some-> stall
-                             deref
-                             :model))
-          :provider (or (get-in result [:cost "provider"])
-                        (:provider result)
+            patch
+            {:status status
+             :role "assistant"
+             :content (cond-> content-blocks
+                        failure-code
+                        (conj (content/error failure-code failure-text true)))
+             :is_needs_input needs-input?
+             ;; the ENGINE's persisted row id - list-turns dedups the
+             ;; DB hydration against it (the gateway tid differs).
+             :engine_turn_id (some-> (:session-turn-id result)
+                                     str)
+             :model (or (get-in result [:cost "model"])
+                        (:model result)
                         (some-> stall
                                 deref
-                                :provider
-                                name))
-          :llm_selected (:llm-selected result)
-          :llm_actual (:llm-actual result)
-          :is_llm_fallback (:llm-fallback? result)
-          :llm_routing_trace (:llm-routing-trace result)
-          :tokens (:tokens result)
-          :cost (:cost result)
-          :confidence (:confidence result)
-          :eval (:eval result)
-          :iteration_count (:iteration-count result)
-          :duration_ms (:duration-ms result)
-          :utilization (:utilization result)
-          :error (when failure-code failure-text)
-          :completed_at (System/currentTimeMillis)}]
+                                :model))
+             :provider (or (get-in result [:cost "provider"])
+                           (:provider result)
+                           (some-> stall
+                                   deref
+                                   :provider
+                                   name))
+             :llm_selected (:llm-selected result)
+             :llm_actual (:llm-actual result)
+             :is_llm_fallback (:llm-fallback? result)
+             :llm_routing_trace (:llm-routing-trace result)
+             :tokens (:tokens result)
+             :cost (:cost result)
+             :confidence (:confidence result)
+             :eval (:eval result)
+             :iteration_count (:iteration-count result)
+             :duration_ms (:duration-ms result)
+             :utilization (:utilization result)
+             :error (when failure-code failure-text)
+             :completed_at (System/currentTimeMillis)}]
 
         (when (claim-turn-terminal! sid tid cancel-token)
           (finish-turn! sid tid patch)
@@ -2925,45 +2873,44 @@
             tid
             {:failed? (= "failed" status) :cancel-token cancel-token :stalled? stalled?})))
       (catch Throwable t
-        (let
-          [stalled?
-           (boolean (and stall (:stalled? @stall)))
+        (let [stalled?
+              (boolean (and stall (:stalled? @stall)))
 
-           ;; A USER CANCEL unwinds this worker by THROWING (the engine aborts on
-           ;; the fired token), and this path used to call that "failed": it wrote
-           ;; `turn.failed`, and `after-turn-terminal!` then saw a failure with a
-           ;; backlog and PAUSED the queue with `provider_error` — a TERMINAL pause
-           ;; with no auto-resume. One Esc therefore wedged the whole session: the
-           ;; next message sat held forever and every channel showed a dead turn
-           ;; whose live panel never closed. Esc is not a provider outage — it is
-           ;; exactly a cancelled token that did not stall and carries the
-           ;; `:cancelling_at` stamp `cancel-turn!` writes.
-           user-cancel?
-           (boolean (and (not stalled?)
-                         (cancellation/cancelled? cancel-token)
-                         (some? (:cancelling_at (turn-record sid tid)))))
+              ;; A USER CANCEL unwinds this worker by THROWING (the engine aborts on
+              ;; the fired token), and this path used to call that "failed": it wrote
+              ;; `turn.failed`, and `after-turn-terminal!` then saw a failure with a
+              ;; backlog and PAUSED the queue with `provider_error` — a TERMINAL pause
+              ;; with no auto-resume. One Esc therefore wedged the whole session: the
+              ;; next message sat held forever and every channel showed a dead turn
+              ;; whose live panel never closed. Esc is not a provider outage — it is
+              ;; exactly a cancelled token that did not stall and carries the
+              ;; `:cancelling_at` stamp `cancel-turn!` writes.
+              user-cancel?
+              (boolean (and (not stalled?)
+                            (cancellation/cancelled? cancel-token)
+                            (some? (:cancelling_at (turn-record sid tid)))))
 
-           status
-           (if user-cancel? "cancelled" "failed")
+              status
+              (if user-cancel? "cancelled" "failed")
 
-           data
-           (ex-data t)
+              data
+              (ex-data t)
 
-           eval
-           (when (= :vis/unsupported-reasoning-effort (:type data))
-             {:valid? false
-              :invalid-reasons [{:type :unsupported-reasoning-effort
-                                 :requested (:requested data)
-                                 :provider (some-> (:provider data)
-                                                   name)
-                                 :model (:model data)
-                                 :supported (vec (:supported data))}]
-              :reasoning-effort {:requested (:requested data) :iterations []}})
+              eval
+              (when (= :vis/unsupported-reasoning-effort (:type data))
+                {:valid? false
+                 :invalid-reasons [{:type :unsupported-reasoning-effort
+                                    :requested (:requested data)
+                                    :provider (some-> (:provider data)
+                                                      name)
+                                    :model (:model data)
+                                    :supported (vec (:supported data))}]
+                 :reasoning-effort {:requested (:requested data) :iterations []}})
 
-           err
-           (cond user-cancel? nil
-                 stalled? (str (stall-failure-text stall) " (force-cancelled)")
-                 :else (ex-message t))]
+              err
+              (cond user-cancel? nil
+                    stalled? (str (stall-failure-text stall) " (force-cancelled)")
+                    :else (ex-message t))]
 
           (if user-cancel?
             (tel/log! :info ["gateway: turn cancelled by user" tid])
@@ -2972,20 +2919,20 @@
             (finish-turn!
               sid
               tid
-              (cond->
-                {:status status
-                 :role "assistant"
-                 :content (cond user-cancel? []
-                                ;; A provider failure that unwound the worker (rate
-                                ;; limit, auth rejection, dead connection) is the SAME
-                                ;; failure the in-loop path renders as a styled card.
-                                ;; Emitting the bare `ex-message` here is why an error
-                                ;; Vis formats perfectly elsewhere sometimes landed in
-                                ;; the TUI (and the app) as raw unformatted text.
-                                (and (not stalled?) (provider-error/provider-failure? t))
-                                (provider-error/provider-error-content t)
-                                :else [(content/error "turn_failed" (or err "Turn failed") false)])
-                 :completed_at (System/currentTimeMillis)}
+              (cond-> {:status status
+                       :role "assistant"
+                       :content (cond user-cancel? []
+                                      ;; A provider failure that unwound the worker (rate
+                                      ;; limit, auth rejection, dead connection) is the SAME
+                                      ;; failure the in-loop path renders as a styled card.
+                                      ;; Emitting the bare `ex-message` here is why an error
+                                      ;; Vis formats perfectly elsewhere sometimes landed in
+                                      ;; the TUI (and the app) as raw unformatted text.
+                                      (and (not stalled?) (provider-error/provider-failure? t))
+                                      (provider-error/provider-error-content t)
+                                      :else
+                                      [(content/error "turn_failed" (or err "Turn failed") false)])
+                       :completed_at (System/currentTimeMillis)}
                 err
                 (assoc :error err)
 
@@ -3056,84 +3003,82 @@
   ;; armed — left a turn nobody runs and nobody ends. One try covers the whole
   ;; launch, and the watchdog is armed before the turn is announced.
   (try
-    (let
-      [stall
-       (atom {:phase nil :last-ms (System/currentTimeMillis)})
+    (let [stall
+          (atom {:phase nil :last-ms (System/currentTimeMillis)})
 
-       ;; Armed BEFORE the turn is announced, so it also covers the window in
-       ;; which the announcement — or the worker — fails to come into existence.
-       _
-       (start-turn-stall-watchdog! sid tid cancel-token stall)
+          ;; Armed BEFORE the turn is announced, so it also covers the window in
+          ;; which the announcement — or the worker — fails to come into existence.
+          _
+          (start-turn-stall-watchdog! sid tid cancel-token stall)
 
-       _
-       (append-event! sid
-                      "turn.started"
-                      (cond->
-                        {:turn_id tid
-                         :request (or display-request request)
-                         :display_request display-request
-                         :started_at (or (:started_at (turn-record sid tid))
-                                         (System/currentTimeMillis))}
-                        queued?
-                        (assoc :queued? true)
+          _
+          (append-event! sid
+                         "turn.started"
+                         (cond-> {:turn_id tid
+                                  :request (or display-request request)
+                                  :display_request display-request
+                                  :started_at (or (:started_at (turn-record sid tid))
+                                                  (System/currentTimeMillis))}
+                           queued?
+                           (assoc :queued? true)
 
-                        (:idempotency_key (turn-record sid tid))
-                        (assoc :idempotency_key (:idempotency_key (turn-record sid tid)))
+                           (:idempotency_key (turn-record sid tid))
+                           (assoc :idempotency_key (:idempotency_key (turn-record sid tid)))
 
-                        (seq attachments)
-                        (assoc :attachments attachments)))
+                           (seq attachments)
+                           (assoc :attachments attachments)))
 
-       ;; Single-claim ticket for this turn's ONE terminal landing. `turn.started`
-       ;; is already on the wire and `:current-turn` already points at `tid`, so
-       ;; EXACTLY one of {the worker body, the cancel hook} must finish the turn.
-       ;; Zero would pin the session to a turn nobody is running: the UI shows an
-       ;; empty assistant row forever and every later message piles up `queued`
-       ;; with nothing to drain it.
-       claimed
-       (java.util.concurrent.atomic.AtomicBoolean. false)
+          ;; Single-claim ticket for this turn's ONE terminal landing. `turn.started`
+          ;; is already on the wire and `:current-turn` already points at `tid`, so
+          ;; EXACTLY one of {the worker body, the cancel hook} must finish the turn.
+          ;; Zero would pin the session to a turn nobody is running: the UI shows an
+          ;; empty assistant row forever and every later message piles up `queued`
+          ;; with nothing to drain it.
+          claimed
+          (java.util.concurrent.atomic.AtomicBoolean. false)
 
-       worker
-       (fn []
-         (when (.compareAndSet claimed false true)
-           ;; Proof of life for the watchdog: the body BEGAN. Waiting for the
-           ;; process-wide permit is legitimate work, so it moves the deadline
-           ;; off the launch ceiling and onto the stall ceiling.
-           (swap! stall assoc
-             :phase :awaiting-permit
-             :started? true
-             :last-ms (System/currentTimeMillis))
-           (if (acquire-turn-permit! cancel-token)
-             (do (swap! turns-executing inc)
-                 ;; The permit is IN HAND: everything from here on — building or
-                 ;; entering this session's engine, then the first provider
-                 ;; request — is execution, not queueing. Leaving the
-                 ;; `:awaiting-permit` stamp standing made a turn parked on its
-                 ;; own session's wedged engine report a phase it had already
-                 ;; left, kept it exempt from the first-output ceiling for six
-                 ;; minutes, and blamed a provider it never reached.
-                 (swap! stall assoc :phase :engine-start :last-ms (System/currentTimeMillis))
-                 (try (run-turn! sid
-                                 tid
-                                 request
-                                 {:messages messages
-                                  :model model
-                                  :reasoning-default reasoning-default
-                                  :cancel-token cancel-token
-                                  :extra-body extra-body
-                                  :turn-features turn-features
-                                  :workspace workspace
-                                  :engine-opts engine-opts
-                                  :attachments attachments
-                                  :display-request display-request
-                                  :stall stall})
-                      (finally (release-turn-permit!))))
-             (cancel-waiting-turn! sid tid cancel-token))))
+          worker
+          (fn []
+            (when (.compareAndSet claimed false true)
+              ;; Proof of life for the watchdog: the body BEGAN. Waiting for the
+              ;; process-wide permit is legitimate work, so it moves the deadline
+              ;; off the launch ceiling and onto the stall ceiling.
+              (swap! stall assoc
+                :phase :awaiting-permit
+                :started? true
+                :last-ms (System/currentTimeMillis))
+              (if (acquire-turn-permit! cancel-token)
+                (do (swap! turns-executing inc)
+                    ;; The permit is IN HAND: everything from here on — building or
+                    ;; entering this session's engine, then the first provider
+                    ;; request — is execution, not queueing. Leaving the
+                    ;; `:awaiting-permit` stamp standing made a turn parked on its
+                    ;; own session's wedged engine report a phase it had already
+                    ;; left, kept it exempt from the first-output ceiling for six
+                    ;; minutes, and blamed a provider it never reached.
+                    (swap! stall assoc :phase :engine-start :last-ms (System/currentTimeMillis))
+                    (try (run-turn! sid
+                                    tid
+                                    request
+                                    {:messages messages
+                                     :model model
+                                     :reasoning-default reasoning-default
+                                     :cancel-token cancel-token
+                                     :extra-body extra-body
+                                     :turn-features turn-features
+                                     :workspace workspace
+                                     :engine-opts engine-opts
+                                     :attachments attachments
+                                     :display-request display-request
+                                     :stall stall})
+                         (finally (release-turn-permit!))))
+                (cancel-waiting-turn! sid tid cancel-token))))
 
-       fut
-       ;; Turn work can block in embedded Python, native SDKs, or subprocesses.
-       ;; Keep it off the virtual-thread scheduler so a pinned cancelled worker
-       ;; cannot prevent the next turn from beginning.
-       (cancellation/worker-future (str "gateway-turn-" tid) worker {:platform? true})]
+          fut
+          ;; Turn work can block in embedded Python, native SDKs, or subprocesses.
+          ;; Keep it off the virtual-thread scheduler so a pinned cancelled worker
+          ;; cannot prevent the next turn from beginning.
+          (cancellation/worker-future (str "gateway-turn-" tid) worker {:platform? true})]
 
       ;; Deliberately NOT `cancellation-set-future!`. That registers a bare
       ;; `.cancel(true)`, and a `FutureTask` cancelled BEFORE its thread enters
@@ -3186,12 +3131,11 @@
    A head queued AFTER the floor (\"stop that, run THIS\") — or a session with no
    user cancel at all — drains normally."
   [entry head]
-  (let
-    [floor
-     (long (or (:cancel-floor entry) 0))
+  (let [floor
+        (long (or (:cancel-floor entry) 0))
 
-     queued-at
-     (long (or (:queued_at head) 0))]
+        queued-at
+        (long (or (:queued_at head) 0))]
 
     (and (pos? floor) (< queued-at floor))))
 
@@ -3221,11 +3165,10 @@
   drains with the old provider payload and appears to answer the previous ask."
   [messages text]
   (if (vector? messages)
-    (if-let
-      [idx (->> (map-indexed vector messages)
-                reverse
-                (some (fn [[i m]]
-                        (when (contains? #{"user" :user} (:role m)) i))))]
+    (if-let [idx (->> (map-indexed vector messages)
+                      reverse
+                      (some (fn [[i m]]
+                              (when (contains? #{"user" :user} (:role m)) i))))]
       (assoc-in messages [idx :content] text)
       messages)
     messages))
@@ -3243,29 +3186,26 @@
    overrides the gate."
   ([sid] (drain-next-queued! sid nil))
   ([sid {:keys [force?]}]
-   (let
-     [decision
-      (volatile! nil)
+   (let [decision
+         (volatile! nil)
 
-      ;; Read the session pin HERE, as the turn starts, to stamp the observable
-      ;; turn record. The worker still receives only the raw caller override;
-      ;; the engine resolves this persisted model together with its provider.
-      pinned-model
-      (:model (session-model sid))]
+         ;; Read the session pin HERE, as the turn starts, to stamp the observable
+         ;; turn record. The worker still receives only the raw caller override;
+         ;; the engine resolves this persisted model together with its provider.
+         pinned-model
+         (:model (session-model sid))]
 
      (update-session!
        sid
        (fn [entry]
          (if (or (nil? entry) (:current-turn entry))
            entry
-           (if-let
-             [[tid
-               {:keys [request messages model reasoning-default cancel-token extra-body
-                       turn-features workspace engine-opts attachments display_request]}]
-              (next-drainable-turn entry force?)]
-             (let
-               [token (or cancel-token (cancellation/cancellation-token))
-                started-at (System/currentTimeMillis)]
+           (if-let [[tid
+                     {:keys [request messages model reasoning-default cancel-token extra-body
+                             turn-features workspace engine-opts attachments display_request]}]
+                    (next-drainable-turn entry force?)]
+             (let [token (or cancel-token (cancellation/cancellation-token))
+                   started-at (System/currentTimeMillis)]
 
                (vreset! decision
                         {:tid tid
@@ -3289,10 +3229,9 @@
                                 (or model pinned-model)
                                 (assoc :model (or model pinned-model))))))
              entry))))
-     (when-let
-       [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body
-                turn-features workspace engine-opts attachments]}
-        @decision]
+     (when-let [{:keys [tid request display-request messages model reasoning-default cancel-token
+                        extra-body turn-features workspace engine-opts attachments]}
+                @decision]
        ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
        ;; attached channel drops its mirrored entry on this, and a replayed
        ;; event log nets to zero (turn.queued … turn.queued.drained). The
@@ -3342,9 +3281,8 @@
         (when entry
           (let [held (count-queued entry)]
             (if (pos? (long held))
-              (let
-                [gen (inc (long (get-in entry [:queue-paused :gen] 0)))
-                 paused {:reason reason :held held :gen gen :at (System/currentTimeMillis)}]
+              (let [gen (inc (long (get-in entry [:queue-paused :gen] 0)))
+                    paused {:reason reason :held held :gen gen :at (System/currentTimeMillis)}]
 
                 (vreset! captured paused)
                 (assoc entry :queue-paused paused))
@@ -3399,12 +3337,11 @@
     (update-session! sid
                      (fn [entry]
                        (if-let [cancelling-at (get-in entry [:turns tid :cancelling_at])]
-                         (let
-                           [stale (filterv (fn [[_ turn]]
-                                             (and (= "queued" (:status turn))
-                                                  (< (long (or (:queued_at turn) 0))
-                                                     (long cancelling-at))))
-                                    (:turns entry))]
+                         (let [stale (filterv (fn [[_ turn]]
+                                                (and (= "queued" (:status turn))
+                                                     (< (long (or (:queued_at turn) 0))
+                                                        (long cancelling-at))))
+                                       (:turns entry))]
                            (vreset! dropped (mapv second stale))
                            (reduce (fn [e [stale-tid _]]
                                      (-> e
@@ -3438,24 +3375,23 @@
    A user cancel drops work queued before the cancel and may drain only requests
    submitted afterward. Shutdown cancellation drains nothing."
   [sid tid {:keys [failed? cancel-token stalled?]}]
-  (let
-    [cancelled?
-     (cancellation/cancelled? cancel-token)
+  (let [cancelled?
+        (cancellation/cancelled? cancel-token)
 
-     user-cancel?
-     (and cancelled? (not stalled?) (some? (:cancelling_at (turn-record sid tid))))
+        user-cancel?
+        (and cancelled? (not stalled?) (some? (:cancelling_at (turn-record sid tid))))
 
-     failed?
-     (and failed? (not user-cancel?))
+        failed?
+        (and failed? (not user-cancel?))
 
-     _
-     (when user-cancel? (drop-cancelled-backlog! sid tid))
+        _
+        (when user-cancel? (drop-cancelled-backlog! sid tid))
 
-     drain?
-     (cond (not cancelled?) true
-           stalled? true
-           user-cancel? (boolean (next-drainable-turn (session-entry sid) false))
-           :else false)]
+        drain?
+        (cond (not cancelled?) true
+              stalled? true
+              user-cancel? (boolean (next-drainable-turn (session-entry sid) false))
+              :else false)]
 
     (cond (not drain?) nil
           (not failed?) (let [was-paused (volatile! false)]
@@ -3484,32 +3420,31 @@
     {:error :invalid-request :message "request must be a non-blank string"}
     (nil? (lp/by-id sid)) {:error :session-not-found}
     :else
-    (let
-      [tid
-       (str (java.util.UUID/randomUUID))
+    (let [tid
+          (str (java.util.UUID/randomUUID))
 
-       ;; Byte-free image chips, resolved ONCE at submit time so every channel's
-       ;; queue row (TUI strip, companion tray) paints the same attachments —
-       ;; whether they arrived as inline uploads or as paths inside the text.
-       ;; Sized from the attached bytes themselves, which vis stores verbatim.
-       previews
-       (attachment-previews request attachments workspace)
+          ;; Byte-free image chips, resolved ONCE at submit time so every channel's
+          ;; queue row (TUI strip, companion tray) paints the same attachments —
+          ;; whether they arrived as inline uploads or as paths inside the text.
+          ;; Sized from the attached bytes themselves, which vis stores verbatim.
+          previews
+          (attachment-previews request attachments workspace)
 
-       request-preview
-       (request-preview-text request previews)
+          request-preview
+          (request-preview-text request previews)
 
-       ;; The pin is resolved when a turn actually STARTS, never frozen here.
-       ;; A turn that waits in the queue must honour a model picked WHILE it
-       ;; waited (companion picker, TUI, another channel) — baking the pin into
-       ;; the queued record made every already-queued message run on the model
-       ;; that happened to be live at submit, so changing the model mid-session
-       ;; appeared to do nothing. Only an EXPLICIT caller model is carried on
-       ;; the queued record; `drain-next-queued!` re-reads the pin at drain.
-       resolved-model
-       (or model (:model (session-model sid)))
+          ;; The pin is resolved when a turn actually STARTS, never frozen here.
+          ;; A turn that waits in the queue must honour a model picked WHILE it
+          ;; waited (companion picker, TUI, another channel) — baking the pin into
+          ;; the queued record made every already-queued message run on the model
+          ;; that happened to be live at submit, so changing the model mid-session
+          ;; appeared to do nothing. Only an EXPLICIT caller model is carried on
+          ;; the queued record; `drain-next-queued!` re-reads the pin at drain.
+          resolved-model
+          (or model (:model (session-model sid)))
 
-       decision
-       (volatile! nil)]
+          decision
+          (volatile! nil)]
 
       (update-session!
         sid
@@ -3530,12 +3465,11 @@
                           (assoc :last-active queued-at)
                           (assoc-in
                             [:turns tid]
-                            (cond->
-                              {:turn_id tid
-                               :session_id (str sid)
-                               :status "queued"
-                               :request request
-                               :queued_at queued-at}
+                            (cond-> {:turn_id tid
+                                     :session_id (str sid)
+                                     :status "queued"
+                                     :request request
+                                     :queued_at queued-at}
                               ;; The submitter's OWN correlation id, echoed back on
                               ;; every wire view of this turn and on turn.queued. A
                               ;; channel paints no queue row of its own, so this is
@@ -3584,47 +3518,44 @@
                           (cond->
                             idempotency-key
                             (assoc-in [:idempotency idempotency-key] tid)))))
-                  :else (do
-                          (vreset! decision [:accepted tid])
-                          (let
-                            [token (or cancel-token (cancellation/cancellation-token))
-                             started-at (System/currentTimeMillis)]
+                  :else (do (vreset! decision [:accepted tid])
+                            (let [token (or cancel-token (cancellation/cancellation-token))
+                                  started-at (System/currentTimeMillis)]
 
-                            (-> entry
-                                (assoc :current-turn tid
-                                       :last-active started-at)
-                                (assoc-in [:turns tid]
-                                          (cond->
-                                            {:turn_id tid
-                                             :session_id (str sid)
-                                             :status "running"
-                                             :request request
-                                             :cancel-token token
-                                             :started_at started-at}
-                                            idempotency-key
-                                            (assoc :idempotency_key idempotency-key)
+                              (-> entry
+                                  (assoc :current-turn tid
+                                         :last-active started-at)
+                                  (assoc-in [:turns tid]
+                                            (cond-> {:turn_id tid
+                                                     :session_id (str sid)
+                                                     :status "running"
+                                                     :request request
+                                                     :cancel-token token
+                                                     :started_at started-at}
+                                              idempotency-key
+                                              (assoc :idempotency_key idempotency-key)
 
-                                            resolved-model
-                                            (assoc :model resolved-model)
+                                              resolved-model
+                                              (assoc :model resolved-model)
 
-                                            reasoning-default
-                                            (assoc :reasoning-default reasoning-default)
+                                              reasoning-default
+                                              (assoc :reasoning-default reasoning-default)
 
-                                            (seq attachments)
-                                            (assoc :attachments attachments)
+                                              (seq attachments)
+                                              (assoc :attachments attachments)
 
-                                            (seq previews)
-                                            (assoc :attachment_previews previews)
+                                              (seq previews)
+                                              (assoc :attachment_previews previews)
 
-                                            request-preview
-                                            (assoc :request_preview request-preview)
+                                              request-preview
+                                              (assoc :request_preview request-preview)
 
-                                            (not (str/blank? (str display-request)))
-                                            (assoc :display_request display-request)))
-                                (update :turn-order (fnil conj []) tid)
-                                (cond->
-                                  idempotency-key
-                                  (assoc-in [:idempotency idempotency-key] tid)))))))))
+                                              (not (str/blank? (str display-request)))
+                                              (assoc :display_request display-request)))
+                                  (update :turn-order (fnil conj []) tid)
+                                  (cond->
+                                    idempotency-key
+                                    (assoc-in [:idempotency idempotency-key] tid)))))))))
       (let [[kind v] @decision]
         (case kind
           :idempotent
@@ -3678,33 +3609,32 @@
   "Resolve a terminal event to the canonical settled message. Terminal events
    intentionally carry no duplicate answer payload; the registry owns content."
   [event fallback-turn-id]
-  (let
-    [failed?
-     (or (= "turn.failed" (get event "type")) (= "failed" (get event "status")))
+  (let [failed?
+        (or (= "turn.failed" (get event "type")) (= "failed" (get event "status")))
 
-     cancelled?
-     (= "cancelled" (get event "status"))
+        cancelled?
+        (= "cancelled" (get event "status"))
 
-     needs-input?
-     (= "suspended" (get event "status"))
+        needs-input?
+        (= "suspended" (get event "status"))
 
-     sid-string
-     (get event "session_id")
+        sid-string
+        (get event "session_id")
 
-     sid
-     (known-sid sid-string)
+        sid
+        (known-sid sid-string)
 
-     turn-id
-     (or (get event "turn_id") fallback-turn-id)
+        turn-id
+        (or (get event "turn_id") fallback-turn-id)
 
-     message
-     (when sid (get-turn sid turn-id))
+        message
+        (when sid (get-turn sid turn-id))
 
-     ;; The persisted row is the primary settled source. The terminal event also
-     ;; carries the failure content so a listener can render it without racing a
-     ;; registry lookup.
-     blocks
-     (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
+        ;; The persisted row is the primary settled source. The terminal event also
+        ;; carries the failure content so a listener can render it without racing a
+        ;; registry lookup.
+        blocks
+        (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
 
     ;; The terminal event is deliberately LEAN ({:turn_id :status}); the
     ;; registry row (`message`, patched by finish-turn!) owns the settled
@@ -3712,12 +3642,11 @@
     ;; ROW first, letting any event-carried value win, otherwise the sync
     ;; submit/attach result drops usage and live bubbles render no
     ;; tokens/cost meta at all.
-    (cond->
-      (-> (merge (select-keys message wire/turn-meta-keys)
-                 (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
-          (assoc "content" blocks
-                 "iteration_count" (or (get message "iteration_count") 1)
-                 "session_turn_id" (or (get message "engine_turn_id") turn-id)))
+    (cond-> (-> (merge (select-keys message wire/turn-meta-keys)
+                       (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
+                (assoc "content" blocks
+                       "iteration_count" (or (get message "iteration_count") 1)
+                       "session_turn_id" (or (get message "engine_turn_id") turn-id)))
       needs-input?
       (assoc "status" "needs_input")
 
@@ -3748,75 +3677,72 @@
   Returns an engine-shaped result map for in-process clients (CLI/TUI)
   that need a blocking call without bypassing the canonical gateway machinery."
   [sid {:keys [on-event] :as opts}]
-  (let
-    [sub-id
-     (str "gateway-sync-" (java.util.UUID/randomUUID))
+  (let [sub-id
+        (str "gateway-sync-" (java.util.UUID/randomUUID))
 
-     started-cursor
-     (current-seq sid)
+        started-cursor
+        (current-seq sid)
 
-     terminal
-     (promise)
+        terminal
+        (promise)
 
-     ;; We subscribe BEFORE the turn id exists (the subscription must not miss
-     ;; our own first events). Until `submit-turn!` returns that id, an arriving
-     ;; event cannot be classified, so it is BUFFERED — never assumed to be
-     ;; ours. Assuming it handed a SIBLING turn's terminal to this caller.
-     inbox
-     (atom {:turn-id nil :pending []})
+        ;; We subscribe BEFORE the turn id exists (the subscription must not miss
+        ;; our own first events). Until `submit-turn!` returns that id, an arriving
+        ;; event cannot be classified, so it is BUFFERED — never assumed to be
+        ;; ours. Assuming it handed a SIBLING turn's terminal to this caller.
+        inbox
+        (atom {:turn-id nil :pending []})
 
-     dispatch!
-     (fn [event tid]
-       (let
-         [type
-          (get event "type")
+        dispatch!
+        (fn [event tid]
+          (let [type
+                (get event "type")
 
-          turn_id
-          (get event "turn_id")]
+                turn_id
+                (get event "turn_id")]
 
-         (cond (= turn_id tid)
-               (do (when on-event (on-event event))
-                   (when (contains? wire/turn-terminal-event-types type) (deliver terminal event))
-                   ;; Our own queued record deleted before it ever ran
-                   ;; (pulled back into a sibling's editor): synthesize a
-                   ;; cancelled terminal so the blocking submit never hangs.
-                   (when (= "turn.queued.deleted" type)
-                     (deliver terminal
-                              {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"})))
-               ;; ANOTHER turn's queue event: forward so the channel can
-               ;; mirror the session's queued backlog; never terminal here.
-               (contains? queue-mirror-event-types type) (when on-event (on-event event)))))
+            (cond (= turn_id tid)
+                  (do (when on-event (on-event event))
+                      (when (contains? wire/turn-terminal-event-types type)
+                        (deliver terminal event))
+                      ;; Our own queued record deleted before it ever ran
+                      ;; (pulled back into a sibling's editor): synthesize a
+                      ;; cancelled terminal so the blocking submit never hangs.
+                      (when (= "turn.queued.deleted" type)
+                        (deliver terminal
+                                 {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"})))
+                  ;; ANOTHER turn's queue event: forward so the channel can
+                  ;; mirror the session's queued backlog; never terminal here.
+                  (contains? queue-mirror-event-types type) (when on-event (on-event event)))))
 
-     handle-event!
-     (fn [event]
-       (let
-         [tid (:turn-id (swap! inbox (fn [s]
-                                       (cond-> s
-                                         (nil? (:turn-id s))
-                                         (update :pending conj event)))))]
-         (when tid (dispatch! event tid))))
+        handle-event!
+        (fn [event]
+          (let [tid (:turn-id (swap! inbox (fn [s]
+                                             (cond-> s
+                                               (nil? (:turn-id s))
+                                               (update :pending conj event)))))]
+            (when tid (dispatch! event tid))))
 
-     ;; Atomically publish the id and take the buffered events, so an event
-     ;; racing this hand-off is dispatched exactly once — by us or by its own
-     ;; caller, never both and never neither.
-     adopt-turn!
-     (fn [tid]
-       (let [[old _] (swap-vals! inbox assoc :turn-id tid :pending [])]
-         (doseq [event (:pending old)]
-           (dispatch! event tid))))]
+        ;; Atomically publish the id and take the buffered events, so an event
+        ;; racing this hand-off is dispatched exactly once — by us or by its own
+        ;; caller, never both and never neither.
+        adopt-turn!
+        (fn [tid]
+          (let [[old _] (swap-vals! inbox assoc :turn-id tid :pending [])]
+            (doseq [event (:pending old)]
+              (dispatch! event tid))))]
 
-    (try (let
-           [replay
-            (subscribe! sid sub-id handle-event! started-cursor)
+    (try (let [replay
+               (subscribe! sid sub-id handle-event! started-cursor)
 
-            submit-result
-            (submit-turn! sid (dissoc opts :on-event))
+               submit-result
+               (submit-turn! sid (dissoc opts :on-event))
 
-            turn
-            (:turn submit-result)
+               turn
+               (:turn submit-result)
 
-            turn-id
-            (get turn "turn_id")]
+               turn-id
+               (get turn "turn_id")]
 
            (when-let [e (:error submit-result)]
              (throw (ex-info (or (:message submit-result) (str e)) submit-result)))
@@ -3847,48 +3773,47 @@
    queued record instead of a client-side shadow queue. Optional `:on-event` fires
    for every replay/live event (canonical string-keyed) of `tid`."
   [sid tid {:keys [on-event]}]
-  (let
-    [sub-id
-     (str "gateway-attach-" (java.util.UUID/randomUUID))
+  (let [sub-id
+        (str "gateway-attach-" (java.util.UUID/randomUUID))
 
-     ;; Replay from the turn's OWN start, not from "now": a channel
-     ;; reattaching mid-turn must repaint everything the turn already
-     ;; produced (the iterations it missed while detached), then continue
-     ;; live. `event_start_seq` is stamped on the turn record when its
-     ;; `turn.started` is appended (local AND mirrored ingress). The HTTP
-     ;; client path already replays (cursor 0 — client.clj/attach-turn-sync!);
-     ;; this aligns the in-process path. A turn with no recorded start seq
-     ;; (foreign, not yet hydrated — `subscribe!` hydrates below) falls back
-     ;; to live-only: hydration appends the whole foreign turn ABOVE the
-     ;; current cursor, so the replay still carries it.
-     started-cursor
-     (let [start-seq (:event_start_seq (turn-record sid tid))]
-       (if (pos-int? start-seq) (dec (long start-seq)) (current-seq sid)))
+        ;; Replay from the turn's OWN start, not from "now": a channel
+        ;; reattaching mid-turn must repaint everything the turn already
+        ;; produced (the iterations it missed while detached), then continue
+        ;; live. `event_start_seq` is stamped on the turn record when its
+        ;; `turn.started` is appended (local AND mirrored ingress). The HTTP
+        ;; client path already replays (cursor 0 — client.clj/attach-turn-sync!);
+        ;; this aligns the in-process path. A turn with no recorded start seq
+        ;; (foreign, not yet hydrated — `subscribe!` hydrates below) falls back
+        ;; to live-only: hydration appends the whole foreign turn ABOVE the
+        ;; current cursor, so the replay still carries it.
+        started-cursor
+        (let [start-seq (:event_start_seq (turn-record sid tid))]
+          (if (pos-int? start-seq) (dec (long start-seq)) (current-seq sid)))
 
-     terminal
-     (promise)
+        terminal
+        (promise)
 
-     handle-event!
-     (fn [event]
-       (let
-         [type
-          (get event "type")
+        handle-event!
+        (fn [event]
+          (let [type
+                (get event "type")
 
-          turn_id
-          (get event "turn_id")]
+                turn_id
+                (get event "turn_id")]
 
-         (cond (= turn_id tid)
-               (do (when on-event (on-event event))
-                   (when (contains? wire/turn-terminal-event-types type) (deliver terminal event))
-                   ;; The queued record was deleted before it ever ran
-                   ;; (pulled back into a sibling's editor): synthesize a
-                   ;; cancelled terminal so the attach never hangs.
-                   (when (= "turn.queued.deleted" type)
-                     (deliver terminal
-                              {"type" "turn.completed" "turn_id" tid "status" "cancelled"})))
-               ;; ANOTHER turn's queue event: forward so the channel can
-               ;; mirror the session's queued backlog; never terminal here.
-               (contains? queue-mirror-event-types type) (when on-event (on-event event)))))]
+            (cond (= turn_id tid)
+                  (do (when on-event (on-event event))
+                      (when (contains? wire/turn-terminal-event-types type)
+                        (deliver terminal event))
+                      ;; The queued record was deleted before it ever ran
+                      ;; (pulled back into a sibling's editor): synthesize a
+                      ;; cancelled terminal so the attach never hangs.
+                      (when (= "turn.queued.deleted" type)
+                        (deliver terminal
+                                 {"type" "turn.completed" "turn_id" tid "status" "cancelled"})))
+                  ;; ANOTHER turn's queue event: forward so the channel can
+                  ;; mirror the session's queued backlog; never terminal here.
+                  (contains? queue-mirror-event-types type) (when on-event (on-event event)))))]
 
     (try (let [replay (subscribe! sid sub-id handle-event! started-cursor)]
            (doseq [event replay]
@@ -3917,18 +3842,17 @@
   [sid tid request]
   (cond (or (not (string? request)) (str/blank? request))
         {:error :invalid-request :message "request must be a non-blank string"}
-        :else (let
-                [decision
-                 (volatile! nil)
+        :else (let [decision
+                    (volatile! nil)
 
-                 existing
-                 (turn-record sid tid)
+                    existing
+                    (turn-record sid tid)
 
-                 previews
-                 (attachment-previews request (:attachments existing) (:workspace existing))
+                    previews
+                    (attachment-previews request (:attachments existing) (:workspace existing))
 
-                 request-preview
-                 (request-preview-text request previews)]
+                    request-preview
+                    (request-preview-text request previews)]
 
                 (update-session!
                   sid
@@ -3941,16 +3865,16 @@
                                       (-> entry
                                           (assoc-in [:turns tid :request] request)
                                           (update-in [:turns tid] dissoc :display_request)
-                                          (update-in
-                                            [:turns tid]
-                                            (fn [t]
-                                              (cond->
-                                                (dissoc t :attachment_previews :request_preview)
-                                                (seq previews)
-                                                (assoc :attachment_previews previews)
+                                          (update-in [:turns tid]
+                                                     (fn [t]
+                                                       (cond-> (dissoc t
+                                                                 :attachment_previews
+                                                                 :request_preview)
+                                                         (seq previews)
+                                                         (assoc :attachment_previews previews)
 
-                                                request-preview
-                                                (assoc :request_preview request-preview))))
+                                                         request-preview
+                                                         (assoc :request_preview request-preview))))
                                           (update-in [:turns tid :messages]
                                                      replace-last-user-message-content
                                                      request)))))))
@@ -4112,56 +4036,52 @@
 
 (defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root prewarm?]}]
-  (let
-    [channel
-     (or channel :api)
+  (let [channel
+        (or channel :api)
 
-     workspace-id
-     (or workspace-id (when root (:id (workspace/create-trunk-at! (lp/db-info) root))))
+        workspace-id
+        (or workspace-id (when root (:id (workspace/create-trunk-at! (lp/db-info) root))))
 
-     created
-     (lp/create! channel
-                 (cond-> {}
-                   title
-                   (assoc :title title)
+        created
+        (lp/create! channel
+                    (cond-> {}
+                      title
+                      (assoc :title title)
 
-                   external-id
-                   (assoc :external-id external-id)
+                      external-id
+                      (assoc :external-id external-id)
 
-                   workspace-id
-                   (assoc :workspace-id workspace-id)
+                      workspace-id
+                      (assoc :workspace-id workspace-id)
 
-                   prewarm?
-                   (assoc :prewarm? true)))]
+                      prewarm?
+                      (assoc :prewarm? true)))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (System/currentTimeMillis)})
     created))
 
 (defn- pop-prewarmed!
   [channel]
-  (let
-    [[old _] (swap-vals! prewarm-pool
-                         (fn [pool]
-                           (update-in pool
-                                      [:ready channel]
-                                      (fn [ready]
-                                        (let [ready (vec ready)]
-                                          (if (seq ready) (subvec ready 1) ready))))))]
+  (let [[old _] (swap-vals! prewarm-pool
+                            (fn [pool]
+                              (update-in pool
+                                         [:ready channel]
+                                         (fn [ready]
+                                           (let [ready (vec ready)]
+                                             (if (seq ready) (subvec ready 1) ready))))))]
     (first (get-in old [:ready channel]))))
 
 (defn- reserve-prewarm-slot!
   [channel]
-  (let
-    [[old new] (swap-vals! prewarm-pool
-                           (fn [pool]
-                             (let
-                               [ready (count (get-in pool [:ready channel]))
-                                building (long (get-in pool [:in-flight channel] 0))]
+  (let [[old new] (swap-vals! prewarm-pool
+                              (fn [pool]
+                                (let [ready (count (get-in pool [:ready channel]))
+                                      building (long (get-in pool [:in-flight channel] 0))]
 
-                               (if (and (:accepting? pool)
-                                        (< (+ ready building) (long PREWARM_POOL_DEPTH)))
-                                 (assoc-in pool [:in-flight channel] (inc building))
-                                 pool))))]
+                                  (if (and (:accepting? pool)
+                                           (< (+ ready building) (long PREWARM_POOL_DEPTH)))
+                                    (assoc-in pool [:in-flight channel] (inc building))
+                                    pool))))]
     (< (long (get-in old [:in-flight channel] 0)) (long (get-in new [:in-flight channel] 0)))))
 
 (defn- finish-prewarm-slot!
@@ -4170,30 +4090,29 @@
 
 (defn- add-prewarmed!
   [channel session]
-  (let
-    [[old _] (swap-vals! prewarm-pool
-                         (fn [pool]
-                           (if (:accepting? pool)
-                             (update-in pool [:ready channel] (fnil conj []) session)
-                             pool)))]
+  (let [[old _] (swap-vals! prewarm-pool
+                            (fn [pool]
+                              (if (:accepting? pool)
+                                (update-in pool [:ready channel] (fnil conj []) session)
+                                pool)))]
     (when-not (:accepting? old)
       (drop-session! (:id session))
       (try (lp/delete! (:id session)) (catch Throwable _ nil)))))
 
 (defn- kick-prewarm!
   [channel]
-  (let
-    [self
-     (promise)
+  (let [self
+        (promise)
 
-     fut
-     (cancellation/worker-future
-       (str "gateway-session-prewarm-" (name channel))
-       (fn []
-         (try (add-prewarmed! channel (create-session-cold! {:channel channel :prewarm? true}))
-              (catch Throwable e
-                (tel/log! :warn ["gateway: session prewarm failed" (name channel) (ex-message e)]))
-              (finally (finish-prewarm-slot! channel) (swap! prewarm-futures disj @self)))))]
+        fut
+        (cancellation/worker-future
+          (str "gateway-session-prewarm-" (name channel))
+          (fn []
+            (try (add-prewarmed! channel (create-session-cold! {:channel channel :prewarm? true}))
+                 (catch Throwable e
+                   (tel/log! :warn
+                             ["gateway: session prewarm failed" (name channel) (ex-message e)]))
+                 (finally (finish-prewarm-slot! channel) (swap! prewarm-futures disj @self)))))]
 
     (swap! prewarm-futures conj fut)
     (deliver self fut)
@@ -4242,23 +4161,22 @@
    matches the gateway launch root; other roots, `:workspace-id`, and
    `:external-id` require a purpose-built environment."
   [{:keys [channel external-id workspace-id root] :as opts}]
-  (let
-    [channel
-     (or channel :api)
+  (let [channel
+        (or channel :api)
 
-     opts
-     (assoc opts :channel channel)
+        opts
+        (assoc opts :channel channel)
 
-     pool-eligible?
-     (and (nil? external-id)
-          (nil? workspace-id)
-          (or (nil? root) (= (workspace/normalize-root root) (workspace/trunk-root))))
+        pool-eligible?
+        (and (nil? external-id)
+             (nil? workspace-id)
+             (or (nil? root) (= (workspace/normalize-root root) (workspace/trunk-root))))
 
-     pooled
-     (when pool-eligible? (pop-prewarmed! channel))]
+        pooled
+        (when pool-eligible? (pop-prewarmed! channel))]
 
-    (try (let
-           [created (if pooled (claim-prewarmed! pooled (:title opts)) (create-session-cold! opts))]
+    (try (let [created
+               (if pooled (claim-prewarmed! pooled (:title opts)) (create-session-cold! opts))]
            (when pool-eligible? (request-prewarm! channel))
            (session->wire created))
          (catch Throwable e
@@ -4276,12 +4194,11 @@
   []
   (doseq [fut (first (reset-vals! prewarm-futures #{}))]
     (try (future-cancel fut) (catch Throwable _ nil)))
-  (let
-    [stopped
-     {:ready {} :in-flight {} :accepting? false}
+  (let [stopped
+        {:ready {} :in-flight {} :accepting? false}
 
-     ready
-     (mapcat val (:ready (first (reset-vals! prewarm-pool stopped))))]
+        ready
+        (mapcat val (:ready (first (reset-vals! prewarm-pool stopped))))]
 
     (doseq [{:keys [id]} ready]
       (drop-session! id)
@@ -4305,71 +4222,69 @@
    happens to hold."
   [sid]
   (when-let [session (lp/by-id sid)]
-    (let
-      [entry (session-entry sid)
-       ;; Liveness is a fact about the MACHINE, not about this process. A turn
-       ;; running in a SIBLING vis process is mirrored into this registry only
-       ;; once somebody subscribes to that session, so a registry-only answer lit
-       ;; up exactly the sessions the asking client had already watched — the
-       ;; desktop app and the phone reading the same gateway and being told two
-       ;; different fleets. `bus/live-turn-id` is the index every producer writes.
-       current-turn-id (or (:current-turn entry) (bus/live-turn-id sid))
-       current-turn (get-in entry [:turns current-turn-id])
-       last-turn (some->> (:turn-order entry)
-                          peek
-                          (get (:turns entry)))
-       server-time-ms (System/currentTimeMillis)
-       stats (try (some-> (lp/db-info)
-                          (persistance/db-session-turn-stats sid))
-                  (catch Throwable _ nil))
-       ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
-       ;; read — no extra query, so every list row carries it and a client never
-       ;; has to follow up with `GET /v1/sessions/:sid/model` to name the model it
-       ;; will run on. An unflushed pick (600ms debounce) still wins over the row.
-       model-pref (let [[pending? v] (smodel/pending-pref sid)]
-                    (if pending? v (:model-pref session)))]
+    (let [entry (session-entry sid)
+          ;; Liveness is a fact about the MACHINE, not about this process. A turn
+          ;; running in a SIBLING vis process is mirrored into this registry only
+          ;; once somebody subscribes to that session, so a registry-only answer lit
+          ;; up exactly the sessions the asking client had already watched — the
+          ;; desktop app and the phone reading the same gateway and being told two
+          ;; different fleets. `bus/live-turn-id` is the index every producer writes.
+          current-turn-id (or (:current-turn entry) (bus/live-turn-id sid))
+          current-turn (get-in entry [:turns current-turn-id])
+          last-turn (some->> (:turn-order entry)
+                             peek
+                             (get (:turns entry)))
+          server-time-ms (System/currentTimeMillis)
+          stats (try (some-> (lp/db-info)
+                             (persistance/db-session-turn-stats sid))
+                     (catch Throwable _ nil))
+          ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
+          ;; read — no extra query, so every list row carries it and a client never
+          ;; has to follow up with `GET /v1/sessions/:sid/model` to name the model it
+          ;; will run on. An unflushed pick (600ms debounce) still wins over the row.
+          model-pref (let [[pending? v] (smodel/pending-pref sid)]
+                       (if pending? v (:model-pref session)))]
 
       (wire/canonical
-        (cond->
-          {:id (str (:id session))
-           :channel (some-> (:channel session)
-                            name)
-           :title (:title session)
-           :model (:model session) ; the state's ROOT model, NOT the pin below
-           :external_id (:external-id session)
-           :created_at (:created-at session)
-           :owner_id (:owner-id session)
-           :project_id (some-> (:project-id session)
-                               str)
-           :project_name (:project-name session)
-           :project_position (:project-position session)
-           ;; The human's STAR, and the ONE place it lives: the GATEWAY owns it,
-           ;; so every client listing this session reads the same mark instead of
-           ;; each device holding its own copy. A RANK - compare it, never show
-           ;; it - and null when the session is not starred. Always PRESENT, so a
-           ;; client merging this row onto a cached one sees a star taken away.
-           :favorite_rank (:favorite-rank session)
-           :status (cond current-turn-id "running"
-                         (= "suspended" (:status last-turn)) "suspended"
-                         :else "idle")
-           ;; Explicit wire-level liveness keeps clients from reverse-engineering
-           ;; status/current_turn_id, and answers for the whole machine, so every
-           ;; client of this gateway sees the SAME session running.
-           :live (boolean current-turn-id)
-           ;; A run PARKED on a human is the one state no client can derive: the
-           ;; turn is still "running", nothing is streaming, and the only thing
-           ;; that will move it is the operator. Cross-process (see
-           ;; `bus/waiting-requests`), so the phone, the TUI picker and this
-           ;; gateway's own list all say INPUT NEEDED about the same session.
-           :is_awaiting_input (bus/session-waiting? sid)
-           :current_turn_id current-turn-id
-           ;; A TOUCH clock, not a content clock: `append-event!` and
-           ;; `set-session-model!` bump it, and it is PROCESS state that a daemon
-           ;; start re-stamps for every session at once. Report it, never order by
-           ;; it - see `session-recency-ms`.
-           :last_active_at (:last-active entry)
-           :turn_count (long (or (:turn-count stats) 0))
-           :server_time_ms server-time-ms}
+        (cond-> {:id (str (:id session))
+                 :channel (some-> (:channel session)
+                                  name)
+                 :title (:title session)
+                 :model (:model session) ; the state's ROOT model, NOT the pin below
+                 :external_id (:external-id session)
+                 :created_at (:created-at session)
+                 :owner_id (:owner-id session)
+                 :project_id (some-> (:project-id session)
+                                     str)
+                 :project_name (:project-name session)
+                 :project_position (:project-position session)
+                 ;; The human's STAR, and the ONE place it lives: the GATEWAY owns it,
+                 ;; so every client listing this session reads the same mark instead of
+                 ;; each device holding its own copy. A RANK - compare it, never show
+                 ;; it - and null when the session is not starred. Always PRESENT, so a
+                 ;; client merging this row onto a cached one sees a star taken away.
+                 :favorite_rank (:favorite-rank session)
+                 :status (cond current-turn-id "running"
+                               (= "suspended" (:status last-turn)) "suspended"
+                               :else "idle")
+                 ;; Explicit wire-level liveness keeps clients from reverse-engineering
+                 ;; status/current_turn_id, and answers for the whole machine, so every
+                 ;; client of this gateway sees the SAME session running.
+                 :live (boolean current-turn-id)
+                 ;; A run PARKED on a human is the one state no client can derive: the
+                 ;; turn is still "running", nothing is streaming, and the only thing
+                 ;; that will move it is the operator. Cross-process (see
+                 ;; `bus/waiting-requests`), so the phone, the TUI picker and this
+                 ;; gateway's own list all say INPUT NEEDED about the same session.
+                 :is_awaiting_input (bus/session-waiting? sid)
+                 :current_turn_id current-turn-id
+                 ;; A TOUCH clock, not a content clock: `append-event!` and
+                 ;; `set-session-model!` bump it, and it is PROCESS state that a daemon
+                 ;; start re-stamps for every session at once. Report it, never order by
+                 ;; it - see `session-recency-ms`.
+                 :last_active_at (:last-active entry)
+                 :turn_count (long (or (:turn-count stats) 0))
+                 :server_time_ms server-time-ms}
           model-pref
           (assoc :model_pref model-pref)
 
@@ -4393,9 +4308,12 @@
    transcript hanging off it — `list-turns` carries whole content vectors and a
    long session's picker would pull megabytes to paint one list of lines."
   [sid]
-  (let [db (try (lp/db-info) (catch Throwable _ nil))
-        rows (when db
-               (try (persistance/db-list-session-turns db sid) (catch Throwable _ nil)))]
+  (let [db
+        (try (lp/db-info) (catch Throwable _ nil))
+
+        rows
+        (when db (try (persistance/db-list-session-turns db sid) (catch Throwable _ nil)))]
+
     (mapv (fn [row]
             (wire/canonical {:turn_id (str (:id row))
                              :request (:user-request row)
@@ -4413,32 +4331,45 @@
    Returns the fork's wire `soul`. Throws `ex-info` with `:type`
    `:session/no-turns`, `:session/unknown-turn` or `:session/fork-failed`."
   [sid through-turn-id]
-  (let [db (lp/db-info)
-        turns (or (when db
-                    (try (vec (persistance/db-list-session-turns db sid))
-                         (catch Throwable _ nil)))
-                  [])
-        ids (into #{} (map #(str (:id %))) turns)
-        through (or (some-> through-turn-id
-                            str
-                            not-empty)
-                    (some-> (peek turns)
-                            :id
-                            str))]
+  (let [db
+        (lp/db-info)
+
+        turns
+        (or (when db (try (vec (persistance/db-list-session-turns db sid)) (catch Throwable _ nil)))
+            [])
+
+        ids
+        (into #{} (map #(str (:id %))) turns)
+
+        through
+        (or (some-> through-turn-id
+                    str
+                    not-empty)
+            (some-> (peek turns)
+                    :id
+                    str))]
+
     (when (empty? turns)
       (throw (ex-info "This session has no turns to fork yet" {:type :session/no-turns})))
     (when-not (contains? ids through)
       (throw (ex-info "That turn does not belong to this session"
                       {:type :session/unknown-turn :turn-id through-turn-id})))
-    (let [current (resolve-workspace db sid)
-          root (or (:repo-root current) (:root current) (workspace/trunk-root))
-          workspace-id (:id (workspace/create-trunk-at! db root))
-          forked (persistance/db-fork-session-at-turn! db
-                                                       sid
-                                                       {:workspace-id workspace-id
-                                                        :through-turn-id through})]
-      (when-not forked
-        (throw (ex-info "Could not fork this session" {:type :session/fork-failed})))
+    (let [current
+          (resolve-workspace db sid)
+
+          root
+          (or (:repo-root current) (:root current) (workspace/trunk-root))
+
+          workspace-id
+          (:id (workspace/create-trunk-at! db root))
+
+          forked
+          (persistance/db-fork-session-at-turn! db
+                                                sid
+                                                {:workspace-id workspace-id
+                                                 :through-turn-id through})]
+
+      (when-not forked (throw (ex-info "Could not fork this session" {:type :session/fork-failed})))
       (put-session! forked {:next-seq 0 :last-active (System/currentTimeMillis)})
       (soul forked))))
 
@@ -4456,24 +4387,23 @@
    scan back on every window."
   [souls db stats]
   (mapv (fn [s]
-          (let
-            [st
-             (get stats (str (get s "id")))
+          (let [st
+                (get stats (str (get s "id")))
 
-             ws
-             (when db
-               (try (when-let [w (resolve-workspace db (get s "id"))]
-                      (wire/canonical {:root (:root w)
-                                       :repo-root (:repo-root w)
-                                       :label (:label w)
-                                       :fork-ms (:fork-ms w)
-                                       ;; A DRAFT is a per-session clone under
-                                       ;; ~/.vis/drafts/<repo>/<label>; without this flag a
-                                       ;; client cannot tell its `root` from a real project
-                                       ;; root and groups every draft as its own project.
-                                       ;; Clients group by `repo_root`, badge on `is_draft`.
-                                       :is-draft (boolean (workspace/draft? w))}))
-                    (catch Throwable _ nil)))]
+                ws
+                (when db
+                  (try (when-let [w (resolve-workspace db (get s "id"))]
+                         (wire/canonical {:root (:root w)
+                                          :repo-root (:repo-root w)
+                                          :label (:label w)
+                                          :fork-ms (:fork-ms w)
+                                          ;; A DRAFT is a per-session clone under
+                                          ;; ~/.vis/drafts/<repo>/<label>; without this flag a
+                                          ;; client cannot tell its `root` from a real project
+                                          ;; root and groups every draft as its own project.
+                                          ;; Clients group by `repo_root`, badge on `is_draft`.
+                                          :is-draft (boolean (workspace/draft? w))}))
+                       (catch Throwable _ nil)))]
 
             (cond-> (assoc s "turn_count" (long (or (:turn-count st) 0)))
               (:latest-turn-at st)
@@ -4570,15 +4500,13 @@
    `list-sessions-page` takes the wire string and treats anything else as no
    cursor at all, so it stays total."
   [cursor]
-  (when-let
-    [^String s (some-> cursor
-                       str
-                       not-empty)]
+  (when-let [^String s (some-> cursor
+                               str
+                               not-empty)]
     (let [cut (.indexOf s ^String session-cursor-separator)]
       (when (pos? cut)
-        (let
-          [recency (try (Long/parseLong (subs s 0 cut)) (catch Exception _ nil))
-           id (not-empty (subs s (inc cut)))]
+        (let [recency (try (Long/parseLong (subs s 0 cut)) (catch Exception _ nil))
+              id (not-empty (subs s (inc cut)))]
 
           (when (and recency id) [(long recency) id]))))))
 
@@ -4589,12 +4517,11 @@
    the cursor, never on how many rows the gateway happened to rank in front of
    them, so a page cannot shift under a client that is still walking."
   [cursor pair]
-  (let
-    [cursor-recency
-     (long (nth cursor 0))
+  (let [cursor-recency
+        (long (nth cursor 0))
 
-     recency
-     (long (nth pair 0))]
+        recency
+        (long (nth pair 0))]
 
     (or (< recency cursor-recency)
         (and (= recency cursor-recency) (pos? (compare (str (nth pair 1)) (str (nth cursor 1))))))))
@@ -4656,52 +4583,51 @@
    makes a polled session list affordable."
   ([opts] (list-sessions-page :all opts))
   ([channel {:keys [limit after root]}]
-   (let
-     [db
-      (try (lp/db-info) (catch Throwable _ nil))
+   (let [db
+         (try (lp/db-info) (catch Throwable _ nil))
 
-      ;; ONE grouped query serves BOTH the ordering and the page's decorations.
-      stats
-      (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
+         ;; ONE grouped query serves BOTH the ordering and the page's decorations.
+         stats
+         (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
 
-      ranked
-      (cond->> (session-ranking channel stats)
-        (and db (seq root))
-        (filterv (fn [pair]
-                   (= root (session-project-root db (nth pair 1))))))
+         ranked
+         (cond->> (session-ranking channel stats)
+           (and db (seq root))
+           (filterv (fn [pair]
+                      (= root (session-project-root db (nth pair 1))))))
 
-      total
-      (count ranked)
+         total
+         (count ranked)
 
-      cursor
-      (parse-session-cursor after)
+         cursor
+         (parse-session-cursor after)
 
-      tail
-      (if cursor
-        (into [] (drop-while (complement (partial after-session-cursor? cursor))) ranked)
-        ranked)
+         tail
+         (if cursor
+           (into [] (drop-while (complement (partial after-session-cursor? cursor))) ranked)
+           ranked)
 
-      window
-      (if (some? limit) (into [] (take (max 0 (long limit))) tail) (vec tail))
+         window
+         (if (some? limit) (into [] (take (max 0 (long limit))) tail) (vec tail))
 
-      rows
-      (-> (into [] (comp (map #(nth % 1)) (keep soul)) window)
-          (session-summary-extras db stats)
-          order-session-summaries)
+         rows
+         (-> (into [] (comp (map #(nth % 1)) (keep soul)) window)
+             (session-summary-extras db stats)
+             order-session-summaries)
 
-      ;; Sessions PARKED on an unanswered human-input request, beside the window
-      ;; instead of lifted into it. The demand is real - only the operator can move
-      ;; that run - but paying for it with a BAND in the ordering key moved the
-      ;; whole list whenever a turn asked or was answered, and pushed another
-      ;; session out of the page. Here it is its own short answer, complete however
-      ;; deep the parked rows sit, so a client can pin them above a list whose
-      ;; order never flinches. Bounded by the runs blocked on a human right now,
-      ;; which is a handful, and cut to the same channel/root as the listing.
-      awaiting
-      (let [listed (into #{} (map #(nth % 1)) ranked)]
-        (-> (into [] (comp (filter listed) (keep soul)) (keys (bus/waiting-requests)))
-            (session-summary-extras db stats)
-            order-session-summaries))]
+         ;; Sessions PARKED on an unanswered human-input request, beside the window
+         ;; instead of lifted into it. The demand is real - only the operator can move
+         ;; that run - but paying for it with a BAND in the ordering key moved the
+         ;; whole list whenever a turn asked or was answered, and pushed another
+         ;; session out of the page. Here it is its own short answer, complete however
+         ;; deep the parked rows sit, so a client can pin them above a list whose
+         ;; order never flinches. Bounded by the runs blocked on a human right now,
+         ;; which is a handful, and cut to the same channel/root as the listing.
+         awaiting
+         (let [listed (into #{} (map #(nth % 1)) ranked)]
+           (-> (into [] (comp (filter listed) (keep soul)) (keys (bus/waiting-requests)))
+               (session-summary-extras db stats)
+               order-session-summaries))]
 
      {:sessions rows
       :awaiting awaiting
@@ -4730,6 +4656,112 @@
    slice (e.g. resolving a chat by external-id)."
   ([] (list-sessions :all))
   ([channel] (:sessions (list-sessions-page channel nil))))
+
+(defn projects-overview
+  "ONE answer for the navigator's header row: every PROJECT this gateway holds
+   with its own counts, plus the gateway's totals beside them.
+
+   `{:projects [{root project_id name session_count live_count awaiting_count
+                 last_activity_ms} ...]
+     :project_count n :session_count n :live_count n :awaiting_count n
+     :server_time_ms ms}`
+
+   A client used to DERIVE this: download the fleet, group it by working
+   directory, tally each group. That made a project header cost the whole
+   session list, so switching gateways repainted projects and their numbers
+   page by page as the windows landed - the flicker in the report. Here the
+   numbers are computed once, by the process that already holds the facts, from
+   the same cheap sources the ordering uses (`session-ranking` +
+   `session-project-root`), so a client paints headers before it has read a
+   single session row.
+
+   The group key is the PROJECT ROOT (`session-project-root`), exactly the key
+   a `root=` window of `list-sessions-page` takes, so a header and its page
+   agree by construction. `name` is the persisted project's name when the root
+   is bound to one and \"\" otherwise - the folder is the client's own fallback.
+
+   Liveness and demand are counts here, never an ordering band: projects come
+   back freshest-content first."
+  ([] (projects-overview :all))
+  ([channel]
+   (let [db
+         (try (lp/db-info) (catch Throwable _ nil))
+
+         stats
+         (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
+
+         ranked
+         (session-ranking channel stats)
+
+         live
+         (bus/live-turns)
+
+         waiting
+         (into #{} (map str) (keys (bus/waiting-requests)))
+
+         ;; Persisted projects by their bound root: the only thing the tally cannot
+         ;; read off a session is the NAME a human gave the project.
+         named
+         (into {}
+               (keep (fn [p]
+                       (when-let [r (not-empty (str (:workspace-root p)))]
+                         [r p])))
+               (try (lp/projects {}) (catch Throwable _ nil)))
+
+         groups
+         (reduce
+           (fn [acc pair]
+             (let [sid
+                   (str (nth pair 1))
+
+                   root
+                   (or (when db (session-project-root db sid)) "")
+
+                   g
+                   (get acc
+                        root
+                        {:session-count 0 :live-count 0 :awaiting-count 0 :last-activity-ms 0})]
+
+               (assoc acc
+                 root {:session-count (inc (long (:session-count g)))
+                       :live-count (cond-> (long (:live-count g))
+                                     (contains? live sid)
+                                     inc)
+                       :awaiting-count (cond-> (long (:awaiting-count g))
+                                         (contains? waiting sid)
+                                         inc)
+                       :last-activity-ms (max (long (:last-activity-ms g)) (long (nth pair 0)))})))
+           {}
+           ranked)
+
+         projects
+         (->> groups
+              (mapv (fn [[root g]]
+                      (wire/canonical {:root root
+                                       :project_id (some-> (get-in named [root :id])
+                                                           str)
+                                       :name (str (get-in named [root :name] ""))
+                                       :session_count (long (:session-count g))
+                                       :live_count (long (:live-count g))
+                                       :awaiting_count (long (:awaiting-count g))
+                                       :last_activity_ms (long (:last-activity-ms g))})))
+              (sort-by (fn [p]
+                         [(unchecked-negate (long (get p "last_activity_ms")))
+                          (str (get p "root"))]))
+              vec)
+
+         listed
+         (into #{}
+               (map (fn [pair]
+                      (str (nth pair 1))))
+               ranked)]
+
+     {:projects projects
+      :project_count (count projects)
+      :session_count (count ranked)
+      :live_count (count (filterv listed (keys live)))
+      :awaiting_count (count (filterv listed waiting))
+      :server_time_ms (System/currentTimeMillis)})))
 
 (defn search-session-ids
   "Soul-id STRINGS whose TRANSCRIPT (user request + assistant iteration text)
@@ -4771,9 +4803,8 @@
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
-       (mapv (fn
-               [{:keys [id rank in-title? in-request? in-reply? in-thinking? request-snippet
-                        reply-snippet hits]}]
+       (mapv (fn [{:keys [id rank in-title? in-request? in-reply? in-thinking? request-snippet
+                          reply-snippet hits]}]
                {:session_id (str id)
                 :rank (long (or rank 0))
                 :is_in_title (boolean in-title?)
@@ -5017,12 +5048,11 @@
 (defn metrics-snapshot
   "Global, per-session, concurrency, replay-buffer, and JVM gauges for /metrics."
   []
-  (let
-    [reg
-     @registry
+  (let [reg
+        @registry
 
-     entries
-     (vals reg)]
+        entries
+        (vals reg)]
 
     (merge @metrics
            (lp/gateway-runtime-metrics)

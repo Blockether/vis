@@ -22,32 +22,30 @@
 
 (defdescribe session-model-audit-test
              (it "records changed picker preferences without making audit failure part of selection"
-                 (let
-                   [recorded
-                    (atom nil)
+                 (let [recorded
+                       (atom nil)
 
-                    before
-                    {:provider "anthropic" :model "claude-5"}
+                       before
+                       {:provider "anthropic" :model "claude-5"}
 
-                    after
-                    {:provider "openai" :model "gpt-5"}]
+                       after
+                       {:provider "openai" :model "gpt-5"}]
 
-                   (with-redefs
-                     [lp/db-info
-                      (constantly :db)
+                   (with-redefs [lp/db-info
+                                 (constantly :db)
 
-                      smodel/model-of
-                      (constantly before)
+                                 smodel/model-of
+                                 (constantly before)
 
-                      smodel/set-model!
-                      (constantly after)
+                                 smodel/set-model!
+                                 (constantly after)
 
-                      smodel/record-switch!
-                      (fn [& args]
-                        (reset! recorded args))
+                                 smodel/record-switch!
+                                 (fn [& args]
+                                   (reset! recorded args))
 
-                      state/append-event!
-                      (fn [& _])]
+                                 state/append-event!
+                                 (fn [& _])]
 
                      (expect (= after (state/set-session-model! "audit-session" "openai" "gpt-5")))
                      (expect (= [:db "audit-session" before after :gateway] @recorded))))))
@@ -64,19 +62,17 @@
   ;; by a writer that never calls it — the engine repointing a session off a
   ;; credential whose 401 it just survived — changed the DB while every chip kept
   ;; naming the dead provider. The broadcast hangs off the session-model store now.
-  (let
-    [broadcasts
-     (fn [pick]
-       (let [appended (atom [])]
-         (with-redefs
-           [state/append-event! (fn [& args]
-                                  (swap! appended conj (vec args)))]
-           (#'state/broadcast-model-event! "sess-1" pick)
-           @appended)))
+  (let [broadcasts
+        (fn [pick]
+          (let [appended (atom [])]
+            (with-redefs [state/append-event! (fn [& args]
+                                                (swap! appended conj (vec args)))]
+              (#'state/broadcast-model-event! "sess-1" pick)
+              @appended)))
 
-     payload
-     (fn [pick]
-       (nth (first (broadcasts pick)) 2))]
+        payload
+        (fn [pick]
+          (nth (first (broadcasts pick)) 2))]
 
     (it "broadcasts the new pin live-only, so a cursor replay cannot re-apply it"
         (expect (= [["sess-1" "session.model_updated" {:provider "openai" :model "gpt-5"}
@@ -101,30 +97,28 @@
     (it "is registered on the STORE, so every writer broadcasts through one path"
         (expect (contains? @@#'smodel/model-listeners #'state/broadcast-model-event!)))
     (it "still persists the pick and records the switch"
-        (let
-          [recorded
-           (atom nil)
+        (let [recorded
+              (atom nil)
 
-           after
-           {:provider "openai" :model "gpt-5"}]
+              after
+              {:provider "openai" :model "gpt-5"}]
 
-          (with-redefs
-            [lp/db-info
-             (constantly :db)
+          (with-redefs [lp/db-info
+                        (constantly :db)
 
-             smodel/model-of
-             (constantly nil)
+                        smodel/model-of
+                        (constantly nil)
 
-             smodel/set-model!
-             (fn [& _]
-               after)
+                        smodel/set-model!
+                        (fn [& _]
+                          after)
 
-             smodel/record-switch!
-             (fn [& args]
-               (reset! recorded (vec args)))
+                        smodel/record-switch!
+                        (fn [& args]
+                          (reset! recorded (vec args)))
 
-             state/append-event!
-             (fn [& _])]
+                        state/append-event!
+                        (fn [& _])]
 
             (expect (= after (state/set-session-model! "sess-1" "openai" "gpt-5")))
             (expect (= [:db "sess-1" nil after :gateway] @recorded)))))))
@@ -135,19 +129,18 @@
    which model each row runs on. Without it every client that names the model has
    to follow up with `GET /v1/sessions/:sid/model` per session it opens."
   (it "carries the persisted pin as model_pref"
-      (with-redefs
-        [lp/by-id
-         (constantly {:id "s1"
-                      :channel :api
-                      :title "t"
-                      :model "root-model"
-                      :model-pref {:provider "anthropic" :model "claude-opus-5"}})
+      (with-redefs [lp/by-id
+                    (constantly {:id "s1"
+                                 :channel :api
+                                 :title "t"
+                                 :model "root-model"
+                                 :model-pref {:provider "anthropic" :model "claude-opus-5"}})
 
-         lp/db-info
-         (constantly nil)
+                    lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)]
+                    persistance/db-session-turn-stats
+                    (constantly nil)]
 
         (let [row (state/soul "s1")]
           (expect (= {"provider" "anthropic" "model" "claude-opus-5"} (get row "model_pref")))
@@ -155,47 +148,48 @@
           ;; user's pick) and keeps its own key.
           (expect (= "root-model" (get row "model"))))))
   (it "omits model_pref for a session on the router default"
-      (with-redefs
-        [lp/by-id
-         (constantly {:id "s2" :channel :api :title "t"})
+      (with-redefs [lp/by-id
+                    (constantly {:id "s2" :channel :api :title "t"})
 
-         lp/db-info
-         (constantly nil)
+                    lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)]
+                    persistance/db-session-turn-stats
+                    (constantly nil)]
 
         (expect (not (contains? (state/soul "s2") "model_pref")))))
   (it "an UNFLUSHED pick beats the persisted row during its debounce window"
-      (with-redefs
-        [lp/by-id
-         (constantly
-           {:id "s3" :channel :api :title "t" :model-pref {:provider "anthropic" :model "old"}})
+      (with-redefs [lp/by-id
+                    (constantly {:id "s3"
+                                 :channel :api
+                                 :title "t"
+                                 :model-pref {:provider "anthropic" :model "old"}})
 
-         lp/db-info
-         (constantly nil)
+                    lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)
+                    persistance/db-session-turn-stats
+                    (constantly nil)
 
-         smodel/pending-pref
-         (constantly [true {:provider "zai" :model "glm-5.2"}])]
+                    smodel/pending-pref
+                    (constantly [true {:provider "zai" :model "glm-5.2"}])]
 
         (expect (= {"provider" "zai" "model" "glm-5.2"} (get (state/soul "s3") "model_pref")))))
   (it "a pending CLEAR drops the pin instead of repainting the old one"
-      (with-redefs
-        [lp/by-id
-         (constantly
-           {:id "s4" :channel :api :title "t" :model-pref {:provider "anthropic" :model "old"}})
+      (with-redefs [lp/by-id
+                    (constantly {:id "s4"
+                                 :channel :api
+                                 :title "t"
+                                 :model-pref {:provider "anthropic" :model "old"}})
 
-         lp/db-info
-         (constantly nil)
+                    lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)
+                    persistance/db-session-turn-stats
+                    (constantly nil)
 
-         smodel/pending-pref
-         (constantly [true nil])]
+                    smodel/pending-pref
+                    (constantly [true nil])]
 
         (expect (not (contains? (state/soul "s4") "model_pref"))))))
 
@@ -206,19 +200,18 @@
    The soul carries the fact and the navigator order acts on it, so the phone,
    the TUI picker and the gateway's own listing all point at the same session."
   (it "carries the machine-wide waiting fact as is_awaiting_input"
-      (with-redefs
-        [lp/by-id
-         (fn [sid]
-           {:id sid :channel :api :title "t"})
+      (with-redefs [lp/by-id
+                    (fn [sid]
+                      {:id sid :channel :api :title "t"})
 
-         lp/db-info
-         (constantly nil)
+                    lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)
+                    persistance/db-session-turn-stats
+                    (constantly nil)
 
-         bus/waiting-requests
-         (constantly {"s-parked" [{"id" "req-1" "since" 1}]})]
+                    bus/waiting-requests
+                    (constantly {"s-parked" [{"id" "req-1" "since" 1}]})]
 
         (expect (true? (get (state/soul "s-parked") "is_awaiting_input")))
         (expect (false? (get (state/soul "s-busy") "is_awaiting_input")))))
@@ -227,47 +220,44 @@
   ;; parked on a human, and a turn in flight, used to LEAD the navigator key, so the
   ;; lifecycle of a turn MOVED rows under the reader - and, because the key is applied
   ;; before the page is cut, pushed another session out of the window entirely.
-  (it "does not lift a parked session: demand is a FIELD, never a place in the order"
-      (let
-        [rows
-         [{"id" "live-now" "live" true "modified_at" "2026-01-02T00:00:00Z"}
-          {"id" "parked" "live" true "is_awaiting_input" true "modified_at" "2026-01-01T00:00:00Z"}
-          {"id" "idle" "modified_at" "2026-01-03T00:00:00Z"}]]
-        (expect (= ["idle" "live-now" "parked"]
-                   (mapv #(get % "id") (#'state/order-session-summaries rows)))))))
+  (it
+    "does not lift a parked session: demand is a FIELD, never a place in the order"
+    (let [rows
+          [{"id" "live-now" "live" true "modified_at" "2026-01-02T00:00:00Z"}
+           {"id" "parked" "live" true "is_awaiting_input" true "modified_at" "2026-01-01T00:00:00Z"}
+           {"id" "idle" "modified_at" "2026-01-03T00:00:00Z"}]]
+      (expect (= ["idle" "live-now" "parked"]
+                 (mapv #(get % "id") (#'state/order-session-summaries rows)))))))
 (defdescribe
   thinking-newline-normalization-test
   "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
    consumers in sync. A client may still render defensively, but it must
    not be the first place where blank-line runs disappear."
   (it "streams reasoning deltas with normalized thinking over the gateway"
-      (let
-        [[type store? payload] (#'state/chunk->event
-                                {:phase :reasoning
-                                 :iteration 1
-                                 :thinking " first  \n\n\t\nsecond\r\n\r\nthird  "
-                                 :stream-block-id "t1:reasoning:1"
-                                 :stream-delta "first\nsecond\nthird"})]
+      (let [[type store? payload] (#'state/chunk->event
+                                   {:phase :reasoning
+                                    :iteration 1
+                                    :thinking " first  \n\n\t\nsecond\r\n\r\nthird  "
+                                    :stream-block-id "t1:reasoning:1"
+                                    :stream-delta "first\nsecond\nthird"})]
         (expect (= "content.block.delta" type))
         (expect store?)
         (expect (= "first\nsecond\nthird" (:text payload)))))
   (it "normalizes iteration-boundary thinking for pinned session history"
-      (let
-        [[type store? payload]
-         (#'state/chunk->event
-          {:phase :iteration-final :done? true :thinking " alpha.\n\n\n beta.  \n\t\n gamma. "})]
+      (let [[type store? payload]
+            (#'state/chunk->event
+             {:phase :iteration-final :done? true :thinking " alpha.\n\n\n beta.  \n\t\n gamma. "})]
         (expect (= "iteration.completed" type))
         (expect store?)
         (expect (= "alpha.\n beta.\n gamma." (:thinking payload)))))
   (it "normalizes persisted transcript thinking the same way as live events"
-      (with-redefs
-        [persistance/db-list-session-turns
-         (fn [_ sid]
-           [{:id sid :status :success}])
+      (with-redefs [persistance/db-list-session-turns
+                    (fn [_ sid]
+                      [{:id sid :status :success}])
 
-         persistance/db-list-session-turn-iterations
-         (fn [_ _]
-           [{:thinking " alpha.\n\n beta.  \n"}])]
+                    persistance/db-list-session-turn-iterations
+                    (fn [_ _]
+                      [{:thinking " alpha.\n\n beta.  \n"}])]
 
         (expect (= "alpha.\n beta."
                    (-> (state/transcript :session-1)
@@ -278,27 +268,26 @@
 
 (defdescribe transcript-bubble-footer-test
              (it "ships the exact shared TUI footer and routing note to remote channels"
-                 (with-redefs
-                   [persistance/db-list-session-turns
-                    (fn [_ sid]
-                      [{:id sid
-                        :status :success
-                        :provider :openai
-                        :model "gpt/5.4"
-                        :input-tokens 11461
-                        :input-cache-read-tokens 4096
-                        :output-tokens 35
-                        :total-cost 0.007
-                        :duration-ms 2300}])
+                 (with-redefs [persistance/db-list-session-turns
+                               (fn [_ sid]
+                                 [{:id sid
+                                   :status :success
+                                   :provider :openai
+                                   :model "gpt/5.4"
+                                   :input-tokens 11461
+                                   :input-cache-read-tokens 4096
+                                   :output-tokens 35
+                                   :total-cost 0.007
+                                   :duration-ms 2300}])
 
-                    persistance/db-list-session-turn-iterations
-                    (fn [_ _]
-                      [{:llm-selected {:provider :anthropic :model "claude/opus"}
-                        :llm-actual {:provider :openai :model "gpt/5.4"}
-                        :llm-fallback? true
-                        :llm-routing-trace [{:event/type :llm.routing/provider-retry}
-                                            {:event/type :llm.routing/provider-fallback
-                                             :status 429}]}])]
+                               persistance/db-list-session-turn-iterations
+                               (fn [_ _]
+                                 [{:llm-selected {:provider :anthropic :model "claude/opus"}
+                                   :llm-actual {:provider :openai :model "gpt/5.4"}
+                                   :llm-fallback? true
+                                   :llm-routing-trace [{:event/type :llm.routing/provider-retry}
+                                                       {:event/type :llm.routing/provider-fallback
+                                                        :status 429}]}])]
 
                    (let [turn (first (state/transcript :session-1))]
                      (expect (= "openai/gpt-5.4  ·  11.5k→35 (cached 4.1k)  ·  ~$0.0070  ·  2.3s"
@@ -313,27 +302,25 @@
              ;; "provider/model" meta line — with no tokens, cost or duration —
              ;; under a turn the user is still watching stream.
              (it "withholds the footer while the turn is still running"
-                 (with-redefs
-                   [persistance/db-list-session-turns
-                    (fn [_ sid]
-                      [{:id sid :status :running}])
+                 (with-redefs [persistance/db-list-session-turns
+                               (fn [_ sid]
+                                 [{:id sid :status :running}])
 
-                    persistance/db-list-session-turn-iterations
-                    (fn [_ _]
-                      [{:llm-actual {:provider :anthropic :model "claude/opus-5"}}])]
+                               persistance/db-list-session-turn-iterations
+                               (fn [_ _]
+                                 [{:llm-actual {:provider :anthropic :model "claude/opus-5"}}])]
 
                    (let [turn (first (state/transcript :session-1))]
                      (expect (nil? (get turn "meta_summary")))
                      (expect (nil? (get turn "meta_fallback_note"))))))
              (it "ships the footer for a settled turn with the same routing"
-                 (with-redefs
-                   [persistance/db-list-session-turns
-                    (fn [_ sid]
-                      [{:id sid :status :success :duration-ms 2300}])
+                 (with-redefs [persistance/db-list-session-turns
+                               (fn [_ sid]
+                                 [{:id sid :status :success :duration-ms 2300}])
 
-                    persistance/db-list-session-turn-iterations
-                    (fn [_ _]
-                      [{:llm-actual {:provider :anthropic :model "claude/opus-5"}}])]
+                               persistance/db-list-session-turn-iterations
+                               (fn [_ _]
+                                 [{:llm-actual {:provider :anthropic :model "claude/opus-5"}}])]
 
                    (let [turn (first (state/transcript :session-1))]
                      (expect (some? (get turn "meta_summary")))))))
@@ -343,21 +330,19 @@
   ;; Op cards are gone, so there is no op-dedup: a form error ALWAYS surfaces
   ;; on the wire. What remains to assert is the lean text shape.
   (it "ships a lean text error (message + line/col + hint), never the pr-str'd map"
-      (let
-        [[_ _ payload] (#'state/chunk->event
-                        {:phase :form-result
-                         :position 0
-                         :code "1/0"
-                         :error {:message "ZeroDivisionError: division by zero"
-                                 :hint "check denominator"
-                                 :data {:phase :python/runtime :line 1 :column 1}}})]
+      (let [[_ _ payload] (#'state/chunk->event
+                           {:phase :form-result
+                            :position 0
+                            :code "1/0"
+                            :error {:message "ZeroDivisionError: division by zero"
+                                    :hint "check denominator"
+                                    :data {:phase :python/runtime :line 1 :column 1}}})]
         (expect (= "ZeroDivisionError: division by zero (line 1, col 1)\nhint: check denominator"
                    (:error payload)))
         (expect (not (str/includes? (:error payload) ":data")))))
   (it "a form error always surfaces on the wire"
-      (let
-        [[type _ payload] (#'state/chunk->event
-                           {:phase :form-result :position 0 :code "rg(...)" :error tool-error})]
+      (let [[type _ payload] (#'state/chunk->event
+                              {:phase :form-result :position 0 :code "rg(...)" :error tool-error})]
         (expect (= "block.output" type))
         (expect (= "rg spec has unknown keys: spec." (:error payload))))))
 
@@ -367,10 +352,9 @@
    call) ship as an EPHEMERAL `activity` event (store? false) so a long call
    never leaves the bubble frozen; nothing persists into the durable trace."
   (it "a nested tool-start ships an ephemeral activity event with its precise label"
-      (let
-        [[type store? payload]
-         (#'state/chunk->event
-          {:phase :tool-start :iteration 2 :tool-event {:op :shell :label "clojure -M:test"}})]
+      (let [[type store? payload]
+            (#'state/chunk->event
+             {:phase :tool-start :iteration 2 :tool-event {:op :shell :label "clojure -M:test"}})]
         (expect (= "activity" type))
         (expect (false? store?))
         (expect (= {:activity "tool" :iteration 2 :op "shell" :label "clojure -M:test"} payload))))
@@ -391,22 +375,21 @@
 
 (defdescribe provider-retry-wire-event-test
              (it "ships structured retry metadata instead of an opaque detail string"
-                 (let
-                   [[type store? payload] (#'state/chunk->event
-                                           {:phase :provider-retry-reset
-                                            :iteration 2
-                                            :attempt 1
-                                            :max-retries 3
-                                            :delay-ms 1000
-                                            :error {:type :svar.llm/provider-unavailable
-                                                    :message "Provider unavailable"
-                                                    :mini-trace ["must not cross the wire"]}
-                                            :event {:event/type :llm.routing/provider-retry
-                                                    :reason :provider-unavailable
-                                                    :provider "openai"
-                                                    :model "gpt-x"
-                                                    :attempt 1
-                                                    :delay-ms 1000}})]
+                 (let [[type store? payload] (#'state/chunk->event
+                                              {:phase :provider-retry-reset
+                                               :iteration 2
+                                               :attempt 1
+                                               :max-retries 3
+                                               :delay-ms 1000
+                                               :error {:type :svar.llm/provider-unavailable
+                                                       :message "Provider unavailable"
+                                                       :mini-trace ["must not cross the wire"]}
+                                               :event {:event/type :llm.routing/provider-retry
+                                                       :reason :provider-unavailable
+                                                       :provider "openai"
+                                                       :model "gpt-x"
+                                                       :attempt 1
+                                                       :delay-ms 1000}})]
                    (expect (= "provider.retry" type))
                    (expect store?)
                    (expect (= 2 (:iteration payload)))
@@ -417,68 +400,63 @@
                    (expect (= 1000 (:delay-ms payload)))
                    (expect (not (contains? (:error payload) :mini-trace))))))
 
-(defdescribe form-event-iteration-wire-test
-             ;; THE "live shows reasoning but no code" bug: every streaming chunk carries
-             ;; its iteration POSITION under `:iteration`, and that MUST ride the wire
-             ;; event — `make-progress-tracker` DROPS any chunk with no iteration, which is
-             ;; how `block.started` / `block.output` once lost their forms and the live
-             ;; bubble showed reasoning but no code.
-             (it "block.started carries :iteration on the wire"
-                 (let
-                   [[type _ payload]
-                    (#'state/chunk->event
-                     {:phase :form-start :iteration 1 :position 0 :code "import hashlib"})]
-                   (expect (= "block.started" type))
-                   (expect (= 1 (:iteration payload)))))
-             (it "block.output carries :iteration on the wire"
-                 (let
-                   [[type _ payload]
-                    (#'state/chunk->event
-                     {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
-                   (expect (= "block.output" type))
-                   (expect (= 3 (:iteration payload)))))
-             (it "reasoning streams as a replayable typed block delta"
-                 (let
-                   [[type store? payload] (#'state/chunk->event
-                                           {:phase :reasoning
-                                            :iteration 2
-                                            :thinking "hmm"
-                                            :stream-block-id "t1:reasoning:2"
-                                            :stream-delta "hmm"})]
-                   (expect (= "content.block.delta" type))
-                   (expect store?)
-                   (expect (= 2 (:iteration payload)))
-                   (expect (= "t1:reasoning:2" (:block_id payload)))
-                   (expect (= "text" (:field payload)))
-                   (expect (= "hmm" (:text payload)))))
-             (it "iteration-final carries :iteration and complete assistant prose on the wire"
-                 (let
-                   [[type _ payload] (#'state/chunk->event
-                                      {:phase :iteration-final
-                                       :iteration 5
-                                       :done true
-                                       :thinking "t"
-                                       :assistant-prose " full prose "})]
-                   (expect (= "iteration.completed" type))
-                   (expect (= 5 (:iteration payload)))
-                   (expect (= "full prose" (:assistant-prose payload)))))
-             (it "the streaming code preview is a distinct replayable block event"
-                 (let
-                   [[type store? payload] (#'state/chunk->event
-                                           {:phase :tool-preview
-                                            :iteration 1
-                                            :position 0
-                                            :code "print(4"
-                                            :svar/tool-call-id "call_1"})]
-                   (expect (= "block.preview" type))
-                   (expect store?)
-                   (expect (= 1 (:iteration payload)))
-                   (expect (= 0 (:block_id payload)))
-                   (expect (= "print(4" (:code payload)))
-                   ;; The preview names no tool: there is exactly one, and a
-                   ;; card's identity is the printed result's own `op`.
-                   (expect (nil? (:tool_name payload)))
-                   (expect (= "call_1" (:tool_call_id payload))))))
+(defdescribe
+  form-event-iteration-wire-test
+  ;; THE "live shows reasoning but no code" bug: every streaming chunk carries
+  ;; its iteration POSITION under `:iteration`, and that MUST ride the wire
+  ;; event — `make-progress-tracker` DROPS any chunk with no iteration, which is
+  ;; how `block.started` / `block.output` once lost their forms and the live
+  ;; bubble showed reasoning but no code.
+  (it "block.started carries :iteration on the wire"
+      (let [[type _ payload] (#'state/chunk->event
+                              {:phase :form-start :iteration 1 :position 0 :code "import hashlib"})]
+        (expect (= "block.started" type))
+        (expect (= 1 (:iteration payload)))))
+  (it "block.output carries :iteration on the wire"
+      (let [[type _ payload]
+            (#'state/chunk->event
+             {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
+        (expect (= "block.output" type))
+        (expect (= 3 (:iteration payload)))))
+  (it "reasoning streams as a replayable typed block delta"
+      (let [[type store? payload] (#'state/chunk->event
+                                   {:phase :reasoning
+                                    :iteration 2
+                                    :thinking "hmm"
+                                    :stream-block-id "t1:reasoning:2"
+                                    :stream-delta "hmm"})]
+        (expect (= "content.block.delta" type))
+        (expect store?)
+        (expect (= 2 (:iteration payload)))
+        (expect (= "t1:reasoning:2" (:block_id payload)))
+        (expect (= "text" (:field payload)))
+        (expect (= "hmm" (:text payload)))))
+  (it "iteration-final carries :iteration and complete assistant prose on the wire"
+      (let [[type _ payload] (#'state/chunk->event
+                              {:phase :iteration-final
+                               :iteration 5
+                               :done true
+                               :thinking "t"
+                               :assistant-prose " full prose "})]
+        (expect (= "iteration.completed" type))
+        (expect (= 5 (:iteration payload)))
+        (expect (= "full prose" (:assistant-prose payload)))))
+  (it "the streaming code preview is a distinct replayable block event"
+      (let [[type store? payload] (#'state/chunk->event
+                                   {:phase :tool-preview
+                                    :iteration 1
+                                    :position 0
+                                    :code "print(4"
+                                    :svar/tool-call-id "call_1"})]
+        (expect (= "block.preview" type))
+        (expect store?)
+        (expect (= 1 (:iteration payload)))
+        (expect (= 0 (:block_id payload)))
+        (expect (= "print(4" (:code payload)))
+        ;; The preview names no tool: there is exactly one, and a
+        ;; card's identity is the printed result's own `op`.
+        (expect (nil? (:tool_name payload)))
+        (expect (= "call_1" (:tool_call_id payload))))))
 
 (defdescribe
   iteration-attachment-descriptor-wire-test
@@ -487,34 +465,30 @@
   ;; lazy-fetches it from the byte endpoint. `:index` is the position in the SAME
   ;; ordered list the byte endpoint serves, so index N always names one artifact.
   (it "omits :attachments when the iteration produced none"
-      (let
-        [[type _ payload] (#'state/chunk->event
-                           {:phase :iteration-final :iteration 2 :done true :thinking "t"})]
+      (let [[type _ payload] (#'state/chunk->event
+                              {:phase :iteration-final :iteration 2 :done true :thinking "t"})]
         (expect (= "iteration.completed" type))
         (expect (not (contains? payload :attachments)))))
   (it "omits :attachments when there is no iteration-id to address them"
-      (let
-        [[_ _ payload] (#'state/chunk->event
-                        {:phase :iteration-final :iteration 2 :done true :attachment-count 3})]
+      (let [[_ _ payload] (#'state/chunk->event
+                           {:phase :iteration-final :iteration 2 :done true :attachment-count 3})]
         (expect (not (contains? payload :attachments)))))
   (it "projects lean snake-case descriptors and NEVER leaks base64"
-      (with-redefs
-        [state/iteration-attachments (fn [_iid]
-                                       [{:tool-call-id "call_A"
-                                         :kind "image"
-                                         :media-type "image/png"
-                                         :filename "fig.png"
-                                         :size 1234
-                                         :base64 "SECRET"}
-                                        {:tool-call-id nil :media-type "image/svg+xml" :size 0}])]
-        (let
-          [[_ _ payload] (#'state/chunk->event
-                          {:phase :iteration-final
-                           :iteration 4
-                           :done false
-                           :iteration-id "00000000-0000-0000-0000-0000000000ab"
-                           :attachment-count 2})
-           atts (:attachments payload)]
+      (with-redefs [state/iteration-attachments
+                    (fn [_iid]
+                      [{:tool-call-id "call_A"
+                        :kind "image"
+                        :media-type "image/png"
+                        :filename "fig.png"
+                        :size 1234
+                        :base64 "SECRET"} {:tool-call-id nil :media-type "image/svg+xml" :size 0}])]
+        (let [[_ _ payload] (#'state/chunk->event
+                             {:phase :iteration-final
+                              :iteration 4
+                              :done false
+                              :iteration-id "00000000-0000-0000-0000-0000000000ab"
+                              :attachment-count 2})
+              atts (:attachments payload)]
 
           (expect (= 2 (count atts)))
           (expect (= [0 1] (mapv :index atts)))
@@ -536,18 +510,17 @@
    so poll clients silently missed it."
   (it
     "stores the sibling title event on a session with NO subscriber (poll-only)"
-    (let
-      [a
-       (java.util.UUID/randomUUID)
+    (let [a
+          (java.util.UUID/randomUUID)
 
-       b
-       (java.util.UUID/randomUUID)
+          b
+          (java.util.UUID/randomUUID)
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       saved
-       @registry]
+          saved
+          @registry]
 
       (try
         ;; b carries no :subscribers — exactly a client on the /poll fallback
@@ -555,12 +528,11 @@
         ;; spelling the caller holds
         (reset! registry {(str a) {:next-seq 0} (str b) {:next-seq 0}})
         (#'state/broadcast-title-event! a "Tidal Forces")
-        (let
-          [a-events
-           (state/events-since a 0)
+        (let [a-events
+              (state/events-since a 0)
 
-           b-events
-           (state/events-since b 0)]
+              b-events
+              (state/events-since b 0)]
 
           ;; the titled session keeps its own stored event
           (expect (= 1 (count a-events)))
@@ -584,12 +556,11 @@
                    (expect (= "prose" (get-in blocks [0 "type"])))
                    (expect (= "## hello" (get-in blocks [0 "markdown"])))))
              (it "passes typed error content without creating a second answer shape"
-                 (let
-                   [blocks [{"id" "e1"
-                             "type" "error"
-                             "code" "provider_unavailable"
-                             "message" "Provider failed"
-                             "retryable" true}]]
+                 (let [blocks [{"id" "e1"
+                                "type" "error"
+                                "code" "provider_unavailable"
+                                "message" "Provider failed"
+                                "retryable" true}]]
                    (expect (= blocks (#'state/answer-content blocks))))))
 
 (defdescribe
@@ -600,21 +571,20 @@
   iterations disclosure."
   (it
     "prefers the persisted row over a matching completed live row with engine id"
-    (let
-      [sid
-       (java.util.UUID/randomUUID)
+    (let [sid
+          (java.util.UUID/randomUUID)
 
-       gateway-id
-       "gateway-turn"
+          gateway-id
+          "gateway-turn"
 
-       engine-id
-       (java.util.UUID/randomUUID)
+          engine-id
+          (java.util.UUID/randomUUID)
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       saved
-       @registry]
+          saved
+          @registry]
 
       (try (reset! registry {sid {:next-seq 0
                                   :turn-order [gateway-id]
@@ -626,24 +596,23 @@
                                                       :content
                                                       [{"id" "b1" "type" "prose" "markdown" "hi"}]
                                                       :started_at 1000}}}})
-           (with-redefs
-             [persistance/db-list-session-turns (fn [_ _]
-                                                  [{:id engine-id
-                                                    :status :success
-                                                    :user-request "hello"
-                                                    :content
-                                                    [{"id" "b1" "type" "prose" "markdown" "hi"}]
-                                                    :iteration-count 2
-                                                    :input-tokens 1200
-                                                    :input-regular-tokens 500
-                                                    :input-cache-write-tokens 100
-                                                    :input-cache-read-tokens 600
-                                                    :output-tokens 150
-                                                    :output-reasoning-tokens 80
-                                                    :total-cost 0.0123
-                                                    :provider :openai
-                                                    :model "gpt-4o"
-                                                    :created-at (java.util.Date. 1010)}])]
+           (with-redefs [persistance/db-list-session-turns
+                         (fn [_ _]
+                           [{:id engine-id
+                             :status :success
+                             :user-request "hello"
+                             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                             :iteration-count 2
+                             :input-tokens 1200
+                             :input-regular-tokens 500
+                             :input-cache-write-tokens 100
+                             :input-cache-read-tokens 600
+                             :output-tokens 150
+                             :output-reasoning-tokens 80
+                             :total-cost 0.0123
+                             :provider :openai
+                             :model "gpt-4o"
+                             :created-at (java.util.Date. 1010)}])]
              (let [turns (state/list-turns sid)]
                (expect (= 1 (count turns)))
                (let [turn (first turns)]
@@ -661,24 +630,23 @@
            (finally (reset! registry saved)))))
   (it
     "prefers the persisted row over a matching completed live row with no engine id"
-    (let
-      [sid
-       (java.util.UUID/randomUUID)
+    (let [sid
+          (java.util.UUID/randomUUID)
 
-       gateway-id
-       "gateway-turn"
+          gateway-id
+          "gateway-turn"
 
-       engine-id
-       (java.util.UUID/randomUUID)
+          engine-id
+          (java.util.UUID/randomUUID)
 
-       started
-       1000
+          started
+          1000
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       saved
-       @registry]
+          saved
+          @registry]
 
       (try (reset! registry {sid {:next-seq 0
                                   :turn-order [gateway-id]
@@ -689,16 +657,15 @@
                                                       :content
                                                       [{"id" "b1" "type" "prose" "markdown" "hi"}]
                                                       :started_at started}}}})
-           (with-redefs
-             [persistance/db-list-session-turns (fn [_ s]
-                                                  (expect (= sid s))
-                                                  [{:id engine-id
-                                                    :status :success
-                                                    :user-request "hello"
-                                                    :content
-                                                    [{"id" "b1" "type" "prose" "markdown" "hi"}]
-                                                    :iteration-count 2
-                                                    :created-at (java.util.Date. (+ started 10))}])]
+           (with-redefs [persistance/db-list-session-turns
+                         (fn [_ s]
+                           (expect (= sid s))
+                           [{:id engine-id
+                             :status :success
+                             :user-request "hello"
+                             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                             :iteration-count 2
+                             :created-at (java.util.Date. (+ started 10))}])]
              (let [turns (state/list-turns sid)]
                (expect (= 1 (count turns)))
                (expect (= (str engine-id) (get (first turns) "turn_id")))
@@ -712,15 +679,14 @@
   rows and NOTHING else — no completed history, and no DB hydration at all."
   (it
     "returns only queued rows and never touches turn-history persistence"
-    (let
-      [sid
-       (java.util.UUID/randomUUID)
+    (let [sid
+          (java.util.UUID/randomUUID)
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       saved
-       @registry]
+          saved
+          @registry]
 
       (try (reset! registry {(str sid) {:next-seq 0
                                         :turn-order ["done" "waiting"]
@@ -736,25 +702,23 @@
                                                            :status "queued"
                                                            :request "next please"
                                                            :queued_at 2000}}}})
-           (with-redefs
-             [persistance/db-list-session-turns
-              (fn [_ _]
-                (throw (ex-info "queued poll must not hydrate history" {})))]
+           (with-redefs [persistance/db-list-session-turns
+                         (fn [_ _]
+                           (throw (ex-info "queued poll must not hydrate history" {})))]
              (let [turns (state/list-queued-turns sid)]
                (expect (= 1 (count turns)))
                (expect (= "waiting" (get (first turns) "turn_id")))
                (expect (= "queued" (get (first turns) "status")))))
            (finally (reset! registry saved)))))
   (it "is empty for a session with nothing waiting"
-      (let
-        [sid
-         (java.util.UUID/randomUUID)
+      (let [sid
+            (java.util.UUID/randomUUID)
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         saved
-         @registry]
+            saved
+            @registry]
 
         (try (reset! registry {sid {:next-seq 0
                                     :turn-order ["done"]
@@ -773,15 +737,14 @@
    other source, because the live rail ships byte-free chips and the persisted
    row does not exist until the turn lands."
   (it "serves an in-flight turn's inline attachments in the canonical wire shape"
-      (let
-        [sid
-         (str (java.util.UUID/randomUUID))
+      (let [sid
+            (str (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         saved
-         @registry]
+            saved
+            @registry]
 
         (try (reset! registry {sid {:next-seq 0
                                     :turn-order ["t1"]
@@ -800,22 +763,20 @@
                (expect (= "QUJD" (get (first rows) "base64"))))
              (finally (reset! registry saved)))))
   (it "falls back to the attachment store for a turn that has already landed"
-      (let
-        [sid
-         (str (java.util.UUID/randomUUID))
+      (let [sid
+            (str (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         saved
-         @registry]
+            saved
+            @registry]
 
         (try (reset! registry {sid {:next-seq 0 :turns {}}})
-             (with-redefs
-               [persistance/db-list-turns-attachments (fn [_ ids]
-                                                        {(str (first ids)) [{:filename "landed.png"
-                                                                             :media-type "image/png"
-                                                                             :base64 "REVG"}]})]
+             (with-redefs [persistance/db-list-turns-attachments
+                           (fn [_ ids]
+                             {(str (first ids))
+                              [{:filename "landed.png" :media-type "image/png" :base64 "REVG"}]})]
                (let [rows (state/turn-attachments sid "t9")]
                  (expect (= 1 (count rows)))
                  (expect (= "landed.png" (get (first rows) "filename")))
@@ -830,28 +791,27 @@
   ;; both existing arms missed, and this endpoint answered `[]`.
   (it
     "serves the images a turn's own request TEXT names, before the turn lands"
-    (let
-      [sid
-       (str (java.util.UUID/randomUUID))
+    (let [sid
+          (str (java.util.UUID/randomUUID))
 
-       dir
-       (str (java.nio.file.Files/createTempDirectory
-              "vis-turn-attachments"
-              (into-array java.nio.file.attribute.FileAttribute [])))
+          dir
+          (str (java.nio.file.Files/createTempDirectory
+                 "vis-turn-attachments"
+                 (into-array java.nio.file.attribute.FileAttribute [])))
 
-       png
-       (java.io.File. dir "clipboard-2026-08-07-104042.png")
+          png
+          (java.io.File. dir "clipboard-2026-08-07-104042.png")
 
-       pixels
-       (.decode (java.util.Base64/getDecoder)
-                (str "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4"
-                     "2mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+          pixels
+          (.decode (java.util.Base64/getDecoder)
+                   (str "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4"
+                        "2mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       saved
-       @registry]
+          saved
+          @registry]
 
       (try (java.nio.file.Files/write (.toPath png)
                                       ^bytes pixels
@@ -886,16 +846,16 @@
    WHOLE session in one metadata read."
   (it
     "indexes every produced artifact with the turn that made it"
-    (let
-      [sid
-       (java.util.UUID/randomUUID)
+    (let [sid
+          (java.util.UUID/randomUUID)
 
-       turns
-       [{:id "soul-0"} {:id "soul-1"} {:id "soul-2"}]
+          turns
+          [{:id "soul-0"} {:id "soul-1"} {:id "soul-2"}]
 
-       att
-       (fn [m]
-         (merge {:kind "image" :media-type "image/png" :audience "both" :size 10 :position 0} m))]
+          att
+          (fn [m]
+            (merge {:kind "image" :media-type "image/png" :audience "both" :size 10 :position 0}
+                   m))]
 
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'persistance/db-list-session-turns (fn [_ _]
@@ -951,17 +911,16 @@
    monotonic in real sessions, so it cannot page anything."
   (it
     "hydrates ONLY the requested window and reports the full total"
-    (let
-      [sid
-       (java.util.UUID/randomUUID)
+    (let [sid
+          (java.util.UUID/randomUUID)
 
-       rows
-       (mapv (fn [n]
-               {:id (str "turn-" n) :position 1})
-             (range 10))
+          rows
+          (mapv (fn [n]
+                  {:id (str "turn-" n) :position 1})
+                (range 10))
 
-       hydrated
-       (atom [])]
+          hydrated
+          (atom [])]
 
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'persistance/db-list-session-turns (fn [_ _]
@@ -1002,17 +961,16 @@
       ;; Turn COUNT does not bound bytes: one real 38-turn session encodes its
       ;; newest 24 turns to 9.5 MB because a single turn carried a 5 MB tool
       ;; result. A page that big is the cost paging exists to avoid.
-      (let
-        [sid
-         (java.util.UUID/randomUUID)
+      (let [sid
+            (java.util.UUID/randomUUID)
 
-         rows
-         (mapv (fn [n]
-                 {:id (str "turn-" n) :position 1})
-               (range 10))
+            rows
+            (mapv (fn [n]
+                    {:id (str "turn-" n) :position 1})
+                  (range 10))
 
-         hydrated
-         (atom [])]
+            hydrated
+            (atom [])]
 
         (with-redefs-fn {#'lp/db-info (constantly ::db)
                          #'persistance/db-list-session-turns (fn [_ _]
@@ -1049,14 +1007,13 @@
               (expect (= 0 (:offset page)))
               (expect (not (:has-more page))))))))
   (it "keeps one row even when that row alone busts the budget, so paging always advances"
-      (let
-        [sid
-         (java.util.UUID/randomUUID)
+      (let [sid
+            (java.util.UUID/randomUUID)
 
-         rows
-         (mapv (fn [n]
-                 {:id (str "turn-" n) :position 1})
-               (range 10))]
+            rows
+            (mapv (fn [n]
+                    {:id (str "turn-" n) :position 1})
+                  (range 10))]
 
         (with-redefs-fn {#'lp/db-info (constantly ::db)
                          #'persistance/db-list-session-turns (fn [_ _]
@@ -1086,9 +1043,9 @@
   "Editing a queued request must also edit the provider message payload;
   otherwise the drained queued turn answers the pre-edit prompt."
   (it "replaces the last user message content"
-      (let
-        [messages [{:role "system" :content "rules"} {:role "user" :content "old prompt"}
-                   {:role "assistant" :content "old answer"} {:role :user :content "queued old"}]]
+      (let [messages [{:role "system" :content "rules"} {:role "user" :content "old prompt"}
+                      {:role "assistant" :content "old answer"}
+                      {:role :user :content "queued old"}]]
         (expect (= [{:role "system" :content "rules"} {:role "user" :content "old prompt"}
                     {:role "assistant" :content "old answer"} {:role :user :content "queued new"}]
                    (#'state/replace-last-user-message-content messages "queued new"))))))
@@ -1097,13 +1054,12 @@
   persisted-duplicate-of-live-test
   ;; Terminal identity is request + status + timestamps; content blocks belong
   ;; to the durable row and are not duplicated onto terminal events.
-  (let
-    [dup?
-     #'state/persisted-duplicate-of-live?
+  (let [dup?
+        #'state/persisted-duplicate-of-live?
 
-     at
-     (fn [ms]
-       (java.util.Date. (long ms)))]
+        at
+        (fn [ms]
+          (java.util.Date. (long ms)))]
 
     (it "dedups an error turn whose live row has no answer to compare"
         (expect
@@ -1135,12 +1091,11 @@
    materialize a running row in :turns/:turn-order on `turn.started` and mark it
    terminal on `turn.completed`/`turn.failed`/`turn.cancelled` — carrying :engine_turn_id so
    list-turns can dedup it against the durable DB row once persisted."
-  (let
-    [reg
-     @#'state/registry
+  (let [reg
+        @#'state/registry
 
-     sid
-     "mirror-test-sid"]
+        sid
+        "mirror-test-sid"]
 
     (it
       "materializes a running row on turn.started, terminal on turn.completed"
@@ -1192,18 +1147,17 @@
 (defdescribe
   queue-drain-mirror-event-test
   (it "broadcasts queue drain live without adding it to replay persistence"
-      (let
-        [sid
-         (str "drain-test-" (java.util.UUID/randomUUID))
+      (let [sid
+            (str "drain-test-" (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         launched
-         (atom nil)
+            launched
+            (atom nil)
 
-         seen
-         (atom [])]
+            seen
+            (atom [])]
 
         (try (swap! registry assoc
                sid
@@ -1228,15 +1182,14 @@
   ;; an orphaned queued backlog into motion — but ONLY when the session is idle.
   ;; A turn already in flight must be left alone (one engine turn per session).
   (it "drain-idle! starts the queued head when the session is idle"
-      (let
-        [sid
-         (str "drain-idle-" (java.util.UUID/randomUUID))
+      (let [sid
+            (str "drain-idle-" (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         launched
-         (atom nil)]
+            launched
+            (atom nil)]
 
         (try (swap! registry assoc
                sid
@@ -1251,18 +1204,17 @@
              (expect (= "streaming" (get (state/get-turn sid "q1") "status")))
              (finally (swap! registry dissoc sid)))))
   (it "drain-idle! is a no-op while a turn is already running"
-      (let
-        [sid
-         (str "drain-idle-busy-" (java.util.UUID/randomUUID))
+      (let [sid
+            (str "drain-idle-busy-" (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         launched
-         (atom nil)
+            launched
+            (atom nil)
 
-         result
-         (atom :unset)]
+            result
+            (atom :unset)]
 
         (try (swap! registry assoc
                sid
@@ -1286,15 +1238,14 @@
    convert that pin into a model-only engine override. The engine owns resolving
    the persisted provider+model pair at the instant a turn starts."
   (it "an immediately accepted turn forwards only an explicit caller model"
-      (let
-        [registry
-         @#'state/registry
+      (let [registry
+            @#'state/registry
 
-         sid
-         (str "model-pin-accepted-" (java.util.UUID/randomUUID))
+            sid
+            (str "model-pin-accepted-" (java.util.UUID/randomUUID))
 
-         launched
-         (atom nil)]
+            launched
+            (atom nil)]
 
         (try (swap! registry assoc sid {:next-seq 0 :turns {} :turn-order []})
              (with-redefs-fn {#'lp/by-id (fn [_]
@@ -1308,15 +1259,14 @@
              (expect (= "ornith" (get (state/get-turn sid (second @launched)) "model")))
              (finally (swap! registry dissoc sid)))))
   (it "a queued turn records the live pin at drain but forwards its raw override"
-      (let
-        [registry
-         @#'state/registry
+      (let [registry
+            @#'state/registry
 
-         sid
-         (str "model-pin-queued-" (java.util.UUID/randomUUID))
+            sid
+            (str "model-pin-queued-" (java.util.UUID/randomUUID))
 
-         launched
-         (atom nil)]
+            launched
+            (atom nil)]
 
         (try (swap! registry assoc
                sid
@@ -1336,24 +1286,23 @@
 
 (defdescribe turn-terminal-claim-once-test
              (it "allows exactly one terminal landing for a turn"
-                 (let
-                   [sid
-                    (str "terminal-claim-" (java.util.UUID/randomUUID))
+                 (let [sid
+                       (str "terminal-claim-" (java.util.UUID/randomUUID))
 
-                    tid
-                    "one-run"
+                       tid
+                       "one-run"
 
-                    registry
-                    @#'state/registry
+                       registry
+                       @#'state/registry
 
-                    claim!
-                    #'state/claim-turn-terminal!
+                       claim!
+                       #'state/claim-turn-terminal!
 
-                    release!
-                    #'state/release-turn-terminal-claim!
+                       release!
+                       #'state/release-turn-terminal-claim!
 
-                    token
-                    (cancellation/cancellation-token)]
+                       token
+                       (cancellation/cancellation-token)]
 
                    (try (swap! registry assoc
                           sid
@@ -1371,21 +1320,20 @@
   ;; a view is never a cancel: only an explicit cancel stops work.
   (it
     "leaves running/queued sessions alone and still releases an idle one"
-    (let
-      [busy-sid
-       (str "release-busy-" (java.util.UUID/randomUUID))
+    (let [busy-sid
+          (str "release-busy-" (java.util.UUID/randomUUID))
 
-       queued-sid
-       (str "release-queued-" (java.util.UUID/randomUUID))
+          queued-sid
+          (str "release-queued-" (java.util.UUID/randomUUID))
 
-       idle-sid
-       (str "release-idle-" (java.util.UUID/randomUUID))
+          idle-sid
+          (str "release-idle-" (java.util.UUID/randomUUID))
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       calls
-       (atom [])]
+          calls
+          (atom [])]
 
       (try (swap! registry assoc
              busy-sid
@@ -1411,18 +1359,17 @@
   ;; later terminal, attach kick or resume can start it minutes and turns later.
   (it
     "a user cancel drops the pre-cancel backlog and keeps post-cancel intent"
-    (let
-      [sid
-       (str "cancel-backlog-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "cancel-backlog-" (java.util.UUID/randomUUID))
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       launched
-       (atom [])
+          launched
+          (atom [])
 
-       seen
-       (atom [])]
+          seen
+          (atom [])]
 
       (try
         (swap! registry assoc
@@ -1453,15 +1400,14 @@
         (expect (= [[sid "new"]] @launched))
         (finally (swap! registry dissoc sid)))))
   (it "a stalled force-cancel is a failure, not a user stop: backlog survives"
-      (let
-        [sid
-         (str "cancel-stall-" (java.util.UUID/randomUUID))
+      (let [sid
+            (str "cancel-stall-" (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         launched
-         (atom [])]
+            launched
+            (atom [])]
 
         (try (swap! registry assoc
                sid
@@ -1483,28 +1429,28 @@
              (finally (swap! registry dissoc sid)))))
   (it
     "no path resurrects a cancel-stopped head; an explicit resume still can"
-    (let
-      [sid
-       (str "cancel-gate-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "cancel-gate-" (java.util.UUID/randomUUID))
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       launched
-       (atom [])
+          launched
+          (atom [])
 
-       seed!
-       #(swap! registry assoc
-          sid
-          {:next-seq 0
-           ;; the floor a completed user cancel left behind
-           :cancel-floor 100
-           ;; …and a paused queue, the state an explicit resume acts on
-           :queue-paused {:reason "provider_error" :held 1 :fails 1 :gen 1}
-           :turns
-           {"r0" {:turn_id "r0" :session_id sid :status "completed" :cancelling_at 100}
-            "old" {:turn_id "old" :session_id sid :status "queued" :request "before" :queued_at 50}}
-           :turn-order ["r0" "old"]})]
+          seed!
+          #(swap! registry assoc
+             sid
+             {:next-seq 0
+              ;; the floor a completed user cancel left behind
+              :cancel-floor 100
+              ;; …and a paused queue, the state an explicit resume acts on
+              :queue-paused {:reason "provider_error" :held 1 :fails 1 :gen 1}
+              :turns
+              {"r0" {:turn_id "r0" :session_id sid :status "completed" :cancelling_at 100}
+               "old"
+               {:turn_id "old" :session_id sid :status "queued" :request "before" :queued_at 50}}
+              :turn-order ["r0" "old"]})]
 
       (try (seed!)
            (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
@@ -1526,15 +1472,14 @@
       ;; Cross-validation: the gate lives at SELECTION. A pre-cancel turn that
       ;; survived the sweep (a submit that raced it) must not wedge the
       ;; post-cancel "stop that, run THIS" message behind it.
-      (let
-        [sid
-         (str "cancel-skip-" (java.util.UUID/randomUUID))
+      (let [sid
+            (str "cancel-skip-" (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         launched
-         (atom [])]
+            launched
+            (atom [])]
 
         (try (swap! registry assoc
                sid
@@ -1555,15 +1500,14 @@
                  (expect (= "queued" (get (state/get-turn sid "old") "status")))))
              (finally (swap! registry dissoc sid)))))
   (it "a token cancelled with no user-cancel stamp (shutdown) drains nothing"
-      (let
-        [sid
-         (str "cancel-shutdown-" (java.util.UUID/randomUUID))
+      (let [sid
+            (str "cancel-shutdown-" (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         launched
-         (atom [])]
+            launched
+            (atom [])]
 
         (try (swap! registry assoc
                sid
@@ -1627,12 +1571,11 @@
         (expect (false?
                   (coalesce? {[:reasoning 0] {:ms 1000 :len 0}} {:phase :form-result} 1050)))))
   (it "coalesces native-call code without classifying it as content"
-      (let
-        [coalesce?
-         @#'state/coalesce-delta?
+      (let [coalesce?
+            @#'state/coalesce-delta?
 
-         prior
-         {[:tool-preview 1] {:ms 1000 :len 3}}]
+            prior
+            {[:tool-preview 1] {:ms 1000 :len 3}}]
 
         (expect (true? (coalesce? prior {:phase :tool-preview :iteration 1 :code "prin"} 1200)))
         (expect (false? (coalesce? prior {:phase :tool-preview :iteration 1 :code "print\n"} 1200)))
@@ -1643,10 +1586,9 @@
 (defdescribe volatile-queue-reconciliation-test
              (it "marks orphaned running turns interrupted without reconstructing messages"
                  (let [sweeps (atom 0)]
-                   (with-redefs
-                     [lp/db-sweep-orphaned-running-turns! (fn []
-                                                            (swap! sweeps inc)
-                                                            :swept)]
+                   (with-redefs [lp/db-sweep-orphaned-running-turns! (fn []
+                                                                       (swap! sweeps inc)
+                                                                       :swept)]
                      (expect (= :swept (state/reconcile-orphaned-turns!)))
                      (expect (= 1 @sweeps))))))
 
@@ -1657,35 +1599,33 @@
    in-flight stream) and the turn is flagged stalled so the queue can drain.
    This covers a stuck `:provider-call` AND the between-iteration
    `:iteration-final` gap. A legitimately long tool/eval phase is left untouched."
-  (let
-    [advance
-     @#'state/advance-turn-stall-state
+  (let [advance
+        @#'state/advance-turn-stall-state
 
-     watchdog
-     @#'state/start-turn-stall-watchdog!
+        watchdog
+        @#'state/start-turn-stall-watchdog!
 
-     registry
-     @#'state/registry
+        registry
+        @#'state/registry
 
-     await-cancel
-     (fn [token ms]
-       (let [deadline (+ (System/currentTimeMillis) (long ms))]
-         (loop []
+        await-cancel
+        (fn [token ms]
+          (let [deadline (+ (System/currentTimeMillis) (long ms))]
+            (loop []
 
-           (cond (cancellation/cancelled? token) true
-                 (>= (System/currentTimeMillis) deadline) false
-                 :else (do (Thread/sleep 25) (recur))))))]
+              (cond (cancellation/cancelled? token) true
+                    (>= (System/currentTimeMillis) deadline) false
+                    :else (do (Thread/sleep 25) (recur))))))]
 
     (it "does not treat empty streaming callbacks as progress"
-        (let
-          [initial
-           {:phase :reasoning :last-ms 10}
+        (let [initial
+              {:phase :reasoning :last-ms 10}
 
-           content-heartbeat
-           (advance initial {:phase :content :delta ""} 20)
+              content-heartbeat
+              (advance initial {:phase :content :delta ""} 20)
 
-           reasoning-heartbeat
-           (advance content-heartbeat {:phase :reasoning :delta ""} 30)]
+              reasoning-heartbeat
+              (advance content-heartbeat {:phase :reasoning :delta ""} 30)]
 
           (expect (= {:phase :reasoning :last-ms 10} reasoning-heartbeat))
           (expect (= 40
@@ -1698,23 +1638,22 @@
                                         {:phase :response-parse :status :started}
                                         60))))))
     (it "force-cancels a turn stuck in :provider-call past the ceiling"
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           ;; `:produced?` — this turn STREAMED and then went quiet, which is what
-           ;; the full stall ceiling is for.
-           (atom {:phase :provider-call
-                  :started? true
-                  :produced? true
-                  :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              ;; `:produced?` — this turn STREAMED and then went quiet, which is what
+              ;; the full stall ceiling is for.
+              (atom {:phase :provider-call
+                     :started? true
+                     :produced? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
                ;; await INSIDE with-redefs so the async watchdog thread reads the
@@ -1731,21 +1670,20 @@
         ;; chunks and NO terminal event, so its phase stays :iteration-final.
         ;; The old `:provider-call`-only gate never caught it and the session
         ;; queue wedged forever.
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           (atom {:phase :iteration-final
-                  :started? true
-                  :produced? true
-                  :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom {:phase :iteration-final
+                     :started? true
+                     :produced? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
                (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
@@ -1753,40 +1691,39 @@
                  (expect (true? (await-cancel token 4000))))
                (expect (true? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-    (it
-      "leaves a turn alone while it runs a legitimately long tool/eval phase"
-      (let
-        [sid
-         (str "stall-" (java.util.UUID/randomUUID))
+    (it "leaves a turn alone while it runs a legitimately long tool/eval phase"
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-         tid
-         "t1"
+              tid
+              "t1"
 
-         token
-         (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-         stall
-         (atom {:phase :tool-start :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom
+                {:phase :tool-start :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
 
-        (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-             (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
-               (watchdog sid tid token stall)
-               ;; The watchdog polls every 25ms here, so 400ms is a dozen-plus
-               ;; decisions past the 150ms ceiling — proof, not a longer nap.
-               (expect (false? (await-cancel token 400))))
-             (expect (nil? (:stalled? @stall)))
-             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+                 (watchdog sid tid token stall)
+                 ;; The watchdog polls every 25ms here, so 400ms is a dozen-plus
+                 ;; decisions past the 150ms ceiling — proof, not a longer nap.
+                 (expect (false? (await-cancel token 400))))
+               (expect (nil? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "leaves a turn alone once it is no longer the current turn"
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           (atom
-             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom {:phase :provider-call
+                     :started? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try
             ;; a DIFFERENT current turn than the one the watchdog guards
@@ -1802,38 +1739,36 @@
         ;; ever be emitted and the session wedged on a spinner that could not be
         ;; cancelled or drained. The watchdog now guards from LAUNCH, not from the
         ;; first chunk.
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           landed
-           (atom nil)
+              landed
+              (atom nil)
 
-           ;; no `:started?`: the worker never stamped proof of life
-           stall
-           (atom {:phase nil :last-ms (- (System/currentTimeMillis) 60000)})]
+              ;; no `:started?`: the worker never stamped proof of life
+              stall
+              (atom {:phase nil :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               (with-redefs
-                 [state/TURN_LAUNCH_TIMEOUT_MS
-                  150
+               (with-redefs [state/TURN_LAUNCH_TIMEOUT_MS
+                             150
 
-                  state/CANCEL_TERMINAL_GRACE_MS
-                  50
+                             state/CANCEL_TERMINAL_GRACE_MS
+                             50
 
-                  state/SILENT_CANCEL_TERMINAL_GRACE_MS
-                  50
+                             state/SILENT_CANCEL_TERMINAL_GRACE_MS
+                             50
 
-                  state/fail-orphaned-turn!
-                  (fn [_sid _tid _token reason]
-                    (reset! landed reason)
-                    true)]
+                             state/fail-orphaned-turn!
+                             (fn [_sid _tid _token reason]
+                               (reset! landed reason)
+                               true)]
 
                  (watchdog sid tid token stall)
                  (expect (true? (await-cancel token 4000)))
@@ -1842,28 +1777,26 @@
                (expect (str/includes? (str @landed) "turn never started running"))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "holds a started turn to the stall ceiling, never the launch ceiling"
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           (atom {:phase :awaiting-permit
-                  :started? true
-                  :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom {:phase :awaiting-permit
+                     :started? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               (with-redefs
-                 [state/TURN_LAUNCH_TIMEOUT_MS
-                  150
+               (with-redefs [state/TURN_LAUNCH_TIMEOUT_MS
+                             150
 
-                  state/TURN_STALL_TIMEOUT_MS
-                  300000]
+                             state/TURN_STALL_TIMEOUT_MS
+                             300000]
 
                  (watchdog sid tid token stall)
                  (expect (false? (await-cancel token 500))))
@@ -1881,27 +1814,26 @@
         ;; Regression: a turn sat 3m47s with zero iterations, holding the whole
         ;; session queue, because silence from the very first byte was budgeted
         ;; like a stream that died mid-answer (`TURN_STALL_TIMEOUT_MS`, 6min).
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           (atom
-             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom {:phase :provider-call
+                     :started? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               (with-redefs
-                 [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
-                  150
+               (with-redefs [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                             150
 
-                  state/TURN_STALL_TIMEOUT_MS
-                  300000]
+                             state/TURN_STALL_TIMEOUT_MS
+                             300000]
 
                  (watchdog sid tid token stall)
                  (expect (true? (await-cancel token 4000))))
@@ -1909,29 +1841,27 @@
                (expect (str/includes? (str (:stall-detail @stall)) "no output at all"))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "holds a turn that already streamed output to the full stall ceiling"
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           (atom {:phase :provider-call
-                  :started? true
-                  :produced? true
-                  :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom {:phase :provider-call
+                     :started? true
+                     :produced? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               (with-redefs
-                 [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
-                  150
+               (with-redefs [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                             150
 
-                  state/TURN_STALL_TIMEOUT_MS
-                  300000]
+                             state/TURN_STALL_TIMEOUT_MS
+                             300000]
 
                  (watchdog sid tid token stall)
                  (expect (false? (await-cancel token 400))))
@@ -1940,46 +1870,43 @@
     (it "never applies the first-output ceiling to a turn queueing for a permit"
         ;; Waiting behind another session's turn for the process-wide execution
         ;; permit is queueing, not a wedged provider.
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           (atom {:phase :awaiting-permit
-                  :started? true
-                  :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom {:phase :awaiting-permit
+                     :started? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               (with-redefs
-                 [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
-                  150
+               (with-redefs [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                             150
 
-                  state/TURN_STALL_TIMEOUT_MS
-                  300000]
+                             state/TURN_STALL_TIMEOUT_MS
+                             300000]
 
                  (watchdog sid tid token stall)
                  (expect (false? (await-cancel token 400))))
                (expect (nil? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "guards a turn whose record is still running after the pin moved on"
-        (let
-          [sid
-           (str "stall-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           stall
-           (atom {:phase :provider-call
-                  :started? true
-                  :produced? true
-                  :last-ms (- (System/currentTimeMillis) 60000)})]
+              stall
+              (atom {:phase :provider-call
+                     :started? true
+                     :produced? true
+                     :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc
                  sid
@@ -1999,47 +1926,45 @@
    public turn nobody runs and nobody ends. It must land a terminal instead."
   (it
     "lands turn.failed when the launch throws after turn.started"
-    (let
-      [launch
-       @#'state/launch-turn-worker!
+    (let [launch
+          @#'state/launch-turn-worker!
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       sid
-       (str "launch-" (java.util.UUID/randomUUID))
+          sid
+          (str "launch-" (java.util.UUID/randomUUID))
 
-       tid
-       "t1"
+          tid
+          "t1"
 
-       token
-       (cancellation/cancellation-token)
+          token
+          (cancellation/cancellation-token)
 
-       events
-       (atom [])
+          events
+          (atom [])
 
-       failed
-       (atom nil)]
+          failed
+          (atom nil)]
 
       (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-           (with-redefs
-             [state/append-event!
-              (fn [_sid kind _payload]
-                (swap! events conj kind)
-                nil)
+           (with-redefs [state/append-event!
+                         (fn [_sid kind _payload]
+                           (swap! events conj kind)
+                           nil)
 
-              state/start-turn-stall-watchdog!
-              (fn [& _]
-                nil)
+                         state/start-turn-stall-watchdog!
+                         (fn [& _]
+                           nil)
 
-              state/fail-orphaned-turn!
-              (fn [_sid _tid _token reason]
-                (reset! failed reason)
-                true)
+                         state/fail-orphaned-turn!
+                         (fn [_sid _tid _token reason]
+                           (reset! failed reason)
+                           true)
 
-              cancellation/worker-future
-              (fn [& _]
-                (throw (ex-info "boom" {})))]
+                         cancellation/worker-future
+                         (fn [& _]
+                           (throw (ex-info "boom" {})))]
 
              (expect (nil? (launch sid tid "hi" {:cancel-token token}))))
            (expect (= ["turn.started"] @events))
@@ -2055,32 +1980,30 @@
 ;; the navigator's own key just lost.
 (defdescribe gateway-search-order-test
              (it "paints the store's freshest-first order and lifts nothing"
-                 (with-redefs
-                   [lp/db-info
-                    (constantly {:db :fake})
+                 (with-redefs [lp/db-info
+                               (constantly {:db :fake})
 
-                    persistance/db-search-session-matches
-                    (fn [_ _ _]
-                      [{:id "new" :rank 0} {:id "old" :rank 2} {:id "run" :rank 1}])
+                               persistance/db-search-session-matches
+                               (fn [_ _ _]
+                                 [{:id "new" :rank 0} {:id "old" :rank 2} {:id "run" :rank 1}])
 
-                    ;; A turn in flight is a FIELD on the row, never a place in the answer.
-                    bus/live-turns
-                    (constantly {"run" "turn-1"})]
+                               ;; A turn in flight is a FIELD on the row, never a place in the answer.
+                               bus/live-turns
+                               (constantly {"run" "turn-1"})]
 
                    (expect (= ["new" "old" "run"]
                               (mapv :session_id (state/search-session-matches "q")))))))
 
 (defdescribe gateway-session-order-test
              (it "orders by content time alone, whatever happens to be running"
-                 (let
-                   [order-summaries
-                    #'state/order-session-summaries
+                 (let [order-summaries
+                       #'state/order-session-summaries
 
-                    sessions
-                    [{"id" "idle-new" "live" false "modified_at" 4000}
-                     {"id" "live-old" "live" true "modified_at" 1000}
-                     {"id" "idle-old" "live" false "modified_at" 2000}
-                     {"id" "live-new" "live" true "modified_at" (java.util.Date. 3000)}]]
+                       sessions
+                       [{"id" "idle-new" "live" false "modified_at" 4000}
+                        {"id" "live-old" "live" true "modified_at" 1000}
+                        {"id" "idle-old" "live" false "modified_at" 2000}
+                        {"id" "live-new" "live" true "modified_at" (java.util.Date. 3000)}]]
 
                    (expect (= ["idle-new" "live-new" "idle-old" "live-old"]
                               (mapv #(get % "id") (order-summaries sessions)))))))
@@ -2090,36 +2013,36 @@
 ;; a big fleet - so the one state only the operator can clear had to reach a client
 ;; BESIDE the window instead of being lifted into it.
 (defdescribe gateway-awaiting-beside-the-window-test
-             (it
-               "answers every parked session in full, outside the window"
-               (with-redefs
-                 [lp/db-info
-                  (constantly nil)
+             (it "answers every parked session in full, outside the window"
+                 (with-redefs [lp/db-info
+                               (constantly nil)
 
-                  persistance/db-session-turn-stats
-                  (constantly nil)
+                               persistance/db-session-turn-stats
+                               (constantly nil)
 
-                  lp/by-channel
-                  (fn [_]
-                    [{:id "fresh" :created-at 3000} {:id "middle" :created-at 2000}
-                     {:id "parked" :created-at 1000}])
+                               lp/by-channel
+                               (fn [_]
+                                 [{:id "fresh" :created-at 3000} {:id "middle" :created-at 2000}
+                                  {:id "parked" :created-at 1000}])
 
-                  bus/waiting-requests
-                  (constantly {"parked" [{"id" "req-1" "since" 1}]})
+                               bus/waiting-requests
+                               (constantly {"parked" [{"id" "req-1" "since" 1}]})
 
-                  bus/session-waiting?
-                  (fn [sid]
-                    (= "parked" (str sid)))
+                               bus/session-waiting?
+                               (fn [sid]
+                                 (= "parked" (str sid)))
 
-                  state/soul
-                  (fn [sid]
-                    {"id" (str sid) "created_at" 1000 "is_awaiting_input" (= "parked" (str sid))})]
+                               state/soul
+                               (fn [sid]
+                                 {"id" (str sid)
+                                  "created_at" 1000
+                                  "is_awaiting_input" (= "parked" (str sid))})]
 
-                 (let [page (state/list-sessions-page :all {:limit 1})]
-                   (expect (= ["fresh"] (mapv #(get % "id") (:sessions page))))
-                   (expect (= 3 (:total page)))
-                   ;; Deep in the fleet, absent from the window, and still complete here.
-                   (expect (= ["parked"] (mapv #(get % "id") (:awaiting page))))))))
+                   (let [page (state/list-sessions-page :all {:limit 1})]
+                     (expect (= ["fresh"] (mapv #(get % "id") (:sessions page))))
+                     (expect (= 3 (:total page)))
+                     ;; Deep in the fleet, absent from the window, and still complete here.
+                     (expect (= ["parked"] (mapv #(get % "id") (:awaiting page))))))))
 
 ;; Regression, user report (paraphrased: "the list keeps jumping while I read it"): a
 ;; window was an OFFSET into an ordering RECOMPUTED per request, so a turn landing while a
@@ -2130,21 +2053,21 @@
   gateway-session-keyset-window-test
   (it
     "pages by the CURSOR of the last row, so a turn landing mid-walk cannot duplicate or drop one"
-    (let
-      [fleet (atom [{:id "e" :created-at 5000} {:id "d" :created-at 4000} {:id "c" :created-at 3000}
-                    {:id "b" :created-at 2000} {:id "a" :created-at 1000}])]
-      (with-redefs
-        [lp/db-info (constantly nil)
-         persistance/db-session-turn-stats (constantly nil)
-         lp/by-channel (fn [_]
-                         @fleet)
-         bus/waiting-requests (constantly {})
-         state/soul (fn [sid]
-                      ;; The decoration reports the same content time the ranking read,
-                      ;; so the window is the cut a fully decorated sort would have made.
-                      (let [id (str sid)]
-                        {"id" id
-                         "created_at" (some #(when (= id (:id %)) (:created-at %)) @fleet)}))]
+    (let [fleet (atom [{:id "e" :created-at 5000} {:id "d" :created-at 4000}
+                       {:id "c" :created-at 3000} {:id "b" :created-at 2000}
+                       {:id "a" :created-at 1000}])]
+      (with-redefs [lp/db-info (constantly nil)
+                    persistance/db-session-turn-stats (constantly nil)
+                    lp/by-channel (fn [_]
+                                    @fleet)
+                    bus/waiting-requests (constantly {})
+                    state/soul (fn [sid]
+                                 ;; The decoration reports the same content time the ranking read,
+                                 ;; so the window is the cut a fully decorated sort would have made.
+                                 (let [id (str sid)]
+                                   {"id" id
+                                    "created_at" (some #(when (= id (:id %)) (:created-at %))
+                                                       @fleet)}))]
 
         (let [head (state/list-sessions-page :all {:limit 2})]
           (expect (= ["e" "d"] (mapv #(get % "id") (:sessions head))))
@@ -2164,23 +2087,22 @@
             (expect (not (:has-more page)))
             (expect (nil? (:next-cursor page))))))))
   (it "breaks a recency tie by id, so a cursor never skips the row beside it"
-      (with-redefs
-        [lp/db-info
-         (constantly nil)
+      (with-redefs [lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)
+                    persistance/db-session-turn-stats
+                    (constantly nil)
 
-         lp/by-channel
-         (fn [_]
-           [{:id "y" :created-at 2000} {:id "x" :created-at 2000}])
+                    lp/by-channel
+                    (fn [_]
+                      [{:id "y" :created-at 2000} {:id "x" :created-at 2000}])
 
-         bus/waiting-requests
-         (constantly {})
+                    bus/waiting-requests
+                    (constantly {})
 
-         state/soul
-         (fn [sid]
-           {"id" (str sid) "created_at" 1000})]
+                    state/soul
+                    (fn [sid]
+                      {"id" (str sid) "created_at" 1000})]
 
         (let [head (state/list-sessions-page :all {:limit 1})]
           (expect (= ["x"] (mapv #(get % "id") (:sessions head))))
@@ -2208,18 +2130,17 @@
 ;; session with one hydration time.
 (defdescribe gateway-session-touch-order-test
              (it "ignores last_active_at, so touching a row cannot move it"
-                 (let
-                   [ids
-                    (fn [rows]
-                      (mapv #(get % "id") (#'state/order-session-summaries rows)))
+                 (let [ids
+                       (fn [rows]
+                         (mapv #(get % "id") (#'state/order-session-summaries rows)))
 
-                    worked
-                    [{"id" "worked" "created_at" 1000 "modified_at" 2000}
-                     {"id" "turnless" "created_at" 1500}]
+                       worked
+                       [{"id" "worked" "created_at" 1000 "modified_at" 2000}
+                        {"id" "turnless" "created_at" 1500}]
 
-                    touched
-                    [{"id" "worked" "created_at" 1000 "modified_at" 2000}
-                     {"id" "turnless" "created_at" 1500 "last_active_at" 9000}]]
+                       touched
+                       [{"id" "worked" "created_at" 1000 "modified_at" 2000}
+                        {"id" "turnless" "created_at" 1500 "last_active_at" 9000}]]
 
                    (expect (= ["worked" "turnless"] (ids worked)))
                    ;; The two payloads differ ONLY in the touch, so the sequence must
@@ -2231,67 +2152,62 @@
                    (expect (= 1000 (recency {:created-at 1000} nil))))))
 (defdescribe
   gateway-prewarm-pool-test
-  (it
-    "adopts a ready session and requests an asynchronous refill"
-    (let
-      [pool
-       @#'state/prewarm-pool
+  (it "adopts a ready session and requests an asynchronous refill"
+      (let [pool
+            @#'state/prewarm-pool
 
-       prior
-       @pool
+            prior
+            @pool
 
-       sid
-       (java.util.UUID/randomUUID)
+            sid
+            (java.util.UUID/randomUUID)
 
-       refills
-       (atom [])]
+            refills
+            (atom [])]
 
-      (try (reset! pool
-             {:ready
-              {:api [{:id sid :channel :api :title nil :external-id nil :workspace-id :workspace}]}
-              :in-flight {}
-              :accepting? true})
-           (with-redefs
-             [state/ensure-prewarmed!
-              #(swap! refills conj %)
+        (try
+          (reset! pool
+            {:ready {:api
+                     [{:id sid :channel :api :title nil :external-id nil :workspace-id :workspace}]}
+             :in-flight {}
+             :accepting? true})
+          (with-redefs [state/ensure-prewarmed!
+                        #(swap! refills conj %)
 
-              state/claim-prewarmed!
-              (fn [session title]
-                (assoc session :title title))]
+                        state/claim-prewarmed!
+                        (fn [session title]
+                          (assoc session :title title))]
 
-             (let
-               [created (state/create-session!
-                          {:channel :api :title "Ready" :root (System/getProperty "user.dir")})]
-               (expect (= (str sid) (get created "id")))
-               (expect (= "Ready" (get created "title")))
-               (expect (= [:api] @refills))
-               (expect (empty? (get-in @pool [:ready :api])))))
-           (finally (reset! pool prior)))))
+            (let [created (state/create-session!
+                            {:channel :api :title "Ready" :root (System/getProperty "user.dir")})]
+              (expect (= (str sid) (get created "id")))
+              (expect (= "Ready" (get created "title")))
+              (expect (= [:api] @refills))
+              (expect (empty? (get-in @pool [:ready :api])))))
+          (finally (reset! pool prior)))))
   (it "bypasses the pool for a purpose-built workspace"
-      (let
-        [pool
-         @#'state/prewarm-pool
+      (let [pool
+            @#'state/prewarm-pool
 
-         prior
-         @pool
+            prior
+            @pool
 
-         pooled-id
-         (java.util.UUID/randomUUID)
+            pooled-id
+            (java.util.UUID/randomUUID)
 
-         cold-id
-         (java.util.UUID/randomUUID)
+            cold-id
+            (java.util.UUID/randomUUID)
 
-         cold-calls
-         (atom [])]
+            cold-calls
+            (atom [])]
 
         (try (reset! pool {:ready {:api [{:id pooled-id :channel :api}]}
                            :in-flight {}
                            :accepting? true})
-             (with-redefs
-               [state/create-session-cold!
-                (fn [opts]
-                  (swap! cold-calls conj opts)
-                  {:id cold-id :channel :api :workspace-id (:workspace-id opts)})]
+             (with-redefs [state/create-session-cold!
+                           (fn [opts]
+                             (swap! cold-calls conj opts)
+                             {:id cold-id :channel :api :workspace-id (:workspace-id opts)})]
                (let [created (state/create-session! {:channel :api :workspace-id :branch})]
                  (expect (= (str cold-id) (get created "id")))
                  (expect (= [:branch] (mapv :workspace-id @cold-calls)))
@@ -2299,14 +2215,13 @@
              (finally (reset! pool prior))))))
 
 (it "ships concise structured iteration errors for live retry rendering"
-    (let
-      [[type _ payload] (#'state/chunk->event
-                         {:phase :iteration-error
-                          :iteration 1
-                          :error {:type :svar.core/http-error
-                                  :message "upstream reset"
-                                  :status 503
-                                  :mini-trace ["private trace"]}})]
+    (let [[type _ payload] (#'state/chunk->event
+                            {:phase :iteration-error
+                             :iteration 1
+                             :error {:type :svar.core/http-error
+                                     :message "upstream reset"
+                                     :status 503
+                                     :mini-trace ["private trace"]}})]
       (expect (= "iteration.error" type))
       (expect (= {:type :svar.core/http-error :message "upstream reset" :status 503}
                  (:error-data payload)))
@@ -2319,15 +2234,14 @@
    the deltas after connect — that is what lets the companion paint the same live
    'Vis is running: …' bubble instead of a bare 'running' row."
   (it "returns the cursor just below the running turn's start seq"
-      (let
-        [sid
-         (str (java.util.UUID/randomUUID))
+      (let [sid
+            (str (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         saved
-         @registry]
+            saved
+            @registry]
 
         (try (reset! registry {sid {:next-seq 12
                                     :current-turn "t-run"
@@ -2336,29 +2250,27 @@
              (expect (= 6 (state/running-turn-start-cursor sid)))
              (finally (reset! registry saved)))))
   (it "is nil with no running turn (a live-only join stays live-only)"
-      (let
-        [sid
-         (str (java.util.UUID/randomUUID))
+      (let [sid
+            (str (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         saved
-         @registry]
+            saved
+            @registry]
 
         (try (reset! registry {sid {:next-seq 4 :current-turn nil :turns {}}})
              (expect (nil? (state/running-turn-start-cursor sid)))
              (finally (reset! registry saved)))))
   (it "is nil when the running turn has no recorded start seq (foreign, unhydrated)"
-      (let
-        [sid
-         (str (java.util.UUID/randomUUID))
+      (let [sid
+            (str (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         saved
-         @registry]
+            saved
+            @registry]
 
         (try (reset! registry {sid {:next-seq 4 :current-turn "t-x" :turns {"t-x" {}}}})
              (expect (nil? (state/running-turn-start-cursor sid)))
@@ -2369,24 +2281,23 @@
   queue-failure-pause-test
   (it
     "holds only later requests after a failure and resumes them explicitly"
-    (let
-      [sid
-       "queue-pause-test"
+    (let [sid
+          "queue-pause-test"
 
-       reg
-       @#'state/registry
+          reg
+          @#'state/registry
 
-       evs
-       (atom [])
+          evs
+          (atom [])
 
-       seed!
-       (fn []
-         (reset! reg {sid {:next-seq 0
-                           :current-turn nil
-                           :turn-order ["q1" "q2"]
-                           :turns {"q1" {:turn_id "q1" :status "failed"}
-                                   "q2" {:turn_id "q2" :status "queued" :queued_at 2}}}})
-         (reset! evs []))]
+          seed!
+          (fn []
+            (reset! reg {sid {:next-seq 0
+                              :current-turn nil
+                              :turn-order ["q1" "q2"]
+                              :turns {"q1" {:turn_id "q1" :status "failed"}
+                                      "q2" {:turn_id "q2" :status "queued" :queued_at 2}}}})
+            (reset! evs []))]
 
       (try (with-redefs-fn {#'state/append-event! (fn [_ type payload & _]
                                                     (swap! evs conj [type payload]))
@@ -2417,31 +2328,29 @@
              (it "retains only the configured replay tail"
                  (with-redefs-fn {#'state/EVENT_RING_MAX (delay 3)}
                    (fn []
-                     (let
-                       [trim-ring
-                        (deref #'state/trim-ring)
+                     (let [trim-ring
+                           (deref #'state/trim-ring)
 
-                        ring
-                        (trim-ring [1 2 3 4 5])]
+                           ring
+                           (trim-ring [1 2 3 4 5])]
 
                        (expect (= [3 4 5] ring))
                        (expect (instance? clojure.lang.PersistentQueue ring))))))
              (it "waits for a global turn permit and lets cancellation win without execution"
-                 (let
-                   [semaphore
-                    (java.util.concurrent.Semaphore. 1 true)
+                 (let [semaphore
+                       (java.util.concurrent.Semaphore. 1 true)
 
-                    token
-                    (cancellation/cancellation-token)
+                       token
+                       (cancellation/cancellation-token)
 
-                    acquire!
-                    (deref #'state/acquire-turn-permit!)
+                       acquire!
+                       (deref #'state/acquire-turn-permit!)
 
-                    waiting
-                    (var-get #'state/turns-waiting)
+                       waiting
+                       (var-get #'state/turns-waiting)
 
-                    queued
-                    (promise)]
+                       queued
+                       (promise)]
 
                    (.acquire semaphore)
                    (try (with-redefs-fn {#'state/turn-permits (delay semaphore)}
@@ -2458,15 +2367,14 @@
                                  (finally (remove-watch waiting ::queued)))))
                         (finally (.release semaphore)))))
              (it "keeps one unused prewarm context per channel"
-                 (let
-                   [pool
-                    @#'state/prewarm-pool
+                 (let [pool
+                       @#'state/prewarm-pool
 
-                    prior
-                    @pool
+                       prior
+                       @pool
 
-                    reserve!
-                    (deref #'state/reserve-prewarm-slot!)]
+                       reserve!
+                       (deref #'state/reserve-prewarm-slot!)]
 
                    (try (reset! pool {:ready {} :in-flight {} :accepting? true})
                         (expect (true? (reserve! :api)))
@@ -2474,10 +2382,9 @@
                         (finally (reset! pool prior)))))
              (it "exports concurrency, replay, heap, GC, thread, and env-cache gauges"
                  (let [snapshot (state/metrics-snapshot)]
-                   (doseq
-                     [k [:turns-executing :turns-waiting :turn-concurrency-limit
-                         :replay-events-retained :jvm-heap-used-bytes :process-rss-bytes
-                         :jvm-gc-count-total :jvm-thread-count :env-cache-size]]
+                   (doseq [k [:turns-executing :turns-waiting :turn-concurrency-limit
+                              :replay-events-retained :jvm-heap-used-bytes :process-rss-bytes
+                              :jvm-gc-count-total :jvm-thread-count :env-cache-size]]
                      (expect (contains? snapshot k))))))
 
 (defdescribe
@@ -2486,56 +2393,52 @@
    turn record AND on `turn.queued`, so a channel binds its optimistic \"Queued\"
    row to the gateway record by ID instead of guessing by request text (two
    identical prompts are indistinguishable by text)."
-  (it
-    "echoes the submitter's correlation id on the queued record and its event"
-    (let
-      [registry
-       @#'state/registry
+  (it "echoes the submitter's correlation id on the queued record and its event"
+      (let [registry
+            @#'state/registry
 
-       sid
-       (str "idem-" (java.util.UUID/randomUUID))
+            sid
+            (str "idem-" (java.util.UUID/randomUUID))
 
-       events
-       (atom [])]
+            events
+            (atom [])]
 
-      (try (swap! registry assoc sid {:next-seq 0 :current-turn "running-1"})
-           (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
-                                                    (swap! events conj [type payload])
-                                                    nil)
-                            #'lp/by-id (fn [_]
-                                         {:id sid})
-                            #'state/session-model (fn [_]
-                                                    nil)}
-             (fn []
-               (let
-                 [res
-                  (state/submit-turn! sid {:request "hello" :idempotency-key "cid-1"})
+        (try (swap! registry assoc sid {:next-seq 0 :current-turn "running-1"})
+             (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                      (swap! events conj [type payload])
+                                                      nil)
+                              #'lp/by-id (fn [_]
+                                           {:id sid})
+                              #'state/session-model (fn [_]
+                                                      nil)}
+               (fn []
+                 (let [res
+                       (state/submit-turn! sid {:request "hello" :idempotency-key "cid-1"})
 
-                  queued
-                  (->> @events
-                       (filter (comp #{"turn.queued"} first))
-                       first
-                       second)]
+                       queued
+                       (->> @events
+                            (filter (comp #{"turn.queued"} first))
+                            first
+                            second)]
 
-                 (expect (= "queued" (get-in res [:turn "status"])))
-                 (expect (= "cid-1" (get-in res [:turn "idempotency_key"])))
-                 (expect (= "cid-1" (:idempotency_key queued)))
-                 (expect (= (get-in res [:turn "turn_id"]) (:turn_id queued))))))
-           (finally (swap! registry dissoc sid)))))
+                   (expect (= "queued" (get-in res [:turn "status"])))
+                   (expect (= "cid-1" (get-in res [:turn "idempotency_key"])))
+                   (expect (= "cid-1" (:idempotency_key queued)))
+                   (expect (= (get-in res [:turn "turn_id"]) (:turn_id queued))))))
+             (finally (swap! registry dissoc sid)))))
   (it
     "echoes the submitter's correlation id on turn.started"
-    (let
-      [registry
-       @#'state/registry
+    (let [registry
+          @#'state/registry
 
-       sid
-       (str "started-idem-" (java.util.UUID/randomUUID))
+          sid
+          (str "started-idem-" (java.util.UUID/randomUUID))
 
-       tid
-       "turn-1"
+          tid
+          "turn-1"
 
-       events
-       (atom [])]
+          events
+          (atom [])]
 
       (try (swap! registry assoc
              sid
@@ -2569,21 +2472,20 @@
       ;; `run` skips the body entirely. `turn.started` is already on the wire by
       ;; then, so landing nothing pinned `:current-turn` to a turn nobody runs —
       ;; an empty assistant row forever and a queue that never drains again.
-      (let
-        [registry
-         @#'state/registry
+      (let [registry
+            @#'state/registry
 
-         sid
-         (str "cancel-at-launch-" (java.util.UUID/randomUUID))
+            sid
+            (str "cancel-at-launch-" (java.util.UUID/randomUUID))
 
-         tid
-         "turn-1"
+            tid
+            "turn-1"
 
-         token
-         (cancellation/cancellation-token)
+            token
+            (cancellation/cancellation-token)
 
-         landed
-         (atom [])]
+            landed
+            (atom [])]
 
         (try (swap! registry assoc
                sid
@@ -2606,21 +2508,20 @@
       ;; INDEPENDENTLY of its blocking submit worker, and a tab whose submit ack is
       ;; still in flight knows only the correlation id it minted. A terminal without
       ;; that id left the spinner running until the stranded worker returned.
-      (let
-        [registry
-         @#'state/registry
+      (let [registry
+            @#'state/registry
 
-         sid
-         (str "terminal-idem-" (java.util.UUID/randomUUID))
+            sid
+            (str "terminal-idem-" (java.util.UUID/randomUUID))
 
-         tid
-         "turn-1"
+            tid
+            "turn-1"
 
-         prose
-         (content/prose "full technical answer")
+            prose
+            (content/prose "full technical answer")
 
-         spoken
-         (content/speech "spoken" "The work is complete.")]
+            spoken
+            (content/speech "spoken" "The work is complete.")]
 
         (try (swap! registry assoc
                sid
@@ -2686,18 +2587,17 @@
                             #'state/session-model (fn [_]
                                                     nil)}
              (fn []
-               (let
-                 [res
-                  (state/submit-turn! sid {:request request :display-request "LOOK AT THIS"})
+               (let [res
+                     (state/submit-turn! sid {:request request :display-request "LOOK AT THIS"})
 
-                  queued
-                  (->> @events
-                       (filter (comp #{"turn.queued"} first))
-                       first
-                       second)
+                     queued
+                     (->> @events
+                          (filter (comp #{"turn.queued"} first))
+                          first
+                          second)
 
-                  chips
-                  (get-in res [:turn "attachment_previews"])]
+                     chips
+                     (get-in res [:turn "attachment_previews"])]
 
                  (expect (= "queued" (get-in res [:turn "status"])))
                  ;; The raw request survives untouched — pulling the row back
@@ -2727,24 +2627,22 @@
    turn — every event ingested twice, re-sequenced, with no dedup downstream."
   (it
     "hydrates a sibling's in-flight turn exactly ONCE across concurrent subscribers"
-    (let
-      [tmp
-       (java.nio.file.Files/createTempDirectory "hydrate-race"
-                                                (make-array java.nio.file.attribute.FileAttribute
-                                                            0))
+    (let [tmp
+          (java.nio.file.Files/createTempDirectory "hydrate-race"
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
 
-       sid
-       (str "hydrate-race-" (java.util.UUID/randomUUID))
+          sid
+          (str "hydrate-race-" (java.util.UUID/randomUUID))
 
-       reg
-       @#'state/registry
+          reg
+          @#'state/registry
 
-       subs-n
-       4]
+          subs-n
+          4]
 
-      (with-redefs
-        [bus/events-dir (fn []
-                          tmp)]
+      (with-redefs [bus/events-dir (fn []
+                                     tmp)]
         (try (spit (#'bus/session-file sid)
                    (str/join (map #(str (wire/json-str %) "\n")
                                   [{:_producer (str (java.util.UUID/randomUUID))
@@ -2756,15 +2654,14 @@
                                     :turn_id "T-race"
                                     :session_id sid
                                     :request "hi"}])))
-             (let
-               [barrier (java.util.concurrent.CyclicBarrier. subs-n)
-                attach (mapv (fn [i]
-                               (future (.await barrier)
-                                       (state/subscribe! sid
-                                                         (str "sub-" i)
-                                                         (fn [_])
-                                                         0)))
-                             (range subs-n))]
+             (let [barrier (java.util.concurrent.CyclicBarrier. subs-n)
+                   attach (mapv (fn [i]
+                                  (future (.await barrier)
+                                          (state/subscribe! sid
+                                                            (str "sub-" i)
+                                                            (fn [_])
+                                                            0)))
+                                (range subs-n))]
 
                (run! deref attach))
              (expect
@@ -2776,14 +2673,13 @@
              "Windowed transcript pages stay bounded even when individual turns are large."
              (it
                "caps a window by encoded size and advances from the returned offset"
-               (let
-                 [sid
-                  (java.util.UUID/randomUUID)
+               (let [sid
+                     (java.util.UUID/randomUUID)
 
-                  rows
-                  (mapv (fn [n]
-                          {:id (str "turn-" n) :position n})
-                        (range 5))]
+                     rows
+                     (mapv (fn [n]
+                             {:id (str "turn-" n) :position n})
+                           (range 5))]
 
                  (with-redefs-fn {#'lp/db-info (constantly ::db)
                                   #'persistance/db-list-session-turns (fn [_ _]
@@ -2798,12 +2694,11 @@
                                   (fn [_db _att row]
                                     {:turn_id (:id row) :payload (apply str (repeat 100 "x"))})}
                    (fn []
-                     (let
-                       [newest
-                        (state/transcript-page sid {:limit 5})
+                     (let [newest
+                           (state/transcript-page sid {:limit 5})
 
-                        earlier
-                        (state/transcript-page sid {:offset 0 :limit (:offset newest)})]
+                           earlier
+                           (state/transcript-page sid {:offset 0 :limit (:offset newest)})]
 
                        ;; The row that BUSTS the budget is kept, not deferred: dropping it
                        ;; would make a single oversized turn (a big image attachment)
@@ -2823,17 +2718,16 @@
    parked forever (unlike `attach-turn-sync!`, which recovers from the record)."
   (it "ignores another turn's terminal that lands before the submit returns"
       (let [handler (promise)]
-        (with-redefs
-          [state/subscribe! (fn [_ _ h _]
-                              (deliver handler h)
-                              [])
-           state/unsubscribe! (fn [_ _]
-                                nil)
-           state/get-turn (fn [_ _]
-                            nil)
-           state/submit-turn! (fn [_ _]
-                                (@handler {"type" "turn.failed" "turn_id" "OTHER"})
-                                {:turn {"turn_id" "MINE"}})]
+        (with-redefs [state/subscribe! (fn [_ _ h _]
+                                         (deliver handler h)
+                                         [])
+                      state/unsubscribe! (fn [_ _]
+                                           nil)
+                      state/get-turn (fn [_ _]
+                                       nil)
+                      state/submit-turn! (fn [_ _]
+                                           (@handler {"type" "turn.failed" "turn_id" "OTHER"})
+                                           {:turn {"turn_id" "MINE"}})]
 
           (let [f (future (state/submit-turn-sync! "sid-iso" {}))]
             (expect (= ::pending (deref f 500 ::pending)))
@@ -2849,16 +2743,15 @@
       ;; behind it — alive for the rest of the session, while the queue happily
       ;; drained the next turn into the same channel.
       (let [handler (promise)]
-        (with-redefs
-          [state/subscribe! (fn [_ _ h _]
-                              (deliver handler h)
-                              [])
-           state/unsubscribe! (fn [_ _]
-                                nil)
-           state/get-turn (fn [_ _]
-                            nil)
-           state/submit-turn! (fn [_ _]
-                                {:turn {"turn_id" "MINE"}})]
+        (with-redefs [state/subscribe! (fn [_ _ h _]
+                                         (deliver handler h)
+                                         [])
+                      state/unsubscribe! (fn [_ _]
+                                           nil)
+                      state/get-turn (fn [_ _]
+                                       nil)
+                      state/submit-turn! (fn [_ _]
+                                           {:turn {"turn_id" "MINE"}})]
 
           (let [f (future (state/submit-turn-sync! "sid-cancelled" {}))]
             (@handler {"type" "turn.cancelled" "turn_id" "MINE" "status" "cancelled"})
@@ -2867,16 +2760,15 @@
               (expect (= "MINE" (get res "session_turn_id"))))))))
   (it "recovers a terminal from the stored record instead of blocking forever"
       (let [handler (promise)]
-        (with-redefs
-          [state/subscribe! (fn [_ _ h _]
-                              (deliver handler h)
-                              [])
-           state/unsubscribe! (fn [_ _]
-                                nil)
-           state/get-turn (fn [_ _]
-                            {"turn_id" "MINE" "status" "completed"})
-           state/submit-turn! (fn [_ _]
-                                {:turn {"turn_id" "MINE"}})]
+        (with-redefs [state/subscribe! (fn [_ _ h _]
+                                         (deliver handler h)
+                                         [])
+                      state/unsubscribe! (fn [_ _]
+                                           nil)
+                      state/get-turn (fn [_ _]
+                                       {"turn_id" "MINE" "status" "completed"})
+                      state/submit-turn! (fn [_ _]
+                                           {:turn {"turn_id" "MINE"}})]
 
           (let [res (deref (future (state/submit-turn-sync! "sid-settled" {})) 2000 ::pending)]
             (expect (not= ::pending res))
@@ -2892,12 +2784,11 @@
    had never finished."
   (it
     "closes each iteration's block at its own iteration.completed"
-    (let
-      [sid
-       (str (random-uuid))
+    (let [sid
+          (str (random-uuid))
 
-       tid
-       (str (random-uuid))]
+          tid
+          (str (random-uuid))]
 
       (swap! @#'state/registry assoc
         sid
@@ -2907,38 +2798,38 @@
          :turns {tid {:turn_id tid :status "running"}}
          :turn-order [tid]
          :current-turn tid})
-      (with-redefs
-        [lp/send!
-         (fn [_ _ opts]
-           (let [on-chunk (get-in opts [:hooks :on-chunk])]
-             (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha."})
-             (on-chunk {:phase :iteration-final :iteration 1 :thinking "alpha." :done? false})
-             (on-chunk {:phase :reasoning :iteration 2 :thinking "beta."})
-             (on-chunk {:phase :iteration-final :iteration 2 :thinking "beta." :done? true}))
-           {:status :ok :answer nil})]
+      (with-redefs [lp/send!
+                    (fn [_ _ opts]
+                      (let [on-chunk (get-in opts [:hooks :on-chunk])]
+                        (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha."})
+                        (on-chunk
+                          {:phase :iteration-final :iteration 1 :thinking "alpha." :done? false})
+                        (on-chunk {:phase :reasoning :iteration 2 :thinking "beta."})
+                        (on-chunk
+                          {:phase :iteration-final :iteration 2 :thinking "beta." :done? true}))
+                      {:status :ok :answer nil})]
         (#'state/run-turn! sid tid "hi" {}))
-      (let
-        [types
-         (mapv #(get % "type") (:events (get @@#'state/registry sid)))
+      (let [types
+            (mapv #(get % "type") (:events (get @@#'state/registry sid)))
 
-         completed-idx
-         (fn [iteration]
-           (first (keep-indexed (fn [idx event]
-                                  (when (and (= "content.block.completed" (get event "type"))
-                                             (str/ends-with? (str (get event "block_id"))
-                                                             (str ":" iteration)))
-                                    idx))
-                                (:events (get @@#'state/registry sid)))))
+            completed-idx
+            (fn [iteration]
+              (first (keep-indexed (fn [idx event]
+                                     (when (and (= "content.block.completed" (get event "type"))
+                                                (str/ends-with? (str (get event "block_id"))
+                                                                (str ":" iteration)))
+                                       idx))
+                                   (:events (get @@#'state/registry sid)))))
 
-         idx-of
-         (fn [type]
-           (first (keep-indexed #(when (= type %2) %1) types)))
+            idx-of
+            (fn [type]
+              (first (keep-indexed #(when (= type %2) %1) types)))
 
-         started-idxs
-         (keep-indexed #(when (= "content.block.started" %2) %1) types)
+            started-idxs
+            (keep-indexed #(when (= "content.block.started" %2) %1) types)
 
-         terminal-idx
-         (idx-of "turn.completed")]
+            terminal-idx
+            (idx-of "turn.completed")]
 
         ;; Every started block is closed exactly once.
         (expect (= (count (filter #{"content.block.started"} types))
@@ -2960,50 +2851,47 @@
    never drains, and every channel shows 'Sending request to provider' forever.
    The backstop lands `turn.cancelled` for it, and the terminal claim guarantees
    the thawed worker cannot land a second one."
-  (let
-    [backstop
-     @#'state/start-cancel-terminal-backstop!
+  (let [backstop
+        @#'state/start-cancel-terminal-backstop!
 
-     claim
-     @#'state/claim-turn-terminal!
+        claim
+        @#'state/claim-turn-terminal!
 
-     registry
-     @#'state/registry
+        registry
+        @#'state/registry
 
-     await-flag
-     (fn [flag ms]
-       (let [deadline (+ (System/currentTimeMillis) (long ms))]
-         (loop []
+        await-flag
+        (fn [flag ms]
+          (let [deadline (+ (System/currentTimeMillis) (long ms))]
+            (loop []
 
-           (cond @flag true
-                 (>= (System/currentTimeMillis) deadline) false
-                 :else (do (Thread/sleep 25) (recur))))))]
+              (cond @flag true
+                    (>= (System/currentTimeMillis) deadline) false
+                    :else (do (Thread/sleep 25) (recur))))))]
 
     (it "claims a turn's ONE terminal landing exactly once per run"
-        (let
-          [sid
-           (str "claim-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "claim-" (java.util.UUID/randomUUID))
 
-           run
-           (cancellation/cancellation-token)]
+              run
+              (cancellation/cancellation-token)]
 
           (expect (true? (claim sid "t1" run)))
           (expect (false? (claim sid "t1" run)))
           ;; a different turn of the same session is untouched
           (expect (true? (claim sid "t2" run)))))
     (it "lands the terminal for a cancelled worker that never lands its own"
-        (let
-          [sid
-           (str "backstop-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "backstop-" (java.util.UUID/randomUUID))
 
-           tid
-           "t1"
+              tid
+              "t1"
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           landed
-           (atom false)]
+              landed
+              (atom false)]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
                (backstop sid
@@ -3020,15 +2908,14 @@
     ;; parked on it forever — `turn.started` and nothing else, for the life of the
     ;; daemon. A backstop must condemn the engine it just gave up on.
     (it "condemns the session engine it just declared dead"
-        (let
-          [sid
-           (str "backstop-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "backstop-" (java.util.UUID/randomUUID))
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           condemned
-           (atom nil)]
+              condemned
+              (atom nil)]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn "t1"})
                (with-redefs-fn {#'lp/condemn-env! (fn [id]
@@ -3043,15 +2930,14 @@
                    (expect (= sid @condemned))))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "stays silent once the turn is no longer the session's current turn"
-        (let
-          [sid
-           (str "backstop-" (java.util.UUID/randomUUID))
+        (let [sid
+              (str "backstop-" (java.util.UUID/randomUUID))
 
-           token
-           (cancellation/cancellation-token)
+              token
+              (cancellation/cancellation-token)
 
-           landed
-           (atom false)]
+              landed
+              (atom false)]
 
           (try
             ;; the worker DID land its terminal and the session moved on
@@ -3088,27 +2974,24 @@
    15155 walks to append 2400 events, 84% of the work discarded). Hoisting it
    also makes the documented stamp rule absolute."
   (it "stamps identity over payload keys that merely CANONICALIZE onto it"
-      (let
-        [sid
-         (java.util.UUID/randomUUID)
+      (let [sid
+            (java.util.UUID/randomUUID)
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         saved
-         @registry]
+            saved
+            @registry]
 
-        (try (with-redefs
-               [bus/publish! (fn [& _]
-                               nil)]
-               (let
-                 [event (state/append-event! sid
-                                             "turn.delta"
-                                             {:session-id "SOMEONE-ELSES-SESSION"
-                                              :seq 999999
-                                              :type "spoofed"
-                                              :schema 42
-                                              :text "hi"})]
+        (try (with-redefs [bus/publish! (fn [& _]
+                                          nil)]
+               (let [event (state/append-event! sid
+                                                "turn.delta"
+                                                {:session-id "SOMEONE-ELSES-SESSION"
+                                                 :seq 999999
+                                                 :type "spoofed"
+                                                 :schema 42
+                                                 :text "hi"})]
                  (expect (= (str sid) (get event "session_id")))
                  (expect (= 1 (get event "seq")))
                  (expect (= "turn.delta" (get event "type")))
@@ -3117,33 +3000,31 @@
              (finally (reset! registry saved)))))
   (it
     "walks each payload exactly once per append, even under CAS contention"
-    (let
-      [registry
-       @#'state/registry
+    (let [registry
+          @#'state/registry
 
-       saved
-       @registry
+          saved
+          @registry
 
-       walks
-       (atom 0)
+          walks
+          (atom 0)
 
-       real
-       wire/canonical
+          real
+          wire/canonical
 
-       ;; Only OUR payloads are counted: the canonical event that flows on to
-       ;; fan-out carries string keys, so it can never be mistaken for one.
-       payload
-       {:bug9 true :rows (vec (repeat 200 {:a 1 :b "x" :nested {:c [1 2 3]}}))}]
+          ;; Only OUR payloads are counted: the canonical event that flows on to
+          ;; fan-out carries string keys, so it can never be mistaken for one.
+          payload
+          {:bug9 true :rows (vec (repeat 200 {:a 1 :b "x" :nested {:c [1 2 3]}}))}]
 
-      (try (with-redefs
-             [bus/publish!
-              (fn [& _]
-                nil)
+      (try (with-redefs [bus/publish!
+                         (fn [& _]
+                           nil)
 
-              wire/canonical
-              (fn [p]
-                (when (and (map? p) (contains? p :bug9)) (swap! walks inc))
-                (real p))]
+                         wire/canonical
+                         (fn [p]
+                           (when (and (map? p) (contains? p :bug9)) (swap! walks inc))
+                           (real p))]
 
              (->> (range 8)
                   (mapv (fn [_]
@@ -3165,58 +3046,56 @@
    fallback arm REQUIRES a blank one and can never fire."
   (it
     "drops the live row a persisted id owns and keeps the one none owns"
-    (let
-      [sid
-       (java.util.UUID/randomUUID)
+    (let [sid
+          (java.util.UUID/randomUUID)
 
-       dup-engine
-       (str (java.util.UUID/randomUUID))
+          dup-engine
+          (str (java.util.UUID/randomUUID))
 
-       own-engine
-       (str (java.util.UUID/randomUUID))
+          own-engine
+          (str (java.util.UUID/randomUUID))
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       saved
-       @registry
+          saved
+          @registry
 
-       live
-       (fn [tid engine-id]
-         {:turn_id tid
-          :engine_turn_id engine-id
-          :session_id (str sid)
-          :status "completed"
-          :request "hello"
-          :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
-          :started_at 1000})
+          live
+          (fn [tid engine-id]
+            {:turn_id tid
+             :engine_turn_id engine-id
+             :session_id (str sid)
+             :status "completed"
+             :request "hello"
+             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+             :started_at 1000})
 
-       persisted
-       (conj (mapv (fn [i]
-                     {:id (str "row-" i)
-                      :status :success
-                      :user-request (str "q" i)
-                      :content []
-                      :created-at (java.util.Date. (+ 1000 (long i)))})
-                   (range 200))
-             {:id dup-engine
-              :status :success
-              :user-request "hello"
-              :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
-              :created-at (java.util.Date. 1500)})]
+          persisted
+          (conj (mapv (fn [i]
+                        {:id (str "row-" i)
+                         :status :success
+                         :user-request (str "q" i)
+                         :content []
+                         :created-at (java.util.Date. (+ 1000 (long i)))})
+                      (range 200))
+                {:id dup-engine
+                 :status :success
+                 :user-request "hello"
+                 :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                 :created-at (java.util.Date. 1500)})]
 
       (try (reset! registry {(str sid) {:next-seq 0
                                         :turn-order ["gateway-dup" "gateway-own"]
                                         :turns {"gateway-dup" (live "gateway-dup" dup-engine)
                                                 "gateway-own" (live "gateway-own" own-engine)}}})
-           (with-redefs
-             [persistance/db-list-session-turns
-              (fn [_ _]
-                persisted)
+           (with-redefs [persistance/db-list-session-turns
+                         (fn [_ _]
+                           persisted)
 
-              persistance/db-list-turns-attachments
-              (fn [_ _]
-                {})]
+                         persistance/db-list-turns-attachments
+                         (fn [_ _]
+                           {})]
 
              (let [ids (set (map #(get % "turn_id") (state/list-turns sid)))]
                (expect (contains? ids dup-engine))
@@ -3232,26 +3111,26 @@
   ;; Each entry point now stamps itself on the turn's cancellation token.
   (it
     "stamps the origin of every cancel entry point on the token"
-    (let
-      [sid
-       (str "cancel-source-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "cancel-source-" (java.util.UUID/randomUUID))
 
-       token-a
-       (cancellation/cancellation-token)
+          token-a
+          (cancellation/cancellation-token)
 
-       token-b
-       (cancellation/cancellation-token)
+          token-b
+          (cancellation/cancellation-token)
 
-       token-c
-       (cancellation/cancellation-token)
+          token-c
+          (cancellation/cancellation-token)
 
-       registry
-       (atom {sid {:current-turn "b"
-                   :turns
-                   {"a" {:turn_id "a" :status "running" :cancel-token token-a}
-                    "b"
-                    {:turn_id "b" :status "running" :idempotency_key "b-key" :cancel-token token-b}
-                    "c" {:turn_id "c" :status "running" :cancel-token token-c}}}})]
+          registry
+          (atom {sid {:current-turn "b"
+                      :turns {"a" {:turn_id "a" :status "running" :cancel-token token-a}
+                              "b" {:turn_id "b"
+                                   :status "running"
+                                   :idempotency_key "b-key"
+                                   :cancel-token token-b}
+                              "c" {:turn_id "c" :status "running" :cancel-token token-c}}}})]
 
       (with-redefs-fn {#'state/registry registry}
         (fn []
@@ -3273,19 +3152,18 @@
 ;; let one client's Esc kill the OTHER client's running turn.
 (defdescribe cancel-current-owner-test
              (it "cancels only the running turn the caller itself submitted"
-                 (let
-                   [sid
-                    (str "cancel-current-owner-" (java.util.UUID/randomUUID))
+                 (let [sid
+                       (str "cancel-current-owner-" (java.util.UUID/randomUUID))
 
-                    token
-                    (cancellation/cancellation-token)
+                       token
+                       (cancellation/cancellation-token)
 
-                    registry
-                    (atom {sid {:current-turn "companion"
-                                :turns {"companion" {:turn_id "companion"
-                                                     :status "running"
-                                                     :idempotency_key "companion:1"
-                                                     :cancel-token token}}}})]
+                       registry
+                       (atom {sid {:current-turn "companion"
+                                   :turns {"companion" {:turn_id "companion"
+                                                        :status "running"
+                                                        :idempotency_key "companion:1"
+                                                        :cancel-token token}}}})]
 
                    (with-redefs-fn {#'state/registry registry}
                      (fn []
@@ -3316,18 +3194,17 @@
    that settles a turn; a process killed mid-cancel is repaired at startup by
    `loop/db-sweep-orphaned-running-turns!`, which owns exactly that case."
   (it "writes nothing durable while the cancelled turn is still live"
-      (let
-        [sid
-         (str "cancel-persist-" (java.util.UUID/randomUUID))
+      (let [sid
+            (str "cancel-persist-" (java.util.UUID/randomUUID))
 
-         registry
-         @#'state/registry
+            registry
+            @#'state/registry
 
-         writes
-         (atom [])
+            writes
+            (atom [])
 
-         token
-         (cancellation/cancellation-token)]
+            token
+            (cancellation/cancellation-token)]
 
         (try (swap! registry assoc
                sid
@@ -3358,24 +3235,23 @@
   ;; screen behind it. The delete must cost the DB removal, nothing more.
   (it
     "returns once the session row is gone and tears the live runtime down off the request thread"
-    (let
-      [sid
-       (str "delete-teardown-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "delete-teardown-" (java.util.UUID/randomUUID))
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       deleted
-       (atom [])
+          deleted
+          (atom [])
 
-       stopped
-       (promise)
+          stopped
+          (promise)
 
-       closed
-       (promise)
+          closed
+          (promise)
 
-       release
-       (promise)]
+          release
+          (promise)]
 
       (try (swap! registry assoc sid {:turns {}})
            (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.resources/stop-all!)
@@ -3393,15 +3269,14 @@
                             #'persistance/db-delete-session-tree! (fn [_db id]
                                                                     (swap! deleted conj id))}
              (fn []
-               (let
-                 [started
-                  (System/nanoTime)
+               (let [started
+                     (System/nanoTime)
 
-                  fut
-                  (state/close-session! sid)
+                     fut
+                     (state/close-session! sid)
 
-                  elapsed-ms
-                  (/ (- (System/nanoTime) started) 1e6)]
+                     elapsed-ms
+                     (/ (- (System/nanoTime) started) 1e6)]
 
                  (expect (< elapsed-ms 500) (str "close-session! blocked for " elapsed-ms "ms"))
                  ;; the row is already gone everywhere a client can look
@@ -3428,24 +3303,23 @@
   ;; re-sending the request just piled another turn onto the same dead pin.
   (it
     "arms the watchdog first and fails the turn when the launch itself throws"
-    (let
-      [sid
-       (str "launch-throw-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "launch-throw-" (java.util.UUID/randomUUID))
 
-       tid
-       "wedged"
+          tid
+          "wedged"
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       token
-       (cancellation/cancellation-token)
+          token
+          (cancellation/cancellation-token)
 
-       armed
-       (atom [])
+          armed
+          (atom [])
 
-       events
-       (atom [])]
+          events
+          (atom [])]
 
       (try (swap! registry assoc
              sid
@@ -3483,21 +3357,20 @@
   ;; hand, and the backlog never drained.
   (it
     "arms a terminal backstop so a stop always resolves the turn"
-    (let
-      [sid
-       (str "cancel-backstop-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "cancel-backstop-" (java.util.UUID/randomUUID))
 
-       tid
-       "stuck"
+          tid
+          "stuck"
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       token
-       (cancellation/cancellation-token)
+          token
+          (cancellation/cancellation-token)
 
-       armed
-       (atom nil)]
+          armed
+          (atom nil)]
 
       (try (swap! registry assoc
              sid
@@ -3526,21 +3399,20 @@
   ;; call without any new user action.
   (it
     "lands the stall once and holds later queued work without replaying it"
-    (let
-      [sid
-       (str "stall-backstop-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "stall-backstop-" (java.util.UUID/randomUUID))
 
-       registry
-       @#'state/registry
+          registry
+          @#'state/registry
 
-       token
-       (cancellation/cancellation-token)
+          token
+          (cancellation/cancellation-token)
 
-       events
-       (atom [])
+          events
+          (atom [])
 
-       launched
-       (atom [])]
+          launched
+          (atom [])]
 
       (cancellation/cancel! token :stall-watchdog)
       (try (swap! registry assoc
@@ -3576,28 +3448,26 @@
 ;; right did the opposite of what a user asking to "remove the project" means.
 (defdescribe
   recursive-project-delete-test
-  (let
-    [pid
-     (java.util.UUID/randomUUID)
+  (let [pid
+        (java.util.UUID/randomUUID)
 
-     a
-     (java.util.UUID/randomUUID)
+        a
+        (java.util.UUID/randomUUID)
 
-     b
-     (java.util.UUID/randomUUID)
+        b
+        (java.util.UUID/randomUUID)
 
-     exec
-     (fn [opts]
-       (let [log (atom [])]
-         (with-redefs
-           [lp/project-session-ids (fn [p]
-                                     (if (= pid p) [a b] []))
-            state/close-session! (fn [sid]
-                                   (swap! log conj [:session sid]))
-            lp/delete-project! (fn [p]
-                                 (swap! log conj [:project p]))]
+        exec
+        (fn [opts]
+          (let [log (atom [])]
+            (with-redefs [lp/project-session-ids (fn [p]
+                                                   (if (= pid p) [a b] []))
+                          state/close-session! (fn [sid]
+                                                 (swap! log conj [:session sid]))
+                          lp/delete-project! (fn [p]
+                                               (swap! log conj [:project p]))]
 
-           {:result (state/delete-project! pid opts) :log @log})))]
+              {:result (state/delete-project! pid opts) :log @log})))]
 
     (it "keeps the scatter contract by default: the row goes, not one conversation"
         (let [{:keys [result log]} (exec nil)]
@@ -3620,18 +3490,17 @@
   terminal-event-settled-failure-test
   (it
     "returns the settled failure card from the terminal turn"
-    (let
-      [sid
-       (str "terminal-failure-" (java.util.UUID/randomUUID))
+    (let [sid
+          (str "terminal-failure-" (java.util.UUID/randomUUID))
 
-       tid
-       "t-stalled"
+          tid
+          "t-stalled"
 
-       reason
-       "Provider stream stalled: no output"
+          reason
+          "Provider stream stalled: no output"
 
-       registry
-       @#'state/registry]
+          registry
+          @#'state/registry]
 
       (try (swap! registry assoc
              sid
@@ -3647,14 +3516,13 @@
              :content [(content/error "provider_stalled" reason false)]
              :error reason
              :completed_at 1})
-           (let
-             [event
-              (wire/->wire (assoc (#'state/turn-terminal-payload sid tid "failed")
-                             :type "turn.failed"
-                             :session_id sid))
+           (let [event
+                 (wire/->wire (assoc (#'state/turn-terminal-payload sid tid "failed")
+                                :type "turn.failed"
+                                :session_id sid))
 
-              result
-              (#'state/terminal-event->result event tid)]
+                 result
+                 (#'state/terminal-event->result event tid)]
 
              (expect (= reason (get result "error")))
              (expect (= 1 (count (get result "content"))))
@@ -3673,14 +3541,13 @@
   ;; those listings read (and base64-encoded) every blob of the iteration just
   ;; to report metadata, so a 9-image gallery cost 81 image reads.
   (it "history drops model-only artifacts and renumbers, exactly like the byte endpoint"
-      (let
-        [rows
-         [{:id "a" :filename "MODEL-ONLY.png" :audience "model" :size 1}
-          {:id "b" :filename "SHOWN-1.png" :audience "both" :size 2}
-          {:id "c" :filename "SHOWN-2.png" :audience "user" :size 3}]
+      (let [rows
+            [{:id "a" :filename "MODEL-ONLY.png" :audience "model" :size 1}
+             {:id "b" :filename "SHOWN-1.png" :audience "both" :size 2}
+             {:id "c" :filename "SHOWN-2.png" :audience "user" :size 3}]
 
-         byte-lister-calls
-         (atom 0)]
+            byte-lister-calls
+            (atom 0)]
 
         (with-redefs-fn {#'persistance/db-list-session-turn-iterations (fn [_ _]
                                                                          [{:id "iter-1"}])
@@ -3691,12 +3558,11 @@
                          #'persistance/db-list-iterations-attachments-meta (fn [_ _]
                                                                              {"iter-1" rows})}
           (fn []
-            (let
-              [turn
-               (#'state/transcript-turn ::db {} {:id "turn-1" :position 1})
+            (let [turn
+                  (#'state/transcript-turn ::db {} {:id "turn-1" :position 1})
 
-               atts
-               (:attachments (first (:iterations turn)))]
+                  atts
+                  (:attachments (first (:iterations turn)))]
 
               (expect (= ["SHOWN-1.png" "SHOWN-2.png"] (mapv :filename atts)))
               (expect (= [0 1] (mapv :index atts)))
@@ -3704,19 +3570,18 @@
               (expect (zero? @byte-lister-calls)))))))
   (it
     "lists metadata only and fetches ONE artifact's bytes, by its own id"
-    (let
-      [rows
-       [{:id "a" :filename "hidden.png" :audience "model" :size 1 :has-bytes true}
-        {:id "b" :filename "shown.png" :audience "both" :size 2 :has-bytes true}]
+    (let [rows
+          [{:id "a" :filename "hidden.png" :audience "model" :size 1 :has-bytes true}
+           {:id "b" :filename "shown.png" :audience "both" :size 2 :has-bytes true}]
 
-       meta-calls
-       (atom 0)
+          meta-calls
+          (atom 0)
 
-       byte-lister-calls
-       (atom 0)
+          byte-lister-calls
+          (atom 0)
 
-       reads
-       (atom [])]
+          reads
+          (atom [])]
 
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'persistance/db-list-iteration-attachments (fn [_ _]
@@ -3749,27 +3614,25 @@
 ;; bare failed card while the log knew it was github-copilot-enterprise / claude-opus-5.
 (defdescribe
   stalled-turn-names-its-provider-test
-  (let
-    [advance
-     @#'state/advance-turn-stall-state
+  (let [advance
+        @#'state/advance-turn-stall-state
 
-     failure-text
-     @#'state/stall-failure-text]
+        failure-text
+        @#'state/stall-failure-text]
 
     (it "remembers the provider and model the call was dispatched to"
-        (let
-          [dispatched
-           (advance {}
-                    {:phase :provider-call
-                     :iteration 0
-                     :started-at-ms 1
-                     :provider "github-copilot-enterprise"
-                     :model "claude-opus-5"}
-                    100)
+        (let [dispatched
+              (advance {}
+                       {:phase :provider-call
+                        :iteration 0
+                        :started-at-ms 1
+                        :provider "github-copilot-enterprise"
+                        :model "claude-opus-5"}
+                       100)
 
-           ;; later chunks carry no attribution of their own and must not erase it
-           streaming
-           (advance dispatched {:phase :content :delta "hi"} 200)]
+              ;; later chunks carry no attribution of their own and must not erase it
+              streaming
+              (advance dispatched {:phase :content :delta "hi"} 200)]
 
           (expect (= "github-copilot-enterprise" (:provider dispatched)))
           (expect (= "claude-opus-5" (:model dispatched)))
@@ -3794,12 +3657,11 @@
 ;; journal and never the SSE fan-out, so the OTP form was never drawn.
 (defdescribe registry-sid-spelling-test
              (it "delivers an event appended under the STRING sid to a UUID subscriber"
-                 (let
-                   [sid
-                    (random-uuid)
+                 (let [sid
+                       (random-uuid)
 
-                    seen
-                    (atom [])]
+                       seen
+                       (atom [])]
 
                    (state/subscribe! sid "sub-1" #(swap! seen conj %) 0)
                    (try (state/append-event! (str sid) "human_input.request" {:request {:id "r1"}})
@@ -3808,12 +3670,11 @@
                                    (mapv #(get % "type") (state/events-since sid 0))))
                         (finally (state/unsubscribe! sid "sub-1")))))
              (it "reads one session's state under either spelling"
-                 (let
-                   [sid
-                    (random-uuid)
+                 (let [sid
+                       (random-uuid)
 
-                    seen
-                    (atom [])]
+                       seen
+                       (atom [])]
 
                    (state/subscribe! (str sid) "sub-2" #(swap! seen conj %) 0)
                    (try (state/append-event! sid "human_input.request" {:request {:id "r2"}})
@@ -3833,11 +3694,10 @@
   stall-before-the-provider-test
   (let [failure-text @#'state/stall-failure-text]
     (it "leaves :awaiting-permit behind the moment the permit is in hand"
-        (let
-          [registry @#'state/registry
-           sid (str "engine-start-" (java.util.UUID/randomUUID))
-           tid "turn-1"
-           seen (promise)]
+        (let [registry @#'state/registry
+              sid (str "engine-start-" (java.util.UUID/randomUUID))
+              tid "turn-1"
+              seen (promise)]
 
           (try (swap! registry assoc
                  sid
@@ -3880,38 +3740,36 @@
   ;; somebody SSE-subscribes to that session — so each app lit up exactly the
   ;; sessions it had happened to open, and neither ever saw the whole fleet.
   (it "reports a turn running in a SIBLING process, with nothing subscribed here"
-      (with-redefs
-        [lp/by-id
-         (constantly {:id "s-foreign" :channel :api :title "t"})
+      (with-redefs [lp/by-id
+                    (constantly {:id "s-foreign" :channel :api :title "t"})
 
-         lp/db-info
-         (constantly nil)
+                    lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)
+                    persistance/db-session-turn-stats
+                    (constantly nil)
 
-         ;; No subscriber, so this process's registry holds no entry for the
-         ;; session at all — the index is the only thing that knows.
-         bus/live-turns
-         (constantly {"s-foreign" "T-foreign"})]
+                    ;; No subscriber, so this process's registry holds no entry for the
+                    ;; session at all — the index is the only thing that knows.
+                    bus/live-turns
+                    (constantly {"s-foreign" "T-foreign"})]
 
         (let [row (state/soul "s-foreign")]
           (expect (true? (get row "live")))
           (expect (= "running" (get row "status")))
           (expect (= "T-foreign" (get row "current_turn_id"))))))
   (it "stays idle when no process on this machine is running the session"
-      (with-redefs
-        [lp/by-id
-         (constantly {:id "s-quiet" :channel :api :title "t"})
+      (with-redefs [lp/by-id
+                    (constantly {:id "s-quiet" :channel :api :title "t"})
 
-         lp/db-info
-         (constantly nil)
+                    lp/db-info
+                    (constantly nil)
 
-         persistance/db-session-turn-stats
-         (constantly nil)
+                    persistance/db-session-turn-stats
+                    (constantly nil)
 
-         bus/live-turns
-         (constantly {})]
+                    bus/live-turns
+                    (constantly {})]
 
         (let [row (state/soul "s-quiet")]
           (expect (false? (get row "live")))
@@ -3929,12 +3787,11 @@
    text, so no consumer ever sees a delta for a block it was not told about."
   (it
     "opens no block for an iteration that only ticked empty reasoning"
-    (let
-      [sid
-       (str (random-uuid))
+    (let [sid
+          (str (random-uuid))
 
-       tid
-       (str (random-uuid))]
+          tid
+          (str (random-uuid))]
 
       (swap! @#'state/registry assoc
         sid
@@ -3944,34 +3801,34 @@
          :turns {tid {:turn_id tid :status "running"}}
          :turn-order [tid]
          :current-turn tid})
-      (with-redefs
-        [lp/send!
-         (fn [_ _ opts]
-           (let [on-chunk (get-in opts [:hooks :on-chunk])]
-             ;; Iteration 1 thought nothing: empty ticks only.
-             (on-chunk {:phase :reasoning :iteration 1 :thinking ""})
-             (on-chunk {:phase :reasoning :iteration 1 :thinking "" :done? true})
-             (on-chunk {:phase :iteration-final :iteration 1 :thinking "" :done? false})
-             ;; Iteration 2 starts silent, then speaks.
-             (on-chunk {:phase :reasoning :iteration 2 :thinking ""})
-             (on-chunk {:phase :reasoning :iteration 2 :thinking "beta thought."})
-             (on-chunk
-               {:phase :iteration-final :iteration 2 :thinking "beta thought." :done? true}))
-           {:status :ok :answer nil})]
+      (with-redefs [lp/send!
+                    (fn [_ _ opts]
+                      (let [on-chunk (get-in opts [:hooks :on-chunk])]
+                        ;; Iteration 1 thought nothing: empty ticks only.
+                        (on-chunk {:phase :reasoning :iteration 1 :thinking ""})
+                        (on-chunk {:phase :reasoning :iteration 1 :thinking "" :done? true})
+                        (on-chunk {:phase :iteration-final :iteration 1 :thinking "" :done? false})
+                        ;; Iteration 2 starts silent, then speaks.
+                        (on-chunk {:phase :reasoning :iteration 2 :thinking ""})
+                        (on-chunk {:phase :reasoning :iteration 2 :thinking "beta thought."})
+                        (on-chunk {:phase :iteration-final
+                                   :iteration 2
+                                   :thinking "beta thought."
+                                   :done? true}))
+                      {:status :ok :answer nil})]
         (#'state/run-turn! sid tid "hi" {}))
-      (let
-        [events
-         (:events (get @@#'state/registry sid))
+      (let [events
+            (:events (get @@#'state/registry sid))
 
-         of-type
-         (fn [type]
-           (filterv #(= type (get % "type")) events))
+            of-type
+            (fn [type]
+              (filterv #(= type (get % "type")) events))
 
-         started
-         (of-type "content.block.started")
+            started
+            (of-type "content.block.started")
 
-         deltas
-         (of-type "content.block.delta")]
+            deltas
+            (of-type "content.block.delta")]
 
         ;; Iteration 1 never became a block, and neither did iteration 2's
         ;; silent lead-in.
@@ -3991,25 +3848,79 @@
 ;; issue…` on an iteration where the model had spent 24.5s and 2056 tokens.
 (defdescribe cut-summary-thinking-test
              (it "clips a settled summary at the last sentence it closed"
-                 (let
-                   [[type _ payload] (#'state/chunk->event
-                                      {:phase :iteration-final
-                                       :done? true
-                                       :iteration 1
-                                       :thinking "Checked the parser. I need…"})]
+                 (let [[type _ payload] (#'state/chunk->event
+                                         {:phase :iteration-final
+                                          :done? true
+                                          :iteration 1
+                                          :thinking "Checked the parser. I need…"})]
                    (expect (= "iteration.completed" type))
                    (expect (= "Checked the parser." (:thinking payload)))))
-             (it "ships no thinking when the provider cut the summary mid-clause"
-                 (let
-                   [[_ _ payload]
-                    (#'state/chunk->event
-                     {:phase :iteration-final :done? true :iteration 1 :thinking "So the issue…"})]
-                   (expect (nil? (:thinking payload)))))
+             (it
+               "ships no thinking when the provider cut the summary mid-clause"
+               (let [[_ _ payload]
+                     (#'state/chunk->event
+                      {:phase :iteration-final :done? true :iteration 1 :thinking "So the issue…"})]
+                 (expect (nil? (:thinking payload)))))
              (it "does the same on the iteration's error boundary"
-                 (let
-                   [[_ _ payload] (#'state/chunk->event
-                                   {:phase :iteration-error
-                                    :iteration 1
-                                    :thinking "I found…"
-                                    :error {:type :provider :message "boom"}})]
+                 (let [[_ _ payload] (#'state/chunk->event
+                                      {:phase :iteration-error
+                                       :iteration 1
+                                       :thinking "I found…"
+                                       :error {:type :provider :message "boom"}})]
                    (expect (nil? (:thinking payload))))))
+
+
+;; Regression, user report (paraphrased: switching gateways flickered the project
+;; list and then the numbers inside it): the counts were derived client-side from
+;; downloaded session windows, so they settled page by page.
+(defdescribe
+  projects-overview-test
+  "One gateway-owned answer for the navigator header: a project's counts must not
+   be a client-side tally of a downloaded fleet."
+  (it
+    "groups the fleet by project root and counts sessions, live and awaiting"
+    (let [roots {"s1" "/repo/a" "s2" "/repo/a" "s3" "/repo/b"}]
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'lp/projects (fn [_]
+                                       [{:id "p-a" :name "Vis" :workspace-root "/repo/a"}])
+                       #'persistance/db-session-turn-stats (fn [_]
+                                                             {"s1" {:latest-turn-at 300}
+                                                              "s2" {:latest-turn-at 100}
+                                                              "s3" {:latest-turn-at 200}})
+                       #'lp/by-channel (fn [_]
+                                         [{:id "s1"} {:id "s2"} {:id "s3"}])
+                       #'state/session-project-root (fn [_ sid]
+                                                      (get roots (str sid)))
+                       #'bus/live-turns (constantly {"s1" "t1"})
+                       #'bus/waiting-requests (constantly {"s3" {}})}
+        (fn []
+          (let [overview (state/projects-overview)
+                by-root (into {}
+                              (map (fn [p]
+                                     [(get p "root") p]))
+                              (:projects overview))]
+
+            ;; Freshest project first — liveness is a COUNT here, never a band.
+            (expect (= ["/repo/a" "/repo/b"] (mapv #(get % "root") (:projects overview))))
+            (expect (= "Vis" (get-in by-root ["/repo/a" "name"])))
+            (expect (= "p-a" (get-in by-root ["/repo/a" "project_id"])))
+            (expect (= 2 (get-in by-root ["/repo/a" "session_count"])))
+            (expect (= 1 (get-in by-root ["/repo/a" "live_count"])))
+            (expect (= 300 (get-in by-root ["/repo/a" "last_activity_ms"])))
+            ;; A root nothing named still IS a project group; the folder is the
+            ;; client's own fallback label.
+            (expect (= "" (get-in by-root ["/repo/b" "name"])))
+            (expect (= 1 (get-in by-root ["/repo/b" "awaiting_count"])))
+            (expect (= {:project_count 2 :session_count 3 :live_count 1 :awaiting_count 1}
+                       (select-keys overview
+                                    [:project_count :session_count :live_count
+                                     :awaiting_count]))))))))
+  (it "answers empty totals, never an exception, when nothing is persisted"
+      (with-redefs-fn {#'lp/db-info (constantly nil)
+                       #'lp/by-channel (constantly [])
+                       #'bus/live-turns (constantly {})
+                       #'bus/waiting-requests (constantly {})}
+        (fn []
+          (let [overview (state/projects-overview)]
+            (expect (= [] (:projects overview)))
+            (expect (= 0 (:session_count overview))))))))

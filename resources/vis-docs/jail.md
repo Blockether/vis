@@ -614,7 +614,7 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
 - `python_execution` is in-process GraalPy. It cannot receive a per-thread
   Seatbelt profile, but its filesystem is confined and HTTP is routed through
   the same gateway policy. Its raw-socket host guard remains a separate floor.
-- Managed REPLs started by `repl` and managed project test processes are
+- Managed REPLs started by `repl_start` and managed project test processes are
   child processes and are jailed.
 - `repl_connect` attaches to an already-running, user-owned external process.
   Vis did not spawn it and cannot retroactively apply Seatbelt. Stopping the

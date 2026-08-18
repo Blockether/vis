@@ -4,10 +4,13 @@
 
    Mapping a tree is the cheapest question there is and the one a model asks
    most, so it must not cost a wire round trip: `ls(dir)` runs inside the
-   `python_execution` block the model is already in, its rows land in a Python
-   variable, and the model prints only what it needed. As a native tool the same
-   listing spent a whole tool result — plus a schema and a description in every
-   request — to hand back a tree that was usually filtered one line later.
+   `python_execution` block the model is already in, and what it answers is the
+   ANSWER: one compact tree STRING, ready to print, not rows to re-render. As a
+   native tool the same listing spent a whole tool result — plus a schema and a
+   description in every request — to hand back a structure whose only consumer
+   was a formatter. Structured rows cost the reader a second rendering step and
+   cost the context every quoted brace; the tree is the shortest form that still
+   says name, kind, size and shape.
 
    The walk itself stays on the HOST: `editing/list-directories` is fff's
    ignore-aware listing (`.gitignore`, `.ignore`, cache directories, the `vis.yml`
@@ -56,7 +59,7 @@
     {:ext/name "foundation-shim-ls"
      :ext/description
      (str "Sandbox `ls(paths, depth=1, is_hidden=False)` — the directory listing as a Python "
-          "call: fff's ignore-aware walk, directories first, nested rows under `children`.")
+          "call: fff's ignore-aware walk, rendered as one compact printable tree string.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -67,10 +70,13 @@
        :shim/globals ["ls"]
        :shim/description
        (str
-         "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk: "
-         "entries `{name, path, type, size}`, directories first, nested under `children` when "
-         "`depth` > 1. Dotfiles need `is_hidden=True`; gitignored entries are never listed; a file "
-         "raises `NotADirectoryError`. A path is a `str` or a `pathlib.Path`.")
+         "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk as "
+         "a compact STRING: a `path  Nd Nf` header, then one line per entry, directories first "
+         "then alphabetical — a directory is `name/` (with its child count once `depth` expanded "
+         "it), a file is `name  size` (`812`, `7.2k`, `2.1M`). `ls([dir, ...])` renders one "
+         "blank-line separated section per directory. Dotfiles need `is_hidden=True`; gitignored "
+         "entries are never listed; a file raises `NotADirectoryError`. A path is a `str` or a "
+         "`pathlib.Path`.")
        :shim/bindings ls-bridge-bindings
        :shim/source "vis-shims/ls.py"}]}))
 
