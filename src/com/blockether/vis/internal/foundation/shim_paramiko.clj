@@ -7,7 +7,7 @@
    command/path strings and base64 file bytes across the boundary."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.env-python :as env])
+            [com.blockether.vis.internal.sandbox-resources :as res])
   (:import [com.jcraft.jsch ChannelExec ChannelSftp JSch KeyPair Session SftpATTRS]
            [java.io ByteArrayInputStream ByteArrayOutputStream File]
            [java.nio.file Files]
@@ -22,83 +22,18 @@
            [org.apache.sshd.server.keyprovider SimpleGeneratorHostKeyProvider]
            [org.graalvm.polyglot Value]))
 
-;; Host-side registries: handle (long) -> JSch Session / ChannelSftp.
-
-(defonce ^:private sess-registry (atom {}))
-
-(defonce ^:private sess-counter (atom 0))
-
-(defonce ^:private sftp-registry (atom {}))
-
-(defonce ^:private sftp-counter (atom 0))
-
-;; Host-side registry: handle (long) -> running Apache MINA SSHD server.
-
-(defonce ^:private server-registry (atom {}))
-
-(defonce ^:private server-counter (atom 0))
-
-;; Hard cap on concurrently live MINA servers. Each server self-reaps when its
-;; relayed connection ends (see the preamble's `start_server`), so this only
-;; bites a pathological guest that opens servers faster than they close; the
-;; oldest is stopped to keep the registry — and its threads — bounded.
-(def ^:private max-live-servers 32)
-
-;; Each MINA SSHD server uses MINA's OWN default per-server NIO2 io-service
-;; factory (its own AsynchronousChannelGroup: acceptor + per-session
-;; `nio2-thread-N`). We deliberately do NOT share one `Nio2ServiceFactoryFactory`
-;; / executor across servers: MINA 2.15 disposes a shared io-service when the
-;; FIRST server `.stop`s, which poisons every later server (its SSH banner is
-;; never sent, so clients time out) — only the first server per JVM would ever
-;; negotiate. Thread growth is instead bounded by each server's self-reap on
-;; connection close (the `SessionListener` below) plus the `max-live-servers`
-;; cap, which together keep SSHD threads flat across many start/stop cycles.
-
-(def ^:private max-live-sessions
-  "Cap on live SSH sessions / SFTP channels. `max-live-servers` above already
-   bounds the SERVER side for exactly this reason; the client side had no such
-   bound, yet leaks the same way — nothing sweeps these registries when a Vis
-   session ends, so a `connect()` the model never closed holds its socket and
-   threads for the life of the process."
-  32)
-
-(defn- evict-oldest!
-  "Release the oldest entry of `reg` when it is already at `cap`. Handles come
-   from a monotonic counter, so the smallest key IS the oldest."
-  [reg cap release!]
-  (let [snapshot @reg]
-    (when (>= (count snapshot) (long cap))
-      (let [oldest (first (sort (keys snapshot)))]
-        (when-let [v (get snapshot oldest)]
-          (try (release! v) (catch Throwable _ nil))
-          (swap! reg dissoc oldest))))))
-
-(defn- reg-sess!
-  "Register `s` under `scope`. The cap is a backstop for a runaway guest inside
-   ONE session; the scope is what guarantees the socket and its threads never
-   outlive the session that opened them."
-  [scope ^Session s]
-  (evict-oldest! sess-registry max-live-sessions (fn [^Session x] (.disconnect x)))
-  (let [h (swap! sess-counter inc)]
-    (swap! sess-registry assoc h s)
-    (env/own-in-scope! scope ::sessions h)
-    h))
+;; Sessions, SFTP channels and MINA servers all live on the JVM; the guest holds
+;; integer handles. Ownership, the handle tables and the caps are declared in
+;; `:shim/resources` at the bottom of this file — nothing here keeps a registry.
 
 (defn- sess-of
   ^Session [h]
-  (or (get @sess-registry (long h)) (throw (ex-info "SSH session is not active." {}))))
+  (or (res/value ::sessions h) (throw (ex-info "SSH session is not active." {}))))
 
-(defn- reg-sftp!
-  [scope ^ChannelSftp c]
-  (evict-oldest! sftp-registry max-live-sessions (fn [^ChannelSftp x] (.disconnect x)))
-  (let [h (swap! sftp-counter inc)]
-    (swap! sftp-registry assoc h c)
-    (env/own-in-scope! scope ::sftp h)
-    h))
 
 (defn- sftp-of
   ^ChannelSftp [h]
-  (or (get @sftp-registry (long h)) (throw (ex-info "SFTP channel is closed." {}))))
+  (or (res/value ::sftp h) (throw (ex-info "SFTP channel is closed." {}))))
 
 (defn- b64enc [^bytes ba] (.encodeToString (Base64/getEncoder) ba))
 
@@ -155,7 +90,7 @@
         (.put props "compression.c2s" "zlib@openssh.com,zlib,none"))
       (.setConfig sess props)
       (.connect sess (int (or timeout_ms 0)))
-      (reg-sess! scope sess))))
+      (res/open! scope ::sessions sess))))
 
 (defn- op-exec
   [conn-h ^String command timeout-ms ^String stdin-b64]
@@ -194,16 +129,12 @@
 
 (defn- op-ssh-active
   [conn-h]
-  (boolean (when-let [^Session s (get @sess-registry (long conn-h))]
+  (boolean (when-let [^Session s (res/value ::sessions conn-h)]
              (.isConnected s))))
 
 (defn- op-ssh-close
-  "Disconnect ONE session. Also the scope releaser, so it stays idempotent and
-   silent for a handle that is already gone."
-  [conn-h]
-  (when-let [^Session s (get @sess-registry (long conn-h))]
-    (.disconnect s)
-    (swap! sess-registry dissoc (long conn-h)))
+  [scope conn-h]
+  (res/close! scope ::sessions conn-h)
   nil)
 
 ;; SFTP operations (JSch ChannelSftp).
@@ -229,7 +160,7 @@
      (.openChannel sess "sftp")]
 
     (.connect ch)
-    (reg-sftp! scope ch)))
+    (res/open! scope ::sftp ch)))
 
 (defn- op-sftp-listdir
   [h ^String path attr?]
@@ -293,10 +224,8 @@
 (defn- op-sftp-pwd [h] (.pwd (sftp-of h)))
 
 (defn- op-sftp-close
-  [h]
-  (when-let [^ChannelSftp ch (get @sftp-registry (long h))]
-    (.disconnect ch)
-    (swap! sftp-registry dissoc (long h)))
+  [scope h]
+  (res/close! scope ::sftp h)
   nil)
 
 (defn- ssh-envelope
@@ -381,19 +310,8 @@
          (finally (.dispose kp)))))
 
 (defn- reg-server!
-  [entry]
-  ;; Keep the live-server set bounded: if a guest leaks servers faster than they
-  ;; self-reap, stop the oldest so MINA instances (and their threads) can't grow
-  ;; without limit.
-  (let [snapshot @server-registry]
-    (when (>= (count snapshot) (long max-live-servers))
-      (let [oldest (first (sort (keys snapshot)))]
-        (when-let [e (get snapshot oldest)]
-          (try (.stop ^SshServer (:server e) true) (catch Throwable _ nil))
-          (swap! server-registry dissoc oldest)))))
-  (let [h (swap! server-counter inc)]
-    (swap! server-registry assoc h entry)
-    h))
+  [scope entry]
+  (res/open! scope ::servers entry))
 
 (defn- guest->clj
   "Coerce a polyglot return `Value` (or a plain value) to a Clojure scalar."
@@ -450,8 +368,8 @@
    `-timer-thread` never outlive the connection. This does NOT depend on the guest
    Python `_reap` daemon — GraalPy cancels that thread when the context closes
    (logging \"Could not stop thread\"), which used to strand the MINA server and leak
-   its threads (and grow `server-registry` unbounded across turns/sessions)."
-  [auth-pw-fn forward-fn auth-none-fn]
+   its threads (and leak MINA instances across turns/sessions)."
+  [scope auth-pw-fn forward-fn auth-none-fn]
   (let
     [hostkey
      (.resolve (Files/createTempDirectory "vis-sshd-hostkey" (make-array FileAttribute 0))
@@ -481,7 +399,7 @@
                                  (canConnect [_ _type _address _session] true))))
 
      h
-     (reg-server! {:server server :hostkey hostkey})]
+     (reg-server! scope {:server server :hostkey hostkey})]
 
     ;; Reap the instant the relayed SSH session ends, on a fresh daemon thread so
     ;; the stop never re-enters MINA's own session-close callback.
@@ -491,7 +409,7 @@
                              (sessionClosed [_ _sess]
                                (doto (Thread. ^Runnable
                                               (fn []
-                                                (op-server-stop h))
+                                                (op-server-stop scope h))
                                               "vis-sshd-reap")
                                  (.setDaemon true)
                                  (.start)))))
@@ -500,15 +418,9 @@
 
 (defn- op-server-stop
   "Stop and deregister the MINA server bound to handle `h`; returns nil."
-  [h]
-  (when-let [entry (get @server-registry (long h))]
-    (try (.stop ^SshServer (:server entry) true) (catch Throwable _ nil))
-    (swap! server-registry dissoc (long h)))
+  [scope h]
+  (res/close! scope ::servers h)
   nil)
-
-(env/register-scope-releaser! ::sessions op-ssh-close)
-
-(env/register-scope-releaser! ::sftp op-sftp-close)
 
 (defn- paramiko-bridge-bindings
   "Host callables (pure-Java JSch) the paramiko shim delegates to."
@@ -520,8 +432,7 @@
    "__vis_ssh_active__" (fn [h]
                           (ssh-envelope #(op-ssh-active h)))
    "__vis_ssh_close__" (fn [h]
-                         (ssh-envelope #(do (env/disown-in-scope! scope ::sessions (long h))
-                                            (op-ssh-close h))))
+                         (ssh-envelope #(op-ssh-close scope h)))
    "__vis_sftp_open__" (fn [h]
                          (ssh-envelope #(op-sftp-open scope h)))
    "__vis_sftp_listdir__" (fn [h path attr?]
@@ -547,16 +458,15 @@
    "__vis_sftp_pwd__" (fn [h]
                         (ssh-envelope #(op-sftp-pwd h)))
    "__vis_sftp_close__" (fn [h]
-                          (ssh-envelope #(do (env/disown-in-scope! scope ::sftp (long h))
-                                             (op-sftp-close h))))
+                          (ssh-envelope #(op-sftp-close scope h)))
    "__vis_key_generate__" (fn [kind bits passphrase]
                             (ssh-envelope #(op-key-generate kind bits passphrase)))
    "__vis_key_load__" (fn [private-b64 passphrase]
                         (ssh-envelope #(op-key-load private-b64 passphrase)))
    "__vis_server_start__" (fn [auth-pw forward auth-none]
-                            (ssh-envelope #(op-server-start auth-pw forward auth-none)))
+                            (ssh-envelope #(op-server-start scope auth-pw forward auth-none)))
    "__vis_server_stop__" (fn [h]
-                           (ssh-envelope #(op-server-stop h)))})
+                           (ssh-envelope #(op-server-stop scope h)))})
 
 ;; Python preamble: publishes a paramiko-compatible module into sys.modules.
 
@@ -592,6 +502,19 @@
             "Import and socket-less `start_server()` start nothing; live servers cap at 32 and "
             "self-reap. Not supported: `invoke_shell`; use `exec_command`/SFTP.")
        :shim/bindings paramiko-bridge-bindings
+       :shim/resources
+       {::sessions {:resource/label "SSH session"
+                    :resource/release (fn [_h ^Session s] (.disconnect s))
+                    :resource/max 32}
+        ::sftp {:resource/label "SFTP channel"
+                :resource/release (fn [_h ^ChannelSftp c] (.disconnect c))
+                :resource/max 32}
+        ;; Each server also self-reaps when its relayed connection ends (the
+        ;; `SessionListener` above), so the cap only bites a guest that opens
+        ;; them faster than they close.
+        ::servers {:resource/label "SSH server"
+                   :resource/release (fn [_h entry] (.stop ^SshServer (:server entry) true))
+                   :resource/max 32}}
        :shim/source "vis-shims/paramiko.py"}]}))
 
 (vis/register-extension! vis-extension)

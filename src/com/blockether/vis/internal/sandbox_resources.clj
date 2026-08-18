@@ -1,0 +1,182 @@
+(ns com.blockether.vis.internal.sandbox-resources
+  "Host objects a sandbox shim lends to the guest, and the lifetime they die on.
+
+   A shim cannot hand the guest the real thing. The sandbox runs with
+   `allowAllAccess false` and no host-access grant, so guest Python may never
+   hold or call a JVM object — the model would reach straight through it. What
+   the guest gets is an INTEGER HANDLE: a name for a thing it can ask about but
+   never touch.
+
+   That leaves the thing itself on the host, and something has to own it. Every
+   shim used to answer that question for itself, with its own `(atom {})`, its
+   own counter and its own close path, so \"who frees this, and when?\" was
+   re-decided per shim and got a different answer each time — usually \"the guest
+   calls close(), and if it doesn't, nobody\". A model that hit an error, or a
+   session that was cancelled, then left a decoded image (an `int[]` of w*h*4:
+   48 MB for one 4000x3000 frame), a JDBC connection or an SSH socket alive until
+   the PROCESS died.
+
+   Nor can the guest be trusted to be the owner even in principle. On CPython the
+   object would die with the scope that held it, because CPython refcounts.
+   GraalPy does not: a file dropped without `with open(...)` is closed whenever
+   the JVM GC gets there (see `bin/vis-agent`), so guest-side ownership trades a
+   bounded memory leak for an unbounded descriptor leak — and this codebase has
+   already been wedged by EMFILE once.
+
+   So ownership lives here, and a shim DECLARES it rather than implementing it:
+
+       :shim/resources
+       {::conns {:resource/label   \"sqlite connection\"
+                 :resource/release (fn [_h ^Connection c] (.close c))
+                 :resource/max     64}}
+
+   `install-sandbox-shims!` reads that declaration and wires it. The shim then
+   uses [[open!]] / [[value]] / [[close!]] and never keeps a registry of its own,
+   which is the point: there is no per-shim bookkeeping left to get wrong, and
+   nothing to remember at teardown.
+
+   A handle is owned by a SCOPE — the Context whose guest asked for it. The scope
+   id is `System/identityHashCode` of that Context: an INT, never the Context.
+   That is load-bearing, not tidiness. A strong reference to a Context in a
+   process-global map would pin it, and a pinned Context is exactly the leak
+   `env-python/new-engine!` exists to prevent, since an Engine retains every
+   Context ever built on it."
+  (:require [taoensso.telemere :as tel]))
+
+(defonce ^:private kinds
+  ;; kind -> {:resource/release :resource/label :resource/max}. Declared by the
+  ;; engine from `:shim/resources`, never by a shim calling in.
+  (atom {}))
+
+(defonce ^:private tables
+  ;; kind -> {handle value}
+  (atom {}))
+
+(defonce ^:private counters
+  ;; kind -> last handle. Monotonic, so the smallest key IS the oldest entry.
+  (atom {}))
+
+(defonce ^:private owned
+  ;; scope -> {kind #{handle}}. Nothing in here is a Context.
+  (atom {}))
+
+(defn declare-kinds!
+  "Register `resources` (a shim's `:shim/resources` map) so its kinds can be
+   opened and released. Idempotent: shims are installed once per Context, and a
+   re-declaration of the same kind is the same declaration."
+  [resources]
+  (when (seq resources) (swap! kinds merge resources))
+  nil)
+
+(defn declared?
+  "Is `kind` declared? False means a shim called [[open!]] for something it never
+   declared — a leak, since nothing would know how to free it."
+  [kind]
+  (contains? @kinds kind))
+
+(defn scope-of
+  "Scope id of `ctx` — its identity hash, never the Context itself (see the ns
+   docstring). nil ctx → nil, which owns nothing."
+  [ctx]
+  (when ctx (System/identityHashCode ctx)))
+
+(defn value
+  "The live value behind `handle`, or nil once it is gone."
+  [kind handle]
+  (get (get @tables kind) (long handle)))
+
+(defn update!
+  "Apply `f` to the value behind `handle` in place. No-op once it is gone, so a
+   late write from a half-finished op cannot resurrect a freed entry."
+  [kind handle f & args]
+  (swap! tables update kind
+         (fn [t]
+           (if (contains? t (long handle)) (apply update t (long handle) f args) t)))
+  nil)
+
+(defn- release!
+  "Run `kind`'s declared release for one entry. Best-effort by construction: one
+   bad release must never abort a teardown, or everything after it leaks."
+  [kind handle v]
+  (when-let [f (:resource/release (get @kinds kind))]
+    (try (f handle v)
+         (catch Throwable t
+           (tel/log! {:level :warn :id ::release-failed :data {:kind kind :handle handle} :error t}
+                     (str "sandbox resource " kind " failed to release"))))))
+
+(defn- forget!
+  "Drop `handle` from its table and from `scope`'s ownership, returning the value
+   it held."
+  [scope kind handle]
+  (let
+    [h
+     (long handle)
+
+     v
+     (value kind h)]
+
+    (swap! tables update kind dissoc h)
+    (when scope (swap! owned update-in [scope kind] disj h))
+    v))
+
+(defn close!
+  "Release ONE handle and forget it. Idempotent and silent for a handle that is
+   already gone, because it is reached from both the guest's own `close()` and
+   from teardown."
+  [scope kind handle]
+  (when-let [v (forget! scope kind handle)] (release! kind handle v))
+  nil)
+
+(defn- evict-oldest!
+  "Enforce `:resource/max` before minting a new handle: release the oldest entry
+   so a runaway guest inside ONE session cannot grow a kind without limit. The
+   cap is a backstop; the SCOPE is what ties a lifetime to a lifetime."
+  [kind]
+  (when-let [cap (:resource/max (get @kinds kind))]
+    (let [t (get @tables kind)]
+      (when (>= (count t) (long cap))
+        (let [oldest (first (sort (keys t)))]
+          ;; The evicted entry may belong to another live scope, so sweep it out
+          ;; of whichever scope owns it rather than guessing.
+          (swap! owned (fn [m] (reduce-kv (fn [acc s ks] (assoc acc s (update ks kind disj oldest)))
+                                          {}
+                                          m)))
+          (when-let [v (forget! nil kind oldest)] (release! kind oldest v))
+          (tel/log! {:level :debug :id ::evicted-oldest :data {:kind kind :handle oldest :cap cap}}
+                    (str "sandbox resource " kind " hit its cap; released the oldest")))))))
+
+(defn open!
+  "Take `v` under `kind`, own it for `scope`, and return the guest's handle.
+
+   A nil scope owns nothing — that is the shim-trigger probe, which is
+   process-wide and closes its own throwaway Context immediately."
+  [scope kind v]
+  (when-not (declared? kind)
+    (throw (ex-info (str "sandbox resource " kind " was opened but never declared -"
+                         " add it to the shim's :shim/resources so teardown knows how to free it")
+                    {:type ::undeclared-resource :kind kind})))
+  (evict-oldest! kind)
+  (let [h (long (get (swap! counters update kind (fnil inc 0)) kind))]
+    (swap! tables update kind assoc h v)
+    (when scope (swap! owned update-in [scope kind] (fnil conj #{}) h))
+    h))
+
+(defn release-scope!
+  "Release every handle `ctx`'s guest still holds, then drop the scope.
+
+   Called from `dispose-environment!` (a session) and `close-quietly!` (an
+   extension context), BEFORE the Context closes so a release still has a live
+   handle to work with."
+  [ctx]
+  (when-let [scope (scope-of ctx)]
+    (let [held (get @owned scope)]
+      (swap! owned dissoc scope)
+      (doseq [[kind handles] held
+              h handles]
+        (when-let [v (forget! nil kind h)] (release! kind h v)))))
+  nil)
+
+(defn live-count
+  "How many handles of `kind` are live. For tests and diagnostics."
+  [kind]
+  (count (get @tables kind)))

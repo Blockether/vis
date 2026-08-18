@@ -32,6 +32,7 @@
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.sandbox-resources :as sandbox-resources]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -886,11 +887,27 @@
   (s/or :map (s/map-of string? ifn?)
         :fn ifn?))
 
+;; What a shim LENDS the guest: host objects it hands out as integer handles.
+;; Declaring them is how a shim says who frees them and when — the engine wires
+;; it at install, so there is no per-shim bookkeeping to forget. See
+;; `internal.sandbox-resources`.
+(s/def :resource/label non-blank-string?)
+
+(s/def :resource/release ifn?) ; (fn [handle value]) — frees ONE entry
+
+(s/def :resource/max pos-int?) ; backstop cap for a runaway guest in ONE session
+
+(s/def ::shim-resource (s/keys :req [:resource/label :resource/release] :opt [:resource/max]))
+
+;; Keys are namespaced to the shim that owns them, so two shims cannot collide.
+(s/def :shim/resources (s/map-of qualified-keyword? ::shim-resource))
+
 (s/def :shim/source non-blank-string?)
 
 (s/def ::sandbox-shim
   (s/keys :req [:shim/name :shim/source]
-          :opt [:shim/imports :shim/globals :shim/description :shim/docs :shim/bindings]))
+          :opt [:shim/imports :shim/globals :shim/description :shim/docs :shim/bindings
+                :shim/resources]))
 
 (s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
 ;; Python sandbox contribution.
@@ -2759,6 +2776,13 @@
 
      ns-sym
      (:ext/name ext)]
+
+    ;; What this extension's shims LEND the guest is wired HERE, at registration,
+    ;; rather than when a Context installs them: declaring is the shim's whole
+    ;; obligation, and it must hold from the moment the shim exists — not from
+    ;; the first time somebody happens to build a sandbox.
+    (doseq [shim (:ext/sandbox-shims ext)]
+      (sandbox-resources/declare-kinds! (:shim/resources shim)))
 
     ;; Slash paths must be unique across the union of `:ext/slash-commands` from every active
     ;; extension. Reject registration when this extension declares a `[parent name]`

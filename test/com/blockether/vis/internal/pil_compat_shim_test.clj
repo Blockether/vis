@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-pil :as shim-pil]
+            [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.util Arrays Base64]
@@ -17,16 +18,20 @@
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
+(def ^:private images-kind
+  :com.blockether.vis.internal.foundation.shim-pil/images)
+
 (defn- live-raster?
-  "Does the host registry still hold this handle's raster? The registry is what
-   the Java heap actually pays for; the Python `Image` is a handle wrapper."
+  "Does the host still hold this handle's raster? That table is what the Java
+   heap actually pays for; the Python `Image` is a handle wrapper. It moved into
+   `sandbox-resources` when shims stopped hand-rolling registries."
   [h]
-  (contains? (deref @#'shim-pil/registry) (long h)))
+  (some? (res/value images-kind (long h))))
 
 (defn- live-rasters
-  "How many rasters the host registry is holding right now."
+  "How many rasters the host is holding right now."
   ^long []
-  (count (deref @#'shim-pil/registry)))
+  (res/live-count images-kind))
 
 (defmacro with-python-context
   [& body]

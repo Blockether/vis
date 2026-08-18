@@ -28,6 +28,7 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
+            [com.blockether.vis.internal.sandbox-resources :as res]
             [flatland.ordered.map :as omap]
             [taoensso.telemere :as tel])
   (:import [org.graalvm.polyglot Context Context$Builder Engine Value PolyglotAccess
@@ -1551,82 +1552,6 @@
   [shim]
   (extension/shim-src shim))
 
-;; ── Sandbox scope — host objects a guest opened, released when its Context dies ──
-;;
-;; A shim hands the guest an INTEGER handle and keeps the real thing (a decoded
-;; image, a JDBC connection, an SSH session) in a process-global registry. The
-;; guest is supposed to hand it back with `close()`. When it does not — and a
-;; model that hit an error, or a session that was cancelled, routinely does not —
-;; that object used to live until the process died: long after the session's
-;; Context, its Engine and its env were gone. Capping a registry only bounds the
-;; damage; it never ties the object's life to the session's.
-;;
-;; So every handle is OWNED by a scope, and the scope is released when the
-;; Context that opened it is disposed.
-;;
-;; The scope id is `System/identityHashCode` of the Context — an INT, never the
-;; Context itself. That is deliberate and load-bearing: a strong reference to a
-;; Context anywhere in a process-global map would pin it, and pinning a Context
-;; is exactly the leak `new-engine!` exists to prevent. (`detached-guest-work`
-;; keys itself the same way, for the same reason.)
-
-(defonce ^:private scope-releasers
-  ;; registry-key -> (fn [handle]) releasing ONE handle of that registry.
-  ;; Declared once per shim, at load, by `register-scope-releaser!`.
-  (atom {}))
-
-(defonce ^:private scope-owned
-  ;; scope-id -> {registry-key #{handle}}. Nothing in here is a Context.
-  (atom {}))
-
-(defn register-scope-releaser!
-  "Declare how to release ONE handle of `reg-key`. Called once per shim at load;
-   `release!` must be idempotent and must never throw for an already-gone handle."
-  [reg-key release!]
-  (swap! scope-releasers assoc reg-key release!)
-  nil)
-
-(defn scope-of
-  "The scope id of `ctx` — its identity hash, never the Context (see above)."
-  ^long [ctx]
-  (System/identityHashCode ctx))
-
-(defn own-in-scope!
-  "Record that `handle` of `reg-key` belongs to `scope`. A nil scope (a shim
-   invoked outside any context, e.g. the trigger probe) owns nothing."
-  [scope reg-key handle]
-  (when scope (swap! scope-owned update-in [scope reg-key] (fnil conj #{}) handle))
-  handle)
-
-(defn disown-in-scope!
-  "Forget `handle`: the guest closed it itself, so the scope must not close it
-   again at teardown."
-  [scope reg-key handle]
-  (when scope (swap! scope-owned update-in [scope reg-key] disj handle))
-  nil)
-
-(defn release-scope!
-  "Release every handle still owned by `ctx`'s scope, then drop the scope.
-
-   Called from `dispose-environment!` BEFORE the Context closes, so a release
-   that needs a live handle still has one. Best-effort per handle: one shim's
-   bad release must never abort the rest of a teardown."
-  [ctx]
-  (when ctx
-    (let
-      [scope
-       (scope-of ctx)
-
-       owned
-       (get @scope-owned scope)]
-
-      (swap! scope-owned dissoc scope)
-      (doseq [[reg-key handles] owned]
-        (when-let [release! (get @scope-releasers reg-key)]
-          (doseq [h handles]
-            (try (release! h) (catch Throwable _ nil)))))
-      nil)))
-
 (defn- wire-shim-bindings!
   "Wire a shim's host `:shim/bindings` (`{py-name -> fn}`, or a 0-arg fn -> one)
    onto the sandbox globals `g` as Python callables. Cheap (proxies only) and
@@ -1979,7 +1904,7 @@
              (tel/log! {:level :warn :id ::lazy-shim-runtime-failed}
                        (str "lazy-shim runtime failed to install: " (or (.getMessage t) t))))))
     (doseq [{:keys [shim src sid trig lazy?] :as e} entries]
-      (try (wire-shim-bindings! g shim (scope-of ctx))
+      (try (wire-shim-bindings! g shim (res/scope-of ctx))
            (if (and lazy? (contains? id->entry sid))
              (do (.putMember g
                              "__vis_lazy_spec_json__"

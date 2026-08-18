@@ -12,7 +12,7 @@
    `sys.modules` (so `from PIL import Image` works) and staples them onto builtins.
 
    Images live HOST-side as `Raster`s -- a plain packed-0xAARRGGBB `int[]` plus
-   width/height -- in a per-JVM registry keyed by an integer handle; the Python
+   width/height -- in a per-SESSION handle table keyed by an integer; the Python
    `Image` object is a thin handle wrapper. All pixel ops, drawing, filtering,
    geometry and codec work happen on the host; only small metadata vectors and
    base64 blobs cross the strings-only boundary. Codecs, resampling, rotation and
@@ -22,17 +22,14 @@
   (:require [clojure.string :as str]
             [com.blockether.imaging :as im]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.internal.foundation.gif :as gif]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import [java.util Base64]))
 
-;; Host-side image registry: handle (long) -> {:img Raster :mode String}.
+;; Images live on the JVM as {:img Raster :mode String}; the guest holds integer
+;; handles. The table, the cap and the release are declared in `:shim/resources`.
 ;; The Python Image is just a handle; the pixels stay on the host.
-
-(defonce ^:private registry (atom {}))
-
-(defonce ^:private counter (atom 0))
 
 ;; Live draw runs: handle -> the cdylib image a run of consecutive ImageDraw
 ;; ops shares, plus the ops queued against it. Converting the whole canvas into
@@ -86,16 +83,13 @@
    unclosed image outliving its session is the single most expensive leak this
    shim can produce."
   [^Raster img mode]
-  (let [h (swap! counter inc)]
-    (swap! registry assoc h {:img img :mode mode})
-    (env/own-in-scope! *scope* ::images h)
-    h))
+  (res/open! *scope* ::images {:img img :mode mode}))
 
 (defn- raw-entry
   "Registry entry WITHOUT flushing an in-flight draw run. Only the flush path
    itself may read an entry this way; anything else would observe stale pixels."
   [h]
-  (get @registry (long h)))
+  (res/value ::images h))
 
 (defn- entry
   "The registry entry for a LIVE handle, its drawing flushed. A handle with no
@@ -114,11 +108,10 @@
   "Free ONE image. Also the scope releaser, so it stays idempotent and silent for
    a handle that is already gone."
   [h]
-  (env/disown-in-scope! *scope* ::images (long h))
   (swap! pending-draws dissoc (long h))
   (some-> (take-draw! h)
           im/close!)
-  (swap! registry dissoc (long h))
+  (res/close! *scope* ::images h)
   nil)
 
 ;; Pixel / colour helpers. Pixels are handled as packed 0xAARRGGBB longs.
@@ -386,8 +379,7 @@
         (dotimes [y (long h)]
           (dotimes [x (long w)]
             (.setRGB img x y p)))))
-    (put-img! img (str mode))
-    (meta-of @counter)))
+    (meta-of (put-img! img (str mode)))))
 
 (def ^:private max-decode-bytes
   "Ceiling on the RGBA8 buffer ONE decode may allocate: 512 MiB, the `image`
@@ -442,7 +434,7 @@
      h
      (put-img! img mode)]
 
-    (swap! registry update
+    (res/update! ::images
       h
       assoc
       :frames (mapv #(select-keys % [:argb :delay-ms :disposal]) frames)
@@ -502,7 +494,7 @@
        [img mode]
        (frame-raster argb (.getWidth cur) (.getHeight cur))]
 
-      (swap! registry update (long h) assoc :img img :mode mode :frame n)
+      (res/update! ::images (long h) assoc :img img :mode mode :frame n)
       (meta-of h))))
 
 (defn- normalise-format
@@ -611,7 +603,7 @@
       ;; a P image copies its palette with it -- `getpalette` on the copy has to
       ;; answer the same table Pillow's does.
       (when palette
-        (swap! registry update nh assoc :palette palette :indices indices :transparent transparent))
+        (res/update! ::images nh assoc :palette palette :indices indices :transparent transparent))
       (meta-of nh))))
 
 (defn- resample->filter
@@ -798,7 +790,7 @@
   "Register a quantisation result as one P image, palette and all."
   [{:keys [img palette indices transparent]}]
   (let [h (put-img! img "P")]
-    (swap! registry update h assoc :palette palette :indices indices :transparent transparent)
+    (res/update! ::images h assoc :palette palette :indices indices :transparent transparent)
     h))
 
 (defn- op-quantize
@@ -853,7 +845,7 @@
 
           (aset ind i (unchecked-byte idx))
           (.setRGB img x y (argb 255 (ch c 16) (ch c 8) (ch c 0))))))
-    (swap! registry update (long h) assoc :mode "P" :palette pal :indices ind :transparent nil)
+    (res/update! ::images (long h) assoc :mode "P" :palette pal :indices ind :transparent nil)
     (meta-of h)))
 
 (defn- op-save-all
@@ -2246,8 +2238,6 @@
   (binding [*scope* scope]
     (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))]))))
 
-(env/register-scope-releaser! ::images free-img!)
-
 (defn- pil-bridge-bindings
   "Host callables (imaging-backed) the PIL shim delegates to. All image ops go
    through here; the Python side only holds integer handles + base64 blobs."
@@ -2356,6 +2346,15 @@
          "Rust-backed without java.desktop. Rejects images over 512 MiB RGBA. Not supported: some "
          "color conversions and `Image.transform` methods (`ValueError`).")
        :shim/bindings pil-bridge-bindings
+       :shim/resources
+       {::images {:resource/label "PIL image"
+                  ;; A decoded image is an on-heap int[] of w*h*4 — 48 MB for one
+                  ;; 4000x3000 frame — so this is the most expensive thing a
+                  ;; guest can forget to close.
+                  :resource/release (fn [h _entry]
+                                      (swap! pending-draws dissoc (long h))
+                                      (some-> (take-draw! h) im/close!))
+                  :resource/max 256}}
        :shim/source "vis-shims/pil.py"}]}))
 
 (vis/register-extension! vis-extension)

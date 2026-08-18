@@ -9,6 +9,7 @@
    key objects, connect-failure mapping, and SFTPAttributes marshaling."
   (:require [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.shim-paramiko :as shim]
+            [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.jcraft.jsch JSch Session]
@@ -284,7 +285,10 @@
     "stops and deregisters the MINA server host-side the moment its SSH session closes, so a started server never outlives its connection (independent of the guest Python `_reap` thread the GraalPy context cancels on close)"
     (let
       [info
+       ;; nil scope: this test owns the server's lifetime itself (it stops it in
+       ;; the `finally` below) rather than through a Context teardown.
        ((deref #'shim/op-server-start)
+         nil
          (fn [_u _p]
            0)
          (fn [_a _p]
@@ -298,10 +302,13 @@
        port
        (int (get info "port"))
 
-       registry
-       (deref #'shim/server-registry)]
+       ;; The handle table moved into `sandbox-resources` when shims stopped
+       ;; hand-rolling registries; a live handle is one that still resolves.
+       live?
+       (fn [] (some? (res/value :com.blockether.vis.internal.foundation.shim-paramiko/servers
+                                handle)))]
 
-      (expect (contains? @registry handle))
+      (expect (live?))
       ;; A completed SSH session that then disconnects is what fires MINA's
       ;; `sessionClosed` in production (the guest relay carries a real SSH
       ;; connection). The handshake does a fresh per-server RSA host-key gen + KEX,
@@ -321,11 +328,11 @@
           (.disconnect sess)
           ;; The reap runs on a daemon thread fired by the SessionListener; poll briefly.
           (expect (loop [tries 100]
-                    (cond (not (contains? @registry handle)) true
+                    (cond (not (live?)) true
                           (zero? tries) false
                           :else (do (Thread/sleep 10) (recur (dec tries))))))))
       ;; Never leak this test's server into later tests, even if the reap was skipped.
-      ((deref #'shim/op-server-stop) handle))))
+      ((deref #'shim/op-server-stop) nil handle))))
 
 (def ^:private none-auth-server-src
   "Guest paramiko SSH server whose `ServerInterface` advertises and accepts `none`

@@ -30,6 +30,7 @@
     [com.blockether.vis.internal.python-extensions :as python-extensions]
     [com.blockether.vis.internal.render :as render]
     [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.sandbox-resources :as res]
     [com.blockether.vis.internal.session-model :as session-model]
     [com.blockether.vis.internal.prompt :as prompt]
     [com.blockether.vis.internal.prompt-templates :as prompt-templates]
@@ -9790,7 +9791,7 @@
     ;; hand back every host object this session's guest opened and never closed
     ;; (images, DB connections, SSH sessions). Without it they outlive the
     ;; Context, the Engine and the session itself.
-    (try (env/release-scope! python-context) (catch Throwable _ nil))
+    (try (res/release-scope! python-context) (catch Throwable _ nil))
     (try (.close ^Context python-context true) (catch Throwable _ nil)))
   ;; AFTER the context, and never skipped: a GraalPy Engine retains every Context
   ;; ever built on it, so closing the context alone gives back NOTHING. This close

@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.notifications :as notifications]
             [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.python-process-handler :as process-handler]
             [com.blockether.vis.contract.python-host :as contract]
@@ -1520,8 +1521,8 @@
   (when ctx
     (let [engine (try (.getEngine ^Context ctx) (catch Throwable _ nil))]
       ;; Host objects this context's guest opened, before it stops being able to
-      ;; hand them back (see `env-python/release-scope!`).
-      (try (env/release-scope! ctx) (catch Throwable _ nil))
+      ;; hand them back (see `sandbox-resources/release-scope!`).
+      (try (res/release-scope! ctx) (catch Throwable _ nil))
       (try (.close ^Context ctx true) (catch Throwable _ nil))
       (when engine (try (.close ^Engine engine true) (catch Throwable _ nil))))))
 

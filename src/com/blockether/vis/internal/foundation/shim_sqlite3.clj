@@ -13,50 +13,17 @@
    no-op flush and data persists without it (the forgiving DB-API path)."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.env-python :as env])
+            [com.blockether.vis.internal.sandbox-resources :as res])
   (:import [java.sql DriverManager Connection PreparedStatement ResultSet]
            [java.util ArrayList Base64]))
 
-;; Host-side connection registry: handle (long) -> java.sql.Connection.
-;; The Python Connection/Cursor are just handles; the DB lives on the JVM.
-
-(defonce ^:private db-registry (atom {}))
-
-(defonce ^:private db-counter (atom 0))
-
-(def ^:private max-live-conns
-  "Cap on live connections in the registry. An entry is normally dropped by the
-   guest's own `conn.close()`, but nothing sweeps this registry when a SESSION
-   ends: `:shim/bindings` is a 0-arg factory with no session or context, so a
-   handle the model never closed would otherwise outlive its Context, its Engine
-   and its whole session, for the life of the process. The cap bounds that at a
-   number no honest guest reaches — the same shape `max-live-servers` already
-   uses for MINA servers."
-  64)
-
-(defn- reg-conn!
-  "Register `c` under `scope` and return its new integer handle, closing the
-   OLDEST connection first when the registry is already at [[max-live-conns]].
-   Handles come from a monotonic counter, so the smallest key IS the oldest.
-
-   `scope` ties the connection's life to the Context that opened it: the cap is
-   only a backstop for a runaway guest INSIDE one session, while the scope is
-   what guarantees nothing outlives its session."
-  [scope ^Connection c]
-  (let [snapshot @db-registry]
-    (when (>= (count snapshot) (long max-live-conns))
-      (let [oldest (first (sort (keys snapshot)))]
-        (when-let [^Connection old (get snapshot oldest)]
-          (try (.close old) (catch Throwable _ nil))
-          (swap! db-registry dissoc oldest)))))
-  (let [h (swap! db-counter inc)]
-    (swap! db-registry assoc h c)
-    (env/own-in-scope! scope ::conns h)
-    h))
+;; The DB lives on the JVM; the Python Connection/Cursor are just handles.
+;; Ownership, the handle table and the cap all come from `:shim/resources` below
+;; — this shim keeps no registry of its own.
 
 (defn- conn-of
   ^Connection [h]
-  (or (get @db-registry (long h)) (throw (ex-info "Cannot operate on a closed database." {}))))
+  (or (res/value ::conns h) (throw (ex-info "Cannot operate on a closed database." {}))))
 
 (def ^:private blob-tag "__vis_blob__")
 
@@ -182,7 +149,7 @@
      (DriverManager/getConnection url)]
 
     (.setAutoCommit c true)
-    (reg-conn! scope c)))
+    (res/open! scope ::conns c)))
 
 (defn- op-execute
   [conn-h ^String sql params]
@@ -276,15 +243,11 @@
   nil)
 
 (defn- op-close
-  "Close ONE connection. Also used as the scope releaser, so it must stay
-   idempotent and silent for a handle that is already gone."
-  [conn-h]
-  (when-let [^Connection c (get @db-registry (long conn-h))]
-    (try (.close c) (catch Throwable _ nil))
-    (swap! db-registry dissoc (long conn-h)))
+  "The guest's own `conn.close()`. Idempotent: `res/close!` is silent for a
+   handle that is already gone, and teardown reaches the same release."
+  [scope conn-h]
+  (res/close! scope ::conns conn-h)
   nil)
-
-(env/register-scope-releaser! ::conns op-close)
 
 (defn- op-total-changes
   [conn-h]
@@ -318,8 +281,7 @@
    "__vis_sqlite_rollback__" (fn [h]
                                (sqlite-envelope #(op-rollback h)))
    "__vis_sqlite_close__" (fn [h]
-                            (sqlite-envelope #(do (env/disown-in-scope! scope ::conns (long h))
-                                                  (op-close h))))
+                            (sqlite-envelope #(op-close scope h)))
    "__vis_sqlite_total_changes__" (fn [h]
                                     (sqlite-envelope #(op-total-changes h)))})
 
@@ -346,6 +308,12 @@
          "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. Bindings "
          "support int/float/str/None only, else `InterfaceError`.")
        :shim/bindings sqlite-bridge-bindings
+       :shim/resources
+       {::conns {:resource/label "sqlite connection"
+                 :resource/release (fn [_h ^Connection c] (.close c))
+                 ;; Backstop for a runaway guest inside ONE session; the scope is
+                 ;; what stops a connection outliving the session that opened it.
+                 :resource/max 64}}
        :shim/source "vis-shims/sqlite3.py"}]}))
 
 (vis/register-extension! vis-extension)
