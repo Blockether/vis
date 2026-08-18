@@ -895,7 +895,9 @@ def _live_apply(view, op):
         # A new node joins the row that holds the node it named, not the top of
         # the view: `after` is a sibling, so the arrangement stays the one declared.
         siblings, at = (
-            (view["nodes"], len(view["nodes"])) if found is None else (found[0], found[1] + 1)
+            (view["nodes"], len(view["nodes"]))
+            if found is None
+            else (found[0], found[1] + 1)
         )
         siblings.insert(at, json.loads(json.dumps(spec)))
         return "+ {}".format(spec.get("label") or spec.get("id"))
