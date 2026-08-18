@@ -23,9 +23,10 @@
    API (no arbitrary Java interop: `allowAllAccess` stays false and no
    host classes are exposed).
 
-   Every context is built on `env-python/shared-engine` — the ONE
-   process-wide Engine that makes context creation safe even while a
-   sandbox eval is running (see the deadlock notes there). Calls into an
+   Every context gets its OWN Engine (`env-python/new-engine!`) and closes
+   it with the context: an Engine retains every Context ever built on it, so
+   a shared one would keep every reloaded extension's Python alive for the
+   life of the process. Calls into an
    extension (tool, activation, prompt, slash, op hook) are serialized
    with `locking` on its context, the same proven pattern as the printer
    context.
@@ -316,7 +317,7 @@
 
      ^Context ctx
      (-> (Context/newBuilder (into-array String ["python"]))
-         (.engine ^Engine @env/shared-engine)
+         (.engine ^Engine (env/new-engine!))
          (.allowAllAccess false)
          (.allowIO IOAccess/ALL)
          (.allowCreateThread true)
@@ -1506,12 +1507,20 @@
     {:dir dest :code-sha (code-sha dest)}))
 
 (defn- close-quietly!
-  "Close a GraalPy context, swallowing what it throws. Every close in this
-   namespace tears down a context that is already superseded, dead or being
-   replaced, so a failing close must never take the load - or the failure being
-   reported - down with it."
+  "Close a GraalPy context AND the engine it owns, swallowing what either
+   throws. Every close in this namespace tears down a context that is already
+   superseded, dead or being replaced, so a failing close must never take the
+   load - or the failure being reported - down with it.
+
+   The engine goes too, and it has to: closing only the Context frees nothing
+   while its Engine lives (see `env-python/new-engine!`). `build-context` gives
+   every context an Engine of its OWN, so `.getEngine` here can only ever reach
+   this context's engine — never a shared one."
   [ctx]
-  (when ctx (try (.close ^Context ctx true) (catch Throwable _ nil))))
+  (when ctx
+    (let [engine (try (.getEngine ^Context ctx) (catch Throwable _ nil))]
+      (try (.close ^Context ctx true) (catch Throwable _ nil))
+      (when engine (try (.close ^Engine engine true) (catch Throwable _ nil))))))
 
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
@@ -1808,7 +1817,7 @@
    The freshness contract: a running process serves exactly the extension bytes
    its own start loaded, or the ones the last `/reload` loaded. Editing a `.py`
    on disk changes nothing until a human reloads. Every implicit load path — a
-   session env cache miss, an env recycle, a `sub_loop` child env — goes through
+   session env cache miss, an env recycle — goes through
    HERE rather than `load-python-extensions!`, whose content fingerprint would
    otherwise re-execute an edited file's top level at the next cache miss, with
    no human act anywhere in the chain.

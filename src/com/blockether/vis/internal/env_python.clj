@@ -472,7 +472,7 @@
   ;; setting it as a system property makes every Engine/Context build
   ;; THROW "must be enabled with allowExperimentalOptions").
   ;;
-  ;; A `delay` forced from `shared-engine`, never a load-time `defonce`:
+  ;; A `delay` forced from `new-engine!`, never a load-time `defonce`:
   ;; `native-image` initializes this namespace at BUILD time, so an eager body
   ;; would create the BUILDER's `~/.vis/logs` and bake that path into the image.
   (delay (when-not (System/getProperty "polyglot.log.file")
@@ -491,7 +491,7 @@
   ;; bootstrap dies with `ModuleNotFoundError: No module named 'ast'`. The
   ;; cache root is read ONCE per JVM (system property
   ;; `polyglot.engine.userResourceCache`) when internal resources initialize,
-  ;; so resolve it lazily HERE, when `shared-engine` is first forced — a
+  ;; so resolve it lazily HERE, when the first engine is built — a
   ;; load-time `defonce` would run on the native-image BUILDER instead.
   ;; Precedence: explicit `-Dpolyglot.engine.userResourceCache` (untouched) >
   ;; `python.resource-cache` in merged vis.yml config > `~/.vis/cache/graal-resources`
@@ -607,91 +607,102 @@
   [^Engine engine ^java.io.File f]
   (try (.mkdirs (.getParentFile f)) (.storeCache engine (.toPath f)) (catch Throwable _ nil)))
 
-(defonce shared-engine
-  ;; ONE process-wide GraalVM Engine. Every AGENT Context — the main session
-  ;; sandbox AND every forked `sub_loop` child — is built ON this engine so that
-  ;; creating a Context WHILE another eval runs does NOT deadlock Truffle.
-  ;;
-  ;; The hazard (GraalVM 25.0.1): a STANDALONE
-  ;; `Context.build()` called during a live eval on a (virtual) thread freezes the
-  ;; whole JVM at a Truffle safepoint. Routing every Context through ONE shared,
-  ;; pre-built Engine moves engine init off the hot path — concurrent create is
-  ;; then safe (verified: create-during-eval returns cleanly; N children eval
-  ;; concurrently). Bonus: shared code cache ⇒ ~38ms warm child vs ~60ms standalone.
-  ;; Built lazily; `create-python-context` forces it at session start (pre-eval).
-  ;;
-  ;; COMPILER-THREAD CAP: Truffle's JIT (`engine.CompilerThreads`) defaults to
-  ;; -1 = scale with CPU cores. On a 14-core box that spawns a fistful of JVMCI
-  ;; CompilerThreads that dominated every cumulative-CPU table during GraalPy
-  ;; warm-up. Cap at 2 (plenty for one shared Engine) and let idle compiler
-  ;; threads retire after 5s (default 10s) — fewer live threads, smaller CPU
-  ;; bursts, at a slightly slower warm-up. Stable engine options; takes effect
-  ;; on the next gateway start.
-  (delay
-    ;; Both are load-order sensitive system properties: force them HERE, before
-    ;; the first Engine exists, so the RUNNING process (not the native-image
-    ;; builder) decides the Truffle log file and the resource-cache root.
-    @polyglot-noise-silenced
-    @graal-resource-cache-redirected
-    (let
-      [build-engine
-       (fn ^Engine [^java.io.File load-file tune?]
-         (let
-           [b (-> (Engine/newBuilder (into-array String ["python"]))
-                  (.allowExperimentalOptions true)
-                  (.option "engine.WarnVirtualThreadSupport" "false"))]
-           ;; Compiler-thread tuning only exists when the Truffle optimizing
-           ;; runtime is present (JVM, or an Oracle/enterprise native image).
-           ;; The community native image runs GraalPy in interpreter mode with
-           ;; no compiler, so these options don't exist. Option validation is
-           ;; DEFERRED to `.build`, so a bad `.option` can't be caught at set
-           ;; time — the caller retries with `tune? false` when a tuned build
-           ;; throws `Could not find option with name engine.CompilerThreads`.
-           (when tune?
-             (.option b "engine.CompilerThreads" "2")
-             (.option b "engine.CompilerIdleDelay" "5000")
-             ;; Enable the auxiliary-cache STORE path so the shutdown-hook
-             ;; `.storeCache` actually writes (Engine javadoc: requires
-             ;; engine.CacheStoreEnabled=true; without it storeCache returns
-             ;; false and writes nothing). The option is contributed only by the
-             ;; enterprise Truffle runtime in an Oracle native image, so gate it
-             ;; on native-image? — the community image lacks it and drops it on
-             ;; the tune? false retry; the JVM optimizing runtime never sets it
-             ;; (store is a no-op there we never call).
-             (when (and (native-image?) (engine-cache-enabled?))
-               (.option b "engine.CacheStoreEnabled" "true")))
-           ;; `engine.CacheLoad` restores the warmed compiled code. The option
-           ;; only EXISTS on a native-image host; on the JVM it throws, so we
-           ;; only reach here under `use-cache?` (native binary). Any load
-           ;; failure (stale/corrupt/option-drift image) is caught by the
-           ;; caller and falls back to a plain cold build.
-           (when load-file (.option b "engine.CacheLoad" (.getAbsolutePath load-file)))
-           (.build b)))
+(defonce ^:private engine-cache-store-hook-installed
+  ;; The warmed-engine STORE hook is process-wide even though engines are not:
+  ;; one hook, installed for the FIRST engine built, is all a native binary
+  ;; needs to leave a warm cache behind for the next start.
+  (atom false))
 
-       build-engine*
-       (fn ^Engine [^java.io.File load-file]
-         (try (build-engine load-file true) (catch Throwable _ (build-engine load-file false))))
+(defn new-engine!
+  "Build a FRESH GraalVM Engine for ONE session sandbox.
 
-       use-cache?
-       (and (native-image?) (engine-cache-enabled?))
+   NOT process-wide, and that is the whole point. A shared Engine RETAINS every
+   Context ever built on it: closing the Context frees nothing while the Engine
+   lives, and only `Engine.close()` gives the memory back. Measured on GraalVM
+   25.1.3 — six heavy contexts created and CLOSED on one shared engine grew the
+   live heap by ~31 MB each and gave none of it back until the engine itself was
+   closed, at which point all of it returned at once. An engine per session makes
+   that leak structurally impossible: the engine dies with its context.
 
-       cache-file
-       (when use-cache? (engine-cache-file))
+   The shared engine originally existed to dodge a Truffle deadlock (GraalVM
+   25.0.1: a standalone `Context.build()` during a live eval froze the JVM at a
+   safepoint). That hazard does not reproduce on 25.1.3 — see
+   `env-python-engine-test`, which builds an engine + context while a virtual
+   thread is mid-eval. The cost of not sharing is ~100ms per session start.
 
-       engine
-       (or (when (and cache-file (.exists ^java.io.File cache-file))
-             (try (build-engine* cache-file) (catch Throwable _ nil)))
-           (build-engine* nil))]
+   COMPILER-THREAD CAP: Truffle's JIT (`engine.CompilerThreads`) defaults to
+   -1 = scale with CPU cores. On a 14-core box that spawns a fistful of JVMCI
+   CompilerThreads that dominated every cumulative-CPU table during GraalPy
+   warm-up. Cap at 2 and let idle compiler threads retire after 5s (default 10s)
+   — fewer live threads, smaller CPU bursts, at a slightly slower warm-up."
+  ^Engine []
+  ;; Both are load-order sensitive system properties: force them HERE, before
+  ;; the first Engine exists, so the RUNNING process (not the native-image
+  ;; builder) decides the Truffle log file and the resource-cache root.
+  @polyglot-noise-silenced
+  @graal-resource-cache-redirected
+  (let
+    [build-engine
+     (fn ^Engine [^java.io.File load-file tune?]
+       (let
+         [b (-> (Engine/newBuilder (into-array String ["python"]))
+                (.allowExperimentalOptions true)
+                (.option "engine.WarnVirtualThreadSupport" "false"))]
+         ;; Compiler-thread tuning only exists when the Truffle optimizing
+         ;; runtime is present (JVM, or an Oracle/enterprise native image).
+         ;; The community native image runs GraalPy in interpreter mode with
+         ;; no compiler, so these options don't exist. Option validation is
+         ;; DEFERRED to `.build`, so a bad `.option` can't be caught at set
+         ;; time — the caller retries with `tune? false` when a tuned build
+         ;; throws `Could not find option with name engine.CompilerThreads`.
+         (when tune?
+           (.option b "engine.CompilerThreads" "2")
+           (.option b "engine.CompilerIdleDelay" "5000")
+           ;; Enable the auxiliary-cache STORE path so the shutdown-hook
+           ;; `.storeCache` actually writes (Engine javadoc: requires
+           ;; engine.CacheStoreEnabled=true; without it storeCache returns
+           ;; false and writes nothing). The option is contributed only by the
+           ;; enterprise Truffle runtime in an Oracle native image, so gate it
+           ;; on native-image? — the community image lacks it and drops it on
+           ;; the tune? false retry; the JVM optimizing runtime never sets it
+           ;; (store is a no-op there we never call).
+           (when (and (native-image?) (engine-cache-enabled?))
+             (.option b "engine.CacheStoreEnabled" "true")))
+         ;; `engine.CacheLoad` restores the warmed compiled code. The option
+         ;; only EXISTS on a native-image host; on the JVM it throws, so we
+         ;; only reach here under `use-cache?` (native binary). Any load
+         ;; failure (stale/corrupt/option-drift image) is caught by the
+         ;; caller and falls back to a plain cold build.
+         (when load-file (.option b "engine.CacheLoad" (.getAbsolutePath load-file)))
+         (.build b)))
 
-      ;; Store the warmed engine on process exit so the NEXT native start can
-      ;; load it. Best-effort, never throws (see `store-engine-cache!`).
-      (when use-cache?
-        (.addShutdownHook (Runtime/getRuntime)
-                          (Thread. ^Runnable
-                                   (fn []
-                                     (store-engine-cache! engine cache-file))
-                                   "vis-engine-cache-store")))
-      engine)))
+     build-engine*
+     (fn ^Engine [^java.io.File load-file]
+       (try (build-engine load-file true) (catch Throwable _ (build-engine load-file false))))
+
+     use-cache?
+     (and (native-image?) (engine-cache-enabled?))
+
+     cache-file
+     (when use-cache? (engine-cache-file))
+
+     engine
+     (or (when (and cache-file (.exists ^java.io.File cache-file))
+           (try (build-engine* cache-file) (catch Throwable _ nil)))
+         (build-engine* nil))]
+
+    ;; Store the warmed engine on process exit so the NEXT native start can
+    ;; load it. Best-effort, never throws (see `store-engine-cache!`). ONCE per
+    ;; process: engines are per-session now, and one hook per session would pile
+    ;; up a hook (and a strong reference to a dead engine) for every session the
+    ;; gateway ever served.
+    (when (and use-cache? (compare-and-set! engine-cache-store-hook-installed false true))
+      (.addShutdownHook (Runtime/getRuntime)
+                        (Thread. ^Runnable
+                                 (fn []
+                                   (store-engine-cache! engine cache-file))
+                                 "vis-engine-cache-store")))
+    engine))
 
 (defn ctx->python-str
   "Render plain boundary data as a deterministic, executable Python literal.
@@ -1475,7 +1486,7 @@
    on builtins: the real stdlib module is imported on the FIRST bare touch
    (`hashlib.md5(...)`, `Counter(...)`, `Path(...)`, `socket.socket(...)`, ...) and then REPLACES
    the proxy, so a session that never touches base64/textwrap/socket/... never
-   pays their import at context build OR at every `sub_loop` fork. An explicit
+   pays their import at context build. An explicit
    `import <name>` always works too (normal stdlib path). The model-facing
    inventory is `AUTO_IMPORTED_PYTHON_NAMES`.
 
@@ -1578,7 +1589,7 @@
 (defonce ^:private shim-triggers-memo
   ;; Process-wide LRU memo: a newest-first VECTOR of `{:h hash :m trigger-map}`,
   ;; so the capture probe runs at most ONCE per process per shim-set (never per
-  ;; Context / sub_loop fork). Bounded to `shim-triggers-cache-max` with TRUE
+  ;; Context). Bounded to `shim-triggers-cache-max` with TRUE
   ;; move-to-front eviction, mirroring the disk cache (a >max churner drops only
   ;; the OLDEST set, never the whole memo).
   (atom []))
@@ -1680,9 +1691,15 @@
    breaking the whole capture."
   [entries]
   (let
-    [ctx
+    [;; Its OWN engine, closed in the `finally` with the context: a probe that
+     ;; rode a shared engine would leave its parsed Python behind for the life
+     ;; of the process (see `new-engine!`).
+     ^Engine probe-engine
+     (new-engine!)
+
+     ctx
      (-> (Context/newBuilder (into-array String ["python"]))
-         (.engine ^Engine @shared-engine)
+         (.engine probe-engine)
          (.allowAllAccess false)
          (.allowCreateThread true)
          (.allowNativeAccess false)
@@ -1727,21 +1744,21 @@
                          provides0 (vec (sort (filter keep? new-mods)))
                          ;; Declared imports are the shim's owned public modules. Use them
                          ;; when the probe cannot observe a new sys.modules entry (for
-                         ;; example a module already initialized by the shared engine).
+                         ;; example a module already initialized by the engine).
                          autoload (if (seq autoload0) autoload0 (vec (:shim/imports shim)))
                          provides (if (seq provides0) provides0 (vec (:shim/imports shim)))]
 
                         (assoc acc sid {:provides provides :autoload autoload})))))
                 {}
                 entries))
-      (finally (.close ctx true)))))
+      (finally (.close ctx true) (try (.close probe-engine true) (catch Throwable _ nil))))))
 
 (defn- shim-trigger-map
   "The `{sid {:provides [...] :autoload [...]}}` lazy-trigger map for `entries`
    (each `{:sid :src :shim}`), derived by CAPTURE (`capture-shim-triggers`), then
    MEMOIZED process-wide and CACHED to disk keyed by a hash of the sources. The
    ~0.5s capture cost is therefore paid at most ONCE per machine per shim-source
-   change - never per Context build or `sub_loop` fork, and never on a warm
+   change - never per Context build, and never on a warm
    restart (the disk cache is read instead). On any failure it degrades to `{}`
    (=> every shim installs eager: correct, only not lazy)."
   [entries]
@@ -1801,8 +1818,8 @@
                         "names" (vec (distinct (concat (:shim/imports shim) (:provides trig))))}))
 
 (defn- install-sandbox-shims!
-  "Install EVERY extension-contributed sandbox shim into `ctx` (main context AND
-   every `sub_loop` fork), in registration order, BEFORE the baseline snapshot.
+  "Install EVERY extension-contributed sandbox shim into `ctx`, in registration
+   order, BEFORE the baseline snapshot.
 
    LAZY-BY-DEFAULT: rather than eval every shim's source here (which materializes
    each module's full live object graph into THIS context - the fat per-session
@@ -2078,12 +2095,12 @@
 
 
 (defn- build-agent-context
-  "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
+  "Build ONE deny-by-default GraalPy agent sandbox Context on its OWN `Engine`,
    wire `custom-bindings` (tool/verb fns as Python callables, values marshalled),
-   install introspection, and return `{:python-context :sandbox-ns :initial-ns-keys}`.
-   Shared by `create-python-context` (the main session sandbox) and `fork-context!`
-   (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
-   bound env (which ctx-atom the verbs close over) differs."
+   install introspection, and return
+   `{:python-context :python-engine :sandbox-ns :initial-ns-keys}`. Used by
+   `create-python-context` to build the one session sandbox. The caller owns the
+   returned engine's lifecycle and MUST close it with the context."
   [custom-bindings roots-fn network-opts stdin stderr gate-fn]
   (let
     [stdout-baos
@@ -2152,12 +2169,16 @@
            (.build))
        IOAccess/NONE)
 
+     ;; THIS session's own Engine. It is closed by `dispose-environment!` right
+     ;; after the Context, and closing it is what actually returns the memory:
+     ;; an Engine retains every Context ever built on it (see `new-engine!`).
+     ^Engine engine
+     (new-engine!)
+
      ctx
      (->
        (Context/newBuilder (into-array String ["python"]))
-       ;; Build on the shared Engine — THE thing that makes concurrent
-       ;; child forks safe (see `shared-engine`).
-       (.engine ^Engine @shared-engine)
+       (.engine engine)
        ;; deny-by-default for the DANGEROUS capabilities — no host access,
        ;; native off. Filesystem is `io-access` above (confined to roots, or
        ;; NONE). THREADS are allowed, though: the
@@ -2456,6 +2477,10 @@
         (.putMember g "__vis_direct_names__" (->py direct-names))
         (.eval ctx "python" "__vis_kwargs_direct_tools__()")))
     {:python-context ctx
+     ;; The caller OWNS this engine and must close it after the context —
+     ;; `dispose-environment!` does. Dropping it on the floor is the leak
+     ;; `new-engine!` exists to prevent.
+     :python-engine engine
      :sandbox-ns :python
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
 
@@ -2523,13 +2548,11 @@
 
    `custom-bindings` maps symbols to tool/verb functions or values. `roots-fn`
    optionally grants filesystem access confined to the current workspace roots.
-   Every session Context rides the process-wide `shared-engine`; parsing and
+   Every session Context rides its OWN `Engine` (see `new-engine!`); parsing and
    extension shims live inside that same Context. Rendering is pure JVM code, so
    normal sessions allocate no auxiliary GraalPy contexts. Extensions
    deliberately SHARE this one session Context (installed as guest callables, not
-   separate contexts) — so a session holds exactly one Context; the only extra is
-   a transient `fork-context!` child, created solely for `sub_loop` parallelism.
-   The 4-arity `stdin`
+   separate contexts), so a session holds exactly one Context. The 4-arity `stdin`
    (optional InputStream) is wired to the guest `sys.stdin` — used by `vis-agent python`
    to forward the caller's real stdin; agent sandboxes leave it nil. The 5-arity
    `stderr` (optional OutputStream) does the same for guest `sys.stderr`; nil keeps
@@ -2546,29 +2569,7 @@
    (create-python-context custom-bindings roots-fn network-opts stdin stderr nil))
   ([custom-bindings roots-fn network-opts stdin stderr gate-fn]
    @graalvm-runtime-checked
-   ;; Build/force the one process-wide Engine before the session Context. Child
-   ;; sub-loops create their own restrictive Context only when true parallel
-   ;; Python execution is requested; all contexts share this Engine's code cache.
-   (try @shared-engine (catch Throwable _ nil))
    (build-agent-context custom-bindings roots-fn network-opts stdin stderr gate-fn)))
-
-(defn fork-context!
-  "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
-   the main context, built ON the shared `Engine` so it is SAFE to create even
-   while the parent's eval is running (GraalVM-verified: no Truffle deadlock).
-   `custom-bindings` wires the child's tool/verb fns, which close over the CHILD's
-   env (its own ctx-atom). Returns the same
-   `{:python-context :sandbox-ns :initial-ns-keys}` shape as
-   `create-python-context`. The caller owns the child Context's lifecycle (close
-   it when the sub_loop ends). `roots-fn` (optional) confines the child's Python
-   filesystem to the current filesystem roots, same as the parent; `gate-fn`
-   carries the parent's `:fs/access` gate into the child."
-  ([custom-bindings] (fork-context! custom-bindings nil nil nil))
-  ([custom-bindings roots-fn] (fork-context! custom-bindings roots-fn nil nil))
-  ([custom-bindings roots-fn network-opts]
-   (fork-context! custom-bindings roots-fn network-opts nil))
-  ([custom-bindings roots-fn network-opts gate-fn]
-   (build-agent-context custom-bindings roots-fn network-opts nil nil gate-fn)))
 
 ;; =============================================================================
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share

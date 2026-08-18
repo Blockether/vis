@@ -6386,8 +6386,7 @@
    coll of names; matching models are hoisted to the front in preference order
    (within each provider AND across providers), and the rest of the router follows
    UNCHANGED as fallback. Blank/unknown prefs → the router as-is (child inherits the
-   parent's order). Coordinator: `sub_loop(prompt, subctx, {\"models\": [\"haiku\",
-   \"sonnet\"]})` (or a single `\"model\"`) — try the cheap one first, fall back.
+   parent's order).
 
    Vector order alone is DECORATION to svar, which selects by provider `:priority`
    and then by the provider's `:root` model name. So the hoist is also written into
@@ -6495,7 +6494,7 @@
             :serving-model (when sp (provider-root-model router sp))}))))))
 
 (defn subctx->seed-ctx
-  "Seed ctx for a sub_loop child's ctx-atom from the model-supplied `subctx`.
+  "Seed ctx for a child env's ctx-atom from the model-supplied `subctx`.
    Child contexts start from an empty engine ctx. PURE. Kept as the named seed site."
   [_subctx]
   {})
@@ -8647,8 +8646,8 @@
       :prior-outcome prior-outcome)))
 
 (defn- health-gated-router
-  "ONE health gate for every routing entry point (turn start AND
-   sub_loop child): demote unreachable LOCAL providers to the router's
+  "ONE health gate for every routing entry point: demote unreachable LOCAL
+   providers to the router's
    end (`providers/demote-unreachable-providers` — never throws) and
    log the demotion once. Returns `{:router r :demoted [ids]}`."
   [router where]
@@ -9281,15 +9280,15 @@
        ;; …but vector order does NOT bind svar's actual selection (it sorts
        ;; by provider :priority). FORCE the pick into `:routing` so the call
        ;; truly lands on the chosen provider+model. A caller-supplied
-       ;; `:routing` (e.g. sub_loop's own pin) wins on merge.
+       ;; `:routing` (e.g. a caller's own pin) wins on merge.
        routing (let [merged (merge pref-forced (or routing {}))]
                  ;; MAIN turn (depth 0): pin the ACTIVE provider+model so a provider
                  ;; failure surfaces as an error the USER acts on (retry / switch
                  ;; provider — TUI Ctrl+K) instead of svar silently hopping across the
                  ;; whole configured fleet (`with-provider-fallback` → the confusing
                  ;; "tried every provider" card). A session pick already pins this way;
-                 ;; this makes the DEFAULT (no-pick) turn behave identically. sub_loop
-                 ;; CHILDREN (depth > 0) are EXEMPT — dispatched agents legitimately
+                 ;; this makes the DEFAULT (no-pick) turn behave identically. CHILD
+                 ;; turns (depth > 0) are EXEMPT — they legitimately
                  ;; optimize / fall back across the `models` list they were given.
                  (cond-> merged
                    (and root-provider
@@ -9777,18 +9776,12 @@
 
 ;; Environment Lifecycle
 
-;; The sub_loop RUNTIME (dispose-environment! + helpers + sub-loop! + the
-;; composite runners) is defined BELOW, before create-environment, so verbs
-;; resolve in order. sub-loop! is the ONE back-edge — it calls create-environment
-;; to build the child env — so create-environment is the only forward declare.
-(declare create-environment)
-
 (defn dispose-environment!
   "Disposes a vis environment and releases resources. For persistent DBs
    (created with `:path`), data is preserved. For disposable DBs, all
    data is deleted.
 
-   A sub_loop CHILD env BORROWS the parent's DB connection (`:owns-db?` false) —
+   A CHILD env BORROWS the parent's DB connection (`:owns-db?` false) —
    disposing the child must NOT close it, or the parent loses its DB mid-turn."
   [environment]
   ;; Drop this session from the SHARED gateway egress proxy's registry. The shared
@@ -9801,346 +9794,14 @@
   (process-jail/unregister-session-jail! (:session-id environment))
   (when-let [python-context (:python-context environment)]
     (try (.close ^Context python-context true) (catch Throwable _ nil)))
+  ;; AFTER the context, and never skipped: a GraalPy Engine retains every Context
+  ;; ever built on it, so closing the context alone gives back NOTHING. This close
+  ;; is what actually returns the session's Python heap (see
+  ;; `env-python/new-engine!`).
+  (when-let [engine (:python-engine environment)]
+    (try (.close ^org.graalvm.polyglot.Engine engine true) (catch Throwable _ nil)))
   (when (and (:db-info environment) (not (false? (:owns-db? environment))))
     (persistance/db-dispose-connection! (:db-info environment))))
-
-;; sub_loop runtime — a child agentic loop (slice C). The model writes Python:
-;; it slices `context` into a focused `subctx` and calls
-;; `sub_loop(prompt, subctx, {"model": …})`. The child is a CHILD session reusing
-;; create-environment (own done/bindings/ctx + forked Context on the shared Engine),
-;; on its OWN workspace (rift clone where supported, else shared root), optionally
-;; on a cheaper proposed model. On close its workspace diff merges back and the
-;; result (status + evidence + produced facts + what-changed) returns to the parent.
-
-(def ^:private MAX-SUBLOOP-DEPTH
-  "Recursion cap: a coordinator → child → grandchild … chain may nest at most this
-   deep before `sub-loop!` refuses, so an agent-tree can't explode unbounded."
-  5)
-
-(def ^:private MAX-PARALLEL-SUBLOOPS
-  "Concurrency cap for `parallel` — at most this many child turns run at once.
-   LLM calls (and the shared single SQLite writer) are the bottleneck, so a small
-   cap keeps provider rate-limits + write contention sane; extra specs queue."
-  4)
-
-(defn- status->str
-  "Coerce a status to its python-facing STRING name (keyword → name, else str).
-   sub_loop results cross to the model as Python, so statuses are STRINGS, never
-   keywords — matching `plan_step`'s string surface and the rendered ctx."
-  [s]
-  (when (some? s) (if (keyword? s) (name s) (str s))))
-
-(def ^:private ^Object workspace-mutation-lock
-  ;; Serializes the FAST rift steps (clone + merge-back) across concurrent
-  ;; `parallel` children: `cow-clone!` does `rift/init` on the SHARED parent
-  ;; (concurrent inits would race) and `apply!` writes into the ONE parent root
-  ;; (concurrent applies could interleave). Only these ~ms ops serialize — the
-  ;; expensive child LLM turn (`run-turn!`) still runs fully concurrently.
-  (Object.))
-
-(defn child-workspace!
-  "Spawn the child's workspace. An isolation backend available for the parent's
-   root → a CoW clone of the parent's workspace (`workspace/create! {:from
-   parent-ws}`): isolated writes, and `workspace/apply!` later lands the
-   since-fork diff back into the parent root. Else (Windows / non-POSIX, or no
-   backend) → a trunk row at the parent's root (`create-trunk-at!`): SHARED
-   files, no clone (safety = disjoint `:files`). Returns the workspace row."
-  [db-info parent-ws]
-  (if (workspace/isolated-workspaces-supported? (:root parent-ws))
-    (workspace/create! db-info {:from parent-ws :label "subloop"})
-    (workspace/create-trunk-at! db-info (:root parent-ws))))
-
-(defn- log-subloop-warn!
-  "Surface a sub_loop lifecycle failure (merge-back / teardown) — NEVER swallowed
-   silently: a failed merge is lost work, a failed clone-trash is a disk leak.
-   The step still best-efforts on, but the warning keeps the failure visible."
-  [step ^Throwable t ws-id]
-  (tel/log! {:level :warn
-             :id ::subloop-lifecycle
-             :data {:step step :workspace-id ws-id :error (ex-message t)}}
-            (str "sub_loop " (name step) " failed for child workspace " ws-id)))
-
-(defn- guard
-  "Functional resource bracket: run `(use resource)` and ALWAYS `(release
-   resource)` afterward, returning `use`'s value. A release failure is LOGGED
-   (tagged `step`/`ws-id`), never swallowed — teardown problems stay visible
-   while the original result (or exception) still propagates."
-  [resource release step ws-id use]
-  (try (use resource)
-       (finally (try (release resource) (catch Throwable t (log-subloop-warn! step t ws-id))))))
-
-(defn- merge-child-edits!
-  "Land the child's since-fork diff back into the parent root, serialized so
-   concurrent `parallel` applies don't interleave. Returns the `apply!` result,
-   or — on failure — nil plus a LOGGED warning (the merge is lost, so it must be
-   visible, not silently dropped)."
-  [db-info child-ws]
-  (locking workspace-mutation-lock
-    (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
-         (catch Throwable t (log-subloop-warn! :merge t (:id child-ws)) nil))))
-
-
-(defn- project-child-result
-  "Run the child turn, merge its edits back (rift path), and project the result
-   the coordinator merges by `task_id`: the model-supplied focus id, status (a
-   STRING — python-facing, never a keyword), answer, and what changed."
-  [child-env {:keys [db-info child-ws rift? subctx prompt system-prompt]}]
-  (let
-    [;; A harness AGENT dispatch rides its markdown body in as the child's
-     ;; system-prompt addendum (build-system-prompt appends it to CORE);
-     ;; ordinary sub_loops pass none.
-     turn-opts
-     (if (seq (str system-prompt)) {:system-prompt (str system-prompt)} {})
-
-     result
-     (run-turn! child-env (str prompt) turn-opts)
-
-     merged
-     (when rift? (merge-child-edits! db-info child-ws))
-
-     ;; `subctx` is a Python dict — STRING keys. The projected result crosses
-     ;; BACK into Python, so its keys/values are strings too.
-     focus
-     (some-> (get subctx "focus")
-             str
-             not-empty)]
-
-    {"task_id" focus
-     "status" (status->str (:status result))
-     "answer" (:answer result)
-     "changed_files" (vec (:changed merged))}))
-
-(defn sub-loop!
-  "Run a CHILD agentic loop for `prompt` over `subctx` (the model-supplied focused
-   slice; see `subctx->seed-ctx`). Forks a child session env (own ctx-atom seeded
-   from subctx, own forked Context on the shared Engine, own workspace per
-   the parent root's isolation backend, reusing the parent's SINGLE DB
-   connection + depth-cap),
-   optionally on a cheaper PROPOSED model preference list `models`
-   (`router-for-model` — always a vector, svar falls back). Runs `run-turn!`,
-   merges the child's workspace diff back (rift path), then ALWAYS tears the child
-   down — env disposed, rift clone trashed (both via `guard`, failures logged) so
-   nothing leaks across `parallel`/`retry`. Returns:
-     {:task_id <focus> :status <string> :answer :changed_files}
-   Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
-  [parent-env {:keys [prompt subctx models system-prompt]}]
-  (let
-    [depth (inc (long (or (some-> parent-env
-                                  :depth-atom
-                                  deref)
-                          0)))]
-    (when (> (long depth) (long MAX-SUBLOOP-DEPTH))
-      (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
-                      {:type :vis/subloop-depth-exceeded :depth depth})))
-    (let
-      [db-info (:db-info parent-env)
-       parent-ws (:workspace parent-env)
-       ;; clone serialized (rift/init on the shared parent races otherwise)
-       ;; Health gate FIRST — before the child workspace clone exists.
-       ;; `preferred` is the reorder the coordinator asked for;
-       ;; demotion sinks unreachable LOCAL providers to the end, so
-       ;; the child AUTO-ROUTES to the next healthy provider instead
-       ;; of burning minutes against a dead endpoint. When the
-       ;; coordinator's EXPLICIT preference was the demoted provider,
-       ;; the reroute is ANNOTATED on the child result (`:rerouted`)
-       ;; so the parent knows its routing was overridden and why.
-       preferred (router-for-model (:router parent-env) models)
-       {:keys [router demoted]} (health-gated-router preferred :sub-loop)
-       rerouted
-       (when (and (seq demoted)
-                  (seq (if (coll? models) models (when models [models])))
-                  ;; router-for-model hoisted the preferred
-                  ;; model's provider to the FRONT pre-demotion;
-                  ;; if that very provider got demoted, the
-                  ;; explicit preference was dead.
-                  (contains? (set demoted) (:id (first (:providers preferred)))))
-         ;; Crosses into Python on the child result — strings.
-         {"from" (vec (if (coll? models) models [models]))
-          "unreachable" (mapv name demoted)
-          "used" (:name (resolve-effective-model router))
-          "reason"
-          "preferred model's provider unreachable; auto-routed to the next healthy provider"})
-       child-ws (locking workspace-mutation-lock (child-workspace! db-info parent-ws))
-       ;; rift path = the child got its OWN clone (root differs from parent);
-       ;; the shared-root fallback writes in place (nothing to merge or trash).
-       rift? (boolean (and (:root child-ws) parent-ws (not= (:root child-ws) (:root parent-ws))))
-       ws-id (:id child-ws)]
-
-      ;; Nested brackets — the CLONE is released LAST (after the env), so the
-      ;; order is: merge diff → dispose env → trash clone. `guard` logs any
-      ;; teardown failure instead of leaking it.
-      (guard child-ws
-             (fn [ws]
-               (when rift?
-                 (locking workspace-mutation-lock
-                   (workspace/abandon! db-info
-                                       {:workspace-id (:id ws) :reason "subloop complete"}))))
-             :abandon
-             ws-id
-             (fn [ws]
-               (guard (create-environment router
-                                          {:workspace-id (:id ws)
-                                           :child {:parent-db-info db-info
-                                                   :depth depth
-                                                   ;; link the child soul to THIS parent's session_state
-                                                   ;; (cross-soul) → queryable sub-tree, hidden from the
-                                                   ;; top-level session list, cascades on parent delete.
-                                                   :parent-state-id (:session/state-id parent-env)
-                                                   ;; Security is inherited by VALUE. A child may use a
-                                                   ;; different workspace/model, never a newer vis.yml.
-                                                   :security-policy (:security-policy parent-env)
-                                                   :seed-ctx (subctx->seed-ctx subctx)}})
-                      dispose-environment!
-                      :dispose
-                      ws-id
-                      (fn [child-env]
-                        (cond->
-                          (project-child-result child-env
-                                                {:db-info db-info
-                                                 :child-ws ws
-                                                 :rift? rift?
-                                                 :subctx subctx
-                                                 :prompt prompt
-                                                 :system-prompt system-prompt})
-                          ;; surface the health override to the coordinator
-                          rerouted
-                          (assoc "rerouted" rerouted)))))))))
-
-(defn- failed-subloop-result
-  "The uniform `sub_loop`-result shape for a child that errored (so `parallel`
-   slots and `retry` attempts read like a normal result, just with `:error`).
-   The throw is surfaced TWO ways — as this `:status \"failed\"` result the
-   coordinator sees, AND a logged warning — so the failure is never silent."
-  [spec ^Throwable t]
-  (let
-    [focus (some-> (get spec "subctx")
-                   (get "focus")
-                   str
-                   not-empty)]
-    (log-subloop-warn! :run t focus)
-    ;; Crosses into Python — string keys, matching `project-child-result`.
-    {"task_id" focus "status" "failed" "error" (ex-message t) "answer" nil "changed_files" []}))
-
-(def ^:private subloop-failure-statuses
-  "A child whose focus task landed in one of these (or threw → `:error`) is a
-   FAILURE for `retry` — re-run; everything else is success enough to keep.
-   STRINGS only — sub_loop result statuses are strings (`status->str`)."
-  #{"failed" "rejected" "error"})
-
-(defn- subloop-failed?
-  "True when a `sub_loop` result represents a failed child (threw, or its focus
-   task ended in a failure status) — the signal `retry`/`sequence`/`selector`
-   branch on. A `:skipped`-mapped status (cancelled/rejected/deferred) is NOT a
-   failure here — those are neutral; only `:failed`/`:error` count."
-  [r]
-  (or (some? (get r "error")) (contains? subloop-failure-statuses (status->str (get r "status")))))
-
-(defn- run-spec!
-  "Run ONE child for `spec` (a Python dict `{\"prompt\" \"subctx\" \"models\"}` —
-   STRING keys), folding a throw into the uniform `failed-subloop-result`. The
-   shared per-child step under every composite runner
-   (parallel/sequence/selector) + retry."
-  [parent-env spec]
-  (try (sub-loop!
-         parent-env
-         {:prompt (get spec "prompt") :subctx (get spec "subctx") :models (get spec "models")})
-       (catch Throwable t (failed-subloop-result spec t))))
-
-(defn retry-sub-loop!
-  "DECORATOR (not a composite): re-run the SAME `spec` until its child SUCCEEDS,
-   up to `n` total attempts (default 2). Returns the first successful result,
-   else the last failure — stamped with the `:attempts` made. (Contrast
-   `selector-sub-loops!`, which tries DIFFERENT alternatives.)"
-  [parent-env spec n]
-  (let [attempts (max 1 (long (or n 2)))]
-    (loop [i 1]
-      (let [r (assoc (run-spec! parent-env spec) "attempts" i)]
-        (if (or (not (subloop-failed? r)) (>= i attempts)) r (recur (inc i)))))))
-
-(defn sequence-sub-loops!
-  "`:sequence` composite — run `specs` IN ORDER, each only after the prior
-   SUCCEEDS, SHORT-CIRCUITING on the first failure. Serial by nature (each child
-   may depend on the last). Returns the vector of results ACTUALLY RUN, in order:
-   all of them when every child succeeded, or up to and INCLUDING the first
-   failure when it stopped early (that last result carries the failure). Mirrors
-   the BT sequence: all-succeed, fail-fast."
-  [parent-env specs]
-  (reduce (fn [acc spec]
-            (let
-              [r
-               (run-spec! parent-env spec)
-
-               acc
-               (conj acc r)]
-
-              (if (subloop-failed? r) (reduced acc) acc)))
-          []
-          (vec specs)))
-
-(defn selector-sub-loops!
-  "`:selector` composite (a.k.a. fallback) — try `specs` IN ORDER until one
-   child SUCCEEDS, then STOP. Serial. Returns the vector of results tried, in
-   order: the failed alternatives followed by the first success (the last
-   result), or — if every alternative failed — all of them (all failures).
-   Mirrors the BT selector: any-succeed. (Unlike `retry`, the alternatives are
-   DIFFERENT specs.)"
-  [parent-env specs]
-  (reduce (fn [acc spec]
-            (let
-              [r
-               (run-spec! parent-env spec)
-
-               acc
-               (conj acc r)]
-
-              (if (subloop-failed? r) acc (reduced acc))))
-          []
-          (vec specs)))
-
-(defn parallel-sub-loops!
-  "Run several `sub-loop!`s CONCURRENTLY on Clojure futures, bounded by
-   `MAX-PARALLEL-SUBLOOPS` (a Semaphore), and return their results as a vector in
-   INPUT ORDER. `specs` is a seq of `{:prompt :subctx :models}` maps (the model
-   passes a list of dicts; keys arrive keyword-snake at the GraalPy boundary).
-
-   All children share the parent's ONE db-info + depth-cap; the fast rift clone /
-   merge-back steps serialize on `workspace-mutation-lock` while the expensive
-   child LLM turns overlap. A child that throws does NOT sink the batch — its slot
-   becomes a `{:status \"failed\" :error …}` result so the coordinator can see the
-   failure and merge the rest. The sandbox denies Python threads, so concurrency
-   lives Clojure-side on the shared GraalVM Engine (forks are safe mid-eval)."
-  [parent-env specs]
-  (let
-    [specs
-     (vec specs)
-
-     sem
-     (java.util.concurrent.Semaphore. MAX-PARALLEL-SUBLOOPS)
-
-     futs
-     (mapv (fn [spec]
-             (future (.acquire sem)
-                     ;; DEFENCE IN DEPTH — `run-spec!` already folds a throw into a failed
-                     ;; result, but ANYTHING escaping it (an Error, or a failure while
-                     ;; BUILDING that result) used to come out of `deref` below as an
-                     ;; ExecutionException: it sank the whole batch AND skipped the sibling
-                     ;; cancel, so every other child kept running as an orphaned LLM turn
-                     ;; whose result nobody ever read.
-                     (try (run-spec! parent-env spec)
-                          (catch Throwable t (failed-subloop-result spec t))
-                          (finally (.release sem)))))
-           specs)]
-
-    ;; Settle in input order — but when the COORDINATING thread is interrupted
-    ;; (turn cancel / eval timeout), hard-cancel every child sub-loop before
-    ;; propagating. Otherwise cancelled parallel sub-loops kept running as
-    ;; orphaned full LLM turns (same leak the gather settle loop had). ANY escape
-    ;; must take the batch with it, not just an interrupt.
-    (try (mapv deref futs)
-         (catch Throwable t
-           (doseq [f futs]
-             (try (future-cancel f) (catch Throwable _ nil)))
-           (throw t)))))
 
 (defonce ^:private last-good-security-snapshot
   ;; Retains the most recent VALID security snapshot so an invalid live config
@@ -10220,7 +9881,7 @@
   (when (and (:parent-db-info child) (nil? (:security-policy child)))
     (throw (ex-info "Child environment requires the parent's security-policy snapshot"
                     {:type :vis/missing-child-security-policy})))
-  ;; `child` (a sub_loop child env) carries:
+  ;; `child` (a child env) carries:
   ;;   :parent-db-info  reuse the parent's DB connection (don't open/close one)
   ;;   :security-policy inherit the parent's immutable policy (required)
   ;;   :depth           starting recursion depth (parent depth + 1)
@@ -10295,8 +9956,8 @@
 
      ;; Routing digest surfaced in the model-facing ctx (`routing`): the CURRENT
      ;; model + provider, nothing more. The provider/model CATALOG is deliberately
-     ;; NOT shipped — child dispatch (`sub_loop`) is unadvertised, so nothing could
-     ;; act on it, and it cost ~445 tokens on EVERY request. STRING-KEYED: this
+     ;; NOT shipped — there is no child dispatch to act on it, and it cost ~445
+     ;; tokens on EVERY request. STRING-KEYED: this
      ;; digest lands in ctx as `session_routing` and crosses the Python boundary.
      routing-digest
      (cond-> {"model" root-model}
@@ -10343,7 +10004,7 @@
                                            :title title
                                            :system-prompt system-prompt
                                            :workspace-id (:id active-workspace)
-                                           ;; sub_loop child → link this whole soul
+                                           ;; child env → link this whole soul
                                            ;; to the parent's session_state (cross-
                                            ;; soul), keeping it out of the top-level
                                            ;; list; nil for a normal session.
@@ -10542,42 +10203,6 @@
        ;; on bounded platform workers).
        compaction
        {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
-       ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
-       ;; binding map so none of the child-dispatch verbs are
-       ;; bound (sub_loop + parallel/sequence/selector/retry).
-       ;; The runtime (sub-loop! / parallel-sub-loops! / …) stays
-       ;; intact; re-enable by deleting the `#_`. Also unadvertised
-       ;; in the system prompt (prompt.clj delegation section).
-       #_{'sub-loop (fn sub-loop [prompt subctx & more]
-                      ;; "models" is ALWAYS a list (ordered preference,
-                      ;; even for one: ["haiku"]) — ONE consistent surface,
-                      ;; never a scalar. svar routes + falls back the order.
-                      ;; The opts dict crosses the GraalPy boundary via
-                      ;; `env-python/->clj`, which keeps dict keys as
-                      ;; VERBATIM STRINGS — the accessor is "models".
-                      (sub-loop!
-                        @environment-atom
-                        {:prompt prompt :subctx subctx :models (get (first more) "models")}))
-          ;; parallel([{prompt, subctx, models}, …]) — dispatch
-          ;; SEVERAL children concurrently (bounded), results in
-          ;; input order. Each spec dict crosses the boundary
-          ;; keyword-snake (see sub_loop). Same single db-info +
-          ;; depth-cap; failures surface per-slot, not as a throw.
-          'parallel (fn parallel [specs]
-                      (parallel-sub-loops! @environment-atom specs))
-          ;; :sequence composite — children IN ORDER,
-          ;; gated on success, fail-fast.
-          'sequence (fn sequence [specs]
-                      (sequence-sub-loops! @environment-atom specs))
-          ;; :selector composite — try alternatives IN
-          ;; ORDER until one succeeds.
-          'selector (fn selector [specs]
-                      (selector-sub-loops! @environment-atom specs))
-          ;; retry({prompt, subctx, models}, n) — re-run ONE child
-          ;; until its focus task succeeds, up to n attempts (default
-          ;; 2; selector semantics). Result is stamped with :attempts.
-          'retry (fn retry [spec & more]
-                   (retry-sub-loop! @environment-atom spec (first more)))}
        ;; Canonical stateful-resource lifecycle:
        ;; `resource_stop(id)` (B-dispatch — act by id;
        ;; ctx advertises can_stop). Session-scoped so the
@@ -10587,7 +10212,7 @@
        (resources/sandbox-bindings session-id))
 
      ;; Security configuration is resolved exactly once for a root environment.
-     ;; A sub_loop child receives the parent's value through `:child`; it never
+     ;; A child env receives the parent's value through `:child`; it never
      ;; re-reads model-writable vis.yml. `/reload` bumps `policy-reload-epoch`,
      ;; so each live env recycles at its next turn and rebuilds this snapshot.
      security-config
@@ -10742,7 +10367,7 @@
        (extension/fs-access-gate (fn []
                                    @environment-atom)))
 
-     {:keys [python-context sandbox-ns initial-ns-keys]}
+     {:keys [python-context python-engine sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
                                 sandbox-roots-fn
                                 network-opts
@@ -10780,7 +10405,7 @@
         ;; re-resolve so `sandbox-roots-fn` tracks /draft + /root.
         :workspace-atom workspace-atom
         :depth-atom depth-atom
-        ;; false for a sub_loop child reusing the parent's connection
+        ;; false for a child env reusing the parent's connection
         ;; — dispose-environment! must NOT close a borrowed DB.
         :owns-db? owns-db?
         ;; routing digest → rendered into ctx as `routing`
@@ -10829,6 +10454,9 @@
        :standing-ctx-atom (atom nil)
        :state-atom state-atom
        :python-context python-context
+       ;; Owned by THIS env: `dispose-environment!` closes it right after the
+       ;; context, which is what frees the session's Python heap.
+       :python-engine python-engine
        :sandbox-ns sandbox-ns
        :initial-ns-keys initial-ns-keys
        ;; Long-lived per-env LRU map: `{var-name-string →
@@ -10842,7 +10470,7 @@
 
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
-    ;; A sub_loop CHILD seeds its in-memory ctx straight from the model-supplied
+    ;; A CHILD env seeds its in-memory ctx straight from the model-supplied
     ;; subctx (its focused bigger-picture slice) — no DB restore.
     (when-let [seed (:seed-ctx child)]
       (reset! ctx-atom (assoc seed
@@ -10878,7 +10506,7 @@
     ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
     ;; classpath discovery so they land in the same registry walk below.
     ;; Load-once, never adopt: this runs on every env cache miss, every recycle
-    ;; and every `sub_loop` child env, and none of those is a human act. Only
+    ;; and every child env, and none of those is a human act. Only
     ;; this process's own start and `/reload` may pick an edit up.
     (python-extensions/ensure-python-extensions-loaded!)
     (extension/register-extensions! env install-extension!)
