@@ -1267,7 +1267,7 @@
    'start a fresh REPL and retry' error that burns the turn. \"repl_wedged\" (hung past
    the timeout) is left CLI-less: the hang is likely the code under test, which a CLI
    run would only re-hang on. Nothing here starts or relaunches a REPL — reviving one
-   is the caller's own `repl` call. The outcome is announced on :note so the result
+   is the caller's own `repl_start` call. The outcome is announced on :note so the result
    explains itself."
   [root norm result]
   (cond (get result "repl_unusable")

@@ -387,7 +387,7 @@
   ;; hatch for a layout vis cannot infer. Relative to the working directory; `~`
   ;; expands.
   ;; `interpreter`: the argv PREFIX that launches this project's Python for
-  ;; `repl` / `repl_eval` and the `project` test runner, pinned instead of
+  ;; `repl_start` / `repl_eval` and the `project` test runner, pinned instead of
   ;; detected (uv / poetry / .venv / python3). A path-like entry resolves against
   ;; the project dir; `~` expands; a bare name is looked up on PATH.
   ;; `runner`: default `run_tests({"language": "python"})` backend -- the hermetic `graalpy`

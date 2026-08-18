@@ -674,7 +674,7 @@
   (vis/extension
     {:ext/name "language-python"
      :ext/description
-     "Python pack: in-process Ruff `format_code`/`lint_code` and managed uv/Poetry/venv/python3 `repl`/`repl_eval`; active in Python workspaces."
+     "Python pack: in-process Ruff `format_code`/`lint_code` and managed uv/Poetry/venv/python3 `repl_start`/`repl_eval`; active in Python workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

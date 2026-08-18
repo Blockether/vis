@@ -2,7 +2,7 @@
   "vis-language-clojure — Clojure language handlers for Vis.
 
    Format/test/REPL are exposed through the generic language facade
-   (`format`, `test`, `repl_eval`, `repl`, `repl_stop`) —
+   (`format`, `test`, `repl_eval`, `repl_start`, `repl_stop`) —
    `format` here does parinfer delimiter repair + cljfmt, and the same repair is
    registered as the pack's `:balance-fn`: the foundation's editors call it with
    the WHOLE spliced file when an edit would not parse, and write the repair only

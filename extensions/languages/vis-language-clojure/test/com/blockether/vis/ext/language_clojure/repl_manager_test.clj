@@ -841,7 +841,7 @@
 
     (f)))
 
-;; Regression, issue #151: `repl` `connect` on a shadow-cljs project answered
+;; Regression, issue #151: `repl_connect` on a shadow-cljs project answered
 ;; "already-running" with the MANAGED JVM REPL's own port — the address asked for
 ;; was never dialled — and nothing could select a build, so every `repl_eval` in a
 ;; ClojureScript project silently evaluated as JVM Clojure.

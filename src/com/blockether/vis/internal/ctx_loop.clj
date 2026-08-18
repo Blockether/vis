@@ -5,7 +5,7 @@
    and a separate `:turn-state-atom` for live turn/iteration/form counters.
    This namespace stamps the cursor, enriches context with env/access/routing,
    and renders the standing context block. Live resources (background shells,
-   managed REPLs) are deliberately NOT part of ctx: a handle or `repl` status
+   managed REPLs) are deliberately NOT part of ctx: a handle or `repl_status`
    answers for them, so nothing about them is reprinted on every request."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.ctx-engine :as eng]

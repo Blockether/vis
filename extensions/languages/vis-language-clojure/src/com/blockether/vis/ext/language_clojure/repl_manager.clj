@@ -1079,7 +1079,7 @@
   "The REPL `session-id` ALREADY has for `dir`, and only while it ANSWERS — else nil.
    NEVER starts, stops or replaces a server: `run_tests` reuses a REPL the session
    deliberately keeps up, and with none it runs the suite in a clean JVM instead of
-   spawning one behind the caller's back. `repl` `start` is the ONE way a managed
+   spawning one behind the caller's back. `repl_start` is the ONE way a managed
    REPL comes into existence.
 
    The MANAGED REPL wins: it needs a live process AND a describe round-trip inside

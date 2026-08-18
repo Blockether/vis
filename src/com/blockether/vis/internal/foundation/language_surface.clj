@@ -84,7 +84,7 @@
 
 (defn capability-data
   "STRUCTURED capability map for the ACTIVE language packs:
-   `{\"clojure\" [\"format\" \"test\" \"repl_eval\" \"repl\"], \"python\" [...]}`
+   `{\"clojure\" [\"format\" \"test\" \"repl_eval\" \"repl_start\"], \"python\" [...]}`
    — nil when none active. Recomputed every turn from active-extensions, so it
    GAINS a language the moment its pack activates (e.g. a .py file appears).
    INTERNAL: it feeds the EXTENSIONS prompt block and the `resources` ctx
@@ -121,12 +121,12 @@
         (str
           "\n  clojure run_tests NEVER starts a REPL: with none running it shells the project's"
           " own test command in a CLEAN JVM, so the run sees the code on disk. When THIS"
-          " session already has a REPL up for that project it REUSES it — and that path reloads"
+          " session already has one for that project it REUSES it — that path reloads"
           " the namespaces it RUNS but NEVER their dependencies, so a changed PRODUCTION ns"
           " still serves the Vars already loaded: `repl_eval` `(require 'my.prod.ns :reload)` for"
           " each one you edited, or `repl_stop` and let a clean JVM run them."
           "\n  clojure lint_code runs clj-kondo + `general` REFLECTION/BOXED-MATH checks;"
-          " whole-project lint (omit code/paths) includes both; no separate reflection check.")))))
+          " whole-project lint (omit code/paths) does both; no separate reflection tool.")))))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
@@ -332,7 +332,6 @@
                                    ;; KeyErroring on the clean path.
                                    "message" message}}))
     (dispatch-repl! env "stop" args)))
-
 
 (defn repl-status
   "Report the pack's REPL state: `repl_status(language,{cwd})`."

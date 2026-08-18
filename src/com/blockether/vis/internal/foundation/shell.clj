@@ -294,7 +294,7 @@
 
      dir-value
      ;; `cwd` is THE name for a working directory across the tool surface
-     ;; (repl, repl_eval, run_tests, the language packs, and Python's own
+     ;; (repl_start, repl_eval, run_tests, the language packs, and Python's own
      ;; `os.getcwd`). There is no other spelling: `dir` is gone, not aliased.
      (get opts "cwd")
 

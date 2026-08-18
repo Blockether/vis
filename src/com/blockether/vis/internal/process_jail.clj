@@ -886,7 +886,7 @@
 ;; ── ONE call's own environment ──────────────────────────────────────────────
 ;; `environment:` says what EVERY child of Vis gets. A verb that SPAWNS also
 ;; carries what THIS child gets on top, and it carries it as an ARGUMENT of the
-;; call — `shell(cmd, {"env": …})`, `repl({"op": "start", "env": …})` — never as
+;; call — `shell(cmd, {"env": …})`, `repl_start({"env": …})` — never as
 ;; an ambient binding wrapped around a block. The record of the call is what
 ;; says which variables the child ran with: a scope opened three lines earlier
 ;; is gone the moment that block is folded, and independent spawns awaited
@@ -1131,7 +1131,7 @@
       (-> (session-base-policy! session-id)
           (language-process-policy loopback-port)
           ;; THIS launch's own `env` delta, on top of the project environment —
-          ;; the argument a `repl`/`run_tests` call carried, resolved and
+          ;; the argument a `repl_start`/`run_tests` call carried, resolved and
           ;; scrubbed by the one contract that owns both.
           (with-call-env (call-env-values env)))
 

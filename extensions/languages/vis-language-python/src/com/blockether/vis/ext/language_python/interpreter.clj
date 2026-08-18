@@ -171,7 +171,7 @@
    in merged config as `python.interpreter`, else `detect-command`'s detection.
    A pin is how a workspace whose only sanctioned invocation is something vis
    cannot detect (`vis-agent python`, a wrapper script, a container shim) still
-   gets its own launcher out of `repl` / `repl_eval` / `run_tests`."
+   gets its own launcher out of `repl_start` / `repl_eval` / `run_tests`."
   [root]
   (or (try (pinned-command root (config/load-config-raw)) (catch Throwable _ nil))
       (detect-command root)))

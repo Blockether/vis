@@ -72,7 +72,7 @@
 
 (defdescribe recover-if-unusable-test
              ;; Recovery never SPAWNS: an unusable REPL means the clean-JVM CLI runs the suite
-             ;; THIS turn, and bringing a REPL back is the caller's own `repl` call.
+             ;; THIS turn, and bringing a REPL back is the caller's own `repl_start` call.
              (it "runs the CLI suite in a clean JVM when the reused server was unusable"
                  (with-redefs
                    [com.blockether.vis.ext.language-clojure.test-runner/run-via-cli

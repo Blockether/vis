@@ -1,6 +1,6 @@
 ;; Python language pack. Activates ONLY when the workspace looks like a Python
 ;; project (pyproject.toml / setup.py / requirements.txt / *.py). Adds a MANAGED
-;; Python REPL behind the generic language facade (repl / repl_eval / repl_status /
+;; Python REPL behind the generic language facade (repl_start / repl_eval / repl_status /
 ;; repl_stop), picking a project-aware interpreter (uv / poetry / .venv / python3)
 ;; the way the Clojure pack picks deps.edn / lein / bb. The REPL is a subprocess
 ;; running a tiny line-framed eval server; charred (JSON) rides in from vis core.
