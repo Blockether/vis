@@ -1480,7 +1480,11 @@
 (defn save-config!
   "Persist configuration to `~/.vis/state.yml` using the string-keyed YAML contract.
    Callers may supply internal keyword-keyed domain maps; validation always runs on
-   the exact string-keyed map that is written."
+   the exact string-keyed map that is written.
+
+   This REPLACES the whole store. Anything that reads the store in order to change
+   PART of it goes through `update-machine-config!` instead — a bare
+   read-modify-write here silently drops whatever another writer stored in between."
   ([config] (save-config! config nil))
   ([config source]
    ;; `restore-env-refs` FIRST: a caller may hand us a map that travelled through
