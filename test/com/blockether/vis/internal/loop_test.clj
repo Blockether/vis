@@ -2690,6 +2690,35 @@
 
 
 (defdescribe
+  failed-block-keeps-its-output-test
+  "A raise ends the block, not its output: whatever the program printed before
+   the failure answers the call ALONGSIDE the error, so a block that batched
+   several calls keeps the ones that already finished."
+  ;; Regression: `form-output` short-circuited on `:error`, so a block whose LAST
+  ;; call raised came back to the model as the traceback alone — every call that
+  ;; had already printed was dropped on the wire (the store and the human card
+  ;; kept it), and the whole round had to be run again.
+  (let
+    [irm
+     (var-get #'lp/iteration-results-message)
+
+     body
+     (fn [form]
+       (get-in (irm {:tool-calls [{:id "A" :name "python_execution"}]
+                     :forms-vec [(merge {:scope "t1/i1/f1" :svar/tool-call-id "A"} form)]})
+               [:content 0 :content]))]
+
+    (it "partial stdout rides along with the error — printed output first"
+        (let [b (body {:stdout "LISTED_THE_TREE"
+                       :error {:message "NameError: name 'no_such_call' is not defined"}})]
+          (expect (str/includes? b "LISTED_THE_TREE"))
+          (expect (str/includes? b "no_such_call"))
+          (expect (< (str/index-of b "LISTED_THE_TREE") (str/index-of b "no_such_call")))))
+    (it "a failure that printed nothing answers with the error alone"
+        (expect (str/includes? (body {:error {:message "ValueError: boom"}})
+                               "✗ error: ValueError: boom")))))
+
+(defdescribe
   tool-result-pairing-test
   "REARCHITECTURE (same DB schema): an iteration is a LIST of `python_execution`
    tool-calls. Each tool_use gets its OWN tool_result, carrying ITS OWN forms'
