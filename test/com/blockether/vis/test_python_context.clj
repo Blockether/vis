@@ -39,7 +39,7 @@
    the test fails while the code it covers is provably fine. Run a single
    namespace as `-M:test --namespace <ns>`, with no `--dir`."
   (:require [com.blockether.vis.internal.env-python :as env-python])
-  (:import [org.graalvm.polyglot Context]))
+  (:import [org.graalvm.polyglot Context Engine]))
 
 (defonce ^:private contexts (atom {}))
 
@@ -61,6 +61,32 @@
     (doseq [[sym v] bindings]
       (env-python/set-python-binding! ctx sym v))
     ctx))
+
+(defmacro with-own
+  "Bind `sym` to a sandbox built for THIS test alone, and dispose it — Context
+   first, then its Engine — when the body returns.
+
+   For a test that cannot share: one that wipes the sandbox
+   (`globals().clear()`, `del __vis_run_async__`), asserts on a COLD context, or
+   needs its own roots / network policy / stdin. Those reasons are real; this
+   does not take them away. It bounds how LONG the sandbox lives.
+
+   That is the number that matters. A sandbox built in a `let` at suite level
+   exists from namespace load until the JVM exits, so a file with fifteen of
+   them holds fifteen at once — and peak memory tracks how many are alive
+   TOGETHER, not how many were made. Since every Context now carries its own
+   Engine (`env-python/new-engine!`), and an Engine retains everything built on
+   it, one unclosed sandbox pins a whole Python heap for the rest of the run.
+
+   `args` are `create-python-context`'s, verbatim."
+  [[sym & args] & body]
+  `(let [r# (env-python/create-python-context ~@args)
+         ~sym (:python-context r#)]
+     (try ~@body
+          (finally
+            (try (.close ^Context (:python-context r#) true) (catch Throwable _# nil))
+            (when-let [e# (:python-engine r#)]
+              (try (.close ^Engine e# true) (catch Throwable _# nil)))))))
 
 (defn shared
   "The sandbox shared by every suite that only USES Python."

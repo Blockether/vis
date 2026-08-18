@@ -640,17 +640,16 @@ await patch({'path': css})" "t1/i1")]
   ;; must come from the exception itself — otherwise the boundary reports a
   ;; preamble line the user never wrote.
   (it "a compile-phase SyntaxError points at the USER's line"
-      (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                "x = 1\ny = 2\nf(a=1, a=2)"
-                                "t1/i1")]
-        (expect (= 3 (:line (:data (:error r)))))
-        (expect (str/includes? (str (:message (:error r))) "3: f(a=1, a=2)"))))
+      (tpc/with-own [ctx {}]
+        (let
+          [r (ep/run-python-block ctx "x = 1\ny = 2\nf(a=1, a=2)" "t1/i1")]
+          (expect (= 3 (:line (:data (:error r)))))
+          (expect (str/includes? (str (:message (:error r))) "3: f(a=1, a=2)")))))
   ;; `globals().clear()` (or deleting an engine-owned name) is legal Python and
   ;; used to KILL the session: the host then called a null `__vis_run_async__` and
   ;; every later block died with a bare NullPointerException.
   (it "a block that wipes the globals does not kill the interpreter"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (tpc/with-own [ctx {}]
         (ep/run-python-block ctx "globals().clear()" "t1/i1")
         (let [r (ep/run-python-block ctx "print('alive')" "t1/i2")]
           (expect (nil? (:error r)))
@@ -658,7 +657,7 @@ await patch({'path': css})" "t1/i1")]
         (let [r (ep/run-python-block ctx "zz = 5\nprint(zz + 1)" "t1/i3")]
           (expect (= "6" (str/trim (str (:stdout r))))))))
   (it "deleting the engine's own runtime name reinstalls it instead of wedging"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (tpc/with-own [ctx {}]
         (ep/run-python-block ctx "del __vis_run_async__" "t1/i1")
         (let [r (ep/run-python-block ctx "print('still here')" "t1/i2")]
           (expect (nil? (:error r)))
@@ -670,26 +669,27 @@ await patch({'path': css})" "t1/i1")]
   ;; survives it (a frame captures its builtins); pinning the helpers into builtins
   ;; gives them the same survival rule as `print`.
   (it "a mid-block globals().clear() does not break the rest of the same block"
-      (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                "import sys\nglobals().clear()\nprint('recovered')"
-                                "t1/i1")]
-        (expect (nil? (:error r)))
-        (expect (= "recovered" (str/trim (str (:stdout r)))))))
+      (tpc/with-own [ctx {}]
+        (let
+          [r (ep/run-python-block ctx
+                                  "import sys\nglobals().clear()\nprint('recovered')"
+                                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "recovered" (str/trim (str (:stdout r))))))))
   (it "deleting one engine helper mid-block keeps the rest of the block alive"
-      (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                "del __vis_settle__\nprint(1 + 1)"
-                                "t1/i1")]
-        (expect (nil? (:error r)))
-        (expect (= "2" (str/trim (str (:stdout r)))))))
+      (tpc/with-own [ctx {}]
+        (let
+          [r (ep/run-python-block ctx "del __vis_settle__\nprint(1 + 1)" "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "2" (str/trim (str (:stdout r))))))))
   (it "a print after a globals().clear() in the same block still works"
-      (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                "print('a')\nglobals().clear()\nprint('b')"
-                                "t1/i1")]
-        (expect (nil? (:error r)))
-        (expect (= "a\nb" (str/trim (str (:stdout r))))))))
+      (tpc/with-own [ctx {}]
+        (let
+          [r (ep/run-python-block ctx
+                                  "print('a')\nglobals().clear()\nprint('b')"
+                                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "a\nb" (str/trim (str (:stdout r)))))))))
 
 (defdescribe
   async-runtime-test
