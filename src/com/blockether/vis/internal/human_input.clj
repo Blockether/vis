@@ -1843,8 +1843,12 @@
 
            (when (contains? old view-id)
              (let
-               [artifact-id (when (mpl-capture/record-attachment! (live-attachment artifact)
-                                                                  (:attachment-sink entry))
+               [;; A human's stop arrives on a gateway thread, which collects no artifacts of
+                ;; its own: the row belongs to the block whose run produced it, so file into
+                ;; the collector that block captured when nothing is collecting here.
+                sink (or mpl-capture/*attachment-sink* (:attachment-sink entry))
+                artifact-id (when (binding [mpl-capture/*attachment-sink* sink]
+                                    (mpl-capture/record-attachment! (live-attachment artifact)))
                               (:id artifact))
                 result (cond-> verdict
                          artifact-id

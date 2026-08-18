@@ -41,7 +41,7 @@
   ^File [session-id view-id]
   (io/file (views-dir) (str session-id) (str view-id ".ndjson")))
 
-(def record-scheme
+(def ^:private record-scheme
   "URI scheme of a live record. Owned by [[record-backend]], which is the only thing
    that reads one back."
   "vis-live")
@@ -80,7 +80,7 @@
                    (re-matches record-segment (str view-id)))
           (view-file session-id view-id))))))
 
-(def record-backend
+(def ^:private record-backend
   "The storage rail that reads a live record back. The artifact a settled view files
    carries no bytes past the inline floor — it carries a [[record-uri]] — and this is
    what turns that address into the bytes `GET /v1/sessions/:sid/iterations/:iid/
@@ -99,7 +99,7 @@
                      (when-let [^File file (uri-file uri)]
                        (when (.isFile file) (Files/readAllBytes (.toPath file)))))})
 
-(defn record-rail!
+(defn ^:private record-rail!
   "Register [[record-backend]]. Idempotent by id, and called from BOTH ends: on LOAD,
    because the process that serves the byte endpoint for a record written weeks ago
    never opened a view of its own, and from [[open!]], so a rail something else

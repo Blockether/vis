@@ -126,25 +126,22 @@
    id. Returns the recorded map (nil with no sink). NEVER throws — capture must
    not break a turn.
 
-   An ASYNCHRONOUS producer passes `sink`: an artifact whose bytes are only final
-   long after the block handed control back — a live view a human stops from a
-   gateway thread — files into the collector that block CAPTURED, because the row
-   belongs to the block that produced it and no other thread has one bound. The
-   ambient sink still wins where there is one: the block doing the recording is
-   alive by definition."
-  ([m] (record-attachment! m nil))
-  ([m sink]
-   (when-let [sink (or *attachment-sink* sink)]
-     (try (let
-            [rec (cond-> m
-                   (str/blank? (str (:id m)))
-                   (assoc :id (str (java.util.UUID/randomUUID)))
+   An artifact whose bytes are only final long after its block handed control back
+   — a live view a human stops from a gateway thread — is filed by REBINDING this
+   var to the collector that block captured. The sink is the whole contract; there
+   is deliberately no second way to hand one in."
+  [m]
+  (when-let [sink *attachment-sink*]
+    (try (let
+           [rec (cond-> m
+                  (str/blank? (str (:id m)))
+                  (assoc :id (str (java.util.UUID/randomUUID)))
 
-                   (nil? (:version m))
-                   (assoc :version (next-attachment-version (:filename m))))]
-            (swap! sink conj rec)
-            rec)
-          (catch Throwable _ nil)))))
+                  (nil? (:version m))
+                  (assoc :version (next-attachment-version (:filename m))))]
+           (swap! sink conj rec)
+           rec)
+         (catch Throwable _ nil))))
 
 (defn pending-attachments
   "What THIS block has recorded into `*attachment-sink*` so far — artifacts the
