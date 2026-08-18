@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.40 (4452) — 2026-08-18
+<!-- commit: f03e0ddb8f5d41288d0730dc9d4c17e83e55c843 -->
+
+- Stop publishing what only the sink itself calls
+- Serve a settled view's record, and file it on a stop
+- Settle a finished live view into an artifact
+- Freeze the live materializer the TUI channel reads
+- Serve on Jetty 12 core, drop the ee9 servlet layer
+- Name the commands a remote target does not redirect
+- Drive a remote gateway from the command line
+- Pin that a leaving gateway publishes held patches
+- Delete unread live surface, flush patches on stop
+- Arrange a live view with the form's own groups
+- Read the armed pull-to-search band
+- Load the session list behind an open transcript
+- Keep the turn either side of the reader laid out
+- Show the aside band whole and pin is_aside outside Vis
+- Fill the band, paint inline markdown, and stand a node aside
+- Let a human stop any live view, with a note
+- Watch and stop a live view from the phone
+- Open live views from a Python extension
+- Paint a live view as one scroll surface in the band
+- Hand the model a live view's picture as data, not markdown
+
 ## 0.1.38 (4319) — 2026-08-16
 <!-- commit: 8088f819e680b5526f62f9616b44f629a28029c9 -->
 
