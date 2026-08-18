@@ -178,9 +178,9 @@
   verb-arg-boundary-test
   ;; Regression: a Python dict passed to a wrapped Clojure verb crosses the
   ;; boundary via `->clj`, which KEYWORDIZES every dict key (snake verbatim).
-  ;; The `sub_loop` verb once read its opts with the STRING key "models" and so
-  ;; silently got nil — the child ran on the DEFAULT model, not the proposed
-  ;; one. This pins the shape so verb authors read `:models`, not "models".
+  ;; A verb once read its opts with the STRING key "models" and so silently got
+  ;; nil — the call ran on the DEFAULT model, not the proposed one. This pins the
+  ;; shape so verb authors read `:models`, not "models".
   (it
     "dict args arrive with KEYWORD-snake keys; values pass through (strings, vectors)"
     (let

@@ -5,7 +5,7 @@
    that reaches for `from fontTools.ttLib.woff2 import decompress` (or
    `import brotli`) would otherwise hit ModuleNotFoundError. This extension
    contributes a `:ext/sandbox-shims` entry that env-python installs into every
-   sandbox Context (main + every `sub_loop` fork).
+   sandbox Context.
 
    Why this exists: WOFF2 web fonts are Brotli-compressed sfnt data, so PIL
    (`ImageFont.truetype`) cannot load a `.woff2` directly - it needs a real

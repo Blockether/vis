@@ -4,7 +4,7 @@
    `tabulate` PyPI package is not in GraalPy, so agents that reach for
    `from tabulate import tabulate` would otherwise hit ModuleNotFoundError; this
    extension contributes a `:ext/sandbox-shims` entry that env-python installs
-   into every sandbox Context (main + every `sub_loop` fork).
+   into every sandbox Context.
 
    The shim covers the tablefmts agents reach for most: plain, simple, github,
    pipe, orgtbl, presto, grid, fancy_grid, rst, tsv and html, with numeric /

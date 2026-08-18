@@ -21,7 +21,7 @@
 #   * shell OFF — the toggle turned BOTH doors off, so nothing here suggests
 #     `subprocess` is the way around a disabled shell.
 #
-# Installed once per sandbox context (main + every `sub_loop` fork) by
+# Installed once per sandbox context by
 # env_python/install-process-surface!, right after the apropos/doc introspection.
 
 

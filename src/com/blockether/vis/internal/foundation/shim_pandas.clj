@@ -4,8 +4,7 @@
    bridge, NOT a line of Clojure or babashka. pandas is a native/heavy wheel that
    does not ship in GraalPy, so agents that reach for `import pandas` would
    otherwise hit ModuleNotFoundError; this extension contributes a
-   `:ext/sandbox-shims` entry that env-python installs into every sandbox Context
-   (main + every `sub_loop` fork).
+   `:ext/sandbox-shims` entry that env-python installs into every sandbox Context.
 
    The shim is a correctness-focused SUBSET, not C-speed pandas: a `Series` is a
    labelled 1-D column, a `DataFrame` is an ordered dict of columns. It covers

@@ -6,8 +6,7 @@
    `tzdata` crash at import (`_tzpath` calls `getcwd`, which the denied FS refuses
    with an UN-catchable Java `SecurityException` that aborts the whole eval). This
    extension contributes a `:ext/sandbox-shims` entry that
-   `env-python/build-agent-context` installs into every sandbox Context (main +
-   every `sub_loop` fork): host callables resolve zone offsets / DST / names via
+   `env-python/build-agent-context` installs into every sandbox Context: host callables resolve zone offsets / DST / names via
    `java.time.ZoneId` (604+ zones, no data files), then a Python preamble publishes
    `zoneinfo`, `pytz`, `tzdata` and the `dateutil` package (`dateutil.tz`,
    `dateutil.parser`, `dateutil.relativedelta`) into `sys.modules` and staples them

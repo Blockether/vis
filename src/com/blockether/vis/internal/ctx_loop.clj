@@ -212,8 +212,8 @@
       (seq access-view)
       (assoc "session_access" access-view)
 
-      ;; current model + available models, so the agent can route a sub_loop
-      ;; child by cost (read-only). `:routing env` is loop-internal; its VALUE
+      ;; current model + available models, so the agent can reason about cost
+      ;; (read-only). `:routing env` is loop-internal; its VALUE
       ;; is built string-keyed at the loop because it crosses the boundary.
       ;; A turn RESCUED onto another provider overrides that plan: the session
       ;; dict must name the model that ANSWERED, because `session_utilization`

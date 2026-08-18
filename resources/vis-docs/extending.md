@@ -1134,8 +1134,8 @@ upstream pytest (no plugins, no assertion-rewriting import hook).
 
 The model's sandbox ships pure-Python, stdlib-only module shims so common
 imports work without pip. Each one is a real `.py` file under
-`resources/vis-shims/`, published into every sandbox context (main session and
-every `sub_loop` fork) and loaded lazily on first import:
+`resources/vis-shims/`, published into the sandbox context and loaded lazily on
+first import:
 
 - Data / formats — `numpy`, `pandas`, `yaml`, `toml`, `tabulate`, `sqlite3`,
   `brotli`.
@@ -1481,7 +1481,7 @@ print(doc("weather_lookup"))                        # call line right, keys mark
 
 The agent writes **Python**, but its sandbox ships only the pure-stdlib — no
 pip, no native wheels. A **shim** lets your extension publish a *host-backed*
-Python module into every sandbox (the main session and every `sub_loop` fork):
+Python module into the session sandbox:
 the familiar Python API is a thin façade whose real work is DELEGATED across the
 boundary to Clojure/JVM callables you supply. This is exactly how `import yaml`
 (backed by the pure-Clojure YAMLStar loader) and `import matplotlib.pyplot`

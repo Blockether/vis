@@ -2260,7 +2260,7 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
   extension-freshness-test
   (it "an implicit load never adopts an edited file - only /reload does"
       ;; `ensure-python-extensions-loaded!` is what a session env cache miss, an
-      ;; env recycle and a `sub_loop` child env call. None of them is a human
+      ;; env recycle and a child env call. None of them is a human
       ;; act, so none of them may execute bytes that appeared after the last
       ;; load: the running process keeps serving the version it admitted.
       (with-fresh-loaded

@@ -150,7 +150,7 @@
              (finally (delete-tree! dir)))))
   (it
     "prunes churny build/cache dirs (clj-kondo cache, target, cpcache) but keeps tracked .clj-kondo/config.edn"
-    ;; Regression: a sub_loop child clones the whole repo; clj-kondo/JVM rewrite
+    ;; Regression: a child env clones the whole repo; clj-kondo/JVM rewrite
     ;; their caches on startup, so thousands of cache files get fresh mtimes.
     ;; Reporting them flooded `changed_files` and overflowed the model ctx.
     (let [dir (temp-dir "vis-prune")]

@@ -864,8 +864,8 @@
    meaningful agent edits and are gitignored anyway. Landing them into trunk
    is always wrong, and — because a cache like `.clj-kondo/.cache` or `target`
    holds thousands of files the JVM/clj-kondo rewrites on startup — letting
-   them into `changed-paths` bloats `changed_files` (and any sub_loop result
-   built from it) enough to overflow the model context."
+   them into `changed-paths` bloats `changed_files` enough to overflow the
+   model context."
   #{".git" ".rift" ".trash" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules" ".shadow-cljs"
     ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
 
@@ -936,7 +936,7 @@
    GENERATED IN THE DRAFT: a rebuilt `dist`, a regenerated native project, a
    tool-written `.env`. Landing it would dump the draft's build output into the
    user's real repo — this repository alone regenerates over ten thousand such
-   files — and flood `changed_files` and every sub_loop result built from it. A
+   files — and flood `changed_files`. A
    force-added ignored file is TRACKED, so it is not in that set and still
    lands."
   [clone fork-ms]

@@ -5,7 +5,7 @@
    CPython Pillow wheel ships in the sandbox, and no Java2D/ImageIO either; this
    extension contributes a
    `:ext/sandbox-shims` entry that `env-python/build-agent-context` installs into
-   every sandbox Context (main + every `sub_loop` fork): the host bridge callables
+   every sandbox Context: the host bridge callables
    are wired onto the globals, then the Python preamble publishes a `PIL` package
    (with `Image`, `ImageDraw`, `ImageFilter`, `ImageOps`, `ImageColor`,
    `ImageEnhance`, `ImageChops`, `ImageFont`, `ImageMath` submodules) into

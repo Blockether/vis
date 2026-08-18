@@ -3,8 +3,7 @@
    Python sandbox, backed by the pure-Clojure YAMLStar loader
    (`org.yamlstar/yamlstar`). No CPython PyYAML wheel ships in the sandbox; this
    extension contributes a `:ext/sandbox-shims` entry that
-   `env-python/build-agent-context` installs into every sandbox Context (main +
-   every `sub_loop` fork): the host bridge callables are wired onto the globals,
+   `env-python/build-agent-context` installs into every sandbox Context: the host bridge callables are wired onto the globals,
    then the Python preamble publishes a `yaml` module into `sys.modules` (so
    `import yaml` works) and staples it onto builtins (so `yaml.safe_load(...)`
    works with NO import).

@@ -1115,7 +1115,7 @@
                                  ;; conversation. Prewarm passes :claimed?
                                  ;; false; everyone else defaults true.
                                  :claimed_at (when claimed? now)}
-                                ;; sub_loop child → cross-soul link to the parent state;
+                                ;; child session → cross-soul link to the parent state;
                                 ;; keeps the child OUT of the top-level list (queryable
                                 ;; sub-tree + cascade-delete with the parent).
                                 parent-state-id
@@ -1248,7 +1248,7 @@
                  :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
                  :left-join [[:project :p] [:= :p.id :cs.project_id]]
                  :where (into [:and
-                               ;; TOP-LEVEL only — sub_loop child souls (parent_state_id set)
+                               ;; TOP-LEVEL only — child souls (parent_state_id set)
                                ;; hang off their parent's sub-tree, never the session list.
                                [:= :cs.parent_state_id nil]
                                ;; ADOPTION filter: hide unclaimed warm-pool

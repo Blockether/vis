@@ -821,8 +821,8 @@
 (s/def :ext/doctor-fn fn?)
 ;; Sandbox Python SHIMS / AUTOLOADS. An extension may publish one or more
 ;; "shims": a host-backed Python module (optionally auto-loaded onto builtins)
-;; installed into EVERY model sandbox context — the main session AND every
-;; `sub_loop` fork — at creation time. This is how a pure-Clojure / JVM
+;; installed into EVERY model sandbox context at creation time. This is how a
+;; pure-Clojure / JVM
 ;; capability (YAMLStar's YAML 1.2 loader, an imaging-backed `matplotlib.pyplot`) is
 ;; surfaced to the model's Python as a REAL importable module: no pip, no
 ;; native wheels, no capability holes. `env-python/build-agent-context`

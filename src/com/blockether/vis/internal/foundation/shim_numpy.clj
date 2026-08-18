@@ -5,7 +5,7 @@
    not ship in GraalPy, so agents that reach for `import numpy` would otherwise
    hit ModuleNotFoundError; this extension contributes a `:ext/sandbox-shims`
    entry that `env-python/build-agent-context` installs into every sandbox
-   Context (main + every `sub_loop` fork).
+   Context.
 
    The shim is a correctness-focused SUBSET, not a C-speed numpy: an `ndarray`
    backed by a flat Python list + shape tuple, with broadcasting, reductions,

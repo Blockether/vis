@@ -5,7 +5,7 @@
    not ship in GraalPy, so agents that reach for `import requests` out of habit
    would otherwise hit ModuleNotFoundError; this extension contributes a
    `:ext/sandbox-shims` entry that `env-python/build-agent-context` installs into
-   every sandbox Context (main + every `sub_loop` fork).
+   every sandbox Context.
 
    Because every call travels through the sandbox's OWN socket (urllib ->
    http.client -> socket), it automatically honours the network toggle

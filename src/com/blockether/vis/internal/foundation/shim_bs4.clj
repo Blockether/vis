@@ -6,7 +6,7 @@
    `from bs4 import BeautifulSoup` (the natural partner to the `requests` shim:
    fetch then parse) would otherwise hit ModuleNotFoundError; this extension
    contributes a `:ext/sandbox-shims` entry that `env-python/build-agent-context`
-   installs into every sandbox Context (main + every `sub_loop` fork).
+   installs into every sandbox Context.
 
    It builds a `Tag` / `NavigableString` tree via `html.parser`, with
    `find`/`find_all` plus the plural and directional finders

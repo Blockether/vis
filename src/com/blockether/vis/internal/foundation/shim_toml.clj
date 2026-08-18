@@ -3,7 +3,7 @@
    sandbox — NO host/JVM bridge. The `toml` PyPI package is not in GraalPy, so
    agents that reach for `import toml` would otherwise hit ModuleNotFoundError;
    this extension contributes a `:ext/sandbox-shims` entry that env-python
-   installs into every sandbox Context (main + every `sub_loop` fork).
+   installs into every sandbox Context.
 
    Reading (`toml.loads`/`toml.load`) delegates to the stdlib `tomllib` (present
    in GraalPy's 3.11 stdlib) for a spec-correct parse; writing

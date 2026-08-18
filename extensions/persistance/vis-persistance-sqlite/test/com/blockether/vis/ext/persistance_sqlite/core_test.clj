@@ -1620,9 +1620,9 @@
 ;; List session states (fork tree introspection)
 
 (defdescribe
-  subloop-child-session-test
+  child-session-test
   (it
-    "a sub_loop child (parent_state_id set) is hidden from the top-level list yet cascade-deletes with its parent"
+    "a child session (parent_state_id set) is hidden from the top-level list yet cascade-deletes with its parent"
     (let
       [s
        (h/store)

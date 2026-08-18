@@ -22,7 +22,7 @@
 
    Registered unconditionally as a foundation shim (like shim-yaml /
    shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `attach` into
-   every sandbox (main + every `sub_loop` fork)."
+   every sandbox."
   (:require [com.blockether.imaging :as imaging]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.core :as vis]

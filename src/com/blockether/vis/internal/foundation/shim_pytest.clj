@@ -6,8 +6,7 @@
    ship in GraalPy, so agents writing full Python extensions and wanting to
    TEST them inline would otherwise hit ModuleNotFoundError; this extension
    contributes a `:ext/sandbox-shims` entry that
-   `env-python/build-agent-context` installs into every sandbox Context (main +
-   every `sub_loop` fork).
+   `env-python/build-agent-context` installs into every sandbox Context.
 
    It is NOT real pytest: there is no pluggy/plugin system, no ini/plugin CLI
    (only `-k` / `-x` / `--maxfail` / `-v`), and no import-time assertion
