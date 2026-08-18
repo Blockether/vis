@@ -1315,9 +1315,39 @@
 
         is-removed
         (boolean (some-> provider-id
-                         (providers/remove-provider! :gateway)))]
+                         (providers/remove-provider! :gateway)))
 
-    (json-response (assoc (router-fleet-json) :is-removed is-removed))))
+        fleet
+        (router-fleet-json)
+
+        ;; A provider still in the fleet after a removal that changed nothing is
+        ;; not config-backed: it is synthesized on every read from an env var or
+        ;; a credential file, so there is no entry in `state.yml` to delete and
+        ;; deleting again will never work. Saying only `is_removed: false` left
+        ;; the UI with nothing to show and the user with a button that silently
+        ;; does nothing — name the source and what would actually remove it.
+        survivor
+        (when-not is-removed
+          (first (filter #(= provider-id (some-> (:id %) keyword)) (:providers fleet))))
+
+        reason
+        (case (some-> survivor :status :source)
+          :env (str "This provider comes from the environment"
+                    (when-let [v (some-> survivor :status :needs-env)] (str " (" v ")"))
+                    ", not from vis config. Unset it in the shell that starts the"
+                    " gateway and restart to drop it from the fleet.")
+          :env-var (str "This provider comes from an environment variable, not from"
+                        " vis config. Unset it in the shell that starts the gateway"
+                        " and restart to drop it from the fleet.")
+          :auth-file (str "This provider comes from a stored credential, not from vis"
+                          " config. Sign it out to drop it from the fleet.")
+          :command (str "This provider comes from an `api_key_command`, not from a"
+                        " stored entry. Remove that command from vis config to drop it.")
+          nil)]
+
+    (json-response (cond-> (assoc fleet :is-removed is-removed)
+                     reason
+                     (assoc :reason reason)))))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
