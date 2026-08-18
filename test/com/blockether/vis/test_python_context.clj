@@ -27,7 +27,17 @@
    lifecycle.
 
    Nothing here closes a context: they live as long as the JVM does, and a
-   `Context.close` on a sandbox with live guest threads is itself slow."
+   `Context.close` on a sandbox with live guest threads is itself slow.
+
+   ONE NAMESPACE, ONE REGISTRATION. `shared-with!` installs a stub that CLOSES
+   OVER test state (the `(atom [])` a test asserts on) into a process-global
+   sandbox. Register the same namespace twice in one JVM — `-M:test --dir test
+   --namespace x` re-adds a directory the `:test` alias already passes, which
+   runs everything under it twice — and the second registration overwrites the
+   binding with a stub closing over the SECOND atom. The first pass then calls
+   a live tool, gets a real result back, and asserts on an atom nobody wrote to:
+   the test fails while the code it covers is provably fine. Run a single
+   namespace as `-M:test --namespace <ns>`, with no `--dir`."
   (:require [com.blockether.vis.internal.env-python :as env-python])
   (:import [org.graalvm.polyglot Context]))
 
