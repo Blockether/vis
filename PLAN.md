@@ -263,7 +263,7 @@ human-input keys, so the snake_case wire spellings keep being DERIVED by `wire-k
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)
          (s/keys :req-un [::id ::title ::session-id ::channel-ids ::nodes
-                          ::is-cancellable ::timeout-ms ::seq ::created-at]
+                          ::timeout-ms ::seq ::created-at]
                  :opt-un [::description ::source])))
 
 ;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads the
@@ -285,10 +285,11 @@ human-input keys, so the snake_case wire spellings keep being DERIVED by `wire-k
 
 ;; What the blocked extension receives, and what the close event carries.
 (s/def ::is-completed boolean?)
+(s/def ::is-from-human boolean?)   ; a PERSON stopped it, engine-stamped
 (s/def ::live-result
   (s/and #(closed? live-result-keys %)
-         (s/keys :req-un [::view-id ::is-completed ::reason]
-                 :opt-un [::summary ::artifact-id ::error])))
+         (s/keys :req-un [::view-id ::is-completed ::reason ::is-from-human]
+                 :opt-un [::note ::summary ::artifact-id ::error])))
 ```
 
 Booleans are `is_<foo>` on the wire and `:is-<foo>` in the engine, per
@@ -597,8 +598,8 @@ session events; without this phase the app stays blind exactly as it is today.
   scroll back through a log whose patches it never received, and
   `POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt`, registered beside the form
   routes. The view id is parsed as a UUID before anything reaches the record directory; an unknown view
-  is 404 and a view declared `:is-cancellable false` refuses the app with 409, exactly as it refuses
-  the terminal.
+  is 404. There is NO 409: a view asks nothing, so no view may refuse the stop, and the body may carry
+  `{"note": "…"}` — the comment the person typed with it.
 - DROPPED: the session list's `awaiting` (`:1702`) does NOT gain a working state. `awaiting` means
   "this run needs YOU"; a live view needs nobody, and the row's own `live` flag already says a turn is
   moving. A working state would cost a new cross-process marker scan for a distinction the row makes.
@@ -826,8 +827,8 @@ Done:
 - Phase 4 COMPLETE — the phone watches it too. `internal/gateway/human_input.clj` stores all three live
   events like every other session event and coalesces a burst into ONE frame per 100 ms tick carrying
   `first_seq`..`seq`, so a client can tell a merge from a gap; `internal/gateway/server.clj` answers the
-  snapshot, the sink's log range and the interrupt (404 for an unknown view, 409 for one that refuses to
-  be stopped). `apps/vis-companion/src/lib/live-view.ts` is the engine's materializer written once more
+  snapshot, the sink's log range and the interrupt (404 for an unknown view; there is no 409 — no view
+  may refuse to be stopped). `apps/vis-companion/src/lib/live-view.ts` is the engine's materializer written once more
   in TypeScript — ops applied BY NODE ID, a replayed frame ignored, a view it cannot paint a single node
   of DROPPED rather than shown as an empty box, and a `seq` gap marking the view stale so the section
   re-reads the snapshot instead of painting a picture it already knows is wrong. `LiveView.tsx` renders
@@ -837,6 +838,14 @@ Done:
   `human_input_cross_channel_test.clj` fails a Clojure test the day the TypeScript vocabulary drifts
   from `hi-spec`. 1491 app tests over 134 files with `npm run lint` and `npm run build` clean, 386 green
   across the engine, gateway and TUI suites.
+- The stop became a CONVERSATION, and `:is-cancellable` left the live vocabulary entirely. A question
+  may be mandatory; a view asks nothing, so nothing may refuse to stop one. Escape in the terminal and
+  Interrupt on the phone both ARM the stop and open one line for a comment — Enter/Interrupt ends the
+  view with it, Escape/Keep watching returns to watching — and the verdict the model reads carries the
+  finished picture plus `is_from_human` and the human's `note` (trimmed, cut at `hi-spec/note-chars`
+  500, never refused for length). `close-live!` takes the human as a THIRD argument the extension
+  cannot forge: `:is-from-human` and `:note` are engine stamps, and the spec refuses a note nobody
+  left, a human stop that does not read `interrupted`, and any verdict that will not say who ended it.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.

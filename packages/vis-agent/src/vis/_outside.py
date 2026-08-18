@@ -888,13 +888,17 @@ def _live_line(name, op, node):
         return f"{label}: +{len(op.get(key) or [])} {key}"
     if kind == "status":
         detail = node.get("detail")
-        return "{}: {}{}".format(label, node.get("text") or "", f" — {detail}" if detail else "")
+        return "{}: {}{}".format(
+            label, node.get("text") or "", f" — {detail}" if detail else ""
+        )
     if kind == "progress":
         total = node.get("total")
         if total:
             return "{}: {} of {}".format(label, node.get("done") or 0, total)
         value = node.get("value")
-        return "{}: {}".format(label, "working" if value is None else f"{round(value * 100)}%")
+        return "{}: {}".format(
+            label, "working" if value is None else f"{round(value * 100)}%"
+        )
     changed = ", ".join(k for k in op if k not in ("op", "node_id"))
     return f"{label}: {changed}"
 
@@ -915,6 +919,10 @@ def _live_verdict(held, ending):
         "view_id": held["view_id"],
         "is_completed": reason == "completed",
         "reason": reason,
+        # Nobody is watching a stderr transcript, so nobody can stop it: the key
+        # is still PRESENT, because extension code reads the same verdict shape
+        # with an engine and without one.
+        "is_from_human": False,
     }
     for key in ("summary", "error", "artifact_id"):
         if str(ending.get(key) or "").strip():
@@ -975,7 +983,9 @@ def live(envelope_json):
     ending = verdict.get("summary") or verdict.get("error") or ""
     print(
         "== {} · {}{} ==".format(
-            held["view"].get("title"), verdict["reason"], f" — {ending}" if ending else ""
+            held["view"].get("title"),
+            verdict["reason"],
+            f" — {ending}" if ending else "",
         ),
         file=sys.stderr,
     )

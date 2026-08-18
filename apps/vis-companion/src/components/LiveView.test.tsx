@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LiveViewPanel } from './LiveView';
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
-import { liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
+import { LIVE_NOTE_CHARS, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
 
 afterEach(cleanup);
 
@@ -146,26 +146,53 @@ describe('a log the operator walks back through', () => {
 });
 
 describe('stopping the run from the phone', () => {
-  it('offers the interrupt the view declared, and says it is working on it', () => {
+  it('arms the stop, takes the comment, and sends it with the interrupt', () => {
+    const onInterrupt = vi.fn();
+    paint({ onInterrupt });
+    // Pressing Interrupt STOPS NOTHING yet: it opens the line the reason goes on.
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+    expect(onInterrupt).not.toHaveBeenCalled();
+
+    const field = screen.getByRole('textbox', { name: 'Why are you stopping Fleet scan?' });
+    expect(field).toHaveProperty('maxLength', LIVE_NOTE_CHARS);
+    fireEvent.change(field, { target: { value: '  wrong subnet  ' } });
+    fireEvent.submit(field.closest('form') as HTMLFormElement);
+    expect(onInterrupt).toHaveBeenCalledWith('wrong subnet');
+  });
+
+  it('stops with no comment at all — a stop is never held up by one', () => {
     const onInterrupt = vi.fn();
     paint({ onInterrupt });
     fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
-    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    fireEvent.submit(
+      (screen.getByRole('textbox') as HTMLElement).closest('form') as HTMLFormElement,
+    );
+    expect(onInterrupt).toHaveBeenCalledWith(null);
+  });
 
+  it('keeps watching when the human backs out, and forgets what they typed', () => {
+    const onInterrupt = vi.fn();
+    paint({ onInterrupt });
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'never mind' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Keep watching' }));
+    expect(onInterrupt).not.toHaveBeenCalled();
+    expect(screen.queryByRole('textbox')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+    expect(screen.getByRole('textbox')).toHaveProperty('value', '');
+  });
+
+  it('says it is working on it, and offers every view a stop', () => {
     cleanup();
-    paint({ onInterrupt, isInterrupting: true });
+    paint({ onInterrupt: vi.fn(), isInterrupting: true });
     const button = screen.getByRole('button', { name: 'Stopping...' });
     expect(button).toHaveProperty('disabled', true);
   });
 
-  it('offers nothing to press when the run refused to be interrupted', () => {
-    paint({ view: { ...opened(), is_cancellable: false }, onInterrupt: vi.fn() });
-    expect(screen.queryByRole('button')).toBeNull();
-  });
-
   it('states a refusal where the press happened', () => {
-    const html = paint({ onInterrupt: vi.fn(), error: 'This view cannot be interrupted' });
-    expect(html).toContain('This view cannot be interrupted');
+    const html = paint({ onInterrupt: vi.fn(), error: 'That view would not stop.' });
+    expect(html).toContain('That view would not stop.');
     expect(html).toContain('text-err');
   });
 });

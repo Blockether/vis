@@ -305,9 +305,9 @@
    one.
 
    `opts` needs at least a `:title`, and may carry `:description`, `:source`,
-   `:channel-ids`, `:is-cancellable` and `:timeout-ms`. At least one node is
-   required, and their ids must be distinct: every patch names the node it
-   speaks to."
+   `:channel-ids` and `:timeout-ms`. There is no cancellable flag: a human can
+   stop watching ANY view. At least one node is required, and their ids must be
+   distinct: every patch names the node it speaks to."
   [opts & nodes]
   (let [view (assoc opts :nodes (vec nodes))]
     (engine/normalize-live-view view)

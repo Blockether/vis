@@ -6,8 +6,10 @@
    A form is a QUESTION and owns the keyboard until it is answered; a view is a
    PICTURE and owns nothing. The composer keeps focus while a view paints, the
    wheel over the band scrolls it, a click opens a link or expands a node, and
-   the only key it takes is Escape — which interrupts the newest open view before
-   it interrupts the turn.
+   the only key it takes is Escape — which ARMS a stop on the newest open view,
+   before it interrupts the turn: the band then takes one line for the comment the
+   human types, Enter interrupts with it, Escape keeps watching. A view is ALWAYS
+   stoppable; the note is what says why.
 
    Everything except [[paint!]] is PURE: [[opened]] builds the pane from the
    engine's own materialized view, [[patched]] is the reducer over one patch,
@@ -622,26 +624,92 @@
       (str/join " · " (remove str/blank? [(flat-text (get-in pane [:view :title])) text])))))
 
 (defn interruptible
-  "The pane a stop would hit: the NEWEST view that says it may be stopped, or nil
-   when nothing on screen answers to Escape.
+  "The pane a stop would hit: the NEWEST open view, or nil when the band is empty.
 
-   ONE place decides that. The footer advertises the abort key by asking here and
-   the terminal's abort branch acts by asking here, so the row the human reads
+   EVERY view answers. A form may refuse to be cancelled because the run cannot
+   continue without an answer; a view asks nothing, so refusing to stop it would
+   only trap the human in front of work they already told to stop.
+
+   ONE place decides WHICH one. The footer advertises the abort key by asking here
+   and the terminal's abort branch acts by asking here, so the row the human reads
    and the key they press can never name different views."
   [panes]
-  (last (filterv #(get-in % [:view :is-cancellable]) panes)))
+  (last panes))
+
+(defn stopping
+  "The note the human is typing into an ARMED stop on `pane` — `\"\"` the moment
+   Escape arms it — or nil while the view is only being watched."
+  [pane]
+  (:stop pane))
+
+(defn armed
+  "The pane with its stop ARMED: Escape asked to interrupt and the band takes the
+   keyboard for one line. NOTHING is stopped yet — the engine hears about it when
+   the human presses Enter, so the comment travels with the stop instead of
+   arriving after it."
+  [pane]
+  (cond-> pane
+    (nil? (stopping pane))
+    (assoc :stop "")))
+
+(defn disarmed
+  "The pane back to being watched: whatever was typed is dropped with the stop."
+  [pane]
+  (dissoc pane :stop))
+
+(defn typed
+  "Apply ONE keystroke to an armed stop — the normalized vocabulary
+   `human-input/key->event` speaks, so the note line and a form's fields read the
+   same keyboard. Returns `{:pane pane' :action action :note note}`, where `action`
+   is `:stop` (interrupt it, carrying `note`), `:keep` (keep watching) or nil
+   (still typing).
+
+   The note stops growing at `hi-spec/note-chars`: the engine cuts a longer one
+   anyway, and a field that swallowed the words past the bound would lie about
+   what the model is going to read."
+  [pane {:keys [kind char]}]
+  (let [note (or (stopping pane) "")]
+    (case kind
+      :cancel
+      {:pane (disarmed pane) :action :keep}
+
+      (:enter :submit)
+      {:pane (disarmed pane) :action :stop :note (not-empty (str/trim note))}
+
+      :backspace
+      {:pane (assoc pane :stop (subs note 0 (max 0 (dec (count note))))) :action nil}
+
+      :char
+      (let [full (>= (count note) (long hi-spec/note-chars))]
+        {:pane (cond-> pane
+                 (not full)
+                 (assoc :stop (str note char)))
+         :action nil})
+
+      {:pane pane :action nil})))
+
+(defn stop-prompt
+  "What an armed stop asks, as `{:label … :note …}`: the line above the hint bar
+   while the human types. It names the view, because the stop hits the newest one
+   and several may be open."
+  [pane]
+  (when-let [note (stopping pane)]
+    {:label (str "interrupt " (flat-text (get-in pane [:view :title])) " — why? ") :note note}))
 
 (defn hint
   "The hint bar under the band. Escape is the ONE key a view takes, and while
    several are open it says WHICH one it will hit — the newest, the one the band
-   is painting."
+   is painting. Once the stop is armed the bar says the two keys that end the
+   typing: Enter interrupts with the note, Escape keeps watching."
   [pane others]
-  (cond-> []
-    (get-in pane [:view :is-cancellable])
-    (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
+  (if (stopping pane)
+    [["⏎" "interrupt"] ["Esc" "keep watching"]]
+    (cond-> []
+      (some? pane)
+      (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-    (seq others)
-    (conj [(str (inc (count others))) "views open"])))
+      (seq others)
+      (conj [(str (inc (count others))) "views open"]))))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
 
@@ -896,9 +964,13 @@
             ;; Half the rows between the top of the transcript and the prompt, at
             ;; the most: the run this view reports on is still being read above it.
             room (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
-            ;; What the band WANTS: every collapsed line, the plan, and the row
-            ;; the fenced hint rule costs.
-            wanted (+ (count collapsed) (count rows-plan) 1)
+            ;; An ARMED stop takes one body row for the line the human types into,
+            ;; right above the fence: the band asks WHY it is being stopped where
+            ;; it is being stopped, and the answer rides along with the stop.
+            stop (stop-prompt pane)
+            ;; What the band WANTS: every collapsed line, the plan, the row the
+            ;; fenced hint rule costs, and that note line when it is armed.
+            wanted (+ (count collapsed) (count rows-plan) 1 (if stop 1 0))
             {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
             (tr/band-geometry region (min wanted room) false)
             ;; The band CLOSES below its hint bar, exactly like the form's: the
@@ -909,7 +981,7 @@
             rule-at (long foot-row)
             hint-rule-at (dec hint-at)
             visible (max 1 (dec (long visible)))
-            body-visible (max 1 (- visible (count collapsed)))
+            body-visible (max 1 (- visible (count collapsed) (if stop 1 0)))
             total (count rows-plan)
             start (offset pane rows-plan body-visible)
             shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
@@ -939,6 +1011,14 @@
                            body-w
                            view-id
                            {:kind :blank}))
+           (when stop
+             (paint-segments! g
+                              left
+                              (dec (long hint-rule-at))
+                              body-w
+                              [{:text (:label stop) :fg t/dialog-hint}
+                               {:text (:note stop) :fg t/dialog-fg :styles [p/BOLD]}
+                               {:text "▏" :fg t/dialog-hint-key}]))
            (dialogs/draw-hint-bar! g left hint-at inner-w (hint pane others))
            ;; The gutter lane every scrollable dialog draws its bar in: the last
            ;; column inside the right rail, which the body's own lead keeps clear.

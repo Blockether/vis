@@ -3272,17 +3272,21 @@ export class GatewayClient {
   }
 
   /**
-   * Ask one view to stop. The extension SEES the interruption and ends the view
-   * itself, so this answers whether the ask landed — never that the work is
-   * over. A view that declared itself uncancellable refuses with 409.
+   * Ask one view to stop, with `note` — the comment the person leaves with the
+   * stop, when they leave one. The extension SEES the interruption and ends the
+   * view itself, so this answers whether the ask LANDED, never that the work is
+   * over. A view is always stoppable: nothing is asked of the human by one, so
+   * nothing is left unanswered by stopping it.
    */
   interruptLiveView(
     sid: string,
     viewId: string,
+    note?: string,
   ): Promise<{ is_interrupted: boolean; view_id: string }> {
     return this.request<{ is_interrupted: boolean; view_id: string }>(
       "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/human-input/live/${encodeURIComponent(viewId)}/actions/interrupt`,
+      note ? { note } : undefined,
     );
   }
 

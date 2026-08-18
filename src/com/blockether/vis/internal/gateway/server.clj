@@ -373,6 +373,13 @@
           slurp
           wire/parse-json))
 
+(defn- optional-body-json
+  "The JSON body of `request` when it HAS one, nil when it is empty or malformed.
+   For routes whose body is an EXTRA rather than the point of the call: a stop
+   must land even when the client sent no body at all."
+  [request]
+  (try (body-json request) (catch Exception _ nil)))
+
 (defn- path-sid
   [request]
   (some-> (get-in request [:path-params :sid])
@@ -2903,15 +2910,15 @@
      request-id
      (str (get-in request [:path-params :request-id]))
 
-     view
+     pending-request
      (when sid (gw-human-input/request-of sid request-id))]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? view) (human-input-404 request-id)
-          (false? (:is-cancellable view)) (error-response 409
-                                                          :human-input-not-cancellable
-                                                          "this request cannot be cancelled"
-                                                          :request_id request-id)
+          (nil? pending-request) (human-input-404 request-id)
+          (false? (:is-cancellable pending-request))
+          (error-response 409
+                          :human-input-not-cancellable "this request cannot be cancelled"
+                          :request_id request-id)
           :else (json-response {:is_cancelled (boolean (gw-human-input/cancel! request-id))
                                 :request_id request-id}))))
 
@@ -2970,9 +2977,12 @@
 
 (defn- interrupt-live-view-handler
   "POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt — stop one
-   live view from the app. The extension resumes with an interrupted verdict, and
-   a view declared `is_cancellable false` refuses, exactly as Escape does in the
-   TUI."
+   live view from the app, with an optional `{note: \"…\"}`: the comment the person
+   leaves with the stop.
+
+   ALWAYS allowed. A view asks nothing, so stopping it leaves nothing unanswered
+   — exactly the rule Escape obeys in the TUI. The extension resumes with an
+   interrupted verdict that says a HUMAN ended it and carries their words."
   [request]
   (let
     [sid
@@ -2982,15 +2992,15 @@
      (path-view-id request)
 
      view
-     (when (and sid view-id) (gw-human-input/live-view-of sid view-id))]
+     (when (and sid view-id) (gw-human-input/live-view-of sid view-id))
+
+     note
+     (get (optional-body-json request) "note")]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
           (nil? view) (live-view-404 (get-in request [:path-params :view-id]))
-          (false? (:is-cancellable view)) (error-response 409
-                                                          :human-input-not-cancellable
-                                                          "this live view cannot be interrupted"
-                                                          :view_id view-id)
-          :else (json-response {:is_interrupted (some? (gw-human-input/interrupt-live! view-id))
+          :else (json-response {:is_interrupted (some? (gw-human-input/interrupt-live! view-id
+                                                                                       note))
                                 :view_id view-id}))))
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before

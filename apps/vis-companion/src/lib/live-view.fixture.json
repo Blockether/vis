@@ -1,6 +1,5 @@
 {
   "seq": 0,
-  "is_cancellable": true,
   "channel_ids": [
     "tui",
     "app"

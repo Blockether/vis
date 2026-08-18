@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Button, LoadMore, Meter, Spinner } from './ui';
+import { Button, Input, LoadMore, Meter, Spinner } from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   applyLiveViewEvent,
+  LIVE_NOTE_CHARS,
   isLiveViewEvent,
   liveFraction,
   livePercent,
@@ -345,11 +346,19 @@ export function LiveViewPanel({
   load,
 }: {
   view: LiveViewModel;
-  onInterrupt?: () => void;
+  /** Stop the view, carrying the comment the human left — `null` when they left none. */
+  onInterrupt?: (note: string | null) => void;
   isInterrupting?: boolean;
   error?: string | null;
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
 }) {
+  // The stop is ARMED before it is sent, exactly as Escape arms it in the
+  // terminal: the comment travels WITH the interrupt, so the run reads WHY it
+  // was stopped and not merely that it was. `null` is "not armed" — an empty
+  // string is an armed stop nobody has typed into yet.
+  const [note, setNote] = useState<string | null>(null);
+  const isArmed = note !== null;
+  const typed = note ?? '';
   return (
     <section
       className="overflow-hidden border border-dialog-edge bg-panel"
@@ -368,12 +377,42 @@ export function LiveViewPanel({
             </span>
           )}
         </span>
-        {view.is_cancellable && onInterrupt && (
-          <Button variant="secondary" onClick={onInterrupt} disabled={isInterrupting}>
+        {onInterrupt && !isArmed && (
+          <Button variant="secondary" onClick={() => setNote('')} disabled={isInterrupting}>
             {isInterrupting ? 'Stopping...' : 'Interrupt'}
           </Button>
         )}
       </header>
+      {isArmed && onInterrupt && (
+        <form
+          className="flex flex-wrap items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setNote(null);
+            onInterrupt(typed.trim() === '' ? null : typed.trim());
+          }}
+          onKeyDown={(event) => {
+            // Escape keeps watching — the terminal's own second Escape.
+            if (event.key === 'Escape') setNote(null);
+          }}
+        >
+          <Input
+            autoFocus
+            className="min-w-40 flex-1"
+            value={typed}
+            maxLength={LIVE_NOTE_CHARS}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="why stop it? (optional)"
+            aria-label={`Why are you stopping ${view.title}?`}
+          />
+          <Button type="submit" variant="primary" disabled={isInterrupting}>
+            Interrupt
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => setNote(null)}>
+            Keep watching
+          </Button>
+        </form>
+      )}
       {error && <p className="border-b border-dialog-edge px-3 py-2 font-mono text-chip text-err">{error}</p>}
       <ul className="divide-y divide-dialog-edge">
         {view.nodes.map((node) => (
@@ -455,11 +494,13 @@ export function LiveView({
 
   if (views.length === 0) return null;
 
-  const interrupt = (viewId: string) => {
+  // The note the human typed rides WITH the stop: one call, so the run never
+  // resumes on an interrupt whose reason is still in flight behind it.
+  const interrupt = (viewId: string, note: string | null) => {
     setStopping(viewId);
     setError(null);
     client
-      .interruptLiveView(sid, viewId)
+      .interruptLiveView(sid, viewId, note ?? undefined)
       .catch(() => setError('That view would not stop. It may have just finished.'))
       .finally(() => setStopping(null));
   };
@@ -475,7 +516,7 @@ export function LiveView({
           view={view}
           error={stopping === null ? error : null}
           isInterrupting={stopping === view.id}
-          onInterrupt={() => interrupt(view.id)}
+          onInterrupt={(note) => interrupt(view.id, note)}
           load={readLog(view.id)}
         />
       ))}

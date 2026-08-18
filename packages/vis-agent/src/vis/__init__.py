@@ -830,16 +830,21 @@ class Interrupted(Exception):
     """The live view this handle drives is no longer open.
 
     Raised by the next push after the human stopped watching — Escape in the
-    terminal, stop in the app — so an unattended loop ends by itself. A loop
+    terminal, Stop in the app — so an unattended loop ends by itself. A loop
     that would rather finish its own work reads `view.is_interrupted` instead
     and decides.
+
+    `note` is the comment the person left with the stop, when they left one: the
+    reason it is being stopped, in their words.
     """
 
-    def __init__(self, view_id, reason=None):
+    def __init__(self, view_id, reason=None, note=None):
         self.view_id = view_id
         self.reason = reason
+        self.note = note
         ended = f" ({reason})" if reason else ""
-        super().__init__(f"live view {view_id} is no longer open{ended}")
+        because = f": {note}" if note else ""
+        super().__init__(f"live view {view_id} is no longer open{ended}{because}")
 
 
 class _Node:
@@ -865,7 +870,11 @@ class _KeyedNode(_Node):
     def remove(self, *item_ids):
         # Ids as arguments or as one iterable, because a caller with a list
         # should not have to spread it.
-        ids = list(item_ids[0]) if len(item_ids) == 1 and not isinstance(item_ids[0], str) else list(item_ids)
+        ids = (
+            list(item_ids[0])
+            if len(item_ids) == 1 and not isinstance(item_ids[0], str)
+            else list(item_ids)
+        )
         return self._op("remove", item_ids=[str(i) for i in ids])
 
     def clear(self):
@@ -890,7 +899,12 @@ class Stat(_Node):
         # One counter of the strip, upserted by id.
         return self._op(
             "append",
-            stats=[_live_item(stat_id, {"value_text": str(value_text), "label": label, "tone": tone})],
+            stats=[
+                _live_item(
+                    stat_id,
+                    {"value_text": str(value_text), "label": label, "tone": tone},
+                )
+            ],
         )
 
     def clear(self):
@@ -906,7 +920,12 @@ class Steps(_Node):
         # running and later done.
         return self._op(
             "append",
-            steps=[_live_item(step_id, {"tone": tone, "label": label, "detail": detail, "value": value})],
+            steps=[
+                _live_item(
+                    step_id,
+                    {"tone": tone, "label": label, "detail": detail, "value": value},
+                )
+            ],
         )
 
     def clear(self):
@@ -933,7 +952,9 @@ class Table(_KeyedNode):
         # table does not know which it is, and the id is the address either way.
         return self._op(
             "append",
-            rows=[_live_item(row_id, {"cells": [_cell(c) for c in cells], "tone": tone})],
+            rows=[
+                _live_item(row_id, {"cells": [_cell(c) for c in cells], "tone": tone})
+            ],
         )
 
 
@@ -945,7 +966,12 @@ class Link(_KeyedNode):
             links=[
                 _live_item(
                     link_id,
-                    {"label": str(label), "target": str(target), "target_kind": target_kind, "tone": tone},
+                    {
+                        "label": str(label),
+                        "target": str(target),
+                        "target_kind": target_kind,
+                        "tone": tone,
+                    },
                 )
             ],
         )
@@ -1045,7 +1071,7 @@ class LiveView:
                 self._order.append(str(node["id"]))
 
     def _refuse_closed(self):
-        raise Interrupted(self.view_id, self.reason)
+        raise Interrupted(self.view_id, self.reason, self.note)
 
     # -- pushing --------------------------------------------------------------
 
@@ -1065,7 +1091,9 @@ class LiveView:
         return (time.monotonic() - self._last_flush) * 1000.0
 
     def _is_full(self):
-        return len(self._buffer) >= _MAX_BATCH or any(_batch_size(op) >= _MAX_BATCH for op in self._buffer)
+        return len(self._buffer) >= _MAX_BATCH or any(
+            _batch_size(op) >= _MAX_BATCH for op in self._buffer
+        )
 
     def _coalesce(self, op):
         """Fold this op into the last one addressing the same node, if it folds.
@@ -1091,7 +1119,9 @@ class LiveView:
         ops, self._buffer = self._buffer, []
         if not self._is_open:
             self._refuse_closed()
-        answer = self._settle(self._call({"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}}))
+        answer = self._settle(
+            self._call({"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}})
+        )
         self._last_flush = time.monotonic()
         if not self._is_open:
             self._refuse_closed()
@@ -1113,7 +1143,10 @@ class LiveView:
         Asks the engine at most once per flush window, so a compute loop can
         poll it every iteration and still cost one host call per tick.
         """
-        if self._is_open and (time.monotonic() - self._last_read) * 1000.0 >= self._flush_ms:
+        if (
+            self._is_open
+            and (time.monotonic() - self._last_read) * 1000.0 >= self._flush_ms
+        ):
             try:
                 self.state()
             except Interrupted:
@@ -1124,6 +1157,25 @@ class LiveView:
     def reason(self):
         """Why the view ended, or None while it is open."""
         return (self._result or {}).get("reason")
+
+    @property
+    def is_from_human(self):
+        """True when a PERSON ended it, rather than the run itself or a deadline.
+
+        A view is always stoppable — nothing is asked of the human, so nothing is
+        left unanswered by stopping it — and this is how the run finds out that is
+        what happened.
+        """
+        return bool((self._result or {}).get("is_from_human"))
+
+    @property
+    def note(self):
+        """The comment the human left with their stop, or None.
+
+        The stop always lands; the note says WHY in their own words, and the same
+        words reach the model in the verdict.
+        """
+        return (self._result or {}).get("note")
 
     @property
     def result(self):
@@ -1155,7 +1207,9 @@ class LiveView:
         if len(ids) == 1:
             return self.node(ids[0])
         if not ids:
-            raise KeyError(f"view.{verb}() needs a {type_name} node and this view has none")
+            raise KeyError(
+                f"view.{verb}() needs a {type_name} node and this view has none"
+            )
         raise KeyError(
             f"view.{verb}() is ambiguous: this view has {len(ids)} {type_name} nodes — "
             f"address one by id ({', '.join(ids)})"
@@ -1165,13 +1219,19 @@ class LiveView:
         return self._only("status", "status").set(text, tone=tone, detail=detail)
 
     def progress(self, value=None, done=None, total=None):
-        return self._only("progress", "progress").set(value=value, done=done, total=total)
+        return self._only("progress", "progress").set(
+            value=value, done=done, total=total
+        )
 
     def stat(self, stat_id, value_text, label=None, tone=None):
-        return self._only("stat", "stat").set(stat_id, value_text, label=label, tone=tone)
+        return self._only("stat", "stat").set(
+            stat_id, value_text, label=label, tone=tone
+        )
 
     def step(self, step_id, tone=None, label=None, detail=None, value=None):
-        return self._only("steps", "step").set(step_id, tone=tone, label=label, detail=detail, value=value)
+        return self._only("steps", "step").set(
+            step_id, tone=tone, label=label, detail=detail, value=value
+        )
 
     def write(self, *lines):
         return self._only("log", "write").write(*lines)
@@ -1180,7 +1240,9 @@ class LiveView:
         return self._only("table", "row").upsert(row_id, cells, tone=tone)
 
     def link(self, link_id, label, target, target_kind=None, tone=None):
-        return self._only("link", "link").add(link_id, label, target, target_kind=target_kind, tone=tone)
+        return self._only("link", "link").add(
+            link_id, label, target, target_kind=target_kind, tone=tone
+        )
 
     # -- shape ----------------------------------------------------------------
 
@@ -1219,7 +1281,12 @@ class LiveView:
             self.flush()
         except Interrupted:
             return self._result
-        ending = {"reason": reason, "summary": summary, "error": error, "artifact_id": artifact_id}
+        ending = {
+            "reason": reason,
+            "summary": summary,
+            "error": error,
+            "artifact_id": artifact_id,
+        }
         answer = self._settle(
             self._call(
                 {
@@ -1272,7 +1339,10 @@ def _merge_append(earlier, op):
 def live(title, nodes, **options):
     """Open a live view and answer the handle that drives it.
 
-    View options: description, source, is_cancellable, session_id, channel_ids,
+    View options: description, source, session_id, channel_ids, plus `flush_ms`
+    for the batching window. EVERY key is a snake_case string, exactly as
+    `vis.ask` documents. There is no cancellable flag: a human can always stop
+    watching, and the verdict says they did (`is_from_human`) and why (`note`).
     plus `flush_ms` for the batching window. EVERY key is a snake_case string,
     exactly as `vis.ask` documents.
 

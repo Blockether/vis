@@ -1426,7 +1426,6 @@
    :channel-ids [:tui]
    :seq 0
    :created-at 1
-   :is-cancellable true
    :timeout-ms 0
    :nodes (into [{:id "state" :type :status :text "connecting" :tone :running}
                  {:id "bar" :type :progress :value 0.25}
@@ -1520,42 +1519,84 @@
   "The verdict is the ONE thing the model reads back, and it reads DATA: the
    picture with its ids and tones, never the document the human reads. It is not
    an answer either — a verdict carries no field values, and an answer carries no
-   artifact."
+   artifact. It always says whether a PERSON ended it, and carries the words they
+   left when they did."
   (it "accepts each ending, and refuses one nobody may branch on"
-      (expect (nil? (hs/live-result-error
-                      {:view-id "v" :is-completed true :reason :completed :view done-picture})))
+      (expect (nil? (hs/live-result-error {:view-id "v"
+                                           :is-completed true
+                                           :reason :completed
+                                           :is-from-human false
+                                           :view done-picture})))
       (expect (nil? (hs/live-result-error {:view-id "v"
                                            :is-completed false
                                            :reason :interrupted
+                                           :is-from-human true
+                                           :note "wrong subnet — I will re-run it against staging"
                                            :view done-picture
                                            :elided [{:node-id "now" :items 12}]
                                            :summary "12 of 40 hosts"
                                            :artifact-id "att-1"})))
-      (expect (some? (hs/live-result-error
-                       {:view-id "v" :is-completed false :reason :bored :view done-picture}))))
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed false
+                                            :reason :bored
+                                            :is-from-human false
+                                            :view done-picture}))))
   (it
     "refuses a verdict carrying no picture: what the human watched reaches the model as data or the view did not end"
-    (expect (some? (hs/live-result-error {:view-id "v" :is-completed true :reason :completed}))))
+    (expect (some? (hs/live-result-error
+                     {:view-id "v" :is-completed true :reason :completed :is-from-human false}))))
   (it "refuses the document in place of the picture, because prose is not a contract"
       (expect (some? (hs/live-result-error {:view-id "v"
                                             :is-completed true
                                             :reason :completed
+                                            :is-from-human false
                                             :markdown "# Deploy\n\n[ok] **done**"}))))
   (it "refuses a picture carrying the mount, so a verdict cannot smuggle a session"
       (expect (some? (hs/live-result-error {:view-id "v"
                                             :is-completed true
                                             :reason :completed
+                                            :is-from-human false
                                             :view (assoc done-picture :session-id "s")}))))
   (it "refuses a verdict claiming completion while naming why it stopped"
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed true
+                                            :reason :interrupted
+                                            :is-from-human false
+                                            :view done-picture})))
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed false
+                                            :reason :completed
+                                            :is-from-human false
+                                            :view done-picture}))))
+  (it "refuses a verdict that will not say whether a person ended it"
       (expect (some? (hs/live-result-error
-                       {:view-id "v" :is-completed true :reason :interrupted :view done-picture})))
-      (expect (some? (hs/live-result-error
-                       {:view-id "v" :is-completed false :reason :completed :view done-picture}))))
+                       {:view-id "v" :is-completed true :reason :completed :view done-picture}))))
+  (it "refuses a note nobody left, and a human's stop that does not read as interrupted"
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed false
+                                            :reason :failed
+                                            :is-from-human false
+                                            :note "wrong subnet"
+                                            :view done-picture})))
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed false
+                                            :reason :timeout
+                                            :is-from-human true
+                                            :view done-picture}))))
+  (it "refuses a note longer than the field the human typed it into"
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed false
+                                            :reason :interrupted
+                                            :is-from-human true
+                                            :note (apply str (repeat (inc (long hs/note-chars)) \x))
+                                            :view done-picture}))))
   (it "refuses field values, because a live view never asked a question"
-      (expect
-        (some?
-          (hs/live-result-error
-            {:view-id "v" :is-completed true :reason :completed :view done-picture :values {}}))))
+      (expect (some? (hs/live-result-error {:view-id "v"
+                                            :is-completed true
+                                            :reason :completed
+                                            :is-from-human false
+                                            :view done-picture
+                                            :values {}}))))
   (it "leaves the form's answer contract alone: its reason is still the line a human reads"
       (expect (nil? (hs/answer-error nil
                                      {:is-submitted false :reason "cancelled" :request-id "r"})))
@@ -1696,7 +1737,7 @@
                     (expect (true? (:is-completed (hi/close-live! view-id))))
                     (expect (nil? (hi/close-live! view-id)))
                     (expect (nil? (hi/live-view view-id)))))))
-  (it "interrupts into a verdict that still carries what the human had watched"
+  (it "interrupts into a verdict that carries what the human watched, and the words they left"
       (recorded
         (fn []
           (let
@@ -1708,10 +1749,45 @@
 
             (hi/patch-live! view-id
                             [{:op "set" :node-id "now" :text "12 of 40 hosts" :tone "warn"}])
-            (let [result (hi/interrupt-live! view-id)]
+            (let [result (hi/interrupt-live! view-id "wrong subnet — re-run it against staging")]
               (expect (false? (:is-completed result)))
               (expect (= :interrupted (:reason result)))
+              (expect (true? (:is-from-human result)))
+              (expect (= "wrong subnet — re-run it against staging" (:note result)))
               (expect (= "12 of 40 hosts" (:text (first (:nodes (:view result)))))))))))
+  (it "stops a view that left no words, and one nobody may refuse to stop"
+      (recorded
+        (fn []
+          (let
+            [view
+             (hi/open-live! (live-spec {:id "now" :type "status" :text "Sweeping"}))
+
+             result
+             (hi/interrupt-live! (:id view))]
+
+            (expect (true? (:is-from-human result))
+                    "a person stopped it whether or not they said why")
+            (expect (not (contains? result :note)))
+            (expect (= :interrupted (:reason result))))
+          ;; A form may be declared unanswerable-by-cancel; a view never can be,
+          ;; so there is no shape of view a stop can bounce off.
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(hi/open-live! (assoc (live-spec
+                                                    {:id "now" :type "status" :text "Sweeping"})
+                                             :is-cancellable false)))
+                  "the flag is not even a word the vocabulary still knows"))))
+  (it "cuts a note longer than the field it was typed into instead of refusing the stop"
+      (recorded (fn []
+                  (let
+                    [view
+                     (hi/open-live! (live-spec {:id "now" :type :status :text "Sweeping"}))
+
+                     result
+                     (hi/interrupt-live! (:id view)
+                                         (apply str (repeat (+ 40 (long hs/note-chars)) \x)))]
+
+                    (expect (= (long hs/note-chars) (count (:note result))))
+                    (expect (true? (:is-from-human result)))))))
   (it "hands a body the view id and answers the verdict"
       (recorded (fn []
                   (let

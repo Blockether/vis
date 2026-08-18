@@ -704,10 +704,11 @@
                (is (= 404
                       (:status ((rv 'interrupt-live-view-handler)
                                  {:path-params {:sid (str (random-uuid)) :view-id view-id}})))))
-             (testing "the app's one button stops it"
+             (testing "the app's one button stops it, carrying the words typed with the stop"
                (let
                  [body (json-body ((rv 'interrupt-live-view-handler)
-                                    {:path-params {:sid sid :view-id view-id}}))]
+                                    {:path-params {:sid sid :view-id view-id}
+                                     :body (body-stream {:note "wrong subnet"})}))]
                  (is (true? (get body "is_interrupted")))
                  (is (= view-id (get body "view_id")))
                  (is (nil? (gw-hi/live-view-of sid view-id)))
@@ -724,32 +725,61 @@
                  (is (= 20 (count (get body "lines"))))))
              (finally (hi/close-live! view-id)))))))
 
-(deftest a-live-view-that-refuses-interruption-refuses-the-app-too-test
+(deftest a-live-view-is-always-stoppable-and-the-stop-carries-its-words-test
   (gw-hi/install!)
   (recorded
     (fn []
-      (let
-        [sid
-         (str (random-uuid))
+      (with-events
+        (fn [seen]
+          (let
+            [sid
+             (str (random-uuid))
 
-         view
-         (hi/open-live! {:title "Migration"
-                         :session-id sid
-                         :is-cancellable false
-                         :nodes [{:id "now" :type "status" :text "Writing rows" :tone "running"}]})
+             view
+             (hi/open-live! {:title "Migration"
+                             :session-id sid
+                             :nodes
+                             [{:id "now" :type "status" :text "Writing rows" :tone "running"}]})
 
-         view-id
-         (:id view)]
+             view-id
+             (:id view)]
 
-        (try (testing "the app is refused the stop the TUI's Escape is also refused"
-               (let
-                 [response ((rv 'interrupt-live-view-handler)
-                             {:path-params {:sid sid :view-id view-id}})]
-                 (is (= 409 (:status response)))
-                 (is (= "human-input-not-cancellable"
-                        (get-in (json-body response) ["error" "type"])))
-                 (is (some? (gw-hi/live-view-of sid view-id)))))
-             (finally (hi/close-live! view-id)))))))
+            (try (testing "no view refuses the stop: it asks nothing, so nothing is left unanswered"
+                   (let
+                     [body (json-body ((rv 'interrupt-live-view-handler)
+                                        {:path-params {:sid sid :view-id view-id}
+                                         :body (body-stream {:note
+                                                             "wrong subnet — I will re-run it"})}))]
+                     (is (true? (get body "is_interrupted")))
+                     (is (nil? (gw-hi/live-view-of sid view-id)))))
+                 (testing "and the run reads WHO stopped it, and why, before it reads the picture"
+                   (is (await-true #(seq (live-events-of seen gw-hi/live-close-event view-id))))
+                   (let [[[_ event]] (live-events-of seen gw-hi/live-close-event view-id)]
+                     (is (= "interrupted" (get-in event ["result" "reason"])))
+                     (is (true? (get-in event ["result" "is_from_human"])))
+                     (is (= "wrong subnet — I will re-run it" (get-in event ["result" "note"])))
+                     (is (= ["now"]
+                            (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))))
+                 (finally (hi/close-live! view-id))))
+          (let
+            [sid
+             (str (random-uuid))
+
+             bare
+             (:id (hi/open-live! {:title "Sweep"
+                                  :session-id sid
+                                  :nodes [{:id "now" :type "status" :text "Sweeping"}]}))]
+
+            (try (testing
+                   "a stop sent with no body at all still lands, and still says a person sent it"
+                   (is (true? (get (json-body ((rv 'interrupt-live-view-handler)
+                                                {:path-params {:sid sid :view-id bare}}))
+                                   "is_interrupted")))
+                   (is (await-true #(seq (live-events-of seen gw-hi/live-close-event bare))))
+                   (let [[[_ event]] (live-events-of seen gw-hi/live-close-event bare)]
+                     (is (true? (get-in event ["result" "is_from_human"])))
+                     (is (nil? (get-in event ["result" "note"])))))
+                 (finally (hi/close-live! bare)))))))))
 
 (deftest the-companion-live-urls-route-to-the-live-handlers-test
   (testing "the URLs a client builds for a live view are the URLs this router serves"

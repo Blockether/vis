@@ -189,6 +189,12 @@
    "undeliverable" :undeliverable
    "failed" :failed})
 
+(def note-chars
+  "The most characters a human's stop note carries. Stopping a view is ALWAYS
+   allowed, so a longer comment is cut to this rather than turned away: a refusal
+   would leave the human watching work they already told to stop."
+  500)
+
 ;; NOTHING here evicts. A `log` is UNBOUNDED: every line reaches the view's sink
 ;; file and `:window-lines` is only how much of it a surface holds hot. The keyed
 ;; collections must stay in memory to remain addressable, so they are bounded by
@@ -244,8 +250,11 @@
 
 (def live-view-keys
   "Every key a live view may carry, engine stamps included — a view crossing a
-   process boundary is rebuilt from exactly this."
-  (into #{:title :description :source :session-id :channel-ids :nodes :is-cancellable :timeout-ms}
+   process boundary is rebuilt from exactly this.
+
+   No cancellable flag lives here: a question may be mandatory, a view never is,
+   so the human can stop watching ANY view — see `human-input/interrupt-live!`."
+  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms}
         live-view-stamp-keys))
 
 (def live-picture-keys
@@ -285,8 +294,12 @@
   "Every key the verdict carries — the ONE thing the model reads back, and it
    reads DATA: `:view` is the finished picture with its ids and tones intact, so
    the model acts on values instead of recovering them from prose. Markdown is the
-   human's document (`live/->markdown`), never the model's contract."
-  #{:view-id :is-completed :reason :view :elided :summary :artifact-id :error})
+   human's document (`live/->markdown`), never the model's contract.
+
+   `:is-from-human` says a PERSON stopped it — Escape in the terminal, Stop in the
+   app — and `:note` carries the words they left with that stop, so a run cut short
+   reads WHO cut it, and why, before it reads the picture."
+  #{:view-id :is-completed :reason :is-from-human :note :view :elided :summary :artifact-id :error})
 (defn contract-vocabulary
   "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
    into `vis_contract/contract.json` — the document every surface that cannot
@@ -778,6 +791,8 @@
 (s/def ::node-id non-blank-string?)                         ; the ADDRESS a patch speaks to
 (s/def ::view-id non-blank-string?)
 (s/def ::is-completed boolean?)
+(s/def ::is-from-human boolean?)                            ; a PERSON stopped it, not the run
+(s/def ::note (s/and non-blank-string? #(<= (count %) (long note-chars))))
 (s/def ::summary non-blank-string?)
 (s/def ::total-lines nat-int?)                              ; the size of a log's record, engine-stamped
 (s/def ::artifact-id non-blank-string?)
@@ -896,8 +911,7 @@
 
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)
-         (s/keys :req-un [::id ::title ::channel-ids ::nodes ::is-cancellable ::timeout-ms ::seq
-                          ::created-at]
+         (s/keys :req-un [::id ::title ::channel-ids ::nodes ::timeout-ms ::seq ::created-at]
                  ;; `::session-id` is optional HERE and required at `open-live!`, exactly
                  ;; as a request's is: a view can be declared by a builder that has no
                  ;; session yet, and it is the MOUNT that must name the session it runs in.
@@ -946,12 +960,15 @@
 
 (s/def ::live-result
   (s/and #(closed? live-result-keys %)
-         (s/keys :req-un [::view-id ::is-completed ::reason ::view]
-                 :opt-un [::summary ::artifact-id ::error ::elided])
+         (s/keys :req-un [::view-id ::is-completed ::reason ::is-from-human ::view]
+                 :opt-un [::note ::summary ::artifact-id ::error ::elided])
          #(live-reason? (:reason %))
-         ;; The one cross-key rule: completion is exactly the `completed` ending,
-         ;; so nothing can report success while naming why it stopped.
-         #(= (:is-completed %) (= :completed (:reason %)))))
+         ;; The cross-key rules: completion is exactly the `completed` ending, so
+         ;; nothing reports success while naming why it stopped; only a HUMAN
+         ;; leaves a note, and a human's stop is always `interrupted`.
+         #(= (:is-completed %) (= :completed (:reason %)))
+         #(or (:is-from-human %) (not (contains? % :note)))
+         #(or (not (:is-from-human %)) (= :interrupted (:reason %)))))
 ;; Explaining a violation
 
 (defn- brief

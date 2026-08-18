@@ -352,7 +352,10 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
             vis.status("now", "Starting", tone="running"),
             vis.table(
                 "jobs",
-                columns=[vis.table_column("job", "Job"), vis.table_column("state", "State")],
+                columns=[
+                    vis.table_column("job", "Job"),
+                    vis.table_column("state", "State"),
+                ],
             ),
             vis.output("tail", label="Output"),
         ],
@@ -372,6 +375,11 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
     verdict = view.result
     assert verdict["is_completed"] is True
     assert verdict["reason"] == "completed"
+    # Outside Vis nobody is watching, so nobody can have stopped it — but the key
+    # is there either way, because the extension reads ONE verdict shape.
+    assert verdict["is_from_human"] is False
+    assert view.is_from_human is False
+    assert view.note is None
     assert verdict["view"]["title"] == "Deploy"
     transcript = capsys.readouterr().err
     assert "== Deploy ==" in transcript
@@ -421,6 +429,10 @@ def test_a_view_that_ended_answers_its_verdict_rather_than_vanishing():
 
     assert verdict["is_completed"] is False
     assert view.reason == "interrupted"
+    # An extension may end its own view as interrupted; only a PERSON's stop is
+    # stamped as one, and only a person leaves a note.
+    assert verdict["is_from_human"] is False
+    assert "note" not in verdict
     # A `finally` closing what an interrupt already closed must not mint a
     # second, cheerier ending.
     assert view.close()["reason"] == "interrupted"

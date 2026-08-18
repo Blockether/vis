@@ -12,6 +12,7 @@
             [com.blockether.vis.human-input :as hi]
             [com.blockether.vis.internal.human-input :as engine]
             [com.blockether.vis.internal.human-input.live :as live]
+            [com.blockether.vis.internal.human-input.spec :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [com.googlecode.lanterna.screen TerminalScreen]))
 
@@ -23,8 +24,7 @@
   [opts & nodes]
   (-> (apply hi/view
              (merge {:title "CI · fix(loop): move the session pick"
-                     :description "Blockether/vis · 32062760734"
-                     :is-cancellable true}
+                     :description "Blockether/vis · 32062760734"}
                     (dissoc opts :id))
              nodes)
       engine/normalize-live-view
@@ -365,9 +365,9 @@
 
       (is (= "view-b" (lv/view-id (lv/interruptible [a b]))))
       (is (nil? (lv/interruptible [])))))
-  (testing "a view nobody may stop does not claim the key"
-    (let [p (lv/opened (assoc (ci-view) :is-cancellable false))]
-      (is (nil? (lv/interruptible [p])))))
+  (testing "EVERY open view answers the key — a view asks nothing, so none may refuse to stop"
+    (let [p (lv/opened (ci-view))]
+      (is (= (lv/view-id p) (lv/view-id (lv/interruptible [p]))))))
   (testing "the echo row advertises the SAME thing the key does, even mid-turn"
     (let [row (first (#'footer/echo-segments {:loading? true :live-views [(pane)]}))]
       (is (str/includes? (:text row) "stop"))
@@ -378,6 +378,72 @@
   (testing "with no view open the row goes back to the turn's own hint"
     (is (str/includes? (:text (first (#'footer/echo-segments {:loading? true :live-views []})))
                        "cancel"))))
+
+(deftest live-view-stop-note-test
+  (testing "Escape ARMS the stop instead of firing it — nothing ends until Enter"
+    (let [p (lv/armed (lv/opened (ci-view)))]
+      (is (= "" (lv/stopping p)) "armed, with nothing typed into it yet")
+      (is (= "" (:note (lv/stop-prompt p))))
+      (is (str/includes? (:label (lv/stop-prompt p)) "CI · fix(loop): move the session pick")
+          "the prompt names the view it would stop, because several may be open")
+      (is (nil? (lv/stop-prompt (lv/opened (ci-view)))) "a watched view asks nothing")
+      (is (nil? (lv/stopping (lv/disarmed p))) "Escape again is watching again")))
+  (testing "the note is typed with the same keyboard a form's fields read"
+    (let
+      [typing
+       (fn [pane text]
+         (reduce (fn [pane c]
+                   (:pane (lv/typed pane {:kind :char :char c})))
+                 pane
+                 text))
+
+       p
+       (typing (lv/armed (lv/opened (ci-view))) "wrong subnet")]
+
+      (is (= "wrong subnet" (lv/stopping p)))
+      (is (= "wrong subne" (lv/stopping (:pane (lv/typed p {:kind :backspace})))))
+      (let [{:keys [pane action note]} (lv/typed p {:kind :enter})]
+        (is (= :stop action))
+        (is (= "wrong subnet" note) "the words travel WITH the stop, not after it")
+        (is (nil? (lv/stopping pane)) "the line is gone the moment the stop is sent"))
+      (let [{:keys [action note]} (lv/typed (lv/armed (lv/opened (ci-view))) {:kind :enter})]
+        (is (= :stop action) "a stop with no words is still a stop")
+        (is (nil? note)))
+      (let [{:keys [pane action]} (lv/typed p {:kind :cancel})]
+        (is (= :keep action))
+        (is (nil? (lv/stopping pane)) "keeping watch forgets what was typed"))
+      (is (nil? (:action (lv/typed p {:kind :next})))
+          "a key the line has no use for changes nothing")))
+  (testing "the line stops growing where the engine cuts it"
+    (let
+      [p (reduce (fn [pane c]
+                   (:pane (lv/typed pane {:kind :char :char c})))
+                 (lv/armed (lv/opened (ci-view)))
+                 (repeat (+ 10 (long hi-spec/note-chars)) \x))]
+      (is (= (long hi-spec/note-chars) (count (lv/stopping p)))
+          "a field that swallowed more than the model will read would lie about the note")))
+  (testing "the band gives the armed line a row of its own, above the fence"
+    (let
+      [p
+       (lv/opened (ci-view))
+
+       watched
+       (painted-text [p])
+
+       armed
+       (painted-text [(:pane (reduce (fn [{:keys [pane]} c]
+                                       (lv/typed pane {:kind :char :char c}))
+                                     {:pane (lv/armed p)}
+                                     "wrong subnet"))])]
+
+      (is (not (str/includes? watched "why?")) "a view being watched asks nothing")
+      (is (str/includes? armed "why? wrong subnet") "the words are on screen as they are typed")
+      (is (str/includes? armed "interrupt CI · fix(loop): move the session pick")
+          "and the line says WHICH view they will stop")
+      (is (str/includes? armed "keep watching")
+          "the hint bar switches to the two keys that end the typing")
+      (is (str/includes? watched "Esc interrupt CI · fix(loop): move the session pick")
+          "while it is only being watched the bar still advertises the one key it takes"))))
 
 ;;; ── The registry half: three ops and the tab that owns them ─────────────────
 
@@ -487,7 +553,16 @@
        (shot! "vis-live-view-before" [before])
 
        png-after
-       (shot! "vis-live-view-after" [after])]
+       (shot! "vis-live-view-after" [after])
+
+       ;; The stop is a CONVERSATION, so it has to be SEEN: an armed band keeps
+       ;; painting the work while it asks why the human is stopping it.
+       png-stop
+       (shot! "vis-live-view-stop"
+              [(reduce (fn [p ch]
+                         (:pane (lv/typed p {:kind :char :char ch})))
+                       (lv/armed after)
+                       "wrong subnet")])]
 
       (is (str/ends-with? png-before "vis-live-view-before.png"))
       (is (str/ends-with? png-after "vis-live-view-after.png"))
@@ -495,7 +570,9 @@
       (is (< (long (cap/ink png-before)) (long (cap/ink png-after)))
           "the row that arrived is ink that was not there before")
       (is (not (str/includes? (painted-text [before]) "job-9")))
-      (is (str/includes? (painted-text [after]) "job-9")))))
+      (is (str/includes? (painted-text [after]) "job-9"))
+      (is (str/ends-with? png-stop "vis-live-view-stop.png"))
+      (is (pos? (long (cap/ink png-stop))) "the armed band still paints the work"))))
 
 ;; A tone is DATA the engine already carries, and a fraction is a fraction
 ;; however it was declared: a surface that paints either as flat prose is

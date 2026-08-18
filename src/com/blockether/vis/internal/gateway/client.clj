@@ -1157,6 +1157,25 @@
                (str "/v1/sessions/" (enc sid) "/human-input/" (enc request-id) "/actions/cancel"))
              "is_cancelled")))
 
+(defn interrupt-live-view!
+  "Stop the DAEMON-side live view `view-id` of `sid`, with `note` — the comment the
+   person typed with the stop, when they typed one. Returns whether a view was
+   still open to stop.
+
+   A view is ALWAYS stoppable, so a TUI watching a REMOTE session ends one exactly
+   as it ends a local one: the run resumes with an interrupted verdict that says a
+   HUMAN stopped it."
+  ([sid view-id] (interrupt-live-view! sid view-id nil))
+  ([sid view-id note]
+   (boolean
+     (get (send-json!
+            "POST"
+            (str "/v1/sessions/" (enc sid) "/human-input/live/" (enc view-id) "/actions/interrupt")
+            (cond-> {}
+              (not (str/blank? (str note)))
+              (assoc :note (str note))))
+          "is_interrupted"))))
+
 (defn reconcile-running-turns!
   "Clients do not sweep. Only the daemon may reconcile its own startup orphans."
   []

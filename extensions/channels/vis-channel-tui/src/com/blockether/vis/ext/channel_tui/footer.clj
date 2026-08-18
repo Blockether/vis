@@ -1071,17 +1071,17 @@
     (when (seq r) (draw-spans! g r-col row r separator))))
 
 (defn- live-view-hint
-  "What an open live view says on the echo row: what it is, where it got to, and
-   — because Escape hits the VIEW before the turn — which one the abort key
-   stops. `lv/footer-text` is the pane's own one-line summary and
-   `lv/interruptible` is the same judge the abort branch uses, so this row and
-   the band can never tell different stories."
+  "What an open live view says on the echo row: what it is, where it got to, and —
+   because Escape hits the VIEW before the turn — that the abort key stops it.
+   `lv/footer-text` is the pane's own one-line summary and `lv/interruptible` is
+   the same judge the abort branch asks, so this row and the band can never tell
+   different stories.
+
+   While that stop is ARMED the row says the two keys that end the typing instead:
+   Escape stops nothing then, it goes back to watching."
   [panes]
   (let
     [front
-     (last panes)
-
-     target
      (lv/interruptible panes)
 
      n
@@ -1089,11 +1089,11 @@
 
     (str/join " · "
               (remove str/blank?
-                [(when target
-                   (str (keymap/abort-hint)
-                        " stop"
-                        (when-not (= target front) (str " " (get-in target [:view :title])))))
-                 (lv/footer-text front) (when (> n 1) (str n " views open"))]))))
+                [(when front
+                   (if (lv/stopping front)
+                     "Enter interrupt · Esc keep watching"
+                     (str (keymap/abort-hint) " stop"))) (lv/footer-text front)
+                 (when (> n 1) (str n " views open"))]))))
 
 (defn- echo-segments
   "Content for the Emacs echo-area row directly above the input box.

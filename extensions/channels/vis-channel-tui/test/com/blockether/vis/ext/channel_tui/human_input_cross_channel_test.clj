@@ -825,7 +825,9 @@
         (is (= (set (keys hi-spec/live-sort-dirs)) (set (ts-strings source "LIVE_SORT_DIRS")))))
       (testing "the bounds the phone holds a node to are the engine's own"
         (is (= (:window-lines hi-spec/log-defaults) (ts-number source "LIVE_LOG_WINDOW")))
-        (is (= (:max-rows hi-spec/table-defaults) (ts-number source "LIVE_TABLE_MAX_ROWS"))))
+        (is (= (:max-rows hi-spec/table-defaults) (ts-number source "LIVE_TABLE_MAX_ROWS")))
+        (is (= hi-spec/note-chars (ts-number source "LIVE_NOTE_CHARS"))
+            "the field the phone types a stop note into ends where the engine cuts it"))
       (testing "and it listens for the three events the bridge actually publishes"
         (is (= [gw/live-open-event gw/live-patch-event gw/live-close-event]
                (mapv (partial ts-literal source)

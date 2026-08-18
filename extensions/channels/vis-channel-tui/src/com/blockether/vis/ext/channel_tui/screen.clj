@@ -619,18 +619,56 @@
         (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
 (defn- interrupt-front-live-view!
-  "Stop the newest live view this terminal shows that says it may be stopped, and
-   answer true when there was one.
+  "Stop the newest live view this terminal paints, with `note` — the comment the
+   human typed into the armed stop, when they typed one.
 
-   The verdict still reads `interrupted` and still carries the picture that was
-   on screen when the human stopped it — what they saw is exactly what the model
-   reads — so the run that opened the view keeps its answer."
+   A view is ALWAYS stoppable, so this never has to refuse. WHERE the view is
+   parked decides who is told: one raised in this process is stopped in-process,
+   one raised in the serve daemon over the gateway that owns its session — the
+   same split [[human-input-answer!]] obeys, for the same reason (issue #122).
+
+   The verdict reads `interrupted`, says a HUMAN stopped it, carries the note, and
+   still carries the picture that was on screen when they did — what they saw is
+   exactly what the model reads."
+  [db note]
+  (when-let [pane (lv/interruptible (:live-views db))]
+    (let
+      [view-id (lv/view-id pane)
+
+       session-id (get-in pane [:view :session-id])
+
+       local? (or (nil? session-id) (some #(= view-id (:id %)) (vis/live-views)))]
+
+      (try (if local?
+             (vis/interrupt-live-view! view-id note)
+             (vis/gateway-interrupt-live-view! session-id view-id note))
+           (catch Throwable t
+             (vis/notify! (str "Could not stop the view: " (ex-message t)) :level :error))))
+    true))
+
+(defn- arm-front-live-view!
+  "Arm the stop on the newest live view this terminal paints, and answer true when
+   there was one. NOTHING is stopped yet: the band takes one row for the comment,
+   and [[live-stop-key!]] sends the interrupt when the human presses Enter, so
+   their words leave WITH the stop instead of after it."
   [db]
   (when-let [pane (lv/interruptible (:live-views db))]
-    (try (vis/interrupt-live-view! (lv/view-id pane))
-         (catch Throwable t
-           (vis/notify! (str "Could not stop the view: " (ex-message t)) :level :error)))
+    (state/dispatch [:live-view-arm (lv/view-id pane)])
     true))
+
+(defn- live-stop-key!
+  "Feed one keystroke to an ARMED stop and act on its verdict.
+
+   While the stop is armed this is the only consumer of keys, exactly as an open
+   form is: the human is typing a comment, and a stray stroke must not reach the
+   chat editor. Enter interrupts the view WITH the note, Escape leaves it
+   running, and anything else just grows the line."
+  [db ^KeyStroke key]
+  (when-let [pane (lv/interruptible (:live-views db))]
+    (let [{next-pane :pane :keys [action note]} (lv/typed pane (hi/key->event key))]
+      (state/dispatch [:live-view-note (lv/view-id pane) next-pane])
+      (when (= :stop action)
+        (interrupt-front-live-view! db note)))))
 
 (defn- replay-human-input!
   "Open EVERY request `session-id` is blocked on right now, oldest first.
@@ -6000,6 +6038,13 @@
                    (and (some? key) (:human-input db))
                    (do (human-input-key! db key) (recur))
 
+                   ;; An ARMED stop swallows it next: the human is typing the
+                   ;; comment that travels with the interrupt, so no stroke of it
+                   ;; may reach the chat editor. A form outranks it — the form owns
+                   ;; the band, so the form owns the keyboard.
+                   (and (some? key) (lv/stopping (lv/interruptible (:live-views db))))
+                   (do (live-stop-key! db key) (recur))
+
                    (nil? key)
                    (do (let
                          [old-mom (long @scroll-momentum)
@@ -7591,11 +7636,12 @@
                            (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks])
                                                             (recur))
                             ;; A live view is the newest thing in front of the human and the
-                            ;; finest-grained stop there is: Escape ends the VIEW before it
-                            ;; reaches for the turn, because the run may have opened several
-                            ;; and want to keep going after one of them is stopped. The
-                            ;; footer says which one it will hit.
-                            (interrupt-front-live-view! @state/app-db) (recur)
+                            ;; finest-grained stop there is: Escape ARMS the VIEW's stop before
+                            ;; it reaches for the turn, because the run may have opened several
+                            ;; and want to keep going after one of them is stopped. Nothing ends
+                            ;; here — the band takes one row for the comment and Enter sends the
+                            ;; stop with it. The footer says which view it will hit.
+                            (arm-front-live-view! @state/app-db) (recur)
 
                             (:loading? @state/app-db) (do (state/dispatch [:cancel-turn]) (recur))
                            ;; Not loading but a queued backlog is draining: Esc

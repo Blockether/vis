@@ -126,6 +126,7 @@
              [gateway-human-input-requests gateway-client/human-input-requests]
              [gateway-submit-human-input! gateway-client/submit-human-input!]
              [gateway-cancel-human-input! gateway-client/cancel-human-input!]
+             [gateway-interrupt-live-view! gateway-client/interrupt-live-view!]
              [gateway-get-turn gateway-client/get-turn]
              [gateway-list-turns gateway-client/list-turns]
              [gateway-transcript gateway-client/transcript]
@@ -774,8 +775,9 @@
 ;; Live views — the picture the human WATCHES while an extension works
 ;;
 ;; The same interaction one `:kind` further, and inverted: nothing blocks, the
-;; human only watches (and may stop it), and the model reads the VERDICT — the
-;; same materialized picture both surfaces painted, handed over as DATA.
+;; human only watches — and may stop it at any moment, with a comment saying why
+;; — and the model reads the VERDICT: the same materialized picture both surfaces
+;; painted, handed over as DATA, stamped with whether a PERSON ended it.
 ;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
 ;; a picture nobody updates on the human's screen and no markdown for the model.
 (def with-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/with-live!))

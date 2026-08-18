@@ -80,6 +80,14 @@ export const LIVE_LOG_WINDOW = 2000;
 /** A table holds this many rows. */
 export const LIVE_TABLE_MAX_ROWS = 5000;
 
+/**
+ * The most characters a stop note carries (`note-chars`). The engine cuts a
+ * longer one rather than refusing the stop, so the field stops growing here for
+ * the same reason: a comment the human cannot see the end of would be a comment
+ * the model reads differently than they wrote it.
+ */
+export const LIVE_NOTE_CHARS = 500;
+
 export type LiveNodeType = (typeof LIVE_NODE_TYPES)[number];
 export type LiveTone = (typeof LIVE_TONES)[number];
 export type LiveReason = (typeof LIVE_REASONS)[number];
@@ -198,7 +206,6 @@ export interface LiveView {
   nodes: LiveNode[];
   /** The last patch this picture has folded in. */
   seq: number;
-  is_cancellable: boolean;
   created_at?: number;
   source?: string;
   /**
@@ -227,6 +234,10 @@ export interface LiveVerdict {
   view_id: string;
   reason: LiveReason;
   is_completed: boolean;
+  /** A PERSON ended it — Escape in the terminal, Interrupt here. */
+  is_from_human: boolean;
+  /** The comment they left with that stop, when they left one. */
+  note?: string;
   summary?: string;
   error?: string;
 }
@@ -427,7 +438,6 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     description: optionalText(view.description),
     nodes,
     seq: count(view.seq, 0),
-    is_cancellable: view.is_cancellable !== false,
     created_at: optionalNumber(view.created_at),
     source: optionalText(view.source),
   };

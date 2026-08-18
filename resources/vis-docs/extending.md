@@ -702,7 +702,6 @@ def deploy(target):
             vis.output("tail", label="deploy.sh"),
         ],
         description=f"{target} · deploy.sh",
-        is_cancellable=True,
     ) as view:
         view["plan"].set("build", tone="running")
         offset = 0
@@ -711,7 +710,8 @@ def deploy(target):
             offset = chunk["next_offset"]
             if chunk["stdout"]:
                 view["tail"].write(chunk["stdout"].splitlines())
-            if view.is_interrupted:           # the human pressed Escape
+            if view.is_interrupted:           # the human stopped watching
+                vis.log(f"stopped by a human: {view.note or 'no reason given'}")
                 run.stop()
                 break
             if chunk["status"] != "running":
@@ -758,13 +758,16 @@ shortcut refuses and names both ids rather than guessing. A view can also grow:
 `view.add(vis.table("failures", columns=[...]), after="tail")` mounts a node a
 run only discovers it needs, and `view.drop("failures")` takes it away.
 
-**The human can stop watching, and the extension finds out.** `view.is_interrupted`
-is true once the view ended without the extension closing it — Escape in the
-terminal, the interrupt button on the phone. It asks the engine at most once per
-batching window, so a tight loop may poll it every iteration and still cost one
-host call per tick. Pushing into a view that has already ended raises
-`vis.Interrupted`, so a loop that ignores the flag still stops instead of
-reporting into a surface nobody is watching.
+**The human can always stop watching, and the extension finds out why.** A view
+asks nothing, so nothing can refuse the stop: Escape in the terminal and the
+Interrupt button on the phone both open one line for a comment and end the view
+with it. `view.is_interrupted` is true once the view ended without the extension
+closing it, `view.is_from_human` says a PERSON ended it, and `view.note` carries
+the words they left — `None` when they left none. The flag asks the engine at
+most once per batching window, so a tight loop may poll it every iteration and
+still cost one host call per tick. Pushing into a view that has already ended
+raises `vis.Interrupted` (carrying the same note), so a loop that ignores the
+flag still stops instead of reporting into a surface nobody is watching.
 
 **Pushes are batched, not throttled away.** The first op after a quiet stretch
 crosses immediately; whatever else arrives within `flush_ms` (100 ms by default,
@@ -775,9 +778,10 @@ host call per window rather than one per iteration. Every read (`view.state()`,
 ever behind what you read.
 
 `view.close(reason=…, summary=…, error=…, artifact_id=…)` ends the view and
-answers **the verdict, as data**: `is_completed`, the `reason` it ended, the
-finished picture (`view`, plus `elided` counts for anything a budget cut), and
-the `summary` the extension chose. That is what the model reads — never a
+answers **the verdict, as data**: `is_completed`, the `reason` it ended,
+`is_from_human` with the `note` when a person stopped it, the finished picture
+(`view`, plus `elided` counts for anything a budget cut), and the `summary` the
+extension chose. That is what the model reads — never a
 rendering of it. Closing twice answers the first verdict, so a `finally` that
 closes what an interrupt already closed cannot overwrite the reason the human
 chose. Used as a context manager, the view closes itself, and an exception

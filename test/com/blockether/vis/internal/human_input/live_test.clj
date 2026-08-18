@@ -13,7 +13,6 @@
                      :session-id "s"
                      :channel-ids [:tui]
                      :nodes (vec nodes)
-                     :is-cancellable true
                      :timeout-ms 0
                      :seq 0
                      :created-at "2026-08-17T19:52:46Z"}))

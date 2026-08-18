@@ -95,6 +95,6 @@
   (it "names the opener, the log builder that could not be called `log`, and what a loop reads"
       (let [md (extending-md)]
         (doseq
-          [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted"
-                   "flush_ms"]]
+          [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted" "flush_ms"
+                   "view.is_from_human" "view.note"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))

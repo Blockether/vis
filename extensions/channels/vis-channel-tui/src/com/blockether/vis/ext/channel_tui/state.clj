@@ -2997,6 +2997,22 @@
               (fn [db [_ view-id geometry]]
                 (update-live-pane db view-id #(lv/painted % geometry))))
 
+(reg-event-db :live-view-arm
+              ;; Escape ARMS the stop instead of firing it: the band takes one row
+              ;; for the comment, and the interrupt leaves this terminal only when
+              ;; the human presses Enter — so their words travel WITH the stop
+              ;; instead of arriving after the run has already resumed.
+              (fn [db [_ view-id]]
+                (update-live-pane db view-id lv/armed)))
+
+(reg-event-db :live-view-note
+              ;; One keystroke of that comment. The pane is the ONLY place the note
+              ;; lives until it is sent: typing stops nothing, and Escape drops the
+              ;; note with the stop — `live-view/typed` decides which, so the rule
+              ;; lives beside the painter that shows the line.
+              (fn [db [_ view-id pane]]
+                (update-live-pane db view-id (constantly pane))))
+
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by
    `:send-message`. Used only when a submitted prompt is cancelled and

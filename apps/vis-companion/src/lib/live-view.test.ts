@@ -64,7 +64,6 @@ describe('a live view read off the wire', () => {
   it('reads the engine fixture node for node, in the order it was declared', () => {
     const view = opened();
     expect(view.title).toBe('Fleet scan');
-    expect(view.is_cancellable).toBe(true);
     expect(ids(view)).toEqual(['now', 'swept', 'score', 'phases', 'tail', 'hosts', 'links']);
     expect(view.nodes.map((node) => node.type)).toEqual([
       'status',

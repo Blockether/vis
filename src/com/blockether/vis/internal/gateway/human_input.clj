@@ -262,11 +262,12 @@
                        (min live-log-page (max 1 (or limit live-log-page)))))
 
 (defn interrupt-live!
-  "Stop live view `view-id` from the app. Returns the verdict, or nil when the
-   view had already ended or refuses to be stopped: the engine holds a view
-   declared `is_cancellable false` to exactly the rule the TUI's Escape obeys."
-  [view-id]
-  (human-input/interrupt-live! (str view-id)))
+  "Stop live view `view-id` from the app, with `note` — the comment the person
+   leaves with the stop, when they leave one. Returns the verdict, or nil when the
+   view had already ended: a view is ALWAYS stoppable, exactly as Escape always
+   stops the one the TUI is painting."
+  ([view-id] (interrupt-live! view-id nil))
+  ([view-id note] (human-input/interrupt-live! (str view-id) note)))
 
 (defn on-channel-event!
   "Translate one `:app` channel event into a session event. Unknown ops are

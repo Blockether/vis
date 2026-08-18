@@ -1123,25 +1123,22 @@
      session-id
      (or (trimmed (pick* view :session-id)) (ambient-session-id))]
 
-    (checked-live-view
-      (cond->
-        {:id (str (random-uuid))
-         :title title
-         :nodes nodes
-         :is-cancellable
-         (bool-value invalid-live-view! ":is-cancellable" (pick* view :is-cancellable) true)
-         :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
-         :channel-ids (normalize-channel-ids view invalid-live-view!)
-         :seq 0
-         :created-at (System/currentTimeMillis)}
-        session-id
-        (assoc :session-id session-id)
+    (checked-live-view (cond->
+                         {:id (str (random-uuid))
+                          :title title
+                          :nodes nodes
+                          :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
+                          :channel-ids (normalize-channel-ids view invalid-live-view!)
+                          :seq 0
+                          :created-at (System/currentTimeMillis)}
+                         session-id
+                         (assoc :session-id session-id)
 
-        (trimmed (pick* view :description))
-        (assoc :description (trimmed (pick* view :description)))
+                         (trimmed (pick* view :description))
+                         (assoc :description (trimmed (pick* view :description)))
 
-        (trimmed (pick* view :source))
-        (assoc :source (trimmed (pick* view :source)))))))
+                         (trimmed (pick* view :source))
+                         (assoc :source (trimmed (pick* view :source)))))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -1541,8 +1538,12 @@
 (def ^:private live-ending-keys
   "Every key the caller of [[close-live!]] may write. The view id, the completion
    flag and the picture are the ENGINE's: what the human watched is read from the
-   record, never claimed by whoever is ending it."
-  (wire-keys (reduce disj hi-spec/live-result-keys #{:view-id :is-completed :view :elided})))
+   record, never claimed by whoever is ending it. So is the human's own stop:
+   `:is-from-human` and `:note` are ENGINE stamps too, because no run gets to
+   claim a person ended it."
+  (wire-keys (reduce disj
+                     hi-spec/live-result-keys
+                     #{:view-id :is-completed :view :elided :is-from-human :note})))
 
 (defn- live-entry
   "The pending entry of live view `view-id`, or nil when no live view is open
@@ -1597,7 +1598,6 @@
       :promise (promise)
       :session-id (:session-id view)
       :channel-ids (:channel-ids view)
-      :is-cancellable (:is-cancellable view)
       :created-at (:created-at view)}]
 
     (swap! pending assoc view-id entry)
@@ -1649,13 +1649,26 @@
                    :patch applied})
         patched))))
 
+(defn- human-note
+  "The comment a human left with their stop: trimmed, and cut to
+   `hi-spec/note-chars`. A stop is never refused for the length of its note —
+   what the person managed to type before pressing stop always reaches the model."
+  [note]
+  (when-let [text (trimmed note)]
+    (subs text 0 (min (count text) (long hi-spec/note-chars)))))
+
 (defn- live-result
   "The verdict of `view`: how it ended, and the whole picture the human watched,
    handed to the model as DATA. `:view` carries the finished nodes — ids, tones,
    values — budgeted exactly as the document is, and `:elided` counts what that
    budget left in the record. It reads the same materialized state both human
-   surfaces painted, and says how the story ended before it says anything else."
-  [view ending fail!]
+   surfaces painted, and says how the story ended before it says anything else.
+
+   `human` is the person who ended it: `{:note …}` from [[interrupt-live!]], nil
+   when the run ended itself. Their stop is stamped `:is-from-human`, and their
+   words ride along as `:note`, so a run that was cut short reads that a PERSON
+   cut it, and why, instead of inferring it from `interrupted`."
+  [view ending human fail!]
   (when-not (map? ending) (fail! "an ending must be a map"))
   (check-keys! "ending" live-ending-keys ending fail!)
   (let
@@ -1663,7 +1676,14 @@
      (live-term fail! ":reason" hi-spec/live-reasons (or (pick* ending :reason) :completed))
 
      verdict
-     (cond-> {:view-id (:id view) :is-completed (= :completed reason) :reason reason}
+     (cond->
+       {:view-id (:id view)
+        :is-completed (= :completed reason)
+        :reason reason
+        :is-from-human (some? human)}
+       (human-note (:note human))
+       (assoc :note (human-note (:note human)))
+
        (trimmed (pick* ending :summary))
        (assoc :summary (trimmed (pick* ending :summary)))
 
@@ -1691,16 +1711,19 @@
    interrupt already closed is a no-op rather than a second verdict.
 
    `ending` says how it ended: `:reason` (`completed` by default), `:summary`,
-   `:error`, `:artifact-id`."
-  ([view-id] (close-live! view-id {}))
-  ([view-id ending]
+   `:error`, `:artifact-id`. `human` is the person who stopped it — `{:note …}`,
+   which only [[interrupt-live!]] passes, because a run does not get to claim a
+   human ended it."
+  ([view-id] (close-live! view-id {} nil))
+  ([view-id ending] (close-live! view-id ending nil))
+  ([view-id ending human]
    (when-let [entry (live-entry view-id)]
      ;; The SAME cell `patch-live!` holds: a close racing the last patch waits for
      ;; it, so the verdict renders the picture the record already ends with.
      (let [cell (:view entry)]
        (locking cell
          (let
-           [result (live-result @cell ending invalid-live-view!)
+           [result (live-result @cell ending human invalid-live-view!)
             [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
@@ -1717,22 +1740,24 @@
                         :result result})
              (tel/log! {:level :debug
                         :id ::live-closed
-                        :data {:view-id view-id :reason (:reason result)}
+                        :data {:view-id view-id
+                               :reason (:reason result)
+                               :is-from-human (:is-from-human result)}
                         :msg "Live view closed"})
              result)))))))
 
 (defn interrupt-live!
-  "End live view `view-id` because the human stopped watching — Escape in the
-   terminal, the app's own stop. The verdict reads `interrupted` and still
-   carries the picture of everything that had happened: what the human saw
-   before they stopped it is exactly what the model has to read.
+  "End live view `view-id` because a human stopped watching — Escape in the
+   terminal, Stop in the app — with `note`, the comment they left, when they left
+   one. ALWAYS allowed: a view asks nothing, so stopping it leaves nothing
+   unanswered, and work being SHOWN can always be told to stop showing itself.
 
-   A view declared `:is-cancellable false` refuses here and answers nil, so
-   EVERY surface is refused alike — exactly the rule [[cancel!]] holds a form
-   to. Such a view ends only when the work ends, or with [[cancel-all!]]."
-  [view-id]
-  (when-not (false? (:is-cancellable (live-entry view-id)))
-    (close-live! view-id {:reason :interrupted})))
+   The verdict reads `interrupted`, is stamped `:is-from-human true`, carries the
+   note, and still carries the picture of everything that had happened: what the
+   human saw before they stopped it is exactly what the model has to read, and
+   their own words say why it is not the whole story."
+  ([view-id] (interrupt-live! view-id nil))
+  ([view-id note] (close-live! view-id {:reason :interrupted} {:note note})))
 
 (defn with-live!
   "Open the view `view` declares, hand its id to `body`, and CLOSE it — on a
