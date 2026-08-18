@@ -777,12 +777,12 @@
   (testing "a real PNG of a table with its paragraph beside it"
     (let
       [png (cap/shot! {:cols 96
-                       :rows 16
+                       :rows 24
                        :font-size 14
                        :out "vis-live-view-aside"
                        :paint! (fn [{:keys [screen]}]
                                  (let [g (.newTextGraphics ^TerminalScreen screen)]
-                                   (lv/paint! g 96 16 [(reading-pane)] 1 3)
+                                   (lv/paint! g 96 24 [(reading-pane)] 1 3)
                                    (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-aside.png"))
       (is (pos? (long (cap/ink png))) "the split band really painted"))))

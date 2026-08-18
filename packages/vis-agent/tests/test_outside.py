@@ -357,6 +357,11 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
                     vis.table_column("state", "State"),
                 ],
             ),
+            vis.stat(
+                "why",
+                stats=[{"id": "queued", "label": "Queued", "value_text": "1"}],
+                is_aside=True,
+            ),
             vis.output("tail", label="Output"),
         ],
         description="staging",
@@ -371,6 +376,10 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         assert nodes["jobs"]["rows"][0]["tone"] == "ok"
         assert nodes["tail"]["lines"] == ["cloning", "compiling"]
         assert nodes["now"]["text"] == "Building"
+        # WHERE a node stands travels with the view even out here, where nothing
+        # paints it: an extension is written once for both places.
+        assert nodes["why"]["is_aside"] is True
+        assert "is_aside" not in nodes["now"]
 
     verdict = view.result
     assert verdict["is_completed"] is True
