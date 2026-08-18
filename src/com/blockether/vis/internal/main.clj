@@ -3208,22 +3208,101 @@
      :db (config/resolve-db-spec (when-let [db (get parsed "db")]
                                    (if (= db ":memory") :memory {:backend :sqlite :path db})))}))
 
+(defn- plural
+  "`n` with `one` pluralized by an s - the shape every gateway line counts in."
+  [n one]
+  (str n " " one (when (not= 1 (long n)) "s")))
+
+(defn- build-label
+  "How a Vis build names ITSELF to a human, read off its handshake
+   (`{:version :build}`): the release version, or - when a source checkout has no
+   release to be ordered by - the commit that is its identity, because \"dev\"
+   alone names no code."
+  [{:keys [version build]}]
+  (if (and (= "dev" version) build) (str version " (" build ")") version))
+
+(defn- this-handshake
+  "What THIS runtime advertises about itself ([[protocol/handshake]])."
+  []
+  ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/handshake)))
+
+(defn- stale-daemon-note
+  "The line `gateway status` adds when THIS runtime (`ours`, a handshake) is newer
+   code than the daemon `status` describes: what picks the new build up, and what
+   still holds the old one. nil when it is not.
+
+   Both halves come out of the handshake the status map already carries, so the
+   answer costs no extra round trip, and it applies the SAME two rules an attach
+   does - [[protocol/superseded?]] for the verdict, [[client/daemon-idle?]] for
+   whether anything is in the way. A status line must never promise a replacement
+   the next client would refuse to make."
+  [status ours]
+  (let [peer
+        (get status "protocol")
+
+        superseded?
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/superseded?)
+          {:our-version (:version ours)
+           :their-version (get peer "version")
+           :our-build (:build ours)
+           :their-build (get peer "build")})
+
+        {:keys [reason clients running-turns pid]}
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/daemon-idle?) status)]
+
+    (when superseded?
+      (str "this build is " (build-label ours)
+           " - " (case reason
+                   :idle
+                   "the next session starts on it"
+
+                   :user-owned
+                   (str "the running daemon is user-owned"
+                        (when pid (str " (pid " pid ")"))
+                        " - stop and start it yourself to pick it up")
+
+                   (if (and clients running-turns)
+                     (str "it is picked up once nothing is using this one ("
+                          (plural clients "client")
+                          ", "
+                          (plural running-turns "running turn")
+                          ")")
+                     "it is picked up once this one is no longer in use"))))))
+
 (defn- cli-gateway-status!
   [parsed _residual]
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
-  (let
-    [{:strs [status pid host port db clients running_turns require_token] :as m}
-     ((requiring-resolve 'com.blockether.vis.internal.gateway.client/status))]
+  (let [{:strs [status pid host port db clients running_turns require_token] :as m}
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/status))]
     (if (= "running" status)
-      (stdout! (str "gateway running pid=" pid
-                    " url=http://" host
-                    ":" port
-                    " db=" db
-                    " clients=" clients
-                    " running-turns=" running_turns
-                    " auth=" (if require_token "token" "loopback-disabled")))
+      (let [peer (get m "protocol")]
+        (stdout!
+          (str "gateway running pid="
+               pid
+               " url=http://"
+               host
+               ":"
+               port
+               " db="
+               db
+               " clients="
+               clients
+               " running-turns="
+               running_turns
+               " auth="
+               (if require_token "token" "loopback-disabled")
+               " version="
+               (or (get peer "version") "unknown")
+               (when-let [build (get peer "build")]
+                 (str " build=" build))))
+        ;; "why is my update not in effect yet" is what this command gets asked, and
+        ;; the answer is already in the map. A --gateway target is another machine's
+        ;; lifecycle, so nothing here is ever going to replace it.
+        (when-not ((requiring-resolve 'com.blockether.vis.internal.gateway.client/remote-gateway))
+          (when-let [note (stale-daemon-note m (this-handshake))]
+            (stdout! note))))
       (stdout! (str "gateway stopped"
                     (when-let [db (get m "db")]
                       (str " db=" db)))))))
@@ -3276,19 +3355,7 @@
         ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon-if-idle!))
 
         version
-        (let [release
-              ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version))
-
-              build
-              ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/build-id))]
-
-          ;; A source checkout has no release to name, so name the commit instead -
-          ;; that IS what a dev build is picked up by.
-          (if (and (= "dev" release) build) (str release " (" build ")") release))
-
-        plural
-        (fn [n one]
-          (str n " " one (when (not= 1 (long n)) "s")))]
+        (build-label (this-handshake))]
 
     (cond
       stopped?

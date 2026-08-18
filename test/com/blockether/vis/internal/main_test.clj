@@ -474,3 +474,45 @@
           (expect (= ["s-a" "s-b"] (:deleted-session-ids result)))
           (expect (= [] (:kept-session-ids result)))
           (expect (= pid (:project-id result)))))))
+
+
+(defdescribe
+  gateway-status-staleness-test
+  ;; `gateway status` is what gets asked when an update looks like it did nothing,
+  ;; so it must answer with the same verdict an attach would reach - never promise
+  ;; a replacement the next client would refuse to make.
+  (let [ours
+        {:version "0.1.40" :build "aaaaaaaaaaaa"}
+
+        note
+        (fn [status]
+          (#'main/stale-daemon-note status ours))
+
+        running
+        (fn [m]
+          (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))]
+
+    (it "names a dev build by its commit, because \"dev\" alone names no code"
+        (expect (= "dev (abc123abc123)"
+                   (#'main/build-label {:version "dev" :build "abc123abc123"})))
+        (expect (= "0.1.40" (#'main/build-label {:version "0.1.40" :build "abc123abc123"}))))
+    (it "says what picks the new build up when nothing is using the old daemon"
+        (let [s (note (running {"protocol" {"version" "0.1.39" "build" "bbbbbbbbbbbb"}}))]
+          (expect (str/includes? s "this build is 0.1.40"))
+          (expect (str/includes? s "next session starts on it"))))
+    (it "counts what is holding the old daemon instead of promising a replacement"
+        (let [s (note (running {"clients" 2 "running_turns" 1 "protocol" {"version" "0.1.39"}}))]
+          (expect (str/includes? s "2 clients"))
+          (expect (str/includes? s "1 running turn"))
+          (expect (not (str/includes? s "next session")))))
+    (it "hands a user-owned daemon back to whoever started it"
+        (let [s (note (running {"managed" false "pid" 4242 "protocol" {"version" "0.1.39"}}))]
+          (expect (str/includes? s "user-owned"))
+          (expect (str/includes? s "4242"))))
+    (it "counts nothing it could not read"
+        (let [s (note (running {"clients" :two "protocol" {"version" "0.1.39"}}))]
+          (expect (str/includes? s "no longer in use"))))
+    (it "is silent about a daemon this build does not replace"
+        (expect (nil? (note (running {"protocol" {"version" "0.1.40" "build" "aaaaaaaaaaaa"}}))))
+        (expect (nil? (note (running {"protocol" {"version" "0.1.41" "build" "cccccccccccc"}}))))
+        (expect (nil? (note (running {"protocol" {"version" "dev"}})))))))
