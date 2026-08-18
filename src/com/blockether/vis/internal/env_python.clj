@@ -1562,10 +1562,10 @@
      (:shim/bindings shim)
 
      bindings
-     ;; A shim that owns host objects takes the SCOPE so it can tie their life to
-     ;; this Context's (see `own-in-scope!`); one that owns nothing keeps its
-     ;; 0-arg factory. `ArityException` is thrown by `invoke` BEFORE any body
-     ;; runs, so the retry cannot double any side effect.
+     ;; A shim that LENDS host objects takes the SCOPE, so what it opens is owned
+     ;; by this Context and dies with it (`sandbox-resources`); one that lends
+     ;; nothing keeps its 0-arg factory. `ArityException` is thrown by `invoke`
+     ;; BEFORE any body runs, so the retry cannot double a side effect.
      (if (fn? b)
        (try (b scope) (catch clojure.lang.ArityException _ (b)))
        b)]

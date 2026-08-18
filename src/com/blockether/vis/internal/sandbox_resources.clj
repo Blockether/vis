@@ -60,6 +60,12 @@
   ;; scope -> {kind #{handle}}. Nothing in here is a Context.
   (atom {}))
 
+(defonce ^:private owners
+  ;; kind -> {handle scope}. The reverse of `owned`, so freeing a handle never
+  ;; needs the caller to remember whose it was: a shim's `close()` op takes the
+  ;; handle the guest gave it and nothing else.
+  (atom {}))
+
 (defn declare-kinds!
   "Register `resources` (a shim's `:shim/resources` map) so its kinds can be
    opened and released. Idempotent: shims are installed once per Context, and a
@@ -105,17 +111,21 @@
                      (str "sandbox resource " kind " failed to release"))))))
 
 (defn- forget!
-  "Drop `handle` from its table and from `scope`'s ownership, returning the value
-   it held."
-  [scope kind handle]
+  "Drop `handle` from its table and from its owner's set, returning the value it
+   held. The owner is looked up, never passed in."
+  [kind handle]
   (let
     [h
      (long handle)
 
      v
-     (value kind h)]
+     (value kind h)
+
+     scope
+     (get-in @owners [kind h])]
 
     (swap! tables update kind dissoc h)
+    (swap! owners update kind dissoc h)
     (when scope (swap! owned update-in [scope kind] disj h))
     v))
 
@@ -123,8 +133,8 @@
   "Release ONE handle and forget it. Idempotent and silent for a handle that is
    already gone, because it is reached from both the guest's own `close()` and
    from teardown."
-  [scope kind handle]
-  (when-let [v (forget! scope kind handle)] (release! kind handle v))
+  [kind handle]
+  (when-let [v (forget! kind handle)] (release! kind handle v))
   nil)
 
 (defn- evict-oldest!
@@ -136,12 +146,7 @@
     (let [t (get @tables kind)]
       (when (>= (count t) (long cap))
         (let [oldest (first (sort (keys t)))]
-          ;; The evicted entry may belong to another live scope, so sweep it out
-          ;; of whichever scope owns it rather than guessing.
-          (swap! owned (fn [m] (reduce-kv (fn [acc s ks] (assoc acc s (update ks kind disj oldest)))
-                                          {}
-                                          m)))
-          (when-let [v (forget! nil kind oldest)] (release! kind oldest v))
+          (when-let [v (forget! kind oldest)] (release! kind oldest v))
           (tel/log! {:level :debug :id ::evicted-oldest :data {:kind kind :handle oldest :cap cap}}
                     (str "sandbox resource " kind " hit its cap; released the oldest")))))))
 
@@ -158,7 +163,9 @@
   (evict-oldest! kind)
   (let [h (long (get (swap! counters update kind (fnil inc 0)) kind))]
     (swap! tables update kind assoc h v)
-    (when scope (swap! owned update-in [scope kind] (fnil conj #{}) h))
+    (when scope
+      (swap! owners update kind assoc h scope)
+      (swap! owned update-in [scope kind] (fnil conj #{}) h))
     h))
 
 (defn release-scope!
@@ -173,7 +180,7 @@
       (swap! owned dissoc scope)
       (doseq [[kind handles] held
               h handles]
-        (when-let [v (forget! nil kind h)] (release! kind h v)))))
+        (when-let [v (forget! kind h)] (release! kind h v)))))
   nil)
 
 (defn live-count

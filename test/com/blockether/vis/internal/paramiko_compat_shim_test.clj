@@ -285,8 +285,8 @@
     "stops and deregisters the MINA server host-side the moment its SSH session closes, so a started server never outlives its connection (independent of the guest Python `_reap` thread the GraalPy context cancels on close)"
     (let
       [info
-       ;; nil scope: this test owns the server's lifetime itself (it stops it in
-       ;; the `finally` below) rather than through a Context teardown.
+       ;; nil scope: this test owns the server's lifetime itself (it stops it
+       ;; below) rather than through a Context teardown.
        ((deref #'shim/op-server-start)
          nil
          (fn [_u _p]
@@ -332,7 +332,7 @@
                           (zero? tries) false
                           :else (do (Thread/sleep 10) (recur (dec tries))))))))
       ;; Never leak this test's server into later tests, even if the reap was skipped.
-      ((deref #'shim/op-server-stop) nil handle))))
+      ((deref #'shim/op-server-stop) handle))))
 
 (def ^:private none-auth-server-src
   "Guest paramiko SSH server whose `ServerInterface` advertises and accepts `none`

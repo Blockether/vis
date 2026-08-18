@@ -25,6 +25,16 @@
 ;; Sessions, SFTP channels and MINA servers all live on the JVM; the guest holds
 ;; integer handles. Ownership, the handle tables and the caps are declared in
 ;; `:shim/resources` at the bottom of this file — nothing here keeps a registry.
+;;
+;; Each MINA SSHD server uses MINA's OWN default per-server NIO2 io-service
+;; factory (its own AsynchronousChannelGroup: acceptor + per-session
+;; `nio2-thread-N`). We deliberately do NOT share one `Nio2ServiceFactoryFactory`
+;; / executor across servers: MINA 2.15 disposes a shared io-service when the
+;; FIRST server `.stop`s, which poisons every later server (its SSH banner is
+;; never sent, so clients time out) — only the first server per JVM would ever
+;; negotiate. Thread growth is instead bounded by each server's self-reap on
+;; connection close (the `SessionListener` below) plus the declared
+;; `:resource/max`, which together keep SSHD threads flat across start/stop cycles.
 
 (defn- sess-of
   ^Session [h]
@@ -133,8 +143,8 @@
              (.isConnected s))))
 
 (defn- op-ssh-close
-  [scope conn-h]
-  (res/close! scope ::sessions conn-h)
+  [conn-h]
+  (res/close! ::sessions conn-h)
   nil)
 
 ;; SFTP operations (JSch ChannelSftp).
@@ -224,8 +234,8 @@
 (defn- op-sftp-pwd [h] (.pwd (sftp-of h)))
 
 (defn- op-sftp-close
-  [scope h]
-  (res/close! scope ::sftp h)
+  [h]
+  (res/close! ::sftp h)
   nil)
 
 (defn- ssh-envelope
@@ -409,7 +419,7 @@
                              (sessionClosed [_ _sess]
                                (doto (Thread. ^Runnable
                                               (fn []
-                                                (op-server-stop scope h))
+                                                (op-server-stop h))
                                               "vis-sshd-reap")
                                  (.setDaemon true)
                                  (.start)))))
@@ -418,8 +428,8 @@
 
 (defn- op-server-stop
   "Stop and deregister the MINA server bound to handle `h`; returns nil."
-  [scope h]
-  (res/close! scope ::servers h)
+  [h]
+  (res/close! ::servers h)
   nil)
 
 (defn- paramiko-bridge-bindings
@@ -432,7 +442,7 @@
    "__vis_ssh_active__" (fn [h]
                           (ssh-envelope #(op-ssh-active h)))
    "__vis_ssh_close__" (fn [h]
-                         (ssh-envelope #(op-ssh-close scope h)))
+                         (ssh-envelope #(op-ssh-close h)))
    "__vis_sftp_open__" (fn [h]
                          (ssh-envelope #(op-sftp-open scope h)))
    "__vis_sftp_listdir__" (fn [h path attr?]
@@ -458,7 +468,7 @@
    "__vis_sftp_pwd__" (fn [h]
                         (ssh-envelope #(op-sftp-pwd h)))
    "__vis_sftp_close__" (fn [h]
-                          (ssh-envelope #(op-sftp-close scope h)))
+                          (ssh-envelope #(op-sftp-close h)))
    "__vis_key_generate__" (fn [kind bits passphrase]
                             (ssh-envelope #(op-key-generate kind bits passphrase)))
    "__vis_key_load__" (fn [private-b64 passphrase]
@@ -466,7 +476,7 @@
    "__vis_server_start__" (fn [auth-pw forward auth-none]
                             (ssh-envelope #(op-server-start scope auth-pw forward auth-none)))
    "__vis_server_stop__" (fn [h]
-                           (ssh-envelope #(op-server-stop scope h)))})
+                           (ssh-envelope #(op-server-stop h)))})
 
 ;; Python preamble: publishes a paramiko-compatible module into sys.modules.
 

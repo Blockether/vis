@@ -245,8 +245,8 @@
 (defn- op-close
   "The guest's own `conn.close()`. Idempotent: `res/close!` is silent for a
    handle that is already gone, and teardown reaches the same release."
-  [scope conn-h]
-  (res/close! scope ::conns conn-h)
+  [conn-h]
+  (res/close! ::conns conn-h)
   nil)
 
 (defn- op-total-changes
@@ -281,7 +281,7 @@
    "__vis_sqlite_rollback__" (fn [h]
                                (sqlite-envelope #(op-rollback h)))
    "__vis_sqlite_close__" (fn [h]
-                            (sqlite-envelope #(op-close scope h)))
+                            (sqlite-envelope #(op-close h)))
    "__vis_sqlite_total_changes__" (fn [h]
                                     (sqlite-envelope #(op-total-changes h)))})
 

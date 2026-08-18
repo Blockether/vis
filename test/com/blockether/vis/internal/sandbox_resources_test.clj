@@ -64,6 +64,8 @@
       (expect (= [h3] @freed)))))
 
 (defdescribe guest-close-test
+  ;; The guest's close takes the handle and nothing else: ownership is recorded
+  ;; at open, so no caller has to remember whose a handle was.
   (it "a handle the guest closed itself is not freed again at teardown"
     (let
       [freed
@@ -81,7 +83,7 @@
        h2
        (res/open! (res/scope-of ctx) k :two)]
 
-      (res/close! (res/scope-of ctx) k h1)
+      (res/close! k h1)
       (expect (= [h1] @freed))
       (res/release-scope! ctx)
       (expect (= [h1 h2] @freed) "teardown re-freed a handle the guest had closed"))))
