@@ -128,7 +128,11 @@
   (testing "a source run identifies itself by HEAD, with no git process to pay for"
     (let [id (protocol/build-id)]
       (is (string? id))
-      (is (re-matches #"[0-9a-f]{12}(\+wip\.\d+)?" id))
+      ;; The COMMIT is the whole identity: no working-tree marker, so the id never
+      ;; depends on which classpath this run holds or on a walk over the checkout.
+      (is (re-matches #"[0-9a-f]{12}(-dirty)?" id))
+      (is (= id (#'protocol/checkout-build-id (#'protocol/checkout-root)))
+          "a dev run says exactly what HEAD says, edited worktree or not")
       (is (identical? id (protocol/build-id))
           "computed once: a daemon must advertise the code it LOADED, not today's disk")))
   (testing "the handshake carries it, so the probe every attach already pays for answers it"

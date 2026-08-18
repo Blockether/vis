@@ -190,54 +190,18 @@
     (let [[sha & marks] (str/split c #"-")]
       (when (re-matches #"[0-9a-f]{7,40}" sha)
         (str/join "-" (cons (subs sha 0 (min 12 (count sha))) marks))))))
-(defn- newest-source-mtime
-  "Newest modification time under the classpath DIRECTORIES that live inside
-   `root` - `src`, `resources`, an extension's own path: exactly the code a source
-   run loads, and nothing outside the checkout."
-  [^java.io.File root]
-  (let [prefix
-        (str (.getCanonicalPath root) java.io.File/separator)
-
-        dirs
-        (->> (str/split (or (System/getProperty "java.class.path") "")
-                        (re-pattern (java.util.regex.Pattern/quote java.io.File/pathSeparator)))
-             (map io/file)
-             (filter (fn [^java.io.File f]
-                       (.isDirectory f)))
-             (filter (fn [^java.io.File f]
-                       (str/starts-with? (.getCanonicalPath f) prefix))))
-
-        stamps
-        (for [d
-              dirs
-
-              ^java.io.File f
-              (file-seq d)
-
-              :when (.isFile f)]
-
-          (.lastModified f))]
-
-    (when (seq stamps) (reduce max stamps))))
-
 (defn- checkout-build-id
-  "The identity of a SOURCE run: the short `HEAD` sha, plus the newest source
-   mtime when the worktree has moved past the index (`git` writes the index on
-   checkout, so anything newer than it is an edit this process is running and the
-   next one may not be). One value, so a dev daemon and a dev client compare the
-   same way a released pair does."
+  "The identity of a SOURCE run: the short `HEAD` sha of the checkout this process
+   loaded its code from.
+
+   The COMMIT is the whole answer. A worktree edited past its index is still that
+   commit: the alternative - stamping the newest source mtime beside the sha -
+   made one commit look like two builds whenever two runs held different
+   classpaths, and charged every cold start a walk over every file in the
+   checkout to say so."
   [^java.io.File root]
   (when-let [gitdir (git-dir root)]
-    (let [sha (head-sha gitdir)
-          short (short-commit sha)
-          ^java.io.File index (io/file gitdir "index")
-          indexed (when (.isFile index) (.lastModified index))
-          newest (newest-source-mtime root)]
-
-      (cond (and short newest indexed (> (long newest) (long indexed))) (str short "+wip." newest)
-            short short
-            newest (str "wip." newest)
-            :else nil))))
+    (short-commit (head-sha gitdir))))
 
 (def ^:private build-identity
   (delay (try (let [stamped (some-> (io/resource "vis/BUILD")
@@ -261,8 +225,7 @@
    One value across both distributions, because a daemon is replaced by whichever
    client finds it and the two halves need not be the same shape:
      native/uberjar  the commit stamped into `vis/BUILD` at build time
-     source (JVM)    `HEAD` of the checkout on the classpath, marked when the
-                     worktree has been edited past it ([[checkout-build-id]])
+     source (JVM)    the short `HEAD` sha of the checkout it loaded from
 
    Computed ONCE per process ON PURPOSE: a daemon must keep advertising the build
    it LOADED, not whatever is on disk minutes later, or nothing would ever look
