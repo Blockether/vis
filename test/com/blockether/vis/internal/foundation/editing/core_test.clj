@@ -4467,9 +4467,9 @@
 
          result
          (ep/run-python-block ctx
-                              (str "names = {e[\"name\"] for e in "
-                                   "ls(\"src/com/blockether/vis/internal/foundation/editing\")}\n"
-                                   "print(\"core.clj\" in names)")
+                              (str "tree = "
+                                   "ls(\"src/com/blockether/vis/internal/foundation/editing\")\n"
+                                   "print(isinstance(tree, str) and \"core.clj\" in tree)")
                               "t1/i1")]
 
         (expect (nil? (:error result)))

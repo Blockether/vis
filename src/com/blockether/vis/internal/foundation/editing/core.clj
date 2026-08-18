@@ -5,9 +5,11 @@
 
    1. Structured helpers for tree / search:
 
-        (ls dir)              ; a DIRECTORY -> [{name path type size}], directories first;
-        (ls dir, depth=2)     ; nested rows sit in `children`. The walk runs inside
-                              ; the block, so mapping a tree costs no wire round trip.
+        (ls dir)              ; a DIRECTORY -> a compact TREE STRING, ready to print:
+        (ls dir, depth=2)     ; a `path  Nd Nf` header, then `name/` per directory and
+                              ; `name  size` per file, directories first. `depth`
+                              ; descends. The walk runs inside the block, so mapping a
+                              ; tree costs no wire round trip.
                               ; A nil or blank path throws before any I/O.
         (grep query)          ; -> ONE anchored TEXT block, never a map: a summary line,
                               ; then `  <line>:<hash>| <text>` rows under each path;

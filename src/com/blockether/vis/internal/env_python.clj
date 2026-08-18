@@ -130,7 +130,7 @@
         (string? x) x
         (boolean? x) x
         ;; `java.util.Map` covers BOTH Clojure maps (which implement it) AND a raw
-        ;; ordered `LinkedHashMap` a tool returns (e.g. `ls`'s entries). The new
+        ;; ordered `LinkedHashMap` a tool returns. The new
         ;; LinkedHashMap preserves the source's ITERATION ORDER — Clojure array-map
         ;; canonical key order, or a LinkedHashMap's insertion order — so the live
         ;; `ctx` dict and the rendered text agree, and ordered tool maps reach
@@ -193,7 +193,7 @@
         ;; Dicts preserve INSERTION ORDER: GraalPy's key iterator is insertion-
         ;; ordered, so accumulate into a flatland ordered-map (NOT a hash-map, whose
         ;; >8-key promotion scrambles order). Without this, a round-tripped ordered
-        ;; tool result (`ls`'s nested entries) comes back HASH-ordered and
+        ;; tool result (a nested listing) comes back HASH-ordered and
         ;; the model reads the file out of line order. ordered-map is still a
         ;; persistent Clojure map (assoc/dissoc/string-lookup all work downstream).
         (.hasHashEntries v) (let [it (.getHashKeysIterator v)]
