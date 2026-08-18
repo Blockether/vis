@@ -28,17 +28,20 @@ const fleet = () => [
 // the trip — and it went on polling the whole fleet every ten seconds while nobody
 // could see it. Every answer re-ran the fleet-wide filter and sort and re-rendered
 // every project group, on the same main thread as the composer being typed in.
+// It still may not POLL there — repetition is what the report was about — but a list
+// with no rows at all takes ONE read wherever the reader is, so a relaunch straight into
+// a session is not a skeleton the moment they leave it (`SessionsScreen.poll.test.tsx`).
 describe("a sessions list that is not on the glass", () => {
-  it("asks the fleet for nothing until it is shown", async () => {
+  it("reads the fleet once, and not again until it is shown", async () => {
     const view = renderSessionsScreen({ isVisible: false, machines: fleet() });
     await settle(60);
 
-    expect(view.requests.filter(isListRead)).toHaveLength(0);
+    // ONE read: the warm-up that gives this list rows to arrive on. The poll is what
+    // may not run off the glass, and it is pinned in `SessionsScreen.poll.test.tsx`.
+    expect(view.requests.filter(isListRead)).toHaveLength(1);
 
     view.setVisible(true);
-    await waitFor(() =>
-      expect(view.requests.filter(isListRead).length).toBeGreaterThan(0),
-    );
+    await waitFor(() => expect(view.requests.filter(isListRead).length).toBeGreaterThan(1));
     // Shown means CURRENT: the load is the first thing coming back does.
     expect(await screen.findByText("A session")).toBeTruthy();
     view.unmount();

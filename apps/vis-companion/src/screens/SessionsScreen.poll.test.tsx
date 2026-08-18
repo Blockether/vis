@@ -12,6 +12,17 @@ vi.mock("../lib/badge", () => badge);
 
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 
+import { forgetListScroll, parkedListScroll, rememberListScroll } from "../lib/list-scroll";
+
+/** Let every poll, repaint and effect that fits inside `ms` happen. */
+const settle = async (ms = 0) => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
+
+const listReads = (requests: { path: string }[]) =>
+  requests.filter((request) => request.path.startsWith("/v1/sessions?")).length;
 let restore = () => {};
 
 // Regression, user report (paraphrased: "entering the session list makes it flicker, and
@@ -28,16 +39,6 @@ describe("a poll that changes nothing leaves the list alone", () => {
     restore();
     vi.useRealTimers();
   });
-
-  /** Let every poll, repaint and effect that fits inside `ms` happen. */
-  const settle = async (ms = 0) => {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(ms);
-    });
-  };
-
-  const listReads = (requests: { path: string }[]) =>
-    requests.filter((request) => request.path.startsWith("/v1/sessions?")).length;
 
   it("keeps the fleet it already has when the poll answers with the same rows", async () => {
     const view = renderSessionsScreen({
@@ -58,5 +59,77 @@ describe("a poll that changes nothing leaves the list alone", () => {
     // very array it was before.
     expect(badge.syncBadge.mock.calls.length).toBe(painted);
     expect(screen.getByText("First")).toBeTruthy();
+  });
+});
+
+// Regression, user report (paraphrased: "I come back to the app in a session view, and
+// leaving it flickers while the session list loads — we already know that list, so hold
+// it while I am reading the session"): the fleet's FIRST read was gated on this screen
+// being visible, so a relaunch straight into a transcript left the list mounted on
+// nothing but its skeleton, and its rows only started arriving on the frame the reader
+// pressed Back on.
+describe("the list parked behind an open session", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    restore();
+    forgetListScroll();
+    vi.useRealTimers();
+  });
+
+  const parkedList = () =>
+    renderSessionsScreen({
+      isVisible: false,
+      machines: [{ label: "alpha", sessions: [listSession({ id: "a1", title: "First" })] }],
+    });
+
+  it("reads its rows while nobody is looking at it", async () => {
+    const view = parkedList();
+    restore = view.restore;
+
+    await settle(50);
+
+    expect(listReads(view.requests)).toBe(1);
+    // What the reader arrives on is the list itself, never its loading state.
+    expect(screen.getByText("First")).toBeTruthy();
+    expect(screen.queryByLabelText("Loading sessions")).toBeNull();
+  });
+
+  it("reads once and leaves the poll to the screen on the glass", async () => {
+    const view = parkedList();
+    restore = view.restore;
+    await settle(50);
+    expect(listReads(view.requests)).toBe(1);
+
+    await settle(30_000);
+
+    expect(listReads(view.requests)).toBe(1);
+  });
+
+  it("asks for nothing when it already has rows to paint", async () => {
+    const view = renderSessionsScreen({
+      machines: [{ label: "alpha", sessions: [listSession({ id: "a1", title: "First" })] }],
+    });
+    restore = view.restore;
+    await settle(50);
+    const read = listReads(view.requests);
+
+    view.setVisible(false);
+    await settle(50);
+
+    expect(listReads(view.requests)).toBe(read);
+  });
+
+  it("keeps the reading position it has nowhere to put back yet", async () => {
+    rememberListScroll({ top: 900, anchor: { id: "a1", offset: 0 } });
+    const view = parkedList();
+    restore = view.restore;
+
+    await settle(50);
+
+    // The rows landed off the glass, where the scroller has no height to restore into.
+    // Spending the mark there costs the reader their place on the frame they come back on.
+    expect(parkedListScroll()?.top).toBe(900);
   });
 });

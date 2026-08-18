@@ -768,6 +768,27 @@ export function SessionsScreen({
     setMachines((current) => hydrateMachines(connsRef.current, current));
   }, [fleetKey]);
 
+  // THE LIST BEHIND AN OPEN TRANSCRIPT IS ALREADY LOADED, or leaving that transcript is
+  // a flicker.
+  //
+  // Coming back to a killed app is normally coming back INTO a session: the OS drops a
+  // backgrounded webview, the restored hash mounts the transcript, and this screen is
+  // parked behind it holding nothing but its skeleton. Gating the fleet's FIRST read on
+  // being visible then began that read on the very frame the reader pressed Back on —
+  // measured against a gateway on localhost, eight frames of skeleton before the rows
+  // replaced it, and a phone reaching a laptop over Wi-Fi pays the whole round trip in
+  // that same place. So the read that gives this list its rows AT ALL happens wherever
+  // the reader is. It is ONE read: it stands down the moment there is something to paint
+  // (a cached fleet already is), and the ten-second poll below stays the business of the
+  // screen that is on the glass.
+  const hasRows = machines.some((machine) => machine.sessions !== null);
+  useEffect(() => {
+    if (isVisible || hasRows) return;
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [fleetKey, hasRows, isVisible, load]);
+
   // Behind an open transcript this screen is mounted but invisible, and a list
   // nobody can see must not do fleet-wide work: this poll refetched every machine
   // every 10s and re-ran the filter and the sort of the whole fleet — under the
@@ -840,6 +861,11 @@ export function SessionsScreen({
   // even though the session just visited has jumped to the top of the list.
   useLayoutEffect(() => {
     if (restoredRef.current) return;
+    // Off the glass there is no layout to restore INTO, and a mark spent where the
+    // reader cannot see where it landed is their place lost: the warm-up above fills
+    // this list behind an open session, so the fleet can now finish loading while it is
+    // hidden — and finishing is what gives up on a mark that does not fit yet.
+    if (!isVisible) return;
     const mark = parkedListScroll();
     if (!mark) {
       restoredRef.current = true;
