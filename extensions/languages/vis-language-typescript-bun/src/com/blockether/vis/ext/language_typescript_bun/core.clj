@@ -189,7 +189,10 @@
           (register-repl-resource! (:session-id env) dir r id)
           (extension/success {:result r})))
 
-      (throw (ex-info (str "repl(typescript) unknown op: " (pr-str op))
+      (throw (ex-info (str "TypeScript REPL lifecycle: unknown op "
+                           (pr-str op)
+                           " — the verbs are repl_start / repl_status / repl_stop; there is no"
+                           " repl_connect for Bun, Vis owns the runtime process.")
                       {:type :ts/bad-args :got op})))))
 
 (defn ts-repl-eval-fn
@@ -225,7 +228,7 @@
       (let [shown (paths/abbreviate-home (str dir))]
         (throw (ex-info (str "TypeScript REPL is not up for "
                              shown
-                             "; call repl(\"typescript\", {\"cwd\": "
+                             "; call repl_start(\"typescript\", {\"cwd\": "
                              (pr-str shown)
                              "}) first")
                         {:type :ts/no-repl :dir dir}))))

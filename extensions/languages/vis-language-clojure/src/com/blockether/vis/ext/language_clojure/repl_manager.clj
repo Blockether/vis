@@ -1120,7 +1120,7 @@
    Rules (the ownership contract):
      - explicit `id` → that REPL (throws :clj/unknown-repl-id if no such live REPL);
      - `id` = `default` (any case) → sentinel, treated as no explicit id (below);
-     - 0 REPLs       → throw :clj/no-repl (start one with repl, e.g. repl(\"clojure\"));
+     - 0 REPLs       → throw :clj/no-repl (start one with repl_start(\"clojure\"));
      - 1 REPL        → use it (the implicit default);
      - >1 REPLs      → use the DEFAULT: the REPL owning `default-dir` (the
                        workspace root) when present, else the first (dir-sorted).
@@ -1150,12 +1150,12 @@
         (throw (ex-info
                  (str "no nREPL registered under id '"
                       id
-                      "' in this session — check session[\"resources\"][\"repls\"][\"clojure\"]")
+                      "' in this session — check repl_status(\"clojure\")")
                  {:type :clj/unknown-repl-id :id id})))
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
           (throw (ex-info (str "no running nREPL in this session — start one with "
-                               "repl(\"clojure\"), "
+                               "repl_start(\"clojure\"), "
                                "then retry the eval")
                           {:type :clj/no-repl :dir default-dir}))
           ;; 1+ REPLs: the implicit default is the one owning `default-dir`
@@ -1192,6 +1192,6 @@
          "message" (str "Is `shadow-cljs watch "
                         build
                         "` still running? Reattach with"
-                        " repl(\"clojure\", \"connect\", {\"build\": \""
+                        " repl_connect(\"clojure\", {\"build\": \""
                         build
                         "\"}) once it is.")}))))

@@ -285,22 +285,65 @@
 ;; gone with it: it was a stop+start pretending to be one atomic step, tearing
 ;; down the REPL the turn was standing on, and when the relaunch hung the caller
 ;; was left with NO repl and no usable error. Stop and start are two decisions.
-(defn- language+opts
-  "Split `(language?, opts?)` into `[language opts-map]`."
-  [args]
-  (let [[language more] (if (and (seq args) (language-like? (first args)))
-                          [(first args) (next args)]
-                          [nil args])]
-    [language (coerce-opts (first more))]))
+(defn- opts-id [opts] (or (get opts "id") (get opts "repl_id")))
+
+(defn- repl-call
+  "Split a lifecycle call into `[id language opts]`.
+
+   A leading string is a REPL *id* when it names one — a live resource of THIS
+   session, or a string no language could be spelled as (`nrepl:~/proj`), so a
+   stale id still takes the by-id path and answers `not-found` instead of acting
+   on some pack's REPL. Otherwise it is the language. An `id`/`repl_id` inside
+   the options reads the same way, so a pack's own REPL LABEL (`{\"id\": \"worker\"}`)
+   still reaches the pack.
+
+   What follows is ONE options MAP. A bare string where the map belongs is
+   REFUSED: `repl_start(\"clojure\", \"extensions/foo\")` used to be swallowed and
+   start a REPL at the workspace ROOT instead."
+  [env args]
+  (let
+    [live-ids
+     (into #{} (map #(str (get % "id"))) (vis/list-resources (:session-id env)))
+
+     id?
+     (fn [x] (and (string? x) (or (not (language-like? x)) (contains? live-ids x))))
+
+     [lead more]
+     (if (seq args) [(first args) (next args)] [nil nil])
+
+     lead-id
+     (when (id? lead) lead)
+
+     language
+     (when (and (nil? lead-id) (language-like? lead)) lead)
+
+     more
+     (if (or lead-id language) more (seq args))
+
+     opts
+     (first more)]
+
+    (when-not (or (nil? opts) (map? opts))
+      (throw (ex-info (str "A REPL lifecycle call is (language?, {options}); "
+                           (pr-str opts)
+                           " is not an options map — name what it selects:"
+                           " {\"cwd\": ...}, {\"id\": ...}, {\"port\": ...}.")
+                      {:type :language-surface/bad-args
+                       :got args
+                       :examples ["repl_start('clojure', {'cwd': 'extensions/foo'})"
+                                  "repl_status('python')"
+                                  "repl_stop('nrepl:~/proj')"]})))
+    (when (next more)
+      (throw (ex-info "A REPL lifecycle call takes at most (language?, {options})."
+                      {:type :language-surface/bad-args :got args})))
+    (let [opts (or opts {})]
+      [(or lead-id (let [oid (opts-id opts)] (when (id? oid) oid))) language opts])))
 
 (defn- dispatch-repl!
   "Run the active pack's REPL-lifecycle handler for `op` (start/status/stop/connect)."
-  [env op args]
+  [env op language opts]
   (let
-    [[language opts]
-     (language+opts args)
-
-     dispatch-opts
+    [dispatch-opts
      (cond-> opts
        language
        (assoc "language" language))
@@ -314,40 +357,70 @@
     (when (= "start" op) (vis/prepare-session-jail! env))
     ((:handler handler) env op opts)))
 
-(defn- repl-id?
-  "Does a leading string name a REPL rather than a language? A live resource id of
-   THIS session does, and so does a string no language could be spelled as
-   (`nrepl:~/proj`) — a stale id then still takes the by-id path and answers
-   `not-found`, instead of stopping some pack's REPL by accident."
-  [env x]
-  (and (string? x)
-       (or (not (language-like? x))
-           (boolean (some #(= x (str (get % "id")))
-                          (vis/list-resources (:session-id env)))))))
+(defn- dispatch-repl-call!
+  [env op args]
+  (let [[_ language opts] (repl-call env args)]
+    (dispatch-repl! env op language opts)))
+
+(defn- repl-resources
+  "Every live REPL resource of THIS session, optionally narrowed to one language.
+   A pack answers for ONE directory, so a REPL under another `cwd` — or a
+   shadow-cljs attachment riding beside the JVM one under its own id — exists
+   only here."
+  [env language]
+  (let [lang (normalize-language language)]
+    ;; `list-resources` returns string-keyed DATA maps with string enum VALUES
+    ;; ("kind" "nrepl", "status" "up"), so filter on strings.
+    (->> (vis/list-resources (:session-id env))
+         (filter #(let [kind (str (get % "kind"))]
+                    (or (= "repl" kind) (= "nrepl" kind) (str/ends-with? kind "repl"))))
+         (filter #(or (nil? lang) (= lang (normalize-language (get % "language")))))
+         vec)))
 
 (defn repl-stop
   "Stop a REPL: `repl_stop(id)` by session resource id, or `repl_stop(language,{cwd})`
    for the pack's REPL under that directory."
   [env & args]
-  (if (repl-id? env (first args))
-    ;; By-id stop is a generic session-resource op — no pack dispatch needed,
-    ;; and it works even when the owning language pack is gone.
-    ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
-    ;; :id ...}); project it to a strings-only model payload (enum value stringified
-    ;; at the source) so nothing keyword crosses the boundary.
-    (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) (first args))]
-      (extension/success {:result {"result" (name result)
-                                   "id" (str id)
-                                   ;; TOTAL: `message` is nil rather than absent, so
-                                   ;; r["message"] reads on EVERY stop instead of
-                                   ;; KeyErroring on the clean path.
-                                   "message" message}}))
-    (dispatch-repl! env "stop" args)))
+  (let [[id language opts] (repl-call env args)]
+    (if id
+      ;; By-id stop is a generic session-resource op — no pack dispatch needed,
+      ;; and it works even when the owning language pack is gone.
+      ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
+      ;; :id ...}); project it to a strings-only model payload (enum value stringified
+      ;; at the source) so nothing keyword crosses the boundary.
+      (let [{:keys [result id message]} (vis/stop-resource! (:session-id env) id)]
+        (extension/success {:result {"result" (name result)
+                                     "id" (str id)
+                                     ;; TOTAL: `message` is nil rather than absent, so
+                                     ;; r["message"] reads on EVERY stop instead of
+                                     ;; KeyErroring on the clean path.
+                                     "message" message}}))
+      (dispatch-repl! env "stop" language opts))))
 
 (defn repl-status
-  "Report the pack's REPL state: `repl_status(language,{cwd})`."
+  "Report REPL state: `repl_status(language,{cwd})` — the pack's answer for that
+   project PLUS `resources`, every live REPL of this session whatever directory it
+   runs in. A REPL id answers for that one REPL alone."
   [env & args]
-  (dispatch-repl! env "status" args))
+  (let
+    [[id language opts]
+     (repl-call env args)
+
+     rows
+     (cond->> (repl-resources env language)
+       id
+       (filterv #(= (str id) (str (get % "id")))))]
+
+    (if id
+      (extension/success {:result {"id" (str id)
+                                   ;; TOTAL: an id nothing answers to reads
+                                   ;; "unknown" instead of an absent key.
+                                   "status" (or (some-> (first rows) (get "status")) "unknown")
+                                   "resources" rows}})
+      (update (dispatch-repl! env "status" language opts)
+              :result
+              (fn [result]
+                (if (map? result) (assoc result "resources" rows) result))))))
 
 ;; Call-selection helpers — what a CALL asked for, read off its input map. A pack
 ;; reports what it RAN; only the call knows what was SELECTED, so `run_tests`
@@ -439,12 +512,12 @@
 (defn repl-start
   "Start a language REPL resource: `repl_start(language,{cwd,env,...})`. There is no restart: `repl_stop`, then `repl_start`."
   [env & args]
-  (dispatch-repl! env "start" args))
+  (dispatch-repl-call! env "start" args))
 
 (defn connect-repl
   "Attach to an external running REPL: `repl_connect(language,{port|build,host?,cwd?})`. A `build` attaches to the project's `shadow-cljs watch` and selects it, making eval ClojureScript. Registers it for eval, tests, and context but never owns or kills its process; stop only detaches."
   [env & args]
-  (dispatch-repl! env "connect" args))
+  (dispatch-repl-call! env "connect" args))
 
 (def format-symbol
   (vis/symbol
@@ -567,8 +640,8 @@
        "— and that env BELONGS to the REPL: a start naming a different one is refused by the keys "
        "that differ, since there is no restart. `repl_eval` never takes `env`: a live process' "
        "environment is its own.")
-     :params [{:name "language"} {:name "cwd"} {:name "id"} {:name "port"} {:name "host"}
-              {:name "build" :note "shadow-cljs build to attach + select (ClojureScript)"}
+     :params [{:name "language"} {:name "cwd"} {:name "id" :note "a label for THIS REPL, when a project holds several"}
+              {:name "aliases" :note "clojure — deps aliases, default [\"dev\" \"test\"]"}
               {:name "env" :note "THIS REPL's variables, over the project's"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
@@ -580,15 +653,19 @@
     {:symbol 'repl_status
      :result
      (str
-       "String-keyed and stamped with `op`. Clojure `result,id,cwd,status`, Python/Bun "
-       "`cwd,status`; a running REPL adds `running,port,pid,build` and its `env` key NAMES "
-       "(never values).")
+       "String-keyed and stamped with `op`. The project REPL: Clojure `result,id,cwd,status`, "
+       "Python/Bun `cwd,status`; a running one adds `running,port,pid,build` and its `env` key "
+       "NAMES (never values). `resources` lists EVERY live REPL of this session — `id`, `kind`, "
+       "`language`, `status`, `label` — including ones under another `cwd`. Asking by id answers "
+       "`id,status,resources`, `status` `unknown` when nothing has that id.")
      :description
      (str
        "State of the project's REPL — `repl_status(\"clojure\")`, or "
        "`repl_status({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. Nothing else lists "
        "live REPLs: this is the only answer — reuse `up`, recheck `starting`, `repl_start` when "
-       "absent/down/failed. `cwd` chooses the project.")
+       "absent/down/failed. `cwd` chooses the project; `resources` beside it names every REPL this "
+       "session owns, so one running under another directory is never invisible. An `id` — leading "
+       "or in the options — reports that REPL alone.")
      :params [{:name "language"} {:name "cwd"} {:name "id"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true

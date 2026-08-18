@@ -1293,7 +1293,7 @@
           result
           "error"
           (fn [e]
-            (str e " Stop it (repl(\"clojure\", \"stop\")) — the next run then uses a clean JVM.")))
+            (str e " Stop it (repl_stop(\"clojure\")) — the next run then uses a clean JVM.")))
         :else result))
 
 (defn- has-build-file?

@@ -1,11 +1,10 @@
 (ns com.blockether.vis.ext.language-clojure.nrepl-ctx
   "Per-turn nREPL resource synchronization for the Clojure pack.
 
-   Live state has one model-facing home:
-   `session[\"resources\"][\"repls\"][\"clojure\"][dir]`. This extension hook
-   probes owned nREPLs and mirrors them into the generic session registry before
-   ctx-loop builds that nested resource view. It returns no legacy
-   `session[\"env\"][\"languages\"]` contribution.
+   Live state has ONE model-facing home: `repl_status`. This extension hook probes
+   owned nREPLs and mirrors them into the generic session resource registry —
+   what `repl_status` and the footer answer from; nothing about a resource rides in
+   ctx. It returns no legacy `session[\"env\"][\"languages\"]` contribution.
 
    OWNERSHIP: we surface ONLY the REPLs THIS session started + owns, PLUS any
    external nREPL the user EXPLICITLY attached via `connect` (both from

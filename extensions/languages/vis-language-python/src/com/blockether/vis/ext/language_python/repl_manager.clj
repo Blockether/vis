@@ -191,7 +191,7 @@ _main()
   [dir req timeout-ms]
   (let [info (get @processes dir)]
     (when-not (alive? info)
-      (throw (ex-info "Python REPL is not running for this dir — repl(\"python\") first."
+      (throw (ex-info "Python REPL is not running for this dir — repl_start(\"python\") first."
                       {:type :py/no-repl :dir dir})))
     (locking info
       (let
@@ -214,7 +214,7 @@ _main()
 
                 (swap! processes dissoc dir)
                 (throw (ex-info
-                         "Python REPL closed the connection; restart it with repl(\"python\")."
+                         "Python REPL closed the connection; start it again with repl_start(\"python\")."
                          {:type :py/closed :dir dir :stderr stderr :exit-code exit-code})))
               (try
                 (json/read-json line)
@@ -228,7 +228,7 @@ _main()
                     (swap! processes dissoc dir)
                     (throw
                       (ex-info
-                        "Python REPL returned an invalid response and is dead; restart it with repl(\"python\")."
+                        "Python REPL returned an invalid response and is dead; start it again with repl_start(\"python\")."
                         {:type :py/protocol-error
                          :dir dir
                          :raw-line line

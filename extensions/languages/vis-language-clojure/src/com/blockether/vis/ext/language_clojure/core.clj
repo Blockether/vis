@@ -228,7 +228,9 @@
                    :ttl-ms 4000))))
 
 (defn repl-start-fn
-  "Manage THIS session's workspace nREPL(s). Positional op (default \"status\") +
+  "Manage THIS session's workspace nREPL(s). The facade verbs `repl_start` /
+   `repl_status` / `repl_stop` / `repl_connect` reach this pack as a positional op
+   STRING (default \"status\") +
    optional opts dict `{\"cwd\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
 
      \"status\"  — managed-process view for this session (always allowed)
@@ -273,12 +275,12 @@
       (resolve-repl-dir root (get opts "cwd"))
 
       aliases
-       (coerce-aliases (get opts "aliases"))
+      (coerce-aliases (get opts "aliases"))
 
-       ;; THIS start's own environment, over the project's. An ARGUMENT of the
-       ;; call, so the record of the call says what the REPL was started with.
-       repl-env
-       (get opts "env")]
+      ;; THIS start's own environment, over the project's. An ARGUMENT of the
+      ;; call, so the record of the call says what the REPL was started with.
+      repl-env
+      (get opts "env")]
 
      (case op
        "status"
@@ -296,12 +298,12 @@
           (get opts "build")]
 
          (when-not (or port build)
-           (throw (ex-info (str "repl \"connect\" needs {\"port\": <the external nREPL's port>}"
+           (throw (ex-info (str "repl_connect needs {\"port\": <the external nREPL's port>}"
                                 " — or {\"build\": \"app\"} to attach to the shadow-cljs watch"
                                 " running under \"cwd\" (it publishes its own port)."
                                 " Optional \"host\", \"cwd\" — e.g."
-                                " repl(\"clojure\", \"connect\", {\"port\": 7888}) /"
-                                " repl(\"clojure\", \"connect\", {\"build\": \"app\"})")
+                                " repl_connect(\"clojure\", {\"port\": 7888}) /"
+                                " repl_connect(\"clojure\", {\"build\": \"app\"})")
                            {:type :clj/bad-args :got opts})))
          (let
            [r (repl-manager/connect!
@@ -323,27 +325,27 @@
 
        "start"
        (do (when-not (.isDirectory (io/file dir))
-             (throw (ex-info (str "repl \"start\" target cwd does not exist: "
+             (throw (ex-info (str "repl_start target cwd does not exist: "
                                   (repl-manager/home-relativize (str dir)))
                              {:type :clj/bad-args :dir dir})))
            ;; No "restart": start! REUSES a healthy REPL ("already-running") and
            ;; a REPL you actually want replaced is stopped explicitly first, so a
            ;; hung relaunch can never leave the caller with nothing.
             (let [result (repl-manager/start! sid dir {:aliases aliases :env repl-env})]
-             ;; Mirror the live REPL into the session resource registry → ctx +
-             ;; footer + stoppable by id.
-             (register-repl-resource! sid dir aliases result)
-             (extension/success {:result result})))
+              ;; Mirror the live REPL into the session resource registry → ctx +
+              ;; footer + stoppable by id.
+              (register-repl-resource! sid dir aliases result)
+              (extension/success {:result result})))
 
        (throw
          (ex-info
-           (str "repl unknown op: " (pr-str op))
+           (str "clojure REPL lifecycle: unknown op " (pr-str op))
            {:type :clj/bad-args
             :got op
             :examples
-            ["repl(\"clojure\")" "repl(\"clojure\", \"status\")" "repl(\"clojure\", \"start\")"
-             "repl(\"clojure\", \"start\", {\"cwd\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
-             "repl(\"clojure\", \"stop\")"]}))))))
+            ["repl_start(\"clojure\")" "repl_status(\"clojure\")"
+             "repl_start(\"clojure\", {\"cwd\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
+             "repl_stop(\"clojure\")"]}))))))
 
 
 (defn available-aliases
@@ -497,14 +499,14 @@
                                                           ;; `/Users/you/vis`.
                                                           (repl-manager/home-relativize
                                                             (str (:dir (ex-data e))))
-                                                          " — start one: repl(\"clojure\")")
+                                                          " — start one: repl_start(\"clojure\")")
                                             :hint "then retry the eval"}})
 
                 :clj/unknown-repl-id
                 (extension/failure
                   {:error {:message (str "no REPL under id '"
                                          (:id (ex-data e))
-                                         "' — check session[\"resources\"][\"repls\"][\"clojure\"]")
+                                         "' — check repl_status(\"clojure\")")
                            :hint "pass a live id, or omit it to use the default REPL"}})
 
                 (throw e))))))))

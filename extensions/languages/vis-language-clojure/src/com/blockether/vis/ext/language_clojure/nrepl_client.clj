@@ -98,7 +98,7 @@
             (or host "localhost")
             ":"
             port
-            " — is the REPL running? Check session[\"resources\"][\"repls\"][\"clojure\"] or call repl(\"clojure\").")
+            " — is the REPL running? Check repl_status(\"clojure\"), or start one with repl_start(\"clojure\").")
           {:type :clj/nrepl-connect-failed
            :host (or host "localhost")
            :port port

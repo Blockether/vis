@@ -77,7 +77,7 @@
                      (language-surface/connect-repl env "clojure" {"cwd" "ext" "aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {"aliases" ["dev"]}}
                    (:result (language-surface/repl-start env {"aliases" ["dev"]}))))
-        (expect (= {:op "status" :opts {"cwd" "ext"}}
+        (expect (= {:op "status" :opts {"cwd" "ext"} "resources" []}
                    (:result (language-surface/repl-status env {"cwd" "ext"}))))
         (expect (= {:op "stop" :opts {"cwd" "ext"}}
                    (:result (language-surface/repl-stop env "clojure" {"cwd" "ext"}))))
@@ -195,7 +195,74 @@
              ;; ...while a LANGUAGE still reaches the pack's own stop handler.
              (expect (= {:op "stop" :opts {"cwd" "ext"}}
                         (:result (language-surface/repl-stop env "clojure" {"cwd" "ext"}))))
+              (finally (resources/stop-all! sid)))))
+  ;; Regression, issue #repl-args: a bare string where the options map belongs was
+  ;; swallowed into `{:arg "..."}` — `repl_start("clojure", "extensions/foo")` reported
+  ;; success while starting the REPL at the workspace ROOT.
+  (it "REFUSES a bare string where the options map belongs, on every lifecycle verb"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :start-repl-fn (fn [_ op opts]
+                                      {:success? true :result {:op op :opts opts}})}])
+
+         refuses
+         (fn [f & args]
+           (try (apply f env args)
+                nil
+                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+        (expect (= :language-surface/bad-args
+                   (refuses language-surface/repl-start "clojure" "extensions/foo")))
+        (expect (= :language-surface/bad-args
+                   (refuses language-surface/repl-status "clojure" "extensions/foo")))
+        (expect (= :language-surface/bad-args
+                   (refuses language-surface/repl-stop "clojure" "extensions/foo")))
+        (expect (= :language-surface/bad-args
+                   (refuses language-surface/connect-repl "clojure" "extensions/foo")))))
+  ;; Regression, issue #repl-enumerate: repl_status answered for the pack's own
+  ;; directory alone, so a REPL under another cwd — or a shadow-cljs attachment beside
+  ;; the JVM one — was invisible, while the verb's doc promised it was the only way to
+  ;; see live REPLs.
+  (it "lists EVERY live REPL of the session beside the pack's per-directory status"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :start-repl-fn (fn [_ _ _]
+                                      {:success? true :result {"status" "down"}})}])
+
+         sid
+         (:session-id env)]
+
+        (try (resources/register! sid
+                                  {:id "nrepl:~/proj#ext"
+                                   :kind :nrepl
+                                   :language "clojure"
+                                   :label "ext"}
+                                  {})
+             (let [result (:result (language-surface/repl-status env "clojure"))]
+               (expect (= "down" (get result "status")))
+               (expect (= ["nrepl:~/proj#ext"]
+                          (mapv #(get % "id") (get result "resources")))))
+             ;; ...and asking BY ID answers for that REPL alone, pack or no pack.
+             (let [one (:result (language-surface/repl-status env "nrepl:~/proj#ext"))]
+               (expect (= "nrepl:~/proj#ext" (get one "id")))
+               (expect (= "up" (get one "status"))))
+             (expect (= "unknown"
+                        (get (:result (language-surface/repl-status env "nrepl:~/gone")) "status")))
              (finally (resources/stop-all! sid)))))
+  (it "keeps a pack's own REPL LABEL with the pack, and a session id with the resource model"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :start-repl-fn (fn [_ op opts]
+                                      {:success? true :result {:op op :opts opts}})}])]
+
+        (expect (= {:op "stop" :opts {"id" "worker" "cwd" "ext"}}
+                   (:result (language-surface/repl-stop env "clojure" {"id" "worker" "cwd" "ext"}))))
+        (expect (= "unknown"
+                   (get-in (language-surface/repl-stop env "clojure" {"id" "nrepl:~/gone"})
+                           [:result "result"])))))
   (it "reports missing language handlers with available languages"
       (let
         [env (fake-env [{:language "clojure"

@@ -118,7 +118,10 @@
         (register-repl-resource! (:session-id env) dir r id)
         (extension/success {:result r}))
 
-      (throw (ex-info (str "repl(python) unknown op: " (pr-str op))
+      (throw (ex-info (str "python REPL lifecycle: unknown op "
+                           (pr-str op)
+                           " — the verbs are repl_start / repl_status / repl_stop; there is no"
+                           " repl_connect for Python, Vis owns the interpreter process.")
                       {:type :py/bad-args :got op})))))
 
 (defn py-repl-eval-fn
@@ -149,7 +152,7 @@
       (let [shown (paths/abbreviate-home (str dir))]
         (throw (ex-info (str "Python REPL is not up for "
                              shown
-                             "; call repl(\"python\", {\"cwd\": "
+                             "; call repl_start(\"python\", {\"cwd\": "
                              (pr-str shown)
                              "}) first")
                         {:type :py/no-repl :dir dir}))))
