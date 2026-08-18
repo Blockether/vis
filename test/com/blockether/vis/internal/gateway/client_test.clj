@@ -209,6 +209,21 @@
     (is (= :user-owned (:reason (client/daemon-idle? (assoc idle-status "managed" false))))))
   (testing "nothing running is nothing to stop"
     (is (= :not-running (:reason (client/daemon-idle? {"status" "stopped"})))))
+  (testing "a count in a shape this build does not know refuses instead of throwing"
+    ;; The peer whose status decides a bounce is by definition a build this one did
+    ;; not ship with: a count it cannot read must never read as zero, and must never
+    ;; take the attach path down with it.
+    (doseq [odd [{} [] :two "two"]]
+      (is (= :not-running (:reason (client/daemon-idle? (assoc idle-status "clients" odd)))))
+      (is (= :not-running (:reason (client/daemon-idle? (assoc idle-status "running_turns" odd))))))
+    (is (= :not-running (:reason (client/daemon-idle? nil))))
+    (is (false? (:bounce? (client/stale-bounce-verdict {:ours "0.1.40"
+                                                        :theirs "0.1.39"
+                                                        :status (assoc idle-status
+                                                                  "clients" "many")})))))
+  (testing "a numeric count is read whichever wire shape carried it"
+    (is (= :clients (:reason (client/daemon-idle? (assoc idle-status "clients" "2")))))
+    (is (= :idle (:reason (client/daemon-idle? (assoc idle-status "clients" 0.0))))))
   (testing "the same rule, calibrated for a caller that is itself attached"
     (is (true? (:idle? (client/daemon-idle? (assoc idle-status "clients" 1)
                                             {:tolerate-clients 1}))))

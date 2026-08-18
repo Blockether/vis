@@ -1406,6 +1406,18 @@
               (> (System/currentTimeMillis) deadline) false
               :else (do (Thread/sleep 50) (recur)))))))
 
+(defn- wire-count
+  "A count read off a peer's status map, or nil when this build cannot read it. An
+   absent key is zero (a stopped daemon reports no counts and is refused on its
+   `status` field instead), but a value of a shape this build does not know is
+   NEVER rounded down to zero: zero is the only reading that would let a caller
+   stop a daemon somebody is using, and the peer whose status matters most here is
+   by definition a build this one did not ship with."
+  [x]
+  (cond (nil? x) 0
+        (number? x) (max 0 (long x))
+        (string? x) (try (max 0 (Long/parseLong (str/trim x))) (catch Exception _ nil))
+        :else nil))
 (defn daemon-idle?
   "THE one definition of \"this daemon may be bounced\", read off an admin status
    map (canonical STRING keys, e.g. from [[status]]).
@@ -1423,24 +1435,27 @@
    classpath lacks a route no matter who started it.
 
    Returns {:idle? :reason :clients :running-turns :managed? :pid}, where `:reason`
-   is one of :idle :not-running :user-owned :clients :running-turns."
+   is one of :idle :not-running :user-owned :clients :running-turns. A status this
+   build cannot read - no map at all, or a count in a shape it does not know
+   ([[wire-count]]) - is :not-running: never evidence that stopping is free."
   ([status] (daemon-idle? status nil))
   ([status {:keys [tolerate-clients user-owned-ok?]}]
    (let [clients
-         (long (or (get status "clients") 0))
+         (wire-count (get status "clients"))
 
          turns
-         (long (or (get status "running_turns") 0))
+         (wire-count (get status "running_turns"))
 
          managed?
          (boolean (get status "managed"))
 
-         ;; USE first: a daemon somebody is working on is off limits whoever started
-         ;; it and whatever its status field says, so no caller can talk itself past
-         ;; a live client or an in-flight turn.
+         ;; A count this build cannot read comes FIRST, then USE: a daemon somebody
+         ;; is working on is off limits whoever started it and whatever its status
+         ;; field says, so no caller can talk itself past a live client or a turn.
          reason
-         (cond (> clients (long (or tolerate-clients 0))) :clients
-               (pos? turns) :running-turns
+         (cond (or (nil? clients) (nil? turns)) :not-running
+               (> (long clients) (long (or tolerate-clients 0))) :clients
+               (pos? (long turns)) :running-turns
                (not= "running" (get status "status")) :not-running
                (and (not managed?) (not user-owned-ok?)) :user-owned
                :else :idle)]
