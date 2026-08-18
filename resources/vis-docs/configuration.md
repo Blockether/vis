@@ -217,9 +217,9 @@ resolves to nothing is simply unset — one *call* asking for that variable is a
 error, because the call said it needed it.
 
 For a REPL the env is part of that REPL's **identity**. `repl_status` reports
-it by name and digest, never by value, and a `start` for a REPL that is already
-running with a different env is refused by the keys that differ: there is no
-restart verb, so `repl_stop` it and start it again.
+it by name and digest, never by value, and a `repl_start` for a REPL that is
+already running with a different env is refused by the keys that differ: there is
+no restart verb, so `repl_stop` it and start it again.
 
 ## Providers and models
 

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.language-typescript-bun.core
   "vis-language-typescript-bun — a managed TypeScript/Bun REPL exposed through
-   the generic language facade (repl / repl_eval / repl_stop) plus
+   the generic language facade (repl_start / repl_status / repl_stop / repl_eval) plus
    run_tests -> `bun test`. Activates only when the workspace looks like a Bun
    project. The REPL is a persistent `bun` subprocess running a line-framed
    JSON eval server with REAL REPL semantics (persistent globals, top-level
@@ -146,12 +146,12 @@
                suggestion
                "\"})."
                (when (seq candidates) (str " Workspace dirs: " (str/join ", " candidates) "."))
-               " To force a root REPL anyway: repl(\"typescript\", {\"cwd\": \".\"})."))))))
+               " To force a root REPL anyway: repl_start(\"typescript\", {\"cwd\": \".\"})."))))))
 
 (defn ts-start-repl-fn
-  "repl handler for TypeScript/Bun. Positional `op` (default \"start\") +
-   opts `{dir, id}`. Lifecycle: start / stop / status — there is NO restart
-   (stop, then start). `op` arrives as
+  "REPL-lifecycle handler for TypeScript/Bun. The facade's `repl_start` / `repl_status` /
+   `repl_stop` verbs reach a pack as a positional `op` STRING (default \"start\")
+   plus opts `{dir, id}` — there is NO restart (stop, then start). `op` arrives as
    a STRING from the model (strings-only boundary) — dispatch on it, no keyword
    minting."
   [env op opts]

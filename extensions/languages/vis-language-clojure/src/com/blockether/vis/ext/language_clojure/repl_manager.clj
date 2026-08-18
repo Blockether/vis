@@ -619,7 +619,7 @@
       (vis/env-fingerprint (vis/call-env-values env))]
 
      ;; SERIALIZE the check-then-spawn per [session-id dir]: without this a
-     ;; racing second start! (e.g. the repl tool + an eval-autostart)
+     ;; racing second start! (e.g. a `repl_start` + an eval-autostart)
      ;; could both pass the alive? check and both spawn, orphaning a duplicate
      ;; JVM. Under the lock the loser re-checks and returns :already-running.
      ;; (`start-lock` returns a SHARED, atom-stored monitor — not a fresh/local
@@ -629,9 +629,9 @@
        (if (proc-alive? (get @processes k))
          (let [differing (env-difference (:env-fingerprint (get @processes k)) env-fingerprint)]
            (when (seq differing)
-             (throw (ex-info (str "repl \"start\" for " (id-of dir) " is already running with a"
+             (throw (ex-info (str "repl_start for " (id-of dir) " is already running with a"
                                   " different env (" (str/join ", " differing) "). There is no"
-                                  " restart: stop that REPL, then start it with this env.")
+                                  " restart: repl_stop that REPL, then start it with this env.")
                              {:type :clj/repl-env-mismatch :id (id-of dir) :env differing})))
            (assoc (status session-id dir) "result" "already-running"))
          (let [port (free-port!)]
@@ -642,14 +642,14 @@
                   ;; Resolve argv + proxy env atomically through the shared,
                   ;; fail-closed language-process contract. nREPL alone may bind a
                   ;; loopback listener; direct outbound traffic remains jailed.
-                   launch (vis/session-process-launch session-id cmd {:loopback-port port
+                  launch (vis/session-process-launch session-id cmd {:loopback-port port
                                                                      :env env})
                   jailed-cmd (:argv launch)
                   pb (doto (ProcessBuilder. ^java.util.List jailed-cmd)
                        (.directory (io/file dir))
                        (.redirectErrorStream true)
                        (.redirectOutput log))
-                   _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+                  _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
                           (when (:replace-env? launch) (.clear e))
                           (doseq [[k v] (:env launch)]
                             (.put e ^String k ^String v))

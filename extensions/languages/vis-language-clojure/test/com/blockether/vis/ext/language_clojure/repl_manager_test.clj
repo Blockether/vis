@@ -1142,9 +1142,12 @@
             ;; refusal can be understood without a value ever being printed.
             (expect (= ["NODE_ENV"] (keys (get same "env"))))
             (expect (not (str/includes? (pr-str (get same "env")) "test"))))
-          (expect (str/includes? (str (refusal-message #(rm/start! "sess-env" dir
-                                                                  {:env {"NODE_ENV" "dev"}})))
-                                 "NODE_ENV"))
+          (let [refused (str (refusal-message #(rm/start! "sess-env" dir
+                                                          {:env {"NODE_ENV" "dev"}})))]
+            (expect (str/includes? refused "NODE_ENV"))
+            ;; A refusal speaks the LIFECYCLE VERBS, never a value of a gone `op`.
+            (expect (str/includes? refused "repl_start"))
+            (expect (str/includes? refused "repl_stop")))
           (finally
             (.destroy proc)
             (swap! manager-processes dissoc ["sess-env" dir]))))))

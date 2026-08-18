@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.language-python.core
   "vis-language-python — a managed Python REPL exposed through the generic
-   language facade (repl / repl_eval / repl_stop). Activates
+   language facade (repl_start / repl_status / repl_stop / repl_eval). Activates
    only when the workspace looks like a Python project. The REPL is a subprocess
    on a project-aware interpreter (uv / poetry / .venv / python3), registered as
    a session resource so it shows in ctx + the footer and is stoppable by id."
@@ -85,10 +85,10 @@
 ;; Language-facade handlers
 
 (defn py-start-repl-fn
-  "repl handler for Python. Positional `op` (default \"start\") + opts
-   `{dir, id}`. Lifecycle: start / stop / status — there is NO restart (stop,
-   then start). `op` arrives as a
-   STRING from the model (strings-only boundary) — dispatch on it, no keyword
+  "REPL-lifecycle handler for Python. The facade's `repl_start` / `repl_status` /
+   `repl_stop` verbs reach a pack as a positional `op` STRING (default \"start\")
+   plus opts `{dir, id}` — there is NO restart (stop, then start). `op` arrives as
+   a STRING from the model (strings-only boundary) — dispatch on it, no keyword
    minting."
   [env op opts]
   (let

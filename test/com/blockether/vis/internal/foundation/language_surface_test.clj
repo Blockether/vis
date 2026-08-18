@@ -169,6 +169,33 @@
              (expect (true? @stopped?))
              (expect (empty? (resources/list-resources sid)))
              (finally (resources/stop-all! sid)))))
+  ;; Regression, issue #repl-ops: `repl_stop(id="…")` folds to (id, {}) at the
+  ;; Python boundary, and a bare leading string was then read as a LANGUAGE — the
+  ;; by-id stop went looking for a pack named after the REPL's own id.
+  (it "reads a leading string as the REPL id even when an empty opts map trails it"
+      (let
+        [stopped?
+         (atom false)
+
+         env
+         (fake-env [{:language "clojure"
+                     :start-repl-fn (fn [_ op opts]
+                                      {:success? true :result {:op op :opts opts}})}])
+
+         sid
+         (:session-id env)]
+
+        (try (resources/register! sid
+                                  {:id "main-repl" :kind :nrepl :language "clojure" :label "main"}
+                                  {:stop-fn (fn []
+                                              (reset! stopped? true))})
+             (expect (= "stopped"
+                        (get-in (language-surface/repl-stop env "main-repl" {}) [:result "result"])))
+             (expect (true? @stopped?))
+             ;; ...while a LANGUAGE still reaches the pack's own stop handler.
+             (expect (= {:op "stop" :opts {"cwd" "ext"}}
+                        (:result (language-surface/repl-stop env "clojure" {"cwd" "ext"}))))
+             (finally (resources/stop-all! sid)))))
   (it "reports missing language handlers with available languages"
       (let
         [env (fake-env [{:language "clojure"

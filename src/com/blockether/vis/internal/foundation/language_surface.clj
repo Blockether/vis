@@ -4,9 +4,9 @@
   Language extensions register handlers under `:ext/language-tools`; this
   foundation surface exposes stable bare tool names and dispatches to the
   active handler for the requested/current language. REPL lifecycle is resource
-   backed: `repl_start` creates a language-owned session resource, `repl_status`
-   reports it and `repl_stop` ends one. Live REPLs also surface in the ctx
-   `resources` block."
+  backed: `repl_start` creates a language-owned session resource, `repl_status`
+  reports it and `repl_stop` ends one. Live REPLs also surface in the ctx
+  `resources` block."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
@@ -314,11 +314,22 @@
     (when (= "start" op) (vis/prepare-session-jail! env))
     ((:handler handler) env op opts)))
 
+(defn- repl-id?
+  "Does a leading string name a REPL rather than a language? A live resource id of
+   THIS session does, and so does a string no language could be spelled as
+   (`nrepl:~/proj`) — a stale id then still takes the by-id path and answers
+   `not-found`, instead of stopping some pack's REPL by accident."
+  [env x]
+  (and (string? x)
+       (or (not (language-like? x))
+           (boolean (some #(= x (str (get % "id")))
+                          (vis/list-resources (:session-id env)))))))
+
 (defn repl-stop
   "Stop a REPL: `repl_stop(id)` by session resource id, or `repl_stop(language,{cwd})`
    for the pack's REPL under that directory."
   [env & args]
-  (if (and (string? (first args)) (nil? (second args)))
+  (if (repl-id? env (first args))
     ;; By-id stop is a generic session-resource op — no pack dispatch needed,
     ;; and it works even when the owning language pack is gone.
     ;; `stop-resource!` returns an INTERNAL keyword-keyed map ({:result :stopped
