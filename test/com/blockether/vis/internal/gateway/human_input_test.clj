@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.human-input.spec :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
@@ -573,3 +574,295 @@
                            "is_accepted")))
            (is (true? (:is-submitted (deref answer 2000 ::stuck)))))
          (finally (hi/cancel! rid)))))
+
+;; -- A live view: the interaction the app WATCHES -----------------------------
+;;
+;; Nothing is parked here and nobody owes an answer, so none of this is a
+;; question: what the app owes the operator is the PICTURE. These pin the three
+;; events on the session stream, the resync a client reads after joining late,
+;; the log page it scrolls back through, and the one button it has — stop.
+
+(def ^:private live-views-dir
+  "The private var every view record hangs under, redefined per test so nothing
+   here writes anywhere near the developer's own `~/.vis`."
+  (requiring-resolve 'com.blockether.vis.internal.human-input.live-sink/views-dir))
+
+(defn- recorded
+  "Run `f` with every view record under a temp directory of its own."
+  [f]
+  (with-redefs-fn {live-views-dir (constantly (io/file (System/getProperty "java.io.tmpdir")
+                                                       (str "vis-views-" (random-uuid))))}
+    f))
+
+(defn- live-events-of
+  "Every collected event of `type` naming `view-id`. Scoped by view id so a
+   sibling test's traffic can never satisfy an assertion here."
+  [seen type view-id]
+  (filterv (fn [[_ event]]
+             (and (= type (get event "type")) (= view-id (get event "view_id"))))
+    @seen))
+
+(deftest the-app-watches-a-live-view-test
+  (gw-hi/install!)
+  (recorded
+    (fn []
+      (with-events
+        (fn [seen]
+          (let
+            [sid
+             (str (random-uuid))
+
+             view
+             (hi/open-live! {:title "CI"
+                             :description "Blockether/vis · 42"
+                             :session-id sid
+                             :nodes [{:id "now" :type "status" :text "Polling…" :tone "running"}
+                                     {:id "tail" :type "log"}]})
+
+             view-id
+             (:id view)]
+
+            (try (testing "the open crosses as an ordinary session event, in snake_case"
+                   (is (await-true #(seq (live-events-of seen gw-hi/live-open-event view-id))))
+                   (let [[[event-sid event]] (live-events-of seen gw-hi/live-open-event view-id)]
+                     (is (= sid event-sid))
+                     (is (= "CI" (get-in event ["view" "title"])))
+                     (is (= ["now" "tail"] (mapv #(get % "id") (get-in event ["view" "nodes"]))))))
+                 (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one" "two"]}])
+                 (hi/patch-live! view-id
+                                 [{:op "append" :node-id "tail" :lines ["three"]}
+                                  {:op "set" :node-id "now" :text "Building"}])
+                 (testing "patches ride ONE coalesced frame that says which of them it carries"
+                   (gw-hi/flush-live-patches!)
+                   (is (await-true #(seq (live-events-of seen gw-hi/live-patch-event view-id))))
+                   (let
+                     [frames
+                      (live-events-of seen gw-hi/live-patch-event view-id)
+
+                      [_ event]
+                      (first frames)]
+
+                     (is (= 1 (count frames)))
+                     (is (= 1 (get event "first_seq")))
+                     (is (= 2 (get-in event ["patch" "seq"])))
+                     ;; Two appends on one node became one; the `set` on the OTHER node
+                     ;; kept its place, because merging across nodes would reorder the run.
+                     (is (= [["append" "tail"] ["set" "now"]]
+                            (mapv (juxt #(get % "op") #(get % "node_id"))
+                                  (get-in event ["patch" "ops"]))))
+                     (is (= ["one" "two" "three"] (get-in event ["patch" "ops" 0 "lines"])))))
+                 (finally (hi/close-live! view-id)))
+            (testing "and the ending carries the picture the model reads, not a rendering of it"
+              (is (await-true #(seq (live-events-of seen gw-hi/live-close-event view-id))))
+              (let [[[_ event]] (live-events-of seen gw-hi/live-close-event view-id)]
+                (is (true? (get-in event ["result" "is_completed"])))
+                (is (= "completed" (get-in event ["result" "reason"])))
+                (is (= ["now" "tail"]
+                       (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))
+                (is (nil? (get-in event ["result" "markdown"])))))))))))
+
+(deftest the-app-reads-a-live-view-back-over-http-test
+  (gw-hi/install!)
+  (recorded
+    (fn []
+      (let
+        [sid
+         (str (random-uuid))
+
+         view
+         (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
+
+         view-id
+         (:id view)]
+
+        (try (hi/patch-live!
+               view-id
+               [{:op "append" :node-id "tail" :lines (mapv #(str "line " %) (range 1 21))}])
+             (testing "a phone that starts cold reads the CURRENT picture, not a stream it missed"
+               (let
+                 [response
+                  ((rv 'list-live-views-handler) {:path-params {:sid sid}})
+
+                  answered
+                  (first (get (json-body response) "views"))]
+
+                 (is (= 200 (:status response)))
+                 (is (= "application/json" (get-in response [:headers "Content-Type"])))
+                 (is (= view-id (get answered "id")))
+                 (is (= sid (get answered "session_id")))
+                 (is (= ["tail"] (mapv #(get % "id") (get answered "nodes"))))))
+             (testing "and scrolls back through output whose patches it never received"
+               (let
+                 [body (json-body ((rv 'live-view-log-handler)
+                                    {:path-params {:sid sid :view-id view-id :node-id "tail"}
+                                     :query-params {"from" "5" "limit" "3"}}))]
+                 (is (= "tail" (get body "node_id")))
+                 (is (= 5 (get body "from")))
+                 (is (= 20 (get body "total")))
+                 (is (= ["line 6" "line 7" "line 8"] (get body "lines")))))
+             (testing "a view id belonging to another session is not stoppable from here"
+               (is (= 404
+                      (:status ((rv 'interrupt-live-view-handler)
+                                 {:path-params {:sid (str (random-uuid)) :view-id view-id}})))))
+             (testing "the app's one button stops it"
+               (let
+                 [body (json-body ((rv 'interrupt-live-view-handler)
+                                    {:path-params {:sid sid :view-id view-id}}))]
+                 (is (true? (get body "is_interrupted")))
+                 (is (= view-id (get body "view_id")))
+                 (is (nil? (gw-hi/live-view-of sid view-id)))
+                 (is (empty? (gw-hi/live-views sid)))))
+             (testing "a view that already ended answers 404 instead of pretending to stop again"
+               (is (= 404
+                      (:status ((rv 'interrupt-live-view-handler)
+                                 {:path-params {:sid sid :view-id view-id}})))))
+             (testing "and its record still answers, which is what makes a finished log readable"
+               (let
+                 [body (json-body ((rv 'live-view-log-handler)
+                                    {:path-params {:sid sid :view-id view-id :node-id "tail"}}))]
+                 (is (= 20 (get body "total")))
+                 (is (= 20 (count (get body "lines"))))))
+             (finally (hi/close-live! view-id)))))))
+
+(deftest a-live-view-that-refuses-interruption-refuses-the-app-too-test
+  (gw-hi/install!)
+  (recorded
+    (fn []
+      (let
+        [sid
+         (str (random-uuid))
+
+         view
+         (hi/open-live! {:title "Migration"
+                         :session-id sid
+                         :is-cancellable false
+                         :nodes [{:id "now" :type "status" :text "Writing rows" :tone "running"}]})
+
+         view-id
+         (:id view)]
+
+        (try (testing "the app is refused the stop the TUI's Escape is also refused"
+               (let
+                 [response ((rv 'interrupt-live-view-handler)
+                             {:path-params {:sid sid :view-id view-id}})]
+                 (is (= 409 (:status response)))
+                 (is (= "human-input-not-cancellable"
+                        (get-in (json-body response) ["error" "type"])))
+                 (is (some? (gw-hi/live-view-of sid view-id)))))
+             (finally (hi/close-live! view-id)))))))
+
+(deftest the-companion-live-urls-route-to-the-live-handlers-test
+  (testing "the URLs a client builds for a live view are the URLs this router serves"
+    (let
+      [match-by-path
+       (requiring-resolve 'reitit.core/match-by-path)
+
+       router
+       ((rv 'router) "token" [])
+
+       sid
+       (str (random-uuid))
+
+       view-id
+       (str (random-uuid))
+
+       match
+       (fn [path]
+         (match-by-path router path))]
+
+      (is (= @(rv 'list-live-views-handler)
+             (get-in (match (str "/v1/sessions/" sid "/human-input/live")) [:data :get :handler])))
+      (is (= @(rv 'live-view-log-handler)
+             (get-in (match (str "/v1/sessions/" sid "/human-input/live/" view-id "/log/tail"))
+                     [:data :get :handler])))
+      (is (= @(rv 'interrupt-live-view-handler)
+             (get-in (match
+                       (str "/v1/sessions/" sid "/human-input/live/" view-id "/actions/interrupt"))
+                     [:data :post :handler])))
+      ;; `live` is a STATIC segment where a request id also fits: a form route that
+      ;; started resolving to a live handler would answer the wrong run entirely.
+      (testing "and a form route is still a form route"
+        (is (= @(rv 'submit-human-input-handler)
+               (get-in (match (str "/v1/sessions/" sid "/human-input/req%201/actions/submit"))
+                       [:data :post :handler])))))))
+
+;; The companion's own unit tests parse `live-view.fixture.json`, exactly as they
+;; parse the form fixture above. That file is not written by hand either: it is
+;; what the engine actually projects onto the wire for a view holding ONE OF EVERY
+;; node kind, so a node type added to the spec and left out of the app ships as a
+;; failure here rather than as a hole in somebody's running build.
+
+(def ^:private live-fixture-spec
+  "The live view whose wire projection the companion app's fixture holds."
+  {:title "Fleet scan"
+   :description "3 hosts · started 12:04"
+   :session-id "5f0f4d0e-2f6f-4c8e-9a0e-2f9a1c0b7d31"
+   :source "vis-fleet"
+   :nodes [{:id "now" :type "status" :text "Scanning db-2" :detail "host 2 of 3" :tone "running"}
+           {:id "swept" :type "progress" :label "Swept" :done 2 :total 3}
+           {:id "score"
+            :type "stat"
+            :label "Findings"
+            :stats [{:id "critical" :label "Critical" :value-text "1" :tone "error"}
+                    {:id "warnings" :label "Warnings" :value-text "4" :tone "warn"}]}
+           {:id "phases"
+            :type "steps"
+            :label "Phases"
+            :steps [{:id "collect" :label "Collect inventory" :tone "ok" :detail "3 hosts"}
+                    {:id "scan" :label "Scan packages" :tone "running"}
+                    {:id "report" :label "Write report" :tone "idle"}]}
+           {:id "tail"
+            :type "log"
+            :label "Output"
+            :lines ["db-1 · 0 critical" "db-2 · 1 critical (openssl)"]}
+           {:id "hosts"
+            :type "table"
+            :label "Hosts"
+            :columns [{:id "host" :label "Host"} {:id "state" :label "State"}
+                      {:id "findings" :label "Findings" :align "right"}]
+            :rows [{:id "db-1" :cells ["db-1" "clean" "0"] :tone "ok"}
+                   {:id "db-2" :cells ["db-2" "critical" "1"] :tone "error"}]}
+           {:id "links"
+            :type "link"
+            :label "Elsewhere"
+            :links
+            [{:id "run" :label "The run on GitHub" :target "https://example.com/run/42"}
+             {:id "report" :label "report.md" :target-kind "path" :target "/tmp/report.md"}]}]})
+
+(defn- live-fixture-file
+  "`apps/vis-companion/src/lib/live-view.fixture.json`, found from the working
+   directory upwards so the test runs from the repo root or a sub-project."
+  []
+  (loop [dir (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
+    (when dir
+      (let [f (io/file dir "apps/vis-companion/src/lib/live-view.fixture.json")]
+        (if (.isFile f) f (recur (.getParentFile dir)))))))
+
+(defn- without-mint
+  "The view without the two values every view mints for ITSELF."
+  [m]
+  (dissoc m "id" "created_at"))
+
+(deftest the-app-live-fixture-is-the-engines-own-projection-test
+  (let
+    [view
+     (live/materialize (hi/normalize-live-view live-fixture-spec))
+
+     file
+     (live-fixture-file)
+
+     fixture
+     (some-> file
+             slurp
+             wire/parse-json)]
+
+    (is (some? file))
+    (when fixture
+      (testing "the companion parses engine bytes, not a hand-written lookalike"
+        (is (= (without-mint (wire/parse-json (wire/json-str view))) (without-mint fixture))))
+      (testing "the two minted values are still there, because the app keys on them"
+        (is (some? (parse-uuid (get fixture "id"))))
+        (is (pos-int? (get fixture "created_at"))))
+      (testing "and it holds one node of every kind the engine can send"
+        (is (= (set (keys hi-spec/live-node-types))
+               (set (map #(get % "type") (get fixture "nodes")))))))))

@@ -107,3 +107,84 @@
                         wire/->engine)]
 
         (when (= "close" (:kind record)) (:result record))))))
+
+(defn- log-node?
+  "True when `node` is the declaration of log node `node-id`."
+  [node node-id]
+  (and (= node-id (str (:id node))) (= "log" (str (:type node)))))
+
+(def ^:private empty-log "A log node with nothing recorded against it yet." {:total 0 :lines []})
+
+(defn- take-window
+  "Count `lines` into `state` and keep only the ones inside `[from end)`. The
+   window is the only thing held in memory, so a 100 000-line record costs the
+   asked-for page and a counter."
+  [state lines from end]
+  (reduce (fn [acc text]
+            (let [at (long (:total acc))]
+              (cond-> (update acc :total inc)
+                (and (>= at (long from)) (< at (long end)))
+                (update :lines conj text))))
+          state
+          (or lines [])))
+
+(defn- fold-record
+  "Fold one record line into what log node `node-id` holds. Only three things
+   ever touch a log: it is declared (in the view, or by `add-node`), lines are
+   appended to it, or it is emptied — `clear` and `remove-node` both start the
+   count again, exactly as the materializer does."
+  [state entry node-id from end]
+  (case (str (:kind entry))
+    "open"
+    (if-let [node (first (filter #(log-node? % node-id) (:nodes (:view entry))))]
+      (take-window state (:lines node) from end)
+      state)
+
+    "patch"
+    (reduce (fn [acc op]
+              (let [op-name (str (:op op))]
+                (cond (= "add-node" op-name)
+                      (if (log-node? (:node-spec op) node-id)
+                        (take-window empty-log (:lines (:node-spec op)) from end)
+                        acc)
+                      (not= node-id (str (:node-id op))) acc
+                      (= "append" op-name) (take-window acc (:lines op) from end)
+                      (contains? #{"clear" "remove-node"} op-name) empty-log
+                      :else acc)))
+            state
+            (:ops (:patch entry)))
+
+    state))
+
+(defn log-range
+  "`limit` lines of log node `node-id`, from 0-based `from`, as the RECORD holds
+   them — plus `:total`, every line that node ever accepted.
+
+   The picture a surface paints carries only the node's WINDOW (`:window-lines`,
+   2000 by default), so this is the one way back to output that scrolled out of
+   it: a phone that joined an hour into a build, or one whose patches were
+   evicted from the gateway's reconnect ring, pages the earlier lines from here
+   instead of being told the run has no history. One streamed pass, and only the
+   asked-for page is held."
+  [^File file node-id from limit]
+  (let
+    [node-id
+     (str node-id)
+
+     from
+     (max 0 (long from))
+
+     end
+     (+ from (max 0 (long limit)))]
+
+    (if-not (and file (.isFile file))
+      (assoc empty-log
+        :node-id node-id
+        :from from)
+      (with-open [reader (io/reader file)]
+        (-> (reduce (fn [state line]
+                      (fold-record state (wire/->engine (json/read-json line)) node-id from end))
+                    empty-log
+                    (line-seq reader))
+            (assoc :node-id node-id
+                   :from from))))))

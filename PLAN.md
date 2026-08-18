@@ -593,47 +593,68 @@ session events; without this phase the app stays blind exactly as it is today.
   already holds every accepted patch and the snapshot route below serves the repair.
 - `src/com/blockether/vis/internal/gateway/server.clj` — `GET /v1/sessions/:sid/human-input/live`
   answering the materialized snapshots (the resync path for a client that joined mid-flight or lost
-  SSE), `GET …/live/:view-id/log/:node-id?from=<line>&count=<n>` reading the sink range so a phone
-  can scroll back through a log whose patches it never received, and
-  `POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt`, registered beside the routes
-  at `:3748-3750`; the session list's `awaiting` (`:1702`) gains the working state so the sessions
-  screen can mark a run as busy rather than parked.
+  SSE), `GET …/live/:view-id/log/:node-id?from=<line>&limit=<n>` reading the sink range so a phone can
+  scroll back through a log whose patches it never received, and
+  `POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt`, registered beside the form
+  routes. The view id is parsed as a UUID before anything reaches the record directory; an unknown view
+  is 404 and a view declared `:is-cancellable false` refuses the app with 409, exactly as it refuses
+  the terminal.
+- DROPPED: the session list's `awaiting` (`:1702`) does NOT gain a working state. `awaiting` means
+  "this run needs YOU"; a live view needs nobody, and the row's own `live` flag already says a turn is
+  moving. A working state would cost a new cross-process marker scan for a distinction the row makes.
 - `apps/vis-companion/src/lib/live-view.ts` — the pure reduction of the three events into view state
   KEYED BY NODE ID (`add-node` and `remove-node` included), a `seq` gap read as RESYNC rather than
   loss — a reconnect, a dropped frame and an evicted ring entry look identical from the client, and
   the snapshot plus the log-range route are the repair — and the mirrors of the closed tables
-  (`LIVE_NODE_TYPES`, `LIVE_OPS`, `LIVE_TONES`, `LIVE_REASONS`, `LINK_TARGETS`), the same way
+  (`LIVE_NODE_TYPES`, `LIVE_OPS`, `LIVE_TONES`, `LIVE_REASONS`, `LIVE_LINK_TARGETS`, `LIVE_ALIGNS`,
+  `LIVE_ORDERS`, `LIVE_SORT_DIRS`) and the two bounds a client must not exceed on its own
+  (`LIVE_LOG_WINDOW`, `LIVE_TABLE_MAX_ROWS`), the same way
   `lib/human-input.ts:22-40` mirrors the form vocabulary.
-- `apps/vis-companion/src/components/LiveView.tsx` + `dev/liveViewVariants.tsx` +
-  `lib/live-view.fixture.json` (one node of every kind AND two tables side by side, `request->view`
-  verbatim) and rendering in `screens/SessionScreen.tsx` where `HumanInputPrompt` renders; nodes
-  render as labelled sections in declaration order, scroll follows the tail and releases on touch,
-  and a log pages older lines through the range route, per `doc("companion-ui")`.
-- `apps/vis-companion/src/components/DataTable.tsx` — REUSED, not reimplemented: it already keys
-  rows (`row.key` `:460`), sorts stably with the numeric/case-insensitive/blanks-last rule the
-  engine's `{:by …}` order mirrors (`:116-131`), and pages. A live table passes the ROW ID as
-  `row.key`, so React moves rows instead of rebuilding them and a re-render cannot reset a row the
-  human is touching. The human's own header sort stays a LOCAL OVERLAY on top of the declared
-  order — it survives every patch and is never written back, because the human's ordering is a
-  reading choice and the extension's is data. `sortRows` stays pure; only the fixture grows.
+- `apps/vis-companion/src/components/LiveView.tsx` + `lib/live-view.fixture.json` (one node of every
+  kind, generated as the engine's own projection of a declared view) rendering in
+  `screens/SessionScreen.tsx` at the END of the transcript, where the newest thing in the session
+  belongs — a view blocks nothing, so it is a section and never a scrim. Nodes are labelled sections in
+  declaration order, the transcript's own scroller keeps following the tail, and a log pages older
+  lines through the range route, per `doc("companion-ui")`. No `dev/liveViewVariants.tsx`: this app has
+  no dev route that would render a catalogue, so the variants live in `LiveView.test.tsx`, where they
+  are asserted instead of eyeballed.
+- `apps/vis-companion/src/components/DataTable.tsx` — NOT reused, and this plan was wrong to promise
+  it. It takes `body: string` — an artifact's table BLOCK parsed through `parseTableBlock`/`parseCsv`
+  (`:246,251-252`) — and keys its rows by their INDEX (`:255`), which is exactly the identity a live
+  table must not lose. Feeding it live rows would mean serializing them back into text and throwing
+  away the row ids, tones and declared alignment. The live table is its own `<table>`, rows keyed by
+  ROW ID so React moves a row instead of rebuilding it. The human's header sort goes with it: a live
+  table is written to while it is read, a column the operator sorted by would re-shuffle rows under the
+  thumb on every patch, and the declared order is the one the terminal paints too.
 - `apps/vis-companion/src/components/ui.tsx` — the ONE control the vocabulary needs and the app does
-  not have: a progress bar. The closed set already covers the rest — `stat` on `Pill` (`:749`),
-  `steps` and `link` on `ListRow` (`:463`), a collapsed log on `Disclosure` (`:603`), tone on
-  `Banner` (`:1392`), pending on `Spinner` (`:1750`), tables on `DataTable` — so the phone costs one
-  new control, not seven painters, and it is added THERE per `doc("companion-ui")`, never inline.
-- `apps/vis-companion/src/lib/gateway.ts` — subscribe the three events, resync from the snapshot
-  route on reconnect (`:3182` is where the same argument is already made for `human_input.request`).
-- Test: `extensions/channels/vis-channel-tui/test/.../human_input_cross_channel_test.clj` extended to
-  read the new TypeScript tables and fail on drift; `LiveView.test.tsx` rendering the fixture and
-  driving the same interleaved table script (insert, in-place update, remove, re-add) asserting row
-  identity by key, that a header sort chosen by the human survives the next patch, and that the
-  declared order is what an unsorted table paints;
-  `test/com/blockether/vis/internal/gateway/human_input_test.clj` for storage, coalescing (superseded
-  `set` dropped, `append` merged, `add-node` never dropped) and the log-range route.
+  not have: `Meter`, a segmented progress bar (twenty cells, filled against the declared fraction).
+  Segmented because no inline style may exist in this app and Tailwind cannot compile a runtime width —
+  and because the terminal paints the same segmented bar, so the two surfaces agree by construction. An
+  indeterminate progress gets NO bar, only its own words. The rest of the closed set covers the live
+  vocabulary WITHOUT stretching it: `Spinner` for a view still running, `Banner` for a refusal,
+  `LoadMore` for the log's earlier lines, `Button` for interrupt. `Pill` (`:750`) and `ListRow`
+  (`:464`) are NOT reused for `stat`, `steps` or `link` rows for one reason: both are `<button>`, and a
+  live row is not pressable — painting it as a control would promise a press that does nothing.
+- `apps/vis-companion/src/lib/gateway.ts` — `liveViews`, `liveViewLog` and `interruptLiveView` beside
+  the form's own three, and the component resyncs from the snapshot route on reconnect and on a `seq`
+  gap (`:3182` is where the same argument is already made for `human_input.request`).
+- Test: `extensions/channels/vis-channel-tui/test/.../human_input_cross_channel_test.clj` extended with
+  a deftest that reads the new TypeScript tables and the three event names back out of
+  `lib/live-view.ts` and fails on drift against `hi-spec` and `gateway/human_input.clj`;
+  `apps/vis-companion/src/lib/live-view.test.ts` for the reducer laws (upsert in place, the log window
+  sliding while `total_lines` keeps growing, `clear` emptying the window and not the record, a replayed
+  frame dropped, an unknown op still ADVANCING `seq` so the next frame is not read as a gap, a gap
+  marking the view stale); `LiveView.test.tsx` rendering the fixture and proving the screen by numbers
+  off the DOM (node order, row count, right-aligned header, `role="status"` and no dialog,
+  `aria-valuenow` 67 with its `2/3`, an indeterminate progress with no bar, the engine's own empty
+  sentence, the log's hole line after paging, interrupt present only when the view allows it);
+  `test/com/blockether/vis/internal/gateway/human_input_test.clj` for storage, coalescing (one frame
+  carrying `first_seq`..`seq`), the log-range route, the 409 and the fixture being the engine's own
+  projection.
 
-**Unknowns.** Does a live view deserve a push notification? The plan says no by default — it is not
-a question — with one exception under discussion: a view that closes `failed` while the app is
-backgrounded.
+**Unknowns.** Answered: no push notification. A live view is not a question, and the phone already
+shows it the moment the app is open; a notification for a view that closes `failed` while the app is
+backgrounded stays a separate decision, not a silent default.
 
 ## Phase 5 — Settle a finished view into an artifact the human can reopen
 
@@ -744,7 +765,7 @@ payload (assumed yes) or its own view.
 
 ## State of the plan
 
-**IN FLIGHT** — Phases 1, 2 and 3 are DONE and green; Phases 4-6 are written and not yet started.
+**IN FLIGHT** — Phases 1-4 are DONE and green; Phases 5 and 6 are written and not yet started.
 
 Done:
 
@@ -802,14 +823,26 @@ Done:
   declared view is refused before a human ever sees it. 59 Python tests across `test_outside.py` and
   the contract package, 27 Clojure tests across `python_host_test.clj` and `extension_check_test.clj`;
   `resources/vis-docs/extending.md` teaches it with the worked background-shell drain.
+- Phase 4 COMPLETE — the phone watches it too. `internal/gateway/human_input.clj` stores all three live
+  events like every other session event and coalesces a burst into ONE frame per 100 ms tick carrying
+  `first_seq`..`seq`, so a client can tell a merge from a gap; `internal/gateway/server.clj` answers the
+  snapshot, the sink's log range and the interrupt (404 for an unknown view, 409 for one that refuses to
+  be stopped). `apps/vis-companion/src/lib/live-view.ts` is the engine's materializer written once more
+  in TypeScript — ops applied BY NODE ID, a replayed frame ignored, a view it cannot paint a single node
+  of DROPPED rather than shown as an empty box, and a `seq` gap marking the view stale so the section
+  re-reads the snapshot instead of painting a picture it already knows is wrong. `LiveView.tsx` renders
+  it at the END of the transcript, where the newest thing in the session belongs, and `Meter` is the one
+  control the app was missing — the closed set covered the rest, and `Pill`/`ListRow` were refused for
+  live rows because both are `<button>` and a row that is not pressable must not look like one.
+  `human_input_cross_channel_test.clj` fails a Clojure test the day the TypeScript vocabulary drifts
+  from `hi-spec`. 1491 app tests over 134 files with `npm run lint` and `npm run build` clean, 386 green
+  across the engine, gateway and TUI suites.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.
 
 TODO, in order:
 
-1. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
-   log-range resync, interrupt route), companion reducer keyed by node id, component and drift test.
-2. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
-3. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
+1. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
+2. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
    proof of the chain.

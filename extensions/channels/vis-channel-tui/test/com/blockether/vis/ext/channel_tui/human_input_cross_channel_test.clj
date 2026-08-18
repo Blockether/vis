@@ -569,6 +569,17 @@
                  (map (fn [[_ k v]]
                         [(keyword k) v])))))
 
+(defn- ts-literal
+  "The string of `export const NAME = '…';` in a TypeScript source."
+  [source const-name]
+  (second (re-find (re-pattern (str "export const " const-name " = '([^']*)'")) source)))
+
+(defn- ts-number
+  "The number of `export const NAME = 123;` in a TypeScript source."
+  [source const-name]
+  (some-> (re-find (re-pattern (str "export const " const-name " = (-?\\d+)")) source)
+          second
+          parse-long))
 (deftest the-app-declares-the-engines-own-node-vocabulary-test
   (let [source (app-source "lib/human-input.ts")]
     (is (some? source))
@@ -790,3 +801,32 @@
           (is (nil? (:human-input @state/app-db)))
           (is (empty? (:human-input-queue @state/app-db)))))
       (finally (reset! state/app-db {:render-version 0})))))
+
+
+;; A live view crosses the same border and hits the same compile-time wall:
+;; `apps/vis-companion/src/lib/live-view.ts` declares the engine's closed tables a
+;; second time so the phone can FOLD patches itself. A node type the engine gains
+;; and the app never learns fails here, instead of shipping a card the phone paints
+;; as a hole while a run reports into it.
+(deftest the-app-declares-the-engines-own-live-vocabulary-test
+  (let [source (app-source "lib/live-view.ts")]
+    (is (some? source))
+    (when source
+      (testing "what a view can be MADE of, and what one patch can do to it"
+        (is (= (set (keys hi-spec/live-node-types)) (set (ts-strings source "LIVE_NODE_TYPES"))))
+        (is (= (set (keys hi-spec/live-ops)) (set (ts-strings source "LIVE_OPS")))))
+      (testing "how a surface colours a line, and why a view ended"
+        (is (= (set (keys hi-spec/live-tones)) (set (ts-strings source "LIVE_TONES"))))
+        (is (= (set (keys hi-spec/live-reasons)) (set (ts-strings source "LIVE_REASONS")))))
+      (testing "what a link points at, and how a table is ordered under it"
+        (is (= (set (keys hi-spec/link-targets)) (set (ts-strings source "LIVE_LINK_TARGETS"))))
+        (is (= (set (keys hi-spec/live-orders)) (set (ts-strings source "LIVE_ORDERS"))))
+        (is (= (set (keys hi-spec/live-aligns)) (set (ts-strings source "LIVE_ALIGNS"))))
+        (is (= (set (keys hi-spec/live-sort-dirs)) (set (ts-strings source "LIVE_SORT_DIRS")))))
+      (testing "the bounds the phone holds a node to are the engine's own"
+        (is (= (:window-lines hi-spec/log-defaults) (ts-number source "LIVE_LOG_WINDOW")))
+        (is (= (:max-rows hi-spec/table-defaults) (ts-number source "LIVE_TABLE_MAX_ROWS"))))
+      (testing "and it listens for the three events the bridge actually publishes"
+        (is (= [gw/live-open-event gw/live-patch-event gw/live-close-event]
+               (mapv (partial ts-literal source)
+                     ["LIVE_VIEW_OPEN_EVENT" "LIVE_VIEW_PATCH_EVENT" "LIVE_VIEW_CLOSE_EVENT"])))))))

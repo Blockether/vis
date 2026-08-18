@@ -52,6 +52,7 @@ import {
   ListRow,
   LiveCount,
   LoadMore,
+  Meter,
   LiveTally,
   LIST_EDGE,
   machineTagFace,
@@ -3716,5 +3717,31 @@ describe("a panel band sits UNDER its column band, never beside it", () => {
     expect(panel).toContain("text-chip font-bold uppercase");
     expect(panel).toContain("text-dialog-hint");
     expect(panel).toContain("border-l-2 border-accent");
+  });
+});
+
+
+// The bar the live-view section paints for a run's progress. It is the app's
+// only gauge, so its resolution and its rounding are pinned here rather than
+// inferred from a screen.
+describe("the meter", () => {
+  const bar = (value: number) => renderToStaticMarkup(<Meter value={value} label="Swept" />);
+
+  it("draws one cell per five percent, filled up to the fraction", () => {
+    const half = bar(0.5);
+    expect(half.match(/<span class="h-full flex-1/g)).toHaveLength(20);
+    expect(half.match(/bg-accent/g)).toHaveLength(10);
+    expect(half.match(/bg-dialog-edge/g)).toHaveLength(10);
+    expect(bar(2 / 3).match(/bg-accent/g)).toHaveLength(13);
+  });
+
+  it("states the exact number it cannot draw, and stays inside the gauge", () => {
+    expect(bar(2 / 3)).toContain('aria-valuenow="67"');
+    expect(bar(0)).toContain('aria-valuenow="0"');
+    expect(bar(1.4)).toContain('aria-valuenow="100"');
+    expect(bar(1.4).match(/bg-dialog-edge/g)).toBeNull();
+    expect(bar(-1).match(/bg-accent/g)).toBeNull();
+    expect(bar(0.5)).toContain('aria-label="Swept"');
+    expect(bar(0.5)).not.toContain("style=");
   });
 });

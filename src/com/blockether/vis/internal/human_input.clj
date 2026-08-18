@@ -1606,7 +1606,10 @@
                :data {:view-id view-id :title (:title view) :nodes (mapv :id (:nodes view))}
                :msg "Live view opened"})
     (when (zero? (long (publish! (:channel-ids entry)
-                                 {:op :human-input/live-open :view-id view-id :view view})))
+                                 {:op :human-input/live-open
+                                  :view-id view-id
+                                  :session-id (:session-id entry)
+                                  :view view})))
       (tel/log! {:level :warn
                  :id ::live-unwatched
                  :data {:view-id view-id :title (:title view) :channel-ids (:channel-ids entry)}
@@ -1640,7 +1643,10 @@
         (reset! cell patched)
         (live-sink/append! (:file entry) applied)
         (publish! (:channel-ids entry)
-                  {:op :human-input/live-patch :view-id view-id :patch applied})
+                  {:op :human-input/live-patch
+                   :view-id view-id
+                   :session-id (:session-id entry)
+                   :patch applied})
         patched))))
 
 (defn- live-result
@@ -1700,8 +1706,15 @@
            (when (contains? old view-id)
              (live-sink/close! (:file entry) result)
              (deliver (:promise entry) result)
+             ;; `:session-id` rides on every live event for the same reason it
+             ;; rides on a form's close: by the time this one is published the
+             ;; entry is out of the registry, and a listener that has to route
+             ;; the ending to a session can no longer look it up.
              (publish! (:channel-ids entry)
-                       {:op :human-input/live-close :view-id view-id :result result})
+                       {:op :human-input/live-close
+                        :view-id view-id
+                        :session-id (:session-id entry)
+                        :result result})
              (tel/log! {:level :debug
                         :id ::live-closed
                         :data {:view-id view-id :reason (:reason result)}
@@ -1712,9 +1725,14 @@
   "End live view `view-id` because the human stopped watching — Escape in the
    terminal, the app's own stop. The verdict reads `interrupted` and still
    carries the picture of everything that had happened: what the human saw
-   before they stopped it is exactly what the model has to read."
+   before they stopped it is exactly what the model has to read.
+
+   A view declared `:is-cancellable false` refuses here and answers nil, so
+   EVERY surface is refused alike — exactly the rule [[cancel!]] holds a form
+   to. Such a view ends only when the work ends, or with [[cancel-all!]]."
   [view-id]
-  (close-live! view-id {:reason :interrupted}))
+  (when-not (false? (:is-cancellable (live-entry view-id)))
+    (close-live! view-id {:reason :interrupted})))
 
 (defn with-live!
   "Open the view `view` declares, hand its id to `body`, and CLOSE it — on a
@@ -1731,6 +1749,7 @@
          (catch Throwable t
            (close-live! view-id {:reason :failed :error (or (ex-message t) (str t))})
            (throw t)))))
+
 (defn- entry->view
   "One pending entry as the surfaces see it, by kind: a request loses its promise
    and its validators, a live view IS its materialized state."
@@ -1743,10 +1762,27 @@
 ;; Registry
 
 (defn pending-requests
-  "Snapshot of the currently pending interactions — forms and live views alike,
-   oldest first. Views only."
+  "The forms a run is BLOCKED on right now, oldest first.
+
+   Live views share this registry — one id space, one cancel path — but they are
+   not questions: nothing is parked on them and nobody owes them an answer, so
+   they come back from [[live-views]] and a surface listing what WAITS on the
+   human never shows one."
   []
   (->> (vals @pending)
+       (remove #(= :live (:kind %)))
+       (sort-by :created-at)
+       (mapv entry->view)))
+
+(defn live-views
+  "Every live view open right now, materialized exactly as the surfaces paint
+   them, oldest first.
+
+   This is the resync: a client that joined mid-flight, woke from sleep or lost
+   its stream reads the picture back instead of replaying every patch it missed."
+  []
+  (->> (vals @pending)
+       (filter #(= :live (:kind %)))
        (sort-by :created-at)
        (mapv entry->view)))
 

@@ -1811,6 +1811,13 @@ const SPINNER_DELAYS = [
   '[animation-delay:-100ms]',
 ];
 
+// The bar is SEGMENTED, so its resolution is a stated number rather than a
+// rounding nobody can see: twenty cells is one cell per 5%, which stays legible
+// at a phone's width and matches the terminal pane's own bar.
+const METER_SEGMENTS = 20;
+
+const METER_CELLS = Array.from({ length: METER_SEGMENTS }, (_, cell) => cell);
+
 /**
  * The waiting spinner: ten frames stacked in one grid cell, cross-faded by the
  * `spinner-frame` keyframe (see `index.css`).
@@ -1845,6 +1852,42 @@ export function Spinner({
         </span>
       ))}
       <span className="col-start-1 row-start-1 hidden motion-reduce:block">●</span>
+    </span>
+  );
+}
+
+/**
+ * How many of a run's steps are BEHIND it, as a bar the eye reads in one look.
+ *
+ * Twenty segments, not a sliding fill: a phone cannot carry a runtime number
+ * into a class name (Tailwind compiles what it can SEE, and this app writes no
+ * inline styles), so a continuous bar here would have to be faked. A segmented
+ * gauge is the honest shape for that constraint — it is also exactly what the
+ * terminal pane paints, so the two surfaces show one picture rather than two
+ * dialects of it. The exact number rides beside the bar and in `aria-valuenow`;
+ * the bar is for the glance, never for the reading.
+ *
+ * A run with no measurable end has NO bar (`live-view.liveFraction` answers
+ * null): an empty gauge that never moves is worse than a sentence saying the
+ * size is not known yet.
+ */
+export function Meter({ value, label }: { value: number; label: string }) {
+  const filled = Math.max(0, Math.min(METER_SEGMENTS, Math.round(value * METER_SEGMENTS)));
+  return (
+    <span
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(Math.max(0, Math.min(1, value)) * 100)}
+      className="flex h-1.5 w-full gap-px mouse:h-1"
+    >
+      {METER_CELLS.map((cell) => (
+        <span
+          key={cell}
+          className={`h-full flex-1 ${cell < filled ? 'bg-accent' : 'bg-dialog-edge'}`}
+        />
+      ))}
     </span>
   );
 }

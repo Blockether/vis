@@ -48,6 +48,7 @@ import {
   VoiceLoopIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
+import { LiveView } from "../components/LiveView";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
@@ -5281,6 +5282,15 @@ export function SessionScreen({
                 {turnRows}
 
                 {liveRow}
+
+                {/* A run SHOWING its work (`vis.live`) stands at the END of the
+                  transcript, where whatever is happening now already lands. It
+                  is not a dialog: nobody has to answer it, so it takes no scrim
+                  and no scroll lock — it fills in while the operator reads, and
+                  it leaves when the run ends, exactly as the terminal band does. */}
+                <div className="mt-5">
+                  <LiveView client={client} subscriptions={subscriptions} sid={sid} />
+                </div>
               </>
             </div>
           </div>

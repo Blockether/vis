@@ -1751,7 +1751,10 @@
       (watching (live-spec {:id "now" :type "status" :text "Polling…" :tone "running"})
                 (fn [view]
                   (let [view-id (:id view)]
-                    (expect (contains? (set (map :id (hi/pending-requests))) view-id))
+                    ;; One id space, one cancel path — but a view is not a question, so it
+                    ;; is never listed among the forms a run is BLOCKED on.
+                    (expect (contains? (set (map :id (hi/live-views))) view-id))
+                    (expect (not (contains? (set (map :id (hi/pending-requests))) view-id)))
                     ;; A pending view IS its materialized state: nodes, never a form's fields.
                     (expect (some? (:nodes (hi/pending-request view-id))))
                     (expect (nil? (:fields (hi/pending-request view-id))))

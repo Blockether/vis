@@ -2915,6 +2915,83 @@
           :else (json-response {:is_cancelled (boolean (gw-human-input/cancel! request-id))
                                 :request_id request-id}))))
 
+;; --- Live views (a run SHOWING its work) ---
+
+(defn- path-view-id
+  "The view id in the path, only when it could BE one. Ids are minted by the
+   engine as UUIDs and a record is a file named after one, so anything else is a
+   404 instead of a path this handler tries to open."
+  [request]
+  (some-> (get-in request [:path-params :view-id])
+          parse-uuid
+          str))
+
+(defn- live-view-404
+  [view-id]
+  (error-response 404 :live-view-not-found "no such live view" :view_id (str view-id)))
+
+(defn- list-live-views-handler
+  "GET /v1/sessions/:sid/human-input/live — the live views this session is showing
+   right now, oldest first, each as the picture a surface paints.
+
+   The `human_input.live.*` events are the fast path; this is what a client that
+   connected LATER (cold start, background, reinstall) reads, so it paints the
+   CURRENT picture instead of waiting for the next patch to tell it something is
+   running."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:views (gw-human-input/live-views sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- live-view-log-handler
+  "GET /v1/sessions/:sid/human-input/live/:view-id/log/:node-id — one page of a log
+   node, `?from=` (0-based) `&limit=` lines, read from the view's RECORD.
+
+   A view carries only its window, so this is how a phone scrolls back through
+   output whose patches it never received. It reads the file rather than the
+   registry, so a view that already CLOSED still answers — which is what makes a
+   finished run's log readable at all."
+  [request]
+  (let
+    [sid
+     (path-sid request)
+
+     view-id
+     (path-view-id request)]
+
+    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
+          (nil? view-id) (live-view-404 (get-in request [:path-params :view-id]))
+          :else (json-response (gw-human-input/live-log-range sid
+                                                              view-id
+                                                              (str (get-in request
+                                                                           [:path-params :node-id]))
+                                                              (query-long request "from")
+                                                              (query-long request "limit"))))))
+
+(defn- interrupt-live-view-handler
+  "POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt — stop one
+   live view from the app. The extension resumes with an interrupted verdict, and
+   a view declared `is_cancellable false` refuses, exactly as Escape does in the
+   TUI."
+  [request]
+  (let
+    [sid
+     (path-sid request)
+
+     view-id
+     (path-view-id request)
+
+     view
+     (when (and sid view-id) (gw-human-input/live-view-of sid view-id))]
+
+    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
+          (nil? view) (live-view-404 (get-in request [:path-params :view-id]))
+          (false? (:is-cancellable view)) (error-response 409
+                                                          :human-input-not-cancellable
+                                                          "this live view cannot be interrupted"
+                                                          :view_id view-id)
+          :else (json-response {:is_interrupted (some? (gw-human-input/interrupt-live! view-id))
+                                :view_id view-id}))))
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before
    LAN — see [[pairing/candidate-hosts]]).
@@ -3748,7 +3825,11 @@
         [(sid-route "/human-input") {:get list-human-input-handler}]
         [(sid-route "/human-input/:request-id/actions/submit") {:post submit-human-input-handler}]
         [(sid-route "/human-input/:request-id/actions/cancel") {:post cancel-human-input-handler}]
-        [(sid-route "/events") {:get events-handler}] [(sid-route "/voice") {:post voice-handler}]
+        [(sid-route "/human-input/live") {:get list-live-views-handler}]
+        [(sid-route "/human-input/live/:view-id/log/:node-id") {:get live-view-log-handler}]
+        [(sid-route "/human-input/live/:view-id/actions/interrupt")
+         {:post interrupt-live-view-handler}] [(sid-route "/events") {:get events-handler}]
+        [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
         [(sid-route "/speech") {:post speech-handler}]

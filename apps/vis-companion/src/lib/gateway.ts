@@ -69,6 +69,11 @@ import {
   type HumanInputValues,
 } from "./human-input";
 import {
+  liveViewsFromWire,
+  type LiveLogPage,
+  type LiveView,
+} from "./live-view";
+import {
   flushSnapshots,
   hydrateSnapshots,
   installSnapshotFlushOnHide,
@@ -3221,6 +3226,63 @@ export class GatewayClient {
     return this.request<{ is_cancelled: boolean; request_id: string }>(
       "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/human-input/${encodeURIComponent(requestId)}/actions/cancel`,
+    );
+  }
+
+  /**
+   * The live views this session is SHOWING right now.
+   *
+   * SSE carries `human_input.live.open` and its patches, but a screen opened
+   * (or woken by a push, or reconnected after a gap) while a run is already
+   * halfway through a scan has to read the picture back from here — the same
+   * snapshot the TUI pane restores from, already materialized by the engine.
+   */
+  async liveViews(sid: string, signal?: AbortSignal): Promise<LiveView[]> {
+    const response = await this.request<{ views: unknown[] }>(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live`,
+      undefined,
+      signal,
+    );
+    return liveViewsFromWire(response.views);
+  }
+
+  /**
+   * One page of a log node's RECORD — what scrolled off the window it shows.
+   *
+   * The record is a file the engine appends to, so this reads a RANGE of it
+   * rather than the whole run: a phone must not have to hold 100 000 lines to
+   * look at the twenty before the ones on screen.
+   */
+  liveViewLog(
+    sid: string,
+    viewId: string,
+    nodeId: string,
+    from: number,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<LiveLogPage> {
+    const query = `?from=${encodeURIComponent(from)}&limit=${encodeURIComponent(limit)}`;
+    return this.request<LiveLogPage>(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live/${encodeURIComponent(viewId)}/log/${encodeURIComponent(nodeId)}${query}`,
+      undefined,
+      signal,
+    );
+  }
+
+  /**
+   * Ask one view to stop. The extension SEES the interruption and ends the view
+   * itself, so this answers whether the ask landed — never that the work is
+   * over. A view that declared itself uncancellable refuses with 409.
+   */
+  interruptLiveView(
+    sid: string,
+    viewId: string,
+  ): Promise<{ is_interrupted: boolean; view_id: string }> {
+    return this.request<{ is_interrupted: boolean; view_id: string }>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live/${encodeURIComponent(viewId)}/actions/interrupt`,
     );
   }
 

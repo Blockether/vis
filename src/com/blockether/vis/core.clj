@@ -791,6 +791,8 @@
 
 (def live-view (requiring-resolve 'com.blockether.vis.internal.human-input/live-view))
 
+(def live-views (requiring-resolve 'com.blockether.vis.internal.human-input/live-views))
+
 ;; Binary entry point
 ;;
 ;; `clojure -M:vis` invokes this `-main`. The dispatcher / built-in
