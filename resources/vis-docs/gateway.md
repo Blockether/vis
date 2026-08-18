@@ -49,9 +49,28 @@ vis-agent tui
 Inspect and control the daemon:
 
 ```sh
-vis-agent gateway status     # pid, url, db, client count, auth mode
-vis-agent gateway stop       # ask the running daemon to exit
+vis-agent gateway status          # pid, url, db, client count, auth mode
+vis-agent gateway stop            # ask it to exit; if it stopped answering, escalate
+                                  # to the pid its own registry names (SIGTERM, then
+                                  # SIGKILL) instead of handing you an `lsof` line
+vis-agent gateway stop --if-idle  # stop it only when stopping is free (see below)
 ```
+
+### When a managed daemon lets go
+
+A managed daemon stops itself once nothing holds it: no client lease, no SSE
+stream, and no turn still producing events. A turn that has produced nothing for
+a minute while no client is left is a **ghost** — its worker died, or was killed
+mid-launch, or is parked on human input nobody will ever answer — and it no
+longer keeps the daemon alive. Zero clients plus a turn that IS still emitting
+events does: that is "I closed the TUI, finish in the background".
+
+`vis-agent gateway stop --if-idle` applies that same rule from outside. It
+releases an unused managed daemon, prints why it did not when someone is using
+one, is silent when none is running, never touches a user-owned daemon, and
+always exits 0. `vis-agent update` runs it after installing a new runtime: every
+live daemon is then older than what is on disk, and the next client spawns the
+new build. `vis-agent update --keep-gateway` opts out.
 
 ## The token model — and the `HTTP 401`
 

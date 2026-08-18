@@ -662,6 +662,23 @@
        (keep :current-turn)
        count))
 
+(defn running-turn-progress
+  "How many turns this gateway still counts as running, and how far their event
+   rings have advanced. A turn that is really working moves `:seq` every few
+   hundred milliseconds; a GHOST turn - one whose worker died, was killed
+   mid-launch, or is parked on human input nobody will ever answer - keeps
+   `:current-turn` set forever while this marker stands still. The daemon
+   lifecycle gate reads exactly that difference, because `running-turn-count`
+   alone cannot tell the two apart."
+  []
+  (reduce (fn [acc entry]
+            (if (:current-turn entry)
+              (-> acc
+                  (update :turns inc)
+                  (update :seq + (long (:next-seq entry 0))))
+              acc))
+          {:turns 0 :seq 0}
+          (vals @registry)))
 (defn session-busy?
   "True when `sid` still has work the daemon owns: a live `:current-turn`, or a
    turn parked in the queue. THE guard for view-close teardown — a session is

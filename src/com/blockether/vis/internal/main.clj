@@ -3262,25 +3262,70 @@
       :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
               {:host host :port port :token token :require-token? (boolean token) :emit stdout!}))))
 
+(defn- gateway-stop-if-idle!
+  "`--if-idle`: release the daemon only when releasing it is free, and say why when
+   it is not. Never fails - `vis-agent update` runs exactly this after installing a
+   new runtime, and an update must not report failure because someone had a TUI
+   open. Silent when nothing is running, so a plain update prints nothing extra."
+  []
+  (let [{:keys [stopped? reason clients running-turns pid]}
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon-if-idle!))
+
+        plural
+        (fn [n one] (str n " " one (when (not= 1 (long n)) "s")))]
+
+    (cond
+      stopped?
+      (stdout! (str "gateway stopped - next session starts on "
+                    ((requiring-resolve
+                       'com.blockether.vis.internal.gateway.protocol/release-version))))
+
+      (= :not-running reason)
+      nil
+
+      (= :remote reason)
+      (stdout! "gateway is a --gateway target on another machine - left alone")
+
+      (= :user-owned reason)
+      (stdout! (str "gateway is user-owned"
+                    (when pid (str " (pid " pid ")"))
+                    " - restart it yourself when ready:\n"
+                    "  vis-agent gateway stop && vis-agent gateway start"))
+
+      :else
+      (stdout! (str "gateway still running ("
+                    (plural clients "client")
+                    ", "
+                    (plural running-turns "running turn")
+                    ") - bounce it when free:\n"
+                    "  vis-agent gateway stop")))))
+
 (defn- cli-gateway-stop!
   [parsed _residual]
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
-  (let
-    [{:keys [stopping status type host port pid recovery] :as m}
-     ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon!))]
-    (stdout! (cond stopping "gateway stopping"
-                   (= "stopped" status) "gateway stopped"
-                   (= :gateway/orphaned-daemon type) (str "gateway stop found a live orphan at "
-                                                          host
-                                                          ":"
-                                                          port
-                                                          (when pid
-                                                            (str " (registered PID " pid ")"))
-                                                          ". "
-                                                          recovery)
-                   :else (str "gateway stop requested: " (pr-str m))))))
+  (if (get parsed "if-idle")
+    (gateway-stop-if-idle!)
+    (let
+      [{:keys [stopping status type host port pid recovery escalated] :as m}
+       ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon!))]
+      (stdout! (cond stopping "gateway stopping"
+                     (= "stopped" status) (if escalated
+                                            (str "gateway stopped by "
+                                                 (if (= :kill escalated) "SIGKILL" "SIGTERM")
+                                                 " - it had stopped answering"
+                                                 (when pid (str " (pid " pid ")")))
+                                            "gateway stopped")
+                     (= :gateway/orphaned-daemon type) (str "gateway stop found a live orphan at "
+                                                            host
+                                                            ":"
+                                                            port
+                                                            (when pid
+                                                              (str " (registered PID " pid ")"))
+                                                            ". "
+                                                            recovery)
+                     :else (str "gateway stop requested: " (pr-str m)))))))
 
 ;;; ── `vis-agent gateway mcp` subcommands ──────────────────────────────────────
 
@@ -3900,13 +3945,19 @@
      :cmd/examples ["vis-agent gateway status"
                     "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN gateway status"]
      :cmd/run-fn cli-gateway-status!}
-    {:cmd/name "stop"
-     :cmd/parent ["gateway"]
-     :cmd/doc "Stop the gateway daemon registered for the current DB — never a --gateway target, which vis attaches to but never manages."
-     :cmd/usage "vis-agent gateway stop [--db PATH]"
-     :cmd/args
-     [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be stopped."}]
-     :cmd/run-fn cli-gateway-stop!}
+     {:cmd/name "stop"
+      :cmd/parent ["gateway"]
+      :cmd/doc "Stop the gateway daemon registered for the current DB - never a --gateway target, which vis attaches to but never manages."
+      :cmd/usage "vis-agent gateway stop [--if-idle] [--db PATH]"
+      :cmd/args
+      [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be stopped."}
+       {:name "if-idle"
+        :kind :flag
+        :type :boolean
+        :doc
+        "Stop it only when stopping is free: an auto-spawned daemon with no client and no turn still moving. Prints why it did not otherwise, is silent when none runs, and always succeeds."}]
+      :cmd/examples ["vis-agent gateway stop" "vis-agent gateway stop --if-idle"]
+      :cmd/run-fn cli-gateway-stop!}
     {:cmd/name "pair"
      :cmd/parent ["gateway"]
      :cmd/doc "Print a companion pairing QR for the gateway already running for this DB, or for the --gateway target."

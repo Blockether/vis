@@ -76,6 +76,13 @@
 
 (def ^:private STARTUP_IDLE_GRACE_MS 30000)
 
+(def ^:private STUCK_TURN_IDLE_MS
+  "How long a turn may show no progress at all - no new event on any ring -
+   before a managed daemon with NO client left treats it as a ghost rather than
+   as work. Long enough that a slow provider call, a long tool run or a paused
+   sandbox is never mistaken for one; short enough that a wedged daemon releases
+   the port while a human is still looking at it."
+  60000)
 (defonce ^:private server-state (atom nil))
 
 ;; Delivered by `stop!`; `serve-main!` parks on it so a stopped daemon process
@@ -85,6 +92,10 @@
 
 (defonce ^:private idle-reaper (atom nil))
 
+;; Where the running turns' event rings stood when they last MOVED, and when that
+;; was: `{:marker {:turns n :seq n} :since ms}`. Sampled once per reap sweep, so
+;; the stall clock measures the TURN and not the moment the last watcher left.
+(defonce ^:private turn-progress-watch (atom nil))
 (defn- log-client-lease-warning!
   "Emit rare lease-compaction warnings to BOTH telemetry and the managed
    gateway's stderr log. The explicit stderr line remains visible when the
@@ -279,44 +290,97 @@
              (>= (- (System/currentTimeMillis) (long (or started-at-ms 0)))
                  (long STARTUP_IDLE_GRACE_MS))))))
 
+(defn- note-turn-progress!
+  "Sample how far the turns this daemon still counts as running have advanced,
+   remembering when that sample last CHANGED. Called on every reap sweep whatever
+   the client count, so [[turns-stalled?]] never mistakes \"the last client just
+   left\" for \"this turn stopped moving a minute ago\"."
+  []
+  (let [marker (state/running-turn-progress)
+        now (System/currentTimeMillis)]
+    (swap! turn-progress-watch
+           (fn [prev]
+             (if (and prev (= marker (:marker prev))) prev {:marker marker :since now})))))
+
+(defn- turns-stalled?
+  "True when turns are still counted as running but nothing about them has moved
+   for `STUCK_TURN_IDLE_MS`. `running-turn-count` alone cannot end a daemon's
+   life: a turn whose launch died before it could clear `:current-turn`, or whose
+   worker is parked in uninterruptible code and ignored its cancel, keeps that
+   entry forever - and the daemon then outlives every client of a turn that will
+   never produce another event, holding the port until someone kills the pid."
+  []
+  (let [{:keys [marker since]} @turn-progress-watch]
+    (boolean (and marker
+                  (pos? (long (:turns marker)))
+                  (>= (- (System/currentTimeMillis) (long (or since 0)))
+                      (long STUCK_TURN_IDLE_MS))))))
+
+(defn- idle-shutdown-reason
+  "Why this managed daemon may stop itself right now, or nil to keep serving.
+   `:idle` - nothing holds it. `:stalled-turns` - no client left AND every turn it
+   still counts as running has stopped producing events, so nothing alive is
+   watching and nothing will finish. Zero clients plus a MOVING turn keeps it
+   serving: that is \"I closed the TUI, finish in the background\"."
+  []
+  (when (and @server-state (idle-shutdown-eligible?) (zero? (long (client-count))))
+    (cond (zero? (long (running-turn-count))) :idle
+          (turns-stalled?) :stalled-turns)))
+
 (defn- maybe-stop-when-idle!
   "Refcount shutdown (Q1): no timer/idle timeout for foreground daemons. A managed
-   daemon exits only when no live client lease/SSE stream remains AND no turn is
-   running. Dead-pid leases do not count, so a killed TUI cannot pin the daemon
-   forever."
+   daemon exits when no live client lease/SSE stream remains and no turn is still
+   moving. Dead-pid leases do not count, so a killed TUI cannot pin the daemon
+   forever - and neither can the ghost turn it left behind, which is cancelled on
+   the way out so nothing is left holding a cancellation token nobody will fire."
   []
-  (when (and @server-state
-             (idle-shutdown-eligible?)
-             (zero? (long (client-count)))
-             (zero? (long (running-turn-count))))
+  (when (idle-shutdown-reason)
     (future (try (Thread/sleep 25) ; let the HTTP response that released the last client flush
-                 (when (and @server-state
-                            (idle-shutdown-eligible?)
-                            (zero? (long (client-count)))
-                            (zero? (long (running-turn-count))))
+                 (when-let [reason (idle-shutdown-reason)]
+                   (when (= :stalled-turns reason)
+                     (tel/log! :warn
+                               ["gateway: no clients and"
+                                (running-turn-count)
+                                "stalled turn(s) - stopping"]))
                    (stop!))
                  (catch Throwable t
                    (tel/log! :warn ["gateway: refcount shutdown failed" (ex-message t)]))))))
 
+(defn- reap-sweep!
+  "One reap sweep, with every step isolated. A step that throws loses ITS step for
+   this second and nothing else - above all it must not cost the refcount-shutdown
+   check, which is the only thing that ever ends a managed daemon's life."
+  []
+  (let [step! (fn [label f]
+                (try (f)
+                     (catch Throwable t
+                       (tel/log! :warn ["gateway: idle reap step failed" label (ex-message t)]))))]
+
+    (step! "self-register" ensure-self-registered!)
+    (step! "client-leases" reap-client-leases!)
+    (step! "sse-clients" reap-sse-clients!)
+    (step! "turn-progress" note-turn-progress!)
+    (step! "refcount-shutdown" maybe-stop-when-idle!)))
+
 (defn- ensure-idle-reaper!
   "Managed daemons reap dead and duplicate process leases once per second, then
    evaluate refcount shutdown. Status/health requests therefore read an O(1)
-   count and never perform OS liveness probes or rebuild a set."
+   count and never perform OS liveness probes or rebuild a set.
+
+   The loop is armed once per boot and is the ONLY place shutdown is evaluated, so
+   it must be unkillable: [[reap-sweep!]] isolates each step, and the client
+   register/release and status handlers re-arm it if it ever did die."
   []
   (when (compare-and-set! idle-reaper nil ::starting)
-    (reset! idle-reaper (future (try (loop []
+    (reset! turn-progress-watch nil)
+    (reset! idle-reaper
+      (future
+        (try (loop []
 
-                                       (Thread/sleep (long IDLE_REAP_MS))
-                                       (when @server-state
-                                         (ensure-self-registered!)
-                                         (reap-client-leases!)
-                                         (reap-sse-clients!)
-                                         (maybe-stop-when-idle!)
-                                         (recur)))
-                                     (catch Throwable t
-                                       (tel/log! :warn
-                                                 ["gateway: idle reaper failed" (ex-message t)]))
-                                     (finally (reset! idle-reaper nil)))))))
+               (Thread/sleep (long IDLE_REAP_MS))
+               (when @server-state (reap-sweep!) (recur)))
+             (catch Throwable t (tel/log! :warn ["gateway: idle reaper failed" (ex-message t)]))
+             (finally (reset! idle-reaper nil)))))))
 
 ;; Bearer token (§3)
 
@@ -908,10 +972,20 @@
                                 (update :clients dissoc client-id)
                                 (update :client-releases-total (fnil inc 0)))
                             st)))
+    ;; Re-arm the lifecycle before judging it: the reaper is what evaluates refcount
+    ;; shutdown, and a daemon whose reaper died must not become immortal just
+    ;; because the sweep that would have noticed is gone.
+    (ensure-idle-reaper!)
     (maybe-stop-when-idle!)
     (json-response {:released true :status (status-map)})))
 
-(defn- status-handler [_] (json-response (status-map)))
+(defn- status-handler
+  [_]
+  ;; Same belt as the release path: whoever is asking whether this daemon is idle
+  ;; (`vis-agent gateway stop --if-idle`, the TUI, a health probe) also revives a
+  ;; reaper that died, so the answer describes a daemon that can still act on it.
+  (ensure-idle-reaper!)
+  (json-response (status-map)))
 
 (defn- stop-handler
   "POST /v1/admin/stop. Logs WHO asked and what it costs BEFORE stopping: this
@@ -4259,7 +4333,7 @@
 
 (def ^:private GRACEFUL_DRAIN_MS
   "Max time `stop!` waits for in-flight turns to finish before forcing Jetty
-   down, so a SIGTERM / `vis-agent gateway restart` landing mid-turn lets active work
+   down, so a SIGTERM / `vis-agent gateway stop` landing mid-turn lets active work
    complete instead of being cut off. Only ever waits when turns are actually
    running (the refcount-idle stop path already has zero)."
   8000)

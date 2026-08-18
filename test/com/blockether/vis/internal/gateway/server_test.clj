@@ -330,6 +330,96 @@
                                                (Thread/sleep 80)
                                                (is (zero? @stops)))))))))
 
+(defn- wait-until-slow
+  [pred]
+  (loop [remaining 60]
+
+    (cond (pred) true
+          (zero? remaining) false
+          :else (do (Thread/sleep 50) (recur (dec remaining))))))
+
+;; Regression (reported: quitting the TUI leaves a gateway nobody can use behind):
+;; refcount shutdown demanded `running-turn-count` be zero, and a turn whose worker
+;; died - or was killed mid-launch, or parked in uninterruptible code - keeps
+;; `:current-turn` set forever. The daemon then outlived every client of a turn that
+;; would never produce another event, holding its port until a human killed the pid.
+(deftest a-stalled-turn-with-no-clients-releases-the-daemon
+  (testing "a turn that stopped producing events cannot pin a daemon nobody watches"
+    (let [stops (atom 0)]
+      (with-stop-stub! stops
+                       {#'state/running-turn-count (constantly 1)
+                        #'state/running-turn-progress (constantly {:turns 1 :seq 7})}
+                       (fn []
+                         (with-server-state! {:managed? true
+                                              :saw-client? true
+                                              :started-at-ms (System/currentTimeMillis)
+                                              :clients {}
+                                              :sse-clients {}}
+                                             (fn []
+                                               ((rv 'note-turn-progress!))
+                                               ;; Age the sample past the stall window instead of
+                                               ;; sleeping through it.
+                                               (swap! @(rv 'turn-progress-watch)
+                                                      update
+                                                      :since
+                                                      - 120000)
+                                               ((rv 'maybe-stop-when-idle!))
+                                               (is (wait-until #(= 1 @stops))))))))))
+
+(deftest a-turn-still-producing-events-keeps-the-daemon-alive
+  (testing "zero clients plus live work is \"I closed the TUI, finish in the background\""
+    (let [stops (atom 0)
+          progress (atom {:turns 1 :seq 1})]
+      (with-stop-stub! stops
+                       {#'state/running-turn-count (constantly 1)
+                        #'state/running-turn-progress (fn [] @progress)}
+                       (fn []
+                         (with-server-state! {:managed? true
+                                              :saw-client? true
+                                              :started-at-ms (System/currentTimeMillis)
+                                              :clients {}
+                                              :sse-clients {}}
+                                             (fn []
+                                               ((rv 'note-turn-progress!))
+                                               (swap! @(rv 'turn-progress-watch)
+                                                      update
+                                                      :since
+                                                      - 120000)
+                                               ;; One new event is all it takes: the stall clock
+                                               ;; restarts, because the turn is demonstrably alive.
+                                               (reset! progress {:turns 1 :seq 2})
+                                               ((rv 'note-turn-progress!))
+                                               ((rv 'maybe-stop-when-idle!))
+                                               (Thread/sleep 80)
+                                               (is (zero? @stops)))))))))
+
+;; Regression (reported: a gateway with no clients that never goes away): the reap
+;; loop caught throws OUTSIDE the loop and cleared its own handle in `finally`, and
+;; nothing re-armed it. One throw from any sweep therefore ended lease reaping, SSE
+;; reaping and refcount shutdown for the life of the process - the daemon could no
+;; longer stop itself at all.
+(deftest a-throwing-reap-sweep-does-not-make-the-daemon-immortal
+  (testing "one bad sweep loses that sweep, never the lifecycle"
+    (let [stops (atom 0)
+          sweeps (atom 0)]
+      (reset! @(rv 'idle-reaper) nil)
+      (with-stop-stub! stops
+                       {(rv 'ensure-self-registered!) (constantly nil)
+                        (rv 'reap-sse-clients!) (constantly nil)
+                        (rv 'reap-client-leases!) (fn []
+                                                    (swap! sweeps inc)
+                                                    (throw (ex-info "reap exploded" {})))}
+                       (fn []
+                         (with-server-state! {:managed? true
+                                              :saw-client? true
+                                              :started-at-ms (System/currentTimeMillis)
+                                              :clients {}
+                                              :sse-clients {}}
+                                             (fn []
+                                               ((rv 'ensure-idle-reaper!))
+                                               (is (wait-until-slow #(pos? @stops))
+                                                   "shutdown is still evaluated after a throw")
+                                               (is (pos? @sweeps)))))))))
 (deftest closing-an-sse-stream-unblocks-a-pump-parked-on-the-heartbeat
   (testing "the writer must exit at once, not at the next 15s keepalive"
     (let

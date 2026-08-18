@@ -60,6 +60,7 @@ never silently substitutes another runtime.
 | `vis-agent update vX.Y.Z` | that release instead of the newest: bundle for `native`, tag for `jvm` |
 | `vis-agent update --rebuild` | after a source update, builds the sidecar locally (`clojure -T:build native`) |
 | `vis-agent update --track NAME` | follows the `stable` or `beta` track from now on; the choice sticks |
+| `vis-agent update --keep-gateway` | skips the post-install `vis-agent gateway stop --if-idle`, which otherwise releases an unused gateway so the next session starts on the runtime just installed |
 
 ### Tracks
 

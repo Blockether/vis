@@ -184,7 +184,8 @@
            [result (with-redefs-fn {(rv 'db-target) (constantly "/tmp/orphan/vis.db")
                                     #'discovery/read-registry (constantly (assoc fake-entry
                                                                             :port port))
-                                    #'discovery/registry-fresh? (constantly false)}
+                                    #'discovery/registry-fresh? (constantly false)
+                                    #'discovery/pid-alive? (constantly false)}
                      (fn []
                        (client/stop-daemon!)))]
            (is (not= "stopped" (:status result))
@@ -194,6 +195,85 @@
            (is (= port (:port result))))
          (finally (.close server)))))
 
+(def ^:private idle-status
+  {"status" "running" "managed" true "clients" 0 "running_turns" 0 "pid" 4242})
+
+(deftest daemon-idle-is-the-one-definition-of-a-free-bounce
+  (testing "a managed daemon nobody holds is free to release"
+    (is (true? (:idle? (client/daemon-idle? idle-status))))
+    (is (= :idle (:reason (client/daemon-idle? idle-status)))))
+  (testing "work in progress is never aborted for a release that was optional"
+    (is (= :clients (:reason (client/daemon-idle? (assoc idle-status "clients" 2)))))
+    (is (= :running-turns (:reason (client/daemon-idle? (assoc idle-status "running_turns" 1))))))
+  (testing "a daemon somebody started by hand belongs to them, idle or not"
+    (is (= :user-owned (:reason (client/daemon-idle? (assoc idle-status "managed" false))))))
+  (testing "nothing running is nothing to stop"
+    (is (= :not-running (:reason (client/daemon-idle? {"status" "stopped"})))))
+  (testing "the same rule, calibrated for a caller that is itself attached"
+    (is (true? (:idle? (client/daemon-idle? (assoc idle-status "clients" 1)
+                                            {:tolerate-clients 1}))))
+    (is (true? (:idle? (client/daemon-idle? (assoc idle-status "managed" false)
+                                            {:user-owned-ok? true}))))))
+
+(deftest stop-if-idle-leaves-a-daemon-somebody-is-using-alone
+  (let [stops (atom 0)]
+    (with-redefs-fn {(rv 'remote-gateway) (constantly nil)
+                     #'client/status (constantly (assoc idle-status
+                                                   "clients" 2
+                                                   "running_turns" 1))
+                     #'client/stop-daemon! (fn []
+                                             (swap! stops inc)
+                                             {:status "stopped"})}
+      (fn []
+        (let [verdict (client/stop-daemon-if-idle!)]
+          (is (false? (:stopped? verdict)))
+          (is (= :clients (:reason verdict)))
+          (is (zero? @stops) "an update must never abort an open session"))))))
+
+(deftest stop-if-idle-releases-an-unused-managed-daemon
+  (let [stops (atom 0)]
+    (with-redefs-fn {(rv 'remote-gateway) (constantly nil)
+                     #'client/status (constantly idle-status)
+                     #'client/stop-daemon! (fn []
+                                             (swap! stops inc)
+                                             {:status "stopped" :stopping false})}
+      (fn []
+        (let [verdict (client/stop-daemon-if-idle!)]
+          (is (true? (:stopped? verdict)))
+          (is (= 1 @stops)))))))
+
+;; Regression (reported: a gateway that stopped answering had to be killed by hand):
+;; `stop-daemon!` reported a live orphan and handed the human an `lsof` line, with
+;; the daemon's pid sitting in the registry entry it had just read.
+(deftest an-unresponsive-daemon-is-escalated-to-its-registered-pid
+  (let [killed (atom nil)
+
+        result
+        (with-redefs-fn {(rv 'db-target) (constantly "/tmp/wedged/vis.db")
+                         (rv 'remote-gateway) (constantly nil)
+                         #'discovery/read-registry (constantly fake-entry)
+                         #'discovery/registry-fresh? (constantly false)
+                         (rv 'port-free?) (constantly false)
+                         (rv 'kill-registered-daemon!) (fn [db entry]
+                                                         (reset! killed [db entry])
+                                                         {:signal :term :stopped? true})}
+          (fn []
+            (client/stop-daemon!)))]
+
+    (is (= "stopped" (:status result)))
+    (is (= :term (:escalated result)))
+    (is (= ["/tmp/wedged/vis.db" fake-entry] @killed))))
+
+(deftest a-pid-that-is-not-provably-ours-is-never-signalled
+  (testing "a dead pid, or none at all, escalates to nothing"
+    (with-redefs-fn {#'discovery/pid-alive? (constantly false)}
+      (fn []
+        (is (nil? ((rv 'registered-daemon-handle) "/tmp/x/vis.db" 4242)))))
+    (is (nil? ((rv 'registered-daemon-handle) "/tmp/x/vis.db" nil)))
+    (is (= {:signal nil :stopped? false}
+           (with-redefs-fn {#'discovery/pid-alive? (constantly false)}
+             (fn []
+               ((rv 'kill-registered-daemon!) "/tmp/x/vis.db" fake-entry)))))))
 (deftest provider-limits-restores-engine-shape-from-gateway-wire
   (let [request (atom nil)]
     (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]

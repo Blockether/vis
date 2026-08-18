@@ -1325,10 +1325,65 @@
         {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
         {:running? false}))))
 
+(defn- await-port-free!
+  "Block (bounded) until nothing is listening on host:port. True when the port was
+   released, false on timeout."
+  [host port timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+    (loop []
+
+      (cond (port-free? (str host) port) true
+            (>= (System/currentTimeMillis) deadline) false
+            :else (do (Thread/sleep 50) (recur))))))
+
+(defn- registered-daemon-handle
+  "The OS handle for the pid a registry entry names, or nil when signalling it
+   would be a guess. Two facts must agree: the pid is alive, and that process
+   started BEFORE the registry entry naming it was written. A vis daemon writes
+   its entry at boot, so a pid the OS recycled after that daemon died is YOUNGER
+   than the file and is never signalled - the one way a stranger's process could
+   otherwise inherit both the pid and the port. A platform that hides start times
+   yields nothing to compare, and the liveness + port evidence stands alone."
+  [db pid]
+  (when (and pid (discovery/pid-alive? pid))
+    (when-let [handle (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
+      (let [registry-ms
+            (.lastModified ^java.io.File (discovery/registry-file db))
+
+            started
+            (.orElse (.startInstant (.info ^java.lang.ProcessHandle handle)) nil)]
+
+        (when (or (nil? started)
+                  (not (pos? registry-ms))
+                  (<= (.toEpochMilli ^java.time.Instant started) (+ (long registry-ms) 1000)))
+          handle)))))
+
+(defn- kill-registered-daemon!
+  "Last resort for a daemon that stopped answering: signal the pid its own registry
+   entry claims. A wedged daemon - event loop stuck, shutdown hook deadlocked, JVM
+   thrashing - still holds the port, so nothing else can start there and
+   `POST /v1/admin/stop` never returns; that is the state a human otherwise leaves
+   with `lsof -nP -iTCP:<port>` and a manual kill.
+
+   Ownership evidence is the registry entry vis itself wrote for THIS db plus the
+   port still being held; [[registered-daemon-handle]] refuses everything else, so
+   a stranger is never signalled. SIGTERM first, because the daemon's own shutdown
+   hook is what releases sessions, sandboxes and child processes; SIGKILL only if
+   the port is still held after it. Returns {:signal :term|:kill|nil :stopped? bool}."
+  [db {:keys [host port pid]}]
+  (if-let [handle (registered-daemon-handle db pid)]
+    (do (.destroy ^java.lang.ProcessHandle handle)
+        (if (await-port-free! host port 3000)
+          {:signal :term :stopped? true}
+          (do (.destroyForcibly ^java.lang.ProcessHandle handle)
+              {:signal :kill :stopped? (await-port-free! host port 3000)})))
+    {:signal nil :stopped? false}))
 (defn stop-daemon!
-  "Request the registered daemon to stop. When its registry is stale but its
-   configured endpoint still accepts TCP connections, report the live orphan
-   rather than falsely claiming it stopped."
+  "Stop the daemon registered for this DB, escalating when it stops answering.
+   `POST /v1/admin/stop` first; when that is met with silence from a daemon that
+   still holds its port, signal the pid the registry names ([[kill-registered-daemon!]])
+   rather than reporting a live orphan and handing the human an `lsof`. A port held
+   by a process this registry cannot claim is still reported, never signalled."
   []
   (when (remote-gateway)
     (throw (ex-info (str "connected to a remote gateway (--gateway / VIS_GATEWAY_URL): "
@@ -1339,22 +1394,36 @@
         (db-target)
 
         entry
-        (discovery/read-registry db)]
+        (discovery/read-registry db)
+
+        forget!
+        (fn [] (reset! cached-entry nil) (reset! client-id nil))
+
+        escalate!
+        (fn []
+          (let [{:keys [signal stopped?]} (kill-registered-daemon! db entry)]
+            (forget!)
+            (if stopped?
+              {:status "stopped" :stopping false :escalated signal :pid (:pid entry)}
+              {:status "orphaned"
+               :type :gateway/orphaned-daemon
+               :host (:host entry)
+               :port (:port entry)
+               :pid (:pid entry)
+               :recovery (str "It answered neither /v1/admin/stop nor a signal. Inspect it with "
+                              "`lsof -nP -iTCP:"
+                              (:port entry)
+                              " -sTCP:LISTEN`, stop that process, then retry "
+                              "`vis-agent gateway stop`.")})))]
 
     (if (discovery/registry-fresh? entry probe-entry?)
-      (let [res (send-json-with-entry! entry "POST" "/v1/admin/stop")]
-        (reset! cached-entry nil)
-        (reset! client-id nil)
-        res)
+      (let [res (try (send-json-with-entry! entry "POST" "/v1/admin/stop")
+                     (catch Throwable _ ::unreachable))]
+        (if (= ::unreachable res)
+          (escalate!)
+          (do (forget!) res)))
       (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
-        {:status "orphaned"
-         :type :gateway/orphaned-daemon
-         :host (:host entry)
-         :port (:port entry)
-         :pid (:pid entry)
-         :recovery (str "Inspect it with `lsof -nP -iTCP:"
-                        (:port entry)
-                        " -sTCP:LISTEN`, stop that process, then retry `vis-agent gateway stop`.")}
+        (escalate!)
         {:status "stopped" :stopping false}))))
 
 (defn- port-free?
@@ -1383,6 +1452,69 @@
               (> (System/currentTimeMillis) deadline) false
               :else (do (Thread/sleep 50) (recur)))))))
 
+(defn daemon-idle?
+  "THE one definition of \"this daemon may be bounced\", read off an admin status
+   map (canonical STRING keys, e.g. from [[status]]).
+
+   A managed daemon with no client and no running turn is free to release: it was
+   auto-spawned for whoever needed it, it self-reaps anyway, and the next client
+   spawns a fresh one from whatever is on disk. A busy one holds work - someone's
+   TUI, someone's turn - that a stop would abort. A user-owned one
+   (`vis-agent gateway start`, nohup, systemd) is never ours to stop, whatever it
+   is doing.
+
+   `opts` calibrates that one rule for a caller that is itself attached:
+   `:tolerate-clients` is how many of the leases belong to the caller, and
+   `:user-owned-ok?` admits the self-heal path that must replace a daemon whose
+   classpath lacks a route no matter who started it.
+
+   Returns {:idle? :reason :clients :running-turns :managed? :pid}, where `:reason`
+   is one of :idle :not-running :user-owned :clients :running-turns."
+  ([status] (daemon-idle? status nil))
+  ([status {:keys [tolerate-clients user-owned-ok?]}]
+   (let [clients
+         (long (or (get status "clients") 0))
+
+         turns
+         (long (or (get status "running_turns") 0))
+
+         managed?
+         (boolean (get status "managed"))
+
+         ;; USE first: a daemon somebody is working on is off limits whoever started
+         ;; it and whatever its status field says, so no caller can talk itself past
+         ;; a live client or an in-flight turn.
+         reason
+         (cond (> clients (long (or tolerate-clients 0))) :clients
+               (pos? turns) :running-turns
+               (not= "running" (get status "status")) :not-running
+               (and (not managed?) (not user-owned-ok?)) :user-owned
+               :else :idle)]
+
+     {:idle? (= :idle reason)
+      :reason reason
+      :clients clients
+      :running-turns turns
+      :managed? managed?
+      :pid (get status "pid")})))
+
+(defn stop-daemon-if-idle!
+  "Release the daemon registered for this DB when releasing it is free, and leave
+   it strictly alone otherwise. This is what runs after `vis-agent update`: every
+   live daemon is then older than the runtime on disk, and stopping an unused
+   managed one costs nothing because the next client spawns the new build. A
+   --gateway target belongs to another machine and is never touched.
+
+   Returns the [[daemon-idle?]] verdict plus `:stopped?` and, when it acted, the
+   `:stop` result."
+  []
+  (if (remote-gateway)
+    {:idle? false :reason :remote :stopped? false}
+    (let [verdict (daemon-idle? (status))]
+      (if (:idle? verdict)
+        (let [res (stop-daemon!)]
+          (assoc verdict :stopped? (not= "orphaned" (:status res)) :stop res))
+        (assoc verdict :stopped? false)))))
 (defn- probe-route
   "Probe whether the daemon actually SERVES `path`, distinguishing three cases so
    the caller only ever force-restarts on a genuine missing-route 404:
@@ -1432,19 +1564,21 @@
          entry
 
          :absent
-         (let [st (status)
-               clients (long (or (get st "clients") 0))
-               running (long (or (get st "running_turns") 0))]
+          (let [{:keys [reason clients running-turns]}
+                (daemon-idle? (status) {:tolerate-clients 1 :user-owned-ok? true})]
 
-           (when (or (> clients 1) (pos? running))
-             (throw (ex-info (str "gateway daemon does not serve " path
-                                  " but is in use (" clients
-                                  " client(s), " running
-                                  " running turn(s)); refusing" " to force-restart a shared daemon")
-                             {:type :gateway/route-missing-busy
-                              :path path
-                              :clients clients
-                              :running-turns running})))
+            ;; Refuse on USE, never on ownership: this heal replaces a daemon whose
+            ;; classpath lacks the route whoever started it, but it must never abort
+            ;; another client's session or an in-flight turn to do so.
+            (when (contains? #{:clients :running-turns} reason)
+              (throw (ex-info (str "gateway daemon does not serve " path
+                                   " but is in use (" clients
+                                   " client(s), " running-turns
+                                   " running turn(s)); refusing" " to force-restart a shared daemon")
+                              {:type :gateway/route-missing-busy
+                               :path path
+                               :clients clients
+                               :running-turns running-turns})))
            (stop-daemon!)
            (await-daemon-down! (db-target) (:host entry) (:port entry))
            (let [entry (ensure-gateway! opts)]

@@ -702,7 +702,7 @@ update_native() {
 
 vis_update_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild]
+Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild] [--keep-gateway]
          (no target)   the newest release on the remembered track for a native
                        install, or main's newest commit for a source install
          vX.Y.Z        that release instead of the newest, once — naming a
@@ -714,6 +714,11 @@ Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild]
                        `--rebuild` is what moves it
          --rebuild     after a source update, build the native runtime from
                        that source
+         --keep-gateway
+                       leave a running gateway alone. By default an idle one is
+                       released after the install (nothing is watching it) so the
+                       next session starts on the runtime just installed; a busy
+                       or user-owned gateway is never touched either way
        Update takes the runtime that is installed forward; it never swaps one
        runtime for the other, and never changes track on its own. The vis-agent
        command travels with it: a native update replaces this file from the
@@ -722,19 +727,41 @@ Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild]
 EOF
 }
 
+# After a successful install the runtime on disk is NEW and every daemon still
+# running is OLD. Releasing an IDLE managed one is free - nothing is watching it,
+# it self-reaps anyway, and the next client spawns the new build - so update does
+# it without asking. A busy or user-owned daemon is never touched: the runtime's
+# own `--if-idle` rule decides that, this shell decides nothing, and a failure
+# here never fails an update that already succeeded.
+release_stale_gateway() {
+  local native source_root
+  case "$(runtime_effective)" in
+    native)
+      native="$(find_native 2>/dev/null || true)"
+      [[ -n "$native" ]] || return 0
+      "$native" "-Duser.home=${HOME:-$vis_home}" gateway stop --if-idle || true
+      ;;
+    jvm)
+      source_root="$(find_jvm_source 2>/dev/null || true)"
+      [[ -n "$source_root" ]] || return 0
+      ( cd "$source_root" && clojure -M:vis gateway stop --if-idle ) || true
+      ;;
+  esac
+}
 # `update` moves the installed runtime forward — the only runtime there is.
 vis_do_update() {
-  local target="" rebuild=0 track="" arg
+  local target="" rebuild=0 keep_gateway=0 track="" arg
   while (( $# )); do
     arg="$1"
     case "$arg" in
       --rebuild) rebuild=1 ;;
+      --keep-gateway) keep_gateway=1 ;;
       --track) track="${2:-}"; [[ -n "$track" ]] || die "update: --track needs a name" \
                                                         "Tracks are 'stable' and 'beta'"; shift ;;
       --track=*) track="${arg#*=}" ;;
       -h|--help) vis_update_usage; exit 0 ;;
       -*) die "update: unknown option $arg" \
-              "Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild]" ;;
+              "Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild] [--keep-gateway]" ;;
       # A published release, or nothing at all. A git ref would name source
       # nobody published, and Vis does not install source nobody published.
       latest|v[0-9]*)
@@ -784,6 +811,11 @@ vis_do_update() {
       update_native "${target:-latest}" "$(vis_track)"
       ;;
   esac
+  if (( keep_gateway )); then
+    say "leaving the gateway alone (--keep-gateway)"
+  else
+    release_stale_gateway
+  fi
   exit 0
 }
 
