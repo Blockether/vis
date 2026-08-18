@@ -1171,10 +1171,13 @@ export function NotifyConnectionRow({
       : `Connect notifications from ${machine}`;
 
   return (
-    // FULL WIDTH ON A PHONE. A lone verb hugging the right edge of a full-bleed
-    // panel reads as a leftover of a row that lost its text; the thumb is also
-    // nowhere near it. Below `sm:` the button IS the row.
-    <div className="flex items-center justify-end px-3 py-2">
+    // FULL WIDTH ON A PHONE, AND THE SAME BOX AS EVERY OTHER PANEL VERB. A lone
+    // verb hugging the right edge of a full-bleed panel reads as a leftover of a
+    // row that lost its text; the thumb is also nowhere near it. Below `sm:` the
+    // button IS the row, edge to edge and exactly as tall as `Add a provider` and
+    // `Add an MCP server` in the panels above and below it — the inset this row
+    // used to keep made it the one verb of a different width and height.
+    <div className="flex items-center justify-end sm:px-3 sm:py-2">
       {/* Connecting is the invitation and wears the amber; disconnecting is the
           way out of something already working and never shouts to be taken. */}
       <Button
