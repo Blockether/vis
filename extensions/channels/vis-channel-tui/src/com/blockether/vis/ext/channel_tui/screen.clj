@@ -4999,8 +4999,7 @@
                 (vis/toggle-add-listener!
                   (fn [event]
                     (try
-                      (let [raw (or (vis/load-config-raw) {})]
-                        (vis/save-config! (assoc raw "toggles" (vis/toggles-snapshot))))
+                      (vis/save-toggles! (vis/toggles-snapshot))
                       (catch Throwable t
                         (tel/log! {:level :warn
                                    :id ::toggle-persist-failed

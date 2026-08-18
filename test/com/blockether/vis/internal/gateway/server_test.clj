@@ -2975,3 +2975,55 @@
       (with-redefs-fn {#'state/set-favorite! (constantly nil)}
         (fn []
           (is (= 404 (:status (patch-session {:is_favorite true})))))))))
+
+;; Regression: the settings mutation route answered 200 to every value it could
+;; not store — a JSON `false` was read as "no value given" and ignored, the string
+;; "false" was cast by truthiness into ON, an unknown enum choice changed nothing
+;; silently, and `cycle` on a boolean surfaced as a 500 engine-error.
+(deftest set-setting-value-action-refuses-what-it-cannot-store-test
+  (toggles/register-toggle! {:id "server_test_value_bool" :label "Test bool" :default true})
+  (toggles/register-toggle! {:id "server_test_value_enum" :label "Test enum" :type :enum
+                             :choices ["quick" "deep"] :default "quick"})
+  (let [call (rv 'set-setting-handler)
+        body (fn [json] {:body (java.io.StringReader. ^String json)})
+        row (fn [response] (wire/parse-json (:body response)))]
+    (testing "a JSON false is a value, not a missing one"
+      (let [response (call (body (str "{\"id\":\"server_test_value_bool\","
+                                      "\"action\":\"value\",\"value\":false}")))]
+        (is (= 200 (:status response)))
+        (is (false? (get (row response) "enabled")))
+        (is (false? (toggles/enabled? "server_test_value_bool")))))
+    (testing "the string false means OFF, never its truthy cast"
+      (toggles/set-value! "server_test_value_bool" true)
+      (let [response (call {:query-params {"id" "server_test_value_bool"
+                                           "action" "value"
+                                           "value" "false"}})]
+        (is (= 200 (:status response)))
+        (is (false? (toggles/enabled? "server_test_value_bool")))))
+    (testing "a token the type cannot name is a 400 that changes nothing"
+      (toggles/set-value! "server_test_value_bool" true)
+      (let [response (call {:query-params {"id" "server_test_value_bool"
+                                           "action" "value"
+                                           "value" "maybe"}})]
+        (is (= 400 (:status response)))
+        (is (true? (toggles/enabled? "server_test_value_bool")))))
+    (testing "the value action without a value is a 400, not a silent success"
+      (let [response (call {:query-params {"id" "server_test_value_bool" "action" "value"}})]
+        (is (= 400 (:status response)))
+        (is (true? (toggles/enabled? "server_test_value_bool")))))
+    (testing "an enum takes a registered choice and refuses the rest"
+      (is (= 200 (:status (call {:query-params {"id" "server_test_value_enum"
+                                                "action" "value"
+                                                "value" "DEEP"}}))))
+      (is (= "deep" (toggles/value-of "server_test_value_enum")))
+      (is (= 400 (:status (call {:query-params {"id" "server_test_value_enum"
+                                                "action" "value"
+                                                "value" "banana"}}))))
+      (is (= "deep" (toggles/value-of "server_test_value_enum"))))
+    (testing "cycle on a boolean is the client's 400, not the engine's 500"
+      (let [response (call {:query-params {"id" "server_test_value_bool" "action" "cycle"}})]
+        (is (= 400 (:status response)))))
+    (testing "the default flip still flips"
+      (toggles/set-value! "server_test_value_bool" true)
+      (is (= 200 (:status (call {:query-params {"id" "server_test_value_bool" "action" "toggle"}}))))
+      (is (false? (toggles/enabled? "server_test_value_bool"))))))

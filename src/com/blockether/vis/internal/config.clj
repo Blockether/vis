@@ -1503,6 +1503,22 @@
                                    :config runtime-config
                                    :source source}))))))
 
+(defn save-toggles!
+  "Persist a `{id value}` feature-toggle snapshot into the MACHINE store, folding
+   NOTHING else in.
+
+   Every flip used to hand `save-config!` the MERGED config (`load-config-raw`),
+   which copied the hand-written `~/.vis/config.yml` tier and the project's
+   committed `vis.yml` — filesystem grants included — into `state.yml`, where the
+   machine tier then WON over the very files they came from: a project's grants
+   became global for every other repository, and a later edit of the hand-written
+   file silently stopped taking effect. Read the machine tier, replace one key,
+   write it back. No-op (and false) when the block is already identical."
+  [snapshot]
+  (let [raw (or (load-global-config-raw) {})]
+    (boolean (when (not= (get raw "toggles") snapshot)
+               (save-config! (assoc raw "toggles" snapshot) :toggles)
+               true))))
 (defn remove-config-provider!
   "Remove every persisted provider entry for `provider-id` from the string-keyed
    machine config, preserving unrelated keys.

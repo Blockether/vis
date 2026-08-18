@@ -1318,3 +1318,46 @@
                                                      :http-status 500}))))
       (expect (nil? (config/no-provider-ex (RuntimeException. "boom"))))
       (expect (nil? (config/no-provider-ex nil)))))
+
+;; Regression: one feature-toggle flip persisted the MERGED config, folding the
+;; hand-written `~/.vis/config.yml` tier and the committed project `vis.yml` —
+;; filesystem grants included — into the machine store, where the machine tier
+;; then outranked the very files they came from.
+(defdescribe save-toggles-writes-only-the-machine-tier-test
+             (it "persists the toggle block without folding the other config tiers"
+                 (let [dir (.toFile (Files/createTempDirectory
+                                      "vis-toggle-store"
+                                      (make-array java.nio.file.attribute.FileAttribute 0)))
+                       home (io/file dir "home")
+                       store-dir (io/file home ".vis")
+                       project (io/file dir "project")
+                       old-home (System/getProperty "user.home")
+                       old-dir (System/getProperty "user.dir")]
+                   (try
+                     (.mkdirs store-dir)
+                     (.mkdirs project)
+                     (spit (io/file store-dir "config.yml") "default_model: hand-written-model\n")
+                     (spit (io/file store-dir "state.yml") "default_provider: machine-provider\n")
+                     (spit (io/file project "vis.yml")
+                           (str "workspace:\n  filesystem:\n    - id: sibling\n"
+                                "      path: ~/sibling-repo\n"
+                                "toggles:\n  introspection: true\n"))
+                     (System/setProperty "user.home" (.getPath home))
+                     (System/setProperty "user.dir" (.getPath project))
+                     (config/invalidate-config-cache!)
+                     ;; The merged view legitimately carries every tier ...
+                     (expect (some? (get (config/load-config-raw) "workspace")))
+                     (expect (= "hand-written-model" (get (config/load-config-raw) "default_model")))
+                     (expect (true? (config/save-toggles! {"introspection" true})))
+                     (let [store (config/load-global-config-raw)]
+                       ;; ... the machine store keeps only what it owns.
+                       (expect (= {"introspection" true} (get store "toggles")))
+                       (expect (= "machine-provider" (get store "default_provider")))
+                       (expect (nil? (get store "workspace")))
+                       (expect (nil? (get store "default_model"))))
+                     ;; An identical block is not rewritten.
+                     (expect (false? (config/save-toggles! {"introspection" true})))
+                     (finally
+                       (System/setProperty "user.home" old-home)
+                       (System/setProperty "user.dir" old-dir)
+                       (config/invalidate-config-cache!))))))

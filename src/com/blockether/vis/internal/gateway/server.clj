@@ -1433,10 +1433,12 @@
           :else (json-response (toggle-json spec)))))
 
 (defn- set-setting-handler
-  "POST /v1/settings {id, action} — flip (`toggle`, the default), `cycle`,
-   or set an exact enum choice (`value` action with `{value}`) on one
-   registered toggle; answers with the refreshed row. JSON body or query
-   params both work."
+  "POST /v1/settings {id, action} — flip (`toggle`, the default), `cycle` an
+   enum, or set an exact value (`value` action with `{value}`) on one registered
+   toggle; answers with the refreshed row. JSON body or query params both work.
+
+   A `value` the setting's own type cannot name is a 400, never a silent 200:
+   booleans take true/false (on/off, yes/no, 1/0), enums take a choice name."
   [request]
   (let
     [body
@@ -1448,8 +1450,15 @@
      action
      (str (or (get body "action") (get-in request [:query-params "action"]) "toggle"))
 
-     raw-value
-     (or (get body "value") (get-in request [:query-params "value"]))
+     ;; A JSON `false` is a LEGAL value, so PRESENCE decides. An `or` here read
+     ;; `{"value": false}` as "no value given" and answered 200 to a request
+     ;; that changed nothing — the client believed the setting was off.
+     given
+     (cond (contains? body "value")
+           {:raw (get body "value")}
+
+           (contains? (:query-params request) "value")
+           {:raw (get-in request [:query-params "value"])})
 
      id
      (when (string? id-str) (str/trim id-str))
@@ -1459,24 +1468,28 @@
 
     (cond (not (toggles/toggle-id? id))
           (error-response 400 :bad-setting-id "settings id must be a snake_case string")
-          (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
-          :else (do (cond (= action "value")
-                          ;; Set an EXACT choice. The wire carries an enum choice as its
-                          ;; string name (e.g. "balanced"); map it back to the registered
-                          ;; choice (keyword or string) before `set-value!` validates it.
-                          (let
-                            [choices
-                             (toggles/choices-of id)
 
-                             chosen
-                             (if (seq choices)
-                               (some #(when (= (name %) (str raw-value)) %) choices)
-                               raw-value)]
+          (nil? spec)
+          (error-response 404 :unknown-setting "no such setting" :id (str id-str))
 
-                            (when (some? chosen) (toggles/set-value! id chosen)))
-                          (= action "cycle") (toggles/cycle-value! id)
-                          :else (toggles/set-enabled! id (not (toggles/enabled? id))))
-                    (json-response (toggle-json (toggles/toggle-spec id)))))))
+          (= action "value")
+          (if-let [chosen (when given (toggles/wire-value id (:raw given)))]
+            (do (toggles/set-value! id (:value chosen))
+                (json-response (toggle-json (toggles/toggle-spec id))))
+            (error-response 400 :invalid-setting-value
+                            "value must match the setting's type: true/false for a boolean, one of its choices for an enum"
+                            :id id))
+
+          (and (= action "cycle") (not= :enum (toggles/type-of id)))
+          (error-response 400 :invalid-setting-action
+                          "cycle advances an enum; a boolean setting takes toggle or value"
+                          :id id)
+
+          :else
+          (do (if (= action "cycle")
+                (toggles/cycle-value! id)
+                (toggles/set-enabled! id (not (toggles/enabled? id))))
+              (json-response (toggle-json (toggles/toggle-spec id)))))))
 
 (defn- mcp-error-response
   [e]
@@ -3991,12 +4004,14 @@
 
 (defn- install-toggle-persistence!
   "Hydrate feature toggles from the `toggles:` slot of the merged YAML config
-   and install a listener that writes every change back. Mirrors the
-   TUI's wiring in `channel-tui/screen.clj` so a toggle flipped from any
-   gateway client survives a gateway restart -
-   without this, only TUI-hosted processes ever persisted toggles.
-   Idempotent: hydration re-runs harmlessly; the save listener installs
-   once per process."
+   and install a listener that writes every change back — through
+   `config/save-toggles!`, which touches ONLY the `toggles:` block of the machine
+   store: handing the MERGED config to `save-config!` folded the hand-written and
+   project tiers into `~/.vis/state.yml`, where the machine tier then outranked
+   them. Mirrors the TUI's wiring in `channel-tui/screen.clj` so a toggle flipped
+   from any gateway client survives a gateway restart - without this, only
+   TUI-hosted processes ever persisted toggles. Idempotent: hydration re-runs
+   harmlessly; the save listener installs once per process."
   []
   (try (let [raw (or (config/load-config-raw) {})]
          (toggles/hydrate-from-config! raw)
@@ -4007,12 +4022,11 @@
          ;; any orphan is present, rewrite the canonical snapshot NOW so the
          ;; file converges instead of carrying the garbage forever.
          (when (toggles/has-orphan-keys? (get raw "toggles"))
-           (config/save-config! (assoc raw "toggles" (toggles/snapshot)))))
+            (config/save-toggles! (toggles/snapshot))))
        (when (compare-and-set! toggle-persist-listener-installed? false true)
          (toggles/add-listener!
            (fn [_event]
-             (try (let [raw (or (config/load-config-raw) {})]
-                    (config/save-config! (assoc raw "toggles" (toggles/snapshot))))
+              (try (config/save-toggles! (toggles/snapshot))
                   (catch Throwable t
                     (tel/log!
                       {:level :warn :id ::toggle-persist-failed :data {:error (ex-message t)}}

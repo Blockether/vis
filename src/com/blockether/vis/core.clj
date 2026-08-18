@@ -623,6 +623,7 @@
              [runtime-config config/runtime-config]
              [load-config config/load-config]
              [save-config! config/save-config!]
+             [save-toggles! config/save-toggles!]
              [remove-config-provider! config/remove-config-provider!]
              [extension-env-status config/extension-env-status]
              [extension-env-value config/extension-env-value]

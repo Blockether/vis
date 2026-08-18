@@ -315,7 +315,9 @@
 (defn set-value!
   "Set `id` to `value` and notify listeners. Returns the new value.
    Validation matches the registered `:type`:
-     `:boolean` — coerce to boolean.
+     `:boolean` — must already BE a boolean; anything else throws, so a
+                  truthy string can never mean its own opposite. `set-enabled!`
+                  casts, `coerce-config-value` and `wire-value` parse.
      `:enum`    — must be one of `:choices`; otherwise throws
                    `:vis.toggles/invalid-value` so the bug surfaces
                    at the call site instead of later in render."
@@ -326,8 +328,12 @@
 
      v
      (case (or (:type spec) :boolean)
-       :boolean
-       (boolean value)
+        :boolean
+        (if (boolean? value)
+          value
+          (throw
+            (ex-info "Toggle value is not a boolean"
+                     {:type :vis.toggles/invalid-value :id id :value value})))
 
        :enum
        (let [allowed (set (:choices spec))]
@@ -484,6 +490,37 @@
 
       v)))
 
+(defn wire-value
+  "Coerce ONE value that arrived over the wire (`POST /v1/settings`) onto the
+   REGISTERED type of `id`, using the vocabulary the CLI's `--toggles` already
+   accepts: `true`/`on`/`yes`/`1` and `false`/`off`/`no`/`0` for a `:boolean`, the
+   name of a registered choice (case-insensitive) for an `:enum`.
+
+   Answers `{:value v}` — a one-entry map, because the legal value `false` is
+   itself falsey — or nil when the wire named nothing legal. Deliberately
+   STRICTER than [[coerce-config-value]]: a hand-written YAML line may degrade to
+   `false`, but a client asking for `\"maybe\"` deserves a refusal, not a
+   coin-flip stored as its choice."
+  [id v]
+  (case (type-of id)
+    :boolean
+    (cond (boolean? v)
+          {:value v}
+
+          (string? v)
+          (let [token (str/lower-case (str/trim v))]
+            (cond (contains? #{"true" "on" "yes" "1"} token) {:value true}
+                  (contains? #{"false" "off" "no" "0"} token) {:value false})))
+
+    :enum
+    (let [target (some-> (cond (keyword? v) (name v)
+                               (string? v) v)
+                         str/trim
+                         str/lower-case)]
+      (some (fn [c] (when (and target (= target (str/lower-case (name c)))) {:value c}))
+            (choices-of id)))
+
+    nil))
 (defn hydrate-from-config!
   "Bulk-apply values from the string-keyed YAML `toggles` map. Keyword-keyed
    internal maps remain accepted for callers that do not originate at YAML."

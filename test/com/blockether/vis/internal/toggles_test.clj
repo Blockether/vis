@@ -326,4 +326,55 @@
            (finally (t/reset-to-default! "provider_fallback")))
       (t/set-value! "refusal_fallback" false)
       (try (expect (true? (t/enabled? "provider_fallback")))
-           (finally (t/reset-to-default! "refusal_fallback")))))
+            (finally (t/reset-to-default! "refusal_fallback")))))
+
+;; Regression: `POST /v1/settings {"value" "false"}` turned a boolean setting ON,
+;; because a wire string was cast by truthiness — the human asked for OFF and the
+;; gateway answered 200 with the opposite stored.
+(defdescribe wire-value-test
+             (it "reads every boolean spelling a client may send"
+                 (with-clean-state
+                   (fn []
+                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                     (expect (= {:value true} (t/wire-value "test_wire_bool" true)))
+                     (expect (= {:value false} (t/wire-value "test_wire_bool" false)))
+                     (doseq [token ["true" "TRUE" " on " "yes" "1"]]
+                       (expect (= {:value true} (t/wire-value "test_wire_bool" token))))
+                     (doseq [token ["false" "FALSE" " off " "no" "0"]]
+                       (expect (= {:value false} (t/wire-value "test_wire_bool" token)))))))
+             (it "answers a MAP, so the legal value false is not read as nothing"
+                 (with-clean-state
+                   (fn []
+                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                     (expect (some? (t/wire-value "test_wire_bool" false)))
+                     (expect (false? (:value (t/wire-value "test_wire_bool" false)))))))
+             (it "refuses a token the registered type cannot name"
+                 (with-clean-state
+                   (fn []
+                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                     (doseq [junk ["maybe" "" "  " 1 0 nil {} :true]]
+                       (expect (nil? (t/wire-value "test_wire_bool" junk)))))))
+             (it "matches an enum choice by name, case-insensitively, and refuses the rest"
+                 (with-clean-state
+                   (fn []
+                     (t/register-toggle! {:id "test_wire_enum" :label "Wire enum" :type :enum
+                                          :choices ["quick" "deep"] :default "quick"})
+                     (expect (= {:value "deep"} (t/wire-value "test_wire_enum" " DEEP ")))
+                     (expect (= {:value "quick"} (t/wire-value "test_wire_enum" :quick)))
+                     (expect (nil? (t/wire-value "test_wire_enum" "banana")))
+                     (expect (nil? (t/wire-value "test_wire_enum" true))))))
+             (it "never resolves an unregistered id"
+                 (with-clean-state
+                   (fn []
+                     (expect (nil? (t/wire-value "test_wire_absent" true))))))
+             (it "set-value! refuses a non-boolean instead of casting it to its opposite"
+                 (with-clean-state
+                   (fn []
+                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                     (let [refused (try (t/set-value! "test_wire_bool" "false")
+                                        ::stored
+                                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+                       (expect (= :vis.toggles/invalid-value refused)))
+                     (expect (true? (t/enabled? "test_wire_bool")))
+                     (t/set-value! "test_wire_bool" false)
+                     (expect (false? (t/enabled? "test_wire_bool")))))))
