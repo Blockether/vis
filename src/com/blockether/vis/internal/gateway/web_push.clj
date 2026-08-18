@@ -125,27 +125,24 @@
 (defn- concat-bytes
   "Concatenate byte arrays without converting them through Clojure sequences."
   ^bytes [& arrays]
-  (let
-    [length
-     (reduce (fn [^long total ^bytes array]
-               (+ total (alength array)))
-             0
-             arrays)
+  (let [length
+        (reduce (fn [^long total ^bytes array]
+                  (+ total (alength array)))
+                0
+                arrays)
 
-     output
-     (byte-array length)]
+        output
+        (byte-array length)]
 
-    (loop
-      [offset
-       0
+    (loop [offset
+           0
 
-       remaining
-       arrays]
+           remaining
+           arrays]
 
       (if-let [array (first remaining)]
-        (let
-          [^bytes array array
-           length (alength array)]
+        (let [^bytes array array
+              length (alength array)]
 
           (System/arraycopy array 0 output offset length)
           (recur (+ offset length) (next remaining)))
@@ -154,18 +151,17 @@
 (defn- fixed32
   "Represent a positive EC coordinate as exactly 32 unsigned bytes."
   ^bytes [^BigInteger value]
-  (let
-    [raw
-     (.toByteArray value)
+  (let [raw
+        (.toByteArray value)
 
-     source-offset
-     (max 0 (- (alength raw) 32))
+        source-offset
+        (max 0 (- (alength raw) 32))
 
-     length
-     (min 32 (alength raw))
+        length
+        (min 32 (alength raw))
 
-     output
-     (byte-array 32)]
+        output
+        (byte-array 32)]
 
     (System/arraycopy raw source-offset output (- 32 length) length)
     output))
@@ -209,9 +205,8 @@
 (defn- ec-key-pair
   "Generate one fresh P-256 key pair for the gateway's VAPID identity."
   []
-  (let
-    [generator (doto (KeyPairGenerator/getInstance "EC")
-                 (.initialize (ECGenParameterSpec. "secp256r1")))]
+  (let [generator (doto (KeyPairGenerator/getInstance "EC")
+                    (.initialize (ECGenParameterSpec. "secp256r1")))]
     (.generateKeyPair generator)))
 
 (defn- key-pair-private
@@ -294,15 +289,14 @@
    Calling this ensures that a gateway has a stable VAPID identity. The
    private key remains on disk and is only used by `send!`."
   []
-  (let
-    [pair
-     (load-or-generate-key-pair)
+  (let [pair
+        (load-or-generate-key-pair)
 
-     subject
-     (or (env-val "VIS_WEB_PUSH_SUBJECT") DEFAULT_SUBJECT)
+        subject
+        (or (env-val "VIS_WEB_PUSH_SUBJECT") DEFAULT_SUBJECT)
 
-     subject-valid?
-     (valid-subject? subject)]
+        subject-valid?
+        (valid-subject? subject)]
 
     {:is-configured (boolean (and pair subject-valid?))
      :application-server-key (when pair (b64url (public-key-bytes (:public pair))))
@@ -337,15 +331,14 @@
 (defn- hkdf-expand
   "Expand an HKDF pseudorandom key to exactly `length` bytes."
   ^bytes [^bytes prk ^bytes info ^long length]
-  (loop
-    [previous
-     (byte-array 0)
+  (loop [previous
+         (byte-array 0)
 
-     output
-     (byte-array 0)
+         output
+         (byte-array 0)
 
-     counter
-     1]
+         counter
+         1]
 
     (if (>= (alength output) length)
       (Arrays/copyOf output length)
@@ -355,86 +348,82 @@
 (defn- sign
   "Sign UTF-8 text with the requested JCA signature algorithm."
   ^bytes [^PrivateKey private ^String algorithm ^String input]
-  (let
-    [signature (doto (Signature/getInstance algorithm) (.initSign private) (.update (utf8 input)))]
+  (let [signature
+        (doto (Signature/getInstance algorithm) (.initSign private) (.update (utf8 input)))]
     (.sign signature)))
 
 (defn- jose-signature
   "Convert JCA's DER ECDSA signature into the JOSE `r || s` form."
   ^bytes [^bytes der]
-  (let
-    [r-length
-     (long (aget der 3))
+  (let [r-length
+        (long (aget der 3))
 
-     r
-     (fixed32 (BigInteger. 1 (Arrays/copyOfRange der 4 (+ 4 r-length))))
+        r
+        (fixed32 (BigInteger. 1 (Arrays/copyOfRange der 4 (+ 4 r-length))))
 
-     s-offset
-     (+ 4 r-length 2)
+        s-offset
+        (+ 4 r-length 2)
 
-     s-length
-     (long (aget der (+ 4 r-length 1)))
+        s-length
+        (long (aget der (+ 4 r-length 1)))
 
-     s
-     (fixed32 (BigInteger. 1 (Arrays/copyOfRange der s-offset (+ s-offset s-length))))]
+        s
+        (fixed32 (BigInteger. 1 (Arrays/copyOfRange der s-offset (+ s-offset s-length))))]
 
     (concat-bytes r s)))
 
 (defn- vapid-token
   "Build the short-lived VAPID JWT for one push-service origin."
   [cfg ^PrivateKey private ^String audience]
-  (let
-    [header
-     (b64url (utf8 (wire/json-str {:alg "ES256" :typ "JWT"})))
+  (let [header
+        (b64url (utf8 (wire/json-str {:alg "ES256" :typ "JWT"})))
 
-     claims
-     (b64url (utf8 (wire/json-str {:aud audience
-                                   :exp (+ (quot (System/currentTimeMillis) 1000) (* 12 60 60))
-                                   :sub (:subject cfg)})))
+        claims
+        (b64url (utf8 (wire/json-str {:aud audience
+                                      :exp (+ (quot (System/currentTimeMillis) 1000) (* 12 60 60))
+                                      :sub (:subject cfg)})))
 
-     input
-     (str header "." claims)
+        input
+        (str header "." claims)
 
-     signature
-     (sign private "SHA256withECDSA" input)]
+        signature
+        (sign private "SHA256withECDSA" input)]
 
     (str input "." (b64url (jose-signature signature)))))
 
 (defn- subscription-key
   "Decode one browser subscription key and enforce its RFC byte length."
   [keys name length]
-  (let
-    [encoded
-     (some-> (get keys name)
-             str
-             str/trim)
+  (let [encoded
+        (some-> (get keys name)
+                str
+                str/trim)
 
-     decoded
-     (some-> encoded
-             b64url-decode)]
+        decoded
+        (some-> encoded
+                b64url-decode)]
 
     (when (and decoded (= length (alength ^bytes decoded))) decoded)))
 
 (defn- subscription
   "Parse and validate the JSON subscription stored as a device token."
   [^String token]
-  (try (let
-         [value
-          (wire/parse-json token)
+  (try (let [value
+             (wire/parse-json token)
 
-          endpoint
-          (some-> (get value "endpoint")
-                  str
-                  str/trim)
+             endpoint
+             (some-> (get value "endpoint")
+                     str
+                     str/trim)
 
-          keys
-          (get value "keys")
+             keys
+             (get value "keys")
 
-          client-public
-          (subscription-key keys "p256dh" 65)
+             client-public
+             (subscription-key keys "p256dh" 65)
 
-          auth
-          (subscription-key keys "auth" 16)]
+             auth
+             (subscription-key keys "auth" 16)]
 
          (when (and (str/starts-with? endpoint "https://") client-public auth)
            {:endpoint endpoint :public-key client-public :auth auth}))
@@ -448,12 +437,11 @@
 (defn- key-agreement
   "Generate an ephemeral server key and derive its ECDH secret."
   [^bytes client-public]
-  (let
-    [client-key
-     (client-public-key client-public)
+  (let [client-key
+        (client-public-key client-public)
 
-     ^KeyPair ephemeral
-     (ec-key-pair)]
+        ^KeyPair ephemeral
+        (ec-key-pair)]
 
     {:shared-secret (ecdh-secret (key-pair-private ephemeral) client-key)
      :server-public (public-key-bytes (key-pair-public ephemeral))}))
@@ -461,18 +449,17 @@
 (defn- content-keys
   "Derive the aes128gcm content-encryption key and nonce from ECDH output."
   [^bytes client-public ^bytes server-public ^bytes auth ^bytes shared]
-  (let
-    [key-info
-     (concat-bytes (utf8 KEY_INFO_PREFIX) client-public server-public)
+  (let [key-info
+        (concat-bytes (utf8 KEY_INFO_PREFIX) client-public server-public)
 
-     ikm
-     (hkdf-expand (hmac auth shared) key-info 32)
+        ikm
+        (hkdf-expand (hmac auth shared) key-info 32)
 
-     salt
-     (random-bytes 16)
+        salt
+        (random-bytes 16)
 
-     prk
-     (hmac salt ikm)]
+        prk
+        (hmac salt ikm)]
 
     {:salt salt
      :cek (hkdf-expand prk (utf8 AES_INFO) 16)
@@ -481,9 +468,9 @@
 (defn- aes-gcm-encrypt
   "Encrypt plaintext with the derived AES-128-GCM content key and nonce."
   ^bytes [^bytes cek ^bytes nonce ^bytes plaintext]
-  (let
-    [cipher (doto (Cipher/getInstance "AES/GCM/NoPadding")
-              (.init Cipher/ENCRYPT_MODE (SecretKeySpec. cek "AES") (GCMParameterSpec. 128 nonce)))]
+  (let [cipher
+        (doto (Cipher/getInstance "AES/GCM/NoPadding")
+          (.init Cipher/ENCRYPT_MODE (SecretKeySpec. cek "AES") (GCMParameterSpec. 128 nonce)))]
     (.doFinal cipher plaintext)))
 
 (defn- int-bytes
@@ -503,21 +490,20 @@
 (defn- encrypted-payload
   "Encrypt a notification and frame it as one RFC 8188/8291 record."
   ^bytes [^bytes client-public ^bytes auth ^bytes plaintext]
-  (let
-    [agreement
-     (key-agreement client-public)
+  (let [agreement
+        (key-agreement client-public)
 
-     ^bytes shared-secret
-     (:shared-secret agreement)
+        ^bytes shared-secret
+        (:shared-secret agreement)
 
-     ^bytes server-public
-     (:server-public agreement)
+        ^bytes server-public
+        (:server-public agreement)
 
-     {:keys [salt cek nonce]}
-     (content-keys client-public server-public auth shared-secret)
+        {:keys [salt cek nonce]}
+        (content-keys client-public server-public auth shared-secret)
 
-     ciphertext
-     (aes-gcm-encrypt cek nonce (concat-bytes plaintext (byte-array [2])))]
+        ciphertext
+        (aes-gcm-encrypt cek nonce (concat-bytes plaintext (byte-array [2])))]
 
     (frame-record salt server-public ciphertext)))
 
@@ -545,12 +531,11 @@
 (defn- push-request
   "Build the authenticated encrypted request sent to a browser push service."
   [cfg pair subscription ^bytes body]
-  (let
-    [endpoint
-     (:endpoint subscription)
+  (let [endpoint
+        (:endpoint subscription)
 
-     jwt
-     (vapid-token cfg (key-pair-private pair) (origin endpoint))]
+        jwt
+        (vapid-token cfg (key-pair-private pair) (origin endpoint))]
 
     {:uri endpoint
      :method :post

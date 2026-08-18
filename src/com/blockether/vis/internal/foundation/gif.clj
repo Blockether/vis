@@ -31,19 +31,17 @@
   "Straight RGBA8 rows (the cdylib's frame shape) -> a packed 0xAARRGGBB int[],
   the shape the PIL shim's raster holds."
   ^ints [^bytes b]
-  (let
-    [n
-     (alength b)
+  (let [n
+        (alength b)
 
-     out
-     (int-array (quot n 4))]
+        out
+        (int-array (quot n 4))]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       j
-       0]
+           j
+           0]
 
       (when (< i n)
         (aset out
@@ -89,17 +87,15 @@
   The cdylib owns palette quantization, LZW, disposal and the NETSCAPE loop
   block."
   ^bytes [spec]
-  (let
-    [lc
-     (:loop-count spec)
+  (let [lc
+        (:loop-count spec)
 
-     ;; nil OR 0 both mean \"loop forever\"; the cdylib takes -1 for forever.
-     lc'
-     (let
-       [n (some-> lc
-                  long)]
-       (cond (nil? n) -1
-             (zero? (long n)) -1
-             :else n))]
+        ;; nil OR 0 both mean \"loop forever\"; the cdylib takes -1 for forever.
+        lc'
+        (let [n (some-> lc
+                        long)]
+          (cond (nil? n) -1
+                (zero? (long n)) -1
+                :else n))]
 
     (im/encode-gif (assoc spec :loop-count lc'))))

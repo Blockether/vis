@@ -33,14 +33,13 @@
     ;; tree-sitter opens ONE ERROR node over the whole file when a form is left
     ;; unclosed, so the node's own start is line 1 — reporting that sent every
     ;; refusal to the `ns` form instead of to the edit that broke.
-    (let
-      [src
-       (str "(ns demo.core)\n\n" (apply str (repeat 40 "(defn ok [x] (inc x))\n"))
-            "(defn boom [x]\n  (let [y (inc x)]\n    {:a y})\n\n"
-            (apply str (repeat 5 "(defn after [x] (dec x))\n")))
+    (let [src
+          (str "(ns demo.core)\n\n" (apply str (repeat 40 "(defn ok [x] (inc x))\n"))
+               "(defn boom [x]\n  (let [y (inc x)]\n    {:a y})\n\n"
+               (apply str (repeat 5 "(defn after [x] (dec x))\n")))
 
-       errs
-       (parse/error-nodes "clojure" src)]
+          errs
+          (parse/error-nodes "clojure" src)]
 
       (is (= 43 (long (:line (first errs)))))
       (is (= "(" (:delimiter (first errs))))
@@ -48,12 +47,11 @@
       (is (= 1 (long (:error-line (first errs)))))))
   (testing "Unicode and CRLF do not shift the reported column"
     ;; `é` occupies two UTF-8 bytes but one user-facing character column.
-    (let
-      [src
-       "class Demo {\r\n  String boom() { String café = \"unterminated\r\n}\r\n"
+    (let [src
+          "class Demo {\r\n  String boom() { String café = \"unterminated\r\n}\r\n"
 
-       err
-       (first (parse/error-nodes "java" src))]
+          err
+          (first (parse/error-nodes "java" src))]
 
       (is (= 2 (long (:line err))))
       (is (= 32 (long (:col err))))
@@ -63,10 +61,9 @@
 
 (deftest top-level-nodes-test
   (testing "the root's NAMED children, one level deep, in document order"
-    (let
-      [nodes (parse/top-level-nodes
-               "toml"
-               "# [tool.uv] in a comment\n[tool.uv]\nx = 1\n\n[[tool.uv.index]]\n")]
+    (let [nodes (parse/top-level-nodes
+                  "toml"
+                  "# [tool.uv] in a comment\n[tool.uv]\nx = 1\n\n[[tool.uv.index]]\n")]
       (is (= ["comment" "table" "table_array_element"] (mapv :kind nodes)))
       ;; punctuation is skipped, so a table's header key is its child 0 — the
       ;; whole point for a caller reading DECLARATIONS out of a config file.

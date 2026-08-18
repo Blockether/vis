@@ -40,12 +40,11 @@
 (defn- python-file?
   [^java.io.File f]
   (and (.isFile f)
-       (let
-         [n
-          (.getName f)
+       (let [n
+             (.getName f)
 
-          i
-          (.lastIndexOf n ".")]
+             i
+             (.lastIndexOf n ".")]
 
          (and (pos? i) (contains? python-exts (subs n (inc i)))))))
 
@@ -65,12 +64,11 @@
 (defn relativize-path
   "`p` written relative to `root` when it lives under it, else left absolute."
   ^String [^java.io.File root p]
-  (let
-    [r
-     (canon root)
+  (let [r
+        (canon root)
 
-     s
-     (canon (io/file (str p)))]
+        s
+        (canon (io/file (str p)))]
 
     (cond (= s r) "."
           (str/starts-with? s (str r java.io.File/separator)) (subs s (inc (count r)))
@@ -114,12 +112,11 @@
    `pyproject.toml` carrying a `[tool.ruff]` table, walking ancestors — so vis
    sees exactly the file the `ruff` CLI would use, `extend` chains and all."
   ^String [p]
-  (let
-    [f
-     (io/file (str p))
+  (let [f
+        (io/file (str p))
 
-     d
-     (if (.isDirectory f) f (or (.getParentFile f) f))]
+        d
+        (if (.isDirectory f) f (or (.getParentFile f) f))]
 
     (try (ruff/config-file (.getAbsolutePath d)) (catch Throwable _ nil))))
 
@@ -130,9 +127,8 @@
   []
   (let [cache (atom {})]
     (fn ^String [p]
-      (let
-        [f (io/file (str p))
-         d (str (if (.isDirectory f) f (or (.getParentFile f) f)))]
+      (let [f (io/file (str p))
+            d (str (if (.isDirectory f) f (or (.getParentFile f) f)))]
 
         (if-let [hit (find @cache d)]
           (val hit)
@@ -153,25 +149,24 @@
    per-file ignores, target version — comes from the discovered configuration
    file, which ruff resolves itself; an explicit option OVERRIDES it."
   [arg]
-  (let
-    [opts
-     (when (map? arg) arg)
+  (let [opts
+        (when (map? arg) arg)
 
-     n
-     (some-> (get opts "line_length")
-             str
-             parse-long)
+        n
+        (some-> (get opts "line_length")
+                str
+                parse-long)
 
-     cfg
-     (some-> (get opts "config")
-             str
-             not-empty)
+        cfg
+        (some-> (get opts "config")
+                str
+                not-empty)
 
-     sel
-     (get opts "select")
+        sel
+        (get opts "select")
 
-     ign
-     (get opts "ignore")]
+        ign
+        (get opts "ignore")]
 
     (cond-> {}
       n
@@ -221,12 +216,11 @@
   "`path` and `paths` UNIONED (not shadowing), as raw (unresolved) strings."
   [arg]
   (when (map? arg)
-    (let
-      [p
-       (get arg "path")
+    (let [p
+          (get arg "path")
 
-       ps
-       (get arg "paths")]
+          ps
+          (get arg "paths")]
 
       (into []
             (distinct (concat (when-not (str/blank? (str p)) [(str p)])
@@ -280,15 +274,14 @@
 
 (defn- format-one-file!
   [opts find-config ^String abs ^java.io.File root]
-  (let
-    [src
-     (slurp abs)
+  (let [src
+        (slurp abs)
 
-     out
-     (try (ruff/format src (with-config opts find-config abs)) (catch Throwable _ src))
+        out
+        (try (ruff/format src (with-config opts find-config abs)) (catch Throwable _ src))
 
-     changed?
-     (not= out src)]
+        changed?
+        (not= out src)]
 
     (when changed? (spit abs out))
     {"path" (relativize-path root abs) "changed" changed? "formatter" "ruff"}))
@@ -311,93 +304,88 @@
    destroys a half-written file."
   ([arg] (py-format-fn nil arg))
   ([env arg]
-   (let
-     [root
-      (io/file (or (:workspace/root env) "."))
+   (let [root
+         (io/file (or (:workspace/root env) "."))
 
-      opts
-      (call-opts arg)
+         opts
+         (call-opts arg)
 
-      find-config
-      (config-finder)
+         find-config
+         (config-finder)
 
-      code
-      (arg-code arg)
+         code
+         (arg-code arg)
 
-      targets
-      (arg-targets arg)
+         targets
+         (arg-targets arg)
 
-      missing
-      (into [] (remove #(.exists (io/file (under root %))) targets))
+         missing
+         (into [] (remove #(.exists (io/file (under root %))) targets))
 
-      expanded
-      (when-not (or code (seq missing)) (expand-targets root targets))
+         expanded
+         (when-not (or code (seq missing)) (expand-targets root targets))
 
-      empties
-      (empty-targets expanded targets)]
+         empties
+         (empty-targets expanded targets)]
 
      (cond (seq missing) (missing-error "format" missing)
-           code (let
-                  [cfg
-                   (or (:config opts) (find-config (.getAbsolutePath root)))
+           code (let [cfg
+                      (or (:config opts) (find-config (.getAbsolutePath root)))
 
-                   out
-                   (ruff/format-or code (assoc opts :config cfg))]
+                      out
+                      (ruff/format-or code (assoc opts :config cfg))]
 
                   (extension/success {:result (contract/check
                                                 :format-fn
-                                                (cond->
-                                                  {"op" "ruff-format"
-                                                   "language" "python"
-                                                   "changed" (not= out code)
-                                                   "chars" (- (count out) (count code))
-                                                   "formatter" "ruff"}
+                                                (cond-> {"op" "ruff-format"
+                                                         "language" "python"
+                                                         "changed" (not= out code)
+                                                         "chars" (- (count out) (count code))
+                                                         "formatter" "ruff"}
                                                   cfg
                                                   (assoc "config" (relativize-path root cfg))
 
                                                   (not cfg)
                                                   (assoc "hint" no-config-hint)))}))
            (seq empties) (no-python-error "format" empties)
-           :else (let
-                   [abs-files
-                    (target-files expanded)
+           :else (let [abs-files
+                       (target-files expanded)
 
-                    files
-                    (mapv #(format-one-file! opts find-config % root) abs-files)
+                       files
+                       (mapv #(format-one-file! opts find-config % root) abs-files)
 
-                    cfg
-                    (or (:config opts)
-                        (find-config (.getAbsolutePath root))
-                        (some find-config abs-files))]
+                       cfg
+                       (or (:config opts)
+                           (find-config (.getAbsolutePath root))
+                           (some find-config abs-files))]
 
                    (extension/success
-                     {:result (contract/check :format-fn
-                                              (cond->
-                                                {"op" "ruff-format"
-                                                 "language" "python"
-                                                 "files" files
-                                                 "changed" (count (filter #(get % "changed") files))
-                                                 "by-cwd" (reduce (fn [acc f]
-                                                                    (let
-                                                                      [p
-                                                                       (io/file (get f "path"))
+                     {:result (contract/check
+                                :format-fn
+                                (cond-> {"op" "ruff-format"
+                                         "language" "python"
+                                         "files" files
+                                         "changed" (count (filter #(get % "changed") files))
+                                         "by-cwd" (reduce (fn [acc f]
+                                                            (let [p
+                                                                  (io/file (get f "path"))
 
-                                                                       d
-                                                                       (or (some-> (.getParent p)
-                                                                                   str)
-                                                                           ".")]
+                                                                  d
+                                                                  (or (some-> (.getParent p)
+                                                                              str)
+                                                                      ".")]
 
-                                                                      (assoc-in acc
-                                                                        [d (.getName p)]
-                                                                        (dissoc f "path"))))
-                                                                  {}
-                                                                  files)
-                                                 "formatters" ["ruff"]}
-                                                cfg
-                                                (assoc "config" (relativize-path root cfg))
+                                                              (assoc-in acc
+                                                                [d (.getName p)]
+                                                                (dissoc f "path"))))
+                                                          {}
+                                                          files)
+                                         "formatters" ["ruff"]}
+                                  cfg
+                                  (assoc "config" (relativize-path root cfg))
 
-                                                (not cfg)
-                                                (assoc "hint" no-config-hint)))}))))))
+                                  (not cfg)
+                                  (assoc "hint" no-config-hint)))}))))))
 
 ;; lint_code
 
@@ -421,14 +409,13 @@
 
 (defn- ->finding
   [file d]
-  (cond->
-    {"level" (level-for (:code d))
-     "type" (:code d)
-     "message" (:message d)
-     "row" (:row d)
-     "col" (:col d)
-     "provider" "ruff"
-     "is_fixable" (boolean (:is-fixable d))}
+  (cond-> {"level" (level-for (:code d))
+           "type" (:code d)
+           "message" (:message d)
+           "row" (:row d)
+           "col" (:col d)
+           "provider" "ruff"
+           "is_fixable" (boolean (:is-fixable d))}
     file
     (assoc "file" file)))
 
@@ -455,95 +442,94 @@
    still has to say what it looked at."
   ([arg] (py-lint-fn nil arg))
   ([env arg]
-   (let
-     [root
-      (io/file (or (:workspace/root env) "."))
+   (let [root
+         (io/file (or (:workspace/root env) "."))
 
-      opts
-      (call-opts arg)
+         opts
+         (call-opts arg)
 
-      find-config
-      (config-finder)
+         find-config
+         (config-finder)
 
-      code
-      (arg-code arg)
+         code
+         (arg-code arg)
 
-      targets
-      (when-not code (arg-targets arg))
+         targets
+         (when-not code (arg-targets arg))
 
-      missing
-      (into [] (remove #(.exists (io/file (under root %))) targets))
+         missing
+         (into [] (remove #(.exists (io/file (under root %))) targets))
 
-      expanded
-      (when-not (or code (seq missing)) (expand-targets root targets))
+         expanded
+         (when-not (or code (seq missing)) (expand-targets root targets))
 
-      empties
-      (empty-targets expanded targets)]
+         empties
+         (empty-targets expanded targets)]
 
      (cond (seq missing) (missing-error "lint" missing)
            (seq empties) (no-python-error "lint" empties)
            :else
-           (let
-             [abs-files
-              (when-not code (target-files expanded))
+           (let [abs-files
+                 (when-not code (target-files expanded))
 
-              findings
-              (if code
-                (mapv #(->finding nil %)
-                      (ruff/lint code
-                                 (assoc opts
-                                   :config (or (:config opts)
-                                               (find-config (.getAbsolutePath root))))))
-                (into []
-                      (mapcat (fn [abs]
-                                (let [rel (relativize-path root abs)]
-                                  (map #(->finding rel %)
-                                       (ruff/lint-or (slurp abs)
-                                                     (with-config opts find-config abs)
-                                                     [])))))
-                      abs-files))
+                 findings
+                 (if code
+                   (mapv #(->finding nil %)
+                         (ruff/lint code
+                                    (assoc opts
+                                      :config (or (:config opts)
+                                                  (find-config (.getAbsolutePath root))))))
+                   (into []
+                         (mapcat (fn [abs]
+                                   (let [rel (relativize-path root abs)]
+                                     (map #(->finding rel %)
+                                          (ruff/lint-or (slurp abs)
+                                                        (with-config opts find-config abs)
+                                                        [])))))
+                         abs-files))
 
-              cfg
-              (or (:config opts) (find-config (.getAbsolutePath root)) (some find-config abs-files))
+                 cfg
+                 (or (:config opts)
+                     (find-config (.getAbsolutePath root))
+                     (some find-config abs-files))
 
-              by-level
-              (frequencies (map #(get % "level") findings))]
+                 by-level
+                 (frequencies (map #(get % "level") findings))]
 
              (extension/success
-               {:result
-                (contract/check
-                  :lint-fn
-                  (cond->
-                    {"op" "ruff-lint"
-                     "language" "python"
-                     "error" (get by-level "error" 0)
-                     "warning" (get by-level "warning" 0)
-                     "info" (get by-level "info" 0)
-                     "files" (if code 1 (count abs-files))
-                     "findings" findings
-                     "providers" ["ruff"]
-                     "by-cwd"
-                     (reduce (fn [acc f]
-                               (let
-                                 [p
-                                  (io/file (get f "file" "<snippet>"))
+               {:result (contract/check
+                          :lint-fn
+                          (cond-> {"op" "ruff-lint"
+                                   "language" "python"
+                                   "error" (get by-level "error" 0)
+                                   "warning" (get by-level "warning" 0)
+                                   "info" (get by-level "info" 0)
+                                   "files" (if code 1 (count abs-files))
+                                   "findings" findings
+                                   "providers" ["ruff"]
+                                   "by-cwd" (reduce (fn [acc f]
+                                                      (let [p
+                                                            (io/file (get f "file" "<snippet>"))
 
-                                  d
-                                  (or (some-> (.getParent p)
-                                              str)
-                                      ".")]
+                                                            d
+                                                            (or (some-> (.getParent p)
+                                                                        str)
+                                                                ".")]
 
-                                 (update-in acc [d (.getName p) (get f "level")] (fnil conj []) f)))
-                             {}
-                             findings)}
-                    code
-                    (assoc "snippet" code)
+                                                        (update-in acc
+                                                                   [d (.getName p) (get f "level")]
+                                                                   (fnil conj [])
+                                                                   f)))
+                                                    {}
+                                                    findings)}
+                            code
+                            (assoc "snippet" code)
 
-                    (seq targets)
-                    (assoc "targets" (mapv #(relativize-path root (under root %)) targets))
+                            (seq targets)
+                            (assoc "targets" (mapv #(relativize-path root (under root %)) targets))
 
-                    cfg
-                    (assoc "config" (relativize-path root cfg))
+                            cfg
+                            (assoc "config" (relativize-path root cfg))
 
-                    (not cfg)
-                    (assoc "hint" no-config-hint)))}))))))
+                            (not cfg)
+                            (assoc "hint" no-config-hint)))}))))))

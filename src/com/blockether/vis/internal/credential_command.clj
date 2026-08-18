@@ -73,30 +73,27 @@
    guesswork this key exists to avoid. Every element must be a non-blank string;
    anything else makes the value invalid rather than partially usable."
   [v]
-  (let
-    [parts (cond (string? v) [v]
-                 (sequential? v) (vec v)
-                 :else nil)]
+  (let [parts (cond (string? v) [v]
+                    (sequential? v) (vec v)
+                    :else nil)]
     (when (and (seq parts) (every? #(and (string? %) (not (str/blank? %))) parts)) parts)))
 
 (defn- read-stream
   "Drain `is` fully (so the child never blocks on a full pipe) but retain at most
    `max-output-bytes` of it."
   ^String [^InputStream is]
-  (let
-    [buf
-     (byte-array 8192)
+  (let [buf
+        (byte-array 8192)
 
-     out
-     (ByteArrayOutputStream.)]
+        out
+        (ByteArrayOutputStream.)]
 
     (loop [kept 0]
       (let [n (.read is buf)]
         (if (neg? n)
           (String. (.toByteArray out) StandardCharsets/UTF_8)
-          (let
-            [room (- (long max-output-bytes) kept)
-             take-n (min n room)]
+          (let [room (- (long max-output-bytes) kept)
+                take-n (min n room)]
 
             (when (pos? take-n) (.write out buf 0 take-n))
             (recur (+ kept take-n))))))))
@@ -106,15 +103,13 @@
    diagnostic. stderr is the helper's DIAGNOSTIC channel; the credential travels
    on stdout and is never read here."
   [err]
-  (when-let
-    [line (some->> (str/split-lines (or err ""))
-                   (map str/trim)
-                   (remove str/blank?)
-                   first)]
-    (let
-      [trimmed (if (> (count line) (long stderr-excerpt-chars))
-                 (str (subs line 0 stderr-excerpt-chars) "…")
-                 line)]
+  (when-let [line (some->> (str/split-lines (or err ""))
+                           (map str/trim)
+                           (remove str/blank?)
+                           first)]
+    (let [trimmed (if (> (count line) (long stderr-excerpt-chars))
+                    (str (subs line 0 stderr-excerpt-chars) "…")
+                    line)]
       (str ": " trimmed))))
 
 (defn- exec-argv
@@ -126,19 +121,17 @@
            ;; A helper that reads stdin (a prompt, a pipe check) must see EOF
            ;; instead of blocking forever against a pipe nobody writes to.
            (.close (.getOutputStream proc))
-           (let
-             [out-f (future (read-stream (.getInputStream proc)))
-              err-f (future (read-stream (.getErrorStream proc)))]
+           (let [out-f (future (read-stream (.getInputStream proc)))
+                 err-f (future (read-stream (.getErrorStream proc)))]
 
              (if-not (.waitFor proc timeout-ms TimeUnit/MILLISECONDS)
                (do (.destroyForcibly proc)
                    (future-cancel out-f)
                    (future-cancel err-f)
                    {:error (str "`" exe "` timed out after " timeout-ms "ms")})
-               (let
-                 [exit (.exitValue proc)
-                  out (str/trim (str (deref out-f 2000 "")))
-                  err (str (deref err-f 2000 ""))]
+               (let [exit (.exitValue proc)
+                     out (str/trim (str (deref out-f 2000 "")))
+                     err (str (deref err-f 2000 ""))]
 
                  (cond (not (zero? exit)) {:error
                                            (str "`" exe "` exited " exit (stderr-excerpt err))}

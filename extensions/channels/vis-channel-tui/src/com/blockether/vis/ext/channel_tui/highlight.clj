@@ -174,35 +174,33 @@
    and `exact-highlight` runs. Split/concat is lossless, so a single-line source or
    one without a trailing newline still reconstructs verbatim."
   [grammar ^String source]
-  (let
-    [lines
-     (str/split source #"\n" -1)
+  (let [lines
+        (str/split source #"\n" -1)
 
-     idx
-     (last-nonblank-index lines)]
+        idx
+        (last-nonblank-index lines)]
 
     (if (<= (long idx) 0)
       ;; nothing settled ahead of the growing line — just parse it whole.
       (highlight* grammar source)
-      (let
-        [prefix
-         (str (str/join "\n" (subvec lines 0 idx)) "\n")
+      (let [prefix
+            (str (str/join "\n" (subvec lines 0 idx)) "\n")
 
-         tail
-         (str/join "\n" (subvec lines idx))
+            tail
+            (str/join "\n" (subvec lines idx))
 
-         m
-         (get @stream-memo grammar)
+            m
+            (get @stream-memo grammar)
 
-         cprefix
-         (if (= (:prefix m) prefix)
-           (:colored m)
-           (let [c (or (highlight* grammar prefix) prefix)]
-             (swap! stream-memo assoc grammar {:prefix prefix :colored c})
-             c))
+            cprefix
+            (if (= (:prefix m) prefix)
+              (:colored m)
+              (let [c (or (highlight* grammar prefix) prefix)]
+                (swap! stream-memo assoc grammar {:prefix prefix :colored c})
+                c))
 
-         ctail
-         (if (pos? (count tail)) (or (highlight* grammar tail) tail) tail)]
+            ctail
+            (if (pos? (count tail)) (or (highlight* grammar tail) tail) tail)]
 
         (str cprefix ctail)))))
 

@@ -28,11 +28,10 @@
   [row]
   (let [tools (long (or (get row "tools") 0))]
     (str/join " · "
-              (cond->
-                [(cond (flag row "is_killed") "killed"
-                       (not (flag row "enabled")) "disabled"
-                       (flag row "is_connected") "connected"
-                       :else "idle")]
+              (cond-> [(cond (flag row "is_killed") "killed"
+                             (not (flag row "enabled")) "disabled"
+                             (flag row "is_connected") "connected"
+                             :else "idle")]
                 (pos? tools)
                 (conj (str tools (if (= 1 tools) " tool" " tools")))
 
@@ -55,15 +54,14 @@
    Every verb carries its own magit key and group, so the letter a user learns
    belongs to the verb and not to whatever widget happens to paint it."
   [row]
-  (let
-    [http?
-     (some? (get row "url"))
+  (let [http?
+        (some? (get row "url"))
 
-     managed?
-     (flag row "is_managed")
+        managed?
+        (flag row "is_managed")
 
-     authorized?
-     (flag row "is_authorized")]
+        authorized?
+        (flag row "is_authorized")]
 
     (cond-> []
       (flag row "is_killed")
@@ -108,11 +106,10 @@
     {:title (str (get row "name") " · " (server-status row))
      :groups (into []
                    (keep (fn [[group heading]]
-                           (let
-                             [items (into []
-                                          (comp (filter #(= group (:group %)))
-                                                (map #(-> (select-keys % [:key :id :label])
-                                                          (assoc :type :action))))
-                                          actions)]
+                           (let [items (into []
+                                             (comp (filter #(= group (:group %)))
+                                                   (map #(-> (select-keys % [:key :id :label])
+                                                             (assoc :type :action))))
+                                             actions)]
                              (when (seq items) {:title heading :items items}))))
                    transient-groups)}))

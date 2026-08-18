@@ -58,13 +58,12 @@
    Rows past the key pool are dropped rather than rendered unreachable — a
    keyless row in a keyboard-driven band is a lie."
   [drafts]
-  (let
-    [drafts
-     (vec drafts)
+  (let [drafts
+        (vec drafts)
 
-     ordered
-     (concat (filterv #(true? (get % "is_current")) drafts)
-             (filterv #(not (true? (get % "is_current"))) drafts))]
+        ordered
+        (concat (filterv #(true? (get % "is_current")) drafts)
+                (filterv #(not (true? (get % "is_current"))) drafts))]
 
     (mapv (fn [k draft]
             {:key k
@@ -99,9 +98,11 @@
      :groups
      [{:title "Commands"
        :items
-       (cond->
-         [{:key "c" :type :action :id :new-clean :label "New draft from the committed HEAD"}
-          {:key "d" :type :action :id :new-dirty :label "New draft with my uncommitted changes"}]
+       (cond-> [{:key "c" :type :action :id :new-clean :label "New draft from the committed HEAD"}
+                {:key "d"
+                 :type :action
+                 :id :new-dirty
+                 :label "New draft with my uncommitted changes"}]
          (seq rs)
          (conj {:key "s" :type :action :id :switch :label "Switch to another draft…"}
                {:key "k" :type :action :id :abandon :label "Abandon draft…"}))}]}))
@@ -206,11 +207,10 @@
    `:clean?` is the gateway's seed-from-the-COMMITTED-HEAD flag."
   [choice label]
   (when (= :draft (:start-in choice))
-    (when-let
-      [label (some-> label
-                     str
-                     str/trim
-                     not-empty)]
+    (when-let [label (some-> label
+                             str
+                             str/trim
+                             not-empty)]
       {:label label :clean? (boolean (:clean? choice))})))
 
 ;;; ── The `/draft …` slashes are the same band ────────────────────────────────

@@ -33,123 +33,121 @@
    outbox and `~/.vis` are engine surfaces lent to the guest, and a hook able to
    refuse them is a hook able to brick a live session."
   ^String []
-  (let
-    [target
-     (java.io.File. (str (System/getProperty "user.dir")) "target")
+  (let [target
+        (java.io.File. (str (System/getProperty "user.dir")) "target")
 
-     _
-     (.mkdirs target)
+        _
+        (.mkdirs target)
 
-     d
-     (Files/createTempDirectory (p (str target)) "vis-fs-gate-test" (make-array FileAttribute 0))]
+        d
+        (Files/createTempDirectory (p (str target))
+                                   "vis-fs-gate-test"
+                                   (make-array FileAttribute 0))]
 
     (spit (str d "/inside.txt") "ROOT-DATA")
     (str (.toRealPath d (make-array java.nio.file.LinkOption 0)))))
 
-(defdescribe
-  confine-test
-  (it "allows paths under a root (existing AND not-yet-created); denies outside"
-      (let
-        [root
-         (tmp-root)
+(defdescribe confine-test
+             (it "allows paths under a root (existing AND not-yet-created); denies outside"
+                 (let [root
+                       (tmp-root)
 
-         roots-fn
-         (fn []
-           [root])
+                       roots-fn
+                       (fn []
+                         [root])
 
-         confine
-         #(@#'sfs/confine! roots-fn (atom {}) [] nil "file-read" (p %))]
+                       confine
+                       #(@#'sfs/confine! roots-fn (atom {}) [] nil "file-read" (p %))]
 
-        ;; allowed
-        (expect (= (str root "/inside.txt") (str (confine (str root "/inside.txt")))))
-        (expect (= (str root "/sub/new.txt") (str (confine (str root "/sub/new.txt")))))
-        (expect (denied? #(confine "/etc/passwd")))
-        (expect (denied? #(confine (str root "/../etc/passwd")))) ; .. escape
-        (expect (denied? #(confine "/tmp")))))
-  (it "denies a symlink (inside a root) that points OUTSIDE"
-      (let
-        [root
-         (tmp-root)
+                   ;; allowed
+                   (expect (= (str root "/inside.txt") (str (confine (str root "/inside.txt")))))
+                   (expect (= (str root "/sub/new.txt") (str (confine (str root "/sub/new.txt")))))
+                   (expect (denied? #(confine "/etc/passwd")))
+                   (expect (denied? #(confine (str root "/../etc/passwd")))) ; .. escape
+                   (expect (denied? #(confine "/tmp")))))
+             (it
+               "denies a symlink (inside a root) that points OUTSIDE"
+               (let [root
+                     (tmp-root)
 
-         link
-         (str root "/evil")]
+                     link
+                     (str root "/evil")]
 
-        (Files/createSymbolicLink (p link) (p "/etc/passwd") (make-array FileAttribute 0))
-        (expect (denied? #(@#'sfs/confine!
-                            (fn []
-                              [root])
-                            (atom {})
-                            []
-                            nil
-                            "file-read"
-                            (p link))))))
-  (it "fails CLOSED with zero roots (denies everything)"
-      (let [root (tmp-root)]
-        (expect (denied? #(@#'sfs/confine!
-                            (fn []
-                              [])
-                            (atom {})
-                            []
-                            nil
-                            "file-read"
-                            (p (str root "/inside.txt")))))
-        (expect (denied? #(@#'sfs/confine!
-                            (fn []
-                              nil)
-                            (atom {})
-                            []
-                            nil
-                            "file-read"
-                            (p (str root "/inside.txt")))))))
-  (it "allows a path under the OUTBOX dir even though it is outside configured roots"
-      (let
-        [root
-         (tmp-root)
+                 (Files/createSymbolicLink (p link) (p "/etc/passwd") (make-array FileAttribute 0))
+                 (expect (denied? #(@#'sfs/confine!
+                                     (fn []
+                                       [root])
+                                     (atom {})
+                                     []
+                                     nil
+                                     "file-read"
+                                     (p link))))))
+             (it "fails CLOSED with zero roots (denies everything)"
+                 (let [root (tmp-root)]
+                   (expect (denied? #(@#'sfs/confine!
+                                       (fn []
+                                         [])
+                                       (atom {})
+                                       []
+                                       nil
+                                       "file-read"
+                                       (p (str root "/inside.txt")))))
+                   (expect (denied? #(@#'sfs/confine!
+                                       (fn []
+                                         nil)
+                                       (atom {})
+                                       []
+                                       nil
+                                       "file-read"
+                                       (p (str root "/inside.txt")))))))
+             (it "allows a path under the OUTBOX dir even though it is outside configured roots"
+                 (let [root
+                       (tmp-root)
 
-         outbox
-         (str (.toRealPath (Files/createTempDirectory "vis-outbox-t" (make-array FileAttribute 0))
-                           (make-array java.nio.file.LinkOption 0)))
+                       outbox
+                       (str (.toRealPath (Files/createTempDirectory "vis-outbox-t"
+                                                                    (make-array FileAttribute 0))
+                                         (make-array java.nio.file.LinkOption 0)))
 
-         confine
-         #(@#'sfs/confine!
-            (fn []
-              [root])
-            (atom {})
-            [(p outbox)]
-            nil
-            "file-read"
-            (p %))]
+                       confine
+                       #(@#'sfs/confine!
+                          (fn []
+                            [root])
+                          (atom {})
+                          [(p outbox)]
+                          nil
+                          "file-read"
+                          (p %))]
 
-        (expect (= (str outbox "/a.csv") (str (confine (str outbox "/a.csv")))))
-        ;; still denies outside both root and outbox
-        (expect (denied? #(confine "/etc/passwd"))))))
+                   (expect (= (str outbox "/a.csv") (str (confine (str outbox "/a.csv")))))
+                   ;; still denies outside both root and outbox
+                   (expect (denied? #(confine "/etc/passwd"))))))
 
 (defdescribe
   confined-graalpy-fs-test
   (it
     "GraalPy open()/listdir is confined to the root; stdlib still loads"
-    (let
-      [root
-       (tmp-root)
+    (let [root
+          (tmp-root)
 
-       fs
-       (sfs/confined-filesystem (fn []
-                                  [root]))
+          fs
+          (sfs/confined-filesystem (fn []
+                                     [root]))
 
-       io
-       (-> (IOAccess/newBuilder)
-           (.fileSystem fs)
-           (.build))
+          io
+          (-> (IOAccess/newBuilder)
+              (.fileSystem fs)
+              (.build))
 
-       ctx
-       (-> (Context/newBuilder (into-array String ["python"]))
-           (.allowIO io)
-           (.allowAllAccess false)
-           (.build))
+          ctx
+          (-> (Context/newBuilder (into-array String ["python"]))
+              (.allowIO io)
+              (.allowAllAccess false)
+              (.build))
 
-       ev
-       (fn [code]
-         (.eval ctx "python" code))]
+          ev
+          (fn [code]
+            (.eval ctx "python" code))]
 
       (try
         ;; read inside the root works
@@ -171,12 +169,11 @@
 (defn- write-channel!
   "Open `path` for write through `fs`, write `s`, close — driving the outbox tap."
   [^org.graalvm.polyglot.io.FileSystem fs ^java.nio.file.Path path ^String s]
-  (let
-    [ch (.newByteChannel fs
-                         path
-                         #{StandardOpenOption/WRITE StandardOpenOption/CREATE
-                           StandardOpenOption/TRUNCATE_EXISTING}
-                         (make-array FileAttribute 0))]
+  (let [ch (.newByteChannel fs
+                            path
+                            #{StandardOpenOption/WRITE StandardOpenOption/CREATE
+                              StandardOpenOption/TRUNCATE_EXISTING}
+                            (make-array FileAttribute 0))]
     (.write ch (ByteBuffer/wrap (.getBytes s)))
     (.close ch)))
 
@@ -184,38 +181,36 @@
   outbox-tap-test
   (it
     "captures a WRITE under the outbox, but NOT a root write or an outbox read"
-    (let
-      [outdir
-       (Files/createTempDirectory "vis-outbox-tap" (make-array FileAttribute 0))
+    (let [outdir
+          (Files/createTempDirectory "vis-outbox-tap" (make-array FileAttribute 0))
 
-       rootdir
-       ;; A NON-temp root (under the repo): a write here is NOT captured.
-       ;; NB not a createTempDirectory dir — that lives under $TMPDIR, which
-       ;; the widened tap now (correctly) captures, so it wouldn't isolate
-       ;; the "non-outbox root" case.
-       (let [d (java.io.File. "target/vis-outbox-root-test")]
-         (.mkdirs d)
-         (.toPath (.getCanonicalFile d)))
+          rootdir
+          ;; A NON-temp root (under the repo): a write here is NOT captured.
+          ;; NB not a createTempDirectory dir — that lives under $TMPDIR, which
+          ;; the widened tap now (correctly) captures, so it wouldn't isolate
+          ;; the "non-outbox root" case.
+          (let [d (java.io.File. "target/vis-outbox-root-test")]
+            (.mkdirs d)
+            (.toPath (.getCanonicalFile d)))
 
-       sink
-       (atom [])
+          sink
+          (atom [])
 
-       seen
-       (atom #{})
+          seen
+          (atom #{})
 
-       fs
-       (sfs/confined-filesystem (fn []
-                                  [(str rootdir)])
-                                {:dir (str outdir)
-                                 :on-close (fn [p]
-                                             (mc/record-file! p))})]
+          fs
+          (sfs/confined-filesystem (fn []
+                                     [(str rootdir)])
+                                   {:dir (str outdir)
+                                    :on-close (fn [p]
+                                                (mc/record-file! p))})]
 
-      (binding
-        [mc/*attachment-sink*
-         sink
+      (binding [mc/*attachment-sink*
+                sink
 
-         mc/*outbox-seen*
-         seen]
+                mc/*outbox-seen*
+                seen]
 
         (write-channel! fs (.resolve outdir "report.csv") "x,y\n1,2\n")
         ;; write under a normal (non-temp) root — untouched
@@ -232,29 +227,27 @@
         (expect (= "file" (:kind att)))
         (expect (= 8 (:size att))))))
   (it "de-dups the same outbox path re-closed within one block"
-      (let
-        [outdir
-         (Files/createTempDirectory "vis-outbox-dedup" (make-array FileAttribute 0))
+      (let [outdir
+            (Files/createTempDirectory "vis-outbox-dedup" (make-array FileAttribute 0))
 
-         sink
-         (atom [])
+            sink
+            (atom [])
 
-         seen
-         (atom #{})
+            seen
+            (atom #{})
 
-         fs
-         (sfs/confined-filesystem (fn []
-                                    [(str outdir)])
-                                  {:dir (str outdir)
-                                   :on-close (fn [p]
-                                               (mc/record-file! p))})]
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [(str outdir)])
+                                     {:dir (str outdir)
+                                      :on-close (fn [p]
+                                                  (mc/record-file! p))})]
 
-        (binding
-          [mc/*attachment-sink*
-           sink
+        (binding [mc/*attachment-sink*
+                  sink
 
-           mc/*outbox-seen*
-           seen]
+                  mc/*outbox-seen*
+                  seen]
 
           (write-channel! fs (.resolve outdir "a.csv") "1")
           (write-channel! fs (.resolve outdir "a.csv") "22"))
@@ -262,42 +255,39 @@
 
 (defdescribe
   temp-root-tap-test
-  (it
-    "captures a WRITE under a system temp root (/tmp, $TMPDIR), not just $VIS_OUTBOX"
-    (let
-      [outdir
-       (Files/createTempDirectory "vis-tmptap-outbox" (make-array FileAttribute 0))
+  (it "captures a WRITE under a system temp root (/tmp, $TMPDIR), not just $VIS_OUTBOX"
+      (let [outdir
+            (Files/createTempDirectory "vis-tmptap-outbox" (make-array FileAttribute 0))
 
-       sink
-       (atom [])
+            sink
+            (atom [])
 
-       seen
-       (atom #{})
+            seen
+            (atom #{})
 
-       ;; A bogus configured root plus an unrelated outbox dir proves the tap
-       ;; can ONLY fire via the system-temp-root widening.
-       fs
-       (sfs/confined-filesystem (fn []
-                                  ["/no/such/workspace/root"])
-                                {:dir (str outdir)
-                                 :on-close (fn [p]
-                                             (mc/record-file! p))})
+            ;; A bogus configured root plus an unrelated outbox dir proves the tap
+            ;; can ONLY fire via the system-temp-root widening.
+            fs
+            (sfs/confined-filesystem (fn []
+                                       ["/no/such/workspace/root"])
+                                     {:dir (str outdir)
+                                      :on-close (fn [p]
+                                                  (mc/record-file! p))})
 
-       probe
-       (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-" (System/nanoTime) ".csv")]
+            probe
+            (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-" (System/nanoTime) ".csv")]
 
-      (binding
-        [mc/*attachment-sink*
-         sink
+        (binding [mc/*attachment-sink*
+                  sink
 
-         mc/*outbox-seen*
-         seen]
+                  mc/*outbox-seen*
+                  seen]
 
-        (write-channel! fs (p probe) "a,b\n1,2\n"))
-      (let [[att] @sink]
-        (expect (= 1 (count @sink)))
-        (expect (= "text/csv" (:media-type att)))
-        (expect (= "file" (:kind att)))))))
+          (write-channel! fs (p probe) "a,b\n1,2\n"))
+        (let [[att] @sink]
+          (expect (= 1 (count @sink)))
+          (expect (= "text/csv" (:media-type att)))
+          (expect (= "file" (:kind att)))))))
 
 ;; Regression: a file the sandbox merely READ through a write-CAPABLE channel
 ;; (`open(p, "r+")`, `sqlite3.connect`, any library that opens read-write to read)
@@ -307,41 +297,38 @@
   temp-root-read-tap-test
   (it
     "does NOT capture a write-capable channel that only READ"
-    (let
-      [outdir
-       (Files/createTempDirectory "vis-tmptap-readonly" (make-array FileAttribute 0))
+    (let [outdir
+          (Files/createTempDirectory "vis-tmptap-readonly" (make-array FileAttribute 0))
 
-       sink
-       (atom [])
+          sink
+          (atom [])
 
-       seen
-       (atom #{})
+          seen
+          (atom #{})
 
-       fs
-       (sfs/confined-filesystem (fn []
-                                  ["/no/such/workspace/root"])
-                                {:dir (str outdir)
-                                 :on-close (fn [p]
-                                             (mc/record-file! p))})
+          fs
+          (sfs/confined-filesystem (fn []
+                                     ["/no/such/workspace/root"])
+                                   {:dir (str outdir)
+                                    :on-close (fn [p]
+                                                (mc/record-file! p))})
 
-       probe
-       (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-rw-" (System/nanoTime) ".csv")]
+          probe
+          (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-rw-" (System/nanoTime) ".csv")]
 
-      (binding
-        [mc/*attachment-sink*
-         sink
+      (binding [mc/*attachment-sink*
+                sink
 
-         mc/*outbox-seen*
-         seen]
+                mc/*outbox-seen*
+                seen]
 
         (write-channel! fs (p probe) "a,b\n1,2\n")
         (expect (= 1 (count @sink)))
         ;; READ+WRITE open, nothing written: the tap stays disarmed.
-        (let
-          [ch (.newByteChannel fs
-                               (p probe)
-                               #{StandardOpenOption/READ StandardOpenOption/WRITE}
-                               (make-array FileAttribute 0))]
+        (let [ch (.newByteChannel fs
+                                  (p probe)
+                                  #{StandardOpenOption/READ StandardOpenOption/WRITE}
+                                  (make-array FileAttribute 0))]
           (.read ch (java.nio.ByteBuffer/allocate 8))
           (.close ch))
         (expect (= 1 (count @sink)))))))
@@ -349,13 +336,12 @@
 (defdescribe
   confined-fs-temp-roots-test
   (it "ALWAYS allows the system temp dirs (/tmp, $TMPDIR) even when outside configured roots"
-      (let
-        [fs
-         (sfs/confined-filesystem (fn []
-                                    ["/no/such/workspace/root"]))
+      (let [fs
+            (sfs/confined-filesystem (fn []
+                                       ["/no/such/workspace/root"]))
 
-         probe
-         (str (System/getProperty "java.io.tmpdir") "/vis-temproot-" (System/nanoTime) ".txt")]
+            probe
+            (str (System/getProperty "java.io.tmpdir") "/vis-temproot-" (System/nanoTime) ".txt")]
 
         (try
           ;; write + read scratch under $TMPDIR works despite the bogus root
@@ -371,35 +357,34 @@
   confined-fs-vis-always-roots-test
   (it
     "ALWAYS allows all of ~/.vis (including config) even when outside configured roots"
-    (let
-      [home
-       (System/getProperty "user.home")
+    (let [home
+          (System/getProperty "user.home")
 
-       vis-dir
-       (java.io.File. home ".vis")
+          vis-dir
+          (java.io.File. home ".vis")
 
-       ext-dir
-       (java.io.File. vis-dir "extensions")
+          ext-dir
+          (java.io.File. vis-dir "extensions")
 
-       logs-dir
-       (java.io.File. vis-dir "logs")
+          logs-dir
+          (java.io.File. vis-dir "logs")
 
-       _
-       (do (.mkdirs ext-dir) (.mkdirs logs-dir))
+          _
+          (do (.mkdirs ext-dir) (.mkdirs logs-dir))
 
-       ;; A bogus configured root proves the always-on ~/.vis widening is sufficient.
-       fs
-       (sfs/confined-filesystem (fn []
-                                  ["/no/such/workspace/root"]))
+          ;; A bogus configured root proves the always-on ~/.vis widening is sufficient.
+          fs
+          (sfs/confined-filesystem (fn []
+                                     ["/no/such/workspace/root"]))
 
-       ext-probe
-       (str ext-dir "/vis-extroot-" (System/nanoTime) ".py")
+          ext-probe
+          (str ext-dir "/vis-extroot-" (System/nanoTime) ".py")
 
-       log-probe
-       (str logs-dir "/vis-logroot-" (System/nanoTime) ".log")
+          log-probe
+          (str logs-dir "/vis-logroot-" (System/nanoTime) ".log")
 
-       config-probe
-       (str vis-dir "/vis-configroot-" (System/nanoTime) ".edn")]
+          config-probe
+          (str vis-dir "/vis-configroot-" (System/nanoTime) ".edn")]
 
       (try
         ;; Existing extension/log paths still work despite the bogus root.
@@ -421,12 +406,11 @@
    writes plain prefixes and answers with the sentence a refusal carries."
   [root rules]
   (fn [_env _op {:keys [operation path]}]
-    (let
-      [rel
-       (str/replace-first (str path) (str root "/") "")
+    (let [rel
+          (str/replace-first (str path) (str root "/") "")
 
-       intent
-       (if (str/ends-with? (str operation) "-write") :write :read)]
+          intent
+          (if (str/ends-with? (str operation) "-write") :write :read)]
 
       (some (fn [{:keys [prefix access hint]}]
               (when (and (str/starts-with? rel prefix)
@@ -452,11 +436,10 @@
         (with-fs-gate!
           (prefix-rule-hook root [{:prefix "secrets/" :access :none :hint "Use the vault API."}])
           (fn [gate-fn]
-            (let
-              [fs (sfs/confined-filesystem (fn []
-                                             [root])
-                                           nil
-                                           gate-fn)]
+            (let [fs (sfs/confined-filesystem (fn []
+                                                [root])
+                                              nil
+                                              gate-fn)]
               (Files/createDirectory (p (str root "/secrets")) (make-array FileAttribute 0))
               (expect (denied? #(.newByteChannel fs
                                                  (p (str root "/secrets/key.txt"))
@@ -481,17 +464,16 @@
                                            :access :read-only
                                            :hint "Use (br/policy) instead."}])
                        (fn [gate-fn]
-                         (let
-                           [fs (sfs/confined-filesystem (fn []
-                                                          [root])
-                                                        nil
-                                                        gate-fn)
-                            msg (try (.newByteChannel fs
-                                                      (p (str root "/inside.txt"))
-                                                      #{StandardOpenOption/WRITE}
-                                                      (make-array FileAttribute 0))
-                                     nil
-                                     (catch java.io.IOException e (ex-message e)))]
+                         (let [fs (sfs/confined-filesystem (fn []
+                                                             [root])
+                                                           nil
+                                                           gate-fn)
+                               msg (try (.newByteChannel fs
+                                                         (p (str root "/inside.txt"))
+                                                         #{StandardOpenOption/WRITE}
+                                                         (make-array FileAttribute 0))
+                                        nil
+                                        (catch java.io.IOException e (ex-message e)))]
 
                            (expect (some? (.newByteChannel fs
                                                            (p (str root "/inside.txt"))
@@ -504,11 +486,10 @@
         (with-fs-gate! (fn [_env _op _ctx]
                          (throw (ex-info "broken guard" {})))
                        (fn [gate-fn]
-                         (let
-                           [fs (sfs/confined-filesystem (fn []
-                                                          [root])
-                                                        nil
-                                                        gate-fn)]
+                         (let [fs (sfs/confined-filesystem (fn []
+                                                             [root])
+                                                           nil
+                                                           gate-fn)]
                            (expect (denied? #(.newByteChannel fs
                                                               (p (str root "/inside.txt"))
                                                               #{StandardOpenOption/READ}

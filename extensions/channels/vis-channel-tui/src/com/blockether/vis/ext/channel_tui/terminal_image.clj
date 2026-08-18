@@ -118,11 +118,10 @@
   "Fit an image of `{:w :h}` px into `max-cols` × `max-rows` cells,
    aspect-preserving. Returns `{:cols :rows}` (>= 1)."
   [{:keys [w h]} max-cols max-rows]
-  (let
-    [r (TerminalImage/cellSize (int (or w 1))
-                               (int (or h 1))
-                               (int max-cols)
-                               (when max-rows (Integer/valueOf (int max-rows))))]
+  (let [r (TerminalImage/cellSize (int (or w 1))
+                                  (int (or h 1))
+                                  (int max-cols)
+                                  (when max-rows (Integer/valueOf (int max-rows))))]
     {:cols (aget ^ints r 0) :rows (aget ^ints r 1)}))
 
 (defn cell-pixels
@@ -157,24 +156,23 @@
    String never exists — the per-frame path for video playback, where the
    payload changes every frame and nothing can be cached."
   [data {:keys [cols rows crop-top crop-bottom img-w img-h]}]
-  (let
-    [c
-     (int (or cols 0))
+  (let [c
+        (int (or cols 0))
 
-     r
-     (int (or rows 0))
+        r
+        (int (or rows 0))
 
-     ct
-     (int (or crop-top 0))
+        ct
+        (int (or crop-top 0))
 
-     cb
-     (int (or crop-bottom 0))
+        cb
+        (int (or crop-bottom 0))
 
-     iw
-     (int (or img-w 0))
+        iw
+        (int (or img-w 0))
 
-     ih
-     (int (or img-h 0))]
+        ih
+        (int (or img-h 0))]
 
     (if (bytes? data)
       (TerminalImage/encodeKitty ^bytes data c r ct cb iw ih)
@@ -206,17 +204,15 @@
    here would only build a 1.33x String for someone else to re-slice."
   [^java.io.File f {:keys [cols rows]}]
   (try (with-open [src (img/decode f)]
-         (let
-           [target-w (* (long cols) (long (TerminalImage/cellWidth)))
-            target-h (* (long rows) (long (TerminalImage/cellHeight)))
-            iw (img/width src)
-            ih (img/height src)
-            scale (min 1.0 (/ (double target-w) iw) (/ (double target-h) ih))]
+         (let [target-w (* (long cols) (long (TerminalImage/cellWidth)))
+               target-h (* (long rows) (long (TerminalImage/cellHeight)))
+               iw (img/width src)
+               ih (img/height src)
+               scale (min 1.0 (/ (double target-w) iw) (/ (double target-h) ih))]
 
            (if (< scale 1.0)
-             (let
-               [sw (max 1 (Math/round (* iw scale)))
-                sh (max 1 (Math/round (* ih scale)))]
+             (let [sw (max 1 (Math/round (* iw scale)))
+                   sh (max 1 (Math/round (* ih scale)))]
 
                (with-open [scaled (img/resize src sw sh :lanczos3)]
                  {:data (img/encode scaled :png) :w (int sw) :h (int sh)}))
@@ -244,12 +240,11 @@
    MP4) is expensive, so the box-sized PNG is cached by path+mtime+size+box: a
    scroll that re-emits the image never re-decodes."
   [path {:keys [cols rows] :as box}]
-  (let
-    [f
-     (io/file (str path))
+  (let [f
+        (io/file (str path))
 
-     key
-     [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
+        key
+        [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
 
     (or (get @png-transcode-cache key)
         (when-let [r (if (video-source? f nil) (video->png f box) (still->png f box))]
@@ -306,12 +301,11 @@
       ;; iTerm2 accepts any container format as-is (no source-crop; the fitting
       ;; pass shrinks a bottom-overflowing box instead).
       :iterm2
-      (when-let
-        [data (if (video-source? path mime)
-                ;; A clip's own bytes are not an image: iTerm2 would draw a
-                ;; broken download card. Send the poster frame instead.
-                (:data (transcode->png path box))
-                (read-base64 path))]
+      (when-let [data (if (video-source? path mime)
+                        ;; A clip's own bytes are not an image: iTerm2 would draw a
+                        ;; broken download card. Send the poster frame instead.
+                        (:data (transcode->png path box))
+                        (read-base64 path))]
         (encode-iterm2 data box))
 
       nil)))
@@ -370,10 +364,10 @@
    index, never a decode. nil unless the path really is a readable clip."
   [text workspace-root]
   (when-let [s (TerminalImage/pastedVideoPath (str text))]
-    (let
-      [f (io/file s)
-       f
-       (if (.isAbsolute f) f (io/file (str (or workspace-root (System/getProperty "user.dir"))) s))]
+    (let [f (io/file s)
+          f (if (.isAbsolute f)
+              f
+              (io/file (str (or workspace-root (System/getProperty "user.dir"))) s))]
 
       (when (and (.isFile f) (.canRead f))
         (when-let [mime (TerminalImage/probeVideoMime (.getAbsolutePath f))]
@@ -392,9 +386,8 @@
    A dropped MP4/M4V/MOV resolves too — it renders as its poster frame.
    `workspace-root` anchors relative candidates. Never throws."
   [text {:keys [workspace-root]}]
-  (try (or (when-let
-             [{:keys [path media-type filename size size-label]}
-              (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
+  (try (or (when-let [{:keys [path media-type filename size size-label]}
+                      (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
              (let [{:keys [w h]} (or (probe-dimensions path media-type) {})]
                {:path path
                 :mime media-type
@@ -413,10 +406,9 @@
    attachments, so a re-rendered history image survives its original (often
    OS-temp) source path vanishing. Created on demand."
   ^java.io.File []
-  (let
-    [dir (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
-                                       "cache")
-                        "tui-attachments")]
+  (let [dir (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
+                                          "cache")
+                           "tui-attachments")]
     (.mkdirs dir)
     dir))
 
@@ -432,38 +424,35 @@
    bytes even after the original source path is gone. Never throws."
   [att]
   (try
-    (let
-      [media
-       (str (get att "media_type"))
+    (let [media
+          (str (get att "media_type"))
 
-       b64
-       (str (get att "base64"))]
+          b64
+          (str (get att "base64"))]
 
       (when (and (or (str/starts-with? media "image/") (video-mime? media)) (not (str/blank? b64)))
-        (let
-          [ext
-           (or (TerminalImage/extensionForMime media) ".png")
+        (let [ext
+              (or (TerminalImage/extensionForMime media) ".png")
 
-           id
-           (or (not-empty (str (get att "id"))) (str (java.util.UUID/randomUUID)))
+              id
+              (or (not-empty (str (get att "id"))) (str (java.util.UUID/randomUUID)))
 
-           f
-           (java.io.File. (attachment-cache-dir) (str id ext))]
+              f
+              (java.io.File. (attachment-cache-dir) (str id ext))]
 
           (when-not (.isFile f)
             (java.nio.file.Files/write (.toPath f)
                                        ^bytes (.decode (java.util.Base64/getDecoder) b64)
                                        ^"[Ljava.nio.file.OpenOption;"
                                        (make-array java.nio.file.OpenOption 0)))
-          (let
-            [path
-             (.getAbsolutePath f)
+          (let [path
+                (.getAbsolutePath f)
 
-             size
-             (.length f)
+                size
+                (.length f)
 
-             {:keys [w h]}
-             (or (probe-dimensions path media) {})]
+                {:keys [w h]}
+                (or (probe-dimensions path media) {})]
 
             {:path path
              :mime media

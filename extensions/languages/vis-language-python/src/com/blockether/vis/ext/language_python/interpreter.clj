@@ -15,10 +15,9 @@
 (defn- on-path?
   "Is executable `bin` resolvable on PATH?"
   [bin]
-  (let
-    [dirs (str/split (or (System/getenv "PATH") "")
-                     (re-pattern (java.util.regex.Pattern/quote (System/getProperty
-                                                                  "path.separator"))))]
+  (let [dirs (str/split (or (System/getenv "PATH") "")
+                        (re-pattern (java.util.regex.Pattern/quote (System/getProperty
+                                                                     "path.separator"))))]
     (boolean (some (fn [d]
                      (let [f (io/file d bin)]
                        (and (.isFile f) (.canExecute f))))
@@ -96,12 +95,11 @@
    provider's `api_key_command` — there is no shell to quote for, so a path may
    contain spaces). Blank entries are dropped; anything else yields nil."
   [configured]
-  (let
-    [argv (into []
-                (comp (map str) (map str/trim) (remove str/blank?))
-                (cond (string? configured) [configured]
-                      (sequential? configured) configured
-                      :else nil))]
+  (let [argv (into []
+                   (comp (map str) (map str/trim) (remove str/blank?))
+                   (cond (string? configured) [configured]
+                         (sequential? configured) configured
+                         :else nil))]
     (when (seq argv) argv)))
 
 (defn- pin->program
@@ -110,12 +108,11 @@
    project's `vis.yml` means THAT project's interpreter. A bare name such as
    `vis-agent` is left alone for PATH lookup."
   ^String [^String root ^String program]
-  (let
-    [expanded
-     (paths/expand-home program)
+  (let [expanded
+        (paths/expand-home program)
 
-     ^java.io.File f
-     (io/file expanded)]
+        ^java.io.File f
+        (io/file expanded)]
 
     (cond (.isAbsolute f) (.getAbsolutePath f)
           (str/includes? expanded "/") (.getAbsolutePath (io/file root expanded))
@@ -137,13 +134,12 @@
   "The `run_tests` backend `raw-config` pins as `python.runner` (`graalpy` or
    `project`), or nil for anything else. Explicit call arguments still win."
   [raw-config]
-  (let
-    [r (some-> (get raw-config "python")
-               (get "runner")
-               str
-               str/trim
-               str/lower-case
-               not-empty)]
+  (let [r (some-> (get raw-config "python")
+                  (get "runner")
+                  str
+                  str/trim
+                  str/lower-case
+                  not-empty)]
     (when (contains? #{"graalpy" "project"} r) r)))
 
 (defn configured-runner

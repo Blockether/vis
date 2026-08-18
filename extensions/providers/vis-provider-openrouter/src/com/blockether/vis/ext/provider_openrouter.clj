@@ -178,18 +178,17 @@
 (defn- fetch-key-info!
   "GET /api/v1/key -> `{:data {:label .. :usage .. :limit .. :is_free_tier ..}}`."
   [api-key]
-  (let
-    [response
-     (http/get key-info-url
-               {:headers {"Accept" "application/json" "Authorization" (str "Bearer " api-key)}
-                :timeout 30000
-                :throw false})
+  (let [response
+        (http/get key-info-url
+                  {:headers {"Accept" "application/json" "Authorization" (str "Bearer " api-key)}
+                   :timeout 30000
+                   :throw false})
 
-     status
-     (:status response)
+        status
+        (:status response)
 
-     body
-     (:body response)]
+        body
+        (:body response)]
 
     (if (<= 200 status 299)
       (json/read-json body :key-fn keyword)
@@ -204,38 +203,36 @@
    `limit` is uncapped (account credits govern it), so it is reported as an
    unlimited row carrying the usage figure."
   [info]
-  (let
-    [data
-     (or (field info :data) info)
+  (let [data
+        (or (field info :data) info)
 
-     usage
-     (field data :usage)
+        usage
+        (field data :usage)
 
-     limit
-     (field data :limit)
+        limit
+        (field data :limit)
 
-     free?
-     (boolean (field data :is_free_tier))
+        free?
+        (boolean (field data :is_free_tier))
 
-     capped?
-     (number? limit)
+        capped?
+        (number? limit)
 
-     row
-     (cond->
-       {:id :openrouter-credits
-        :label "OpenRouter credits"
-        :scope :account
-        :kind :credits
-        :precision :exact
-        :source :provider-api
-        :is-unlimited (not capped?)}
-       (number? usage)
-       (assoc :used (double usage))
+        row
+        (cond-> {:id :openrouter-credits
+                 :label "OpenRouter credits"
+                 :scope :account
+                 :kind :credits
+                 :precision :exact
+                 :source :provider-api
+                 :is-unlimited (not capped?)}
+          (number? usage)
+          (assoc :used (double usage))
 
-       capped?
-       (assoc :limit
-         (double limit) :remaining
-         (double (max 0.0 (- (double limit) (double (or usage 0)))))))]
+          capped?
+          (assoc :limit
+            (double limit) :remaining
+            (double (max 0.0 (- (double limit) (double (or usage 0)))))))]
 
     (cond-> {:limits [row]}
       free?
@@ -274,12 +271,11 @@
   "Non-blocking auth flow: the CLI dispatcher captures stdin/stdout, so we
    persist an env-var key when present and otherwise print instructions."
   [printer-fn]
-  (let
-    [print!
-     (or printer-fn (constantly nil))
+  (let [print!
+        (or printer-fn (constantly nil))
 
-     existing
-     (detect-key)]
+        existing
+        (detect-key)]
 
     (cond (and existing (contains? #{:config :auth-file} (:source existing)))
           (do (print! (str "  Already authenticated with " LABEL "."))
@@ -307,18 +303,17 @@
 
 (defn- catalog-entry
   [m]
-  (let
-    [top
-     (field m :top_provider)
+  (let [top
+        (field m :top_provider)
 
-     params
-     (set (field m :supported_parameters))
+        params
+        (set (field m :supported_parameters))
 
-     context
-     (or (field top :context_length) (field m :context_length))
+        context
+        (or (field top :context_length) (field m :context_length))
 
-     output
-     (field top :max_completion_tokens)]
+        output
+        (field top :max_completion_tokens)]
 
     (cond-> {}
       (number? context)
@@ -338,9 +333,9 @@
    catalog stays the source of truth for context windows - nothing is pinned in
    this file. Never throws; an unreachable catalog yields `{}`."
   []
-  (try (let
-         [response (http/get catalog-url
-                             {:headers {"Accept" "application/json"} :timeout 15000 :throw false})]
+  (try (let [response (http/get
+                        catalog-url
+                        {:headers {"Accept" "application/json"} :timeout 15000 :throw false})]
          (if-not (<= 200 (:status response) 299)
            {}
            (into {}

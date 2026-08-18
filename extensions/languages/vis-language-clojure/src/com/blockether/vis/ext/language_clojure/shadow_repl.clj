@@ -94,16 +94,15 @@
    live `watch`; `:target` is that build's shadow target. A plain JVM nREPL
    answers `:shadow? false`, and an unreachable one adds `:error`."
   [{:keys [host port build timeout-ms]}]
-  (let
-    [r
-     (try (nrepl-client/eval! {:host (or host "localhost")
-                               :port port
-                               :code (probe-form build)
-                               :timeout-ms (or timeout-ms probe-timeout-ms)})
-          (catch Throwable e {"error_message" (.getMessage e)}))
+  (let [r
+        (try (nrepl-client/eval! {:host (or host "localhost")
+                                  :port port
+                                  :code (probe-form build)
+                                  :timeout-ms (or timeout-ms probe-timeout-ms)})
+             (catch Throwable e {"error_message" (.getMessage e)}))
 
-     v
-     (read-value r)]
+        v
+        (read-value r)]
 
     (if (map? v)
       {:shadow? (boolean (:shadow v))
@@ -131,12 +130,11 @@
    shadow-cljs server shares that session, so a sibling build's selection owns
    this one's next eval."
   [{:keys [host port build]}]
-  (let
-    [host
-     (or host "localhost")
+  (let [host
+        (or host "localhost")
 
-     s
-     (get @selections [host port])]
+        s
+        (get @selections [host port])]
 
     (boolean (and (:session s)
                   (= (:session s) (nrepl-client/session-token host port))
@@ -155,24 +153,23 @@
    Answers `{:selected? true}` — recording the selection for `selected?` — or
    `{:selected? false :message …}` with the server's own reason."
   [{:keys [host port build timeout-ms]}]
-  (let
-    [host
-     (or host "localhost")
+  (let [host
+        (or host "localhost")
 
-     timeout-ms
-     (or timeout-ms probe-timeout-ms)
+        timeout-ms
+        (or timeout-ms probe-timeout-ms)
 
-     _
-     (try (nrepl-client/eval! {:host host :port port :code ":cljs/quit" :timeout-ms timeout-ms})
-          (catch Throwable _ nil))
+        _
+        (try (nrepl-client/eval! {:host host :port port :code ":cljs/quit" :timeout-ms timeout-ms})
+             (catch Throwable _ nil))
 
-     r
-     (try (nrepl-client/eval!
-            {:host host
-             :port port
-             :code (str "(shadow.cljs.devtools.api/nrepl-select " (pr-str (keyword build)) ")")
-             :timeout-ms timeout-ms})
-          (catch Throwable e {"error_message" (.getMessage e)}))]
+        r
+        (try (nrepl-client/eval!
+               {:host host
+                :port port
+                :code (str "(shadow.cljs.devtools.api/nrepl-select " (pr-str (keyword build)) ")")
+                :timeout-ms timeout-ms})
+             (catch Throwable e {"error_message" (.getMessage e)}))]
 
     ;; shadow answers `[:selected :app]`; anything else (an eval-error carrying
     ;; `watch for build not running`, a connect failure) leaves the session in
@@ -241,20 +238,18 @@
    when the build has no runtime; a build that can no longer be selected answers
    `{:selected? false :message …}` and evaluates NOTHING."
   [{:keys [host port build target]} eval-opts]
-  (let
-    [host
-     (or host "localhost")
+  (let [host
+        (or host "localhost")
 
-     sel
-     (when-not (selected? {:host host :port port :build build})
-       (select! {:host host :port port :build build}))]
+        sel
+        (when-not (selected? {:host host :port port :build build})
+          (select! {:host host :port port :build build}))]
 
     (if (and sel (not (:selected? sel)))
       {:selected? false :message (:message sel)}
-      (let
-        [r (nrepl-client/eval! (assoc eval-opts
-                                 :host host
-                                 :port port))]
+      (let [r (nrepl-client/eval! (assoc eval-opts
+                                    :host host
+                                    :port port))]
         (cond-> {:selected? true :result r}
           (no-runtime? r)
           (assoc :message (runtime-hint build target)))))))

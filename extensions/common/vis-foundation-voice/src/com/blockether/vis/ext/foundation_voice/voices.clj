@@ -50,13 +50,12 @@
    Lower case, one dash between words, nothing else: the id travels through a
    URL path, a CLI argument and a JSON field, and `nil` when nothing survives."
   [voice-name]
-  (let
-    [slug (-> (str voice-name)
-              str/trim
-              str/lower-case
-              (str/replace #"[^a-z0-9]+" "-")
-              (str/replace #"^-+" "")
-              (str/replace #"-+$" ""))]
+  (let [slug (-> (str voice-name)
+                 str/trim
+                 str/lower-case
+                 (str/replace #"[^a-z0-9]+" "-")
+                 (str/replace #"^-+" "")
+                 (str/replace #"-+$" ""))]
     (when-not (str/blank? slug) (subs slug 0 (min 48 (count slug))))))
 
 ;; RIFF/WAVE - the one format read without help
@@ -94,37 +93,35 @@
    assumed at offset 36: a recorder that writes `LIST` or `fact` before `data`
    is still an ordinary WAV file."
   [^File file]
-  (let
-    [data
-     (Files/readAllBytes (.toPath file))
+  (let [data
+        (Files/readAllBytes (.toPath file))
 
-     len
-     (alength ^bytes data)
+        len
+        (alength ^bytes data)
 
-     buf
-     (little-endian data)]
+        buf
+        (little-endian data)]
 
     (when (or (< len 44) (not= "RIFF" (four-cc data 0)) (not= "WAVE" (four-cc data 8)))
       (throw (ex-info "That file is not a RIFF/WAVE recording"
                       {:type :voice-tts/clip-not-wav :path (str file)})))
-    (loop
-      [pos
-       12
+    (loop [pos
+           12
 
-       tag
-       0
+           tag
+           0
 
-       channels
-       0
+           channels
+           0
 
-       rate
-       0
+           rate
+           0
 
-       bits
-       0
+           bits
+           0
 
-       audio
-       nil]
+           audio
+           nil]
 
       (if (> (+ pos 8) len)
         (do (when (zero? rate) (unsupported-encoding! "a WAV file with no format chunk"))
@@ -134,21 +131,20 @@
             (when (or (nil? audio) (zero? (alength ^shorts audio)))
               (unsupported-encoding! "a WAV file with no audio in it"))
             {:sample-rate rate :channels (max 1 channels) :samples audio})
-        (let
-          [id
-           (four-cc data pos)
+        (let [id
+              (four-cc data pos)
 
-           size
-           (bit-and (long (.getInt buf (+ pos 4))) 0xFFFFFFFF)
+              size
+              (bit-and (long (.getInt buf (+ pos 4))) 0xFFFFFFFF)
 
-           body
-           (+ pos 8)
+              body
+              (+ pos 8)
 
-           size
-           (min size (- len body))
+              size
+              (min size (- len body))
 
-           next-pos
-           (+ body size (if (odd? size) 1 0))]
+              next-pos
+              (+ body size (if (odd? size) 1 0))]
 
           (cond (= "fmt " id) (recur next-pos
                                      (bit-and (long (.getShort buf body)) 0xFFFF)
@@ -156,12 +152,11 @@
                                      (long (.getInt buf (+ body 4)))
                                      (bit-and (long (.getShort buf (+ body 14))) 0xFFFF)
                                      audio)
-                (= "data" id) (let
-                                [frames
-                                 (quot size 2)
+                (= "data" id) (let [frames
+                                    (quot size 2)
 
-                                 shorts
-                                 (short-array frames)]
+                                    shorts
+                                    (short-array frames)]
 
                                 (dotimes [i frames]
                                   (aset shorts i (.getShort buf (+ body (* 2 i)))))
@@ -173,18 +168,17 @@
    are averaged rather than one of them dropped, so a recording panned to one
    side does not import as silence. Trimmed to [[max-clip-seconds]]."
   ^shorts [{:keys [channels sample-rate ^shorts samples]}]
-  (let
-    [channels
-     (long (max 1 (long channels)))
+  (let [channels
+        (long (max 1 (long channels)))
 
-     frames
-     (long (quot (alength samples) channels))
+        frames
+        (long (quot (alength samples) channels))
 
-     kept
-     (long (min frames (* (long sample-rate) (long max-clip-seconds))))
+        kept
+        (long (min frames (* (long sample-rate) (long max-clip-seconds))))
 
-     out
-     (short-array kept)]
+        out
+        (short-array kept)]
 
     (dotimes [i kept]
       (let [base (* i channels)]
@@ -200,15 +194,14 @@
   "Write mono 16-bit PCM. The header is built here rather than by a library
    because it is 44 bytes and this is the only place Vis writes one."
   [^File file ^shorts samples ^long sample-rate]
-  (let
-    [frames
-     (alength samples)
+  (let [frames
+        (alength samples)
 
-     payload
-     (* 2 frames)
+        payload
+        (* 2 frames)
 
-     buf
-     (little-endian (byte-array (+ 44 payload)))]
+        buf
+        (little-endian (byte-array (+ 44 payload)))]
 
     (.put buf (.getBytes "RIFF" StandardCharsets/US_ASCII))
     (.putInt buf (int (+ 36 payload)))
@@ -237,12 +230,11 @@
    missing or unreadable is still a voice - the WAV is the voice - so the id
    stands in for everything else rather than the whole catalogue failing."
   [id]
-  (let
-    [f
-     (meta-file id)
+  (let [f
+        (meta-file id)
 
-     stored
-     (when (.isFile f) (try (edn/read-string (slurp f)) (catch Throwable _ nil)))]
+        stored
+        (when (.isFile f) (try (edn/read-string (slurp f)) (catch Throwable _ nil)))]
 
     (merge {:id id :label id} (when (map? stored) stored))))
 
@@ -250,15 +242,14 @@
   "The imported voice with `id`, or nil. `:clip` is the absolute path of the
    recording, which is what the engine needs and what nobody else should read."
   [id]
-  (let
-    [id
-     (some-> id
-             name
-             not-empty)
+  (let [id
+        (some-> id
+                name
+                not-empty)
 
-     f
-     (some-> id
-             clip-file)]
+        f
+        (some-> id
+                clip-file)]
 
     (when (and f (.isFile ^File f))
       (assoc (read-meta id)
@@ -286,17 +277,12 @@
   [^File file]
   (if (wav? file)
     (decode-wav file)
-    (let
-      [ffmpeg
-       (some #(let
-                [f
-                 (io/file % "ffmpeg")]
+    (let [ffmpeg
+          (some #(let [f (io/file % "ffmpeg")] (when (.canExecute f) (str f)))
+                (str/split (str (System/getenv "PATH")) (re-pattern File/pathSeparator)))
 
-                (when (.canExecute f) (str f)))
-             (str/split (str (System/getenv "PATH")) (re-pattern File/pathSeparator)))
-
-       converted
-       (File/createTempFile "vis-voice-import" ".wav")]
+          converted
+          (File/createTempFile "vis-voice-import" ".wav")]
 
       (when-not ffmpeg
         (.delete converted)
@@ -306,19 +292,18 @@
                              (.getName file)
                              " -ac 1 -c:a pcm_s16le clip.wav")
                         {:type :voice-tts/clip-not-wav :path (str file)})))
-      (try (let
-             [^java.util.List command
-              [ffmpeg "-v" "error" "-y" "-i" (str file) "-ac" "1" "-c:a" "pcm_s16le"
-               (str converted)]
+      (try (let [^java.util.List command
+                 [ffmpeg "-v" "error" "-y" "-i" (str file) "-ac" "1" "-c:a" "pcm_s16le"
+                  (str converted)]
 
-              ^Process process
-              (.start (doto (ProcessBuilder. command) (.redirectErrorStream true)))
+                 ^Process process
+                 (.start (doto (ProcessBuilder. command) (.redirectErrorStream true)))
 
-              output
-              (slurp (.getInputStream process))
+                 output
+                 (slurp (.getInputStream process))
 
-              code
-              (.waitFor process)]
+                 code
+                 (.waitFor process)]
 
              (when-not (zero? code)
                (throw (ex-info (str "ffmpeg could not read that recording: " (str/trim output))
@@ -338,15 +323,14 @@
    rate kept - so that everything downstream reads one shape and the engine
    never meets a file format at synthesis time."
   [{:keys [path voice-name language text]}]
-  (let
-    [file
-     (io/file (str path))
+  (let [file
+        (io/file (str path))
 
-     stem
-     (when (.isFile file) (str/replace (.getName file) #"\.[A-Za-z0-9]+$" ""))
+        stem
+        (when (.isFile file) (str/replace (.getName file) #"\.[A-Za-z0-9]+$" ""))
 
-     id
-     (or (voice-id voice-name) (voice-id stem))]
+        id
+        (or (voice-id voice-name) (voice-id stem))]
 
     (when-not (.isFile file)
       (throw (ex-info (str "No recording at " path)
@@ -359,40 +343,37 @@
     (when-not id
       (throw (ex-info "A voice needs a name with a letter or a digit in it"
                       {:type :voice-tts/voice-name-invalid :name voice-name})))
-    (let
-      [decoded
-       (source-clip! file)
+    (let [decoded
+          (source-clip! file)
 
-       samples
-       (mono-16 decoded)
+          samples
+          (mono-16 decoded)
 
-       rate
-       (long (:sample-rate decoded))
+          rate
+          (long (:sample-rate decoded))
 
-       seconds
-       (/ (double (alength ^shorts samples)) (double rate))]
+          seconds
+          (/ (double (alength ^shorts samples)) (double rate))]
 
       (when (< seconds (double min-clip-seconds))
         (throw (ex-info (format "That recording is %.1f seconds long: too short to imitate a voice"
                                 seconds)
                         {:type :voice-tts/clip-too-short :seconds seconds})))
       (io/make-parents (clip-file id))
-      (let
-        [staged
-         (File/createTempFile "vis-voice" ".wav" (io/file (voices-dir)))
+      (let [staged
+            (File/createTempFile "vis-voice" ".wav" (io/file (voices-dir)))
 
-         voice
-         (cond->
-           {:id id
-            :label (or (not-empty (str/trim (str voice-name))) id)
-            :sample-rate rate
-            :seconds (/ (Math/round (* 10.0 seconds)) 10.0)
-            :imported-at (str (java.time.Instant/now))}
-           (not-empty (str language))
-           (assoc :language (str/trim (str language)))
+            voice
+            (cond-> {:id id
+                     :label (or (not-empty (str/trim (str voice-name))) id)
+                     :sample-rate rate
+                     :seconds (/ (Math/round (* 10.0 seconds)) 10.0)
+                     :imported-at (str (java.time.Instant/now))}
+              (not-empty (str language))
+              (assoc :language (str/trim (str language)))
 
-           (not-empty (str text))
-           (assoc :clip-text (str/trim (str text))))]
+              (not-empty (str text))
+              (assoc :clip-text (str/trim (str text))))]
 
         (write-wav! staged samples rate)
         (Files/move (.toPath staged)
@@ -408,14 +389,13 @@
   "Delete an imported voice. True when there was one to delete: the clip is the
    voice, so removing the file removes it from every catalogue at once."
   [id]
-  (let
-    [id
-     (some-> id
-             name
-             not-empty)
+  (let [id
+        (some-> id
+                name
+                not-empty)
 
-     clip
-     (some-> id
-             clip-file)]
+        clip
+        (some-> id
+                clip-file)]
 
     (boolean (when (and clip (.isFile ^File clip)) (.delete (meta-file id)) (.delete ^File clip)))))

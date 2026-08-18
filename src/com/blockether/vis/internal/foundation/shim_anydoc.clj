@@ -106,11 +106,10 @@
    cache is inside BOTH bounds: at most `cache-entries` documents, holding at
    most `cache-total-budget` characters between them."
   [state key payload]
-  (loop
-    [state (-> state
-               (assoc-in [:entries key] payload)
-               (assoc-in [:chars key] (entry-chars payload))
-               (cache-take key))]
+  (loop [state (-> state
+                   (assoc-in [:entries key] payload)
+                   (assoc-in [:chars key] (entry-chars payload))
+                   (cache-take key))]
     (if (and (<= (count (:order state)) (long cache-entries))
              (<= (long (reduce + 0 (vals (:chars state)))) (long cache-total-budget)))
       state
@@ -123,9 +122,9 @@
 (defn- cached
   "`(f)`, memoized on `key`. Misses that fit the budget become the new MRU entry."
   [key f]
-  (if-let
-    [hit (get-in (swap! conversion-cache #(cond-> % (contains? (:entries %) key) (cache-take key)))
-                 [:entries key])]
+  (if-let [hit (get-in (swap! conversion-cache #(cond-> % (contains? (:entries %) key) (cache-take
+                                                                                         key)))
+                       [:entries key])]
     hit
     (let [payload (f)]
       (when (<= (entry-chars payload) (long cache-entry-budget))
@@ -187,20 +186,19 @@
    plain text, its blocks and (for a PDF) its page count — the structure every
    citation is addressed in."
   [^bytes raw format file-name with-assets max-assets with-blocks]
-  (let
-    [opts
-     (cond-> (doc-opts format file-name)
-       with-assets
-       (assoc :assets true)
+  (let [opts
+        (cond-> (doc-opts format file-name)
+          with-assets
+          (assoc :assets true)
 
-       (pos? (long max-assets))
-       (assoc :max-assets (long max-assets))
+          (pos? (long max-assets))
+          (assoc :max-assets (long max-assets))
 
-       with-blocks
-       (assoc :blocks true))
+          with-blocks
+          (assoc :blocks true))
 
-     {:keys [source chars markdown text blocks pages assets] doc-format :format}
-     (im/read-document raw opts)]
+        {:keys [source chars markdown text blocks pages assets] doc-format :format}
+        (im/read-document raw opts)]
 
     {"format" (some-> doc-format
                       name)
@@ -214,12 +212,11 @@
 
 (defn- read-document-wire
   [encoded format file-name with-assets max-assets with-blocks]
-  (let
-    [raw
-     (decode64 encoded)
+  (let [raw
+        (decode64 encoded)
 
-     max-assets
-     (long (or max-assets 0))]
+        max-assets
+        (long (or max-assets 0))]
 
     (cached
       [(sha256 raw) (str format) (str file-name) (boolean with-assets) max-assets
@@ -228,9 +225,8 @@
 
 (defn- detect-document-wire
   [encoded format file-name]
-  (let
-    [{:keys [source formats] doc-format :format} (im/document-format (decode64 encoded)
-                                                                     (doc-opts format file-name))]
+  (let [{:keys [source formats] doc-format :format}
+        (im/document-format (decode64 encoded) (doc-opts format file-name))]
     {"format" (some-> doc-format
                       name)
      "source" source

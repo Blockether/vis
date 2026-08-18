@@ -58,20 +58,17 @@
   "Split a typed command line into argv, honoring single and double quotes so a
    path or a flag value containing a space survives as ONE argument."
   [line]
-  (let
-    [flush (fn [^StringBuilder sb out]
-             (if (pos? (.length sb)) (conj out (.toString sb)) out))]
-    (loop
-      [cs (seq (str line))
-       sb (StringBuilder.)
-       ^Character q nil
-       out []]
+  (let [flush (fn [^StringBuilder sb out]
+                (if (pos? (.length sb)) (conj out (.toString sb)) out))]
+    (loop [cs (seq (str line))
+           sb (StringBuilder.)
+           ^Character q nil
+           out []]
 
       (if (nil? cs)
         (flush sb out)
-        (let
-          [c (char (first cs))
-           r (next cs)]
+        (let [c (char (first cs))
+              r (next cs)]
 
           (cond (and q (= c q)) (recur r sb nil out)
                 (some? q) (recur r (.append sb c) q out)
@@ -86,16 +83,15 @@
    field means \"leave whatever the gateway already stores\", which keeps a
    redacted secret alive across an edit."
   [text]
-  (let
-    [pairs (into {}
-                 (comp (map str/trim)
-                       (remove str/blank?)
-                       (keep (fn [entry]
-                               (let [i (str/index-of entry "=")]
-                                 (when (and i (pos? (long i)))
-                                   [(str/trim (subs entry 0 (long i)))
-                                    (str/trim (subs entry (inc (long i))))])))))
-                 (str/split (str text) #"[\n,]"))]
+  (let [pairs (into {}
+                    (comp (map str/trim)
+                          (remove str/blank?)
+                          (keep (fn [entry]
+                                  (let [i (str/index-of entry "=")]
+                                    (when (and i (pos? (long i)))
+                                      [(str/trim (subs entry 0 (long i)))
+                                       (str/trim (subs entry (inc (long i))))])))))
+                    (str/split (str text) #"[\n,]"))]
     (when (seq pairs) pairs)))
 
 (defn kv->text
@@ -128,15 +124,14 @@
    transport owns are sent and blank optionals are dropped, so an edit that
    leaves the header field empty preserves the secret the daemon holds."
   [{:keys [transport command-line cwd url env headers timeout-ms is-enabled]}]
-  (let
-    [http?
-     (= "streamable_http" transport)
+  (let [http?
+        (= "streamable_http" transport)
 
-     argv
-     (tokenize-command command-line)
+        argv
+        (tokenize-command command-line)
 
-     timeout
-     (parse-long (str/trim (str timeout-ms)))]
+        timeout
+        (parse-long (str/trim (str timeout-ms)))]
 
     (cond-> {"transport" (if http? "streamable_http" "stdio") "enabled" (boolean is-enabled)}
       (and (not http?) (seq argv))
@@ -203,12 +198,11 @@
    dialog spent four lines of prose on rides IN the field as a placeholder — the
    only part of that prose that ever answered the question."
   [read! transport]
-  (let
-    [timeout [:timeout-ms
-              (fn [f]
-                (read! "Timeout in ms (blank for the default):"
-                       {:initial (str (:timeout-ms f))
-                        :placeholder "how long the gateway waits for this server"}))]]
+  (let [timeout [:timeout-ms
+                 (fn [f]
+                   (read! "Timeout in ms (blank for the default):"
+                          {:initial (str (:timeout-ms f))
+                           :placeholder "how long the gateway waits for this server"}))]]
     (if (= "streamable_http" transport)
       [[:url
         (fn [f]
@@ -241,29 +235,29 @@
    and the existing sanitized row for an edit. Returns `[name spec]`, or nil the
    moment the user escapes a prompt."
   [q row]
-  (let
-    [form
-     (row->form row)
+  (let [form
+        (row->form row)
 
-     heading
-     (if row (str "MCP · edit " (get row "name")) "MCP · add server")]
+        heading
+        (if row (str "MCP · edit " (get row "name")) "MCP · add server")]
 
-    (when-let
-      [transport
-       (if row
-         (:transport form)
-         ((:choose! q)
-           heading
-           [{:key \s :id "stdio" :label "stdio — the gateway runs a local command"}
-            {:key \h :id "streamable_http" :label "http — a remote streamable HTTP endpoint"}]))]
-      (when-let
-        [server
-         (if row
-           (str (get row "name"))
-           (some-> ((:read! q) "Name:" {:placeholder "a short id for this server, e.g. filesystem"})
-                   str/trim))]
-        (when-let
-          [filled (ask-all (assoc form :transport transport) (field-prompts (:read! q) transport))]
+    (when-let [transport
+               (if row
+                 (:transport form)
+                 ((:choose! q)
+                   heading
+                   [{:key \s :id "stdio" :label "stdio — the gateway runs a local command"}
+                    {:key \h
+                     :id "streamable_http"
+                     :label "http — a remote streamable HTTP endpoint"}]))]
+      (when-let [server (if row
+                          (str (get row "name"))
+                          (some-> ((:read! q)
+                                    "Name:"
+                                    {:placeholder "a short id for this server, e.g. filesystem"})
+                                  str/trim))]
+        (when-let [filled (ask-all (assoc form :transport transport)
+                                   (field-prompts (:read! q) transport))]
           [server (form->spec filled)])))))
 
 (defn save-server!
@@ -277,14 +271,13 @@
     (try (when-let [[server spec] (collect-spec! q row)]
            (if-let [problem (spec-problem server spec)]
              ((:note! q) title problem)
-             (let
-               [verdict (try (vis/gateway-mcp-test-server! server spec)
-                             (catch Exception e {"error" (ex-message e)}))
-                tools (tool-count verdict)
-                summary (if (get verdict "is_connected")
-                          (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
-                          (str "Could not connect: "
-                               (or (get verdict "error") "the server did not answer")))]
+             (let [verdict (try (vis/gateway-mcp-test-server! server spec)
+                                (catch Exception e {"error" (ex-message e)}))
+                   tools (tool-count verdict)
+                   summary (if (get verdict "is_connected")
+                             (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
+                             (str "Could not connect: "
+                                  (or (get verdict "error") "the server did not answer")))]
 
                (when ((:confirm! q)
                        (str (if row "Save changes to `" "Add MCP server `") server "`?")
@@ -305,61 +298,59 @@
    itself, so an empty paste is answered by a poll; otherwise the user pastes the
    final redirect URL back and the daemon exchanges it."
   [q server]
-  (let
-    [flow
-     (vis/gateway-mcp-auth-start! server)
+  (let [flow
+        (vis/gateway-mcp-auth-start! server)
 
-     flow-id
-     (get flow "flow_id")
+        flow-id
+        (get flow "flow_id")
 
-     url
-     (get flow "url")]
+        url
+        (get flow "url")]
 
     (if-not (and flow-id url)
       ((:note! q) title "No authorization URL came back from vis.")
-      (do (opener/open! url)
-          (let
-            [pasted
-             ((:read! q)
-               (str "Signing in to `" server "` — paste the final browser URL, or Enter to check:")
-               {:placeholder url})
+      (do
+        (opener/open! url)
+        (let [pasted
+              ((:read! q)
+                (str "Signing in to `" server "` — paste the final browser URL, or Enter to check:")
+                {:placeholder url})
 
-             input
-             (some-> pasted
-                     str/trim)
+              input
+              (some-> pasted
+                      str/trim)
 
-             verdict
-             (if (str/blank? input)
-               (vis/gateway-mcp-auth-poll! server flow-id)
-               (vis/gateway-mcp-auth-complete! server flow-id input))
+              verdict
+              (if (str/blank? input)
+                (vis/gateway-mcp-auth-poll! server flow-id)
+                (vis/gateway-mcp-auth-complete! server flow-id input))
 
-             status
-             (get verdict "status")]
+              status
+              (get verdict "status")]
 
-            (cond
-              ;; Success is silent: parity with the provider bands.
-              (= "ok" status) (do (vis/gateway-mcp-start-server! server) nil)
-              (= "pending" status)
-              (do (vis/gateway-mcp-auth-cancel! server flow-id)
-                  ((:note! q) title "Sign-in was not finished — the flow was cancelled."))
-              :else ((:note! q)
-                      title
-                      (str "Auth failed: " (or (get verdict "error") "authorization failed")))))))))
+          (cond
+            ;; Success is silent: parity with the provider bands.
+            (= "ok" status) (do (vis/gateway-mcp-start-server! server) nil)
+            (= "pending" status)
+            (do (vis/gateway-mcp-auth-cancel! server flow-id)
+                ((:note! q) title "Sign-in was not finished — the flow was cancelled."))
+            :else ((:note! q)
+                    title
+                    (str "Auth failed: " (or (get verdict "error") "authorization failed")))))))))
 
 (defn run-action!
   "Execute one palette verb against one server IN THE CALLER'S BAND. Every gateway
    rejection (409 for a hand-written server, 404 for an unknown one) comes back as
    a line in that same band, never as a window over the list it was fired from."
   [^TerminalScreen screen g region row action]
-  (let
-    [region
-     (dlg/host-band-region screen region)
+  (let [region
+        (dlg/host-band-region screen region)
 
-     q
-     (band-questions screen g region)
+        q
+        (band-questions screen g region)
 
-     server
-     (str (get row "name"))]
+        server
+        (str (get row "name"))]
 
     (try (case action
            :kill

@@ -44,89 +44,90 @@
 ;; ── live REPL subprocess ─────────────────────────────────────────────────────
 (defdescribe
   repl-lifecycle-test
-  (it "starts, evaluates TS, persists globals across evals, captures output + errors, stops"
-      (when (has-bun?)
-        (let [dir (.getPath (tmp-dir))]
-          (try (expect (= "up" (get (repl/start! dir {:session-id test-session-id}) "status")))
-               ;; last expression's value is captured (REPL semantics)
-               (expect (= "2" (get (repl/eval! dir "1+1" 15000) "value")))
-               ;; const/let PERSIST across separate evals — a real session
-               (repl/eval! dir "const x: number = 21" 15000)
-               (expect (= "42" (get (repl/eval! dir "x * 2" 15000) "value")))
-               ;; top-level await just works
-               (expect (= "99" (get (repl/eval! dir "await Promise.resolve(99)" 15000) "value")))
-               ;; stdout is captured, not leaked into the protocol
-               (let [r (repl/eval! dir "console.log('hi'); 5" 15000)]
-                 (expect (= "hi\n" (get r "out")))
-                 (expect (get r "ok")))
-               ;; an exception is captured, not thrown into Clojure
-               (let [r (repl/eval! dir "JSON.parse('nope')" 15000)]
-                 (expect (false? (get r "ok")))
-                 (expect (re-find #"SyntaxError" (str (get r "exc")))))
-                (let [up (repl/status dir)]
-                  (expect (= "up" (get up "status")))
-                  ;; ONE status shape for every language: a key rides only where
-                  ;; it MEANS something
-                  (expect (true? (get up "running")))
-                  (expect (get up "pid")))
-                (repl/stop! dir)
-                (let [down (repl/status dir)]
-                  (expect (= "down" (get down "status")))
-                  (expect (not (contains? down "running")))
-                  (expect (not (contains? down "pid")))
-                  (expect (not (contains? down "cmd"))))
-               (finally (repl/stop! dir))))))
+  (it
+    "starts, evaluates TS, persists globals across evals, captures output + errors, stops"
+    (when (has-bun?)
+      (let [dir (.getPath (tmp-dir))]
+        (try (expect (= "up" (get (repl/start! dir {:session-id test-session-id}) "status")))
+             ;; last expression's value is captured (REPL semantics)
+             (expect (= "2" (get (repl/eval! dir "1+1" 15000) "value")))
+             ;; const/let PERSIST across separate evals — a real session
+             (repl/eval! dir "const x: number = 21" 15000)
+             (expect (= "42" (get (repl/eval! dir "x * 2" 15000) "value")))
+             ;; top-level await just works
+             (expect (= "99" (get (repl/eval! dir "await Promise.resolve(99)" 15000) "value")))
+             ;; stdout is captured, not leaked into the protocol
+             (let [r (repl/eval! dir "console.log('hi'); 5" 15000)]
+               (expect (= "hi\n" (get r "out")))
+               (expect (get r "ok")))
+             ;; an exception is captured, not thrown into Clojure
+             (let [r (repl/eval! dir "JSON.parse('nope')" 15000)]
+               (expect (false? (get r "ok")))
+               (expect (re-find #"SyntaxError" (str (get r "exc")))))
+             (let [up (repl/status dir)]
+               (expect (= "up" (get up "status")))
+               ;; ONE status shape for every language: a key rides only where
+               ;; it MEANS something
+               (expect (true? (get up "running")))
+               (expect (get up "pid")))
+             (repl/stop! dir)
+             (let [down (repl/status dir)]
+               (expect (= "down" (get down "status")))
+               (expect (not (contains? down "running")))
+               (expect (not (contains? down "pid")))
+               (expect (not (contains? down "cmd"))))
+             (finally (repl/stop! dir))))))
   ;; Regression, issue #repl-consistency: a second `repl_start` KILLED the live
   ;; Bun process and spawned a new one, so the session's globals vanished while
   ;; the call reported plain success — where Clojure answered "already-running".
   ;; A live REPL is reused in EVERY language now, and the env it was started with
   ;; is part of its identity.
-  (it "reuses a live REPL and refuses a start naming a different env"
-      (when (has-bun?)
-        (let [dir (.getPath (tmp-dir))]
-          (try
-            (let [first-start (repl/start! dir {:session-id test-session-id
-                                                "env" {"VIS_REPL_MARK" "one"}})]
-              (expect (= "started" (get first-start "result")))
-              ;; the env rides by NAME + digest, never by value
-              (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
-              (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
-              ;; and it really reached the child
-              (expect (re-find #"one" (str (get (repl/eval! dir "process.env.VIS_REPL_MARK" 15000) "value"))))
-              (repl/eval! dir "globalThis.__vis_mark = 7" 15000)
-              (let [same (repl/start! dir {:session-id test-session-id
-                                          "env" {"VIS_REPL_MARK" "one"}})]
-                (expect (= "already-running" (get same "result")))
-                ;; SAME process — the state the session stands on survived
-                (expect (= "7" (get (repl/eval! dir "globalThis.__vis_mark" 15000) "value"))))
-              (let [refused (try (repl/start! dir {:session-id test-session-id
-                                                  "env" {"VIS_REPL_MARK" "two"}})
-                                 nil
-                                 (catch clojure.lang.ExceptionInfo e e))]
-                (expect (some? refused))
-                (expect (= :ts/repl-env-mismatch (:type (ex-data refused))))
-                (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
-                ;; the refusal names the KEY, never the value
-                (expect (not (str/includes? (.getMessage refused) "two")))
-                (expect (str/includes? (.getMessage refused) "repl_stop"))))
-            (finally (repl/stop! dir))))))
+  (it
+    "reuses a live REPL and refuses a start naming a different env"
+    (when (has-bun?)
+      (let [dir (.getPath (tmp-dir))]
+        (try (let [first-start
+                   (repl/start! dir {:session-id test-session-id "env" {"VIS_REPL_MARK" "one"}})]
+               (expect (= "started" (get first-start "result")))
+               ;; the env rides by NAME + digest, never by value
+               (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
+               (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
+               ;; and it really reached the child
+               (expect (re-find #"one"
+                                (str (get (repl/eval! dir "process.env.VIS_REPL_MARK" 15000)
+                                          "value"))))
+               (repl/eval! dir "globalThis.__vis_mark = 7" 15000)
+               (let [same (repl/start! dir
+                                       {:session-id test-session-id "env" {"VIS_REPL_MARK" "one"}})]
+                 (expect (= "already-running" (get same "result")))
+                 ;; SAME process — the state the session stands on survived
+                 (expect (= "7" (get (repl/eval! dir "globalThis.__vis_mark" 15000) "value"))))
+               (let [refused (try (repl/start! dir
+                                               {:session-id test-session-id
+                                                "env" {"VIS_REPL_MARK" "two"}})
+                                  nil
+                                  (catch clojure.lang.ExceptionInfo e e))]
+                 (expect (some? refused))
+                 (expect (= :ts/repl-env-mismatch (:type (ex-data refused))))
+                 (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
+                 ;; the refusal names the KEY, never the value
+                 (expect (not (str/includes? (.getMessage refused) "two")))
+                 (expect (str/includes? (.getMessage refused) "repl_stop"))))
+             (finally (repl/stop! dir))))))
   (it "eval before start fails closed with a clear error"
       (let [dir (str (System/getProperty "java.io.tmpdir") "/vis-bun-never-started")]
         (expect (= :ts/no-repl
                    (try (repl/eval! dir "1" 1000)
                         nil
-                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   ;; Regression, issue #repl-consistency: `start!` answered "started" for a Bun
   ;; that had never spoken, so a runtime which died on its first line passed as
   ;; a usable REPL — Python had been handshaking since it shipped.
   (it "fails startup when the runtime cannot complete the ping handshake"
       (let [dir (.getPath (tmp-dir))]
-        (try (let
-               [result
-                (with-redefs
-                  [runner/resolve-command (constantly ["sh" "-c" "printf 'not-json\\n'; sleep 30"])]
-                  (repl/start! dir {:session-id test-session-id}))]
-
+        (try (let [result (with-redefs [runner/resolve-command
+                                        (constantly ["sh" "-c" "printf 'not-json\\n'; sleep 30"])]
+                            (repl/start! dir {:session-id test-session-id}))]
                (expect (= "failed" (get result "status")))
                (expect (string? (get result "message")))
                (expect (= :ts/no-repl
@@ -139,12 +140,9 @@
   ;; and Clojure both handed back the tail and the code.
   (it "reports a dead launch by the keys EVERY language uses"
       (let [dir (.getPath (tmp-dir))]
-        (try (let
-               [result
-                (with-redefs
-                  [runner/resolve-command (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
-                  (repl/start! dir {:session-id test-session-id}))]
-
+        (try (let [result (with-redefs [runner/resolve-command
+                                        (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
+                            (repl/start! dir {:session-id test-session-id}))]
                (expect (= "failed" (get result "result")))
                (expect (string? (get result "message")))
                (expect (= 3 (get result "exit")))
@@ -154,15 +152,14 @@
              (finally (repl/stop! dir)))))
   (it "imports a project module and reload() re-imports it cache-busted"
       (when (has-bun?)
-        (let
-          [root
-           (tmp-dir)
+        (let [root
+              (tmp-dir)
 
-           dir
-           (.getPath root)
+              dir
+              (.getPath root)
 
-           mod
-           (io/file root "answer.ts")]
+              mod
+              (io/file root "answer.ts")]
 
           (try (spit mod "export const answer = (): number => 40 + 1;\n")
                (repl/start! dir {:session-id test-session-id})
@@ -183,15 +180,14 @@
   facade-test
   (it "repl_eval requires explicit repl and then returns the value"
       (when (has-bun?)
-        (let
-          [root
-           (tmp-dir)
+        (let [root
+              (tmp-dir)
 
-           dir
-           (.getCanonicalPath root)
+              dir
+              (.getCanonicalPath root)
 
-           env
-           (test-env root)]
+              env
+              (test-env root)]
 
           (try (expect (= :ts/no-repl
                           (try (core/ts-repl-eval-fn env "3 * 7")
@@ -203,34 +199,32 @@
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))
   (it "shows a home-relative, retryable cwd when no REPL is running"
-      (let
-        [home
-         (System/getProperty "user.home")
+      (let [home
+            (System/getProperty "user.home")
 
-         cwd
-         "~/vis-bun-not-running"
+            cwd
+            "~/vis-bun-not-running"
 
-         env
-         (assoc (test-env (io/file home)) :workspace/root home)
+            env
+            (assoc (test-env (io/file home)) :workspace/root home)
 
-         msg
-         (try (core/ts-repl-eval-fn env {"code" "1 + 1" "cwd" cwd})
-              nil
-              (catch clojure.lang.ExceptionInfo e (.getMessage e)))]
+            msg
+            (try (core/ts-repl-eval-fn env {"code" "1 + 1" "cwd" cwd})
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (.getMessage e)))]
 
         (expect (str/includes? msg cwd))
         (expect (not (str/includes? msg home)))))
   (it "repl status/stop lifecycle ops route through the manager"
       (when (has-bun?)
-        (let
-          [root
-           (tmp-dir)
+        (let [root
+              (tmp-dir)
 
-           dir
-           (.getCanonicalPath root)
+              dir
+              (.getCanonicalPath root)
 
-           env
-           (test-env root)]
+              env
+              (test-env root)]
 
           (try
             (expect (:success? (core/ts-start-repl-fn env "start" nil)))
@@ -369,9 +363,8 @@
   monorepo-root-guard-test
   (it "repl_eval WITHOUT cwd at a monorepo root refuses with the app-dir hint"
       (let [root (monorepo-fixture)]
-        (try (let
-               [{:keys [type msg]} (monorepo-guard-ex #(core/ts-repl-eval-fn (test-env root)
-                                                                             "1+1"))]
+        (try (let [{:keys [type msg]} (monorepo-guard-ex #(core/ts-repl-eval-fn (test-env root)
+                                                                                "1+1"))]
                (expect (= :ts/monorepo-root type))
                ;; suggests the api app dir + lists workspace dirs
                (expect (re-find #"apps/api" (str msg)))
@@ -379,19 +372,17 @@
              (finally (cleanup root)))))
   (it "repl WITHOUT cwd at a monorepo root refuses the same way"
       (let [root (monorepo-fixture)]
-        (try (let
-               [{:keys [type]} (monorepo-guard-ex
-                                 #(core/ts-start-repl-fn (test-env root) "start" {}))]
+        (try (let [{:keys [type]} (monorepo-guard-ex
+                                    #(core/ts-start-repl-fn (test-env root) "start" {}))]
                (expect (= :ts/monorepo-root type)))
              (finally (cleanup root)))))
   (it "an explicit cwd escapes the guard (app dir works; '.' forces a root REPL)"
       (when (has-bun?)
-        (let
-          [root
-           (monorepo-fixture)
+        (let [root
+              (monorepo-fixture)
 
-           api
-           (.getCanonicalPath (io/file root "apps" "api"))]
+              api
+              (.getCanonicalPath (io/file root "apps" "api"))]
 
           (try ;; app dir: explicit start + eval succeed
             (core/ts-start-repl-fn (test-env root) "start" {"cwd" "apps/api"})

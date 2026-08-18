@@ -147,21 +147,20 @@
    last op on its OWN node, so ops on different nodes keep their order and a
    `clear` between two appends still cuts the log."
   [ops op]
-  (let
-    [node
-     (op-node op)
+  (let [node
+        (op-node op)
 
-     at
-     (when node
-       (last (keep-indexed (fn [i earlier]
-                             (when (= node (op-node earlier)) i))
-                           ops)))
+        at
+        (when node
+          (last (keep-indexed (fn [i earlier]
+                                (when (= node (op-node earlier)) i))
+                              ops)))
 
-     prior
-     (when at (nth ops at))
+        prior
+        (when at (nth ops at))
 
-     k
-     (append-key op)]
+        k
+        (append-key op)]
 
     (cond (nil? prior) (conj ops op)
           (= :set (:op op) (:op prior)) (assoc ops at (merge prior op))
@@ -203,17 +202,16 @@
 (defn- buffer-patch!
   "Hold one accepted patch for `view-id` and make sure a flush is coming."
   [sid view-id patch]
-  (let
-    [fresh?
-     (nil? (get @buffered view-id))
+  (let [fresh?
+        (nil? (get @buffered view-id))
 
-     _
-     (swap! buffered update
-       view-id
-       (fn [frame]
-         (-> (or frame {:session-id sid :view-id view-id :first-seq (:seq patch) :ops []})
-             (assoc :seq (:seq patch))
-             (update :ops #(reduce coalesce % (:ops patch))))))]
+        _
+        (swap! buffered update
+          view-id
+          (fn [frame]
+            (-> (or frame {:session-id sid :view-id view-id :first-seq (:seq patch) :ops []})
+                (assoc :seq (:seq patch))
+                (update :ops #(reduce coalesce % (:ops patch))))))]
 
     (when fresh?
       (.schedule ^ScheduledExecutorService @flusher

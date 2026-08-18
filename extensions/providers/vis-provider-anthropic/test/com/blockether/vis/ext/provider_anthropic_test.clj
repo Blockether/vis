@@ -9,12 +9,11 @@
 (defdescribe
   provider-anthropic-test
   (it "registers separate Anthropic API-key and Claude subscription providers"
-      (let
-        [api-provider
-         (vis/provider-by-id :anthropic)
+      (let [api-provider
+            (vis/provider-by-id :anthropic)
 
-         oauth-provider
-         (vis/provider-by-id :anthropic-coding-plan)]
+            oauth-provider
+            (vis/provider-by-id :anthropic-coding-plan)]
 
         (expect (= :anthropic (:provider/id api-provider)))
         (expect (= "Anthropic (API Key)" (:provider/label api-provider)))
@@ -58,12 +57,11 @@
         (expect (str/includes? (:url flow) "user%3Asessions%3Aclaude_code"))))
   (it
     "login exchanges code and persists credentials"
-    (let
-      [saved
-       (atom nil)
+    (let [saved
+          (atom nil)
 
-       lines
-       (atom [])]
+          lines
+          (atom [])]
 
       (with-redefs-fn {#'http/post (fn [url opts]
                                      (reset! saved {:url url :opts opts})
@@ -78,15 +76,14 @@
                                                                      :credentials credentials))
                                                      credentials)}
         (fn []
-          (let
-            [result
-             (anthropic/login! #(swap! lines conj %)
-                               {:open-browser-fn (constantly true)
-                                :manual-code-fn (fn [_]
-                                                  "code123")})
+          (let [result
+                (anthropic/login! #(swap! lines conj %)
+                                  {:open-browser-fn (constantly true)
+                                   :manual-code-fn (fn [_]
+                                                     "code123")})
 
-             body
-             (json/read-json (get-in @saved [:opts :body]) :key-fn keyword)]
+                body
+                (json/read-json (get-in @saved [:opts :body]) :key-fn keyword)]
 
             (expect (= :ok result))
             (expect (= "https://platform.claude.com/v1/oauth/token" (:url @saved)))
@@ -106,12 +103,11 @@
                                                                  "code123#wrong")}))))))
   (it
     "reports live Claude subscription usage limits from Anthropic OAuth endpoint"
-    (let
-      [provider
-       (vis/provider-by-id :anthropic-coding-plan)
+    (let [provider
+          (vis/provider-by-id :anthropic-coding-plan)
 
-       called
-       (atom nil)]
+          called
+          (atom nil)]
 
       (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
                                                           {:token "sk-ant-oat01-test"})
@@ -125,12 +121,11 @@
                                               :sevenDayOpus {:utilization 10}})})}
         (fn []
           (anthropic/clear-limits-cache!)
-          (let
-            [report
-             ((:provider/limits-fn provider))
+          (let [report
+                ((:provider/limits-fn provider))
 
-             rows
-             (get-in report [:dynamic :limits])]
+                rows
+                (get-in report [:dynamic :limits])]
 
             (expect (= "https://api.anthropic.com/api/oauth/usage" (:url @called)))
             (expect (= "Bearer sk-ant-oat01-test"
@@ -142,12 +137,11 @@
             (expect (= 100.0 (:limit (first rows))))
             (expect (= 1778155200000 (get-in (first rows) [:window :resets-at-ms]))))))))
   (it "coalesces concurrent Claude subscription usage limit checks"
-      (let
-        [provider
-         (vis/provider-by-id :anthropic-coding-plan)
+      (let [provider
+            (vis/provider-by-id :anthropic-coding-plan)
 
-         calls
-         (atom 0)]
+            calls
+            (atom 0)]
 
         (anthropic/clear-limits-cache!)
         (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
@@ -159,19 +153,17 @@
                                        :body (json/write-json-str {:five_hour {:utilization 8}
                                                                    :seven_day {:utilization 7}})})}
           (fn []
-            (let
-              [reports (->> (repeatedly 2 #(future ((:provider/limits-fn provider))))
-                            doall
-                            (mapv deref))]
+            (let [reports (->> (repeatedly 2 #(future ((:provider/limits-fn provider))))
+                               doall
+                               (mapv deref))]
               (expect (= 1 @calls))
               (expect (= [:ok :ok] (mapv :status reports))))))))
   (it "backs off after Anthropic usage endpoint returns HTTP 409 and serves stale limits"
-      (let
-        [provider
-         (vis/provider-by-id :anthropic-coding-plan)
+      (let [provider
+            (vis/provider-by-id :anthropic-coding-plan)
 
-         calls
-         (atom 0)]
+            calls
+            (atom 0)]
 
         (anthropic/clear-limits-cache!)
         (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
@@ -188,9 +180,8 @@
             (let [fresh ((:provider/limits-fn provider))]
               (expect (= :ok (:status fresh)))
               (swap! @#'anthropic/limits-cache assoc :expires-at-ms 0)
-              (let
-                [stale ((:provider/limits-fn provider))
-                 still-stale ((:provider/limits-fn provider))]
+              (let [stale ((:provider/limits-fn provider))
+                    still-stale ((:provider/limits-fn provider))]
 
                 (expect (= 2 @calls))
                 (expect (= :ok (:status stale)))
@@ -198,15 +189,14 @@
                 (expect (str/includes? (get-in stale [:dynamic :note]) "HTTP 409"))))))))
   (it
     "force-refreshes the rotated OAuth token when the usage endpoint answers 401, then retries once"
-    (let
-      [provider
-       (vis/provider-by-id :anthropic-coding-plan)
+    (let [provider
+          (vis/provider-by-id :anthropic-coding-plan)
 
-       refreshes
-       (atom [])
+          refreshes
+          (atom [])
 
-       tokens
-       (atom [])]
+          tokens
+          (atom [])]
 
       (anthropic/clear-limits-cache!)
       (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
@@ -230,12 +220,11 @@
             (expect (= ["stale-token"] @refreshes))
             (expect (= ["Bearer stale-token" "Bearer rotated-token"] @tokens)))))))
   (it "stops at unauthenticated when the forced refresh itself fails (no retry storm)"
-      (let
-        [provider
-         (vis/provider-by-id :anthropic-coding-plan)
+      (let [provider
+            (vis/provider-by-id :anthropic-coding-plan)
 
-         calls
-         (atom 0)]
+            calls
+            (atom 0)]
 
         (anthropic/clear-limits-cache!)
         (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []

@@ -42,18 +42,17 @@
 (def ^:private document
   "The parsed, validated contract, read from the classpath like its Python twin."
   (delay
-    (let
-      [resource
-       (io/resource resource-path)
+    (let [resource
+          (io/resource resource-path)
 
-       _
-       (when-not resource
-         (throw (ex-info (str "the Clojure host contract is missing from the classpath: "
-                              resource-path)
-                         {:type :vis/contract-missing :resource resource-path})))
+          _
+          (when-not resource
+            (throw (ex-info (str "the Clojure host contract is missing from the classpath: "
+                                 resource-path)
+                            {:type :vis/contract-missing :resource resource-path})))
 
-       parsed
-       (edn/read-string (slurp resource))]
+          parsed
+          (edn/read-string (slurp resource))]
 
       (when-not (s/valid? :contract/clojure-host parsed)
         (throw (ex-info (str resource-path " is not a valid Clojure host contract")

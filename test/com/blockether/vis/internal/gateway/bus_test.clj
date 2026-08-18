@@ -16,32 +16,31 @@
    the previous deliver-fn afterwards. `f` receives `[capture write-journal!]`
    where `write-journal!` spits ndjson lines for a sid."
   [f]
-  (let
-    [tmp
-     (java.nio.file.Files/createTempDirectory "bus-test"
-                                              (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [tmp
+        (java.nio.file.Files/createTempDirectory "bus-test"
+                                                 (make-array java.nio.file.attribute.FileAttribute
+                                                             0))
 
-     capture
-     (atom [])
+        capture
+        (atom [])
 
-     prev
-     @(var-get #'bus/deliver-fn)]
+        prev
+        @(var-get #'bus/deliver-fn)]
 
-    (with-redefs
-      [bus/events-dir
-       (fn []
-         tmp)
+    (with-redefs [bus/events-dir
+                  (fn []
+                    tmp)
 
-       ;; In production the liveness index is a SIBLING of the journal dir; give
-       ;; it a home inside the throwaway one so no test ever marks a session live
-       ;; in the developer's own ~/.vis.
-       bus/live-dir
-       (fn []
-         (.resolve ^java.nio.file.Path tmp "live"))
+                  ;; In production the liveness index is a SIBLING of the journal dir; give
+                  ;; it a home inside the throwaway one so no test ever marks a session live
+                  ;; in the developer's own ~/.vis.
+                  bus/live-dir
+                  (fn []
+                    (.resolve ^java.nio.file.Path tmp "live"))
 
-       bus/waiting-dir
-       (fn []
-         (.resolve ^java.nio.file.Path tmp "waiting"))]
+                  bus/waiting-dir
+                  (fn []
+                    (.resolve ^java.nio.file.Path tmp "waiting"))]
 
       ;; a fresh journal dir is a fresh world: drop this process's orphan-reap
       ;; markers, tail cursors and cached liveness so re-running in one JVM starts
@@ -81,12 +80,11 @@
   hydrate-liveness-test
   (it "mirrors a non-terminal turn whose producer process is still ALIVE"
       (with-temp-journal (fn [capture write!]
-                           (let
-                             [prod
-                              (str (java.util.UUID/randomUUID))
+                           (let [prod
+                                 (str (java.util.UUID/randomUUID))
 
-                              live-pid
-                              (var-get #'bus/producer-pid)]
+                                 live-pid
+                                 (var-get #'bus/producer-pid)]
 
                              (write! "sid-live"
                                      [(turn-started prod live-pid "sid-live" "T-live")
@@ -111,15 +109,14 @@
   (it "treats a cancelled turn as terminal, not an orphan to fail again"
       (with-temp-journal
         (fn [capture write!]
-          (let
-            [prod
-             (str (java.util.UUID/randomUUID))
+          (let [prod
+                (str (java.util.UUID/randomUUID))
 
-             sid
-             "sid-cancel"
+                sid
+                "sid-cancel"
 
-             tid
-             "T-cancel"]
+                tid
+                "T-cancel"]
 
             (write! sid
                     [(turn-started prod dead-pid sid tid)
@@ -145,9 +142,8 @@
                              ;; `publish!` is ASYNC: hold the terminal out of the journal to stand
                              ;; in for its write window. Without the CAS marker both hydrates read
                              ;; `terminal? = false` and each emit their own `turn.failed`.
-                             (with-redefs
-                               [bus/publish! (fn [& _]
-                                               nil)]
+                             (with-redefs [bus/publish! (fn [& _]
+                                                          nil)]
                                (bus/hydrate! "sid-race")
                                (bus/hydrate! "sid-race"))
                              (expect (= 1 (count @capture)))
@@ -178,31 +174,28 @@
     "a concurrent drain never rewinds hydrate!'s EOF claim"
     (with-temp-journal
       (fn [capture write!]
-        (let
-          [prod
-           (str (java.util.UUID/randomUUID))
+        (let [prod
+              (str (java.util.UUID/randomUUID))
 
-           sid
-           "sid-cursor"
+              sid
+              "sid-cursor"
 
-           f
-           (#'bus/session-file sid)]
+              f
+              (#'bus/session-file sid)]
 
           (write! sid [(turn-started prod (var-get #'bus/producer-pid) sid "T-cursor")])
-          (let
-            [gate
-             (promise)
+          (let [gate
+                (promise)
 
-             orig
-             @#'bus/deliver-line!
+                orig
+                @#'bus/deliver-line!
 
-             ;; park the drain mid-file, holding the cursor it read at entry
-             drain
-             (future (with-redefs
-                       [bus/deliver-line! (fn [s l]
-                                            @gate
-                                            (orig s l))]
-                       (#'bus/drain-file! sid f)))]
+                ;; park the drain mid-file, holding the cursor it read at entry
+                drain
+                (future (with-redefs [bus/deliver-line! (fn [s l]
+                                                          @gate
+                                                          (orig s l))]
+                          (#'bus/drain-file! sid f)))]
 
             (Thread/sleep 100)
             ;; producer appends while the drain is parked, then a subscriber hydrates
@@ -234,10 +227,9 @@
             (.interrupt ^Thread dead)
             (Thread/sleep 200)
             (expect (not (.isAlive ^Thread dead)))
-            (let
-              [t0 (System/currentTimeMillis)
-               _ (bus/publish! "sid-writer" {"type" "turn.completed" "seq" 2} {:store? true})
-               ms (- (System/currentTimeMillis) t0)]
+            (let [t0 (System/currentTimeMillis)
+                  _ (bus/publish! "sid-writer" {"type" "turn.completed" "seq" 2} {:store? true})
+                  ms (- (System/currentTimeMillis) t0)]
 
               (expect (< ms 2000))
               (expect (not (identical? dead @(var-get #'bus/writer))))
@@ -263,26 +255,24 @@
           (when (instance? Thread cur) (.interrupt ^Thread cur))
           (Thread/sleep 100)
           (reset! (var-get #'bus/writer) nil))
-        (with-redefs
-          [bus/durable-write-timeout-ms
-           400
+        (with-redefs [bus/durable-write-timeout-ms
+                      400
 
-           bus/spawn-writer-thread!
-           (fn []
-             (throw (OutOfMemoryError. "unable to create native thread")))]
+                      bus/spawn-writer-thread!
+                      (fn []
+                        (throw (OutOfMemoryError. "unable to create native thread")))]
 
           (bus/publish! "sid-start-fail" {"type" "turn.started" "seq" 1} {:store? true}))
         ;; the gate must be released, not stranded
         (expect (not= ::bus/starting @(var-get #'bus/writer)))
-        (let
-          [t0
-           (System/currentTimeMillis)
+        (let [t0
+              (System/currentTimeMillis)
 
-           _
-           (bus/publish! "sid-start-fail" {"type" "turn.completed" "seq" 2} {:store? true})
+              _
+              (bus/publish! "sid-start-fail" {"type" "turn.completed" "seq" 2} {:store? true})
 
-           ms
-           (- (System/currentTimeMillis) t0)]
+              ms
+              (- (System/currentTimeMillis) t0)]
 
           (expect (< ms 2000))
           (expect (.isAlive ^Thread @(var-get #'bus/writer)))
@@ -303,18 +293,17 @@
     "replays from byte 0 when the journal's first bytes change"
     (with-temp-journal
       (fn [capture write!]
-        (let
-          [prod
-           (str (java.util.UUID/randomUUID))
+        (let [prod
+              (str (java.util.UUID/randomUUID))
 
-           pid
-           (var-get #'bus/producer-pid)
+              pid
+              (var-get #'bus/producer-pid)
 
-           sid
-           "sid-generation"
+              sid
+              "sid-generation"
 
-           f
-           (#'bus/session-file sid)]
+              f
+              (#'bus/session-file sid)]
 
           ;; Turn 1: drained normally, cursor lands at EOF.
           (write! sid
@@ -350,24 +339,23 @@
   (it "delivers the event that was half-written when the reader joined"
       (with-temp-journal
         (fn [capture _write!]
-          (let
-            [sid
-             "partial"
+          (let [sid
+                "partial"
 
-             f
-             (#'bus/session-file sid)
+                f
+                (#'bus/session-file sid)
 
-             prod
-             (str (random-uuid))
+                prod
+                (str (random-uuid))
 
-             pid
-             (.pid (java.lang.ProcessHandle/current))
+                pid
+                (.pid (java.lang.ProcessHandle/current))
 
-             whole
-             (str (wire/json-str (assoc (delta prod pid "T") :text "IMPORTANT")) "\n")
+                whole
+                (str (wire/json-str (assoc (delta prod pid "T") :text "IMPORTANT")) "\n")
 
-             cut
-             (quot (count whole) 2)]
+                cut
+                (quot (count whole) 2)]
 
             (spit f (str (wire/json-str (turn-started prod pid sid "T")) "\n" (subs whole 0 cut)))
             (bus/hydrate! sid)
@@ -386,15 +374,14 @@
    so a resurrected entry would sit in the map for the daemon's whole life."
   (it "leaves no tail entry behind after the journal is gone"
       (with-temp-journal (fn [_capture write-journal!]
-                           (let
-                             [sid
-                              "closed"
+                           (let [sid
+                                 "closed"
 
-                              prod
-                              (str (random-uuid))
+                                 prod
+                                 (str (random-uuid))
 
-                              pid
-                              (.pid (java.lang.ProcessHandle/current))]
+                                 pid
+                                 (.pid (java.lang.ProcessHandle/current))]
 
                              (write-journal! sid [(turn-started prod pid sid "T")])
                              (#'bus/drain-file! sid (#'bus/session-file sid))
@@ -413,15 +400,14 @@
   (it "keeps `turn.started` as the first line after the cap truncates"
       (with-temp-journal
         (fn [_capture _write!]
-          (let
-            [sid
-             "capped"
+          (let [sid
+                "capped"
 
-             f
-             (#'bus/session-file sid)
+                f
+                (#'bus/session-file sid)
 
-             blob
-             (apply str (repeat (* 6 1024 1024) "x"))]
+                blob
+                (apply str (repeat (* 6 1024 1024) "x"))]
 
             (#'bus/write-event!
              sid
@@ -438,12 +424,11 @@
   (it "reaps an orphan whose `turn.started` the cap already dropped"
       (with-temp-journal
         (fn [capture write-journal!]
-          (let
-            [sid
-             "capped-orphan"
+          (let [sid
+                "capped-orphan"
 
-             prod
-             (str (random-uuid))]
+                prod
+                (str (random-uuid))]
 
             (write-journal! sid [(assoc (delta prod dead-pid "T9") :session_id sid)])
             (bus/hydrate! sid)
@@ -463,18 +448,17 @@
   (it "delivers a mirrored event under the very sid the process asked for"
       (with-temp-journal
         (fn [_capture write!]
-          (let
-            [sid
-             (java.util.UUID/randomUUID)
+          (let [sid
+                (java.util.UUID/randomUUID)
 
-             seen
-             (atom [])
+                seen
+                (atom [])
 
-             prod
-             (str (random-uuid))
+                prod
+                (str (random-uuid))
 
-             pid
-             (.pid (java.lang.ProcessHandle/current))]
+                pid
+                (.pid (java.lang.ProcessHandle/current))]
 
             (bus/set-deliver-fn! (fn [s _store? _ev]
                                    (swap! seen conj s)))
@@ -524,15 +508,14 @@
   (it "ignores AND deletes a marker whose producer process is gone"
       (with-temp-journal
         (fn [_capture _write!]
-          (let
-            [sid
-             (str (random-uuid))
+          (let [sid
+                (str (random-uuid))
 
-             dir
-             ^java.nio.file.Path (#'bus/live-dir)
+                dir
+                ^java.nio.file.Path (#'bus/live-dir)
 
-             f
-             (.toFile (.resolve dir (str sid ".json")))]
+                f
+                (.toFile (.resolve dir (str sid ".json")))]
 
             (java.nio.file.Files/createDirectories dir
                                                    (make-array java.nio.file.attribute.FileAttribute
@@ -625,15 +608,14 @@
   (it "ignores AND deletes a marker whose producer process is gone"
       (with-temp-journal
         (fn [_capture _write!]
-          (let
-            [sid
-             (str (random-uuid))
+          (let [sid
+                (str (random-uuid))
 
-             dir
-             ^java.nio.file.Path (#'bus/waiting-dir)
+                dir
+                ^java.nio.file.Path (#'bus/waiting-dir)
 
-             f
-             (.toFile (.resolve dir (str sid ".json")))]
+                f
+                (.toFile (.resolve dir (str sid ".json")))]
 
             (java.nio.file.Files/createDirectories dir
                                                    (make-array java.nio.file.attribute.FileAttribute

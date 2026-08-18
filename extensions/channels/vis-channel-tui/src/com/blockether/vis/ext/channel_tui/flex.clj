@@ -83,38 +83,36 @@
    cluster within the slack."
   ([children] (row children nil))
   ([children {:keys [gap align] fixed-w :width :or {gap 0 align :left}}]
-   (let
-     [gap
-      (long gap)
+   (let [gap
+         (long gap)
 
-      kids
-      (vec (keep as-node children))
+         kids
+         (vec (keep as-node children))
 
-      inner
-      (long (+ (long (reduce + 0 (map width kids))) (* gap (max 0 (dec (count kids))))))
+         inner
+         (long (+ (long (reduce + 0 (map width kids))) (* gap (max 0 (dec (count kids))))))
 
-      w
-      (long (if fixed-w (max (long fixed-w) inner) inner))
+         w
+         (long (if fixed-w (max (long fixed-w) inner) inner))
 
-      h
-      (long (reduce max 1 (map height kids)))]
+         h
+         (long (reduce max 1 (map height kids)))]
 
      (node w
            h
            (fn [g col row]
-             (let
-               [slack
-                (max 0 (- w inner))
+             (let [slack
+                   (max 0 (- w inner))
 
-                pad
-                (long (case align
-                        :right
-                        slack
+                   pad
+                   (long (case align
+                           :right
+                           slack
 
-                        :center
-                        (quot slack 2)
+                           :center
+                           (quot slack 2)
 
-                        0))]
+                           0))]
 
                (reduce (fn [x kid]
                          (let [x (long x)]
@@ -129,18 +127,17 @@
    height, with `:gap` blank rows between them. Width is the widest child."
   ([children] (col children nil))
   ([children {:keys [gap] :or {gap 0}}]
-   (let
-     [gap
-      (long gap)
+   (let [gap
+         (long gap)
 
-      kids
-      (vec (keep as-node children))
+         kids
+         (vec (keep as-node children))
 
-      w
-      (long (reduce max 0 (map width kids)))
+         w
+         (long (reduce max 0 (map width kids)))
 
-      h
-      (long (+ (long (reduce + 0 (map height kids))) (* gap (max 0 (dec (count kids))))))]
+         h
+         (long (+ (long (reduce + 0 (map height kids))) (* gap (max 0 (dec (count kids))))))]
 
      (node w
            h

@@ -68,20 +68,19 @@
    [[check]] calls, and one that can take neither shape is refused before a
    human is ever shown the form it would have crashed."
   [raw fail!]
-  (let
-    [normalize (fn [validator]
-                 (if-not (fn? validator)
-                   (fail! (str ":validate takes a FUNCTION, not "
-                               (pr-str validator)
-                               " — it receives the value (and, if it asks for a second"
-                               " argument, every value) and answers nil when the value"
-                               " is fine or the error message as a string"))
-                   (let [arity (arity-of validator)]
-                     (cond (= 1 arity) (fn [value _values]
-                                         (validator value))
-                           (= 2 arity) validator
-                           :else (fail! (str ":validate function takes the value, or the value"
-                                             " and every value — this one takes neither"))))))]
+  (let [normalize (fn [validator]
+                    (if-not (fn? validator)
+                      (fail! (str ":validate takes a FUNCTION, not "
+                                  (pr-str validator)
+                                  " — it receives the value (and, if it asks for a second"
+                                  " argument, every value) and answers nil when the value"
+                                  " is fine or the error message as a string"))
+                      (let [arity (arity-of validator)]
+                        (cond (= 1 arity) (fn [value _values]
+                                            (validator value))
+                              (= 2 arity) validator
+                              :else (fail! (str ":validate function takes the value, or the value"
+                                                " and every value — this one takes neither"))))))]
     (cond (nil? raw) nil
           (sequential? raw) (not-empty (mapv normalize raw))
           :else [(normalize raw)])))

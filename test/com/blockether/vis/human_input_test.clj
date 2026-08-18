@@ -119,14 +119,13 @@
         ;; A validator is a FUNCTION, and a function is not wire data: the builder
         ;; hands it straight back, and the engine calls it on the answered value
         ;; (one argument) or on the value and every value (two).
-        (let
-          [required
-           (fn [value]
-             (when (= "" value) "who?"))
+        (let [required
+              (fn [value]
+                (when (= "" value) "who?"))
 
-           agrees
-           (fn [value values]
-             (when-not (= value (get values "who")) "must match"))]
+              agrees
+              (fn [value values]
+                (when-not (= value (get values "who")) "must match"))]
 
           (expect (= {:type "plaintext" :name "who" :validate required}
                      (hi/plaintext "who" {:validate required})))

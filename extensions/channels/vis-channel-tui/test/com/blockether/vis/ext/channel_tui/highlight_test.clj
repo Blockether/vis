@@ -51,18 +51,17 @@
                "a finalized fence re-parsed after a streaming run still matches native (self-heal)"
                (when native?
                  (reset! @#'hl/stream-memo {})
-                 (let
-                   [[g s]
-                    (first multiline-fences)
+                 (let [[g s]
+                       (first multiline-fences)
 
-                    lines
-                    (str/split-lines s)
+                       lines
+                       (str/split-lines s)
 
-                    ;; walk growing prefixes of the fence under *live?* (the streaming ticks) ...
-                    _
-                    (binding [hl/*live?* true]
-                      (doseq [n (range 1 (inc (count lines)))]
-                        (hl/highlight g (str (str/join "\n" (take n lines)) "\n"))))]
+                       ;; walk growing prefixes of the fence under *live?* (the streaming ticks) ...
+                       _
+                       (binding [hl/*live?* true]
+                         (doseq [n (range 1 (inc (count lines)))]
+                           (hl/highlight g (str (str/join "\n" (take n lines)) "\n"))))]
 
                    ;; ... then the finalized (non-live) render is exact regardless of that history.
                    (expect (= (native g s) (hl/highlight g s)))))))
@@ -73,23 +72,22 @@
     "live streaming parses the settled prefix once, re-parsing only the growing tail"
     (when native?
       (reset! @#'hl/stream-memo {})
-      (let
-        [prefix
-         (str/join "\n"
-                   (for [i (range 20)]
-                     (format "(def x%d %d)" i i)))
+      (let [prefix
+            (str/join "\n"
+                      (for [i (range 20)]
+                        (format "(def x%d %d)" i i)))
 
-         ;; parser normalises a live fence body to end in a newline; the last,
-         ;; still-typed line grows char by char while the 20-line prefix is stable.
-         frames
-         (vec (for [k (range 1 12)]
-                (str prefix "\n" (subs "(println :growing)" 0 k) "\n")))
+            ;; parser normalises a live fence body to end in a newline; the last,
+            ;; still-typed line grows char by char while the 20-line prefix is stable.
+            frames
+            (vec (for [k (range 1 12)]
+                   (str prefix "\n" (subs "(println :growing)" 0 k) "\n")))
 
-         prefix-parses
-         (atom 0)
+            prefix-parses
+            (atom 0)
 
-         tail-parses
-         (atom 0)]
+            tail-parses
+            (atom 0)]
 
         (with-redefs-fn {#'hl/highlight* (let [orig @#'hl/highlight*]
                                            (fn [g ^String src]
@@ -108,24 +106,23 @@
   (it "the settled prefix of a live frame is coloured exactly as native colours it"
       (when native?
         (reset! @#'hl/stream-memo {})
-        (let
-          [prefix
-           (str/join "\n"
-                     (for [i (range 8)]
-                       (format "(def y%d %d)" i i)))
+        (let [prefix
+              (str/join "\n"
+                        (for [i (range 8)]
+                          (format "(def y%d %d)" i i)))
 
-           frame
-           (str prefix "\n(println :tail)\n")
+              frame
+              (str prefix "\n(println :tail)\n")
 
-           live
-           (binding [hl/*live?* true]
-             (hl/highlight "clojure" frame))
+              live
+              (binding [hl/*live?* true]
+                (hl/highlight "clojure" frame))
 
-           live-ls
-           (str/split-lines (or live ""))
+              live-ls
+              (str/split-lines (or live ""))
 
-           full-ls
-           (str/split-lines (or (native "clojure" frame) ""))]
+              full-ls
+              (str/split-lines (or (native "clojure" frame) ""))]
 
           ;; the 8 settled prefix lines match native byte-for-byte (only the last,
           ;; still-typed line may differ mid-stream).

@@ -48,24 +48,23 @@
    a fixed thinking string. Mirrors the shape `chat/rebuild-history`
    produces."
   [n-iters forms-per-iter answer]
-  (let
-    [forms
-     (vec (for [idx (range forms-per-iter)]
-            {:position idx
-             :code "(print 3)"
-             ;; Tool output is shown as the program's STDOUT now;
-             ;; bare values are never echoed. Give each form some
-             ;; printed output so the rendered bubble has real height
-             ;; (the estimator-vs-real height contracts below need a
-             ;; non-trivial body to measure).
-             :stdout "3"
-             :result-kind :value
-             :duration-ms 1
-             :success? true
-             :silent? false}))
+  (let [forms
+        (vec (for [idx (range forms-per-iter)]
+               {:position idx
+                :code "(print 3)"
+                ;; Tool output is shown as the program's STDOUT now;
+                ;; bare values are never echoed. Give each form some
+                ;; printed output so the rendered bubble has real height
+                ;; (the estimator-vs-real height contracts below need a
+                ;; non-trivial body to measure).
+                :stdout "3"
+                :result-kind :value
+                :duration-ms 1
+                :success? true
+                :silent? false}))
 
-     trace
-     (vec (repeat n-iters {:thinking "thinking line" :forms forms}))]
+        trace
+        (vec (repeat n-iters {:thinking "thinking line" :forms forms}))]
 
     {:role :assistant
      :content (prose-content answer)
@@ -80,80 +79,79 @@
    dumps, and one answer bubble. Payload text is synthetic; operation mix and
    cardinality are the regression signal."
   []
-  (let
-    [ops
-     (vec (take 304 (cycle [:cat :cat :outline :patch :z/locators :rg])))
+  (let [ops
+        (vec (take 304 (cycle [:cat :cat :outline :patch :z/locators :rg])))
 
-     huge
-     (str/join "\n" (map #(str "locator-" % " (defn huge-fixture [] :ok)") (range 240)))
+        huge
+        (str/join "\n" (map #(str "locator-" % " (defn huge-fixture [] :ok)") (range 240)))
 
-     preview
-     (str/join "\n" (map #(str % ": selected preview line") (range 1 61)))
+        preview
+        (str/join "\n" (map #(str % ": selected preview line") (range 1 61)))
 
-     mk-form
-     (fn [idx op]
-       {:code (str "(" (namespace op) "/" (name op) " \"fixture-" idx "\")")
-        :result (case op
-                  :cat
-                  preview
+        mk-form
+        (fn [idx op]
+          {:code (str "(" (namespace op) "/" (name op) " \"fixture-" idx "\")")
+           :result (case op
+                     :cat
+                     preview
 
-                  :z/locators
-                  huge
+                     :z/locators
+                     huge
 
-                  :outline
-                  "directory listing"
+                     :outline
+                     "directory listing"
 
-                  :patch
-                  "1 file changed"
+                     :patch
+                     "1 file changed"
 
-                  :rg
-                  "12 matches"
+                     :rg
+                     "12 matches"
 
-                  "read 20 lines")
-        :kind (if (= op :cat) :preview :tool)
-        :detail {:op op
-                 :tag (case op
-                        (:cat :z/locators :rg :outline)
-                        :observation
+                     "read 20 lines")
+           :kind (if (= op :cat) :preview :tool)
+           :detail {:op op
+                    :tag (case op
+                           (:cat :z/locators :rg :outline)
+                           :observation
 
-                        :patch
-                        :mutation
+                           :patch
+                           :mutation
 
-                        :observation)
-                 :presentation-kind (case op
-                                      (:cat :z/locators)
-                                      :tool/read
+                           :observation)
+                    :presentation-kind (case op
+                                         (:cat :z/locators)
+                                         :tool/read
 
-                                      :rg
-                                      :tool/search
+                                         :rg
+                                         :tool/search
 
-                                      :patch
-                                      :tool/edit
+                                         :patch
+                                         :tool/edit
 
-                                      :ls
-                                      :tool/read
+                                         :ls
+                                         :tool/read
 
-                                      :tool/meta)
-                 :raw (when (= op :cat) (pr-str preview))}})
+                                         :tool/meta)
+                    :raw (when (= op :cat) (pr-str preview))}})
 
-     forms
-     (mapv mk-form (range) ops)
+        forms
+        (mapv mk-form (range) ops)
 
-     trace
-     (->> forms
-          (partition-all 12)
-          (mapv (fn [chunk]
-                  {:thinking "synthetic 9a55 reasoning chunk"
-                   :forms (vec (map-indexed (fn [idx {:keys [code result kind detail]}]
-                                              {:position idx
-                                               :code code
-                                               :result-render result
-                                               :result-kind kind
-                                               :result-detail detail
-                                               :duration-ms 1
-                                               :success? true
-                                               :silent? false})
-                                            chunk))})))]
+        trace
+        (->> forms
+             (partition-all 12)
+             (mapv (fn [chunk]
+                     {:thinking "synthetic 9a55 reasoning chunk"
+                      :forms (vec (map-indexed (fn [idx {:keys [code result kind detail]}]
+                                                 {:position idx
+                                                  :code code
+                                                  :result-render result
+                                                  :result-kind kind
+                                                  :result-detail detail
+                                                  :duration-ms 1
+                                                  :success? true
+                                                  :silent? false})
+                                               chunk))})))]
 
     {:role :assistant
      :content (prose-content "done")
@@ -179,30 +177,27 @@
                 (expect (>= (estimated-height (trace-assistant-msg 1 1 "ok") bubble-w) 1))))
   (describe "estimated-height grows monotonically with content"
             (it "longer text -> taller user bubble"
-                (let
-                  [a
-                   (estimated-height (user-msg "x") bubble-w)
+                (let [a
+                      (estimated-height (user-msg "x") bubble-w)
 
-                   b
-                   (estimated-height (user-msg (apply str (repeat 500 "x"))) bubble-w)]
+                      b
+                      (estimated-height (user-msg (apply str (repeat 500 "x"))) bubble-w)]
 
                   (expect (< a b))))
             (it "more iterations -> taller assistant bubble"
-                (let
-                  [a
-                   (estimated-height (trace-assistant-msg 1 1 "ok") bubble-w)
+                (let [a
+                      (estimated-height (trace-assistant-msg 1 1 "ok") bubble-w)
 
-                   b
-                   (estimated-height (trace-assistant-msg 20 1 "ok") bubble-w)]
+                      b
+                      (estimated-height (trace-assistant-msg 20 1 "ok") bubble-w)]
 
                   (expect (< a b))))
             (it "more code forms per iter -> taller assistant bubble"
-                (let
-                  [a
-                   (estimated-height (trace-assistant-msg 1 1 "ok") bubble-w)
+                (let [a
+                      (estimated-height (trace-assistant-msg 1 1 "ok") bubble-w)
 
-                   b
-                   (estimated-height (trace-assistant-msg 1 20 "ok") bubble-w)]
+                      b
+                      (estimated-height (trace-assistant-msg 1 20 "ok") bubble-w)]
 
                   (expect (< a b)))))
   (describe "estimated-height is within 2x of real bubble-height"
@@ -210,39 +205,37 @@
             ;; magnitude. Off-screen accuracy only nudges the scrollbar, but
             ;; a 10x miss would shift the thumb so badly the user notices.
             (it "user msg"
-                (let
-                  [m
-                   (user-msg (apply str (repeat 200 "x")))
+                (let [m
+                      (user-msg (apply str (repeat 200 "x")))
 
-                   pm
-                   (project-message m bubble-w settings)
+                      pm
+                      (project-message m bubble-w settings)
 
-                   est
-                   (estimated-height m bubble-w)
+                      est
+                      (estimated-height m bubble-w)
 
-                   real
-                   (render/bubble-height pm bubble-w)
+                      real
+                      (render/bubble-height pm bubble-w)
 
-                   ratio
-                   (max (/ (double est) real) (/ (double real) est))]
+                      ratio
+                      (max (/ (double est) real) (/ (double real) est))]
 
                   (expect (<= ratio 2.5))))
             (it "trace assistant"
-                (let
-                  [m
-                   (trace-assistant-msg 5 3 "Some answer text.")
+                (let [m
+                      (trace-assistant-msg 5 3 "Some answer text.")
 
-                   pm
-                   (project-message m bubble-w settings)
+                      pm
+                      (project-message m bubble-w settings)
 
-                   est
-                   (estimated-height m bubble-w)
+                      est
+                      (estimated-height m bubble-w)
 
-                   real
-                   (render/bubble-height pm bubble-w)
+                      real
+                      (render/bubble-height pm bubble-w)
 
-                   ratio
-                   (max (/ (double est) real) (/ (double real) est))]
+                      ratio
+                      (max (/ (double est) real) (/ (double real) est))]
 
                   ;; trace estimator can over-shoot (per-form lines, etc.); we
                   ;; allow up to 4x because the alternative is paying the full
@@ -252,21 +245,20 @@
 
 (defdescribe
   layout-test
-  (describe
-    "empty session"
-    (it "returns empty visible + zero total-h"
-        (let [{:keys [total-h eff-scroll visible]} (virtual/layout [] bubble-w settings nil 20 {})]
-          (expect (= 0 total-h))
-          (expect (= 0 eff-scroll))
-          (expect (= [] visible)))))
+  (describe "empty session"
+            (it "returns empty visible + zero total-h"
+                (let [{:keys [total-h eff-scroll visible]}
+                      (virtual/layout [] bubble-w settings nil 20 {})]
+                  (expect (= 0 total-h))
+                  (expect (= 0 eff-scroll))
+                  (expect (= [] visible)))))
   (describe "single message smaller than viewport"
             (it "is fully visible at top, eff-scroll = 0"
-                (let
-                  [m
-                   (user-msg "hi")
+                (let [m
+                      (user-msg "hi")
 
-                   {:keys [eff-scroll visible]}
-                   (virtual/layout [m] bubble-w settings nil 50 {})]
+                      {:keys [eff-scroll visible]}
+                      (virtual/layout [m] bubble-w settings nil 50 {})]
 
                   (expect (= 0 eff-scroll))
                   (expect (= 1 (count visible)))
@@ -276,46 +268,49 @@
   (describe
     "auto-bottom (scroll = nil)"
     (it "snaps eff-scroll so the LAST message's bottom touches inner-h"
-        (let
-          [msgs
-           [(user-msg "first") (user-msg "second") (user-msg "last")]
+        (let [msgs
+              [(user-msg "first") (user-msg "second") (user-msg "last")]
 
-           inner-h
-           7
+              inner-h
+              7
 
-           {:keys [eff-scroll total-h visible]}
-           (virtual/layout msgs bubble-w settings nil inner-h {})]
+              {:keys [eff-scroll total-h visible]}
+              (virtual/layout msgs bubble-w settings nil inner-h {})]
 
           (expect (= eff-scroll (max 0 (- total-h inner-h))))
           ;; visible includes at least the last message
           (expect (some #(= (dec (count msgs)) (:idx %)) visible))))
     (it "projects the live loading placeholder with progress text"
-        (let
-          [m
-           {:role :assistant :text "Sending request to provider..."}
+        (let [m
+              {:role :assistant :text "Sending request to provider..."}
 
-           {:keys [visible]}
-           (virtual/layout [m] bubble-w settings nil 20 {:loading? true :progress {:iterations []}})
+              {:keys [visible]}
+              (virtual/layout [m]
+                              bubble-w
+                              settings
+                              nil
+                              20
+                              {:loading? true :progress {:iterations []}})
 
-           projected
-           (:projected (first visible))]
+              projected
+              (:projected (first visible))]
 
           (expect (string? (:text projected)))
           (expect (not= (:text m) (:text projected)))))
-    (it "does not project off-screen live progress while the user is scrolled up"
-        (let
-          [msgs
-           (vec (concat (mapv #(user-msg (str "old " %)) (range 20))
-                        [{:role :assistant :text "Sending request to provider..."}]))
+    (it
+      "does not project off-screen live progress while the user is scrolled up"
+      (let [msgs
+            (vec (concat (mapv #(user-msg (str "old " %)) (range 20))
+                         [{:role :assistant :text "Sending request to provider..."}]))
 
-           {:keys [visible]}
-           (virtual/layout msgs bubble-w settings 0 6 {:loading? true :progress {:iterations []}})
+            {:keys [visible]}
+            (virtual/layout msgs bubble-w settings 0 6 {:loading? true :progress {:iterations []}})
 
-           last-idx
-           (dec (count msgs))]
+            last-idx
+            (dec (count msgs))]
 
-          (expect (seq visible))
-          (expect (not (some #(= last-idx (:idx %)) visible)))))
+        (expect (seq visible))
+        (expect (not (some #(= last-idx (:idx %)) visible)))))
     (it "folds a huge streaming result behind its own disclosure"
         ;; A live bubble must never grow by the SIZE of what the block produced:
         ;; the result rides behind its own `▸ RESULT` disclosure, so a 10 000-char
@@ -324,134 +319,129 @@
         ;; NAME only; that the name paints bold is pinned on the real grid in
         ;; `render-test/band-label-emphasis-test`.
         (render/invalidate-cache!)
-        (let
-          [huge-result
-           (str/join " " (repeat 1000 "abcdefghij"))
+        (let [huge-result
+              (str/join " " (repeat 1000 "abcdefghij"))
 
-           m
-           {:role :assistant :text "Sending request to provider..."}
+              m
+              {:role :assistant :text "Sending request to provider..."}
 
-           trace
-           [{:forms [{:code "(+ 1 2)"
-                      :result-render huge-result
-                      :result-kind :value
-                      :duration-ms 1
-                      :success? true
-                      :silent? false}]}]
+              trace
+              [{:forms [{:code "(+ 1 2)"
+                         :result-render huge-result
+                         :result-kind :value
+                         :duration-ms 1
+                         :success? true
+                         :silent? false}]}]
 
-           {:keys [visible]}
-           (virtual/layout [m]
-                           bubble-w
-                           settings
-                           nil
-                           30
-                           {:loading? true
-                            :progress {:iterations trace}
-                            :progress-extra {:now-ms 1000 :turn-start-ms 0}}
-                           {:session-id "session" :detail-expansions {}})
+              {:keys [visible]}
+              (virtual/layout [m]
+                              bubble-w
+                              settings
+                              nil
+                              30
+                              {:loading? true
+                               :progress {:iterations trace}
+                               :progress-extra {:now-ms 1000 :turn-start-ms 0}}
+                              {:session-id "session" :detail-expansions {}})
 
-           projected
-           (:projected (first visible))]
+              projected
+              (:projected (first visible))]
 
           (expect (str/includes? (:text projected) "▸ RESULT"))
           (expect (not (str/includes? (:text projected) "chars hidden")))
           (expect (not (str/includes? (:text projected) huge-result)))
           (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))
-    (it "keeps long live progress layout inside scroll-frame budget"
-        ;; Plain `:value` results are now hidden per user directive, so
-        ;; the row count is dominated by code + status lines per
-        ;; iteration (~6 rows). 300 iterations × ~6 rows leaves a wide
-        ;; budget below 3000; p95 latency budget unchanged.
-        (render/invalidate-cache!)
-        (let
-          [m
-           {:role :assistant :text "Sending request to provider..."}
+    (it
+      "keeps long live progress layout inside scroll-frame budget"
+      ;; Plain `:value` results are now hidden per user directive, so
+      ;; the row count is dominated by code + status lines per
+      ;; iteration (~6 rows). 300 iterations × ~6 rows leaves a wide
+      ;; budget below 3000; p95 latency budget unchanged.
+      (render/invalidate-cache!)
+      (let [m
+            {:role :assistant :text "Sending request to provider..."}
 
-           progress-entry
-           (fn [i done?]
-             {:forms [{:code (str "(do (Thread/sleep 1000) " i ")")
-                       :result-render nil
-                       :result-kind (when done? :value)
-                       :duration-ms (if done? 1000 0)
-                       :success? (when done? true)
-                       :started-at-ms (when-not done? 0)
-                       :silent? false}]})
+            progress-entry
+            (fn [i done?]
+              {:forms [{:code (str "(do (Thread/sleep 1000) " i ")")
+                        :result-render nil
+                        :result-kind (when done? :value)
+                        :duration-ms (if done? 1000 0)
+                        :success? (when done? true)
+                        :started-at-ms (when-not done? 0)
+                        :silent? false}]})
 
-           progress
-           {:iterations (vec (concat (map #(progress-entry % true) (range 300))
-                                     [(progress-entry 300 false)]))}
+            progress
+            {:iterations (vec (concat (map #(progress-entry % true) (range 300))
+                                      [(progress-entry 300 false)]))}
 
-           sample
-           (fn []
-             (let
-               [t0
-                (System/nanoTime)
+            sample
+            (fn []
+              (let [t0
+                    (System/nanoTime)
 
-                r
-                (virtual/layout [m]
-                                90
-                                settings
-                                nil
-                                30
-                                {:loading? true
-                                 :progress progress
-                                 :progress-extra {:now-ms 100000 :turn-start-ms 0}}
-                                {:session-id "session" :detail-expansions {}})
+                    r
+                    (virtual/layout [m]
+                                    90
+                                    settings
+                                    nil
+                                    30
+                                    {:loading? true
+                                     :progress progress
+                                     :progress-extra {:now-ms 100000 :turn-start-ms 0}}
+                                    {:session-id "session" :detail-expansions {}})
 
-                dt
-                (/ (- (System/nanoTime) t0) 1000000.0)]
+                    dt
+                    (/ (- (System/nanoTime) t0) 1000000.0)]
 
-               {:ms dt :line-count (count (get-in r [:visible 0 :projected :prewrapped-lines]))}))
+                {:ms dt :line-count (count (get-in r [:visible 0 :projected :prewrapped-lines]))}))
 
-           ;; First sample pays JIT + cache-miss warmup; drop it
-           ;; so the budget reflects steady-state layout cost.
-           _warmup
-           (sample)
+            ;; First sample pays JIT + cache-miss warmup; drop it
+            ;; so the budget reflects steady-state layout cost.
+            _warmup
+            (sample)
 
-           samples
-           (doall (repeatedly 12 sample))
+            samples
+            (doall (repeatedly 12 sample))
 
-           sorted-ms
-           (vec (sort (map :ms samples)))
+            sorted-ms
+            (vec (sort (map :ms samples)))
 
-           ;; Steady-state cost is the MEDIAN, not the slowest sample: a
-           ;; shared CI runner can stall any single sample on an unrelated
-           ;; process, and this is a regression tripwire, not a latency SLA.
-           ;; The worst sample still has a (generous) ceiling so a real
-           ;; blow-up cannot hide behind one fast half.
-           median-ms
-           (nth sorted-ms (quot (count sorted-ms) 2))
+            ;; Steady-state cost is the MEDIAN, not the slowest sample: a
+            ;; shared CI runner can stall any single sample on an unrelated
+            ;; process, and this is a regression tripwire, not a latency SLA.
+            ;; The worst sample still has a (generous) ceiling so a real
+            ;; blow-up cannot hide behind one fast half.
+            median-ms
+            (nth sorted-ms (quot (count sorted-ms) 2))
 
-           worst-ms
-           (peek sorted-ms)
+            worst-ms
+            (peek sorted-ms)
 
-           max-lines
-           (apply max (map :line-count samples))]
+            max-lines
+            (apply max (map :line-count samples))]
 
-          (expect (< max-lines 3000))
-          (expect (< median-ms 60.0)
-                  (str "progress layout median-ms=" median-ms " samples=" samples))
-          (expect (< worst-ms 400.0)
-                  (str "progress layout worst-ms=" worst-ms " samples=" samples)))))
+        (expect (< max-lines 3000))
+        (expect (< median-ms 60.0) (str "progress layout median-ms=" median-ms " samples=" samples))
+        (expect (< worst-ms 400.0)
+                (str "progress layout worst-ms=" worst-ms " samples=" samples)))))
   (describe "fixed scroll offset (scroll = some long)"
             (it "clamps to [0, max-scroll]"
-                (let
-                  [msgs
-                   (mapv #(user-msg (str %)) (range 30))
+                (let [msgs
+                      (mapv #(user-msg (str %)) (range 30))
 
-                   {:keys [eff-scroll total-h]}
-                   (virtual/layout msgs bubble-w settings 999999 10 {})]
+                      {:keys [eff-scroll total-h]}
+                      (virtual/layout msgs bubble-w settings 999999 10 {})]
 
                   (expect (= eff-scroll (max 0 (- total-h 10))))))
             (it "negative scroll clamps to 0"
                 ;; Channel layer normally guards this; the planner stays
                 ;; defensive anyway.
-                (let
-                  [msgs
-                   (mapv #(user-msg (str %)) (range 5))
+                (let [msgs
+                      (mapv #(user-msg (str %)) (range 5))
 
-                   {:keys [eff-scroll]}
-                   (virtual/layout msgs bubble-w settings 0 5 {})]
+                      {:keys [eff-scroll]}
+                      (virtual/layout msgs bubble-w settings 0 5 {})]
 
                   (expect (>= eff-scroll 0)))))
   (describe "pass-3 recovers visible bubbles missed by the pass-1 estimate"
@@ -465,55 +455,53 @@
             (it
               "keeps the prior stable assistant bubble visible while a huge live bubble streams"
               (render/invalidate-cache!)
-              (let
-                [stable
-                 (plain-assistant-msg "earlier turn answer body")
+              (let [stable
+                    (plain-assistant-msg "earlier turn answer body")
 
-                 live
-                 {:role :assistant :text "Sending request to provider..."}
+                    live
+                    {:role :assistant :text "Sending request to provider..."}
 
-                 inner-h
-                 40
+                    inner-h
+                    40
 
-                 ;; A streaming live bubble: pass-1's cheap estimate (it has no
-                 ;; `:traces`, just the "Sending..." text) badly undershoots the
-                 ;; real height once the printed iterations render. The prior
-                 ;; stable turn must still survive into `:visible` rather than
-                 ;; blinking out when the real height is measured. (Op-card
-                 ;; aggregation that used to collapse repeated calls is gone, so a
-                 ;; chatty bubble is genuinely tall — a handful of prints already
-                 ;; dwarfs pass-1's estimate.)
-                 iters
-                 (vec (for [i (range 4)]
-                        {:forms [{:code (str "(print " (inc i) ")")
-                                  :stdout (str (inc i))
-                                  :result-kind :value
-                                  :duration-ms 1
-                                  :success? true
-                                  :silent? false}]}))
+                    ;; A streaming live bubble: pass-1's cheap estimate (it has no
+                    ;; `:traces`, just the "Sending..." text) badly undershoots the
+                    ;; real height once the printed iterations render. The prior
+                    ;; stable turn must still survive into `:visible` rather than
+                    ;; blinking out when the real height is measured. (Op-card
+                    ;; aggregation that used to collapse repeated calls is gone, so a
+                    ;; chatty bubble is genuinely tall — a handful of prints already
+                    ;; dwarfs pass-1's estimate.)
+                    iters
+                    (vec (for [i (range 4)]
+                           {:forms [{:code (str "(print " (inc i) ")")
+                                     :stdout (str (inc i))
+                                     :result-kind :value
+                                     :duration-ms 1
+                                     :success? true
+                                     :silent? false}]}))
 
-                 {:keys [visible total-h eff-scroll]}
-                 (virtual/layout [stable live]
-                                 bubble-w
-                                 settings
-                                 nil
-                                 inner-h
-                                 {:loading? true
-                                  :progress {:iterations iters}
-                                  :progress-extra {:now-ms 1000 :turn-start-ms 0}}
-                                 {:session-id "s" :detail-expansions {}})
+                    {:keys [visible total-h eff-scroll]}
+                    (virtual/layout [stable live]
+                                    bubble-w
+                                    settings
+                                    nil
+                                    inner-h
+                                    {:loading? true
+                                     :progress {:iterations iters}
+                                     :progress-extra {:now-ms 1000 :turn-start-ms 0}}
+                                    {:session-id "s" :detail-expansions {}})
 
-                 visible-idxs
-                 (set (map :idx visible))]
+                    visible-idxs
+                    (set (map :idx visible))]
 
                 ;; The live bubble is always projected.
                 (expect (contains? visible-idxs 1))
                 ;; And the earlier stable bubble whose bottom row still pokes
                 ;; into the viewport must survive into `:visible`. Without
                 ;; pass-3 recovery this set is `#{1}` — the bug the user hit.
-                (let
-                  [stable-bottom (long (+ (get-in (first visible) [:top])
-                                          (get-in (first visible) [:height])))]
+                (let [stable-bottom (long (+ (get-in (first visible) [:top])
+                                             (get-in (first visible) [:height])))]
                   (expect (pos? total-h))
                   (expect (>= eff-scroll 0))
                   (expect (or (contains? visible-idxs 0) (zero? stable-bottom))
@@ -523,20 +511,18 @@
             ;; intercepting `render/format-answer-with-thinking` with a
             ;; counter wrap. Off-screen bubbles must not bump the counter.
             (it "10-message session, only the bottom few intersect a 5-row viewport"
-                (let
-                  [msgs
-                   (vec (concat (mapv #(trace-assistant-msg 3 2 (str "answer " %)) (range 10))))
+                (let [msgs
+                      (vec (concat (mapv #(trace-assistant-msg 3 2 (str "answer " %)) (range 10))))
 
-                   calls
-                   (atom 0)
+                      calls
+                      (atom 0)
 
-                   real
-                   render/format-answer-with-thinking]
+                      real
+                      render/format-answer-with-thinking]
 
-                  (with-redefs
-                    [render/format-answer-with-thinking (fn [& args]
-                                                          (swap! calls inc)
-                                                          (apply real args))]
+                  (with-redefs [render/format-answer-with-thinking (fn [& args]
+                                                                     (swap! calls inc)
+                                                                     (apply real args))]
                     (let [{:keys [visible]} (virtual/layout msgs bubble-w settings nil 5 {})]
                       ;; visible is only a small subset, NOT all 10
                       (expect (< (count visible) (count msgs)))
@@ -545,97 +531,91 @@
 
 (defdescribe
   pre-warm-test
-  (describe "pre-warm! warms the LRU off the render thread"
-            (it "returns nil for empty messages, no thread spawned"
-                (expect (nil? (virtual/pre-warm! [] bubble-w settings))))
-            (it "returns a daemon thread for non-empty messages"
-                (let [t (virtual/pre-warm! [(plain-assistant-msg "hi")] bubble-w settings)]
-                  (expect (some? t))
-                  (expect (.isDaemon ^Thread t))
-                  (virtual/stop-pre-warm! t)))
-            (it "pre-warm-recent! warms only the requested tail-count"
-                (virtual/invalidate-heights!)
-                (render/invalidate-cache!)
-                (let
-                  [msgs
-                   [(plain-assistant-msg "m0") (plain-assistant-msg "m1") (plain-assistant-msg "m2")
-                    (plain-assistant-msg "m3") (plain-assistant-msg "m4")]
+  (describe
+    "pre-warm! warms the LRU off the render thread"
+    (it "returns nil for empty messages, no thread spawned"
+        (expect (nil? (virtual/pre-warm! [] bubble-w settings))))
+    (it "returns a daemon thread for non-empty messages"
+        (let [t (virtual/pre-warm! [(plain-assistant-msg "hi")] bubble-w settings)]
+          (expect (some? t))
+          (expect (.isDaemon ^Thread t))
+          (virtual/stop-pre-warm! t)))
+    (it "pre-warm-recent! warms only the requested tail-count"
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [msgs
+              [(plain-assistant-msg "m0") (plain-assistant-msg "m1") (plain-assistant-msg "m2")
+               (plain-assistant-msg "m3") (plain-assistant-msg "m4")]
 
-                   warmed
-                   (virtual/pre-warm-recent! msgs bubble-w settings {:count 2 :budget-ms 1000})]
+              warmed
+              (virtual/pre-warm-recent! msgs bubble-w settings {:count 2 :budget-ms 1000})]
 
-                  (expect (= 2 warmed))
-                  (expect (= 2 (virtual/height-cache-size)))))
-            (it "pre-warm-recent! respects wall-clock budget"
-                (virtual/invalidate-heights!)
-                (render/invalidate-cache!)
-                (let
-                  [msgs
-                   [(trace-assistant-msg 5 4 "a") (trace-assistant-msg 5 4 "b")
-                    (trace-assistant-msg 5 4 "c")]
+          (expect (= 2 warmed))
+          (expect (= 2 (virtual/height-cache-size)))))
+    (it "pre-warm-recent! respects wall-clock budget"
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [msgs
+              [(trace-assistant-msg 5 4 "a") (trace-assistant-msg 5 4 "b")
+               (trace-assistant-msg 5 4 "c")]
 
-                   warmed
-                   (virtual/pre-warm-recent! msgs bubble-w settings {:count 3 :budget-ms 0})]
+              warmed
+              (virtual/pre-warm-recent! msgs bubble-w settings {:count 3 :budget-ms 0})]
 
-                  (expect (= 0 warmed))
-                  (expect (= 0 (virtual/height-cache-size)))))
-            (it
-              "warms the cache so a subsequent layout call is cheap"
-              ;; The whole point: after pre-warm finishes, calling
-              ;; format-answer-with-thinking on the warmed assistants must
-              ;; hit the cache (sub-microsecond), NOT recompute. Verified by
-              ;; counting calls into the uncached `format-answer-with-thinking*`
-              ;; surface.
-              (render/invalidate-cache!)
-              (let
-                [msgs
-                 [(trace-assistant-msg 3 2 "answer") (trace-assistant-msg 2 1 "another")]
+          (expect (= 0 warmed))
+          (expect (= 0 (virtual/height-cache-size)))))
+    (it "warms the cache so a subsequent layout call is cheap"
+        ;; The whole point: after pre-warm finishes, calling
+        ;; format-answer-with-thinking on the warmed assistants must
+        ;; hit the cache (sub-microsecond), NOT recompute. Verified by
+        ;; counting calls into the uncached `format-answer-with-thinking*`
+        ;; surface.
+        (render/invalidate-cache!)
+        (let [msgs
+              [(trace-assistant-msg 3 2 "answer") (trace-assistant-msg 2 1 "another")]
 
-                 t
-                 (virtual/pre-warm! msgs bubble-w settings)]
+              t
+              (virtual/pre-warm! msgs bubble-w settings)]
 
-                (.join ^Thread t 5000)
-                ;; Now both bubbles' fawt entries should be cached.
-                (let
-                  [calls
-                   (atom 0)
+          (.join ^Thread t 5000)
+          ;; Now both bubbles' fawt entries should be cached.
+          (let [calls
+                (atom 0)
 
-                   real
-                   @#'render/format-answer-with-thinking*]
+                real
+                @#'render/format-answer-with-thinking*]
 
-                  (with-redefs
-                    [render/format-answer-with-thinking* (fn [& args]
-                                                           (swap! calls inc)
-                                                           (apply real args))]
-                    (doseq [m msgs]
-                      (render/format-answer-with-thinking (:text m) (:traces m) bubble-w settings))
-                    ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
-                    ;; calls expected.
-                    (expect (zero? @calls))))))
-            (it "fires :on-warm at least once when warming completes"
-                ;; The render-version bump hook: callers wire :on-warm to
-                ;; settle total-h via a re-layout. Must fire at least once
-                ;; (the final settle) even for a sub-batch session.
-                (virtual/invalidate-heights!)
-                (render/invalidate-cache!)
-                (let
-                  [hits
-                   (atom 0)
+            (with-redefs [render/format-answer-with-thinking* (fn [& args]
+                                                                (swap! calls inc)
+                                                                (apply real args))]
+              (doseq [m msgs]
+                (render/format-answer-with-thinking (:text m) (:traces m) bubble-w settings))
+              ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
+              ;; calls expected.
+              (expect (zero? @calls))))))
+    (it "fires :on-warm at least once when warming completes"
+        ;; The render-version bump hook: callers wire :on-warm to
+        ;; settle total-h via a re-layout. Must fire at least once
+        ;; (the final settle) even for a sub-batch session.
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [hits
+              (atom 0)
 
-                   t
-                   (virtual/pre-warm! [(plain-assistant-msg "a") (plain-assistant-msg "b")]
-                                      bubble-w
-                                      settings
-                                      {:on-warm (fn []
-                                                  (swap! hits inc))})]
+              t
+              (virtual/pre-warm! [(plain-assistant-msg "a") (plain-assistant-msg "b")]
+                                 bubble-w
+                                 settings
+                                 {:on-warm (fn []
+                                             (swap! hits inc))})]
 
-                  (.join ^Thread t 5000)
-                  (expect (pos? @hits))))
-            (it "stop-pre-warm! is safe on nil and on already-finished threads"
-                (expect (nil? (virtual/stop-pre-warm! nil)))
-                (let [t (virtual/pre-warm! [(plain-assistant-msg "x")] bubble-w settings)]
-                  (.join ^Thread t 5000)
-                  (expect (nil? (virtual/stop-pre-warm! t)))))))
+          (.join ^Thread t 5000)
+          (expect (pos? @hits))))
+    (it "stop-pre-warm! is safe on nil and on already-finished threads"
+        (expect (nil? (virtual/stop-pre-warm! nil)))
+        (let [t (virtual/pre-warm! [(plain-assistant-msg "x")] bubble-w settings)]
+          (.join ^Thread t 5000)
+          (expect (nil? (virtual/stop-pre-warm! t)))))))
 
 (defdescribe
   overshoot-invariant-test
@@ -646,55 +626,52 @@
   ;; shapes that used to undershoot: long single-line code (fold-wrapped
   ;; by the painter, newline-counted by the old estimator) and pasted
   ;; diffs (every `+ ` line explodes into a markdown list item).
-  (let
-    [;; Measure the PRODUCTION shape: a live bubble always carries a session, so
-     ;; every collapsible section really does fold behind its details node. Without
-     ;; one the painter has nothing to key an expand state on and paints each body
-     ;; inline in full — a shape the TUI never ships.
-     sid
-     "overshoot"
+  (let [;; Measure the PRODUCTION shape: a live bubble always carries a session, so
+        ;; every collapsible section really does fold behind its details node. Without
+        ;; one the painter has nothing to key an expand state on and paints each body
+        ;; inline in full — a shape the TUI never ships.
+        sid
+        "overshoot"
 
-     est->real
-     (fn [m w]
-       (let [pm (project-message m w settings {:session-id sid :detail-expansions {}})]
-         [(estimated-height m w {} sid) (render/bubble-height pm w)]))]
+        est->real
+        (fn [m w]
+          (let [pm (project-message m w settings {:session-id sid :detail-expansions {}})]
+            [(estimated-height m w {} sid) (render/bubble-height pm w)]))]
 
     (describe
       "estimate >= painted height"
       (it "long single-line code in a trace, across widths"
           (doseq [w [64 104 194 254]]
-            (let
-              [code (str "(def payload \"" (apply str (repeat 900 "y")) "\")")
-               m (-> (trace-assistant-msg 1 1 "ok")
-                     (assoc-in [:traces 0 :forms 0 :code] code))
-               [est real] (est->real m w)]
+            (let [code (str "(def payload \"" (apply str (repeat 900 "y")) "\")")
+                  m (-> (trace-assistant-msg 1 1 "ok")
+                        (assoc-in [:traces 0 :forms 0 :code] code))
+                  [est real] (est->real m w)]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
       (it "pasted diff as a user message (list-marker block chrome)"
           (doseq [w [84 154 254]]
-            (let
-              [m (user-msg (str/join "\n" (repeat 20 "+        (let [rows (try ;; wide diff line")))
-               [est real] (est->real m w)]
+            (let [m (user-msg (str/join "\n"
+                                        (repeat 20 "+        (let [rows (try ;; wide diff line")))
+                  [est real] (est->real m w)]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
       (it "long multi-line tool result (collapsed preview cap)"
           (doseq [w [84 154 254]]
-            (let
-              [result (str/join "\n" (map #(str "line " % " of output") (range 80)))
-               m (-> (trace-assistant-msg 1 1 "ok")
-                     (assoc-in [:traces 0 :forms 0 :result-render] result))
-               [est real] (est->real m w)]
+            (let [result (str/join "\n" (map #(str "line " % " of output") (range 80)))
+                  m (-> (trace-assistant-msg 1 1 "ok")
+                        (assoc-in [:traces 0 :forms 0 :result-render] result))
+                  [est real] (est->real m w)]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
       (it "plain user / assistant prose"
-          (doseq
-            [w
-             [84 154 254]
+          (doseq [w
+                  [84 154 254]
 
-             m
-             [(user-msg "hi") (user-msg (apply str (repeat 600 "x")))
-              (plain-assistant-msg "Short answer.")
-              (plain-assistant-msg (str/join "\n\n" (repeat 8 "A paragraph of answer prose.")))]]
+                  m
+                  [(user-msg "hi") (user-msg (apply str (repeat 600 "x")))
+                   (plain-assistant-msg "Short answer.")
+                   (plain-assistant-msg (str/join "\n\n"
+                                                  (repeat 8 "A paragraph of answer prose.")))]]
 
             (let [[est real] (est->real m w)]
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real))))))))
@@ -707,87 +684,83 @@
 ;; (measured 190 → 400 over 8 messages) and the viewport/thumb lurched.
 (defdescribe
   image-fence-overshoot-test
-  (let
-    [fence
-     (fn [i w h]
-       (str "````vis-image\n[Image #"
-            i
-            ": shot-"
-            i
-            ".png]\n/tmp/shot-"
-            i
-            ".png\nimage/png\n"
-            w
-            "x"
-            h
-            "\n1.2 MB\n````"))
+  (let [fence
+        (fn [i w h]
+          (str "````vis-image\n[Image #"
+               i
+               ": shot-"
+               i
+               ".png]\n/tmp/shot-"
+               i
+               ".png\nimage/png\n"
+               w
+               "x"
+               h
+               "\n1.2 MB\n````"))
 
-     shot-msg
-     (fn [i]
-       (user-msg (str "look at this\n\n" (fence i 1320 2868))))
+        shot-msg
+        (fn [i]
+          (user-msg (str "look at this\n\n" (fence i 1320 2868))))
 
-     graphical
-     (fn [f]
-       ;; The picture box only exists on a terminal that can draw;
-       ;; the caches are keyed on text+width, not on that fact.
-       (with-redefs [timg/graphical-terminal? (constantly true)]
-         (virtual/invalidate-heights!)
-         (render/invalidate-cache!)
-         (let [v (f)]
-           (virtual/invalidate-heights!)
-           (render/invalidate-cache!)
-           v)))]
+        graphical
+        (fn [f]
+          ;; The picture box only exists on a terminal that can draw;
+          ;; the caches are keyed on text+width, not on that fact.
+          (with-redefs [timg/graphical-terminal? (constantly true)]
+            (virtual/invalidate-heights!)
+            (render/invalidate-cache!)
+            (let [v (f)]
+              (virtual/invalidate-heights!)
+              (render/invalidate-cache!)
+              v)))]
 
     (describe
       "a pasted screenshot"
       (it "estimates at least the rows its picture box paints, across widths"
           (doseq [w [84 154 254]]
-            (let
-              [m (shot-msg 1)
-               [est real] (graphical (fn []
-                                       [(estimated-height m w)
-                                        (render/bubble-height (project-message m w settings) w)]))]
+            (let [m (shot-msg 1)
+                  [est real] (graphical (fn []
+                                          [(estimated-height m w)
+                                           (render/bubble-height (project-message m w settings)
+                                                                 w)]))]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
       (it
         "never grows total-h while the reader scrolls up through screenshots"
-        (let
-          [msgs
-           (mapv shot-msg (range 8))
+        (let [msgs
+              (mapv shot-msg (range 8))
 
-           inner-h
-           40
+              inner-h
+              40
 
-           totals
-           (graphical
-             (fn []
-               (loop
-                 [base
-                  (:eff-scroll (virtual/layout msgs bubble-w settings nil inner-h {}))
+              totals
+              (graphical
+                (fn []
+                  (loop [base
+                         (:eff-scroll (virtual/layout msgs bubble-w settings nil inner-h {}))
 
-                  prev
-                  nil
+                         prev
+                         nil
 
-                  out
-                  []
+                         out
+                         []
 
-                  k
-                  0]
+                         k
+                         0]
 
-                 (if (>= k 14)
-                   out
-                   (let
-                     [ly (virtual/layout msgs
-                                         bubble-w
-                                         settings
-                                         (max 0 (- (long base) 8))
-                                         inner-h
-                                         {}
-                                         (when prev {:prev-offsets prev}))]
-                     (recur (long (or (:anchored-scroll ly) (:eff-scroll ly)))
-                            (:offsets ly)
-                            (conj out (long (:total-h ly)))
-                            (inc k)))))))]
+                    (if (>= k 14)
+                      out
+                      (let [ly (virtual/layout msgs
+                                               bubble-w
+                                               settings
+                                               (max 0 (- (long base) 8))
+                                               inner-h
+                                               {}
+                                               (when prev {:prev-offsets prev}))]
+                        (recur (long (or (:anchored-scroll ly) (:eff-scroll ly)))
+                               (:offsets ly)
+                               (conj out (long (:total-h ly)))
+                               (inc k)))))))]
 
           (expect (apply >= totals) (str "total-h grew while scrolling up: " (vec totals))))))))
 
@@ -801,86 +774,83 @@
   ;; disclosures (the :expand-all flag AND a real per-node toggle),
   ;; form errors (plain + provider), form comments, and the dense
   ;; tool-card fixture.
-  (let
-    [long-thinking
-     (str/join "\n" (map #(str "reasoning step " % " weighs the trade-offs at length") (range 40)))
+  (let [long-thinking
+        (str/join "\n"
+                  (map #(str "reasoning step " % " weighs the trade-offs at length") (range 40)))
 
-     long-result
-     (str/join "\n" (map #(str "output row " % " of the tool run") (range 60)))
+        long-result
+        (str/join "\n" (map #(str "output row " % " of the tool run") (range 60)))
 
-     sid
-     "ovs-x"
+        sid
+        "ovs-x"
 
-     rich-msg
-     (fn []
-       (-> (trace-assistant-msg 2 2 "Answer with some prose.")
-           (assoc :session-turn-id "ovs-turn-1")
-           (assoc-in [:traces 0 :thinking] long-thinking)
-           (assoc-in [:traces 0 :forms 0 :result] long-result)
-           (assoc-in [:traces 0 :forms 1 :comment] "why this form runs")))
+        rich-msg
+        (fn []
+          (-> (trace-assistant-msg 2 2 "Answer with some prose.")
+              (assoc :session-turn-id "ovs-turn-1")
+              (assoc-in [:traces 0 :thinking] long-thinking)
+              (assoc-in [:traces 0 :forms 0 :result] long-result)
+              (assoc-in [:traces 0 :forms 1 :comment] "why this form runs")))
 
-     est->real
-     (fn [m w de]
-       (let [pm (project-message m w settings {:session-id sid :detail-expansions de})]
-         [(estimated-height m w de sid) (render/bubble-height pm w)]))]
+        est->real
+        (fn [m w de]
+          (let [pm (project-message m w settings {:session-id sid :detail-expansions de})]
+            [(estimated-height m w de sid) (render/bubble-height pm w)]))]
 
-    (describe
-      "expanded disclosures stay overshooting"
-      (it "global :expand-all flag (estimate switches to full section heights)"
-          (doseq [w [84 154 254]]
-            (let [[est real] (est->real (rich-msg) w {:vis.channel-tui/expand-all-details? true})]
-              (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
-      (it "a REAL per-node toggle harvested from painter metadata (vector key branch)"
-          (let
-            [w
-             104
+    (describe "expanded disclosures stay overshooting"
+              (it "global :expand-all flag (estimate switches to full section heights)"
+                  (doseq [w [84 154 254]]
+                    (let [[est real]
+                          (est->real (rich-msg) w {:vis.channel-tui/expand-all-details? true})]
+                      (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
+              (it "a REAL per-node toggle harvested from painter metadata (vector key branch)"
+                  (let [w
+                        104
 
-             m
-             (rich-msg)
+                        m
+                        (rich-msg)
 
-             pm
-             (project-message m w settings {:session-id sid :detail-expansions {}})
+                        pm
+                        (project-message m w settings {:session-id sid :detail-expansions {}})
 
-             node-ids
-             (->> (:line-meta pm)
-                  (keep #(when (= :toggle-details (:kind %)) (:node-id %)))
-                  distinct
-                  vec)]
+                        node-ids
+                        (->> (:line-meta pm)
+                             (keep #(when (= :toggle-details (:kind %)) (:node-id %)))
+                             distinct
+                             vec)]
 
-            ;; The collapsed projection must expose at least one disclosure
-            ;; (the 40-line thinking trace guarantees it).
-            (expect (seq node-ids))
-            (doseq [nid node-ids]
-              (let
-                [de {[sid (str nid)] true}
-                 [est real] (est->real m w de)]
+                    ;; The collapsed projection must expose at least one disclosure
+                    ;; (the 40-line thinking trace guarantees it).
+                    (expect (seq node-ids))
+                    (doseq [nid node-ids]
+                      (let [de {[sid (str nid)] true}
+                            [est real] (est->real m w de)]
 
-                (expect (>= (long est) (long real))
-                        (str "node=" nid " est=" est " real=" real)))))))
+                        (expect (>= (long est) (long real))
+                                (str "node=" nid " est=" est " real=" real)))))))
     (describe
       "rich collapsed shapes stay overshooting"
       (it "form error — plain exception with a long message"
           (doseq [w [84 154 254]]
-            (let
-              [m (-> (trace-assistant-msg 1 1 "ok")
-                     (assoc-in [:traces 0 :forms 0 :success?] false)
-                     (assoc-in [:traces 0 :forms 0 :error]
-                               {:message (apply str "boom: " (repeat 40 "deeply nested cause "))}))
-               [est real] (est->real m w nil)]
+            (let [m (-> (trace-assistant-msg 1 1 "ok")
+                        (assoc-in [:traces 0 :forms 0 :success?] false)
+                        (assoc-in [:traces 0 :forms 0 :error]
+                                  {:message
+                                   (apply str "boom: " (repeat 40 "deeply nested cause "))}))
+                  [est real] (est->real m w nil)]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
       (it "form error — provider error with raw body trims"
           (doseq [w [84 154 254]]
-            (let
-              [m (-> (trace-assistant-msg 1 1 "ok")
-                     (assoc-in [:traces 0 :forms 0 :success?] false)
-                     (assoc-in [:traces 0 :forms 0 :error]
-                               {:message "upstream 500"
-                                :data {:status 500
-                                       :body (apply str (repeat 80 "provider exploded loudly "))
-                                       :raw-data (apply str (repeat 80 "raw payload fragment "))
-                                       :received-type "text/html"}}))
-               [est real] (est->real m w nil)]
+            (let [m (-> (trace-assistant-msg 1 1 "ok")
+                        (assoc-in [:traces 0 :forms 0 :success?] false)
+                        (assoc-in [:traces 0 :forms 0 :error]
+                                  {:message "upstream 500"
+                                   :data {:status 500
+                                          :body (apply str (repeat 80 "provider exploded loudly "))
+                                          :raw-data (apply str (repeat 80 "raw payload fragment "))
+                                          :received-type "text/html"}}))
+                  [est real] (est->real m w nil)]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
       (it "dense tool-card fixture (304 forms, previews, locator dumps)"
@@ -898,12 +868,11 @@
             (it "populates the sticky height cache (the post-invalidate re-settle)"
                 (virtual/invalidate-heights!)
                 (render/invalidate-cache!)
-                (let
-                  [msgs
-                   [(user-msg "one") (trace-assistant-msg 2 1 "two")]
+                (let [msgs
+                      [(user-msg "one") (trace-assistant-msg 2 1 "two")]
 
-                   t
-                   (virtual/rewarm! msgs bubble-w settings {:session-id "rewarm-t"})]
+                      t
+                      (virtual/rewarm! msgs bubble-w settings {:session-id "rewarm-t"})]
 
                   (expect (some? t))
                   (.join ^Thread t 5000)
@@ -912,18 +881,17 @@
             (it "restarting replaces the previous worker without leaking cache junk"
                 (virtual/invalidate-heights!)
                 (render/invalidate-cache!)
-                (let
-                  [a
-                   (vec (repeatedly 6 #(trace-assistant-msg 3 2 "warm me")))
+                (let [a
+                      (vec (repeatedly 6 #(trace-assistant-msg 3 2 "warm me")))
 
-                   _
-                   (virtual/rewarm! a bubble-w settings {:session-id "rewarm-a"})
+                      _
+                      (virtual/rewarm! a bubble-w settings {:session-id "rewarm-a"})
 
-                   b
-                   [(user-msg "fresh")]
+                      b
+                      [(user-msg "fresh")]
 
-                   t
-                   (virtual/rewarm! b bubble-w settings {:session-id "rewarm-b"})]
+                      t
+                      (virtual/rewarm! b bubble-w settings {:session-id "rewarm-b"})]
 
                   (.join ^Thread t 5000)
                   ;; b's single bubble is definitely warm; a's worker was stopped
@@ -943,20 +911,18 @@
     (it "`total-h` is stable across many scroll positions after pre-warm"
         (virtual/invalidate-heights!)
         (render/invalidate-cache!)
-        (let
-          [msgs
-           [(user-msg "first") (trace-assistant-msg 5 3 "answer one") (user-msg "second")
-            (trace-assistant-msg 8 4 "answer two") (user-msg "third")]
+        (let [msgs
+              [(user-msg "first") (trace-assistant-msg 5 3 "answer one") (user-msg "second")
+               (trace-assistant-msg 8 4 "answer two") (user-msg "third")]
 
-           t
-           (virtual/pre-warm! msgs bubble-w settings)]
+              t
+              (virtual/pre-warm! msgs bubble-w settings)]
 
           (.join ^Thread t 30000)
           ;; Every layout pass MUST agree on total-h after pre-warm.
-          (let
-            [totals (mapv (fn [s]
-                            (:total-h (virtual/layout msgs bubble-w settings s 10 {})))
-                          [nil 0 50 100 500 (long 1e6)])]
+          (let [totals (mapv (fn [s]
+                               (:total-h (virtual/layout msgs bubble-w settings s 10 {})))
+                             [nil 0 50 100 500 (long 1e6)])]
             (expect (= 1 (count (distinct totals)))))))
     (it "layout pins the real height of any message it measures"
         (virtual/invalidate-heights!)
@@ -969,36 +935,35 @@
     (it "mid-scroll last-bubble paints use full projection instead of broken window slices"
         (virtual/invalidate-heights!)
         (render/invalidate-cache!)
-        (let
-          [long-answer
-           (str/join "\n" (map #(str "line " %) (range 1 180)))
+        (let [long-answer
+              (str/join "\n" (map #(str "line " %) (range 1 180)))
 
-           msgs
-           [(user-msg "prompt") (plain-assistant-msg long-answer)]
+              msgs
+              [(user-msg "prompt") (plain-assistant-msg long-answer)]
 
-           inner-h
-           20
+              inner-h
+              20
 
-           bottom
-           (virtual/layout msgs bubble-w settings nil inner-h {})
+              bottom
+              (virtual/layout msgs bubble-w settings nil inner-h {})
 
-           total
-           (:total-h bottom)
+              total
+              (:total-h bottom)
 
-           max-s
-           (max 0 (- total inner-h))
+              max-s
+              (max 0 (- total inner-h))
 
-           mid-scroll
-           (max 0 (- max-s 3))
+              mid-scroll
+              (max 0 (- max-s 3))
 
-           mid
-           (virtual/layout msgs bubble-w settings mid-scroll inner-h {})
+              mid
+              (virtual/layout msgs bubble-w settings mid-scroll inner-h {})
 
-           mid-again
-           (virtual/layout msgs bubble-w settings (max 0 (- max-s 6)) inner-h {})
+              mid-again
+              (virtual/layout msgs bubble-w settings (max 0 (- max-s 6)) inner-h {})
 
-           last-visible
-           (last (:visible mid))]
+              last-visible
+              (last (:visible mid))]
 
           (expect (pos? max-s))
           (expect (nil? (-> last-visible
@@ -1012,31 +977,30 @@
     (it "mid-scroll trace assistants render the trace instead of an empty Markdown window"
         (virtual/invalidate-heights!)
         (render/invalidate-cache!)
-        (let
-          [msgs
-           [(user-msg "prompt") (trace-assistant-msg 12 6 "done")]
+        (let [msgs
+              [(user-msg "prompt") (trace-assistant-msg 12 6 "done")]
 
-           inner-h
-           20
+              inner-h
+              20
 
-           bottom
-           (virtual/layout msgs bubble-w settings nil inner-h {})
+              bottom
+              (virtual/layout msgs bubble-w settings nil inner-h {})
 
-           max-s
-           (max 0 (- (:total-h bottom) inner-h))
+              max-s
+              (max 0 (- (:total-h bottom) inner-h))
 
-           mid-scroll
-           (quot max-s 2)
+              mid-scroll
+              (quot max-s 2)
 
-           mid
-           (virtual/layout msgs bubble-w settings mid-scroll inner-h {})
+              mid
+              (virtual/layout msgs bubble-w settings mid-scroll inner-h {})
 
-           trace-row
-           (some #(when (-> %
-                            :projected
-                            :traces)
-                    %)
-                 (:visible mid))]
+              trace-row
+              (some #(when (-> %
+                               :projected
+                               :traces)
+                       %)
+                    (:visible mid))]
 
           (expect (pos? max-s))
           (expect (some? trace-row))
@@ -1054,29 +1018,27 @@
         ;; not a stale hit on the collapsed one.
         (virtual/invalidate-heights!)
         (render/invalidate-cache!)
-        (let
-          [msgs
-           [(plain-assistant-msg "<details>\n<summary>D</summary>\n\nbody\n\n</details>")]
+        (let [msgs
+              [(plain-assistant-msg "<details>\n<summary>D</summary>\n\nbody\n\n</details>")]
 
-           collapsed
-           (virtual/layout msgs
-                           bubble-w
-                           settings
-                           nil
-                           20
-                           {}
-                           {:session-id "cid" :detail-expansions {}})]
+              collapsed
+              (virtual/layout msgs
+                              bubble-w
+                              settings
+                              nil
+                              20
+                              {}
+                              {:session-id "cid" :detail-expansions {}})]
 
           (expect (= 1 (virtual/height-cache-size)))
-          (let
-            [expanded (virtual/layout msgs
-                                      bubble-w
-                                      settings
-                                      nil
-                                      20
-                                      {}
-                                      {:session-id "cid"
-                                       :detail-expansions {["cid" "answer:d1"] true}})]
+          (let [expanded (virtual/layout msgs
+                                         bubble-w
+                                         settings
+                                         nil
+                                         20
+                                         {}
+                                         {:session-id "cid"
+                                          :detail-expansions {["cid" "answer:d1"] true}})]
             ;; expansion state is keyed → a 2nd entry, NOT a stale collapsed hit
             (expect (= 2 (virtual/height-cache-size)))
             ;; and the expanded layout is at least as tall (it reveals the body)
@@ -1104,35 +1066,33 @@
   (it "never anchors auto-bottom (nil scroll stays bottom-pinned)"
       (virtual/invalidate-heights!)
       (render/invalidate-cache!)
-      (let
-        [msgs
-         [(user-msg "q") (trace-assistant-msg 6 4 "a")]
+      (let [msgs
+            [(user-msg "q") (trace-assistant-msg 6 4 "a")]
 
-         frame1
-         (virtual/layout msgs bubble-w settings nil 20 {})
+            frame1
+            (virtual/layout msgs bubble-w settings nil 20 {})
 
-         frame2
-         (virtual/layout msgs bubble-w settings nil 20 {} {:prev-offsets (:offsets frame1)})]
+            frame2
+            (virtual/layout msgs bubble-w settings nil 20 {} {:prev-offsets (:offsets frame1)})]
 
         (expect (nil? (:anchored-scroll frame2)))
         (expect (= (:eff-scroll frame2) (max 0 (- (:total-h frame2) 20))))))
   (it "skips anchoring when the message count changed (append)"
       (virtual/invalidate-heights!)
       (render/invalidate-cache!)
-      (let
-        [msgs1
-         [(user-msg "q") (trace-assistant-msg 3 2 "a")]
+      (let [msgs1
+            [(user-msg "q") (trace-assistant-msg 3 2 "a")]
 
-         frame1
-         (virtual/layout msgs1 bubble-w settings 10 20 {})
+            frame1
+            (virtual/layout msgs1 bubble-w settings 10 20 {})
 
-         msgs2
-         (conj msgs1 (user-msg "q2"))
+            msgs2
+            (conj msgs1 (user-msg "q2"))
 
-         ;; prev-offsets has the wrong length for msgs2 - must not throw
-         ;; or mis-index; falls through to the raw scroll.
-         frame2
-         (virtual/layout msgs2 bubble-w settings 10 20 {} {:prev-offsets (:offsets frame1)})]
+            ;; prev-offsets has the wrong length for msgs2 - must not throw
+            ;; or mis-index; falls through to the raw scroll.
+            frame2
+            (virtual/layout msgs2 bubble-w settings 10 20 {} {:prev-offsets (:offsets frame1)})]
 
         (expect (some? (:eff-scroll frame2)))))
   ;; Regression: the mid-scroll JUMP. Scrolling UP into never-measured
@@ -1144,72 +1104,68 @@
   ;; then the user wheels up `step`. A tracked message's screen row must
   ;; advance by EXACTLY `step` every frame — never jump — even as `total-h`
   ;; shrinks under it.
-  (it
-    "scrolling up never jumps a visible message as estimates resolve"
-    (virtual/invalidate-heights!)
-    (render/invalidate-cache!)
-    (let
-      [overshoot
-       (fn [i]
-         (-> (trace-assistant-msg 1 1 (str "ok " i))
-             (assoc-in [:traces 0 :forms 0 :result-render]
-                       (str/join "\n" (map #(str "line " % " out " i) (range 80))))))
+  (it "scrolling up never jumps a visible message as estimates resolve"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [overshoot
+            (fn [i]
+              (-> (trace-assistant-msg 1 1 (str "ok " i))
+                  (assoc-in [:traces 0 :forms 0 :result-render]
+                            (str/join "\n" (map #(str "line " % " out " i) (range 80))))))
 
-       msgs
-       (vec (map overshoot (range 40)))
+            msgs
+            (vec (map overshoot (range 40)))
 
-       inner-h
-       24
+            inner-h
+            24
 
-       step
-       3
+            step
+            3
 
-       track
-       16
+            track
+            16
 
-       screen-top
-       (fn [ly]
-         (- (long (nth (:offsets ly) track)) (long (:eff-scroll ly))))
+            screen-top
+            (fn [ly]
+              (- (long (nth (:offsets ly) track)) (long (:eff-scroll ly))))
 
-       frames
-       (loop
-         [base
-          400
+            frames
+            (loop [base
+                   400
 
-          prev
-          nil
+                   prev
+                   nil
 
-          out
-          []
+                   out
+                   []
 
-          k
-          0]
+                   k
+                   0]
 
-         (if (>= k 18)
-           out
-           (let
-             [scroll
-              (max 0 (- (long base) step))
+              (if (>= k 18)
+                out
+                (let [scroll
+                      (max 0 (- (long base) step))
 
-              ly
-              (virtual/layout msgs
-                              bubble-w
-                              settings
-                              scroll
-                              inner-h
-                              {}
-                              (when prev {:prev-offsets prev}))]
+                      ly
+                      (virtual/layout msgs
+                                      bubble-w
+                                      settings
+                                      scroll
+                                      inner-h
+                                      {}
+                                      (when prev {:prev-offsets prev}))]
 
-             (recur (:eff-scroll ly) (:offsets ly) (conj out (screen-top ly)) (inc k)))))
+                  (recur (:eff-scroll ly) (:offsets ly) (conj out (screen-top ly)) (inc k)))))
 
-       deltas
-       (map - (rest frames) frames)]
+            deltas
+            (map - (rest frames) frames)]
 
-      ;; total-h actually shrinks across the sweep (bubbles get measured),
-      ;; so this is a live estimate->real correction, not a no-op.
-      (expect (every? (fn [d]
-                        (= d step))
-                      deltas))))
+        ;; total-h actually shrinks across the sweep (bubbles get measured),
+        ;; so this is a live estimate->real correction, not a no-op.
+        (expect (every? (fn [d]
+                          (= d step))
+                        deltas))))
   (it
     "expanding a fold in the CLIPPED top message never jumps the viewport up"
     ;; Regression: scroll up a little so the top-of-viewport message is
@@ -1221,101 +1177,97 @@
     ;; itself when IT grew this frame, so its top row stays put.
     (virtual/invalidate-heights!)
     (render/invalidate-cache!)
-    (let
-      [sid
-       "rowsess"
+    (let [sid
+          "rowsess"
 
-       mk
-       (fn [i]
-         (-> (trace-assistant-msg 1 1 (str "Answer " i))
-             (assoc :session-turn-id (str "turn-" i))
-             (assoc-in [:traces 0 :thinking]
-                       (str/join "\n" (map #(str "reasoning " % " msg " i) (range 30))))
-             (assoc-in [:traces 0 :forms 0 :result]
-                       (str/join "\n" (map #(str "out " % " msg " i) (range 40))))))
+          mk
+          (fn [i]
+            (-> (trace-assistant-msg 1 1 (str "Answer " i))
+                (assoc :session-turn-id (str "turn-" i))
+                (assoc-in [:traces 0 :thinking]
+                          (str/join "\n" (map #(str "reasoning " % " msg " i) (range 30))))
+                (assoc-in [:traces 0 :forms 0 :result]
+                          (str/join "\n" (map #(str "out " % " msg " i) (range 40))))))
 
-       msgs
-       (vec (interleave (map #(user-msg (str "q" %)) (range 20)) (map mk (range 20))))
+          msgs
+          (vec (interleave (map #(user-msg (str "q" %)) (range 20)) (map mk (range 20))))
 
-       inner-h
-       40
+          inner-h
+          40
 
-       lay
-       (fn [scroll de prev]
-         (virtual/layout msgs
-                         bubble-w
-                         settings
-                         scroll
-                         inner-h
-                         {}
-                         (merge {:session-id sid :detail-expansions de}
-                                (when prev {:prev-offsets prev}))))
+          lay
+          (fn [scroll de prev]
+            (virtual/layout msgs
+                            bubble-w
+                            settings
+                            scroll
+                            inner-h
+                            {}
+                            (merge {:session-id sid :detail-expansions de}
+                                   (when prev {:prev-offsets prev}))))
 
-       settle
-       (fn [start de]
-         (loop
-           [scroll
-            start
+          settle
+          (fn [start de]
+            (loop [scroll
+                   start
 
-            prev
-            nil
+                   prev
+                   nil
 
-            k
-            0
+                   k
+                   0
 
-            acc
-            nil]
+                   acc
+                   nil]
 
-           (if (>= k 8)
-             acc
-             (let [ly (lay scroll de prev)]
-               (recur (:anchored-scroll ly) (:offsets ly) (inc k) ly)))))
+              (if (>= k 8)
+                acc
+                (let [ly (lay scroll de prev)]
+                  (recur (:anchored-scroll ly) (:offsets ly) (inc k) ly)))))
 
-       max-s
-       (max 0 (- (long (:total-h (lay nil {} nil))) inner-h))
+          max-s
+          (max 0 (- (long (:total-h (lay nil {} nil))) inner-h))
 
-       node-of
-       (fn [idx]
-         (->> (:line-meta (project-message (nth msgs idx)
-                                           bubble-w
-                                           settings
-                                           {:session-id sid :detail-expansions {}}))
-              (keep #(when (= :toggle-details (:kind %)) (:node-id %)))
-              first))
+          node-of
+          (fn [idx]
+            (->> (:line-meta (project-message (nth msgs idx)
+                                              bubble-w
+                                              settings
+                                              {:session-id sid :detail-expansions {}}))
+                 (keep #(when (= :toggle-details (:kind %)) (:node-id %)))
+                 first))
 
-       ;; The scroll offset that lands a FOLDABLE message clipped at the top of
-       ;; the viewport is a function of every bubble's painted height, so pinning
-       ;; one magic offset makes this regression re-break on any layout change.
-       ;; Search for the frame the claim is ABOUT instead: top message clipped,
-       ;; and carrying a disclosure to open.
-       [fA top-idx node]
-       (or (first
-             (for
-               [k
-                (range 4 60)
+          ;; The scroll offset that lands a FOLDABLE message clipped at the top of
+          ;; the viewport is a function of every bubble's painted height, so pinning
+          ;; one magic offset makes this regression re-break on any layout change.
+          ;; Search for the frame the claim is ABOUT instead: top message clipped,
+          ;; and carrying a disclosure to open.
+          [fA top-idx node]
+          (or (first (for [k
+                           (range 4 60)
 
-                :let [f
-                      (settle (- max-s k) {})
+                           :let [f
+                                 (settle (- max-s k) {})
 
-                      idx
-                      (:idx (first (:visible f)))
+                                 idx
+                                 (:idx (first (:visible f)))
 
-                      nd
-                      (node-of idx)
+                                 nd
+                                 (node-of idx)
 
-                      row
-                      (- (long (nth (:offsets f) idx)) (long (:eff-scroll f)))]
-                :when (and nd (neg? row))]
+                                 row
+                                 (- (long (nth (:offsets f) idx)) (long (:eff-scroll f)))]
+                           :when (and nd (neg? row))]
 
-               [f idx nd]))
-           [(settle (- max-s 6) {}) (:idx (first (:visible (settle (- max-s 6) {})))) nil])
+                       [f idx nd]))
+              [(settle (- max-s 6) {}) (:idx (first (:visible (settle (- max-s 6) {})))) nil])
 
-       f1
-       (lay (:anchored-scroll fA) {[sid node] true} (:offsets fA))
+          f1
+          (lay (:anchored-scroll fA) {[sid node] true} (:offsets fA))
 
-       row-of
-       (fn [ly]
-         (- (long (nth (:offsets ly) top-idx)) (long (:eff-scroll ly))))]
+          row-of
+          (fn [ly]
+            (- (long (nth (:offsets ly) top-idx)) (long (:eff-scroll ly))))]
 
       ;; sanity: a real disclosure exists and the top message is truly clipped
       (expect (some? node))
@@ -1326,15 +1278,14 @@
 (defdescribe
   turn-separator-test
   (it "ignores legacy turn-separator settings and reserves no blank row"
-      (let
-        [msgs
-         [(user-msg "first") (plain-assistant-msg "answer") (user-msg "next")]
+      (let [msgs
+            [(user-msg "first") (plain-assistant-msg "answer") (user-msg "next")]
 
-         marked-layout
-         (virtual/layout msgs bubble-w (assoc settings :differentiate-turns true) nil 100 {})
+            marked-layout
+            (virtual/layout msgs bubble-w (assoc settings :differentiate-turns true) nil 100 {})
 
-         unmarked-layout
-         (virtual/layout msgs bubble-w (assoc settings :differentiate-turns false) nil 100 {})]
+            unmarked-layout
+            (virtual/layout msgs bubble-w (assoc settings :differentiate-turns false) nil 100 {})]
 
         (expect (not-any? #(contains? (:projected %) :turn-separator?) (:visible marked-layout)))
         (expect (= (:total-h unmarked-layout) (:total-h marked-layout))))))
@@ -1343,44 +1294,45 @@
   cross-message-error-squash-test
   (it
     "squashes a run of error-only assistant turns into one bubble with ERROR x N"
-    (let
-      [err
-       {:type :svar.core/stream-truncated :message "Stream ended before terminal marker."}
+    (let [err
+          {:type :svar.core/stream-truncated :message "Stream ended before terminal marker."}
 
-       mk
-       (fn [i]
-         {:role :assistant
-          :session-turn-id (str "t" i)
-          :client-turn-id (str "c" i)
-          :traces [{:error err}]
-          :content []
-          :text ""})
+          mk
+          (fn [i]
+            {:role :assistant
+             :session-turn-id (str "t" i)
+             :client-turn-id (str "c" i)
+             :traces [{:error err}]
+             :content []
+             :text ""})
 
-       cancel
-       {:role :assistant
-        :session-turn-id "tc"
-        :client-turn-id "cc"
-        :status :cancelled
-        :content
-        [{"id" "cancelled" "type" "notice" "code" "turn_cancelled" "message" "Cancelled by user."}]
-        :text "Cancelled by user."}
+          cancel
+          {:role :assistant
+           :session-turn-id "tc"
+           :client-turn-id "cc"
+           :status :cancelled
+           :content [{"id" "cancelled"
+                      "type" "notice"
+                      "code" "turn_cancelled"
+                      "message" "Cancelled by user."}]
+           :text "Cancelled by user."}
 
-       msgs
-       (-> (mapv mk (range 9))
-           (conj cancel)
-           (into (mapv mk (range 9 11))))
+          msgs
+          (-> (mapv mk (range 9))
+              (conj cancel)
+              (into (mapv mk (range 9 11))))
 
-       layout
-       (virtual/layout msgs bubble-w settings nil 200 {})
+          layout
+          (virtual/layout msgs bubble-w settings nil 200 {})
 
-       bodies
-       (mapv (comp :text :projected) (:visible layout))
+          bodies
+          (mapv (comp :text :projected) (:visible layout))
 
-       error-bubbles
-       (filterv #(str/includes? (or % "") "ERROR") bodies)
+          error-bubbles
+          (filterv #(str/includes? (or % "") "ERROR") bodies)
 
-       error-occurrences
-       (count (mapcat #(re-seq #"ERROR" %) error-bubbles))]
+          error-occurrences
+          (count (mapcat #(re-seq #"ERROR" %) error-bubbles))]
 
       ;; 11 identical error turns split by one cancellation → two
       ;; merged error bubbles + cancellation between them.
@@ -1447,12 +1399,11 @@
    to assert on them is to compile that form again — here, in a throwaway
    namespace, so a lint assertion can never redefine the loaded one."
   [marker]
-  (let
-    [src
-     (slurp (io/resource "com/blockether/vis/ext/channel_tui/virtual.clj"))
+  (let [src
+        (slurp (io/resource "com/blockether/vis/ext/channel_tui/virtual.clj"))
 
-     i
-     (str/index-of src marker)]
+        i
+        (str/index-of src marker)]
 
     (assert i (str "no `" marker "` in virtual.clj"))
     (read-string (subs src i))))
@@ -1463,25 +1414,23 @@
    `render` aliased the way `virtual.clj` aliases it. Defines nothing that
    survives the call."
   [form]
-  (let
-    [shadow
-     (gensym "virtual-warn-check-")
+  (let [shadow
+        (gensym "virtual-warn-check-")
 
-     sw
-     (java.io.StringWriter.)]
+        sw
+        (java.io.StringWriter.)]
 
-    (try (binding
-           [*err*
-            sw
+    (try (binding [*err*
+                   sw
 
-            *warn-on-reflection*
-            true
+                   *warn-on-reflection*
+                   true
 
-            *unchecked-math*
-            :warn-on-boxed
+                   *unchecked-math*
+                   :warn-on-boxed
 
-            *ns*
-            (create-ns shadow)]
+                   *ns*
+                   (create-ns shadow)]
 
            (clojure.core/refer-clojure)
            (alias 'render 'com.blockether.vis.ext.channel-tui.render)

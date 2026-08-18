@@ -102,25 +102,23 @@
    spell-correction, which is how a query in another language answered with
    three confident and unrelated documents."
   [s]
-  (let
-    [^String s
-     (str s)
+  (let [^String s
+        (str s)
 
-     n
-     (.length s)
+        n
+        (.length s)
 
-     sb
-     (StringBuilder.)]
+        sb
+        (StringBuilder.)]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       in-word?
-       false
+           in-word?
+           false
 
-       out
-       (transient [])]
+           out
+           (transient [])]
 
       (if (= i n)
         (persistent! (if (pos? (.length sb)) (conj! out (.toString sb)) out))
@@ -163,12 +161,11 @@
    letter `-ing`/`-ed` doubled on the way in. Only the consonants English
    actually doubles, and never below `min-stem-len`."
   ^String [^String s]
-  (let
-    [n
-     (.length s)
+  (let [n
+        (.length s)
 
-     c
-     (.charAt s (dec n))]
+        c
+        (.charAt s (dec n))]
 
     (if (and (> n (long min-stem-len))
              (= c (.charAt s (- n 2)))
@@ -213,23 +210,24 @@
    tool 4 times in 14 with the plural rules alone, and 13 in 14 with these —
    with no change to the 51-ask battery the plural rules already answered."
   ^String [^String t]
-  (let
-    [folded
-     (plural-fold t)
+  (let [folded
+        (plural-fold t)
 
-     n
-     (.length folded)
+        n
+        (.length folded)
 
-     cut
-     (cond
-       (and (.endsWith folded "ing") (>= (- n 3) (long min-stem-len)) (has-vowel? folded (- n 3)))
-       (undoubled (subs folded 0 (- n 3)))
-       (and (.endsWith folded "ed") (>= (- n 2) (long min-stem-len)) (has-vowel? folded (- n 2)))
-       (undoubled (subs folded 0 (- n 2)))
-       ;; `used`, `named`: the `e` is the stem's own, so only the `d` goes.
-       (and (.endsWith folded "ed") (>= (- n 1) (long min-stem-len)) (has-vowel? folded (- n 1)))
-       (subs folded 0 (dec n))
-       :else folded)]
+        cut
+        (cond
+          (and (.endsWith folded "ing")
+               (>= (- n 3) (long min-stem-len))
+               (has-vowel? folded (- n 3)))
+          (undoubled (subs folded 0 (- n 3)))
+          (and (.endsWith folded "ed") (>= (- n 2) (long min-stem-len)) (has-vowel? folded (- n 2)))
+          (undoubled (subs folded 0 (- n 2)))
+          ;; `used`, `named`: the `e` is the stem's own, so only the `d` goes.
+          (and (.endsWith folded "ed") (>= (- n 1) (long min-stem-len)) (has-vowel? folded (- n 1)))
+          (subs folded 0 (dec n))
+          :else folded)]
 
     ;; The final `e` goes LAST and from every word, which is the rule that makes
     ;; `define`, `defines` and `defined` the one term `defin`.
@@ -264,30 +262,27 @@
    each, its term frequency in every field slot. Arrays instead of maps because
    this is the only structure the scoring loop reads."
   [^HashMap per-doc ^long n]
-  (let
-    [k
-     (.size per-doc)
+  (let [k
+        (.size per-doc)
 
-     ids
-     (int-array k)
+        ids
+        (int-array k)
 
-     tfs
-     (double-array (* k (long field-count)))]
+        tfs
+        (double-array (* k (long field-count)))]
 
-    (loop
-      [it
-       (.iterator (.entrySet per-doc))
+    (loop [it
+           (.iterator (.entrySet per-doc))
 
-       i
-       0]
+           i
+           0]
 
       (when (.hasNext it)
-        (let
-          [^Map$Entry e
-           (.next it)
+        (let [^Map$Entry e
+              (.next it)
 
-           ^doubles a
-           (.getValue e)]
+              ^doubles a
+              (.getValue e)]
 
           (aset ids i (int (.getKey e)))
           (System/arraycopy a 0 tfs (* i (long field-count)) (long field-count))
@@ -301,36 +296,35 @@
    `opts` overrides `default-opts` and is carried on the index itself."
   ([docs] (index docs nil))
   ([docs opts]
-   (let
-     [o
-      (merge default-opts opts)
+   (let [o
+         (merge default-opts opts)
 
-      ^doubles weights
-      (double-array (:field-weights o))
+         ^doubles weights
+         (double-array (:field-weights o))
 
-      ^doubles bs
-      (double-array (:field-b o))
+         ^doubles bs
+         (double-array (:field-b o))
 
-      k1
-      (double (:k1 o))
+         k1
+         (double (:k1 o))
 
-      docs
-      (vec docs)
+         docs
+         (vec docs)
 
-      nd
-      (count docs)
+         nd
+         (count docs)
 
-      acc
-      (HashMap.)
+         acc
+         (HashMap.)
 
-      lens
-      (double-array (* (max 1 nd) (long field-count)))
+         lens
+         (double-array (* (max 1 nd) (long field-count)))
 
-      handle-toks
-      (object-array (max 1 nd))
+         handle-toks
+         (object-array (max 1 nd))
 
-      handle-ids
-      (HashMap.)]
+         handle-ids
+         (HashMap.)]
 
      (dotimes [i nd]
        (let [d (nth docs i)]
@@ -342,28 +336,25 @@
            (let [ts (terms (get d (nth field-keys f)))]
              (aset lens (+ (* i (long field-count)) f) (double (count ts)))
              (doseq [t ts]
-               (let
-                 [^HashMap per (or (.get acc t)
-                                   (let [m (HashMap.)]
-                                     (.put acc t m)
-                                     m))
-                  ^doubles tf (or (.get per (int i))
-                                  (let [a (double-array (long field-count))]
-                                    (.put per (int i) a)
-                                    a))]
+               (let [^HashMap per (or (.get acc t)
+                                      (let [m (HashMap.)]
+                                        (.put acc t m)
+                                        m))
+                     ^doubles tf (or (.get per (int i))
+                                     (let [a (double-array (long field-count))]
+                                       (.put per (int i) a)
+                                       a))]
 
                  (aset tf f (+ 1.0 (aget tf f)))))))))
      (let [bn (double-array (* (max 1 nd) (long field-count)))]
        (dotimes [f (long field-count)]
-         (let
-           [total
-            (loop
-              [i 0
-               s 0.0]
+         (let [total
+               (loop [i 0
+                      s 0.0]
 
-              (if (< i nd) (recur (inc i) (+ s (aget lens (+ (* i (long field-count)) f)))) s))
-            avg (max 1.0e-9 (/ total (double (max 1 nd))))
-            b (aget bs f)]
+                 (if (< i nd) (recur (inc i) (+ s (aget lens (+ (* i (long field-count)) f)))) s))
+               avg (max 1.0e-9 (/ total (double (max 1 nd))))
+               b (aget bs f)]
 
            (dotimes [i nd]
              (aset bn
@@ -430,15 +421,14 @@
    thrown away."
   []
   (while (> (.size ^ConcurrentHashMap index-cache) (long cache-capacity))
-    (let
-      [victim (reduce (fn [worst ^Map$Entry e]
-                        (if (or (nil? worst)
-                                (< (.get ^AtomicLong (:used (.getValue e)))
-                                   (.get ^AtomicLong (:used (second worst)))))
-                          [(.getKey e) (.getValue e)]
-                          worst))
-                      nil
-                      (.entrySet ^ConcurrentHashMap index-cache))]
+    (let [victim (reduce (fn [worst ^Map$Entry e]
+                           (if (or (nil? worst)
+                                   (< (.get ^AtomicLong (:used (.getValue e)))
+                                      (.get ^AtomicLong (:used (second worst)))))
+                             [(.getKey e) (.getValue e)]
+                             worst))
+                         nil
+                         (.entrySet ^ConcurrentHashMap index-cache))]
       (if victim
         (.remove ^ConcurrentHashMap index-cache (first victim) (second victim))
         ;; Emptied underneath us — nothing left to evict.
@@ -451,21 +441,21 @@
    one immutable index and may rank against it in parallel."
   ([docs] (cached-index docs nil))
   ([docs opts]
-   (let
-     [ds
-      (vec docs)
+   (let [ds
+         (vec docs)
 
-      o
-      (merge default-opts opts)
+         o
+         (merge default-opts opts)
 
-      entry
-      (.computeIfAbsent ^ConcurrentHashMap index-cache
-                        (fingerprint ds o)
-                        (reify
-                          Function
-                            (apply [_ _]
-                              {:ix (index ds o)
-                               :used (AtomicLong. (.incrementAndGet ^AtomicLong cache-clock))})))]
+         entry
+         (.computeIfAbsent ^ConcurrentHashMap index-cache
+                           (fingerprint ds o)
+                           (reify
+                             Function
+                               (apply [_ _]
+                                 {:ix (index ds o)
+                                  :used (AtomicLong. (.incrementAndGet ^AtomicLong
+                                                                       cache-clock))})))]
 
      (.set ^AtomicLong (:used entry) (.incrementAndGet ^AtomicLong cache-clock))
      (evict-lru!)
@@ -482,68 +472,65 @@
    before any work, and a row whose every cell already exceeds `budget` ends
    the walk."
   ^long [^String a ^String b ^long budget]
-  (let
-    [m
-     (.length a)
+  (let [m
+        (.length a)
 
-     n
-     (.length b)
+        n
+        (.length b)
 
-     over
-     (inc budget)]
+        over
+        (inc budget)]
 
     (if (> (Math/abs (- m n)) budget)
       over
-      (loop
-        [i
-         1
+      (loop [i
+             1
 
-         pprev
-         nil
+             pprev
+             nil
 
-         prev
-         (long-array (map long (range (inc n))))]
+             prev
+             (long-array (map long (range (inc n))))]
 
         (if (> i m)
           (aget ^longs prev n)
-          (let
-            [^longs pv
-             prev
+          (let [^longs pv
+                prev
 
-             ^longs row
-             (long-array (inc n))
+                ^longs row
+                (long-array (inc n))
 
-             _
-             (aset row 0 (long i))
-
-             best
-             (loop
-               [j
-                1
+                _
+                (aset row 0 (long i))
 
                 best
-                (long i)]
+                (loop [j
+                       1
 
-               (if (> j n)
-                 best
-                 (let
-                   [cost
-                    (if (= (.charAt a (dec i)) (.charAt b (dec j))) 0 1)
+                       best
+                       (long i)]
 
-                    v
-                    (min (inc (aget row (dec j))) (inc (aget pv j)) (+ (aget pv (dec j)) cost))
+                  (if (> j n)
+                    best
+                    (let [cost
+                          (if (= (.charAt a (dec i)) (.charAt b (dec j))) 0 1)
 
-                    v
-                    (if (and pprev
-                             (> i 1)
-                             (> j 1)
-                             (= (.charAt a (dec i)) (.charAt b (- j 2)))
-                             (= (.charAt a (- i 2)) (.charAt b (dec j))))
-                      (min v (inc (aget ^longs pprev (- j 2))))
-                      v)]
+                          v
+                          (min (inc (aget row (dec j)))
+                               (inc (aget pv j))
+                               (+ (aget pv (dec j)) cost))
 
-                   (aset row j (long v))
-                   (recur (inc j) (min best (long v))))))]
+                          v
+                          (if (and pprev
+                                   (> i 1)
+                                   (> j 1)
+                                   (= (.charAt a (dec i)) (.charAt b (- j 2)))
+                                   (= (.charAt a (- i 2)) (.charAt b (dec j))))
+                            (min v (inc (aget ^longs pprev (- j 2))))
+                            v)]
+
+                      (aset row j (long v))
+                      (recur (inc j) (min best (long v))))))]
 
             (if (> (long best) budget) over (recur (inc i) prev row))))))))
 
@@ -598,39 +585,36 @@
    can beat."
   [bucket ^String term]
   (when (>= (.length term) 4)
-    (let
-      [len
-       (.length term)
+    (let [len
+          (.length term)
 
-       budget
-       (if (>= len 7) 2 1)]
+          budget
+          (if (>= len 7) 2 1)]
 
-      (loop
-        [ts
-         (seq bucket)
+      (loop [ts
+             (seq bucket)
 
-         best
-         nil
+             best
+             nil
 
-         bd
-         (inc (long budget))
+             bd
+             (inc (long budget))
 
-         bdl
-         Long/MAX_VALUE]
+             bdl
+             Long/MAX_VALUE]
 
         (if (or (nil? ts) (and (= bd 1) (= bdl 0)))
           (when (<= (long bd) (long budget)) best)
-          (let
-            [^String cand
-             (first ts)
+          (let [^String cand
+                (first ts)
 
-             dl
-             (Math/abs (- (.length cand) len))
+                dl
+                (Math/abs (- (.length cand) len))
 
-             ;; Cheaper than entering the DP: a candidate further away in
-             ;; length than the budget cannot be within it.
-             d
-             (if (> dl (long budget)) (inc (long budget)) (edit-distance term cand bd))]
+                ;; Cheaper than entering the DP: a candidate further away in
+                ;; length than the budget cannot be within it.
+                d
+                (if (> dl (long budget)) (inc (long budget)) (edit-distance term cand bd))]
 
             (if (or (< d (long bd)) (and (= d (long bd)) (< dl (long bdl))))
               (recur (next ts) cand d dl)
@@ -660,24 +644,22 @@
    an excerpt by `:idf`, so a hit can show WHY it came back instead of only how
    high it scored."
   [{:keys [postings] :as ix} raw]
-  (loop
-    [ts
-     (seq raw)
+  (loop [ts
+         (seq raw)
 
-     seen
-     #{}
+         seen
+         #{}
 
-     out
-     []]
+         out
+         []]
 
     (if-not ts
       out
-      (let
-        [t
-         (first ts)
+      (let [t
+            (first ts)
 
-         r
-         (resolve-term ix t)]
+            r
+            (resolve-term ix t)]
 
         (if (or (nil? r) (contains? seen r))
           (recur (next ts) seen out)
@@ -695,37 +677,34 @@
    a document most of its score. Walks the term's postings, so an unrelated
    document is never touched."
   [^doubles scores ^doubles bn ^doubles weights k1 posting]
-  (let
-    [k1
-     (double k1)
+  (let [k1
+        (double k1)
 
-     ^ints ids
-     (:ids posting)
+        ^ints ids
+        (:ids posting)
 
-     ^doubles tfs
-     (:tfs posting)
+        ^doubles tfs
+        (:tfs posting)
 
-     w
-     (double (:idf posting))]
+        w
+        (double (:idf posting))]
 
     (dotimes [p (alength ids)]
-      (let
-        [id (aget ids p)
-         base (* p (long field-count))
-         dbase (* id (long field-count))
-         ;; A field the term misses adds nothing, so the divisor is never zero:
-         ;; a field with an occurrence has a length.
-         ptf (loop
-               [f 0
-                acc 0.0]
+      (let [id (aget ids p)
+            base (* p (long field-count))
+            dbase (* id (long field-count))
+            ;; A field the term misses adds nothing, so the divisor is never zero:
+            ;; a field with an occurrence has a length.
+            ptf (loop [f 0
+                       acc 0.0]
 
-               (if (= f (long field-count))
-                 acc
-                 (let [tf (aget tfs (+ base f))]
-                   (recur (inc f)
-                          (if (zero? tf)
-                            acc
-                            (+ acc (/ (* (aget weights f) tf) (aget bn (+ dbase f)))))))))]
+                  (if (= f (long field-count))
+                    acc
+                    (let [tf (aget tfs (+ base f))]
+                      (recur (inc f)
+                             (if (zero? tf)
+                               acc
+                               (+ acc (/ (* (aget weights f) tf) (aget bn (+ dbase f)))))))))]
 
         (aset scores id (+ (aget scores id) (* w (/ (* ptf (+ k1 1.0)) (+ k1 ptf))))))))
   scores)
@@ -761,29 +740,26 @@
    a real handle - still covers `format_code` outright. Only HANDLE tokens are
    scanned (`:handle-ids`), never the corpus body."
   [^doubles scores ^objects handle-toks handle-ids bonus query-terms]
-  (let
-    [bonus
-     (double bonus)
+  (let [bonus
+        (double bonus)
 
-     qset
-     (set query-terms)
+        qset
+        (set query-terms)
 
-     qn
-     (count qset)
+        qn
+        (count qset)
 
-     prefix?
-     (<= qn (long name-lookup-terms))]
+        prefix?
+        (<= qn (long name-lookup-terms))]
 
     (when (pos? qn)
-      (doseq
-        [i (into #{}
-                 (comp (filter (fn [[tok _]]
-                                 (names-token? qset prefix? tok)))
-                       (mapcat val))
-                 handle-ids)]
-        (let
-          [ht (aget handle-toks (int i))
-           covered (count (filter #(names-token? qset prefix? %) ht))]
+      (doseq [i (into #{}
+                      (comp (filter (fn [[tok _]]
+                                      (names-token? qset prefix? tok)))
+                            (mapcat val))
+                      handle-ids)]
+        (let [ht (aget handle-toks (int i))
+              covered (count (filter #(names-token? qset prefix? %) ht))]
 
           (when (pos? covered)
             (aset scores
@@ -797,16 +773,15 @@
   "The `k` best of `hits` by (score desc, name asc) through a bounded heap: a
    250-document corpus is not sorted to answer five rows."
   [hits ^long k]
-  (let
-    [worst-first
-     (reify
-       Comparator
-         (compare [_ a b]
-           (let [d (compare (:score a) (:score b))]
-             (if (zero? d) (compare (:name b) (:name a)) d))))
+  (let [worst-first
+        (reify
+          Comparator
+            (compare [_ a b]
+              (let [d (compare (:score a) (:score b))]
+                (if (zero? d) (compare (:name b) (:name a)) d))))
 
-     pq
-     (PriorityQueue. (max 1 (int k)) worst-first)]
+        pq
+        (PriorityQueue. (max 1 (int k)) worst-first)]
 
     (doseq [h hits]
       (.offer pq h)
@@ -825,63 +800,59 @@
    came back cannot re-derive them from the query string."
   ([ix query] (rank ix query nil))
   ([ix query {:keys [limit]}]
-   (let
-     [raw
-      (terms query)
+   (let [raw
+         (terms query)
 
-      docs
-      (:docs ix)
+         docs
+         (:docs ix)
 
-      limit
-      (when limit (long limit))]
+         limit
+         (when limit (long limit))]
 
      (if (empty? raw)
-       (with-meta (cond->>
-                    (sort-by :name
-                             (map (fn [d]
-                                    (assoc (:value d) :score 0.0))
-                                  docs))
+       (with-meta (cond->> (sort-by :name
+                                    (map (fn [d]
+                                           (assoc (:value d) :score 0.0))
+                                         docs))
                     limit
                     (take limit)
 
                     :always
                     vec)
          {:terms []})
-       (let
-         [nd
-          (count docs)
+       (let [nd
+             (count docs)
 
-          scores
-          (double-array (max 1 nd))
+             scores
+             (double-array (max 1 nd))
 
-          ^doubles bn
-          (:bn ix)
+             ^doubles bn
+             (:bn ix)
 
-          ^doubles weights
-          (:weights ix)
+             ^doubles weights
+             (:weights ix)
 
-          k1
-          (double (:k1 ix))
+             k1
+             (double (:k1 ix))
 
-          postings
-          (:postings ix)
+             postings
+             (:postings ix)
 
-          resolved
-          (resolve-query ix raw)
+             resolved
+             (resolve-query ix raw)
 
-          hit
-          (into #{} (map :as) resolved)]
+             hit
+             (into #{} (map :as) resolved)]
 
          (doseq [t hit]
            (when-let [p (get postings t)]
              (accumulate! scores bn weights k1 p)))
          (add-handle-bonus! scores (:handle-toks ix) (:handle-ids ix) (:handle-bonus ix) hit)
-         (let
-           [hits (into []
-                       (keep (fn [i]
-                               (let [s (aget scores (int i))]
-                                 (when (pos? s) (assoc (:value (nth docs i)) :score s)))))
-                       (range nd))]
+         (let [hits (into []
+                          (keep (fn [i]
+                                  (let [s (aget scores (int i))]
+                                    (when (pos? s) (assoc (:value (nth docs i)) :score s)))))
+                          (range nd))]
            (with-meta (if (and limit (> (count hits) (long limit)))
                         (top-k hits limit)
                         (vec (sort-by (juxt (comp - :score) :name) hits)))

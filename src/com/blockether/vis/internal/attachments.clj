@@ -144,9 +144,8 @@
   (loop [offset (long (count png-signature))]
     (if (> (+ offset 8) (alength b))
       false
-      (let
-        [chunk-length (u32-be b offset)
-         type-offset (+ offset 4)]
+      (let [chunk-length (u32-be b offset)
+            type-offset (+ offset 4)]
 
         (cond (ascii-at? b type-offset "acTL") true
               (ascii-at? b type-offset "IDAT") false
@@ -158,23 +157,21 @@
 (defn- bmp?
   [^bytes b]
   (and (>= (alength b) 30)
-       (let
-         [declared-size
-          (u32-le b 2)
+       (let [declared-size
+             (u32-le b 2)
 
-          pixel-data-offset
-          (u32-le b 10)
+             pixel-data-offset
+             (u32-le b 10)
 
-          dib-header-size
-          (u32-le b 14)]
+             dib-header-size
+             (u32-le b 14)]
 
          (and (or (zero? declared-size) (>= declared-size 26))
               (>= pixel-data-offset (+ 14 dib-header-size))
               (or (zero? declared-size) (< pixel-data-offset declared-size))
-              (let
-                [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
-                                    (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
-                                    :else [nil nil])]
+              (let [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
+                                       (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
+                                       :else [nil nil])]
                 (and (= 1 planes) (contains? #{1 4 8 16 24 32} bpp)))))))
 
 (defn- svg-markup?
@@ -182,12 +179,11 @@
    the root tag itself, followed by an `<svg` element. Text sniffing, not magic
    bytes -- SVG has none."
   [^bytes b]
-  (let
-    [head
-     (str/lower-case (String. b 0 (int (min (alength b) 4096)) StandardCharsets/UTF_8))
+  (let [head
+        (str/lower-case (String. b 0 (int (min (alength b) 4096)) StandardCharsets/UTF_8))
 
-     start
-     (str/triml (str/replace head "\ufeff" ""))]
+        start
+        (str/triml (str/replace head "\ufeff" ""))]
 
     (and (str/starts-with? start "<") (str/includes? head "<svg"))))
 
@@ -279,9 +275,8 @@
   "Read the file head and sniff its MIME type. nil on any read failure."
   [^File f]
   (try (with-open [raf (RandomAccessFile. f "r")]
-         (let
-           [n (int (min (.length raf) (long sniff-bytes)))
-            buf (byte-array n)]
+         (let [n (int (min (.length raf) (long sniff-bytes)))
+               buf (byte-array n)]
 
            (.readFully raf buf)
            (detect-media-mime buf)))
@@ -355,12 +350,11 @@
                   (or single double*))
                 (re-seq quoted-span-pattern text))
           (mapcat (fn [tok]
-                    (let
-                      [tok
-                       (unescape-token tok)
+                    (let [tok
+                          (unescape-token tok)
 
-                       trimmed
-                       (strip-edge-punct tok)]
+                          trimmed
+                          (strip-edge-punct tok)]
 
                       (if (= tok trimmed) [tok] [tok trimmed])))
                   (re-seq escaped-token-pattern text))))
@@ -370,16 +364,15 @@
    extension, or nil. Relative candidates resolve against
    `workspace-root` (falling back to cwd)."
   ^File [candidate workspace-root]
-  (let
-    [^String s (-> candidate
-                   str/trim
-                   strip-file-url
-                   paths/expand-home)]
+  (let [^String s (-> candidate
+                      str/trim
+                      strip-file-url
+                      paths/expand-home)]
     (when (and (seq s) (re-find media-extension-pattern s))
-      (let
-        [f (File. s)
-         f
-         (if (.isAbsolute f) f (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
+      (let [f (File. s)
+            f (if (.isAbsolute f)
+                f
+                (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
 
         (when (and (.isFile f) (.canRead f)) f)))))
 
@@ -426,15 +419,14 @@
    Returns the attachment map, or `{:reason <why>}` when the file is too big to
    store (see [[storable-limit]])."
   [^File f mime ^long max-bytes]
-  (let
-    [raw
-     (Files/readAllBytes (.toPath f))
+  (let [raw
+        (Files/readAllBytes (.toPath f))
 
-     size
-     (alength raw)
+        size
+        (alength raw)
 
-     limit
-     (storable-limit mime max-bytes)]
+        limit
+        (storable-limit mime max-bytes)]
 
     (if (> size limit)
       {:reason (str (size-label size) " exceeds the " (size-label limit) " attachment limit")}
@@ -558,21 +550,20 @@
    (reduce
      (fn [acc att]
        (try
-         (let
-           [^String payload
-            (strip-data-url-prefix (str (or (:base64 att) (get att "base64"))))
+         (let [^String payload
+               (strip-data-url-prefix (str (or (:base64 att) (get att "base64"))))
 
-            label
-            (or (not-empty (str (or (:filename att) (get att "filename")))) "image")
+               label
+               (or (not-empty (str (or (:filename att) (get att "filename")))) "image")
 
-            ^bytes raw
-            (.decode (Base64/getDecoder) payload)
+               ^bytes raw
+               (.decode (Base64/getDecoder) payload)
 
-            mime
-            (detect-media-mime raw)
+               mime
+               (detect-media-mime raw)
 
-            size
-            (alength raw)]
+               size
+               (alength raw)]
 
            (cond (nil? mime)
                  (update acc :skipped conj {:path label :reason "not a supported image or video"})
@@ -625,13 +616,12 @@
       (str/replace s
                    media-path-token-pattern
                    (fn [m]
-                     (let
-                       [clean (-> (str m)
-                                  (str/replace #"^[\"'(\[{<]+" "")
-                                  (str/replace #"[\"')\]}>.,;:!?]+$" "")
-                                  unescape-token
-                                  strip-file-url)
-                        base (last (str/split clean #"[/\\\\]"))]
+                     (let [clean (-> (str m)
+                                     (str/replace #"^[\"'(\[{<]+" "")
+                                     (str/replace #"[\"')\]}>.,;:!?]+$" "")
+                                     unescape-token
+                                     strip-file-url)
+                           base (last (str/split clean #"[/\\\\]"))]
 
                        (if (str/blank? (str base)) clean base)))))))
 
@@ -695,14 +685,13 @@
   "True when `media-type` names a document from [[human-only-media-types]].
    Parameters (`text/html; charset=utf-8`) are dropped before the lookup."
   [media-type]
-  (let
-    [mt (-> (str media-type)
-            (str/trim)
-            (str/lower-case)
-            (str/split #";")
-            (first)
-            (str)
-            (str/trim))]
+  (let [mt (-> (str media-type)
+               (str/trim)
+               (str/lower-case)
+               (str/split #";")
+               (first)
+               (str)
+               (str/trim))]
     (contains? human-only-media-types mt)))
 
 (defn normalize-audience
@@ -779,12 +768,11 @@
 (defn- content-key
   "Cache key: the payload's own content, plus everything the verdict depends on."
   [^String payload media-type ^long max-bytes ^long max-dimension]
-  (let
-    [md
-     (MessageDigest/getInstance "SHA-256")
+  (let [md
+        (MessageDigest/getInstance "SHA-256")
 
-     digest
-     (.digest md (.getBytes payload StandardCharsets/UTF_8))]
+        digest
+        (.digest md (.getBytes payload StandardCharsets/UTF_8))]
 
     (str (.encodeToString (Base64/getUrlEncoder) digest)
          "|" media-type
@@ -794,15 +782,14 @@
 (defn- cache-put!
   [k verdict]
   (swap! wire-cache (fn [cache]
-                      (loop
-                        [order
-                         (conj (:order cache) k)
+                      (loop [order
+                             (conj (:order cache) k)
 
-                         entries
-                         (assoc (:entries cache) k verdict)
+                             entries
+                             (assoc (:entries cache) k verdict)
 
-                         total
-                         (+ (long (:bytes cache)) (long (count (str (:base64 verdict)))))]
+                             total
+                             (+ (long (:bytes cache)) (long (count (str (:base64 verdict)))))]
 
                         (if (and (seq order)
                                  (or (> (count entries) (long wire-cache-max-entries))
@@ -848,13 +835,12 @@
    about. Refused only when the track cannot be decoded (HEVC/AV1/VP9, a
    corrupt container) or the GIF still does not fit."
   [^bytes raw media-type ^long max-bytes]
-  (let
-    [gif
-     (image-convert/video->wire-gif raw nil)
+  (let [gif
+        (image-convert/video->wire-gif raw nil)
 
-     ;; The cap is on the BASE64 payload, not on the GIF ([[wire-byte-budget]]).
-     budget
-     (wire-byte-budget max-bytes)]
+        ;; The cap is on the BASE64 payload, not on the GIF ([[wire-byte-budget]]).
+        budget
+        (wire-byte-budget max-bytes)]
 
     (cond (nil? gif) {:reason (str media-type " cannot be turned into a picture on this build")}
           (:reason gif) {:reason (:reason gif)}
@@ -878,34 +864,33 @@
   (let [raw (try (.decode (Base64/getDecoder) payload) (catch Throwable _ nil))]
     (if (or (nil? raw) (zero? (alength ^bytes raw)))
       {:reason "the attachment carries no readable image bytes"}
-      (let
-        [;; The BYTES decide the container; a declared type is a claim, and the
-         ;; sniff covers everything vis stores. A type the sniff does not know
-         ;; (tiff, heic, an inline upload's own label) still reaches the decoder
-         ;; below, which sniffs for itself.
-         mt (or (detect-media-mime raw) declared)
-         ;; A clip takes its own path: no wire reads a video container, and
-         ;; handing these bytes to the STILL decoder is a wasted full read of
-         ;; every byte the user dropped.
-         video? (video-media-type? mt)
-         safe (when-not video? (image-convert/to-provider-safe raw mt))
-         ;; PIXELS are a provider limit of their own, and the one a byte cap
-         ;; never catches: a well-compressed 4K screenshot sits happily under
-         ;; 5MB and is still refused outright once the request carries many
-         ;; images. Clamped BEFORE the byte ladder — fewer pixels is also fewer
-         ;; bytes — and a picture already within the ceiling comes back ITSELF.
-         scaled (some-> safe
-                        :bytes
-                        (image-convert/fit-dimensions max-dimension))
-         ;; What a provider weighs is the BASE64 string, which is 4/3 of the
-         ;; picture ([[wire-byte-budget]]), so the ladder aims at 3/4 of the cap.
-         budget (wire-byte-budget max-bytes)
-         ;; Over the cap is NOT the same as unsendable. The real optimisers get
-         ;; one shot at it (lossless first, then the imaging library's own
-         ;; ladder) instead of the picture being dropped; a payload that already
-         ;; fits comes back IDENTICAL, so nothing under the cap is re-encoded.
-         fitted (some-> ^bytes (:bytes scaled)
-                        (image-convert/fit-within budget))]
+      (let [;; The BYTES decide the container; a declared type is a claim, and the
+            ;; sniff covers everything vis stores. A type the sniff does not know
+            ;; (tiff, heic, an inline upload's own label) still reaches the decoder
+            ;; below, which sniffs for itself.
+            mt (or (detect-media-mime raw) declared)
+            ;; A clip takes its own path: no wire reads a video container, and
+            ;; handing these bytes to the STILL decoder is a wasted full read of
+            ;; every byte the user dropped.
+            video? (video-media-type? mt)
+            safe (when-not video? (image-convert/to-provider-safe raw mt))
+            ;; PIXELS are a provider limit of their own, and the one a byte cap
+            ;; never catches: a well-compressed 4K screenshot sits happily under
+            ;; 5MB and is still refused outright once the request carries many
+            ;; images. Clamped BEFORE the byte ladder — fewer pixels is also fewer
+            ;; bytes — and a picture already within the ceiling comes back ITSELF.
+            scaled (some-> safe
+                           :bytes
+                           (image-convert/fit-dimensions max-dimension))
+            ;; What a provider weighs is the BASE64 string, which is 4/3 of the
+            ;; picture ([[wire-byte-budget]]), so the ladder aims at 3/4 of the cap.
+            budget (wire-byte-budget max-bytes)
+            ;; Over the cap is NOT the same as unsendable. The real optimisers get
+            ;; one shot at it (lossless first, then the imaging library's own
+            ;; ladder) instead of the picture being dropped; a payload that already
+            ;; fits comes back IDENTICAL, so nothing under the cap is re-encoded.
+            fitted (some-> ^bytes (:bytes scaled)
+                           (image-convert/fit-within budget))]
 
         (cond video? (video-verdict raw mt max-bytes)
               ;; Conversion unavailable (a build with no imaging cdylib): a container
@@ -967,21 +952,21 @@
   ([{:keys [media-type base64] :as attachment}
     {:keys [max-bytes max-dimension]
      :or {max-bytes max-image-bytes max-dimension image-convert/max-wire-dimension}}]
-   (let
-     [declared
-      (str/lower-case (str/trim (str media-type)))
+   (let [declared
+         (str/lower-case (str/trim (str media-type)))
 
-      payload
-      (strip-data-url-prefix (str base64))]
+         payload
+         (strip-data-url-prefix (str base64))]
 
      (when (and (media-candidate? declared) (not (str/blank? payload)))
-       (let
-         [k
-          (content-key payload declared (long max-bytes) (long max-dimension))
+       (let [k
+             (content-key payload declared (long max-bytes) (long max-dimension))
 
-          verdict
-          (or (get-in @wire-cache [:entries k])
-              (cache-put! k (wire-verdict payload declared (long max-bytes) (long max-dimension))))]
+             verdict
+             (or (get-in @wire-cache [:entries k])
+                 (cache-put!
+                   k
+                   (wire-verdict payload declared (long max-bytes) (long max-dimension))))]
 
          (if (:reason verdict)
            (assoc (select-keys attachment [:path :filename]) :reason (:reason verdict))

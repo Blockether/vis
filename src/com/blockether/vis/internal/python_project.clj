@@ -32,12 +32,11 @@
   "`path` as a `java.io.File`: absolute entries stand alone, relative ones
    resolve against `dir`, and a leading `~` expands to the home directory."
   ^File [^String dir ^String path]
-  (let
-    [expanded
-     (paths/expand-home path)
+  (let [expanded
+        (paths/expand-home path)
 
-     f
-     (io/file expanded)]
+        f
+        (io/file expanded)]
 
     (if (.isAbsolute f) f (io/file dir expanded))))
 
@@ -89,19 +88,18 @@
    so a caller can say so instead of reporting a project with no layout. The
    caller's globals are left exactly as they were found."
   [^Context ctx ^String dir]
-  (let
-    [^Value bindings
-     (.getBindings ctx "python")
+  (let [^Value bindings
+        (.getBindings ctx "python")
 
-     entry
-     "__vis_project_config__"
+        entry
+        "__vis_project_config__"
 
-     arg
-     "__vis_project_dir__"
+        arg
+        "__vis_project_dir__"
 
-     strings
-     (fn [^Value v]
-       (mapv #(.asString (.getArrayElement v (long %))) (range (.getArraySize v))))]
+        strings
+        (fn [^Value v]
+          (mapv #(.asString (.getArrayElement v (long %))) (range (.getArraySize v))))]
 
     (try (.eval ctx "python" ^String @project-config-src)
          (.putMember bindings arg dir)
@@ -144,23 +142,22 @@
   "ONE attempt at `project-layout`, in a throwaway trusted GraalPy context.
    `:warning` (present only on failure) says why the read degraded to nothing."
   [^String dir]
-  (let
-    [built
-     (try {:ctx (pyx/build-context "python-project-layout")}
-          (catch Throwable t
-            {:warning (str "GraalPy context unavailable, project layout not read: "
-                           (throwable-msg t))}))
+  (let [built
+        (try {:ctx (pyx/build-context "python-project-layout")}
+             (catch Throwable t
+               {:warning (str "GraalPy context unavailable, project layout not read: "
+                              (throwable-msg t))}))
 
-     ^Context ctx
-     (:ctx built)]
+        ^Context ctx
+        (:ctx built)]
 
     (if (nil? ctx)
       {:import-roots [] :testpaths [] :warning (:warning built)}
       (try (let [declared (declared-config ctx dir)]
-             (cond->
-               {:import-roots (vec (distinct (concat (configured-import-roots dir)
+             (cond-> {:import-roots (vec (distinct (concat
+                                                     (configured-import-roots dir)
                                                      (existing-dirs dir (:import-roots declared)))))
-                :testpaths (existing-paths dir (:testpaths declared))}
+                      :testpaths (existing-paths dir (:testpaths declared))}
                (:error declared)
                (assoc :warning
                  (str "project metadata unreadable, import roots not applied: "

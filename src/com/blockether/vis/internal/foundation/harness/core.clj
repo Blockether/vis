@@ -93,12 +93,11 @@
    same reason — the directory a skill's files live in is not derivable from
    the body `doc` prints."
   [s args]
-  (let
-    [note
-     (owner-note (owner-root s))
+  (let [note
+        (owner-note (owner-root s))
 
-     resources
-     (seq (mapv #(str (:dir s) "/" %) (:resources s)))]
+        resources
+        (seq (mapv #(str (:dir s) "/" %) (:resources s)))]
 
     (str "Use the skill \""
          (:name s)
@@ -117,14 +116,13 @@
    relative to that project even when selected from a repository-root session."
   []
   (mapv (fn [s]
-          (cond->
-            {:name (str "skill:" (:name s))
-             :description (str "Load skill "
-                               (:name s)
-                               (when-let [d (not-empty (str (:description s)))]
-                                 (str " — " (clip d 140))))
-             :expand-fn (fn [_env args]
-                          (skill-template-text s args))}
+          (cond-> {:name (str "skill:" (:name s))
+                   :description (str "Load skill "
+                                     (:name s)
+                                     (when-let [d (not-empty (str (:description s)))]
+                                       (str " — " (clip d 140))))
+                   :expand-fn (fn [_env args]
+                                (skill-template-text s args))}
             (:project-root s)
             (assoc :project-root (:project-root s))))
         (d/skills)))

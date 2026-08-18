@@ -9,15 +9,15 @@
 (defdescribe
   doctor-format-output-test
   (it "renders doctor messages grouped by extension name"
-      (let
-        [out (doctor/format-output
-               [{:ext "foundation" :check-id ::agents-md :level :info :message "AGENTS.md loaded"}
-                {:ext "voice"
-                 :check-id ::piper
-                 :level :warn
-                 :message "Piper missing"
-                 :remediation "Install voice"}]
-               {:use-ansi? false})]
+      (let [out
+            (doctor/format-output
+              [{:ext "foundation" :check-id ::agents-md :level :info :message "AGENTS.md loaded"}
+               {:ext "voice"
+                :check-id ::piper
+                :level :warn
+                :message "Piper missing"
+                :remediation "Install voice"}]
+              {:use-ansi? false})]
         (expect (str/starts-with? out "vis-agent doctor\n\n  foundation\n  ──────────"))
         (expect (str/includes? out "  ℹ agents-md: AGENTS.md loaded"))
         (expect (str/includes? out "\n\n  voice\n  ─────"))
@@ -25,20 +25,19 @@
         (expect (str/includes? out "      -> Install voice"))
         (expect (str/ends-with? out "Summary: 0 errors, 1 warnings, 1 info"))))
   (it "uses question mark for anonymous diagnostics inside extension section"
-      (let
-        [out (doctor/format-output [{:ext "example-ext" :level :error :message "boom"}]
-                                   {:use-ansi? false})]
+      (let [out (doctor/format-output [{:ext "example-ext" :level :error :message "boom"}]
+                                      {:use-ansi? false})]
         (expect (str/includes? out "  example-ext"))
         (expect (str/includes? out "  ✗ ?: boom")))))
 
 (defdescribe doctor-run-checks-test
              (it "emits host system messages under vis before extension messages"
-                 (with-redefs
-                   [extension/registered-extensions
-                    (fn []
-                      [{:ext/name "sample"
-                        :ext/doctor-fn (fn [_]
-                                         [{:level :info :check-id ::sample :message "ok"}])}])]
+                 (with-redefs [extension/registered-extensions
+                               (fn []
+                                 [{:ext/name "sample"
+                                   :ext/doctor-fn
+                                   (fn [_]
+                                     [{:level :info :check-id ::sample :message "ok"}])}])]
                    (let [msgs (doctor/run-checks {:db-info {:path "/tmp/test.db"}})]
                      (expect (= "vis" (:ext (first msgs))))
                      (expect (= ::doctor/system (:check-id (first msgs))))
@@ -48,12 +47,12 @@
 (defdescribe
   doctor-sandbox-deps-test
   (it "reports one info line when every sandbox shim's dependencies resolve"
-      (with-redefs
-        [extension/sandbox-shims (constantly [{:shim/name "yaml" :shim/source "vis-shims/yaml.py"}
-                                              {:shim/name "numpy"
-                                               :shim/source "vis-shims/numpy.py"
-                                               :shim/bindings {"probe" (fn []
-                                                                         :ok)}}])]
+      (with-redefs [extension/sandbox-shims (constantly [{:shim/name "yaml"
+                                                          :shim/source "vis-shims/yaml.py"}
+                                                         {:shim/name "numpy"
+                                                          :shim/source "vis-shims/numpy.py"
+                                                          :shim/bindings {"probe" (fn []
+                                                                                    :ok)}}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})]
           (expect (= 1 (count msgs)))
           (expect (= "vis" (:ext (first msgs))))
@@ -62,39 +61,33 @@
           (expect (str/includes? (:message (first msgs)) "2/2 Python sandbox dependencies resolve"))
           (expect (str/includes? (:message (first msgs)) "1 host bridges")))))
   (it "errors on a shim whose Python source is not on the classpath"
-      (with-redefs
-        [extension/sandbox-shims (constantly [{:shim/name "ghost"
-                                               :shim/source "vis-shims/nope.py"}])]
-        (let
-          [msgs (#'doctor/sandbox-shim-messages {})
-           err (first (filterv #(= :error (:level %)) msgs))]
+      (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ghost"
+                                                          :shim/source "vis-shims/nope.py"}])]
+        (let [msgs (#'doctor/sandbox-shim-messages {})
+              err (first (filterv #(= :error (:level %)) msgs))]
 
           (expect (some? err))
           (expect (str/includes? (:message err) "Sandbox shim 'ghost' source is unavailable"))
           (expect (str/includes? (:remediation err) "vis-shims/nope.py"))
           (expect (= 2 (doctor/exit-code msgs))))))
   (it "errors on a shim whose host bindings cannot be realized"
-      (with-redefs
-        [extension/sandbox-shims (constantly [{:shim/name "ruffy"
-                                               :shim/source "vis-shims/ruff.py"
-                                               :shim/bindings (fn []
-                                                                (throw (ex-info "ruff unavailable"
-                                                                                {})))}])]
-        (let
-          [msgs (#'doctor/sandbox-shim-messages {})
-           err (first (filterv #(= :error (:level %)) msgs))]
+      (with-redefs [extension/sandbox-shims
+                    (constantly [{:shim/name "ruffy"
+                                  :shim/source "vis-shims/ruff.py"
+                                  :shim/bindings (fn []
+                                                   (throw (ex-info "ruff unavailable" {})))}])]
+        (let [msgs (#'doctor/sandbox-shim-messages {})
+              err (first (filterv #(= :error (:level %)) msgs))]
 
           (expect (some? err))
           (expect (str/includes? (:message err)
                                  "host bindings failed to resolve: ruff unavailable")))))
   (it "warns on duplicate shim names, which shadow each other at install time"
-      (with-redefs
-        [extension/sandbox-shims (constantly [{:shim/name "yaml" :shim/source "vis-shims/yaml.py"}
-                                              {:shim/name "yaml"
-                                               :shim/source "vis-shims/yaml.py"}])]
-        (let
-          [msgs (#'doctor/sandbox-shim-messages {})
-           warn (first (filterv #(= :warn (:level %)) msgs))]
+      (with-redefs [extension/sandbox-shims
+                    (constantly [{:shim/name "yaml" :shim/source "vis-shims/yaml.py"}
+                                 {:shim/name "yaml" :shim/source "vis-shims/yaml.py"}])]
+        (let [msgs (#'doctor/sandbox-shim-messages {})
+              warn (first (filterv #(= :warn (:level %)) msgs))]
 
           (expect (some? warn))
           (expect (str/includes? (:message warn) "Duplicate sandbox shim name(s): yaml")))))
@@ -103,45 +96,43 @@
         (let [msgs (#'doctor/sandbox-shim-messages {})]
           (expect (= [:warn] (mapv :level msgs)))
           (expect (str/includes? (:message (first msgs)) "No Python sandbox shims registered"))))
-      (with-redefs
-        [extension/sandbox-shims (fn []
-                                   (throw (ex-info "registry exploded" {})))]
+      (with-redefs [extension/sandbox-shims (fn []
+                                              (throw (ex-info "registry exploded" {})))]
         (let [msgs (#'doctor/sandbox-shim-messages {})]
           (expect (= [:error] (mapv :level msgs)))
           (expect (str/includes? (:message (first msgs))
                                  "Sandbox shim registry unavailable: registry exploded"))))))
 
-(defdescribe doctor-workspace-mount-test
-             (it "reports a declared workspace root this host does not have (#89)"
-                 (let
-                   [msgs
-                    (#'doctor/workspace-mount-messages
-                     {:config {"workspace" {"filesystem" [{"id" "ghost"
-                                                           "path" "/vis-doctor-no-such-root"}]}}})
+(defdescribe
+  doctor-workspace-mount-test
+  (it "reports a declared workspace root this host does not have (#89)"
+      (let [msgs
+            (#'doctor/workspace-mount-messages
+             {:config {"workspace" {"filesystem" [{"id" "ghost"
+                                                   "path" "/vis-doctor-no-such-root"}]}}})
 
-                    msg
-                    (first msgs)]
+            msg
+            (first msgs)]
 
-                   (expect (= 1 (count msgs)))
-                   (expect (= :warn (:level msg)))
-                   (expect (= ::doctor/mounts (:check-id msg)))
-                   (expect (= "vis" (:ext msg)))
-                   (expect (str/includes? (:message msg) "/vis-doctor-no-such-root"))
-                   (expect (seq (:remediation msg)))
-                   ;; A warning is exactly what `doctor` exits 1 on.
-                   (expect (= 1 (doctor/exit-code msgs)))))
-             (it "a gated root is INFO, a fully mounted catalog is silent, no config is silent"
-                 (let
-                   [gated (#'doctor/workspace-mount-messages
-                           {:config {"workspace" {"filesystem" [{"id" "other-box"
-                                                                 "path" "/vis-doctor-no-such-root"
-                                                                 "optional" true}]}}})]
-                   (expect (= [:info] (mapv :level gated)))
-                   (expect (= 0 (doctor/exit-code gated)))
-                   (expect (= []
-                              (#'doctor/workspace-mount-messages
-                               {:config {"workspace" {"filesystem" [{"id" "root" "path" "/"}]}}})))
-                   (expect (= [] (#'doctor/workspace-mount-messages {:config {}}))))))
+        (expect (= 1 (count msgs)))
+        (expect (= :warn (:level msg)))
+        (expect (= ::doctor/mounts (:check-id msg)))
+        (expect (= "vis" (:ext msg)))
+        (expect (str/includes? (:message msg) "/vis-doctor-no-such-root"))
+        (expect (seq (:remediation msg)))
+        ;; A warning is exactly what `doctor` exits 1 on.
+        (expect (= 1 (doctor/exit-code msgs)))))
+  (it "a gated root is INFO, a fully mounted catalog is silent, no config is silent"
+      (let [gated (#'doctor/workspace-mount-messages
+                   {:config {"workspace" {"filesystem" [{"id" "other-box"
+                                                         "path" "/vis-doctor-no-such-root"
+                                                         "optional" true}]}}})]
+        (expect (= [:info] (mapv :level gated)))
+        (expect (= 0 (doctor/exit-code gated)))
+        (expect (= []
+                   (#'doctor/workspace-mount-messages
+                    {:config {"workspace" {"filesystem" [{"id" "root" "path" "/"}]}}})))
+        (expect (= [] (#'doctor/workspace-mount-messages {:config {}}))))))
 
 ;; Regression, issue #111: a provider registered by an extension without
 ;; `:provider/detect-fn` is dropped from `providers/picker-fleet`, so
@@ -150,20 +141,18 @@
 (defdescribe
   doctor-provider-selection-test
   (it "errors when default_provider is registered without a detect-fn"
-      (with-redefs
-        [providers/picker-fleet
-         (constantly [{:id "github-copilot" :models [{:name "gpt-5"}]}])
+      (with-redefs [providers/picker-fleet
+                    (constantly [{:id "github-copilot" :models [{:name "gpt-5"}]}])
 
-         registry/registered-providers
-         (constantly [{:provider/id "acme_genai" :provider/label "Acme GenAI"}])]
+                    registry/registered-providers
+                    (constantly [{:provider/id "acme_genai" :provider/label "Acme GenAI"}])]
 
-        (let
-          [msgs
-           (#'doctor/provider-selection-messages
-            {:config {"default_provider" "acme_genai" "default_model" "acme-large"}})
+        (let [msgs
+              (#'doctor/provider-selection-messages
+               {:config {"default_provider" "acme_genai" "default_model" "acme-large"}})
 
-           m
-           (first msgs)]
+              m
+              (first msgs)]
 
           (expect (= 1 (count msgs)))
           (expect (= :error (:level m)))
@@ -172,58 +161,50 @@
           (expect (str/includes? (:remediation m) "providers:"))
           (expect (= 2 (doctor/exit-code msgs))))))
   (it "warns when a registered provider's detect-fn finds no credential"
-      (with-redefs
-        [providers/picker-fleet
-         (constantly [])
+      (with-redefs [providers/picker-fleet
+                    (constantly [])
 
-         registry/registered-providers
-         (constantly [{:provider/id "acme_genai"
-                       :provider/label "Acme GenAI"
-                       :provider/detect-fn (constantly nil)}])]
+                    registry/registered-providers
+                    (constantly [{:provider/id "acme_genai"
+                                  :provider/label "Acme GenAI"
+                                  :provider/detect-fn (constantly nil)}])]
 
-        (let
-          [m (first (#'doctor/provider-selection-messages
-                     {:config {"default_provider" "acme_genai"}}))]
+        (let [m (first (#'doctor/provider-selection-messages
+                        {:config {"default_provider" "acme_genai"}}))]
           (expect (= :warn (:level m)))
           (expect (str/includes? (:message m) "no credential")))))
   (it "errors on an unknown provider id, and covers the fallback root too"
-      (with-redefs
-        [providers/picker-fleet
-         (constantly [])
+      (with-redefs [providers/picker-fleet
+                    (constantly [])
 
-         registry/registered-providers
-         (constantly [])]
+                    registry/registered-providers
+                    (constantly [])]
 
-        (let
-          [msgs (#'doctor/provider-selection-messages
-                 {:config {"default_provider" "ghost" "fallback_provider" "phantom"}})]
+        (let [msgs (#'doctor/provider-selection-messages
+                    {:config {"default_provider" "ghost" "fallback_provider" "phantom"}})]
           (expect (= [:error :error] (mapv :level msgs)))
           (expect (str/includes? (:message (first msgs)) "unknown"))
           (expect (str/includes? (:message (second msgs)) "fallback provider 'phantom'")))))
   (it "warns when the default model is absent from the provider catalog"
-      (with-redefs
-        [providers/picker-fleet
-         (constantly [{:id "acme_genai" :models [{:name "gpt-5"}]}])
+      (with-redefs [providers/picker-fleet
+                    (constantly [{:id "acme_genai" :models [{:name "gpt-5"}]}])
 
-         registry/registered-providers
-         (constantly [])]
+                    registry/registered-providers
+                    (constantly [])]
 
-        (let
-          [m (first (#'doctor/provider-selection-messages
-                     {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
+        (let [m (first (#'doctor/provider-selection-messages
+                        {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
           (expect (= :warn (:level m)))
           (expect (str/includes? (:message m) "acme-large")))))
   (it "stays informational when provider and model both resolve"
-      (with-redefs
-        [providers/picker-fleet
-         (constantly [{:id "acme_genai" :models [{:name "acme-large"}]}])
+      (with-redefs [providers/picker-fleet
+                    (constantly [{:id "acme_genai" :models [{:name "acme-large"}]}])
 
-         registry/registered-providers
-         (constantly [])]
+                    registry/registered-providers
+                    (constantly [])]
 
-        (let
-          [m (first (#'doctor/provider-selection-messages
-                     {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
+        (let [m (first (#'doctor/provider-selection-messages
+                        {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
           (expect (= :info (:level m)))
           (expect (= 0 (doctor/exit-code [m]))))))
   (it "reports nothing when config names no router roots"

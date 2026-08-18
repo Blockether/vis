@@ -92,13 +92,12 @@
    opaque wrapper (`ExecutionException: java.lang.RuntimeException: no model`)
    never hides the line a human needs."
   [^Throwable t]
-  (let
-    [root (->> (iterate (fn [^Throwable x]
-                          (some-> x
-                                  .getCause))
-                        t)
-               (take-while some?)
-               last)]
+  (let [root (->> (iterate (fn [^Throwable x]
+                             (some-> x
+                                     .getCause))
+                           t)
+                  (take-while some?)
+                  last)]
     (or (not-empty (str/trim (str (ex-message root))))
         (not-empty (str/trim (str root)))
         "Unknown error")))
@@ -235,11 +234,10 @@
    remembered (a build without the extension must not pay a `requiring-resolve`
    per call); a failure never is."
   []
-  (doseq
-    [ns-name
-     builtin-engine-nses
+  (doseq [ns-name
+          builtin-engine-nses
 
-     :when (not (#{:registered :absent} (get @builtins* ns-name)))]
+          :when (not (#{:registered :absent} (get @builtins* ns-name)))]
 
     (swap! builtins* assoc ns-name (load-builtin! ns-name)))
   nil)
@@ -273,10 +271,9 @@
    the code and the code outranks the accident of registration order. Pure, so the
    precedence is provable without touching the process environment."
   [{:keys [env-id pinned-id] es :engines}]
-  (let
-    [by-id #(first (filter (fn [e]
-                             (= % (:id e)))
-                           es))]
+  (let [by-id #(first (filter (fn [e]
+                                (= % (:id e)))
+                              es))]
     (or (some-> env-id
                 by-id)
         (some-> pinned-id
@@ -406,19 +403,18 @@
    means \"one fixed voice, nothing to choose\", so a broken engine must not be reported
    as a silent one — and it must not take the whole capabilities response down with it."
   [direction]
-  (let
-    [es
-     (engines direction)
+  (let [es
+        (engines direction)
 
-     selected
-     (try (default-engine direction) (catch Throwable _ nil))
+        selected
+        (try (default-engine direction) (catch Throwable _ nil))
 
-     described
-     (fn [e]
-       (let [vs (when (= :synthesize direction) (try (voices e) (catch Throwable _ nil)))]
-         (cond-> (public-engine e)
-           vs
-           (assoc :voices vs))))]
+        described
+        (fn [e]
+          (let [vs (when (= :synthesize direction) (try (voices e) (catch Throwable _ nil)))]
+            (cond-> (public-engine e)
+              vs
+              (assoc :voices vs))))]
 
     {:engines (mapv described es)
      :selected (some-> selected
@@ -443,15 +439,14 @@
    direction names its own input — a recording for `:transcribe`, a line of text and an
    optional voice for `:synthesize` — and neither ever sees the job store."
   [direction {:keys [audio-path text voice-id]} report job-id]
-  (cond->
-    (case direction
-      :transcribe
-      {:audio-path (str audio-path) :on-progress report}
+  (cond-> (case direction
+            :transcribe
+            {:audio-path (str audio-path) :on-progress report}
 
-      :synthesize
-      (cond-> {:text (str text) :on-progress report}
-        voice-id
-        (assoc :voice-id voice-id)))
+            :synthesize
+            (cond-> {:text (str text) :on-progress report}
+              voice-id
+              (assoc :voice-id voice-id)))
     job-id
     (assoc :job-id job-id)))
 
@@ -461,12 +456,11 @@
    else to say — and a nameless result is a refusal, never a job that says `:done` with
    silence behind it."
   [result]
-  (let
-    [m
-     (if (map? result) result {:audio-path result})
+  (let [m
+        (if (map? result) result {:audio-path result})
 
-     path
-     (str (:audio-path m))]
+        path
+        (str (:audio-path m))]
 
     (when (str/blank? path)
       (throw (ex-info "Synthesis engine returned no audio file"
@@ -479,12 +473,11 @@
   "Run one piece of work on THIS thread and answer the keys a job carries: a transcript
    for `:transcribe`, the audio file and its facts for `:synthesize`."
   [direction engine request report job-id]
-  (let
-    [work
-     (get engine direction)
+  (let [work
+        (get engine direction)
 
-     result
-     (work (engine-request direction request report job-id))]
+        result
+        (work (engine-request direction request report job-id))]
 
     (case direction
       :transcribe
@@ -498,12 +491,11 @@
   "Run `audio-path` through the resolved transcription engine on THIS thread, reporting
    `{:phase :progress}` to `on-progress`. Returns the transcript."
   [{:keys [engine-id on-progress] :as request}]
-  (let
-    [engine
-     (resolve-engine :transcribe engine-id)
+  (let [engine
+        (resolve-engine :transcribe engine-id)
 
-     report
-     (reporter on-progress)]
+        report
+        (reporter on-progress)]
 
     (report {:phase :preparing :progress 0})
     (let [text (:text (call-engine :transcribe engine request report nil))]
@@ -515,12 +507,11 @@
    `{:phase :progress}` to `on-progress`. Returns the file the engine wrote —
    `{:audio-path :media-type :bytes …}` — which the CALLER owns and deletes."
   [{:keys [engine-id on-progress] :as request}]
-  (let
-    [engine
-     (resolve-engine :synthesize engine-id)
+  (let [engine
+        (resolve-engine :synthesize engine-id)
 
-     report
-     (reporter on-progress)]
+        report
+        (reporter on-progress)]
 
     (report {:phase :preparing :progress 0})
     (let [{:keys [audio-path audio]} (call-engine :synthesize engine request report nil)]
@@ -548,16 +539,15 @@
    named to the caller."
   [job]
   (when job
-    (cond->
-      {:id (:id job)
-       :direction (name (:direction job))
-       :engine (some-> (:engine-id job)
-                       name)
-       :phase (name (:phase job))
-       :progress (clamp-progress (:progress job))
-       :is-done (boolean (terminal-phases (:phase job)))
-       :created-at (:created-at job)
-       :updated-at (:updated-at job)}
+    (cond-> {:id (:id job)
+             :direction (name (:direction job))
+             :engine (some-> (:engine-id job)
+                             name)
+             :phase (name (:phase job))
+             :progress (clamp-progress (:progress job))
+             :is-done (boolean (terminal-phases (:phase job)))
+             :created-at (:created-at job)
+             :updated-at (:updated-at job)}
       (:voice-id job)
       (assoc :voice (name (:voice-id job)))
 
@@ -574,16 +564,15 @@
   "Drop finished jobs past their TTL, then the oldest above the cap. Running jobs
    are never dropped."
   [jobs]
-  (let
-    [t
-     (long (now-ms))
+  (let [t
+        (long (now-ms))
 
-     alive
-     (into {}
-           (remove (fn [[_ j]]
-                     (and (terminal-phases (:phase j))
-                          (> (- t (long (:updated-at j))) (long job-ttl-ms)))))
-           jobs)]
+        alive
+        (into {}
+              (remove (fn [[_ j]]
+                        (and (terminal-phases (:phase j))
+                             (> (- t (long (:updated-at j))) (long job-ttl-ms)))))
+              jobs)]
 
     (if (<= (count alive) max-jobs)
       alive
@@ -659,20 +648,18 @@
    A TERMINAL phase keeps the percentage it arrived with: `:failed` at 40% is
    where the engine gave up, not zero."
   [job-id update-map]
-  (let
-    [[before after] (swap-vals! jobs*
-                                (fn [jobs]
-                                  (if-let [j (get jobs job-id)]
-                                    (if (terminal-phases (:phase j))
-                                      jobs
-                                      (let
-                                        [same-phase? (or (nil? (:phase update-map))
-                                                         (= (:phase update-map) (:phase j)))
-                                         floor (if same-phase? (clamp-progress (:progress j)) 0)]
+  (let [[before after] (swap-vals!
+                         jobs*
+                         (fn [jobs]
+                           (if-let [j (get jobs job-id)]
+                             (if (terminal-phases (:phase j))
+                               jobs
+                               (let [same-phase? (or (nil? (:phase update-map))
+                                                     (= (:phase update-map) (:phase j)))
+                                     floor (if same-phase? (clamp-progress (:progress j)) 0)]
 
-                                        (assoc jobs
-                                          job-id
-                                          (merge j
+                                 (assoc jobs
+                                   job-id (merge j
                                                  (cond-> (assoc update-map :updated-at (now-ms))
                                                    (:progress update-map)
                                                    (update :progress
@@ -683,7 +670,7 @@
                                                         (nil? (:progress update-map))
                                                         (not (terminal-phases (:phase update-map))))
                                                    (assoc :progress 0))))))
-                                    jobs)))]
+                             jobs)))]
     (when (not= (get before job-id) (get after job-id))
       (notify-watchers! job-id (public-job (get after job-id)))))
   nil)
@@ -691,13 +678,12 @@
 (defn- run-job!
   [direction job-id engine request on-done]
   (try (advance! job-id {:phase :preparing :progress 0})
-       (let
-         [report
-          (fn [update-map]
-            (advance! job-id (select-keys update-map [:phase :progress])))
+       (let [report
+             (fn [update-map]
+               (advance! job-id (select-keys update-map [:phase :progress])))
 
-          result
-          (call-engine direction engine request report job-id)]
+             result
+             (call-engine direction engine request report job-id)]
 
          ;; No `:transcribing 100` filler: the DONE frame is the completion, and a
          ;; pushed stream would otherwise spend a frame saying the same thing twice.
@@ -713,32 +699,29 @@
   "Resolve the engine and store the QUEUED job, or refuse BEFORE a job exists. Returns
    `[engine job]` — the private job, not the public one."
   [direction {:keys [engine-id voice-id]}]
-  (let
-    [engine
-     (resolve-engine direction engine-id)
+  (let [engine
+        (resolve-engine direction engine-id)
 
-     id
-     (new-job-id)
+        id
+        (new-job-id)
 
-     t
-     (now-ms)
+        t
+        (now-ms)
 
-     job
-     (cond->
-       {:id id
-        :direction direction
-        :engine-id (:id engine)
-        :phase :queued
-        :progress 0
-        :created-at t
-        :updated-at t}
-       voice-id
-       (assoc :voice-id voice-id))]
+        job
+        (cond-> {:id id
+                 :direction direction
+                 :engine-id (:id engine)
+                 :phase :queued
+                 :progress 0
+                 :created-at t
+                 :updated-at t}
+          voice-id
+          (assoc :voice-id voice-id))]
 
-    (let
-      [[before after] (swap-vals! jobs*
-                                  (fn [jobs]
-                                    (assoc (sweep jobs) id job)))]
+    (let [[before after] (swap-vals! jobs*
+                                     (fn [jobs]
+                                       (assoc (sweep jobs) id job)))]
       (discard-dropped-audio! before after))
     [engine job]))
 

@@ -19,62 +19,59 @@
 (defdescribe
   language-surface-dispatch-test
   (it "dispatches format to the active language handler"
-      (let
-        [seen
-         (atom nil)
+      (let [seen
+            (atom nil)
 
-         env
-         (fake-env [{:language "clojure"
-                     :format-fn (fn [_ arg]
-                                  (reset! seen arg)
-                                  {:success? true
-                                   :result {:op :fake-format :text (get arg "code")}})}])
+            env
+            (fake-env [{:language "clojure"
+                        :format-fn (fn [_ arg]
+                                     (reset! seen arg)
+                                     {:success? true
+                                      :result {:op :fake-format :text (get arg "code")}})}])
 
-         r
-         (language-surface/format-code env {"code" "(+ 1 2)"})]
+            r
+            (language-surface/format-code env {"code" "(+ 1 2)"})]
 
         (expect (= {"code" "(+ 1 2)"} @seen))
         (expect (= {:op :fake-format :text "(+ 1 2)"} (:result r)))))
   (it "uses an explicit language to disambiguate handlers"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :test-fn (fn [_ arg]
-                                {:success? true :result {:language "clojure" :arg arg}})}
-                    {:language "python"
-                     :test-fn (fn [_ arg]
-                                {:success? true :result {:language "python" :arg arg}})}])
+      (let [env
+            (fake-env [{:language "clojure"
+                        :test-fn (fn [_ arg]
+                                   {:success? true :result {:language "clojure" :arg arg}})}
+                       {:language "python"
+                        :test-fn (fn [_ arg]
+                                   {:success? true :result {:language "python" :arg arg}})}])
 
-         result
-         (:result (language-surface/run-tests env {"language" "python" "ns" "x"}))]
+            result
+            (:result (language-surface/run-tests env {"language" "python" "ns" "x"}))]
 
         (expect (= "python" (:language result)))
         (expect (= {"language" "python" "ns" "x"} (:arg result)))))
   (it "puts the completed verdict and elapsed time inside the public test result"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :test-fn (fn [_ _]
-                                {:success? true :result {"pass" 2 "fail" 0}})}])
+      (let [env
+            (fake-env [{:language "clojure"
+                        :test-fn (fn [_ _]
+                                   {:success? true :result {"pass" 2 "fail" 0}})}])
 
-         envelope
-         (language-surface/run-tests env {})
+            envelope
+            (language-surface/run-tests env {})
 
-         result
-         (:result envelope)]
+            result
+            (:result envelope)]
 
         (expect (true? (get result "is_pass")))
         (expect (= 2 (get result "total")))
         (expect (nat-int? (get result "ms")))
         (expect (nil? (get envelope "ms")))))
   (it "dispatches each lifecycle VERB to the language handler with its own op"
-      (let
-        [env (fake-env [{:language "clojure"
-                         :start-repl-fn (fn [_ op opts]
-                                          {:success? true :result {:op op :opts opts}})}])]
+      (let [env (fake-env [{:language "clojure"
+                            :start-repl-fn (fn [_ op opts]
+                                             {:success? true :result {:op op :opts opts}})}])]
         (expect (= {:op "connect" :opts {"cwd" "ext" "aliases" ["dev"]}}
-                   (:result
-                     (language-surface/connect-repl env "clojure" {"cwd" "ext" "aliases" ["dev"]}))))
+                   (:result (language-surface/connect-repl env
+                                                           "clojure"
+                                                           {"cwd" "ext" "aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {"aliases" ["dev"]}}
                    (:result (language-surface/repl-start env {"aliases" ["dev"]}))))
         (expect (= {:op "status" :opts {"cwd" "ext"} "resources" []}
@@ -86,27 +83,25 @@
   ;; call read as a lifecycle step only after resolving its second argument —
   ;; and a stale `op` (`restart`) could be parsed as a REPL id and start one.
   (it "takes no `op` at all — an op string is just this verb's language or id"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :start-repl-fn (fn [_ op opts]
-                                      {:success? true :result {:op op :opts opts}})}])]
+      (let [env (fake-env [{:language "clojure"
+                            :start-repl-fn (fn [_ op opts]
+                                             {:success? true :result {:op op :opts opts}})}])]
         (expect (= "start" (:op (:result (language-surface/repl-start env {"op" "restart"})))))
         (expect (= "status" (:op (:result (language-surface/repl-status env)))))
-        (expect (nil? (resolve 'com.blockether.vis.internal.foundation.language-surface/start-repl)))))
+        (expect (nil? (resolve
+                        'com.blockether.vis.internal.foundation.language-surface/start-repl)))))
   (it "documents the explicit REPL lifecycle in its own doc text"
-      (let
-        [start
-         (:ext.symbol/description language-surface/repl-start-symbol)
+      (let [start
+            (:ext.symbol/description language-surface/repl-start-symbol)
 
-         result
-         (:ext.symbol/result language-surface/repl-start-symbol)
+            result
+            (:ext.symbol/result language-surface/repl-start-symbol)
 
-         status
-         (:ext.symbol/description language-surface/repl-status-symbol)
+            status
+            (:ext.symbol/description language-surface/repl-status-symbol)
 
-         stop
-         (:ext.symbol/description language-surface/repl-stop-symbol)]
+            stop
+            (:ext.symbol/description language-surface/repl-stop-symbol)]
 
         ;; Regression, issue #ctx-resources: the doc used to send the model to
         ;; `session["resources"]["repls"][language][cwd]`, a ctx key that no longer exists.
@@ -125,40 +120,36 @@
         (expect (str/includes? stop "after verification"))
         (expect (str/includes? stop "never killed"))))
   (it "accepts language-first calls for repl eval"
-      (let
-        [seen
-         (atom nil)
+      (let [seen
+            (atom nil)
 
-         env
-         (fake-env [{:language "clojure"
-                     :repl-eval-fn (fn [_ arg]
-                                     (reset! seen arg)
-                                     {:success? true :result {:value "3"}})}])]
+            env
+            (fake-env [{:language "clojure"
+                        :repl-eval-fn (fn [_ arg]
+                                        (reset! seen arg)
+                                        {:success? true :result {:value "3"}})}])]
 
         (expect (= {:value "3"} (:result (language-surface/repl-eval env "clojure" "(+ 1 2)"))))
         (expect (= "(+ 1 2)" @seen))))
-  (it "passes a language-first repl id and opts to language handlers"
-      (let
-        [env (fake-env [{:language "clojure"
-                         :start-repl-fn (fn [_ op opts]
-                                          {:success? true :result {:op op :opts opts}})}])]
-        (expect (= {:op "connect" :opts {"id" "main" "cwd" "ext"}}
-                   (:result
-                     (language-surface/connect-repl env "clojure" {"id" "main" "cwd" "ext"}))))
-        (expect (= {:op "start" :opts {"id" "main" "aliases" ["dev"]}}
-                   (:result (language-surface/repl-start env
-                                                         "clojure"
-                                                         {"id" "main" "aliases" ["dev"]}))))))
+  (it
+    "passes a language-first repl id and opts to language handlers"
+    (let [env (fake-env [{:language "clojure"
+                          :start-repl-fn (fn [_ op opts]
+                                           {:success? true :result {:op op :opts opts}})}])]
+      (expect (= {:op "connect" :opts {"id" "main" "cwd" "ext"}}
+                 (:result (language-surface/connect-repl env "clojure" {"id" "main" "cwd" "ext"}))))
+      (expect (= {:op "start" :opts {"id" "main" "aliases" ["dev"]}}
+                 (:result
+                   (language-surface/repl-start env "clojure" {"id" "main" "aliases" ["dev"]}))))))
   (it "stops a repl resource BY ID through the resource model, with no pack at all"
-      (let
-        [stopped?
-         (atom false)
+      (let [stopped?
+            (atom false)
 
-         env
-         (fake-env [])
+            env
+            (fake-env [])
 
-         sid
-         (:session-id env)]
+            sid
+            (:session-id env)]
 
         (try (resources/register! sid
                                   {:id "main-repl" :kind :nrepl :language "clojure" :label "main"}
@@ -173,77 +164,71 @@
   ;; Python boundary, and a bare leading string was then read as a LANGUAGE — the
   ;; by-id stop went looking for a pack named after the REPL's own id.
   (it "reads a leading string as the REPL id even when an empty opts map trails it"
-      (let
-        [stopped?
-         (atom false)
+      (let [stopped?
+            (atom false)
 
-         env
-         (fake-env [{:language "clojure"
-                     :start-repl-fn (fn [_ op opts]
-                                      {:success? true :result {:op op :opts opts}})}])
+            env
+            (fake-env [{:language "clojure"
+                        :start-repl-fn (fn [_ op opts]
+                                         {:success? true :result {:op op :opts opts}})}])
 
-         sid
-         (:session-id env)]
+            sid
+            (:session-id env)]
 
         (try (resources/register! sid
                                   {:id "main-repl" :kind :nrepl :language "clojure" :label "main"}
                                   {:stop-fn (fn []
                                               (reset! stopped? true))})
              (expect (= "stopped"
-                        (get-in (language-surface/repl-stop env "main-repl" {}) [:result "result"])))
+                        (get-in (language-surface/repl-stop env "main-repl" {})
+                                [:result "result"])))
              (expect (true? @stopped?))
              ;; ...while a LANGUAGE still reaches the pack's own stop handler.
              (expect (= {:op "stop" :opts {"cwd" "ext"}}
                         (:result (language-surface/repl-stop env "clojure" {"cwd" "ext"}))))
-              (finally (resources/stop-all! sid)))))
+             (finally (resources/stop-all! sid)))))
   ;; Regression, issue #repl-args: a bare string where the options map belongs was
   ;; swallowed into `{:arg "..."}` — `repl_start("clojure", "extensions/foo")` reported
   ;; success while starting the REPL at the workspace ROOT.
-  (it "REFUSES a bare string where the options map belongs, on every lifecycle verb"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :start-repl-fn (fn [_ op opts]
-                                      {:success? true :result {:op op :opts opts}})}])
+  (it
+    "REFUSES a bare string where the options map belongs, on every lifecycle verb"
+    (let [env
+          (fake-env [{:language "clojure"
+                      :start-repl-fn (fn [_ op opts]
+                                       {:success? true :result {:op op :opts opts}})}])
 
-         refuses
-         (fn [f & args]
-           (try (apply f env args)
-                nil
-                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+          refuses
+          (fn [f & args]
+            (try (apply f env args) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
-        (expect (= :language-surface/bad-args
-                   (refuses language-surface/repl-start "clojure" "extensions/foo")))
-        (expect (= :language-surface/bad-args
-                   (refuses language-surface/repl-status "clojure" "extensions/foo")))
-        (expect (= :language-surface/bad-args
-                   (refuses language-surface/repl-stop "clojure" "extensions/foo")))
-        (expect (= :language-surface/bad-args
-                   (refuses language-surface/connect-repl "clojure" "extensions/foo")))))
+      (expect (= :language-surface/bad-args
+                 (refuses language-surface/repl-start "clojure" "extensions/foo")))
+      (expect (= :language-surface/bad-args
+                 (refuses language-surface/repl-status "clojure" "extensions/foo")))
+      (expect (= :language-surface/bad-args
+                 (refuses language-surface/repl-stop "clojure" "extensions/foo")))
+      (expect (= :language-surface/bad-args
+                 (refuses language-surface/connect-repl "clojure" "extensions/foo")))))
   ;; Regression, issue #repl-enumerate: repl_status answered for the pack's own
   ;; directory alone, so a REPL under another cwd — or a shadow-cljs attachment beside
   ;; the JVM one — was invisible, while the verb's doc promised it was the only way to
   ;; see live REPLs.
   (it "lists EVERY live REPL of the session beside the pack's per-directory status"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :start-repl-fn (fn [_ _ _]
-                                      {:success? true :result {"status" "down"}})}])
+      (let [env
+            (fake-env [{:language "clojure"
+                        :start-repl-fn (fn [_ _ _]
+                                         {:success? true :result {"status" "down"}})}])
 
-         sid
-         (:session-id env)]
+            sid
+            (:session-id env)]
 
-        (try (resources/register! sid
-                                  {:id "nrepl:~/proj#ext"
-                                   :kind :nrepl
-                                   :language "clojure"
-                                   :label "ext"}
-                                  {})
+        (try (resources/register!
+               sid
+               {:id "nrepl:~/proj#ext" :kind :nrepl :language "clojure" :label "ext"}
+               {})
              (let [result (:result (language-surface/repl-status env "clojure"))]
                (expect (= "down" (get result "status")))
-               (expect (= ["nrepl:~/proj#ext"]
-                          (mapv #(get % "id") (get result "resources")))))
+               (expect (= ["nrepl:~/proj#ext"] (mapv #(get % "id") (get result "resources")))))
              ;; ...and asking BY ID answers for that REPL alone, pack or no pack.
              (let [one (:result (language-surface/repl-status env "nrepl:~/proj#ext"))]
                (expect (= "nrepl:~/proj#ext" (get one "id")))
@@ -252,22 +237,19 @@
                         (get (:result (language-surface/repl-status env "nrepl:~/gone")) "status")))
              (finally (resources/stop-all! sid)))))
   (it "keeps a pack's own REPL LABEL with the pack, and a session id with the resource model"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :start-repl-fn (fn [_ op opts]
-                                      {:success? true :result {:op op :opts opts}})}])]
-
+      (let [env (fake-env [{:language "clojure"
+                            :start-repl-fn (fn [_ op opts]
+                                             {:success? true :result {:op op :opts opts}})}])]
         (expect (= {:op "stop" :opts {"id" "worker" "cwd" "ext"}}
-                   (:result (language-surface/repl-stop env "clojure" {"id" "worker" "cwd" "ext"}))))
+                   (:result
+                     (language-surface/repl-stop env "clojure" {"id" "worker" "cwd" "ext"}))))
         (expect (= "unknown"
                    (get-in (language-surface/repl-stop env "clojure" {"id" "nrepl:~/gone"})
                            [:result "result"])))))
   (it "reports missing language handlers with available languages"
-      (let
-        [env (fake-env [{:language "clojure"
-                         :repl-eval-fn (fn [_ _]
-                                         {:success? true :result :ok})}])]
+      (let [env (fake-env [{:language "clojure"
+                            :repl-eval-fn (fn [_ _]
+                                            {:success? true :result :ok})}])]
         (expect (= :language-surface/no-language-handler
                    (try (language-surface/repl-eval env {"language" "python" "code" "1"})
                         nil
@@ -306,34 +288,30 @@
   (it "falls through a data primary to the first REAL code language a pack handles"
       ;; json dominates by file count but has no pack; the ts pack still resolves
       ;; a BARE repl_eval — this is the 'couldn't use it' fix.
-      (let
-        [env (scan-env "json"
-                       ["json" "typescript" "clojure"]
-                       [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
+      (let [env (scan-env "json"
+                          ["json" "typescript" "clojure"]
+                          [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
         (expect (= "typescript" (resolved-language env)))))
   (it "prefers the workspace primary over other scanned languages"
-      (let
-        [env (scan-env "clojure"
-                       ["clojure" "typescript"]
-                       [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
+      (let [env (scan-env "clojure"
+                          ["clojure" "typescript"]
+                          [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
         (expect (= "clojure" (resolved-language env)))))
   (it "uses the file-count primary from the workspace snapshot when tool env metadata is absent"
-      (let
-        [env (dissoc (scan-env nil [] [(echo-lang-handler "python") (echo-lang-handler "clojure")])
-               :env/project
-               :env/languages)]
-        (with-redefs
-          [environment/snapshot (constantly {:languages {:primary "clojure"
-                                                         :languages
-                                                         [{:language "clojure" :files 260}
-                                                          {:language "python" :files 47}]}})]
+      (let [env
+            (dissoc (scan-env nil [] [(echo-lang-handler "python") (echo-lang-handler "clojure")])
+              :env/project
+              :env/languages)]
+        (with-redefs [environment/snapshot
+                      (constantly {:languages {:primary "clojure"
+                                               :languages [{:language "clojure" :files 260}
+                                                           {:language "python" :files 47}]}})]
           (expect (= "clojure" (resolved-language env))))))
   (it "resolves a grammar variant to its base family handler via the alias map"
       ;; a pack registering only 'typescript'/'javascript' still serves tsx/jsx.
-      (let
-        [env (scan-env "json"
-                       ["json"]
-                       [(echo-lang-handler "typescript") (echo-lang-handler "javascript")])]
+      (let [env (scan-env "json"
+                          ["json"]
+                          [(echo-lang-handler "typescript") (echo-lang-handler "javascript")])]
         (expect (= "typescript" (resolved-language env "tsx")))
         (expect (= "javascript" (resolved-language env "jsx")))
         (expect (= "typescript" (resolved-language env "mts")))))
@@ -342,29 +320,27 @@
         (expect (= :language-surface/no-language-handler
                    (error-type #(language-surface/repl-eval env {"language" "rust" "code" "1"}))))))
   (it "asks for a language when several packs match and none can be inferred"
-      (let
-        [env (scan-env "json"
-                       ["json"]
-                       [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
+      (let [env (scan-env "json"
+                          ["json"]
+                          [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
         (expect (= :language-surface/ambiguous-language
                    (error-type #(language-surface/repl-eval env {"code" "1"})))))))
 
 (defdescribe
   capability-matrix-test
   (it "renders the facade verbs per ACTIVE language pack"
-      (let
-        [env
-         {:active-extensions (atom [{:ext/language-tools [{:language "clojure"
-                                                           :format-fn identity
-                                                           :test-fn identity
-                                                           :repl-eval-fn identity
-                                                           :start-repl-fn identity}
-                                                          {:language "python"
-                                                           :repl-eval-fn identity
-                                                           :start-repl-fn identity}]}])}
+      (let [env
+            {:active-extensions (atom [{:ext/language-tools [{:language "clojure"
+                                                              :format-fn identity
+                                                              :test-fn identity
+                                                              :repl-eval-fn identity
+                                                              :start-repl-fn identity}
+                                                             {:language "python"
+                                                              :repl-eval-fn identity
+                                                              :start-repl-fn identity}]}])}
 
-         m
-         (language-surface/capability-matrix env)]
+            m
+            (language-surface/capability-matrix env)]
 
         (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl"))
         (expect (str/includes? m "python : repl_eval · repl"))
@@ -412,71 +388,70 @@
 (defdescribe
   language-process-jail-refresh-test
   (it "refreshes the session jail before a test handler launches a process"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :test-fn (fn [handler-env _]
-                                {:success? true
-                                 :result {:launch? (boolean (seq (:argv (vis/session-process-launch
+      (let [env
+            (fake-env [{:language "clojure"
+                        :test-fn (fn [handler-env _]
+                                   {:success? true
+                                    :result {:launch? (boolean (seq (:argv
+                                                                      (vis/session-process-launch
+                                                                        (:session-id handler-env)
+                                                                        ["clojure"
+                                                                         "-Sdescribe"]))))}})}])
+
+            session-id
+            (:session-id env)
+
+            result
+            (try (language-surface/run-tests env {})
+                 (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before repl_eval can auto-start a REPL"
+      (let [env
+            (fake-env [{:language "clojure"
+                        :repl-eval-fn (fn [handler-env _]
+                                        {:success? true
+                                         :result {:launch? (boolean
+                                                             (seq (:argv (vis/session-process-launch
+                                                                           (:session-id handler-env)
+                                                                           ["clojure"
+                                                                            "-Sdescribe"]))))}})}])
+
+            session-id
+            (:session-id env)
+
+            result
+            (try (language-surface/repl-eval env "(+ 1 1)")
+                 (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before starting a REPL"
+      (let [env
+            (fake-env [{:language "clojure"
+                        :start-repl-fn (fn [handler-env _ _]
+                                         {:success? true
+                                          :result {:launch?
+                                                   (boolean (seq (:argv (vis/session-process-launch
                                                                           (:session-id handler-env)
                                                                           ["clojure"
                                                                            "-Sdescribe"]))))}})}])
 
-         session-id
-         (:session-id env)
+            session-id
+            (:session-id env)
 
-         result
-         (try (language-surface/run-tests env {})
-              (finally (process-jail/unregister-session-jail! session-id)))]
-
-        (expect (true? (get-in result [:result :launch?])))))
-  (it "refreshes the session jail before repl_eval can auto-start a REPL"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :repl-eval-fn
-                     (fn [handler-env _]
-                       {:success? true
-                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
-                                                                 (:session-id handler-env)
-                                                                 ["clojure" "-Sdescribe"]))))}})}])
-
-         session-id
-         (:session-id env)
-
-         result
-         (try (language-surface/repl-eval env "(+ 1 1)")
-              (finally (process-jail/unregister-session-jail! session-id)))]
-
-        (expect (true? (get-in result [:result :launch?])))))
-  (it "refreshes the session jail before starting a REPL"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :start-repl-fn
-                     (fn [handler-env _ _]
-                       {:success? true
-                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
-                                                                 (:session-id handler-env)
-                                                                 ["clojure" "-Sdescribe"]))))}})}])
-
-         session-id
-         (:session-id env)
-
-         result
-         (try (language-surface/repl-start env)
-              (finally (process-jail/unregister-session-jail! session-id)))]
+            result
+            (try (language-surface/repl-start env)
+                 (finally (process-jail/unregister-session-jail! session-id)))]
 
         (expect (true? (get-in result [:result :launch?]))))))
 
 (defdescribe repl-connect-trust-boundary-test
              (it "advertises external ownership and detach-only lifecycle"
-                 (let
-                   [description
-                    (:ext.symbol/description language-surface/connect-repl-symbol)
+                 (let [description
+                       (:ext.symbol/description language-surface/connect-repl-symbol)
 
-                    stop-description
-                    (:ext.symbol/description language-surface/repl-stop-symbol)]
+                       stop-description
+                       (:ext.symbol/description language-surface/repl-stop-symbol)]
 
                    (expect (str/includes? description "external"))
                    (expect (str/includes? description "never owns or kills"))

@@ -50,12 +50,11 @@
 
 (defn- sha256-hex
   ^String [^String s]
-  (let
-    [md
-     (MessageDigest/getInstance "SHA-256")
+  (let [md
+        (MessageDigest/getInstance "SHA-256")
 
-     bs
-     (.digest md (.getBytes s StandardCharsets/UTF_8))]
+        bs
+        (.digest md (.getBytes s StandardCharsets/UTF_8))]
 
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bs))))
 
@@ -120,12 +119,11 @@
   [pid]
   (if (nil? pid)
     false
-    (let
-      [now
-       (System/currentTimeMillis)
+    (let [now
+          (System/currentTimeMillis)
 
-       [alive? at]
-       (get @pid-liveness-cache pid)]
+          [alive? at]
+          (get @pid-liveness-cache pid)]
 
       (if (and at (< (- now (long at)) (long PID_LIVENESS_TTL_MS)))
         alive?
@@ -148,15 +146,14 @@
   [db f]
   (locking registry-mutation-monitor
     (.mkdirs (registry-dir))
-    (with-open
-      [raf
-       (RandomAccessFile. (registry-mutation-lock-file db) "rw")
+    (with-open [raf
+                (RandomAccessFile. (registry-mutation-lock-file db) "rw")
 
-       channel
-       (.getChannel raf)
+                channel
+                (.getChannel raf)
 
-       _lock
-       (.lock channel)]
+                _lock
+                (.lock channel)]
 
       (f))))
 
@@ -181,12 +178,11 @@
    the registry for `db`. Registry readers therefore never observe a partial EDN
    file and mistake a live daemon for a missing one. Returns the written entry."
   [db entry]
-  (let
-    [f
-     (registry-file db)
+  (let [f
+        (registry-file db)
 
-     entry
-     (merge {:db (canonical-db db) :created-at (System/currentTimeMillis)} entry)]
+        entry
+        (merge {:db (canonical-db db) :created-at (System/currentTimeMillis)} entry)]
 
     (with-registry-mutation-lock
       db
@@ -220,12 +216,11 @@
   [db pred]
   (try (with-registry-mutation-lock db
                                     (fn []
-                                      (let
-                                        [f
-                                         (registry-file db)
+                                      (let [f
+                                            (registry-file db)
 
-                                         entry
-                                         (read-registry-file f)]
+                                            entry
+                                            (read-registry-file f)]
 
                                         (boolean
                                           (and entry (pred entry) (delete-registry-file! f))))))
@@ -270,15 +265,14 @@
    answers on. Never throws: a blank host, an unusable port and a refused or
    timed-out connect are all simply false."
   [host port]
-  (let
-    [port
-     (long (or (parse-long (str port)) 0))
+  (let [port
+        (long (or (parse-long (str port)) 0))
 
-     raw
-     (str/trim (str (or host "")))
+        raw
+        (str/trim (str (or host "")))
 
-     host
-     (if (or (str/blank? raw) (contains? #{"0.0.0.0" "::" "[::]" "*"} raw)) "127.0.0.1" raw)]
+        host
+        (if (or (str/blank? raw) (contains? #{"0.0.0.0" "::" "[::]" "*"} raw)) "127.0.0.1" raw)]
 
     (if (or (< port 1) (> port 65535))
       false
@@ -420,22 +414,21 @@
    stdout+stderr are captured to a per-DB boot log under the registry dir so a
    daemon that dies on startup is diagnosable instead of vanishing. Returns nil."
   [{:keys [db] :as opts}]
-  (let
-    [argv
-     (spawn-argv opts)
+  (let [argv
+        (spawn-argv opts)
 
-     _
-     (.mkdirs (registry-dir))
+        _
+        (.mkdirs (registry-dir))
 
-     ;; Per-DB boot log so a daemon that dies on startup (route conflict,
-     ;; bad flag, port clash, …) leaves a diagnosable trace instead of only
-     ;; surfacing to clients as a generic :gateway/start-timeout. Truncated
-     ;; on each spawn, so it always reflects the latest boot.
-     log
-     (io/file (registry-dir) (str (registry-key db) ".log"))
+        ;; Per-DB boot log so a daemon that dies on startup (route conflict,
+        ;; bad flag, port clash, …) leaves a diagnosable trace instead of only
+        ;; surfacing to clients as a generic :gateway/start-timeout. Truncated
+        ;; on each spawn, so it always reflects the latest boot.
+        log
+        (io/file (registry-dir) (str (registry-key db) ".log"))
 
-     pb
-     (ProcessBuilder. ^java.util.List (vec (unix-launch-cmd argv (.getPath log))))]
+        pb
+        (ProcessBuilder. ^java.util.List (vec (unix-launch-cmd argv (.getPath log))))]
 
     ;; The daemon's own stdio is redirected to `log` by the shell command;
     ;; discard only the throwaway wrapper shell's stdio.
@@ -487,12 +480,11 @@
    the poll loop. Returns the entry or nil on timeout."
   ([db probe] (await-registry! db probe {}))
   ([db probe {:keys [timeout-ms poll-ms on-tick] :or {timeout-ms 8000 poll-ms 100}}]
-   (let
-     [start
-      (System/currentTimeMillis)
+   (let [start
+         (System/currentTimeMillis)
 
-      deadline
-      (+ start (long timeout-ms))]
+         deadline
+         (+ start (long timeout-ms))]
 
      (loop []
 
@@ -542,23 +534,20 @@
   [{:keys [db] :as opts} &
    {:keys [probe spawn timeout-ms poll-ms on-event]
     :or {probe (constantly true) spawn spawn-detached!}}]
-  (let
-    [emit (fn [ev]
-            (when on-event (try (on-event ev) (catch Throwable _ nil))))]
+  (let [emit (fn [ev]
+               (when on-event (try (on-event ev) (catch Throwable _ nil))))]
     (if (memory-db? db)
       {:mode :none}
       (let [existing (read-registry db)]
         (if (registry-fresh? existing probe)
           {:mode :attach :entry existing}
-          (let
-            [await-opts (cond->
-                          {:on-tick (fn [elapsed-ms]
-                                      (emit {:phase :tick :elapsed-ms elapsed-ms}))}
-                          timeout-ms
-                          (assoc :timeout-ms timeout-ms)
+          (let [await-opts (cond-> {:on-tick (fn [elapsed-ms]
+                                               (emit {:phase :tick :elapsed-ms elapsed-ms}))}
+                             timeout-ms
+                             (assoc :timeout-ms timeout-ms)
 
-                          poll-ms
-                          (assoc :poll-ms poll-ms))]
+                             poll-ms
+                             (assoc :poll-ms poll-ms))]
             (if-let [holder (acquire-spawn-lock! db)]
               ;; We are the designated spawner for this DB.
               (try

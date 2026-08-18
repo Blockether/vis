@@ -34,21 +34,19 @@
    `i mod 8` of an otherwise black frame. jcodec samples are SIGNED and offset by
    -128, so -128 is black and 127 is white."
   ^Picture [^long i]
-  (let
-    [p
-     (Picture/create clip-w clip-h ColorSpace/RGB)
+  (let [p
+        (Picture/create clip-w clip-h ColorSpace/RGB)
 
-     ^bytes d
-     (aget (.getData p) 0)
+        ^bytes d
+        (aget (.getData p) 0)
 
-     lit
-     (long (mod i (quot clip-w block-px)))]
+        lit
+        (long (mod i (quot clip-w block-px)))]
 
     (dotimes [y clip-h]
       (dotimes [x clip-w]
-        (let
-          [o (* 3 (+ x (* y clip-w)))
-           v (byte (if (= (quot x block-px) lit) 127 -128))]
+        (let [o (* 3 (+ x (* y clip-w)))
+              v (byte (if (= (quot x block-px) lit) 127 -128))]
 
           (aset d o v)
           (aset d (inc o) v)
@@ -70,20 +68,18 @@
   "Which block the bar occupies in one decoded RGBA frame, by scanning a middle
    row for the first bright pixel. The inverse of [[bar-picture]]."
   [{:keys [width ^bytes rgba]}]
-  (let
-    [w
-     (long width)
+  (let [w
+        (long width)
 
-     y
-     20]
+        y
+        20]
 
-    (first (for
-             [x
-              (range w)
+    (first (for [x
+                 (range w)
 
-              :let [v
-                    (bit-and (aget rgba (* 4 (+ (long x) (* y w)))) 0xff)]
-              :when (> v 127)]
+                 :let [v
+                       (bit-and (aget rgba (* 4 (+ (long x) (* y w)))) 0xff)]
+                 :when (> v 127)]
 
              (quot (long x) (long block-px))))))
 
@@ -95,10 +91,9 @@
                    (expect (true? (video/mp4? head))))
                  ;; `ftyp` alone is NOT enough: HEIC/AVIF are ISO-BMFF too, and treating one as
                  ;; a video would send a still photo down the decoder.
-                 (let
-                   [heic (byte-array (map unchecked-byte
-                                          [0 0 0 24 0x66 0x74 0x79 0x70 0x68 0x65 0x69 0x63 0 0 0
-                                           0]))]
+                 (let [heic (byte-array (map unchecked-byte
+                                             [0 0 0 24 0x66 0x74 0x79 0x70 0x68 0x65 0x69 0x63 0 0 0
+                                              0]))]
                    (expect (false? (video/mp4? heic))))
                  (expect (false? (video/mp4? (byte-array (map unchecked-byte
                                                               [0x89 0x50 0x4e 0x47 13 10 26 10])))))
@@ -138,12 +133,11 @@
                  (let [d (video/decode-frames (reference-clip))]
                    (expect (= [0 1 2 3 4 5 6 7 0 1] (mapv bar-block (:frames d))))))
              (it "honours max-frames and stride"
-                 (let
-                   [capped
-                    (video/decode-frames (reference-clip) {:max-frames 4})
+                 (let [capped
+                       (video/decode-frames (reference-clip) {:max-frames 4})
 
-                    strided
-                    (video/decode-frames (reference-clip) {:stride 3})]
+                       strided
+                       (video/decode-frames (reference-clip) {:stride 3})]
 
                    (expect (= 4 (count (:frames capped))))
                    (expect (= [0 1 2 3] (mapv bar-block (:frames capped))))
@@ -185,12 +179,11 @@
                      (expect (= -1 (:loop-count back))))))
              (it "keeps the animation moving through the palette quantizer"
                  ;; A GIF whose frames all came out identical would still decode cleanly.
-                 (let
-                   [back
-                    (gif/decode (video/->gif (reference-clip) {}))
+                 (let [back
+                       (gif/decode (video/->gif (reference-clip) {}))
 
-                    hashes
-                    (map #(java.util.Arrays/hashCode ^ints (:argb %)) (:frames back))]
+                       hashes
+                       (map #(java.util.Arrays/hashCode ^ints (:argb %)) (:frames back))]
 
                    ;; the bar has 8 distinct positions across the 10 frames
                    (expect (= 8 (count (distinct hashes)))))))
@@ -198,15 +191,14 @@
 (defdescribe playback-sequences-test
              (describe "kitty"
                        (it "emits a graphics escape per frame and reuses ONE image id"
-                           (let
-                             [d
-                              (video/decode-frames (reference-clip))
+                           (let [d
+                                 (video/decode-frames (reference-clip))
 
-                              p
-                              (video/playback-sequences d {:protocol :kitty :cols 20})
+                                 p
+                                 (video/playback-sequences d {:protocol :kitty :cols 20})
 
-                              e
-                              (:escape (first (:frames p)))]
+                                 e
+                                 (:escape (first (:frames p)))]
 
                              (expect (= :kitty (:protocol p)))
                              (expect (= clip-frames (count (:frames p))))
@@ -219,33 +211,30 @@
                              (expect (= 8 (count (distinct (map :escape (:frames p)))))))))
              (describe "iterm2"
                        (it "emits an inline-image sequence per frame"
-                           (let
-                             [d
-                              (video/decode-frames (reference-clip))
+                           (let [d
+                                 (video/decode-frames (reference-clip))
 
-                              p
-                              (video/playback-sequences d {:protocol :iterm2 :cols 20})]
+                                 p
+                                 (video/playback-sequences d {:protocol :iterm2 :cols 20})]
 
                              (expect (= :iterm2 (:protocol p)))
                              (expect (.contains ^String (:escape (first (:frames p)))
                                                 "\u001b]1337;File="))
                              (expect (= 8 (count (distinct (map :escape (:frames p)))))))))
              (it "paces frames at the clip's own rate"
-                 (let
-                   [d
-                    (video/decode-frames (reference-clip))
+                 (let [d
+                       (video/decode-frames (reference-clip))
 
-                    p
-                    (video/playback-sequences d {:protocol :kitty :cols 20})]
+                       p
+                       (video/playback-sequences d {:protocol :kitty :cols 20})]
 
                    (expect (= 125 (:delay-ms (first (:frames p)))))))
              (it "fits the picture into the requested cell box, aspect-preserving"
-                 (let
-                   [d
-                    (video/decode-frames (reference-clip))
+                 (let [d
+                       (video/decode-frames (reference-clip))
 
-                    p
-                    (video/playback-sequences d {:protocol :kitty :cols 20})]
+                       p
+                       (video/playback-sequences d {:protocol :kitty :cols 20})]
 
                    (expect (= 20 (:cols p)))
                    (expect (pos? (long (:rows p))))))
@@ -260,16 +249,15 @@
 
 (defdescribe play!-test
              (it "writes the clip and leaves no image or cursor behind"
-                 (let
-                   [bos
-                    (java.io.ByteArrayOutputStream.)
+                 (let [bos
+                       (java.io.ByteArrayOutputStream.)
 
-                    res
-                    (video/play! (reference-clip)
-                                 {:out bos :protocol :kitty :cols 20 :max-frames 3})
+                       res
+                       (video/play! (reference-clip)
+                                    {:out bos :protocol :kitty :cols 20 :max-frames 3})
 
-                    s
-                    (.toString bos "UTF-8")]
+                       s
+                       (.toString bos "UTF-8")]
 
                    (expect (= 3 (:frames res)))
                    (expect (= :kitty (:protocol res)))
@@ -294,12 +282,11 @@
 
 (defdescribe video-file-sniffing-test
              (it "recognises a clip by MAGIC BYTES, not by its name"
-                 (let
-                   [clip
-                    (reference-clip)
+                 (let [clip
+                       (reference-clip)
 
-                    fake
-                    (File/createTempFile "vis-not-a-movie" ".mp4")]
+                       fake
+                       (File/createTempFile "vis-not-a-movie" ".mp4")]
 
                    (.deleteOnExit fake)
                    (spit fake "this is text, not a movie")
@@ -309,12 +296,11 @@
                    (expect (nil? (video/media-type fake)))
                    (expect (not (video/video-file? (File. "/nope/missing.mp4"))))))
              (it "labels a QuickTime container from its name once the BYTES agree"
-                 (let
-                   [clip
-                    (reference-clip)
+                 (let [clip
+                       (reference-clip)
 
-                    mov
-                    (File/createTempFile "vis-video-test" ".mov")]
+                       mov
+                       (File/createTempFile "vis-video-test" ".mov")]
 
                    (.deleteOnExit mov)
                    (java.nio.file.Files/copy (.toPath clip)
@@ -327,22 +313,20 @@
 
 (defdescribe poster-test
              (it "is the first picture, decoded ONCE and at draw size"
-                 (let
-                   [clip
-                    (reference-clip)
+                 (let [clip
+                       (reference-clip)
 
-                    seen
-                    (atom nil)
+                       seen
+                       (atom nil)
 
-                    real
-                    video/decode-frames
+                       real
+                       video/decode-frames
 
-                    p
-                    (with-redefs
-                      [video/decode-frames (fn [src opts]
-                                             (reset! seen opts)
-                                             (real src opts))]
-                      (video/poster clip {:max-dimension 32}))]
+                       p
+                       (with-redefs [video/decode-frames (fn [src opts]
+                                                           (reset! seen opts)
+                                                           (real src opts))]
+                         (video/poster clip {:max-dimension 32}))]
 
                    ;; The whole point: ONE keyframe at the size it will be drawn,
                    ;; never the timeline, and encoded by the cdylib rather than
@@ -361,28 +345,26 @@
 (defdescribe
   video-in-terminal-image-test
   (it "Kitty gets a PNG poster for an MP4 — that wire is PNG-only"
-      (let
-        [clip
-         (reference-clip)
+      (let [clip
+            (reference-clip)
 
-         {:keys [data w h]}
-         (timg/kitty-png (.getAbsolutePath clip) "video/mp4" {:cols 20 :rows 10})
+            {:keys [data w h]}
+            (timg/kitty-png (.getAbsolutePath clip) "video/mp4" {:cols 20 :rows 10})
 
-         bs
-         ;; RAW PNG bytes, not base64: the fork base64s them as it
-         ;; chunks the escape, so nothing here builds the 1.33x String.
-         data]
+            bs
+            ;; RAW PNG bytes, not base64: the fork base64s them as it
+            ;; chunks the escape, so nothing here builds the 1.33x String.
+            data]
 
         (expect (= [-119 80 78 71] (mapv #(aget ^bytes bs %) (range 4))))
         (expect (= {:w w :h h} (timg/image-dimensions bs "image/png")))))
   (it "raw bytes and base64 produce the IDENTICAL escape, in every encoder"
-      (let
-        [bs
-         (:data
-           (timg/kitty-png (.getAbsolutePath (reference-clip)) "video/mp4" {:cols 20 :rows 10}))
+      (let [bs
+            (:data
+              (timg/kitty-png (.getAbsolutePath (reference-clip)) "video/mp4" {:cols 20 :rows 10}))
 
-         b64
-         (.encodeToString (java.util.Base64/getEncoder) ^bytes bs)]
+            b64
+            (.encodeToString (java.util.Base64/getEncoder) ^bytes bs)]
 
         ;; The saving is the intermediate String, never the picture:
         ;; whatever reaches the terminal must be byte-for-byte the same.
@@ -397,33 +379,31 @@
         ;; and with no media type either — a dropped path carries none
         (expect (= {:w clip-w :h clip-h} (timg/probe-dimensions (.getAbsolutePath clip) nil)))))
   (it "a dropped clip path probes exactly like a dropped picture"
-      (let
-        [clip
-         (reference-clip)
+      (let [clip
+            (reference-clip)
 
-         d
-         (timg/probe-paste-image (.getAbsolutePath clip) {})]
+            d
+            (timg/probe-paste-image (.getAbsolutePath clip) {})]
 
         (expect (= "video/mp4" (:mime d)))
         (expect (= [clip-w clip-h] [(:width d) (:height d)]))
         (expect (= (.getName clip) (:filename d)))
         (expect (pos? (long (:size d))))))
   (it "renders in both protocols — iTerm2 gets the poster, never raw MP4 bytes"
-      (let
-        [path
-         (.getAbsolutePath (reference-clip))
+      (let [path
+            (.getAbsolutePath (reference-clip))
 
-         k
-         (with-redefs [timg/images-protocol (constantly :kitty)]
-           (timg/render-sequence path "video/mp4" {:cols 20 :rows 10}))
+            k
+            (with-redefs [timg/images-protocol (constantly :kitty)]
+              (timg/render-sequence path "video/mp4" {:cols 20 :rows 10}))
 
-         i
-         (with-redefs [timg/images-protocol (constantly :iterm2)]
-           (timg/render-sequence path "video/mp4" {:cols 20 :rows 10}))
+            i
+            (with-redefs [timg/images-protocol (constantly :iterm2)]
+              (timg/render-sequence path "video/mp4" {:cols 20 :rows 10}))
 
-         payload
-         (.decode (java.util.Base64/getDecoder)
-                  ^String (second (re-find #":([A-Za-z0-9+/=]{16,})" i)))]
+            payload
+            (.decode (java.util.Base64/getDecoder)
+                     ^String (second (re-find #":([A-Za-z0-9+/=]{16,})" i)))]
 
         (expect (.contains ^String k "\u001b_G"))
         (expect (.contains ^String i "\u001b]1337;File="))
@@ -435,20 +415,18 @@
 
 (defdescribe playback-laziness-test
              (it "encodes a frame only when playback reaches it"
-                 (let
-                   [d
-                    (video/decode-frames (reference-clip))
+                 (let [d
+                       (video/decode-frames (reference-clip))
 
-                    n
-                    (atom 0)
+                       n
+                       (atom 0)
 
-                    real
-                    video/frame->png]
+                       real
+                       video/frame->png]
 
-                   (with-redefs
-                     [video/frame->png (fn [f]
-                                         (swap! n inc)
-                                         (real f))]
+                   (with-redefs [video/frame->png (fn [f]
+                                                    (swap! n inc)
+                                                    (real f))]
                      (let [p (video/playback-sequences d {:protocol :kitty :cols 20})]
                        ;; nothing is encoded up front...
                        (expect (zero? @n))
@@ -465,39 +443,35 @@
 (defdescribe
   playback-decode-size-test
   (it "decodes to the CELL BOX by default, not the clip's full resolution"
-      (let
-        [seen
-         (atom nil)
+      (let [seen
+            (atom nil)
 
-         real
-         video/decode-frames
+            real
+            video/decode-frames
 
-         bos
-         (java.io.ByteArrayOutputStream.)]
+            bos
+            (java.io.ByteArrayOutputStream.)]
 
-        (with-redefs
-          [video/decode-frames (fn [src opts]
-                                 (reset! seen opts)
-                                 (real src opts))]
+        (with-redefs [video/decode-frames (fn [src opts]
+                                            (reset! seen opts)
+                                            (real src opts))]
           (video/play! (reference-clip) {:out bos :protocol :kitty :cols 20 :max-frames 2}))
         ;; 20 cols x 9px = 180px of terminal; decoding 1080p for that
         ;; box doubles decode time and sextuples the escape bytes.
         (expect (= (timg/box-pixels 20 nil) (:max-dimension @seen)))))
   (it "an explicit :max-dimension always wins"
-      (let
-        [seen
-         (atom nil)
+      (let [seen
+            (atom nil)
 
-         real
-         video/decode-frames
+            real
+            video/decode-frames
 
-         bos
-         (java.io.ByteArrayOutputStream.)]
+            bos
+            (java.io.ByteArrayOutputStream.)]
 
-        (with-redefs
-          [video/decode-frames (fn [src opts]
-                                 (reset! seen opts)
-                                 (real src opts))]
+        (with-redefs [video/decode-frames (fn [src opts]
+                                            (reset! seen opts)
+                                            (real src opts))]
           (video/play! (reference-clip)
                        {:out bos :protocol :kitty :cols 20 :max-frames 2 :max-dimension 24}))
         (expect (= 24 (:max-dimension @seen))))))
@@ -506,18 +480,17 @@
   native-png-frames-test
   (it
     "asks the cdylib for PNG frames instead of hauling RGBA over the FFI boundary"
-    (let
-      [clip
-       (reference-clip)
+    (let [clip
+          (reference-clip)
 
-       raw
-       (video/decode-frames clip)
+          raw
+          (video/decode-frames clip)
 
-       png
-       (video/decode-frames clip {:encoding :png})
+          png
+          (video/decode-frames clip {:encoding :png})
 
-       f
-       (first (:frames png))]
+          f
+          (first (:frames png))]
 
       (expect (= clip-frames (count (:frames png))))
       ;; The frame carries an ENCODED still, not a canvas...
@@ -542,20 +515,18 @@
 
 (defdescribe playback-encoding-default-test
              (it "play! defaults to the encoded-frame path"
-                 (let
-                   [seen
-                    (atom nil)
+                 (let [seen
+                       (atom nil)
 
-                    real
-                    video/decode-frames
+                       real
+                       video/decode-frames
 
-                    bos
-                    (java.io.ByteArrayOutputStream.)]
+                       bos
+                       (java.io.ByteArrayOutputStream.)]
 
-                   (with-redefs
-                     [video/decode-frames (fn [src opts]
-                                            (reset! seen opts)
-                                            (real src opts))]
+                   (with-redefs [video/decode-frames (fn [src opts]
+                                                       (reset! seen opts)
+                                                       (real src opts))]
                      (video/play! (reference-clip) {:out bos :protocol :kitty :cols 20 :rows 10})
                      (expect (= :png (:encoding @seen)))
                      ;; An explicit choice still wins.
@@ -565,19 +536,19 @@
 
 (defdescribe video-attachment-materialization-test
              (it "re-renders a persisted clip attachment after a resume"
-                 (let
-                   [clip
-                    (reference-clip)
+                 (let [clip
+                       (reference-clip)
 
-                    att
-                    {"id" (str "vid-" (System/currentTimeMillis))
-                     "media_type" "video/mp4"
-                     "filename" "clip.mp4"
-                     "base64" (.encodeToString (java.util.Base64/getEncoder)
-                                               (java.nio.file.Files/readAllBytes (.toPath clip)))}
+                       att
+                       {"id" (str "vid-" (System/currentTimeMillis))
+                        "media_type" "video/mp4"
+                        "filename" "clip.mp4"
+                        "base64" (.encodeToString (java.util.Base64/getEncoder)
+                                                  (java.nio.file.Files/readAllBytes (.toPath
+                                                                                      clip)))}
 
-                    d
-                    (timg/materialize-attachment att)]
+                       d
+                       (timg/materialize-attachment att)]
 
                    (expect (some? d))
                    ;; Cached under its OWN extension: a `.png` named MP4 could be

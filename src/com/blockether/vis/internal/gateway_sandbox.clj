@@ -133,10 +133,9 @@
   (or (:port @proxy-state)
       (locking proxy-lock
         (or (:port @proxy-state)
-            (let
-              [srv (egress/start! {:policy-fn resolve-policy
-                                   :mitm (fn []
-                                           @ca-state)})]
+            (let [srv (egress/start! {:policy-fn resolve-policy
+                                      :mitm (fn []
+                                              @ca-state)})]
               (reset! proxy-state srv)
               (:port srv))))))
 
@@ -153,11 +152,10 @@
   (or (get-in @session-proxy-states [token :port])
       (locking session-proxy-lock
         (or (get-in @session-proxy-states [token :port])
-            (let
-              [srv (egress/start! {:policy-fn (fn [_]
-                                                (resolve-policy token))
-                                   :mitm (fn []
-                                           @ca-state)})]
+            (let [srv (egress/start! {:policy-fn (fn [_]
+                                                   (resolve-policy token))
+                                      :mitm (fn []
+                                              @ca-state)})]
               (swap! session-proxy-states assoc token srv)
               (:port srv))))))
 

@@ -17,9 +17,8 @@
                        (expect (< (count description) 350))))))
              (it
                "exposes exactly ONE verb — the inventory is ctx's job, connecting is the gateway's"
-               (let
-                 [names (set (map :ext.symbol/name
-                                  (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
+               (let [names (set (map :ext.symbol/name
+                                     (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
                  (expect (= #{"mcp__call"} names))
                  ;; Server names, status and tool names ride in `env.mcp`, so a listing
                  ;; verb would only re-fetch what the session object already carries.
@@ -33,12 +32,11 @@
 (defdescribe
   gateway-mcp-management-test
   (it "persists gateway server values while returning only a sanitized inventory row"
-      (let
-        [saved
-         (atom nil)
+      (let [saved
+            (atom nil)
 
-         reconnect!
-         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)]
+            reconnect!
+            (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)]
 
         (with-redefs-fn {#'config/load-global-config-raw (constantly {})
                          #'config/load-config-raw (constantly {})
@@ -46,11 +44,10 @@
                                                  (reset! saved [value source]))
                          reconnect! (constantly nil)}
           (fn []
-            (let
-              [row (mcp/save-gateway-server! "filesystem"
-                                             {"transport" "stdio"
-                                              "command" "npx"
-                                              "env" {"API_TOKEN" "not-for-the-client"}})]
+            (let [row (mcp/save-gateway-server! "filesystem"
+                                                {"transport" "stdio"
+                                                 "command" "npx"
+                                                 "env" {"API_TOKEN" "not-for-the-client"}})]
               (expect (= "filesystem" (get row "name")))
               (expect (= "stdio" (get row "transport")))
               (expect (nil? (get row "env")))
@@ -60,31 +57,28 @@
                          (get-in (first @saved)
                                  ["mcp" "servers" "filesystem" "env" "API_TOKEN"]))))))))
   (it "tests a candidate without persisting it and always closes its connection"
-      (let
-        [seen
-         (atom nil)
+      (let [seen
+            (atom nil)
 
-         closed
-         (atom nil)]
+            closed
+            (atom nil)]
 
-        (with-redefs
-          [client/connect
-           (fn [name spec]
-             (reset! seen [name spec])
-             ::connection)
+        (with-redefs [client/connect
+                      (fn [name spec]
+                        (reset! seen [name spec])
+                        ::connection)
 
-           client/list-tools
-           (constantly [{"name" "list_files" "description" "Enumerate files"}])
+                      client/list-tools
+                      (constantly [{"name" "list_files" "description" "Enumerate files"}])
 
-           client/close
-           (fn [conn]
-             (reset! closed conn))]
+                      client/close
+                      (fn [conn]
+                        (reset! closed conn))]
 
-          (let
-            [result (mcp/test-gateway-server! "remote"
-                                              {"transport" "streamable_http"
-                                               "url" "https://mcp.example.test/mcp"
-                                               "headers" {"Authorization" "Bearer private"}})]
+          (let [result (mcp/test-gateway-server! "remote"
+                                                 {"transport" "streamable_http"
+                                                  "url" "https://mcp.example.test/mcp"
+                                                  "headers" {"Authorization" "Bearer private"}})]
             (expect (= "remote" (get result "name")))
             (expect (= [{"name" "list_files" "description" "Enumerate files"}]
                        (get result "tools")))
@@ -93,14 +87,13 @@
             (expect (= :streamable-http (get-in @seen [1 :transport])))
             (expect (= "Bearer private" (get-in @seen [1 :headers "Authorization"])))))))
   (it "keeps persisted env and headers when a save omits them"
-      (let
-        [store
-         (atom {"mcp" {"servers" {"remote" {"transport" "streamable_http"
-                                            "url" "https://mcp.example.test/mcp"
-                                            "headers" {"Authorization" "Bearer keep-me"}}}}})
+      (let [store
+            (atom {"mcp" {"servers" {"remote" {"transport" "streamable_http"
+                                               "url" "https://mcp.example.test/mcp"
+                                               "headers" {"Authorization" "Bearer keep-me"}}}}})
 
-         reconnect!
-         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)]
+            reconnect!
+            (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)]
 
         (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                            @store)
@@ -124,19 +117,18 @@
             (expect (= {} (get-in @store ["mcp" "servers" "remote" "headers"])))))))
   (it
     "refuses to write a server that a hand-written config file declares"
-    (let
-      [saved
-       (atom nil)
+    (let [saved
+          (atom nil)
 
-       reconnect!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)
+          reconnect!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)
 
-       merged
-       {"mcp" {"servers" {"team" {"transport" "stdio" "command" "echo"}}}}
+          merged
+          {"mcp" {"servers" {"team" {"transport" "stdio" "command" "echo"}}}}
 
-       thrown
-       (fn [f]
-         (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+          thrown
+          (fn [f]
+            (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
       (with-redefs-fn {#'config/load-global-config-raw (constantly {})
                        #'config/load-config-raw (constantly merged)
@@ -158,13 +150,12 @@
           (expect (= :mcp/not-found (thrown #(mcp/set-gateway-server-enabled! "absent" false))))
           (expect (= :mcp/not-found (thrown #(mcp/delete-gateway-server! "absent"))))))))
   (it "carries the non-secret rest of a spec so a client can edit it without losing it"
-      (let
-        [machine {"mcp" {"servers" {"owned" {"transport" "stdio"
-                                             "command" "npx"
-                                             "args" ["-y" "server-filesystem" "/srv"]
-                                             "cwd" "/srv"
-                                             "timeout_ms" 45000
-                                             "env" {"API_TOKEN" "never-leaves"}}}}}]
+      (let [machine {"mcp" {"servers" {"owned" {"transport" "stdio"
+                                                "command" "npx"
+                                                "args" ["-y" "server-filesystem" "/srv"]
+                                                "cwd" "/srv"
+                                                "timeout_ms" 45000
+                                                "env" {"API_TOKEN" "never-leaves"}}}}}]
         (with-redefs-fn {#'config/load-global-config-raw (constantly machine)
                          #'config/load-config-raw (constantly machine)}
           (fn []
@@ -179,15 +170,14 @@
               (expect (nil? (get row "env")))
               (expect (nil? (get row "headers"))))))))
   (it "marks the rows this gateway owns and counts tools that are not cached yet"
-      (let
-        [machine
-         {"mcp" {"servers" {"owned" {"transport" "stdio" "command" "npx"}}}}
+      (let [machine
+            {"mcp" {"servers" {"owned" {"transport" "stdio" "command" "npx"}}}}
 
-         merged
-         (assoc-in machine ["mcp" "servers" "team"] {"transport" "stdio" "command" "echo"})
+            merged
+            (assoc-in machine ["mcp" "servers" "team"] {"transport" "stdio" "command" "echo"})
 
-         tool-count
-         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'tool-count)]
+            tool-count
+            (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'tool-count)]
 
         (with-redefs-fn {#'config/load-global-config-raw (constantly machine)
                          #'config/load-config-raw (constantly merged)}
@@ -206,21 +196,20 @@
   gateway-mcp-runtime-test
   (it
     "keeps a killed server down across reconciles until it is started again"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
 
-       connects
-       (atom [])
+          connects
+          (atom [])
 
-       conns
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
 
-       killed
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+          killed
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
-       reconcile!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)]
+          reconcile!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -264,21 +253,20 @@
                (finally (reset! conns {}) (reset! killed #{})))))))
   (it
     "refuses a tool call on a killed server instead of quietly respawning it"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
 
-       connects
-       (atom [])
+          connects
+          (atom [])
 
-       conns
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
 
-       killed
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+          killed
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
-       call!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)]
+          call!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -308,13 +296,12 @@
                (expect (empty? @connects))
                (finally (reset! conns {}) (reset! killed #{})))))))
   (it "refuses OAuth where it cannot apply and answers unknown flows as such"
-      (let
-        [merged
-         {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}}
+      (let [merged
+            {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}}
 
-         thrown
-         (fn [f]
-           (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+            thrown
+            (fn [f]
+              (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
         (with-redefs-fn {#'config/load-global-config-raw (constantly merged)
                          #'config/load-config-raw (constantly merged)}
@@ -329,13 +316,12 @@
             ;; Cancelling one is idempotent: a client may always retry the cleanup.
             (expect (get (mcp/cancel-gateway-server-auth! "gone") "is_cancelled"))))))
   (it "takes the authorization code from a pasted redirect URL or a bare code"
-      (let
-        [code-of
-         (requiring-resolve 'com.blockether.vis.internal.foundation.mcp.oauth/code-of)
+      (let [code-of
+            (requiring-resolve 'com.blockether.vis.internal.foundation.mcp.oauth/code-of)
 
-         thrown
-         (fn [f]
-           (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+            thrown
+            (fn [f]
+              (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
         ;; A user on another device can only hand back the whole URL their browser
         ;; landed on, so both shapes have to work.
@@ -347,24 +333,23 @@
         (expect (= :mcp/oauth-error (thrown #(code-of "   "))))))
   (it
     "reaps a dead connection and respawns it with nobody asking"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
 
-       connects
-       (atom [])
+          connects
+          (atom [])
 
-       dead
-       (atom #{})
+          dead
+          (atom #{})
 
-       conns
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
 
-       killed
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+          killed
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
-       reconcile!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)]
+          reconcile!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -397,15 +382,14 @@
                  (expect (false? (contains? @dead (get-in @conns ["local" :conn])))))
                (finally (reset! conns {}) (reset! killed #{})))))))
   (it "arms exactly one daemon-wide health loop once a server is configured"
-      (let
-        [store
-         (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
+      (let [store
+            (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
 
-         supervisor
-         @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'supervisor)
+            supervisor
+            @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'supervisor)
 
-         ensure-supervisor!
-         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'ensure-supervisor!)]
+            ensure-supervisor!
+            (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'ensure-supervisor!)]
 
         (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                            @store)
@@ -425,30 +409,29 @@
                    (finally (reset! supervisor previous))))))))
   (it
     "closes a connection that finishes racing an already accepted kill"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
 
-       connects
-       (atom [])
+          connects
+          (atom [])
 
-       closes
-       (atom [])
+          closes
+          (atom [])
 
-       entered
-       (promise)
+          entered
+          (promise)
 
-       release-connect
-       (promise)
+          release-connect
+          (promise)
 
-       conns
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
 
-       killed
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+          killed
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
-       call!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)]
+          call!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -483,25 +466,24 @@
                           (reset! killed #{}))))))))
   (it
     "tears a killed server down without freezing the pool for every other server"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"slow" {"transport" "stdio" "command" "echo"}
-                                "other" {"transport" "stdio" "command" "echo"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"slow" {"transport" "stdio" "command" "echo"}
+                                   "other" {"transport" "stdio" "command" "echo"}}}})
 
-       conns
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
 
-       killed
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+          killed
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
-       ensure-connected!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'ensure-connected!)
+          ensure-connected!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'ensure-connected!)
 
-       in-close
-       (promise)
+          in-close
+          (promise)
 
-       release-close
-       (promise)]
+          release-close
+          (promise)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -537,29 +519,28 @@
   mcp-ctx-block-test
   (it
     "puts each visible server's TOOL NAMES in ctx, keyed by name so one server diffs alone"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo"}
-                                "beta" {"transport" "stdio" "command" "echo"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo"}
+                                   "beta" {"transport" "stdio" "command" "echo"}}}})
 
-       conns
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
 
-       killed
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+          killed
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
-       reconcile!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)
+          reconcile!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)
 
-       reconcile-async!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)
+          reconcile-async!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)
 
-       contribute
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'contribute)
+          contribute
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'contribute)
 
-       block
-       (fn [c]
-         (get-in c ["session_env" "mcp" "servers"]))]
+          block
+          (fn [c]
+            (get-in c ["session_env" "mcp" "servers"]))]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -586,10 +567,9 @@
                  (expect (= "global" (get-in before ["alpha" "scope"])))
                  (expect (= "stdio" (get-in before ["alpha" "transport"])))
                  (mcp/kill-gateway-server! "beta")
-                 (let
-                   [after (block (contribute {:session-id "s1"}))
-                    delta (renderer/render-ctx-delta {"env" {"mcp" {"servers" before}}}
-                                                     {"env" {"mcp" {"servers" after}}})]
+                 (let [after (block (contribute {:session-id "s1"}))
+                       delta (renderer/render-ctx-delta {"env" {"mcp" {"servers" before}}}
+                                                        {"env" {"mcp" {"servers" after}}})]
 
                    ;; A stopped server stays VISIBLE with a status: "no such server"
                    ;; and "stopped, start it again" are different answers.
@@ -604,24 +584,23 @@
   mcp-call-two-shapes-test
   (it
     "answers `server` alone with schemas, and refuses an unknown tool with the names it has"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo"}}}})
 
-       conns
-       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+          conns
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
 
-       reconcile!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)
+          reconcile!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)
 
-       reconcile-async!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)
+          reconcile-async!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)
 
-       call!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)
+          call!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)
 
-       called
-       (atom nil)]
+          called
+          (atom nil)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -665,48 +644,47 @@
   mcp-oauth-visibility-test
   (it
     "tells \"sign in\" apart from \"it is down\", in ctx and in every refusal"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"down" {"transport" "streamable_http"
-                                        "url" "https://down.example.test/mcp"}
-                                "signed-out" {"transport" "streamable_http"
-                                              "url" "https://signed-out.example.test/mcp"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"down" {"transport" "streamable_http"
+                                           "url" "https://down.example.test/mcp"}
+                                   "signed-out" {"transport" "streamable_http"
+                                                 "url" "https://signed-out.example.test/mcp"}}}})
 
-       resolve*
-       (fn [sym]
-         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core sym))
+          resolve*
+          (fn [sym]
+            (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core sym))
 
-       conns
-       @(resolve* 'conns)
+          conns
+          @(resolve* 'conns)
 
-       killed
-       @(resolve* 'killed)
+          killed
+          @(resolve* 'killed)
 
-       configured-servers
-       (resolve* 'configured-servers)
+          configured-servers
+          (resolve* 'configured-servers)
 
-       reconcile-async!
-       (resolve* 'reconcile-async!)
+          reconcile-async!
+          (resolve* 'reconcile-async!)
 
-       contribute
-       (resolve* 'contribute)
+          contribute
+          (resolve* 'contribute)
 
-       unavailable-err
-       (resolve* 'unavailable-err)
+          unavailable-err
+          (resolve* 'unavailable-err)
 
-       call-failed-err
-       (resolve* 'call-failed-err)
+          call-failed-err
+          (resolve* 'call-failed-err)
 
-       msg
-       (fn [r]
-         (get-in r [:error :message]))
+          msg
+          (fn [r]
+            (get-in r [:error :message]))
 
-       hint
-       (fn [r]
-         (get-in r [:error :hint]))
+          hint
+          (fn [r]
+            (get-in r [:error :hint]))
 
-       env
-       {:session-id "s1"}]
+          env
+          {:session-id "s1"}]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -756,57 +734,56 @@
   mcp-string-keyed-surfaces-test
   (it
     "answers EVERY surface with string keys - no keyword may reach the model, a client, or the wire"
-    (let
-      [store
-       (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo" "env" {"S" "x"}}
-                                "remote" {"transport" "streamable_http"
-                                          "url" "https://remote.example.test/mcp"}}}})
+    (let [store
+          (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo" "env" {"S" "x"}}
+                                   "remote" {"transport" "streamable_http"
+                                             "url" "https://remote.example.test/mcp"}}}})
 
-       resolve*
-       (fn [sym]
-         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core sym))
+          resolve*
+          (fn [sym]
+            (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core sym))
 
-       conns
-       @(resolve* 'conns)
+          conns
+          @(resolve* 'conns)
 
-       killed
-       @(resolve* 'killed)
+          killed
+          @(resolve* 'killed)
 
-       reconcile!
-       (resolve* 'reconcile!)
+          reconcile!
+          (resolve* 'reconcile!)
 
-       reconcile-async!
-       (resolve* 'reconcile-async!)
+          reconcile-async!
+          (resolve* 'reconcile-async!)
 
-       call!
-       (resolve* 'mcp-call-impl)
+          call!
+          (resolve* 'mcp-call-impl)
 
-       contribute
-       (resolve* 'contribute)
+          contribute
+          (resolve* 'contribute)
 
-       env
-       {:session-id "s1"}
+          env
+          {:session-id "s1"}
 
-       ;; `:message` and `:hint` are the ENGINE's failure contract, shared by every
-       ;; extension; everything MCP itself carries alongside them has to be a string.
-       payload
-       (fn [v]
-         (if (and (map? v) (or (contains? v :result) (contains? v :error)))
-           [(:result v) (dissoc (:error v) :message :hint)]
-           [v]))
+          ;; `:message` and `:hint` are the ENGINE's failure contract, shared by every
+          ;; extension; everything MCP itself carries alongside them has to be a string.
+          payload
+          (fn [v]
+            (if (and (map? v) (or (contains? v :result) (contains? v :error)))
+              [(:result v) (dissoc (:error v) :message :hint)]
+              [v]))
 
-       keywords-in
-       (fn keywords-in [x path]
-         (cond (map? x) (mapcat (fn [[k v]]
-                                  (concat (when (keyword? k) [(conj path k)])
-                                          (keywords-in v (conj path k))))
-                                x)
-               (sequential? x) (apply concat
-                                 (map-indexed (fn [i v]
-                                                (keywords-in v (conj path i)))
-                                              x))
-               (keyword? x) [(conj path x)]
-               :else nil))]
+          keywords-in
+          (fn keywords-in [x path]
+            (cond (map? x) (mapcat (fn [[k v]]
+                                     (concat (when (keyword? k) [(conj path k)])
+                                             (keywords-in v (conj path k))))
+                                   x)
+                  (sequential? x) (apply concat
+                                    (map-indexed (fn [i v]
+                                                   (keywords-in v (conj path i)))
+                                                 x))
+                  (keyword? x) [(conj path x)]
+                  :else nil))]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -830,25 +807,28 @@
             (reset! conns {})
             (reset! killed #{})
             (reconcile!)
-            (let
-              [surfaces
-               [(mcp/gateway-servers)
-                (mcp/save-gateway-server!
-                  "beta"
-                  {"transport" "stdio" "command" "ls" "args" ["-l"] "cwd" "/tmp" "timeout_ms" 900})
-                (mcp/set-gateway-server-enabled! "beta" false) (mcp/kill-gateway-server! "beta")
-                (mcp/start-gateway-server! "beta") (mcp/delete-gateway-server! "beta")
-                (mcp/test-gateway-server! "probe" {"transport" "stdio" "command" "echo"})
-                (mcp/gateway-server-auth-status "remote")
-                (mcp/set-session-servers! "s1" {"sess" {"transport" "stdio" "command" "echo"}})
-                (mcp/session-servers "s1") (contribute env)
-                ;; The model-facing verb, in every shape it can land in.
-                (call! env "alpha") (call! env "alpha" "write_file" {"path" "p"})
-                (call! env "alpha" "nope" {}) (call! env "ghost")
-                (oauth/token-status "no-such-server") (oauth/cancel-authorization! "no-such-flow")]
+            (let [surfaces
+                  [(mcp/gateway-servers)
+                   (mcp/save-gateway-server! "beta"
+                                             {"transport" "stdio"
+                                              "command" "ls"
+                                              "args" ["-l"]
+                                              "cwd" "/tmp"
+                                              "timeout_ms" 900})
+                   (mcp/set-gateway-server-enabled! "beta" false) (mcp/kill-gateway-server! "beta")
+                   (mcp/start-gateway-server! "beta") (mcp/delete-gateway-server! "beta")
+                   (mcp/test-gateway-server! "probe" {"transport" "stdio" "command" "echo"})
+                   (mcp/gateway-server-auth-status "remote")
+                   (mcp/set-session-servers! "s1" {"sess" {"transport" "stdio" "command" "echo"}})
+                   (mcp/session-servers "s1") (contribute env)
+                   ;; The model-facing verb, in every shape it can land in.
+                   (call! env "alpha") (call! env "alpha" "write_file" {"path" "p"})
+                   (call! env "alpha" "nope" {}) (call! env "ghost")
+                   (oauth/token-status "no-such-server")
+                   (oauth/cancel-authorization! "no-such-flow")]
 
-               values
-               (vec (mapcat payload surfaces))]
+                  values
+                  (vec (mapcat payload surfaces))]
 
               (expect (= [] (vec (mapcat #(keywords-in % []) values))))
               ;; Already snake_case strings, so the wire encoder has NOTHING left to

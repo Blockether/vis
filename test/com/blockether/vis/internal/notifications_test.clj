@@ -18,12 +18,11 @@
   (it "returns a fresh uuid string per push and keeps insertion order"
       (with-clean-store
         (fn []
-          (let
-            [id1
-             (notif/notify! "first")
+          (let [id1
+                (notif/notify! "first")
 
-             id2
-             (notif/notify! "second")]
+                id2
+                (notif/notify! "second")]
 
             (expect (parse-uuid id1) "the id must be a uuid string callers can round-trip")
             (expect (not= id1 id2))

@@ -182,44 +182,43 @@
    exactly the false negative this whole path exists to avoid. So that fallback
    is REFUSED here, naming the engine's own reason."
   [idx ^String query is-regex?]
-  (loop
-    [offset
-     0
+  (loop [offset
+         0
 
-     page
-     0
+         page
+         0
 
-     acc
-     (transient [])]
+         acc
+         (transient [])]
 
-    (let
-      [{:keys [matches next-file-offset regex-fallback-error]}
-       (fff/grep idx
-                 {:query query
-                  :mode (if is-regex? :regex :plain)
-                  :file-offset offset
-                  :page-limit rg-fff-grep-page-limit
-                  :max-matches-per-file 1
-                  :max-file-size rg-fff-grep-max-file-size
-                  :time-budget-ms 1500})
+    (let [{:keys [matches next-file-offset regex-fallback-error]}
+          (fff/grep idx
+                    {:query query
+                     :mode (if is-regex? :regex :plain)
+                     :file-offset offset
+                     :page-limit rg-fff-grep-page-limit
+                     :max-matches-per-file 1
+                     :max-file-size rg-fff-grep-max-file-size
+                     :time-budget-ms 1500})
 
-       _
-       (when (and is-regex? (not (str/blank? (str regex-fallback-error))))
-         (throw (ex-info
-                  (str "grep is_regex pattern is not supported by the native scanner: " query
+          _
+          (when (and is-regex? (not (str/blank? (str regex-fallback-error))))
+            (throw (ex-info
+                     (str
+                       "grep is_regex pattern is not supported by the native scanner: " query
                        " — " regex-fallback-error
                        ". Rust regex syntax has no lookaround and no backreferences; rewrite the"
                        " pattern without that construct, or drop is_regex to search it literally.")
-                  {:type :ext.foundation.editing/invalid-rg-spec
-                   :field :query
-                   :pattern query
-                   :engine-error (str regex-fallback-error)})))
+                     {:type :ext.foundation.editing/invalid-rg-spec
+                      :field :query
+                      :pattern query
+                      :engine-error (str regex-fallback-error)})))
 
-       acc
-       (reduce conj! acc matches)
+          acc
+          (reduce conj! acc matches)
 
-       next-offset
-       (long (or next-file-offset 0))]
+          next-offset
+          (long (or next-file-offset 0))]
 
       (if (or (zero? next-offset) (>= (inc page) (long rg-fff-grep-max-pages)))
         (persistent! acc)
@@ -252,14 +251,13 @@
    and drags in a page of files that carry no match at all. Native regex grep
    already owns content discovery in that mode."
   [idx ^File base query is-regex?]
-  (let
-    [path-items
-     (when (and (not is-regex?) (not (rg-needle-hostile-to-fff? query)))
-       (->> (:items (fff/search idx {:query query :page-size 1000}))
-            (filter #(rg-fff-path-hit? query %))))
+  (let [path-items
+        (when (and (not is-regex?) (not (rg-needle-hostile-to-fff? query)))
+          (->> (:items (fff/search idx {:query query :page-size 1000}))
+               (filter #(rg-fff-path-hit? query %))))
 
-     grep-items
-     (rg-fff-grep-files idx query is-regex?)]
+        grep-items
+        (rg-fff-grep-files idx query is-regex?)]
 
     (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base grep-items))))
 
@@ -429,12 +427,11 @@
 
      ^java.nio.file.Path target
      (or (some (fn [{:keys [trunk clone]}]
-                 (let
-                   [^java.nio.file.Path cp
-                    (canon clone)
+                 (let [^java.nio.file.Path cp
+                       (canon clone)
 
-                    ^java.nio.file.Path tp
-                    (canon trunk)]
+                       ^java.nio.file.Path tp
+                       (canon trunk)]
 
                    ;; Already inside the clone → keep it (a clone nested under
                    ;; its own trunk must never remap twice).
@@ -488,22 +485,20 @@
   ;; a file under the primary cwd renders RELATIVE; a file under a context
   ;; CLONE renders as its REAL (trunk) absolute path — never the ~/.vis/drafts
   ;; clone path. Anything else falls back to the absolute path.
-  (let
-    [^java.nio.file.Path cwd-canon
-     (canonical-path (workspace/cwd))
+  (let [^java.nio.file.Path cwd-canon
+        (canonical-path (workspace/cwd))
 
-     ^java.nio.file.Path p
-     (.toPath (.getCanonicalFile f))]
+        ^java.nio.file.Path p
+        (.toPath (.getCanonicalFile f))]
 
     (cond (.startsWith p cwd-canon) (let [rel (paths/unixify (.relativize cwd-canon p))]
                                       (if (str/blank? rel) "." rel))
           :else (or (some (fn [{:keys [trunk clone]}]
-                            (let
-                              [^java.nio.file.Path cp
-                               (canonical-path clone)
+                            (let [^java.nio.file.Path cp
+                                  (canonical-path clone)
 
-                               ^java.nio.file.Path tp
-                               (canonical-path trunk)]
+                                  ^java.nio.file.Path tp
+                                  (canonical-path trunk)]
 
                               (when (.startsWith p cp)
                                 (paths/unixify (.resolve tp (.relativize cp p))))))
@@ -520,13 +515,12 @@
    workspace itself reads exactly like `/etc` does. Only a directory that is ours has a
    warm index to ride and a `vis.yml` overlay to rebase."
   [^File f]
-  (let
-    [^java.nio.file.Path p
-     (canonical-path f)
+  (let [^java.nio.file.Path p
+        (canonical-path f)
 
-     under?
-     (fn [x]
-       (.startsWith p ^java.nio.file.Path (canonical-path x)))]
+        under?
+        (fn [x]
+          (.startsWith p ^java.nio.file.Path (canonical-path x)))]
 
     (boolean (or (under? (workspace/cwd))
                  (some (fn [{:keys [trunk clone]}]
@@ -561,20 +555,19 @@
    directory. The model-facing value uses the same round-trippable address as
    every search result."
   [path]
-  (let
-    [p
-     (str/trim (str path))
+  (let [p
+        (str/trim (str path))
 
-     p
-     (if (str/blank? p) "." p)
+        p
+        (if (str/blank? p) "." p)
 
-     ^File f
-     (safe-path p)
+        ^File f
+        (safe-path p)
 
-     ^File dir
-     (cond (.isDirectory f) f
-           (.isFile f) (.getParentFile f)
-           :else (nearest-existing-dir f))]
+        ^File dir
+        (cond (.isDirectory f) f
+              (.isFile f) (.getParentFile f)
+              :else (nearest-existing-dir f))]
 
     (if dir (rel-path dir) p)))
 
@@ -634,37 +627,31 @@
    Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap); a
    confinement violation still propagates — that is not a miss."
   [paths]
-  (let
-    [paths (mapv #(let [s (str/trim (str %))]
-
-                    (if (str/blank? s) "." s))
-                 paths)]
+  (let [paths (mapv #(let [s (str/trim (str %))] (if (str/blank? s) "." s)) paths)]
     (if (some #{"."} paths)
-      (let
-        [allowed (workspace/allowed-roots)
-         primary (first allowed)
-         no-search (workspace/no-search-roots)
-         roots (into []
-                     (comp (remove (fn [r]
-                                     (and (not= r primary) (contains? no-search r))))
-                           (map io/file))
-                     allowed)]
+      (let [allowed (workspace/allowed-roots)
+            primary (first allowed)
+            no-search (workspace/no-search-roots)
+            roots (into []
+                        (comp (remove (fn [r]
+                                        (and (not= r primary) (contains? no-search r))))
+                              (map io/file))
+                        allowed)]
 
         {:roots roots :searched-paths (mapv rel-path roots) :resolutions []})
-      (let
-        [resolutions
-         (mapv (fn [p]
-                 (let [^File f (safe-path p)]
-                   (if (.exists f)
-                     {:requested p :resolved (rel-path f) :root f :existed true :climbed false}
-                     (let [anc (nearest-existing-dir f)]
-                       {:requested p
-                        :resolved (when anc (rel-path anc))
-                        :root anc
-                        :existed false
-                        :climbed (boolean anc)}))))
-               paths)
-         roots (into [] (comp (keep :root) (distinct)) resolutions)]
+      (let [resolutions
+            (mapv (fn [p]
+                    (let [^File f (safe-path p)]
+                      (if (.exists f)
+                        {:requested p :resolved (rel-path f) :root f :existed true :climbed false}
+                        (let [anc (nearest-existing-dir f)]
+                          {:requested p
+                           :resolved (when anc (rel-path anc))
+                           :root anc
+                           :existed false
+                           :climbed (boolean anc)}))))
+                  paths)
+            roots (into [] (comp (keep :root) (distinct)) resolutions)]
 
         {:roots roots :searched-paths (mapv rel-path roots) :resolutions resolutions}))))
 
@@ -716,19 +703,18 @@
    from a native read call for protection. A batch entry is either a plain path
    string or a per-file options object carrying its own `path`."
   [args]
-  (let
-    [a
-     (first args)
+  (let [a
+        (first args)
 
-     entry-path
-     (fn [e]
-       (cond (string? e) e
-             (map? e) (get e "path")
-             :else nil))
+        entry-path
+        (fn [e]
+          (cond (string? e) e
+                (map? e) (get e "path")
+                :else nil))
 
-     batch-paths
-     (fn [entries]
-       (when (sequential? entries) (vec (keep entry-path entries))))]
+        batch-paths
+        (fn [entries]
+          (when (sequential? entries) (vec (keep entry-path entries))))]
 
     (cond (map? a) (or (some-> (get a "files")
                                batch-paths)
@@ -744,29 +730,27 @@
    nil when nothing balances. Lets a stringified argument with trailing junk
    (`\"[{…}]}\"` — one brace too many) still parse as the list it meant."
   [^String s]
-  (let
-    [array
-     (str/index-of s "[")
+  (let [array
+        (str/index-of s "[")
 
-     object
-     (str/index-of s "{")
+        object
+        (str/index-of s "{")
 
-     start
-     (if (and array object) (min (long array) (long object)) (or array object))]
+        start
+        (if (and array object) (min (long array) (long object)) (or array object))]
 
     (when start
-      (loop
-        [i
-         (long start)
+      (loop [i
+             (long start)
 
-         depth
-         0
+             depth
+             0
 
-         in-string?
-         false
+             in-string?
+             false
 
-         escaped?
-         false]
+             escaped?
+             false]
 
         (when (< i (count s))
           (let [c (.charAt s i)]
@@ -800,14 +784,13 @@
    `patch`'s batch path all read the same shape. An unrecognisable value is
    returned unchanged so the caller's own validation still speaks."
   [edits]
-  (let
-    [unwrapped
-     (if (and (map? edits) (contains? edits "edits")) (get edits "edits") edits)
+  (let [unwrapped
+        (if (and (map? edits) (contains? edits "edits")) (get edits "edits") edits)
 
-     batch
-     (cond (string? unwrapped) (or (edit-maps-from-string unwrapped) unwrapped)
-           (map? unwrapped) [unwrapped]
-           :else unwrapped)]
+        batch
+        (cond (string? unwrapped) (or (edit-maps-from-string unwrapped) unwrapped)
+              (map? unwrapped) [unwrapped]
+              :else unwrapped)]
 
     (if (and (sequential? batch) (some string? batch))
       (mapv (fn [entry]
@@ -817,22 +800,21 @@
 
 (defn- find-arg-paths
   [args]
-  (let
-    [a
-     (first args)
+  (let [a
+        (first args)
 
-     spec
-     (when (map? a) a)
+        spec
+        (when (map? a) a)
 
-     paths
-     (cond (contains? spec "paths") (get spec "paths")
-           (contains? spec "path") (get spec "path")
-           :else nil)
+        paths
+        (cond (contains? spec "paths") (get spec "paths")
+              (contains? spec "path") (get spec "path")
+              :else nil)
 
-     paths
-     (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
-           (sequential? paths) paths
-           :else [paths])]
+        paths
+        (cond (or (nil? paths) (and (sequential? paths) (empty? paths))) ["."]
+              (sequential? paths) paths
+              :else [paths])]
 
     (mapv normalize-find-dir-path paths)))
 
@@ -932,9 +914,8 @@
         (if (contains? out :result)
           out
           (if-let [gate (:mutation-gate env)]
-            (let
-              [paths (extracted-paths path-extractor args)
-               refusal (gate {:op op :paths paths :atomic? (mutation-atomic? args)})]
+            (let [paths (extracted-paths path-extractor args)
+                  refusal (gate {:op op :paths paths :atomic? (mutation-atomic? args)})]
 
               (if (and (string? refusal) (not (str/blank? refusal)))
                 {:result (plan-required-failure op kind paths refusal)}
@@ -972,32 +953,31 @@
 (defn- tool-failure-on-error
   [op kind]
   (fn [err _env _f args]
-    (let
-      [path
-       (first args)
+    (let [path
+          (first args)
 
-       target
-       (path->target path kind)
+          target
+          (path->target path kind)
 
-       interrupted?
-       (instance? InterruptedException err)
+          interrupted?
+          (instance? InterruptedException err)
 
-       t
-       (now-ms)
+          t
+          (now-ms)
 
-       error
-       (when interrupted?
-         {:message (str (name op) " interrupted while running; operation was cancelled.")})]
+          error
+          (when interrupted?
+            {:message (str (name op) " interrupted while running; operation was cancelled.")})]
 
       {:result (extension/failure
                  {:result nil
                   :op op
-                  :metadata (cond->
-                              {:target target :started-at-ms t :finished-at-ms t :duration-ms 0}
-                              interrupted?
-                              (assoc :interrupted?
-                                true :status
-                                :interrupted))
+                  :metadata
+                  (cond-> {:target target :started-at-ms t :finished-at-ms t :duration-ms 0}
+                    interrupted?
+                    (assoc :interrupted?
+                      true :status
+                      :interrupted))
                   :error error
                   :throwable (when-not error err)})})))
 
@@ -1030,14 +1010,13 @@
    The config half ALWAYS applies: `.gitignore` is honored unconditionally and
    `vis.yml` is the only way to widen or narrow what search sees."
   []
-  (let
-    [{:keys [include-gitignored-paths always-exclude]}
-     (config/search-overlay)
+  (let [{:keys [include-gitignored-paths always-exclude]}
+        (config/search-overlay)
 
-     overlay
-     {:custom-ignore-filenames [".rgignore"]
-      :exclude-globs (vec always-exclude)
-      :unignore-globs (vec include-gitignored-paths)}]
+        overlay
+        {:custom-ignore-filenames [".rgignore"]
+         :exclude-globs (vec always-exclude)
+         :unignore-globs (vec include-gitignored-paths)}]
 
     (when (some seq (vals overlay)) overlay)))
 
@@ -1045,12 +1024,11 @@
   "True when `relative-path` has a hidden filesystem segment below `root`. This
    preserves `ls`'s `is_hidden` contract while fff owns every ignore decision."
   [^File root ^String relative-path]
-  (loop
-    [^File parent
-     root
+  (loop [^File parent
+         root
 
-     [part & more]
-     (str/split relative-path #"/")]
+         [part & more]
+         (str/split relative-path #"/")]
 
     (if part
       (let [^File child (io/file parent part)]
@@ -1061,12 +1039,11 @@
   "Segment count of a `/`-joined relative path. Counting separators keeps the depth
    test allocation-free — it runs on EVERY indexed record."
   ^long [^String p]
-  (loop
-    [i
-     (.indexOf p "/")
+  (loop [i
+         (.indexOf p "/")
 
-     n
-     1]
+         n
+         1]
 
     (if (neg? i) n (recur (.indexOf p "/" (unchecked-inc i)) (unchecked-inc n)))))
 
@@ -1108,30 +1085,28 @@
    own kind (the file and directory indexes each answer for one). `keep-fn` answers
    the row to keep, or nil to drop the record."
   [fetch directory? keep-fn]
-  (loop
-    [offset
-     0
+  (loop [offset
+         0
 
-     acc
-     (transient [])]
+         acc
+         (transient [])]
 
-    (let
-      [{page :items total :total-matched}
-       (fetch offset)
+    (let [{page :items total :total-matched}
+          (fetch offset)
 
-       page
-       (or page [])
+          page
+          (or page [])
 
-       acc
-       (reduce (fn [a item]
-                 (if-let [row (keep-fn item directory?)]
-                   (conj! a row)
-                   a))
-               acc
-               page)
+          acc
+          (reduce (fn [a item]
+                    (if-let [row (keep-fn item directory?)]
+                      (conj! a row)
+                      a))
+                  acc
+                  page)
 
-       seen
-       (unchecked-add (long offset) (long (count page)))]
+          seen
+          (unchecked-add (long offset) (long (count page)))]
 
       (if (or (empty? page) (>= seen (long total))) (persistent! acc) (recur seen acc)))))
 
@@ -1174,19 +1149,19 @@
    Opening the pooled native index at that directory preserves explicit-read
    semantics, while paths configured beneath it must become local to fff's base."
   [target-rel]
-  (let
-    [prefix
-     (when (seq target-rel) (str target-rel "/"))
+  (let [prefix
+        (when (seq target-rel) (str target-rel "/"))
 
-     rebase
-     (fn [globs]
-       (->> globs
-            (keep (fn [glob]
-                    (let [glob (str glob)]
-                      (cond (= glob target-rel) nil
-                            (and prefix (str/starts-with? glob prefix)) (subs glob (count prefix))
-                            :else glob))))
-            vec))]
+        rebase
+        (fn [globs]
+          (->> globs
+               (keep (fn [glob]
+                       (let [glob (str glob)]
+                         (cond (= glob target-rel) nil
+                               (and prefix (str/starts-with? glob prefix)) (subs glob
+                                                                                 (count prefix))
+                               :else glob))))
+               vec))]
 
     (some-> (fff-ignore-overlay)
             (update :exclude-globs rebase)
@@ -1210,9 +1185,8 @@
    then the cheaper of the two. The root is CANONICAL so the pool key is the very one
    `grep`/`find`/`ls .` warm."
   []
-  (let
-    [lease
-     (fff-index/lease (.getCanonicalFile (io/file (workspace/cwd))) true (fff-ignore-overlay))]
+  (let [lease
+        (fff-index/lease (.getCanonicalFile (io/file (workspace/cwd))) true (fff-ignore-overlay))]
     (when (fff-index/warm? lease) lease)))
 
 (def ^:private ls-workspace-reuse-limit
@@ -1234,22 +1208,21 @@
   [^File root target-rel ^long levels is-hidden?]
   (when (and (seq target-rel) (workspace-relative-address? target-rel))
     (when-let [lease (warm-ls-lease)]
-      (let
-        [prefix (str target-rel "/")
-         keep-fn (fff-ls-keeper root prefix levels is-hidden?)
-         covered? (volatile! false)
-         rows (fff-index/with-index
-                [idx lease]
-                (when (<= (long (or (:total-matched
-                                      (fff/search-directories idx {:query "" :page-size 1}))
-                                    0))
-                          (long ls-workspace-reuse-limit))
-                  (fff-ls-records idx
-                                  prefix
-                                  (fn [{:keys [relative-path] :as item} directory?]
-                                    (if (= target-rel relative-path)
-                                      (do (vreset! covered? true) nil)
-                                      (keep-fn item directory?))))))]
+      (let [prefix (str target-rel "/")
+            keep-fn (fff-ls-keeper root prefix levels is-hidden?)
+            covered? (volatile! false)
+            rows (fff-index/with-index
+                   [idx lease]
+                   (when (<= (long (or (:total-matched
+                                         (fff/search-directories idx {:query "" :page-size 1}))
+                                       0))
+                             (long ls-workspace-reuse-limit))
+                     (fff-ls-records idx
+                                     prefix
+                                     (fn [{:keys [relative-path] :as item} directory?]
+                                       (if (= target-rel relative-path)
+                                         (do (vreset! covered? true) nil)
+                                         (keep-fn item directory?))))))]
 
         (when (and (some? rows) (or @covered? (seq rows))) rows)))))
 
@@ -1304,53 +1277,51 @@
    from the directory's own rendered path instead of canonicalizing per row. Results
    remain directories-first then alphabetical, and are exhaustive."
   [^File d {:keys [depth is_hidden] :or {depth 1 is_hidden false}}]
-  (let
-    [^File root
-     (.getCanonicalFile d)
+  (let [^File root
+        (.getCanonicalFile d)
 
-     base
-     (rel-path root)
+        base
+        (rel-path root)
 
-     target-rel
-     (if (= "." base) "" base)
+        target-rel
+        (if (= "." base) "" base)
 
-     levels
-     (long depth)
+        levels
+        (long depth)
 
-     is-hidden?
-     (boolean is_hidden)
+        is-hidden?
+        (boolean is_hidden)
 
-     items
-     (if-not (workspace-dir? root)
-       (fff-ls-listing-items root levels is-hidden?)
-       (or (fff-ls-workspace-items root target-rel levels is-hidden?)
-           (try (fff-ls-target-items root target-rel levels is-hidden?)
-                (catch clojure.lang.ExceptionInfo e
-                  (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
-                    (fff-ls-listing-items root levels is-hidden?)
-                    (throw e))))))
+        items
+        (if-not (workspace-dir? root)
+          (fff-ls-listing-items root levels is-hidden?)
+          (or (fff-ls-workspace-items root target-rel levels is-hidden?)
+              (try (fff-ls-target-items root target-rel levels is-hidden?)
+                   (catch clojure.lang.ExceptionInfo e
+                     (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
+                       (fff-ls-listing-items root levels is-hidden?)
+                       (throw e))))))
 
-     render-prefix
-     (if (= "." base) "" (str base "/"))
+        render-prefix
+        (if (= "." base) "" (str base "/"))
 
-     rows
-     (->> items
-          (map (fn [{:keys [relative-path directory? size]}]
-                 (let
-                   [^String path
-                    (or relative-path "")
+        rows
+        (->> items
+             (map (fn [{:keys [relative-path directory? size]}]
+                    (let [^String path
+                          (or relative-path "")
 
-                    slash
-                    (.lastIndexOf path "/")]
+                          slash
+                          (.lastIndexOf path "/")]
 
-                   {:local path
-                    :parent (if (neg? slash) "" (subs path 0 slash))
-                    :entry {"name" (if (neg? slash) path (subs path (inc slash)))
-                            "path" (str render-prefix path)
-                            "type" (if directory? "dir" "file")
-                            "size"
-                            (if directory? (.length (io/file root path)) (long (or size 0)))}})))
-          (group-by :parent))]
+                      {:local path
+                       :parent (if (neg? slash) "" (subs path 0 slash))
+                       :entry {"name" (if (neg? slash) path (subs path (inc slash)))
+                               "path" (str render-prefix path)
+                               "type" (if directory? "dir" "file")
+                               "size"
+                               (if directory? (.length (io/file root path)) (long (or size 0)))}})))
+             (group-by :parent))]
 
     (letfn [(children [parent ^long level]
               (->> (get rows parent)
@@ -1393,39 +1364,35 @@
    subsequence, or nil when `needle` is not a subsequence of `hay`. A tight span
    (few gaps) means a strong match; a sprawling one means scattered noise."
   [^String needle ^String hay]
-  (let
-    [n
-     (count needle)
+  (let [n
+        (count needle)
 
-     h
-     (count hay)]
+        h
+        (count hay)]
 
     (when (pos? n)
-      (loop
-        [s
-         (long 0)
+      (loop [s
+             (long 0)
 
-         best
-         (long Long/MAX_VALUE)]
+             best
+             (long Long/MAX_VALUE)]
 
         (if (< s h)
           (if (= (.charAt hay s) (.charAt needle 0))
-            (let
-              [end
-               (loop
-                 [i
-                  (inc s)
+            (let [end
+                  (loop [i
+                         (inc s)
 
-                  k
-                  (long 1)]
+                         k
+                         (long 1)]
 
-                 (cond (= k n) (dec i)
-                       (>= i h) -1
-                       (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
-                       :else (recur (inc i) k)))
+                    (cond (= k n) (dec i)
+                          (>= i h) -1
+                          (= (.charAt hay i) (.charAt needle k)) (recur (inc i) (inc k))
+                          :else (recur (inc i) k)))
 
-               span
-               (- (long end) s)]
+                  span
+                  (- (long end) s)]
 
               (recur (inc s) (if (and (>= (long end) 0) (< span best)) span best)))
             (recur (inc s) best))
@@ -1436,12 +1403,11 @@
    or the whole PATH (0.6 weight — a directory hit is weaker than a name hit).
    0.0 when the token is absent entirely."
   [^String token ^String path-norm ^String name-norm]
-  (let
-    [wp
-     (find-subseq-window token path-norm)
+  (let [wp
+        (find-subseq-window token path-norm)
 
-     wf
-     (find-subseq-window token name-norm)]
+        wf
+        (find-subseq-window token name-norm)]
 
     (if (nil? wp)
       0.0
@@ -1455,16 +1421,15 @@
    is what separates the handful of genuine hits from fff's page of loose
    subsequence noise."
   [query path]
-  (let
-    [toks
-     (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
-          (remove str/blank?))
+  (let [toks
+        (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
+             (remove str/blank?))
 
-     pnorm
-     (find-norm path)
+        pnorm
+        (find-norm path)
 
-     nnorm
-     (find-norm (last (str/split (str path) #"/")))]
+        nnorm
+        (find-norm (last (str/split (str path) #"/")))]
 
     (if (empty? toks) 0.0 (transduce (map #(find-token-score % pnorm nnorm)) min 1.0 toks))))
 
@@ -1476,25 +1441,24 @@
    reading of `grep([\"a\" \"b\"], [\"src\" \"tools\"])` — needles, then scopes — died
    on argument shape instead of searching. `limit` is canonical; `max_results` is its accepted alias — ONE of the two, never both."
   [args]
-  (let
-    [spec
-     (first args)
+  (let [spec
+        (first args)
 
-     _
-     (when-not (and (= 1 (count args)) (map? spec))
-       (throw
-         (ex-info
-           (str "grep takes ONE options map: grep({\"query\": q, \"paths\": [\"src\"]}) "
-                "— kwargs are that same map, grep(query=q, paths=[\"src\"]). "
-                "A positional query or paths argument is not accepted.")
-           {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
+        _
+        (when-not (and (= 1 (count args)) (map? spec))
+          (throw
+            (ex-info
+              (str "grep takes ONE options map: grep({\"query\": q, \"paths\": [\"src\"]}) "
+                   "— kwargs are that same map, grep(query=q, paths=[\"src\"]). "
+                   "A positional query or paths argument is not accepted.")
+              {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
 
-     allowed-keys
-     #{"query" "paths" "path" "limit" "max_results" "offset" "include" "exclude" "context"
-       "is_hidden" "is_regex"}
+        allowed-keys
+        #{"query" "paths" "path" "limit" "max_results" "offset" "include" "exclude" "context"
+          "is_hidden" "is_regex"}
 
-     unknown-keys
-     (seq (remove allowed-keys (keys spec)))]
+        unknown-keys
+        (seq (remove allowed-keys (keys spec)))]
 
     (when unknown-keys
       (throw
@@ -1626,15 +1590,14 @@
    files `:include-gitignored-paths` re-includes."
   [^File base query is_hidden
    {:keys [relative-path file-name git-status size modified frecency-score binary?]}]
-  (let
-    [f
-     (io/file base relative-path)
+  (let [f
+        (io/file base relative-path)
 
-     rel
-     (rel-path f)
+        rel
+        (rel-path f)
 
-     score
-     (find-relevance query rel)]
+        score
+        (find-relevance query rel)]
 
     (when (and (>= (double score) (double find-min-score)) (or is_hidden (not (.isHidden f))))
       {:path rel
@@ -1682,9 +1645,8 @@
    verbs are kept — they often ARE the name; only true glue words drop). Capped
    at the 5 LONGEST so a rambling query can't fan out into a dozen fff scans."
   [query]
-  (let
-    [glue #{"the" "and" "for" "with" "that" "this" "how" "what" "where" "into" "from" "was" "are"
-            "any" "all" "not" "our" "you" "your"}]
+  (let [glue #{"the" "and" "for" "with" "that" "this" "how" "what" "where" "into" "from" "was" "are"
+               "any" "all" "not" "our" "you" "your"}]
     (->> (str/split (str/lower-case (or query "")) #"[^a-z0-9]+")
          (remove str/blank?)
          distinct
@@ -1698,12 +1660,11 @@
    See `find-scan-item`: fff owns the ignore verdict."
   [^File base is_hidden
    {:keys [relative-path file-name git-status size modified frecency-score binary?]}]
-  (let
-    [f
-     (io/file base relative-path)
+  (let [f
+        (io/file base relative-path)
 
-     rel
-     (rel-path f)]
+        rel
+        (rel-path f)]
 
     (when (or is_hidden (not (.isHidden f)))
       {:path rel
@@ -1748,147 +1709,145 @@
 
 (defn- find-search
   [args]
-  (let
-    [{:keys [query paths limit offset is_hidden is_ls is_regex] scope-misses :missing}
-     (coerce-find-spec args)
+  (let [{:keys [query paths limit offset is_hidden is_ls is_regex] scope-misses :missing}
+        (coerce-find-spec args)
 
-     {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
-     (resolve-search-roots paths)
+        {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
+        (resolve-search-roots paths)
 
-     ;; fff ranks genuine hits first but pads the page with loose subsequence
-     ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
-     ;; filter below do the real cutting (a fresh fff scan is ~11ms).
-     ;; The page the caller asked for starts at `offset`, so the candidate set
-     ;; has to cover everything up to its END, not just one page's worth.
-     candidate-page
-     (max (+ (long limit) (long offset)) 300)
+        ;; fff ranks genuine hits first but pads the page with loose subsequence
+        ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
+        ;; filter below do the real cutting (a fresh fff scan is ~11ms).
+        ;; The page the caller asked for starts at `offset`, so the candidate set
+        ;; has to cover everything up to its END, not just one page's worth.
+        candidate-page
+        (max (+ (long limit) (long offset)) 300)
 
-     ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
-     ;; itself — see `fff-ignore-overlay`.
-     search-overlay
-     (fff-ignore-overlay)
+        ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
+        ;; itself — see `fff-ignore-overlay`.
+        search-overlay
+        (fff-ignore-overlay)
 
-     scan
-     (fn [q]
-       (find-scan roots q is_hidden candidate-page search-overlay))
+        scan
+        (fn [q]
+          (find-scan roots q is_hidden candidate-page search-overlay))
 
-     strict
-     (if (or is_ls is_regex) [] (scan query))
+        strict
+        (if (or is_ls is_regex) [] (scan query))
 
-     tokens
-     (find-fallback-tokens query)
+        tokens
+        (find-fallback-tokens query)
 
-     ;; RELAXED FALLBACK. `find-relevance` takes the MIN across query tokens,
-     ;; so EVERY word must land in one path — a multi-word CONCEPT query
-     ;; ("native tool call visualization render") is dropped the moment any
-     ;; term is absent, even when a distinctive term is an exact filename
-     ;; match (`render`). That is why such queries returned nothing. When the
-     ;; strict pass is empty and the query has ≥2 usable tokens, search each
-     ;; token on its own and surface files ranked by HOW MANY query terms
-     ;; they match (coverage) then best term score. It stays a FILENAME tool
-     ;; — it just stops requiring the whole sentence to be one filename.
-     [ranked fuzzy?]
-     (cond
-       ;; `is_regex` is a CONTENT dialect. The NAME axis is a FUZZY SUBSEQUENCE
-       ;; score over filenames, which reads `^ns\b|foo.*bar` as literal
-       ;; characters and ranks unrelated paths above nothing at all — so in
-       ;; regex mode there is no name axis and `paths` stays empty.
-       is_regex [[] false]
-       is_ls [(find-ls roots (+ (long limit) (long offset)) is_hidden search-overlay) false]
-       (or (seq strict) (< (count tokens) 2)) [strict false]
-       :else (let
-               [stem
-                (fn [it]
-                  (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
+        ;; RELAXED FALLBACK. `find-relevance` takes the MIN across query tokens,
+        ;; so EVERY word must land in one path — a multi-word CONCEPT query
+        ;; ("native tool call visualization render") is dropped the moment any
+        ;; term is absent, even when a distinctive term is an exact filename
+        ;; match (`render`). That is why such queries returned nothing. When the
+        ;; strict pass is empty and the query has ≥2 usable tokens, search each
+        ;; token on its own and surface files ranked by HOW MANY query terms
+        ;; they match (coverage) then best term score. It stays a FILENAME tool
+        ;; — it just stops requiring the whole sentence to be one filename.
+        [ranked fuzzy?]
+        (cond
+          ;; `is_regex` is a CONTENT dialect. The NAME axis is a FUZZY SUBSEQUENCE
+          ;; score over filenames, which reads `^ns\b|foo.*bar` as literal
+          ;; characters and ranks unrelated paths above nothing at all — so in
+          ;; regex mode there is no name axis and `paths` stays empty.
+          is_regex [[] false]
+          is_ls [(find-ls roots (+ (long limit) (long offset)) is_hidden search-overlay) false]
+          (or (seq strict) (< (count tokens) 2)) [strict false]
+          :else (let [stem
+                      (fn [it]
+                        (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
 
-                by-path
-                (reduce (fn [m t]
-                          (reduce (fn [m it]
-                                    (update m
-                                            (:path it)
-                                            (fn [cur]
-                                              (-> (or cur
-                                                      (assoc it
-                                                        :score 0.0
-                                                        :terms #{}))
-                                                  (update :score max (:score it))
-                                                  (update :terms conj t)))))
-                                  m
-                                  (scan t)))
-                        {}
-                        tokens)
+                      by-path
+                      (reduce (fn [m t]
+                                (reduce (fn [m it]
+                                          (update m
+                                                  (:path it)
+                                                  (fn [cur]
+                                                    (-> (or cur
+                                                            (assoc it
+                                                              :score 0.0
+                                                              :terms #{}))
+                                                        (update :score max (:score it))
+                                                        (update :terms conj t)))))
+                                        m
+                                        (scan t)))
+                              {}
+                              tokens)
 
-                ;; A term that IS the filename stem (`render` → `render.clj`) is a
-                ;; bullseye — it must beat a 2-common-word loose match
-                ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
-                ;; score bonus that ranks above raw term coverage.
-                scored
-                (map (fn [it]
-                       (let
-                         [s
-                          (stem it)
+                      ;; A term that IS the filename stem (`render` → `render.clj`) is a
+                      ;; bullseye — it must beat a 2-common-word loose match
+                      ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
+                      ;; score bonus that ranks above raw term coverage.
+                      scored
+                      (map (fn [it]
+                             (let [s
+                                   (stem it)
 
-                          bull?
-                          (contains? (:terms it) s)]
+                                   bull?
+                                   (contains? (:terms it) s)]
 
-                         (assoc it :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
-                     (vals by-path))]
+                               (assoc it
+                                 :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
+                           (vals by-path))]
 
-               [(->> scored
-                     (sort-by (fn [it]
-                                [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
-                                 (- (long (or (:frecency-score it) 0))) (:path it)]))
-                     vec) true]))
+                  [(->> scored
+                        (sort-by (fn [it]
+                                   [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
+                                    (- (long (or (:frecency-score it) 0))) (:path it)]))
+                        vec) true]))
 
-     items
-     (if fuzzy?
-       (vec (take limit (drop offset (map #(dissoc % :rank-score) ranked))))
-       (->> ranked
-            ;; strongest match first; frecency then path break ties.
-            (sort-by (fn [it]
-                       [(- (double (:score it 0.0))) (- (long (or (:frecency-score it) 0)))
-                        (:path it)]))
-            (drop offset)
-            (take limit)
-            vec))
+        items
+        (if fuzzy?
+          (vec (take limit (drop offset (map #(dissoc % :rank-score) ranked))))
+          (->> ranked
+               ;; strongest match first; frecency then path break ties.
+               (sort-by (fn [it]
+                          [(- (double (:score it 0.0))) (- (long (or (:frecency-score it) 0)))
+                           (:path it)]))
+               (drop offset)
+               (take limit)
+               vec))
 
-     ;; The query terms that actually landed a file (fuzzy pass only) — so
-     ;; the card/model can see WHICH words matched, e.g. "render, native".
-     matched-terms
-     (when fuzzy?
-       (->> items
-            (mapcat :terms)
-            distinct
-            (sort-by (comp - count))
-            vec))
+        ;; The query terms that actually landed a file (fuzzy pass only) — so
+        ;; the card/model can see WHICH words matched, e.g. "render, native".
+        matched-terms
+        (when fuzzy?
+          (->> items
+               (mapcat :terms)
+               distinct
+               (sort-by (comp - count))
+               vec))
 
-     ;; Project each internal (keyword-keyed) item onto the model-facing
-     ;; string-keyed row — snake_case keys, keyword values stringified.
-     ->item
-     (fn [it]
-       (cond-> {"path" (:path it) "score" (:score it)}
-         (contains? it :file-name)
-         (assoc "file_name" (:file-name it))
+        ;; Project each internal (keyword-keyed) item onto the model-facing
+        ;; string-keyed row — snake_case keys, keyword values stringified.
+        ->item
+        (fn [it]
+          (cond-> {"path" (:path it) "score" (:score it)}
+            (contains? it :file-name)
+            (assoc "file_name" (:file-name it))
 
-         (contains? it :size)
-         (assoc "size" (:size it))
+            (contains? it :size)
+            (assoc "size" (:size it))
 
-         (contains? it :modified)
-         (assoc "modified" (:modified it))
+            (contains? it :modified)
+            (assoc "modified" (:modified it))
 
-         (contains? it :frecency-score)
-         (assoc "frecency_score" (:frecency-score it))
+            (contains? it :frecency-score)
+            (assoc "frecency_score" (:frecency-score it))
 
-         (contains? it :git-status)
-         (assoc "git_status"
-           (let [g (:git-status it)]
-             (if (keyword? g) (name g) g)))
+            (contains? it :git-status)
+            (assoc "git_status"
+              (let [g (:git-status it)]
+                (if (keyword? g) (name g) g)))
 
-         (contains? it :binary?)
-         (assoc "binary" (boolean (:binary? it)))
+            (contains? it :binary?)
+            (assoc "binary" (boolean (:binary? it)))
 
-         (:source it)
-         (assoc "source" (name (:source it)))))]
+            (:source it)
+            (assoc "source" (name (:source it)))))]
 
     ;; grep's canonical DATA result — `grep-tool` RENDERS this as anchored text;
     ;; every key ships on every call (empty vector / false, never absent) so
@@ -1914,18 +1873,17 @@
    finds nothing. `context` N (0 = off) rides along, so one call can ask for the
    surrounding lines of every hit."
   [args]
-  (let
-    [[a b]
-     args
+  (let [[a b]
+        args
 
-     spec
-     (cond (and (= 1 (count args)) (map? a)) a
-           (and (= 2 (count args)) (map? b)) (assoc b "query" a)
-           (= 1 (count args)) {"query" a}
-           :else {})
+        spec
+        (cond (and (= 1 (count args)) (map? a)) a
+              (and (= 2 (count args)) (map? b)) (assoc b "query" a)
+              (= 1 (count args)) {"query" a}
+              :else {})
 
-     {paths :precise-paths :keys [context offset]}
-     (coerce-find-spec args)]
+        {paths :precise-paths :keys [context offset]}
+        (coerce-find-spec args)]
 
     (cond-> {"query" (get spec "query") "paths" paths "offset" offset}
       (pos? (long (or context 0)))
@@ -1952,49 +1910,47 @@
    surrounding lines arrive in the same call. The compatibility arity takes the
    context count positionally; the hits already carry it."
   ([out needles]
-   (let
-     [hits
-      (vec (:hits out))
+   (let [hits
+         (vec (:hits out))
 
-      ordered-paths
-      (distinct (map :path hits))
+         ordered-paths
+         (distinct (map :path hits))
 
-      by-path
-      (group-by :path hits)
+         by-path
+         (group-by :path hits)
 
-      total-files
-      (:total-file-count out)
+         total-files
+         (:total-file-count out)
 
-      matches
-      (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
-        (doseq [p ordered-paths]
-          (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
-            (doseq [{:keys [line text before after]} (get by-path p)]
-              (.put fm
-                    (str line)
-                    (cond-> {"text" text}
-                      (seq before)
-                      (assoc "before"
-                        (mapv (fn [[ln txt]]
-                                {"line" ln "text" txt})
-                              before))
+         matches
+         (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
+           (doseq [p ordered-paths]
+             (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
+               (doseq [{:keys [line text before after]} (get by-path p)]
+                 (.put fm
+                       (str line)
+                       (cond-> {"text" text}
+                         (seq before)
+                         (assoc "before"
+                           (mapv (fn [[ln txt]]
+                                   {"line" ln "text" txt})
+                                 before))
 
-                      (seq after)
-                      (assoc "after"
-                        (mapv (fn [[ln txt]]
-                                {"line" ln "text" txt})
-                              after)))))
-            (.put mm p fm)))
-        mm)
+                         (seq after)
+                         (assoc "after"
+                           (mapv (fn [[ln txt]]
+                                   {"line" ln "text" txt})
+                                 after)))))
+               (.put mm p fm)))
+           mm)
 
-      file-counts
-      (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
-        (doseq
-          [p (sort-by (fn [p]
-                        [(- (count (get by-path p))) p])
-                      ordered-paths)]
-          (.put fc p (count (get by-path p))))
-        fc)]
+         file-counts
+         (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
+           (doseq [p (sort-by (fn [p]
+                                [(- (count (get by-path p))) p])
+                              ordered-paths)]
+             (.put fc p (count (get by-path p))))
+           fc)]
 
      ;; TOTAL result: breadth and truncation keys ALWAYS ship (nil / false when
      ;; there is nothing to report), so `r["hits_truncated_by"]` is a value test
@@ -2069,47 +2025,49 @@
    HEAD-clipped, so a trailing summary is the first casualty of exactly the wide
    grep whose truncation you must know about."
   ^String [result]
-  (let
-    [ls?
-     (str/blank? (str (get result "query")))
+  (let [ls?
+        (str/blank? (str (get result "query")))
 
-     query
-     (let [q (get result "query")]
-       (if (coll? q) (str/join " " (map str q)) (str q)))
+        query
+        (let [q (get result "query")]
+          (if (coll? q) (str/join " " (map str q)) (str q)))
 
-     hits
-     (long (or (get result "hit_count") 0))
+        hits
+        (long (or (get result "hit_count") 0))
 
-     files
-     (long (or (get result "file_count") 0))
+        files
+        (long (or (get result "file_count") 0))
 
-     total
-     (get result "total_file_count")
+        total
+        (get result "total_file_count")
 
-     exact?
-     (boolean (get result "total_file_count_is_exact"))
+        exact?
+        (boolean (get result "total_file_count_is_exact"))
 
-     breadth
-     (if (and total (> (long total) files) (pos? files))
-       (str files " of " (when-not exact? "~") total " files")
-       (count-phrase files "file"))
+        breadth
+        (if (and total (> (long total) files) (pos? files))
+          (str files " of " (when-not exact? "~") total " files")
+          (count-phrase files "file"))
 
-     capped
-     (let
-       [content-cap
-        (get result "hits_truncated_by")
+        capped
+        (let [content-cap
+              (get result "hits_truncated_by")
 
-        name-cap
-        (get result "truncated_by")
+              name-cap
+              (get result "truncated_by")
 
-        next-offset
-        (get result "next_offset")]
+              next-offset
+              (get result "next_offset")]
 
-       (cond
-         (= "time" content-cap) "  stopped at the scan budget — PARTIAL, narrow the scope"
-         (and next-offset (or (contains? #{"limit" "bytes"} content-cap) (= "limit" name-cap)))
-         (str "  capped by " (or content-cap name-cap) " → grep({…, \"offset\": " next-offset "})")
-         :else ""))]
+          (cond (= "time" content-cap) "  stopped at the scan budget — PARTIAL, narrow the scope"
+                (and next-offset
+                     (or (contains? #{"limit" "bytes"} content-cap) (= "limit" name-cap)))
+                (str "  capped by "
+                     (or content-cap name-cap)
+                     " → grep({…, \"offset\": "
+                     next-offset
+                     "})")
+                :else ""))]
 
     (if ls?
       (str "grep '' — file listing  " (count-phrase (count (get result "paths")) "file"))
@@ -2123,54 +2081,51 @@
    flow reads the summary or counts the lines it just split. One structured
    field would put a map back around a string and take the saving with it."
   ^String [result]
-  (let
-    [matches
-     (get result "matches")
+  (let [matches
+        (get result "matches")
 
-     counts
-     (get result "file_counts")
+        counts
+        (get result "file_counts")
 
-     content-paths
-     (set (map str (keys matches)))
+        content-paths
+        (set (map str (keys matches)))
 
-     blocks
-     (mapv (fn [e]
-             (let
-               [path
-                (str (key e))
+        blocks
+        (mapv (fn [e]
+                (let [path
+                      (str (key e))
 
-                runs
-                (contiguous-runs (grep-hit-tuples (val e)))]
+                      runs
+                      (contiguous-runs (grep-hit-tuples (val e)))]
 
-               (str path
-                    "  (" (get counts path (count runs))
-                    ")\n" (str/join "\n  ⋮\n"
-                                    (map #(hashline/render-hashline-block % "  ") runs)))))
-           matches)
+                  (str path
+                       "  (" (get counts path (count runs))
+                       ")\n" (str/join "\n  ⋮\n"
+                                       (map #(hashline/render-hashline-block % "  ") runs)))))
+              matches)
 
-     name-rows
-     (->> (get result "paths")
-          (map str)
-          (remove content-paths)
-          (mapv #(str "~ " %)))
+        name-rows
+        (->> (get result "paths")
+             (map str)
+             (remove content-paths)
+             (mapv #(str "~ " %)))
 
-     missing
-     (seq (get result "missing_paths"))
+        missing
+        (seq (get result "missing_paths"))
 
-     scope-row
-     (when missing
-       (str "missing: "
-            (str/join ", " (map str missing))
-            "  (searched: "
-            (str/join ", " (map str (get result "searched_paths")))
-            ")"))
+        scope-row
+        (when missing
+          (str "missing: "
+               (str/join ", " (map str missing))
+               "  (searched: "
+               (str/join ", " (map str (get result "searched_paths")))
+               ")"))
 
-     hint-row
-     (when-let
-       [h (some-> (get result "hint")
-                  str
-                  not-empty)]
-       (str "hint: " h))]
+        hint-row
+        (when-let [h (some-> (get result "hint")
+                             str
+                             not-empty)]
+          (str "hint: " h))]
 
     (->> (concat [(grep-summary-line result)]
                  (when scope-row [scope-row])
@@ -2191,13 +2146,12 @@
    needle contiguously. Returns `paths` unchanged when there is nothing to
    filter on."
   [paths needles]
-  (let
-    [terms (->> needles
-                (keep #(some-> %
-                               str
-                               str/lower-case
-                               not-empty))
-                seq)]
+  (let [terms (->> needles
+                   (keep #(some-> %
+                                  str
+                                  str/lower-case
+                                  not-empty))
+                   seq)]
     (if-not terms
       paths
       (vec (filter (fn [p]
@@ -2332,16 +2286,14 @@
      ;; cap proposes nothing: re-scanning stops at the same wall, and the hint
      ;; below asks for a narrower search instead.
      next-offset
-     (let
-       [advances (cond-> []
-                   (= "limit" truncated_by)
-                   (conj (long (or item_count 0)))
+     (let [advances (cond-> []
+                      (= "limit" truncated_by)
+                      (conj (long (or item_count 0)))
 
-                   (contains? #{"limit" "bytes"} (get content "hits_truncated_by"))
-                   (conj content-hits))]
-       (when-some
-         [advance (some->> (seq advances)
-                           (apply min))]
+                      (contains? #{"limit" "bytes"} (get content "hits_truncated_by"))
+                      (conj content-hits))]
+       (when-some [advance (some->> (seq advances)
+                                    (apply min))]
          (when (pos? (long advance)) (+ (long (or offset 0)) (long advance)))))
 
      ;; ONE FLAT canonical result: the content block is merged UP (no nested
@@ -2349,15 +2301,14 @@
      ;; `matched_terms`/`item_count` internals) so `matches`/`hit_count`/`paths`
      ;; sit at the top level for the model, the renderer and the tests alike.
      out
-     (cond->
-       (-> name-out
-           (dissoc "items" "fuzzy" "matched_terms" "item_count")
-           ;; `hint` and `next_offset` are TOTAL too: present on every grep
-           ;; result, nil when the search has nothing to explain / no next page.
-           (assoc "paths" kept-paths
-                  "hint" nil
-                  "next_offset" next-offset)
-           (merge content))
+     (cond-> (-> name-out
+                 (dissoc "items" "fuzzy" "matched_terms" "item_count")
+                 ;; `hint` and `next_offset` are TOTAL too: present on every grep
+                 ;; result, nil when the search has nothing to explain / no next page.
+                 (assoc "paths" kept-paths
+                        "hint" nil
+                        "next_offset" next-offset)
+                 (merge content))
        ;; REGEX mode: the NAME axis is off, so "nothing matched" is only ever a
        ;; CONTENT story — and the pattern demonstrably RAN (it compiled on both
        ;; sides), so the recovery is a looser pattern, never a different dialect.
@@ -2421,12 +2372,11 @@
    too. A hit is therefore already a `patch` argument: split it on the gutter and
    spend the anchor, with no `cat` in between."
   [& args]
-  (let
-    [out
-     (apply grep-data args)
+  (let [out
+        (apply grep-data args)
 
-     searched_paths
-     (get out "searched_paths")]
+        searched_paths
+        (get out "searched_paths")]
 
     (tool-success {:op :grep
                    :path (first searched_paths)
@@ -2511,124 +2461,121 @@
   (when-not (map? spec)
     (throw (ex-info "rg takes one spec map: {\"query\": [...], \"paths\": [...]}."
                     {:type :ext.foundation.editing/invalid-rg-spec :got (type spec)})))
-  (let
-    [vector-of-strings
-     (fn [k raw]
-       (let
-         [raw
-          (parse-stringish-vector raw)
+  (let [vector-of-strings
+        (fn [k raw]
+          (let [raw
+                (parse-stringish-vector raw)
 
-          ;; tolerate a stringified list literal
-          v
-          (if (string? raw) [raw] raw)]
+                ;; tolerate a stringified list literal
+                v
+                (if (string? raw) [raw] raw)]
 
-         ;; scalar-tolerant
-         (when-not (and (vector? v) (seq v) (every? string? v))
-           (throw (ex-info "rg field must be a string or non-empty vector of strings."
-                           {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
-         (when-not (every? #(not (str/blank? %)) v)
-           (throw (ex-info "rg string values must be non-blank."
-                           {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
-         v))
+            ;; scalar-tolerant
+            (when-not (and (vector? v) (seq v) (every? string? v))
+              (throw (ex-info "rg field must be a string or non-empty vector of strings."
+                              {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
+            (when-not (every? #(not (str/blank? %)) v)
+              (throw (ex-info "rg string values must be non-blank."
+                              {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
+            v))
 
-     ;; `query` canonical; `any`/`all` are accepted aliases (all mean OR now).
-     query-key
-     (some #(when (contains? spec %) %) ["query" "any" "all"])
+        ;; `query` canonical; `any`/`all` are accepted aliases (all mean OR now).
+        query-key
+        (some #(when (contains? spec %) %) ["query" "any" "all"])
 
-     _
-     (when-not query-key
-       (throw (ex-info "rg needs `query`: a term or a list of terms."
-                       {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
+        _
+        (when-not query-key
+          (throw (ex-info "rg needs `query`: a term or a list of terms."
+                          {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
 
-     ;; REGEX mode is decided BEFORE the needles: it turns the comma-splitting
-     ;; and trimming below OFF (they would cut `a{1,3}` in half and silently
-     ;; change what a trailing-space pattern means).
-     is_regex
-     (boolean (get spec "is_regex"))
+        ;; REGEX mode is decided BEFORE the needles: it turns the comma-splitting
+        ;; and trimming below OFF (they would cut `a{1,3}` in half and silently
+        ;; change what a trailing-space pattern means).
+        is_regex
+        (boolean (get spec "is_regex"))
 
-     ;; A query TERM is a substring; a LIST is OR. Models overwhelmingly write
-     ;; the OR list as ONE comma-joined string (`\"model, cycle\"`) — which,
-     ;; matched literally, hits nothing. So split every term on commas into
-     ;; separate OR needles: `\"a, b\"` and `[\"a, b\", c]` both become
-     ;; `[a b …]`. (A rare literal-comma search loses out; the model's intent
-     ;; is virtually always \"these separate terms\".)
-     needles
-     (let
-       [raw
-        (vector-of-strings query-key (get spec query-key))
+        ;; A query TERM is a substring; a LIST is OR. Models overwhelmingly write
+        ;; the OR list as ONE comma-joined string (`\"model, cycle\"`) — which,
+        ;; matched literally, hits nothing. So split every term on commas into
+        ;; separate OR needles: `\"a, b\"` and `[\"a, b\", c]` both become
+        ;; `[a b …]`. (A rare literal-comma search loses out; the model's intent
+        ;; is virtually always \"these separate terms\".)
+        needles
+        (let [raw
+              (vector-of-strings query-key (get spec query-key))
 
-        ns
-        (if is_regex
-          (into [] (remove str/blank?) raw)
-          (->> raw
-               (mapcat #(str/split % #"\s*,\s*"))
-               (map str/trim)
-               (remove str/blank?)
-               vec))]
+              ns
+              (if is_regex
+                (into [] (remove str/blank?) raw)
+                (->> raw
+                     (mapcat #(str/split % #"\s*,\s*"))
+                     (map str/trim)
+                     (remove str/blank?)
+                     vec))]
 
-       (when (empty? ns)
-         (throw (ex-info "rg query has no non-blank terms."
-                         {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
-       ;; REFUSE a broken pattern here, where the caller still gets a reason —
-       ;; not deep in the scan where it would surface as an empty result.
-       (when is_regex (run! needle-pattern ns))
-       ns)
+          (when (empty? ns)
+            (throw (ex-info "rg query has no non-blank terms."
+                            {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
+          ;; REFUSE a broken pattern here, where the caller still gets a reason —
+          ;; not deep in the scan where it would surface as an empty result.
+          (when is_regex (run! needle-pattern ns))
+          ns)
 
-     raw-paths
-     (get spec "paths" ["."])
+        raw-paths
+        (get spec "paths" ["."])
 
-     paths
-     (if (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths)))
-       ["."]
-       (vector-of-strings :paths raw-paths))
+        paths
+        (if (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths)))
+          ["."]
+          (vector-of-strings :paths raw-paths))
 
-     ;; A blank glob filters NOTHING, so `""`, `[""]` and a stray empty entry in
-     ;; a real list all mean exactly what nil/[] mean: no filter at all. Refusing
-     ;; the whole search over an empty OPTIONAL filter threw away a caller's call
-     ;; for a field that was asking for no restriction in the first place.
-     globs
-     (fn [field raw-globs]
-       (let
-         [raw
-          (parse-stringish-vector raw-globs)
+        ;; A blank glob filters NOTHING, so `""`, `[""]` and a stray empty entry in
+        ;; a real list all mean exactly what nil/[] mean: no filter at all. Refusing
+        ;; the whole search over an empty OPTIONAL filter threw away a caller's call
+        ;; for a field that was asking for no restriction in the first place.
+        globs
+        (fn [field raw-globs]
+          (let [raw
+                (parse-stringish-vector raw-globs)
 
-          items
-          (cond (nil? raw) []
-                (string? raw) [raw]
-                (sequential? raw) (vec raw)
-                :else [raw])
+                items
+                (cond (nil? raw) []
+                      (string? raw) [raw]
+                      (sequential? raw) (vec raw)
+                      :else [raw])
 
-          items
-          (into [] (remove #(and (string? %) (str/blank? %))) items)]
+                items
+                (into [] (remove #(and (string? %) (str/blank? %))) items)]
 
-         (if (empty? items) [] (vector-of-strings field items))))
+            (if (empty? items) [] (vector-of-strings field items))))
 
-     include
-     (globs :include (get spec "include"))
+        include
+        (globs :include (get spec "include"))
 
-     ;; `exclude` is `include`'s complement and OUTRANKS it: a file whose path or
-     ;; name matches an exclude glob is never scanned, even when an include glob
-     ;; matches it too. One call can therefore say "every .clj but the tests".
-     exclude
-     (globs :exclude (get spec "exclude"))
+        ;; `exclude` is `include`'s complement and OUTRANKS it: a file whose path or
+        ;; name matches an exclude glob is never scanned, even when an include glob
+        ;; matches it too. One call can therefore say "every .clj but the tests".
+        exclude
+        (globs :exclude (get spec "exclude"))
 
-     nonneg-int!
-     (fn [label v]
-       (when (and (some? v) (not (and (integer? v) (not (neg? (long v))))))
-         (throw (ex-info (str "rg " label " must be a non-negative integer")
-                         {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
+        nonneg-int!
+        (fn [label v]
+          (when (and (some? v) (not (and (integer? v) (not (neg? (long v))))))
+            (throw (ex-info (str "rg " label " must be a non-negative integer")
+                            {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
 
-     _
-     (do (nonneg-int! ":context" (get spec "context")) (nonneg-int! ":offset" (get spec "offset")))
+        _
+        (do (nonneg-int! ":context" (get spec "context"))
+            (nonneg-int! ":offset" (get spec "offset")))
 
-     is_files_only
-     (boolean (get spec "is_files_only"))
+        is_files_only
+        (boolean (get spec "is_files_only"))
 
-     ;; `context` is a CONTENT-mode concept — in files-only mode there are no
-     ;; per-line hits to surround, so a stray `context` is simply IGNORED (never
-     ;; a hard error: the model harmlessly set both, so honor `is_files_only`).
-     context
-     (if is_files_only 0 (or (get spec "context") 0))]
+        ;; `context` is a CONTENT-mode concept — in files-only mode there are no
+        ;; per-line hits to surround, so a stray `context` is simply IGNORED (never
+        ;; a hard error: the model harmlessly set both, so honor `is_files_only`).
+        context
+        (if is_files_only 0 (or (get spec "context") 0))]
 
     {:needles needles
      :paths paths
@@ -2664,16 +2611,15 @@
         (boolean (some (fn [^java.util.regex.Pattern p]
                          (.find (.matcher p line)))
                        patterns))))
-    (let
-      [grouped
-       (group-by has-upper? needles)
+    (let [grouped
+          (group-by has-upper? needles)
 
-       cs
-       (vec (get grouped true))
+          cs
+          (vec (get grouped true))
 
-       ;; has uppercase → case-sensitive
-       ci
-       (mapv str/lower-case (get grouped false))]
+          ;; has uppercase → case-sensitive
+          ci
+          (mapv str/lower-case (get grouped false))]
 
       ;; no uppercase → case-insensitive
       (fn [^String line]
@@ -2693,12 +2639,11 @@
   "Rough char/byte size of a content-mode hit (text + context) for the rg
    total-bytes budget."
   ^long [hit]
-  (let
-    [sum-lens (fn ^long [xs]
-                (reduce (fn [^long acc x]
-                          (+ acc (count (str (second x)))))
-                        0
-                        xs))]
+  (let [sum-lens (fn ^long [xs]
+                   (reduce (fn [^long acc x]
+                             (+ acc (count (str (second x)))))
+                           0
+                           xs))]
     (+ (count (str (:text hit))) (long (sum-lens (:before hit))) (long (sum-lens (:after hit))))))
 
 (defn- search-file-content
@@ -2715,65 +2660,62 @@
    memory is O(context), not O(file), and `check-interrupt!` lands mid-file."
   [^File f matches? before-ctx after-ctx]
   (try
-    (let
-      [path
-       (rel-path f)
+    (let [path
+          (rel-path f)
 
-       before-ctx
-       (long before-ctx)
+          before-ctx
+          (long before-ctx)
 
-       after-ctx
-       (long after-ctx)
+          after-ctx
+          (long after-ctx)
 
-       want-before?
-       (pos? before-ctx)
+          want-before?
+          (pos? before-ctx)
 
-       want-after?
-       (pos? after-ctx)]
+          want-after?
+          (pos? after-ctx)]
 
       (with-open [r (io/reader f)]
-        (loop
-          [ls (line-seq r)
-           i 0
-           ;; ring of the last `before-ctx` [line-no text] pairs
-           ring clojure.lang.PersistentQueue/EMPTY
-           ;; hits whose :after window is not full yet, oldest first — hits
-           ;; therefore still complete in line order
-           pending []
-           out (transient [])]
+        (loop [ls (line-seq r)
+               i 0
+               ;; ring of the last `before-ctx` [line-no text] pairs
+               ring clojure.lang.PersistentQueue/EMPTY
+               ;; hits whose :after window is not full yet, oldest first — hits
+               ;; therefore still complete in line order
+               pending []
+               out (transient [])]
 
           (when (zero? (rem (long i) (long search-file-poll-lines))) (check-interrupt!))
           (if-some [line (first ls)]
-            (let
-              [line-no (inc (long i))
-               ;; feed the open :after windows BEFORE this line can open its own
-               fed (mapv (fn [h]
-                           (cond-> h
-                             (< (count (:after h)) after-ctx)
-                             (update :after conj [line-no line])))
-                         pending)
-               done (filterv (fn [h]
-                               (>= (count (:after h)) after-ctx))
-                      fed)
-               waiting (filterv (fn [h]
-                                  (< (count (:after h)) after-ctx))
+            (let [line-no (inc (long i))
+                  ;; feed the open :after windows BEFORE this line can open its own
+                  fed (mapv (fn [h]
+                              (cond-> h
+                                (< (count (:after h)) after-ctx)
+                                (update :after conj [line-no line])))
+                            pending)
+                  done (filterv (fn [h]
+                                  (>= (count (:after h)) after-ctx))
                          fed)
-               out (reduce conj! out done)
-               ;; FULL text here — the model's data. Display clipping happens
-               ;; downstream (see rg-search).
-               hit (when (matches? line)
-                     (cond-> {:path path :line line-no :text line}
-                       want-before?
-                       (assoc :before (vec ring))
+                  waiting (filterv (fn [h]
+                                     (< (count (:after h)) after-ctx))
+                            fed)
+                  out (reduce conj! out done)
+                  ;; FULL text here — the model's data. Display clipping happens
+                  ;; downstream (see rg-search).
+                  hit (when (matches? line)
+                        (cond-> {:path path :line line-no :text line}
+                          want-before?
+                          (assoc :before (vec ring))
 
-                       want-after?
-                       (assoc :after [])))
-               out (if (and hit (not want-after?)) (conj! out hit) out)
-               waiting (if (and hit want-after?) (conj waiting hit) waiting)
-               ring (if want-before?
-                      (let [q (conj ring [line-no line])]
-                        (if (> (count q) before-ctx) (pop q) q))
-                      ring)]
+                          want-after?
+                          (assoc :after [])))
+                  out (if (and hit (not want-after?)) (conj! out hit) out)
+                  waiting (if (and hit want-after?) (conj waiting hit) waiting)
+                  ring (if want-before?
+                         (let [q (conj ring [line-no line])]
+                           (if (> (count q) before-ctx) (pop q) q))
+                         ring)]
 
               (recur (rest ls) (inc (long i)) ring waiting out))
             ;; EOF: hits whose :after window never filled ship short
@@ -2803,150 +2745,148 @@
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
-  (let
-    [{:keys [needles paths include exclude is_hidden is_regex limit offset context is_files_only]}
-     (coerce-rg-spec spec)
+  (let [{:keys [needles paths include exclude is_hidden is_regex limit offset context
+                is_files_only]}
+        (coerce-rg-spec spec)
 
-     before-ctx
-     context
+        before-ctx
+        context
 
-     after-ctx
-     context
+        after-ctx
+        context
 
-     glob-matcher
-     (fn [pattern]
-       ;; ripgrep/gitignore semantics: a leading `**/` matches at ANY depth
-       ;; INCLUDING the root, but Java NIO glob requires `**/` to consume at
-       ;; least one dir (so `**/deps.edn` misses a root-level `deps.edn`).
-       ;; Rewrite the leading `**/` to `{**/,}` so zero leading dirs also match.
-       (let [pattern (if (str/starts-with? pattern "**/") (str "{**/,}" (subs pattern 3)) pattern)]
-         (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" pattern))))
+        glob-matcher
+        (fn [pattern]
+          ;; ripgrep/gitignore semantics: a leading `**/` matches at ANY depth
+          ;; INCLUDING the root, but Java NIO glob requires `**/` to consume at
+          ;; least one dir (so `**/deps.edn` misses a root-level `deps.edn`).
+          ;; Rewrite the leading `**/` to `{**/,}` so zero leading dirs also match.
+          (let [pattern
+                (if (str/starts-with? pattern "**/") (str "{**/,}" (subs pattern 3)) pattern)]
+            (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" pattern))))
 
-     include-matchers
-     (mapv glob-matcher include)
+        include-matchers
+        (mapv glob-matcher include)
 
-     exclude-matchers
-     (mapv glob-matcher exclude)
+        exclude-matchers
+        (mapv glob-matcher exclude)
 
-     match-globs?
-     (fn [matchers ^File f]
-       (let
-         [rel
-          (rel-path f)
+        match-globs?
+        (fn [matchers ^File f]
+          (let [rel
+                (rel-path f)
 
-          name
-          (.getName f)
+                name
+                (.getName f)
 
-          rel-path
-          (fs/path rel)
+                rel-path
+                (fs/path rel)
 
-          name-path
-          (fs/path name)]
+                name-path
+                (fs/path name)]
 
-         (boolean (some (fn [^java.nio.file.PathMatcher m]
-                          (or (.matches m rel-path) (.matches m name-path)))
-                        matchers))))
+            (boolean (some (fn [^java.nio.file.PathMatcher m]
+                             (or (.matches m rel-path) (.matches m name-path)))
+                           matchers))))
 
-     ;; WHICH FILES the scan may read: `include` narrows, `exclude` subtracts,
-     ;; and exclude WINS — a file matching both globs is not searched.
-     scan-file?
-     (fn [^File f]
-       (and (or (empty? include-matchers) (match-globs? include-matchers f))
-            (not (and (seq exclude-matchers) (match-globs? exclude-matchers f)))))
+        ;; WHICH FILES the scan may read: `include` narrows, `exclude` subtracts,
+        ;; and exclude WINS — a file matching both globs is not searched.
+        scan-file?
+        (fn [^File f]
+          (and (or (empty? include-matchers) (match-globs? include-matchers f))
+               (not (and (seq exclude-matchers) (match-globs? exclude-matchers f)))))
 
-     search-roots
-     (resolve-search-roots paths)
+        search-roots
+        (resolve-search-roots paths)
 
-     rg-missing-paths
-     (missing-search-paths (:resolutions search-roots))
+        rg-missing-paths
+        (missing-search-paths (:resolutions search-roots))
 
-     roots
-     (->> (:roots search-roots)
-          (sort-by (fn [^File f]
-                     [(count (iterator-seq (.iterator (.toPath f)))) (.getPath f)]))
-          (reduce (fn [acc ^File f]
-                    (if (some (fn [^File parent]
-                                (.startsWith (.toPath f) (.toPath parent)))
-                              acc)
-                      acc
-                      (conj acc f)))
-                  []))
+        roots
+        (->> (:roots search-roots)
+             (sort-by (fn [^File f]
+                        [(count (iterator-seq (.iterator (.toPath f)))) (.getPath f)]))
+             (reduce (fn [acc ^File f]
+                       (if (some (fn [^File parent]
+                                   (.startsWith (.toPath f) (.toPath parent)))
+                                 acc)
+                         acc
+                         (conj acc f)))
+                     []))
 
-     matches?
-     (make-line-matcher needles is_regex)
+        matches?
+        (make-line-matcher needles is_regex)
 
-     ;; `.rgignore` + the `:grep` config overlay (issue #23) — handed to fff
-     ;; itself, see `fff-ignore-overlay`.
-     search-overlay
-     (fff-ignore-overlay)
+        ;; `.rgignore` + the `:grep` config overlay (issue #23) — handed to fff
+        ;; itself, see `fff-ignore-overlay`.
+        search-overlay
+        (fff-ignore-overlay)
 
-     ;; fff-first, ALWAYS: fff OWNS discovery. It enumerates the correct universe (nested
-     ;; `.gitignore`-aware — NEVER descends node_modules/target/…) and needle-narrows via
-     ;; native grep, ~280× faster than a raw walk. `.gitignore` is ALWAYS respected by
-     ;; fff's walker, and `.rgignore` / the `:grep` overlay ride along as fff's own
-     ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
-     ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
-     ;; include/exclude globs + hidden-below-root guard here.
-     candidates
-     (->> (rg-fff-candidate-files roots needles is_regex search-overlay)
-          (filter scan-file?)
-          (remove (fn [^File f]
-                    (and (not is_hidden) (rg-hidden-below-root? roots f)))))
+        ;; fff-first, ALWAYS: fff OWNS discovery. It enumerates the correct universe (nested
+        ;; `.gitignore`-aware — NEVER descends node_modules/target/…) and needle-narrows via
+        ;; native grep, ~280× faster than a raw walk. `.gitignore` is ALWAYS respected by
+        ;; fff's walker, and `.rgignore` / the `:grep` overlay ride along as fff's own
+        ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
+        ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
+        ;; include/exclude globs + hidden-below-root guard here.
+        candidates
+        (->> (rg-fff-candidate-files roots needles is_regex search-overlay)
+             (filter scan-file?)
+             (remove (fn [^File f]
+                       (and (not is_hidden) (rg-hidden-below-root? roots f)))))
 
-     ;; WALL-CLOCK budget for the scan below. Every other bound here is a COUNT,
-     ;; which says nothing about time: before this, a pathological tree could run
-     ;; to the outer Python eval wall and return nothing at all.
-     deadline
-     (+ (System/currentTimeMillis) (long rg-search-budget-ms))
+        ;; WALL-CLOCK budget for the scan below. Every other bound here is a COUNT,
+        ;; which says nothing about time: before this, a pathological tree could run
+        ;; to the outer Python eval wall and return nothing at all.
+        deadline
+        (+ (System/currentTimeMillis) (long rg-search-budget-ms))
 
-     out-of-time?
-     (fn []
-       (>= (System/currentTimeMillis) (long deadline)))
+        out-of-time?
+        (fn []
+          (>= (System/currentTimeMillis) (long deadline)))
 
-     files
-     ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths (syscalls). Handing it
-     ;; to `sort-by` directly ran it INSIDE the comparator — O(n·log n) canonicalizations
-     ;; that pinned a core for minutes on big trees, and with no interrupt checkpoint in
-     ;; the sort the burn OUTLIVED cancellation (orphaned rg workers at 100% CPU until
-     ;; exit). Compute the key ONCE per file, polling `check-interrupt!` so Esc/timeout
-     ;; aborts, then sort the cheap precomputed string keys.
-     (->> candidates
-          (mapv (fn [^File f]
-                  (check-interrupt!)
-                  [(rel-path f) f]))
-          (sort-by first)
-          (mapv second))]
+        files
+        ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths (syscalls). Handing it
+        ;; to `sort-by` directly ran it INSIDE the comparator — O(n·log n) canonicalizations
+        ;; that pinned a core for minutes on big trees, and with no interrupt checkpoint in
+        ;; the sort the burn OUTLIVED cancellation (orphaned rg workers at 100% CPU until
+        ;; exit). Compute the key ONCE per file, polling `check-interrupt!` so Esc/timeout
+        ;; aborts, then sort the cheap precomputed string keys.
+        (->> candidates
+             (mapv (fn [^File f]
+                     (check-interrupt!)
+                     [(rel-path f) f]))
+             (sort-by first)
+             (mapv second))]
 
     (cond
-      is_files_only (let
-                      [out
-                       (atom [])
+      is_files_only (let [out
+                          (atom [])
 
-                       capped?
-                       (atom false)
+                          capped?
+                          (atom false)
 
-                       total-files
-                       (atom 0)
+                          total-files
+                          (atom 0)
 
-                       probed-extra
-                       (atom 0)
+                          probed-extra
+                          (atom 0)
 
-                       breadth-capped?
-                       (atom false)
+                          breadth-capped?
+                          (atom false)
 
-                       time-capped?
-                       (atom false)]
+                          time-capped?
+                          (atom false)]
 
                       ;; the scan phase reads every candidate file — poll so Esc/timeout
                       ;; aborts mid-sweep. Past the display cap we keep short-circuit-probing
                       ;; candidate files to report TRUE breadth (`total_file_count`), bounded
                       ;; by `rg-breadth-probe-limit` so a hostile-needle full-tree scan (fff
                       ;; disabled) can't turn a truncated result into a whole-tree sweep.
-                      (doseq
-                        [^File f
-                         files
+                      (doseq [^File f
+                              files
 
-                         :while (and (not @breadth-capped?) (not @time-capped?))]
+                              :while (and (not @breadth-capped?) (not @time-capped?))]
 
                         (check-interrupt!)
                         (when (out-of-time?) (reset! time-capped? true))
@@ -2971,40 +2911,38 @@
                        :total-file-count @total-files
                        :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))})
       :else
-      (let
-        [out
-         (atom [])
+      (let [out
+            (atom [])
 
-         bytes-used
-         (atom 0)
+            bytes-used
+            (atom 0)
 
-         ;; PAGING: hits before `offset` are walked but not kept, so the byte
-         ;; budget and the hit limit both bound the page the caller ASKED for
-         ;; rather than everything up to it.
-         skipped
-         (atom 0)
+            ;; PAGING: hits before `offset` are walked but not kept, so the byte
+            ;; budget and the hit limit both bound the page the caller ASKED for
+            ;; rather than everything up to it.
+            skipped
+            (atom 0)
 
-         cap-reason
-         (atom nil)
+            cap-reason
+            (atom nil)
 
-         ;; nil | :limit | :bytes
-         total-files
-         (atom 0)
+            ;; nil | :limit | :bytes
+            total-files
+            (atom 0)
 
-         probed-extra
-         (atom 0)
+            probed-extra
+            (atom 0)
 
-         breadth-capped?
-         (atom false)
+            breadth-capped?
+            (atom false)
 
-         time-capped?
-         (atom false)]
+            time-capped?
+            (atom false)]
 
-        (doseq
-          [^File f
-           files
+        (doseq [^File f
+                files
 
-           :while (and (not @breadth-capped?) (not @time-capped?))]
+                :while (and (not @breadth-capped?) (not @time-capped?))]
 
           ;; the scan phase reads every candidate file — poll so Esc/timeout
           ;; aborts mid-sweep
@@ -3023,9 +2961,8 @@
                 ;; :text is kept FULL — it's the model's data, sliceable in Python
                 ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
                 ;; Stop on the hit limit OR the total-bytes budget (whichever first).
-                (doseq
-                  [hit hits
-                   :while (not @cap-reason)]
+                (doseq [hit hits
+                        :while (not @cap-reason)]
 
                   (if (< (long @skipped) (long offset))
                     (swap! skipped inc)
@@ -3109,12 +3046,11 @@
   (when-not (map? args)
     (throw (ex-info "write expects a single map argument"
                     {:type :ext.foundation.editing/invalid-write-args :got (type args)})))
-  (let
-    [missing
-     (seq (remove #(contains? args %) write-required-keys))
+  (let [missing
+        (seq (remove #(contains? args %) write-required-keys))
 
-     unknown
-     (seq (remove write-allowed-keys (keys args)))]
+        unknown
+        (seq (remove write-allowed-keys (keys args)))]
 
     (when missing
       (throw (ex-info (str "write missing required keys: "
@@ -3154,19 +3090,18 @@
    Answers nil when the bytes landed, or a `{:reason :io-error :message …}`
    failure the caller reports like any other refusal — nothing was written."
   [^File file rel ^String content]
-  (let
-    [^Path target
-     (.toPath file)
+  (let [^Path target
+        (.toPath file)
 
-     ^File tmp
-     (io/file (.getParentFile file)
-              (str "." (.getName file) ".vis-" (java.util.UUID/randomUUID) ".tmp"))
+        ^File tmp
+        (io/file (.getParentFile file)
+                 (str "." (.getName file) ".vis-" (java.util.UUID/randomUUID) ".tmp"))
 
-     ^Path tmp-path
-     (.toPath tmp)
+        ^Path tmp-path
+        (.toPath tmp)
 
-     existed?
-     (.exists file)]
+        existed?
+        (.exists file)]
 
     (try (spit tmp content)
          ;; A fresh temp file would otherwise hand back a file whose permission bits
@@ -3218,44 +3153,43 @@
       :loop-hint <string-or-nil>
       :message  <human-readable>}"
   [args]
-  (let
-    [args
-     (coerce-write-args args)
+  (let [args
+        (coerce-write-args args)
 
-     path
-     (get args "path")
+        path
+        (get args "path")
 
-     content
-     (str (get args "content"))
+        content
+        (str (get args "content"))
 
-     is_overwrite
-     (if (contains? args "is_overwrite") (get args "is_overwrite") true)
+        is_overwrite
+        (if (contains? args "is_overwrite") (get args "is_overwrite") true)
 
-     is_dirty_ok
-     (boolean (if (contains? args "is_dirty_ok") (get args "is_dirty_ok") (get args "allow_dirty")))
+        is_dirty_ok
+        (boolean
+          (if (contains? args "is_dirty_ok") (get args "is_dirty_ok") (get args "allow_dirty")))
 
-     expected_mtime
-     (get args "expected_mtime")
+        expected_mtime
+        (get args "expected_mtime")
 
-     expected_size
-     (get args "expected_size")
+        expected_size
+        (get args "expected_size")
 
-     resolved
-     (try {:file (safe-path path) :rel (rel-path (safe-path path))}
-          (catch clojure.lang.ExceptionInfo e
-            {:error {:reason (case (:type (ex-data e))
-                               :ext.foundation.editing/path-escape
-                               :path-escape
+        resolved
+        (try {:file (safe-path path) :rel (rel-path (safe-path path))}
+             (catch clojure.lang.ExceptionInfo e
+               {:error {:reason (case (:type (ex-data e))
+                                  :ext.foundation.editing/path-escape
+                                  :path-escape
 
-                               :path-error)
-                     :message (ex-message e)
-                     :data (ex-data e)}}))]
+                                  :path-error)
+                        :message (ex-message e)
+                        :data (ex-data e)}}))]
 
     (if-let [perr (:error resolved)]
-      (let
-        [check {:edit-index 0 :path path :reason (:reason perr) :path-error perr}
-         file-for-counter (try (safe-path path) (catch Throwable _ nil))
-         n (when file-for-counter (bump-write-fail-count! file-for-counter))]
+      (let [check {:edit-index 0 :path path :reason (:reason perr) :path-error perr}
+            file-for-counter (try (safe-path path) (catch Throwable _ nil))
+            n (when file-for-counter (bump-write-fail-count! file-for-counter))]
 
         {:success? false
          :failures [(cond-> check
@@ -3264,52 +3198,52 @@
          :checks [check]
          :loop-hint (when (and file-for-counter n) (write-loop-hint n path))
          :message (str "write failed: " (:message perr))})
-      (let
-        [^java.io.File file (:file resolved)
-         rel (:rel resolved)
-         exists? (.exists file)
-         is-dir? (and exists? (.isDirectory file))
-         before (when (and exists? (not is-dir?)) (slurp file))
-         actual-mtime (when exists? (.lastModified file))
-         actual-size (when exists? (.length file))
-         fail (cond
-                is-dir? {:reason :path-is-dir :message (str "write target is a directory: " rel)}
-                (and (not is_overwrite) exists?)
-                {:reason :exists
-                 :path rel
-                 :message (str "write refused: " rel " already exists and :is_overwrite is false")}
-                ;; A whole-file write over a file with UNCOMMITTED changes is
-                ;; how a truncated reconstruction silently wipes work. Refuse
-                ;; it: surgical edits belong in patch().
-                (and exists? (not is-dir?) (not is_dirty_ok) (git/file-dirty? file))
-                {:reason :dirty
-                 :path rel
-                 :message (str "write refused: "
-                               rel
-                               " has UNCOMMITTED changes — a "
-                               "whole-file write would clobber edits already in flight "
-                               "(this is exactly how a truncated reconstruction wipes a "
-                               "file). Make surgical changes with patch(...) "
-                               "instead, or commit/checkout "
-                               rel
-                               " first. Pass is_dirty_ok=True to overwrite on purpose.")}
-                (and exists?
-                     (some? expected_mtime)
-                     (pos? (long expected_mtime))
-                     (not= (long expected_mtime) (long actual-mtime)))
-                {:reason :stale
-                 :stale {:reason :stale-mtime
-                         :expected_mtime expected_mtime
-                         :actual-mtime actual-mtime
-                         :actual-size actual-size}
-                 :message (str "write refused: " rel " mtime changed since :expected_mtime")}
-                (and exists? (some? expected_size) (not= (long expected_size) (long actual-size)))
-                {:reason :stale
-                 :stale {:reason :stale-size
-                         :expected_size expected_size
-                         :actual-size actual-size
-                         :actual-mtime actual-mtime}
-                 :message (str "write refused: " rel " size changed since :expected_size")})]
+      (let [^java.io.File file (:file resolved)
+            rel (:rel resolved)
+            exists? (.exists file)
+            is-dir? (and exists? (.isDirectory file))
+            before (when (and exists? (not is-dir?)) (slurp file))
+            actual-mtime (when exists? (.lastModified file))
+            actual-size (when exists? (.length file))
+            fail
+            (cond is-dir? {:reason :path-is-dir :message (str "write target is a directory: " rel)}
+                  (and (not is_overwrite) exists?)
+                  {:reason :exists
+                   :path rel
+                   :message
+                   (str "write refused: " rel " already exists and :is_overwrite is false")}
+                  ;; A whole-file write over a file with UNCOMMITTED changes is
+                  ;; how a truncated reconstruction silently wipes work. Refuse
+                  ;; it: surgical edits belong in patch().
+                  (and exists? (not is-dir?) (not is_dirty_ok) (git/file-dirty? file))
+                  {:reason :dirty
+                   :path rel
+                   :message (str "write refused: "
+                                 rel
+                                 " has UNCOMMITTED changes — a "
+                                 "whole-file write would clobber edits already in flight "
+                                 "(this is exactly how a truncated reconstruction wipes a "
+                                 "file). Make surgical changes with patch(...) "
+                                 "instead, or commit/checkout "
+                                 rel
+                                 " first. Pass is_dirty_ok=True to overwrite on purpose.")}
+                  (and exists?
+                       (some? expected_mtime)
+                       (pos? (long expected_mtime))
+                       (not= (long expected_mtime) (long actual-mtime)))
+                  {:reason :stale
+                   :stale {:reason :stale-mtime
+                           :expected_mtime expected_mtime
+                           :actual-mtime actual-mtime
+                           :actual-size actual-size}
+                   :message (str "write refused: " rel " mtime changed since :expected_mtime")}
+                  (and exists? (some? expected_size) (not= (long expected_size) (long actual-size)))
+                  {:reason :stale
+                   :stale {:reason :stale-size
+                           :expected_size expected_size
+                           :actual-size actual-size
+                           :actual-mtime actual-mtime}
+                   :message (str "write refused: " rel " size changed since :expected_size")})]
 
         (if fail
           (let [n (bump-write-fail-count! file)]
@@ -3366,10 +3300,9 @@
     (throw (ex-info (str tool " `" arg-key "` must be a non-empty array of paths")
                     {:type err-type :got entries})))
   (mapv (fn [e]
-          (let
-            [p (cond (string? e) e
-                     (map? e) (get e "path")
-                     :else nil)]
+          (let [p (cond (string? e) e
+                        (map? e) (get e "path")
+                        :else nil)]
             (when-not (and (string? p) (seq (str/trim p)))
               (throw (ex-info (str tool
                                    " `"
@@ -3388,17 +3321,15 @@
    namespace, which is wrong in a workspace with many source roots — is recovered
    by listing that real directory instead of being guessed a second time."
   [spec]
-  (let
-    [path
-     (get spec "path")
+  (let [path
+        (get spec "path")
 
-     ^File f
-     (safe-path path)]
+        ^File f
+        (safe-path path)]
 
     (when-not (.exists f)
-      (let
-        [near (some-> (nearest-existing-dir f)
-                      rel-path)]
+      (let [near (some-> (nearest-existing-dir f)
+                         rel-path)]
         (throw (ex-info (str "`ls`: no such path `" path
                              "`" (when near
                                    (str
@@ -3435,18 +3366,17 @@
    `PermissionError`, a path that does not exist a `FileNotFoundError` (naming
    the nearest existing directory), a FILE path a `NotADirectoryError`."
   [env args]
-  (let
-    [entries
-     (or (get args "paths")
-         (when-let [p (get args "path")]
-           [p]))
+  (let [entries
+        (or (get args "paths")
+            (when-let [p (get args "path")]
+              [p]))
 
-     specs
-     (batch-path-specs "ls"
-                       "paths"
-                       :ext.foundation.editing/invalid-ls-args
-                       (dissoc args "paths" "path")
-                       entries)]
+        specs
+        (batch-path-specs "ls"
+                          "paths"
+                          :ext.foundation.editing/invalid-ls-args
+                          (dissoc args "paths" "path")
+                          entries)]
 
     (when-let [refusal (fs-access-refusal env :dir "file-read" (map #(get % "path") specs))]
       (throw (ex-info (str "ls blocked: " (:resolved (:target refusal)) " — " (:reason refusal))
@@ -3469,11 +3399,10 @@
    symmetric multiset difference of the two line bags. Sparse edits in a huge
    file score tiny; a full rewrite scores about n+m."
   [a b]
-  (let
-    [counts (reduce (fn [m line]
-                      (update m line (fnil dec 0)))
-                    (frequencies a)
-                    b)]
+  (let [counts (reduce (fn [m line]
+                         (update m line (fnil dec 0)))
+                       (frequencies a)
+                       b)]
     (long (reduce + 0 (map #(abs (long %)) (vals counts))))))
 
 (defn- java-diff-affordable?
@@ -3482,12 +3411,11 @@
    case) while waving through an expensive full rewrite just under the cap.
    Budget the actual work instead."
   [a b]
-  (let
-    [size
-     (long (max (count a) (count b)))
+  (let [size
+        (long (max (count a) (count b)))
 
-     edits
-     (max 1 (long (estimated-diff-size a b)))]
+        edits
+        (max 1 (long (estimated-diff-size a b)))]
 
     (<= (* size edits) (long patch-java-diff-max-work))))
 
@@ -3501,24 +3429,22 @@
    in the caller's own words: a diff loses lines, a patch report loses rows."
   ([lines ^long limit] (head-tail-cap lines limit "diff" "line"))
   ([lines ^long limit ^String what ^String unit]
-   (let
-     [lines
-      (vec lines)
+   (let [lines
+         (vec lines)
 
-      n
-      (long (count lines))]
+         n
+         (long (count lines))]
 
      (if (<= n limit)
        lines
-       (let
-         [tail-n
-          (quot limit 4)
+       (let [tail-n
+             (quot limit 4)
 
-          head-n
-          (- limit tail-n)
+             head-n
+             (- limit tail-n)
 
-          omitted
-          (- n head-n tail-n)]
+             omitted
+             (- n head-n tail-n)]
 
          (vec (concat (subvec lines 0 head-n)
                       [(str "... " what " truncated; " omitted " " unit "(s) omitted")]
@@ -3531,15 +3457,14 @@
    element is its own `@@` header. A diff with no `@@` (pure add/delete preview)
    yields no hunks."
   [lines]
-  (let
-    [lines
-     (vec lines)
+  (let [lines
+        (vec lines)
 
-     start
-     (or (first (keep-indexed (fn [idx line]
-                                (when (hunk-header? line) idx))
-                              lines))
-         (count lines))]
+        start
+        (or (first (keep-indexed (fn [idx line]
+                                   (when (hunk-header? line) idx))
+                                 lines))
+            (count lines))]
 
     [(subvec lines 0 start)
      (reduce (fn [hunks line]
@@ -3559,11 +3484,10 @@
   (let [n (long (count hunk))]
     (if (<= n budget)
       (vec hunk)
-      (let
-        [body (max 2 (dec budget))
-         tail-n (max 1 (quot body 3))
-         head-n (max 1 (- body tail-n))
-         omitted (- n 1 head-n tail-n)]
+      (let [body (max 2 (dec budget))
+            tail-n (max 1 (quot body 3))
+            head-n (max 1 (- body tail-n))
+            omitted (- n 1 head-n tail-n)]
 
         (if (pos? omitted)
           (vec (concat (subvec hunk 0 (inc head-n))
@@ -3578,39 +3502,36 @@
    Each hunk keeps its own header, head and tail; whole hunks past the budget are
    dropped with an explicit count rather than half-shown."
   [lines]
-  (let
-    [lines
-     (vec lines)
+  (let [lines
+        (vec lines)
 
-     n
-     (long (count lines))]
+        n
+        (long (count lines))]
 
     (if (<= n (long patch-diff-max-render-lines))
       lines
       (let [[preamble hunks] (split-diff-hunks lines)]
         (if (empty? hunks)
           (head-tail-cap lines patch-diff-max-render-lines)
-          (let
-            [budget (max (long patch-diff-min-hunk-lines)
-                         (- (long patch-diff-max-render-lines) (count preamble) 1))
-             ;; Fill the budget hunk by hunk: a hunk is shown whole when it
-             ;; fits, capped in place when a usable remainder is left, and the
-             ;; rest are reported as a count instead of being half-rendered.
-             [kept dropped]
-             (loop
-               [pending hunks
-                used 0
-                kept []]
+          (let [budget (max (long patch-diff-min-hunk-lines)
+                            (- (long patch-diff-max-render-lines) (count preamble) 1))
+                ;; Fill the budget hunk by hunk: a hunk is shown whole when it
+                ;; fits, capped in place when a usable remainder is left, and the
+                ;; rest are reported as a count instead of being half-rendered.
+                [kept dropped]
+                (loop [pending hunks
+                       used 0
+                       kept []]
 
-               (if-let [hunk (first pending)]
-                 (let [remaining (- budget used)]
-                   (cond (<= (count hunk) remaining)
-                         (recur (next pending) (+ used (count hunk)) (into kept hunk))
-                         (>= remaining (long patch-diff-min-hunk-lines))
-                         (let [capped (cap-hunk-lines hunk remaining)]
-                           (recur (next pending) (+ used (count capped)) (into kept capped)))
-                         :else [kept (count pending)]))
-                 [kept 0]))]
+                  (if-let [hunk (first pending)]
+                    (let [remaining (- budget used)]
+                      (cond (<= (count hunk) remaining)
+                            (recur (next pending) (+ used (count hunk)) (into kept hunk))
+                            (>= remaining (long patch-diff-min-hunk-lines))
+                            (let [capped (cap-hunk-lines hunk remaining)]
+                              (recur (next pending) (+ used (count capped)) (into kept capped)))
+                            :else [kept (count pending)]))
+                    [kept 0]))]
 
             (vec (concat preamble
                          kept
@@ -3625,36 +3546,34 @@
 
 (defn- common-suffix-count
   [a b ^long prefix-count]
-  (let
-    [a-count
-     (long (count a))
+  (let [a-count
+        (long (count a))
 
-     b-count
-     (long (count b))
+        b-count
+        (long (count b))
 
-     limit
-     (- (min a-count b-count) prefix-count)]
+        limit
+        (- (min a-count b-count) prefix-count)]
 
     (loop [i 0]
       (if (and (< i limit) (= (a (- a-count i 1)) (b (- b-count i 1)))) (recur (inc i)) i))))
 
 (defn- prefixed-diff-lines
   [prefix lines]
-  (let
-    [lines
-     (vec lines)
+  (let [lines
+        (vec lines)
 
-     n
-     (long (count lines))
+        n
+        (long (count lines))
 
-     shown-n
-     (min n (long patch-diff-max-render-lines))
+        shown-n
+        (min n (long patch-diff-max-render-lines))
 
-     shown
-     (subvec lines 0 shown-n)
+        shown
+        (subvec lines 0 shown-n)
 
-     omitted
-     (- n shown-n)]
+        omitted
+        (- n shown-n)]
 
     (cond-> (mapv #(str prefix %) shown)
       (pos? omitted)
@@ -3665,48 +3584,47 @@
    minimal diff: for normal-sized files `java-diff-utils` renders real
    unified hunks."
   [a b]
-  (let
-    [prefix-count
-     (long (common-prefix-count a b))
+  (let [prefix-count
+        (long (common-prefix-count a b))
 
-     suffix-count
-     (long (common-suffix-count a b prefix-count))
+        suffix-count
+        (long (common-suffix-count a b prefix-count))
 
-     a-count
-     (long (count a))
+        a-count
+        (long (count a))
 
-     b-count
-     (long (count b))
+        b-count
+        (long (count b))
 
-     a-change-end
-     (- a-count suffix-count)
+        a-change-end
+        (- a-count suffix-count)
 
-     b-change-end
-     (- b-count suffix-count)
+        b-change-end
+        (- b-count suffix-count)
 
-     pre-start
-     (max 0 (- prefix-count (long patch-diff-context-lines)))
+        pre-start
+        (max 0 (- prefix-count (long patch-diff-context-lines)))
 
-     post-end
-     (min a-count (+ a-change-end (long patch-diff-context-lines)))
+        post-end
+        (min a-count (+ a-change-end (long patch-diff-context-lines)))
 
-     pre-lines
-     (subvec a pre-start prefix-count)
+        pre-lines
+        (subvec a pre-start prefix-count)
 
-     del-lines
-     (subvec a prefix-count a-change-end)
+        del-lines
+        (subvec a prefix-count a-change-end)
 
-     add-lines
-     (subvec b prefix-count b-change-end)
+        add-lines
+        (subvec b prefix-count b-change-end)
 
-     post-lines
-     (subvec a a-change-end post-end)
+        post-lines
+        (subvec a a-change-end post-end)
 
-     before-skip
-     pre-start
+        before-skip
+        pre-start
 
-     after-skip
-     (- a-count post-end)]
+        after-skip
+        (- a-count post-end)]
 
     (vec (concat (when (pos? before-skip) [(str "... " before-skip " unchanged line(s) before")])
                  (map #(str " " %) pre-lines)
@@ -3720,12 +3638,12 @@
    renderer (TUI, companion app) already shows the path and colours each line by
    its `-`/`+` prefix, so the two header lines only ate screen space."
   [a b]
-  (let
-    [patch
-     (DiffUtils/diff a b)
+  (let [patch
+        (DiffUtils/diff a b)
 
-     lines
-     (vec (UnifiedDiffUtils/generateUnifiedDiff "before" "after" a patch patch-diff-context-lines))]
+        lines
+        (vec
+          (UnifiedDiffUtils/generateUnifiedDiff "before" "after" a patch patch-diff-context-lines))]
 
     (if (and (>= (count lines) 2)
              (str/starts-with? (str (nth lines 0)) "---")
@@ -3761,29 +3679,27 @@
    context), diff only the changed window, and renumber the `@@` headers back to
    file lines. nil when even that window is too expensive to diff."
   [a b]
-  (let
-    [prefix-count
-     (long (common-prefix-count a b))
+  (let [prefix-count
+        (long (common-prefix-count a b))
 
-     suffix-count
-     (long (common-suffix-count a b prefix-count))
+        suffix-count
+        (long (common-suffix-count a b prefix-count))
 
-     start
-     (max 0 (- prefix-count (long patch-diff-context-lines)))
+        start
+        (max 0 (- prefix-count (long patch-diff-context-lines)))
 
-     a-end
-     (min (count a) (+ (- (count a) suffix-count) (long patch-diff-context-lines)))
+        a-end
+        (min (count a) (+ (- (count a) suffix-count) (long patch-diff-context-lines)))
 
-     b-end
-     (min (count b) (+ (- (count b) suffix-count) (long patch-diff-context-lines)))]
+        b-end
+        (min (count b) (+ (- (count b) suffix-count) (long patch-diff-context-lines)))]
 
     (when (and (<= start a-end) (<= start b-end))
-      (let
-        [a-win
-         (subvec a start a-end)
+      (let [a-win
+            (subvec a start a-end)
 
-         b-win
-         (subvec b start b-end)]
+            b-win
+            (subvec b start b-end)]
 
         (when (java-diff-affordable? a-win b-win)
           (shift-hunk-headers (java-unified-diff-lines a-win b-win) start))))))
@@ -3813,12 +3729,11 @@
   (cond (= before after) nil
         (nil? before) (str/join "\n" (prefixed-diff-lines "+" (str/split-lines (or after ""))))
         (nil? after) (str "--- (deleted, " (count (str/split-lines (or before ""))) " lines)")
-        :else (let
-                [a
-                 (vec (str/split-lines before))
+        :else (let [a
+                    (vec (str/split-lines before))
 
-                 b
-                 (vec (str/split-lines after))]
+                    b
+                    (vec (str/split-lines after))]
 
                 (if (whole-file-rewrite? a b)
                   (str/join "\n"
@@ -3833,21 +3748,20 @@
    pair too expensive for a real Myers diff. The overlapping part of the window
    counts as modified, the surplus on either side as added or removed."
   [a b]
-  (let
-    [pre
-     (long (common-prefix-count a b))
+  (let [pre
+        (long (common-prefix-count a b))
 
-     suf
-     (long (common-suffix-count a b pre))
+        suf
+        (long (common-suffix-count a b pre))
 
-     removed
-     (- (long (count a)) pre suf)
+        removed
+        (- (long (count a)) pre suf)
 
-     added
-     (- (long (count b)) pre suf)
+        added
+        (- (long (count b)) pre suf)
 
-     both
-     (min removed added)]
+        both
+        (min removed added)]
 
     {"added" (- added both) "removed" (- removed both) "modified" both}))
 
@@ -3858,10 +3772,9 @@
   [a b]
   (let [^Patch patch (DiffUtils/diff a b)]
     (reduce (fn [acc ^AbstractDelta delta]
-              (let
-                [src (long (count (.getLines ^Chunk (.getSource delta))))
-                 tgt (long (count (.getLines ^Chunk (.getTarget delta))))
-                 both (min src tgt)]
+              (let [src (long (count (.getLines ^Chunk (.getSource delta))))
+                    tgt (long (count (.getLines ^Chunk (.getTarget delta))))
+                    both (min src tgt)]
 
                 (-> acc
                     (update "modified" + both)
@@ -3881,12 +3794,11 @@
         (nil? before)
         {"added" (long (count (str/split-lines (or after "")))) "removed" 0 "modified" 0}
         (nil? after) {"added" 0 "removed" (long (count (str/split-lines before))) "modified" 0}
-        :else (let
-                [a
-                 (vec (str/split-lines before))
+        :else (let [a
+                    (vec (str/split-lines before))
 
-                 b
-                 (vec (str/split-lines after))]
+                    b
+                    (vec (str/split-lines after))]
 
                 (if (java-diff-affordable? a b) (delta-line-counts a b) (window-line-counts a b)))))
 
@@ -3983,30 +3895,29 @@
                   :which which
                   :anchor (str endpoint)}))
         (long (:from-line r))))
-    (let
-      [n
-       (long (cond (integer? endpoint) (long endpoint)
-                   (number? endpoint) (long endpoint)
-                   (and (string? endpoint) (parse-long (str/trim (str endpoint))))
-                   (long (parse-long (str/trim (str endpoint))))
-                   :else (throw (ex-info (str "cat: the "
-                                              which
-                                              " endpoint must be a line number or a "
-                                              "`<line>:<hash>` anchor, got "
-                                              (pr-str endpoint)
-                                              ".")
-                                         {:type :ext.foundation.editing/invalid-range
-                                          :which which
-                                          :endpoint endpoint}))))
+    (let [n
+          (long (cond (integer? endpoint) (long endpoint)
+                      (number? endpoint) (long endpoint)
+                      (and (string? endpoint) (parse-long (str/trim (str endpoint))))
+                      (long (parse-long (str/trim (str endpoint))))
+                      :else (throw (ex-info (str "cat: the "
+                                                 which
+                                                 " endpoint must be a line number or a "
+                                                 "`<line>:<hash>` anchor, got "
+                                                 (pr-str endpoint)
+                                                 ".")
+                                            {:type :ext.foundation.editing/invalid-range
+                                             :which which
+                                             :endpoint endpoint}))))
 
-       ;; A NEGATIVE endpoint counts from the END, Python-style: -1 IS the last
-       ;; line, so `cat(path, -50)` reads the tail 50 lines and
-       ;; `cat(path, -50, -30)` the window between them. It is resolved BEFORE
-       ;; the range check, so every message names a real 1-based line; a
-       ;; magnitude past the top clamps to line 1, because asking for more tail
-       ;; than the file has is a reader asking for the whole file.
-       n
-       (long (if (neg? n) (max 1 (+ line-count n 1)) n))]
+          ;; A NEGATIVE endpoint counts from the END, Python-style: -1 IS the last
+          ;; line, so `cat(path, -50)` reads the tail 50 lines and
+          ;; `cat(path, -50, -30)` the window between them. It is resolved BEFORE
+          ;; the range check, so every message names a real 1-based line; a
+          ;; magnitude past the top clamps to line 1, because asking for more tail
+          ;; than the file has is a reader asking for the whole file.
+          n
+          (long (if (neg? n) (max 1 (+ line-count n 1)) n))]
 
       (when (or (< n 1) (and (> n line-count) (not= which "end")))
         (throw
@@ -4027,79 +3938,76 @@
    on its last line and names the call that continues it, so nothing is ever
    silently dropped."
   ^String [path from to]
-  (let
-    [content
-     (anchored-file-content path)
+  (let [content
+        (anchored-file-content path)
 
-     rel
-     (rel-path (safe-path path))
+        rel
+        (rel-path (safe-path path))
 
-     lines
-     (hashline/split-content-lines content)
+        lines
+        (hashline/split-content-lines content)
 
-     line-count
-     (long (count lines))]
+        line-count
+        (long (count lines))]
 
     (if (zero? line-count)
       ""
-      (let
-        [from-line
-         (if (some? from)
-           (cat-endpoint-line content (positional-only! :cat from) "start" line-count)
-           1)
+      (let [from-line
+            (if (some? from)
+              (cat-endpoint-line content (positional-only! :cat from) "start" line-count)
+              1)
 
-         to-line
-         (if (some? to)
-           (cat-endpoint-line content (positional-only! :cat to) "end" line-count)
-           line-count)
+            to-line
+            (if (some? to)
+              (cat-endpoint-line content (positional-only! :cat to) "end" line-count)
+              line-count)
 
-         _
-         (when (> from-line to-line)
-           (throw (ex-info
-                    (str "cat: start line "
-                         from-line
-                         " is after end line "
-                         to-line
-                         " — order the window.")
-                    {:type :ext.foundation.editing/invalid-range :from from-line :to to-line})))
+            _
+            (when (> from-line to-line)
+              (throw (ex-info
+                       (str "cat: start line "
+                            from-line
+                            " is after end line "
+                            to-line
+                            " — order the window.")
+                       {:type :ext.foundation.editing/invalid-range :from from-line :to to-line})))
 
-         wanted
-         (subvec lines (dec from-line) to-line)
+            wanted
+            (subvec lines (dec from-line) to-line)
 
-         ;; Two caps, whichever bites first. `byte-capped` walks the window once
-         ;; and stops at the byte ceiling, so one enormous line cannot blow the
-         ;; block's printed-output budget on its own.
-         line-capped
-         (vec (take (long default-cat-limit) wanted))
+            ;; Two caps, whichever bites first. `byte-capped` walks the window once
+            ;; and stops at the byte ceiling, so one enormous line cannot blow the
+            ;; block's printed-output budget on its own.
+            line-capped
+            (vec (take (long default-cat-limit) wanted))
 
-         byte-capped
-         (loop
-           [i
-            0
+            byte-capped
+            (loop [i
+                   0
 
-            total
-            0
+                   total
+                   0
 
-            acc
-            []]
+                   acc
+                   []]
 
-           (if (>= i (count line-capped))
-             acc
-             (let [next-total (+ total (count (nth line-capped i)) 8)]
-               (if (and (pos? i) (> next-total (long max-cat-window-bytes)))
-                 acc
-                 (recur (inc i) next-total (conj acc (nth line-capped i)))))))
+              (if (>= i (count line-capped))
+                acc
+                (let [next-total (+ total (count (nth line-capped i)) 8)]
+                  (if (and (pos? i) (> next-total (long max-cat-window-bytes)))
+                    acc
+                    (recur (inc i) next-total (conj acc (nth line-capped i)))))))
 
-         shown
-         (long (count byte-capped))
+            shown
+            (long (count byte-capped))
 
-         last-line
-         (+ from-line (dec shown))
+            last-line
+            (+ from-line (dec shown))
 
-         body
-         (hashline/render-hashline-block (map-indexed (fn [i s]
-                                                        [(+ from-line (long i)) s])
-                                                      byte-capped))]
+            body
+            (hashline/render-hashline-block (map-indexed (fn [i s]
+                                                           [(+ from-line (long i)) s])
+                                                         byte-capped))]
 
         (if (>= last-line to-line)
           body
@@ -4187,23 +4095,22 @@
   [rel
    {:keys [reason which hash stated-line found-lines current-anchor current-text line lines
            from-line to-line anchor edit-index edit-count]}]
-  (let
-    [slot
-     (if (= :to which) "to" "from")
+  (let [slot
+        (if (= :to which) "to" "from")
 
-     refusal
-     (cond-> {:reason reason}
-       stated-line
-       (assoc :stated-line stated-line)
+        refusal
+        (cond-> {:reason reason}
+          stated-line
+          (assoc :stated-line stated-line)
 
-       (seq found-lines)
-       (assoc :found-lines (vec found-lines))
+          (seq found-lines)
+          (assoc :found-lines (vec found-lines))
 
-       current-anchor
-       (assoc :current-anchor current-anchor)
+          current-anchor
+          (assoc :current-anchor current-anchor)
 
-       edit-index
-       (assoc :edit-index edit-index))]
+          edit-index
+          (assoc :edit-index edit-index))]
 
     (patch-refusal!
       rel
@@ -4276,10 +4183,9 @@
    them stays deterministic — an internal caller or a test gets precisely the splice
    it asked for unless a tool hands the balancer down."
   [lang]
-  (when-let
-    [want (some-> lang
-                  name
-                  str/lower-case)]
+  (when-let [want (some-> lang
+                          name
+                          str/lower-case)]
     (some (fn [entry]
             (let [f (:balance-fn entry)]
               (when (and (ifn? f)
@@ -4312,31 +4218,28 @@
   [rel lang ^String original ^String updated span-label spans]
   (if-not lang
     {:content updated :clause ""}
-    (let
-      [clean?
-       (fn [^String s]
-         (empty? (parse/error-nodes lang s)))
+    (let [clean?
+          (fn [^String s]
+            (empty? (parse/error-nodes lang s)))
 
-       after
-       (parse/error-nodes lang updated)]
+          after
+          (parse/error-nodes lang updated)]
 
       (if (empty? after)
         {:content updated :clause "  parse: clean"}
-        (let
-          [before
-           (parse/error-nodes lang original)
+        (let [before
+              (parse/error-nodes lang original)
 
-           e
-           (first after)]
+              e
+              (first after)]
 
           (if (seq before)
             {:content updated :clause (str "  parse: still broken at line " (:line e))}
-            (let
-              [repair (balance/rebalance {:balancer (language-balancer lang)
-                                          :parses-clean? clean?
-                                          :source updated
-                                          :spans spans
-                                          :original original})]
+            (let [repair (balance/rebalance {:balancer (language-balancer lang)
+                                             :parses-clean? clean?
+                                             :source updated
+                                             :spans spans
+                                             :original original})]
               (if (:ok? repair)
                 {:content (:content repair)
                  :clause
@@ -4354,11 +4257,10 @@
                           (:line e)
                           ", col "
                           (:col e)
-                          (when-let
-                            [t (some-> (:text e)
-                                       str
-                                       str/trim
-                                       not-empty)]
+                          (when-let [t (some-> (:text e)
+                                               str
+                                               str/trim
+                                               not-empty)]
                             (str " — near `" (subs t 0 (min 60 (count t))) "`")))
                      "  the file parsed clean before this edit, so the replacement introduced it."]
                     (when-let [why (:why repair)]
@@ -4407,49 +4309,47 @@
    so the text is dropped and the addresses are kept. `head-tail-cap` bounds them,
    so a 300-edit batch still answers in a block a reader can hold."
   [applied new-lines]
-  (let
-    [anchor-at
-     (fn [^long ln]
-       (hashline/line-anchor ln (nth new-lines (dec ln) "")))
+  (let [anchor-at
+        (fn [^long ln]
+          (hashline/line-anchor ln (nth new-lines (dec ln) "")))
 
-     cells
-     (mapv
-       (fn [{:keys [index from-line to-line new-from written unchanged?]}]
-         (let
-           [n
-            (long written)
+        cells
+        (mapv (fn [{:keys [index from-line to-line new-from written unchanged?]}]
+                (let [n
+                      (long written)
 
-            outcome
-            (cond (zero? n) "deleted"
-                  unchanged? "unchanged"
-                  :else (str n (if (= 1 n) " line" " lines")))
+                      outcome
+                      (cond (zero? n) "deleted"
+                            unchanged? "unchanged"
+                            :else (str n (if (= 1 n) " line" " lines")))
 
-            anchors
-            (when (pos? n)
-              (let
-                [from-anchor
-                 (anchor-at new-from)
+                      anchors
+                      (when (pos? n)
+                        (let [from-anchor
+                              (anchor-at new-from)
 
-                 to-anchor
-                 (anchor-at (+ (long new-from) (dec n)))]
+                              to-anchor
+                              (anchor-at (+ (long new-from) (dec n)))]
 
-                (if (= from-anchor to-anchor) from-anchor (str from-anchor " .. " to-anchor))))]
+                          (if (= from-anchor to-anchor)
+                            from-anchor
+                            (str from-anchor " .. " to-anchor))))]
 
-           [(str (inc (long index))) (str from-line ".." to-line) (str "→ " outcome)
-            (str anchors)]))
-       (sort-by :index applied))
+                  [(str (inc (long index))) (str from-line ".." to-line) (str "→ " outcome)
+                   (str anchors)]))
+              (sort-by :index applied))
 
-     width
-     (fn [col]
-       (reduce max 0 (map #(count (nth % col)) cells)))
+        width
+        (fn [col]
+          (reduce max 0 (map #(count (nth % col)) cells)))
 
-     rows
-     (mapv (fn [[idx span outcome anchors]]
-             (str/trimr (str "  " (pad-cell idx (width 0) :right)
-                             "  " (pad-cell span (width 1) :left)
-                             "  " (pad-cell outcome (width 2) :left)
-                             "  " anchors)))
-           cells)]
+        rows
+        (mapv (fn [[idx span outcome anchors]]
+                (str/trimr (str "  " (pad-cell idx (width 0) :right)
+                                "  " (pad-cell span (width 1) :left)
+                                "  " (pad-cell outcome (width 2) :left)
+                                "  " anchors)))
+              cells)]
 
     (head-tail-cap rows patch-edit-rows-max "edit rows" "row")))
 
@@ -4494,11 +4394,10 @@
                               {:reason :edit-not-a-map :edit-index i}
                               (cons (str at "is " (pr-str entry) ", not an edit map.")
                                     shape-lines)))
-            (let
-              [unknown (remove #{"from" "to" "replace"}
-                         (map #(if (keyword? %) (name %) (str %)) (keys entry)))
-               from (edit-field entry "from")
-               replacement (edit-field entry "replace")]
+            (let [unknown (remove #{"from" "to" "replace"}
+                            (map #(if (keyword? %) (name %) (str %)) (keys entry)))
+                  from (edit-field entry "from")
+                  replacement (edit-field entry "replace")]
 
               (when (seq unknown)
                 (patch-refusal!
@@ -4531,9 +4430,8 @@
   [rel resolved]
   (doseq [[a b] (partition 2 1 (sort-by :from-line resolved))]
     (when (>= (long (:to-line a)) (long (:from-line b)))
-      (let
-        [i (inc (long (:index a)))
-         j (inc (long (:index b)))]
+      (let [i (inc (long (:index a)))
+            j (inc (long (:index b)))]
 
         (patch-refusal!
           rel
@@ -4553,156 +4451,153 @@
    go stale mid-batch. The answer is the status line and one row per edit, carrying
    the anchors that are live AFTER the write."
   [path edits]
-  (let
-    [^File f
-     (ensure-existing-file! (safe-path (positional-only! :patch path)))
+  (let [^File f
+        (ensure-existing-file! (safe-path (positional-only! :patch path)))
 
-     rel
-     (rel-path f)
+        rel
+        (rel-path f)
 
-     batch
-     (patch-edits-shape! rel edits)
+        batch
+        (patch-edits-shape! rel edits)
 
-     total
-     (count batch)
+        total
+        (count batch)
 
-     original
-     (slurp f)
+        original
+        (slurp f)
 
-     ;; Resolve EVERY span against the ONE read before a character moves: a span is
-     ;; a char range, not new content, so the whole batch is verified while the file
-     ;; is still exactly what the caller read.
-     resolved
-     (mapv (fn [{:keys [index from to replace]}]
-             (let
-               [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
-                ^String new-text
-                (escapes/decode-unicode-escapes (str replace))
+        ;; Resolve EVERY span against the ONE read before a character moves: a span is
+        ;; a char range, not new content, so the whole batch is verified while the file
+        ;; is still exactly what the caller read.
+        resolved
+        (mapv (fn [{:keys [index from to replace]}]
+                (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
+                      ^String new-text
+                      (escapes/decode-unicode-escapes (str replace))
 
-                span
-                (hashline/resolve-anchor-edit-span original from to new-text)]
+                      span
+                      (hashline/resolve-anchor-edit-span original from to new-text)]
 
-               (when-let [err (:error span)]
-                 (anchor-refusal! rel
-                                  (assoc err
-                                    :anchor (str (if (= :to (:which err)) to from))
-                                    :edit-index index
-                                    :edit-count total)))
-               (assoc span
-                 :index index
-                 :new-text new-text)))
-           batch)
+                  (when-let [err (:error span)]
+                    (anchor-refusal! rel
+                                     (assoc err
+                                       :anchor (str (if (= :to (:which err)) to from))
+                                       :edit-index index
+                                       :edit-count total)))
+                  (assoc span
+                    :index index
+                    :new-text new-text)))
+              batch)
 
-     _
-     (patch-overlap! rel resolved)
+        _
+        (patch-overlap! rel resolved)
 
-     ;; Descending by start offset: every earlier span keeps the offsets it resolved
-     ;; with, so one pass applies the whole batch without re-resolving anything.
-     updated
-     (reduce (fn [^String acc {:keys [start end replacement]}]
-               (str (subs acc 0 (long start)) replacement (subs acc (long end))))
-             original
-             (sort-by :start #(compare %2 %1) resolved))
+        ;; Descending by start offset: every earlier span keeps the offsets it resolved
+        ;; with, so one pass applies the whole batch without re-resolving anything.
+        updated
+        (reduce (fn [^String acc {:keys [start end replacement]}]
+                  (str (subs acc 0 (long start)) replacement (subs acc (long end))))
+                original
+                (sort-by :start #(compare %2 %1) resolved))
 
-     ;; Only a CODE grammar may gate a write. `detect-language` answers for every
-     ;; extension it knows — `.txt` is `vimdoc`, whose grammar reports an ERROR node
-     ;; on ordinary prose — so gating on it alone told EVERY prose edit that its file
-     ;; was broken. `parse/code-languages` is the set where a parse error means
-     ;; something; vimdoc, markdown and csv are not in it.
-     lang
-     (let [l (parse/detect-language rel)]
-       (when (contains? parse/code-languages l) l))
+        ;; Only a CODE grammar may gate a write. `detect-language` answers for every
+        ;; extension it knows — `.txt` is `vimdoc`, whose grammar reports an ERROR node
+        ;; on ordinary prose — so gating on it alone told EVERY prose edit that its file
+        ;; was broken. `parse/code-languages` is the set where a parse error means
+        ;; something; vimdoc, markdown and csv are not in it.
+        lang
+        (let [l (parse/detect-language rel)]
+          (when (contains? parse/code-languages l) l))
 
-     ;; Where each edit ENDED UP: walk the spans in file order carrying the line
-     ;; delta every earlier edit already applied, so every anchor reported below is
-     ;; one a next call can spend without a `cat` — and so the parse gate knows
-     ;; exactly which lines of the NEW content this call may have its delimiters
-     ;; repaired in. Pure: it reads the resolved spans, never the write.
-     applied
-     (:rows
-       (reduce
-         (fn [{:keys [^long delta rows]} {:keys [index start end from-line to-line replacement]}]
-           (let
-             [;; What the splice ACTUALLY put in the file. The matched
-              ;; region's terminator stays OUTSIDE the span, so a mid-file
-              ;; replacement always closes its last line and only a span
-              ;; that reaches EOF carries a terminator of its own — counting
-              ;; the replacement's own lines instead reported one line too
-              ;; few for every replacement that ended in a newline, and every
-              ;; later row's anchor inherited the drift.
-              written
-              (long (let [text (str replacement)]
-                      ;; The SPLICED text decides, not the caller's `replace`:
-                      ;; a replacement that reduces to nothing — `"\n"` over a
-                      ;; span that ends a file with no final newline — writes
-                      ;; no line at all.
-                      (if (= "" text)
-                        0
-                        (let [breaks (count (filter #(= \newline %) text))]
-                          (if (and (= (long end) (count original)) (str/ends-with? text "\n"))
-                            breaks
-                            (inc breaks))))))
+        ;; Where each edit ENDED UP: walk the spans in file order carrying the line
+        ;; delta every earlier edit already applied, so every anchor reported below is
+        ;; one a next call can spend without a `cat` — and so the parse gate knows
+        ;; exactly which lines of the NEW content this call may have its delimiters
+        ;; repaired in. Pure: it reads the resolved spans, never the write.
+        applied
+        (:rows
+          (reduce
+            (fn [{:keys [^long delta rows]} {:keys [index start end from-line to-line replacement]}]
+              (let [;; What the splice ACTUALLY put in the file. The matched
+                    ;; region's terminator stays OUTSIDE the span, so a mid-file
+                    ;; replacement always closes its last line and only a span
+                    ;; that reaches EOF carries a terminator of its own — counting
+                    ;; the replacement's own lines instead reported one line too
+                    ;; few for every replacement that ended in a newline, and every
+                    ;; later row's anchor inherited the drift.
+                    written
+                    (long (let [text (str replacement)]
+                            ;; The SPLICED text decides, not the caller's `replace`:
+                            ;; a replacement that reduces to nothing — `"\n"` over a
+                            ;; span that ends a file with no final newline — writes
+                            ;; no line at all.
+                            (if (= "" text)
+                              0
+                              (let [breaks (count (filter #(= \newline %) text))]
+                                (if (and (= (long end) (count original)) (str/ends-with? text "\n"))
+                                  breaks
+                                  (inc breaks))))))
 
-              replaced
-              (inc (- (long to-line) (long from-line)))]
+                    replaced
+                    (inc (- (long to-line) (long from-line)))]
 
-             {:delta (+ delta (- written replaced))
-              :rows (conj rows
-                          {:index index
-                           :from-line from-line
-                           :to-line to-line
-                           :new-from (+ (long from-line) delta)
-                           :written written
-                           :unchanged? (= (subs original (long start) (long end))
-                                          (str replacement))})}))
-         {:delta 0 :rows []}
-         (sort-by :start resolved)))
+                {:delta (+ delta (- written replaced))
+                 :rows (conj rows
+                             {:index index
+                              :from-line from-line
+                              :to-line to-line
+                              :new-from (+ (long from-line) delta)
+                              :written written
+                              :unchanged? (= (subs original (long start) (long end))
+                                             (str replacement))})}))
+            {:delta 0 :rows []}
+            (sort-by :start resolved)))
 
-     gate
-     (patch-parse-gate rel
-                       lang
-                       original
-                       updated
-                       (str total
-                            (if (= 1 (long total)) " edit" " edits")
-                            ", lines " (reduce min (map :from-line resolved))
-                            ".." (reduce max (map :to-line resolved)))
-                       (mapv (fn [{:keys [new-from written]}]
-                               (let [from (long new-from)]
-                                 (if (zero? (long written))
-                                   ;; A deletion writes NO line: what it left behind is a
-                                   ;; SEAM between the line above it and the line that moved
-                                   ;; up into its place, and the delimiters it took with it
-                                   ;; belong to one of those two. Naming the line the deleted
-                                   ;; text used to occupy names a line that no longer exists,
-                                   ;; so every repair of a deletion fell "outside the edit".
-                                   [(max 1 (dec from)) from]
-                                   [from (+ from (dec (long written)))])))
-                             applied))
+        gate
+        (patch-parse-gate rel
+                          lang
+                          original
+                          updated
+                          (str total
+                               (if (= 1 (long total)) " edit" " edits")
+                               ", lines " (reduce min (map :from-line resolved))
+                               ".." (reduce max (map :to-line resolved)))
+                          (mapv (fn [{:keys [new-from written]}]
+                                  (let [from (long new-from)]
+                                    (if (zero? (long written))
+                                      ;; A deletion writes NO line: what it left behind is a
+                                      ;; SEAM between the line above it and the line that moved
+                                      ;; up into its place, and the delimiters it took with it
+                                      ;; belong to one of those two. Naming the line the deleted
+                                      ;; text used to occupy names a line that no longer exists,
+                                      ;; so every repair of a deletion fell "outside the edit".
+                                      [(max 1 (dec from)) from]
+                                      [from (+ from (dec (long written)))])))
+                                applied))
 
-     ;; What actually reaches disk: the splice, or the delimiter repair the gate
-     ;; accepted for it. Every anchor, count and diff below is taken from THIS.
-     ^String written-content
-     (:content gate)
+        ;; What actually reaches disk: the splice, or the delimiter repair the gate
+        ;; accepted for it. Every anchor, count and diff below is taken from THIS.
+        ^String written-content
+        (:content gate)
 
-     parse-clause
-     (:clause gate)
+        parse-clause
+        (:clause gate)
 
-     ;; `cat`'s gutter is an ADDRESS, not text. A replacement that carries one is a
-     ;; copied read, and it lands in the file verbatim — say so on the status line
-     ;; rather than refuse, because our own docs quote sample `cat` output.
-     gutter-clause
-     (when (some (fn [{:keys [new-text]}]
-                   (some (fn [l]
-                           (re-find #"^\s*\d+:[0-9a-f]{3}│ " (str l)))
-                         (hashline/split-content-lines new-text)))
-                 resolved)
-       "  note: a replacement carries a `line:hash│ ` gutter, written verbatim")
+        ;; `cat`'s gutter is an ADDRESS, not text. A replacement that carries one is a
+        ;; copied read, and it lands in the file verbatim — say so on the status line
+        ;; rather than refuse, because our own docs quote sample `cat` output.
+        gutter-clause
+        (when (some (fn [{:keys [new-text]}]
+                      (some (fn [l]
+                              (re-find #"^\s*\d+:[0-9a-f]{3}│ " (str l)))
+                            (hashline/split-content-lines new-text)))
+                    resolved)
+          "  note: a replacement carries a `line:hash│ ` gutter, written verbatim")
 
-     ;; is_dirty_ok: an anchored span replace is SURGICAL and content-verified —
-     ;; the dirty guard exists to stop a blind whole-file rewrite, not this.
-     result
-     (write-safe {"path" path "content" written-content "is_dirty_ok" true})]
+        ;; is_dirty_ok: an anchored span replace is SURGICAL and content-verified —
+        ;; the dirty guard exists to stop a blind whole-file rewrite, not this.
+        result
+        (write-safe {"path" path "content" written-content "is_dirty_ok" true})]
 
     (if-not (:success? result)
       (throw (ex-info (str "patch refused — nothing was written.\n  " (:message result))

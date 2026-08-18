@@ -90,12 +90,11 @@
    a directory's own timestamp only moves when entries are added or removed, so
    a busy clone can look untouched for weeks by that measure alone."
   [^File root]
-  (try (let
-         [total
-          (java.util.concurrent.atomic.AtomicLong. 0)
+  (try (let [total
+             (java.util.concurrent.atomic.AtomicLong. 0)
 
-          newest
-          (java.util.concurrent.atomic.AtomicLong. 0)]
+             newest
+             (java.util.concurrent.atomic.AtomicLong. 0)]
 
          (Files/walkFileTree (.toPath root)
                              (proxy [SimpleFileVisitor] []
@@ -224,18 +223,17 @@
    re-checked with `under?` against `canon`, so a hostile link cannot walk the
    delete out of the tree. Returns `{:file-count :deleted :bytes :dirs-removed}`."
   [^File root ^String canon ^long cutoff]
-  (let
-    [files
-     (java.util.concurrent.atomic.AtomicLong. 0)
+  (let [files
+        (java.util.concurrent.atomic.AtomicLong. 0)
 
-     deleted
-     (java.util.concurrent.atomic.AtomicLong. 0)
+        deleted
+        (java.util.concurrent.atomic.AtomicLong. 0)
 
-     bytes
-     (java.util.concurrent.atomic.AtomicLong. 0)
+        bytes
+        (java.util.concurrent.atomic.AtomicLong. 0)
 
-     dirs
-     (java.util.concurrent.atomic.AtomicLong. 0)]
+        dirs
+        (java.util.concurrent.atomic.AtomicLong. 0)]
 
     (try (Files/walkFileTree (.toPath root)
                              (proxy [SimpleFileVisitor] []
@@ -267,18 +265,17 @@
    `budget` bytes. The age pass cannot bound a single afternoon that renders
    thousands of pictures; this does. Returns `{:deleted :bytes}`."
   [^File root ^String canon ^long budget]
-  (let
-    [entries
-     (->> (or (.listFiles root) (make-array File 0))
-          (filter (fn [^File f]
-                    (and (.isFile f) (not (Files/isSymbolicLink (.toPath f))))))
-          (map (fn [^File f]
-                 {:file f :ms (.lastModified f) :size (.length f)}))
-          (sort-by :ms)
-          vec)
+  (let [entries
+        (->> (or (.listFiles root) (make-array File 0))
+             (filter (fn [^File f]
+                       (and (.isFile f) (not (Files/isSymbolicLink (.toPath f))))))
+             (map (fn [^File f]
+                    {:file f :ms (.lastModified f) :size (.length f)}))
+             (sort-by :ms)
+             vec)
 
-     total
-     (reduce + 0 (map :size entries))]
+        total
+        (reduce + 0 (map :size entries))]
 
     (:report (reduce (fn [acc {:keys [^File file ^long size]}]
                        (if (<= (long (:held acc)) budget)
@@ -298,11 +295,10 @@
    an orphan draft, because a live session touches its journal constantly.
    Returns `{:file-count :deleted :bytes :dirs-removed}`."
   [^File root ^String canon ^long cutoff]
-  (let
-    [stores (->> (or (.listFiles root) (make-array File 0))
-                 (filter (fn [^File f]
-                           (and (.isDirectory f) (not (.startsWith (.getName f) ".")))))
-                 vec)]
+  (let [stores (->> (or (.listFiles root) (make-array File 0))
+                    (filter (fn [^File f]
+                              (and (.isDirectory f) (not (.startsWith (.getName f) ".")))))
+                    vec)]
     (reduce (fn [acc ^File d]
               (let [{:keys [bytes newest-ms]} (tree-stats d)]
                 (if (and (< (long newest-ms) cutoff)
@@ -351,46 +347,45 @@
    `:budget-bytes` (overrides every byte budget) and `:now-ms`."
   ([] (sweep-stale! nil))
   ([{:keys [days now-ms] budget-override :budget-bytes}]
-   (let
-     [now
-      (long (or now-ms (System/currentTimeMillis)))
+   (let [now
+         (long (or now-ms (System/currentTimeMillis)))
 
-      reports
-      (mapv
-        (fn [{:keys [id mode dir retention-days budget-bytes]}]
-          (let
-            [^File d
-             (dir)
+         reports
+         (mapv
+           (fn [{:keys [id mode dir retention-days budget-bytes]}]
+             (let [^File d
+                   (dir)
 
-             window
-             (long (or days retention-days))
+                   window
+                   (long (or days retention-days))
 
-             cutoff
-             (- now (* window (long day-ms)))
+                   cutoff
+                   (- now (* window (long day-ms)))
 
-             base
-             {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
+                   base
+                   {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
 
-            (if-not (.isDirectory d)
-              (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
-              (let
-                [canon
-                 (canonical d)
+               (if-not (.isDirectory d)
+                 (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
+                 (let [canon
+                       (canonical d)
 
-                 swept
-                 (if (= :stores mode) (sweep-stores! d canon cutoff) (sweep-files! d canon cutoff))
-
-                 trimmed
-                 (when budget-bytes
-                   (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
-
-                (merge base
                        swept
-                       (when trimmed
-                         {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
-                          :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
-                          :over-budget-deleted (:deleted trimmed)}))))))
-        sweep-targets)]
+                       (if (= :stores mode)
+                         (sweep-stores! d canon cutoff)
+                         (sweep-files! d canon cutoff))
+
+                       trimmed
+                       (when budget-bytes
+                         (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
+
+                   (merge base
+                          swept
+                          (when trimmed
+                            {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
+                             :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
+                             :over-budget-deleted (:deleted trimmed)}))))))
+           sweep-targets)]
 
      {:targets reports
       :deleted (reduce + 0 (map :deleted reports))
@@ -433,84 +428,80 @@
   "Every `<drafts-root>/<repo>/<draft>` directory on disk. Dot-entries are
    Vis-internal (`.fresh-seed`, `.trash`) and are never reported as drafts."
   [^String drafts-root]
-  (let
-    [visible (fn [^File dir]
-               (->> (or (.listFiles dir) (make-array File 0))
-                    (filter #(and (.isDirectory ^File %)
-                                  (not (.startsWith (.getName ^File %) "."))))))]
+  (let [visible (fn [^File dir]
+                  (->> (or (.listFiles dir) (make-array File 0))
+                       (filter #(and (.isDirectory ^File %)
+                                     (not (.startsWith (.getName ^File %) "."))))))]
     (when drafts-root
       (let [root (io/file drafts-root)]
         (when (.isDirectory root) (vec (mapcat visible (visible root))))))))
 
 (defn- scan-drafts
   [db-info ^long cutoff-ms ^long now-ms]
-  (let
-    [drafts-root
-     (workspace/drafts-store-path)
+  (let [drafts-root
+        (workspace/drafts-store-path)
 
-     rows
-     (draft-rows db-info)
+        rows
+        (draft-rows db-info)
 
-     by-root
-     (into {}
-           (keep (fn [ws]
-                   (when-let [r (:root ws)]
-                     [(canonical (io/file r)) ws]))
-                 rows))
+        by-root
+        (into {}
+              (keep (fn [ws]
+                      (when-let [r (:root ws)]
+                        [(canonical (io/file r)) ws]))
+                    rows))
 
-     entry
-     (fn [ws ^String path kind]
-       (let [activity (draft-activity-ms ws)]
-         (assoc (select-keys (tree-stats (io/file path)) [:bytes])
-           :kind kind
-           :workspace-id (:id ws)
-           :label (:label ws)
-           :state (:state ws)
-           :root path
-           :last-activity-ms (when (pos? activity) activity)
-           :age-days (when (pos? activity) (ms->days (- now-ms activity))))))
+        entry
+        (fn [ws ^String path kind]
+          (let [activity (draft-activity-ms ws)]
+            (assoc (select-keys (tree-stats (io/file path)) [:bytes])
+              :kind kind
+              :workspace-id (:id ws)
+              :label (:label ws)
+              :state (:state ws)
+              :root path
+              :last-activity-ms (when (pos? activity) activity)
+              :age-days (when (pos? activity) (ms->days (- now-ms activity))))))
 
-     ;; Rows whose clone is still on disk and whose last sign of life is
-     ;; older than the cutoff. A :discarded row with a surviving directory is
-     ;; always reclaimable — the async root release did not finish.
-     from-rows
-     (into []
-           (keep (fn [ws]
-                   (let
-                     [path (some-> (:root ws)
-                                   io/file
-                                   canonical)]
-                     (when (and path (under? drafts-root path) (exists? (io/file path)))
-                       (cond (= :discarded (:state ws)) (entry ws path :discarded)
-                             (< (draft-activity-ms ws) cutoff-ms) (entry ws path :stale)
-                             :else nil)))))
-           rows)
+        ;; Rows whose clone is still on disk and whose last sign of life is
+        ;; older than the cutoff. A :discarded row with a surviving directory is
+        ;; always reclaimable — the async root release did not finish.
+        from-rows
+        (into []
+              (keep (fn [ws]
+                      (let [path (some-> (:root ws)
+                                         io/file
+                                         canonical)]
+                        (when (and path (under? drafts-root path) (exists? (io/file path)))
+                          (cond (= :discarded (:state ws)) (entry ws path :discarded)
+                                (< (draft-activity-ms ws) cutoff-ms) (entry ws path :stale)
+                                :else nil)))))
+              rows)
 
-     ;; A directory with no row is either debris from a crashed clone or a
-     ;; store written by a different DB. Either way it is only reclaimable once
-     ;; nothing inside it has been touched since the cutoff — the same bar the
-     ;; DB-backed drafts have to clear.
-     orphans
-     (into []
-           (keep (fn [^File d]
-                   (let
-                     [path
-                      (canonical d)
+        ;; A directory with no row is either debris from a crashed clone or a
+        ;; store written by a different DB. Either way it is only reclaimable once
+        ;; nothing inside it has been touched since the cutoff — the same bar the
+        ;; DB-backed drafts have to clear.
+        orphans
+        (into []
+              (keep (fn [^File d]
+                      (let [path
+                            (canonical d)
 
-                      {:keys [bytes newest-ms]}
-                      (tree-stats d)]
+                            {:keys [bytes newest-ms]}
+                            (tree-stats d)]
 
-                     (when (and (not (contains? by-root path)) (< (long newest-ms) cutoff-ms))
-                       {:kind :orphan
-                        :root path
-                        :label (.getName d)
-                        :last-activity-ms newest-ms
-                        :age-days (ms->days (- now-ms (long newest-ms)))
-                        :bytes bytes}))))
-           (draft-dirs drafts-root))
+                        (when (and (not (contains? by-root path)) (< (long newest-ms) cutoff-ms))
+                          {:kind :orphan
+                           :root path
+                           :label (.getName d)
+                           :last-activity-ms newest-ms
+                           :age-days (ms->days (- now-ms (long newest-ms)))
+                           :bytes bytes}))))
+              (draft-dirs drafts-root))
 
-     reclaimable
-     (into from-rows orphans)]
+        reclaimable
+        (into from-rows orphans)]
 
     {:root drafts-root
      :row-count (count rows)
@@ -522,26 +513,25 @@
 
 (defn- scan-journals
   [^long cutoff-ms ^long now-ms]
-  (let
-    [dir
-     (events-dir)
+  (let [dir
+        (events-dir)
 
-     files
-     (when (.isDirectory dir)
-       (->> (or (.listFiles dir) (make-array File 0))
-            (filter #(.endsWith (.getName ^File %) ".ndjson"))))
+        files
+        (when (.isDirectory dir)
+          (->> (or (.listFiles dir) (make-array File 0))
+               (filter #(.endsWith (.getName ^File %) ".ndjson"))))
 
-     stale
-     (into []
-           (keep (fn [^File f]
-                   (when (< (.lastModified f) cutoff-ms)
-                     {:kind :journal
-                      :root (canonical f)
-                      :label (.getName f)
-                      :last-activity-ms (.lastModified f)
-                      :age-days (ms->days (- now-ms (.lastModified f)))
-                      :bytes (.length f)})))
-           files)]
+        stale
+        (into []
+              (keep (fn [^File f]
+                      (when (< (.lastModified f) cutoff-ms)
+                        {:kind :journal
+                         :root (canonical f)
+                         :label (.getName f)
+                         :last-activity-ms (.lastModified f)
+                         :age-days (ms->days (- now-ms (.lastModified f)))
+                         :bytes (.length f)})))
+              files)]
 
     {:root (canonical dir)
      :file-count (count files)
@@ -558,21 +548,20 @@
    Options: `:db-info` (nil is fine, drafts then reduce to on-disk orphans),
    `:days` (defaults to `default-stale-days`) and `:now-ms` for tests."
   [{:keys [db-info days now-ms]}]
-  (let
-    [days
-     (long (or days default-stale-days))
+  (let [days
+        (long (or days default-stale-days))
 
-     now
-     (long (or now-ms (System/currentTimeMillis)))
+        now
+        (long (or now-ms (System/currentTimeMillis)))
 
-     cutoff
-     (- now (* days (long day-ms)))
+        cutoff
+        (- now (* days (long day-ms)))
 
-     drafts
-     (try (scan-drafts db-info cutoff now) (catch Throwable _ nil))
+        drafts
+        (try (scan-drafts db-info cutoff now) (catch Throwable _ nil))
 
-     journals
-     (try (scan-journals cutoff now) (catch Throwable _ nil))]
+        journals
+        (try (scan-journals cutoff now) (catch Throwable _ nil))]
 
     {:days days
      :cutoff-ms cutoff
@@ -583,29 +572,28 @@
 
 (defn- purge-one!
   [db-info drafts-root events-root {:keys [kind root workspace-id] :as item}]
-  (let
-    [ok (case kind
-          ;; A live draft row goes out the front door: state transition, hooks,
-          ;; and backend-owned root release, identical to `/draft abandon`.
-          :stale
-          (try (let
-                 [{:keys [discard-future]}
-                  (workspace/abandon! db-info {:workspace-id workspace-id :reason :housekeeping})]
-                 (when discard-future (deref discard-future 30000 nil))
-                 (when (exists? (io/file root))
-                   (when (under? drafts-root root) (delete-tree! (io/file root))))
-                 true)
-               (catch Throwable _ false))
+  (let [ok (case kind
+             ;; A live draft row goes out the front door: state transition, hooks,
+             ;; and backend-owned root release, identical to `/draft abandon`.
+             :stale
+             (try (let [{:keys [discard-future]} (workspace/abandon! db-info
+                                                                     {:workspace-id workspace-id
+                                                                      :reason :housekeeping})]
+                    (when discard-future (deref discard-future 30000 nil))
+                    (when (exists? (io/file root))
+                      (when (under? drafts-root root) (delete-tree! (io/file root))))
+                    true)
+                  (catch Throwable _ false))
 
-          (:discarded :orphan)
-          (boolean (and (under? drafts-root root) (pos? (delete-tree! (io/file root)))))
+             (:discarded :orphan)
+             (boolean (and (under? drafts-root root) (pos? (delete-tree! (io/file root)))))
 
-          :journal
-          (boolean (and (under? events-root root)
-                        (try (Files/deleteIfExists (.toPath (io/file root)))
-                             (catch Throwable _ false))))
+             :journal
+             (boolean (and (under? events-root root)
+                           (try (Files/deleteIfExists (.toPath (io/file root)))
+                                (catch Throwable _ false))))
 
-          false)]
+             false)]
     (assoc item :is-purged ok)))
 
 (defn purge!
@@ -615,12 +603,11 @@
    With `:is-dry-run` true nothing is touched: `:purged` still carries the plan
    with every item stamped `:is-purged false`, so operators can look first."
   [{:keys [db-info is-dry-run] :as opts}]
-  (let
-    [{:keys [drafts journals] :as report}
-     (scan opts)
+  (let [{:keys [drafts journals] :as report}
+        (scan opts)
 
-     items
-     (into (vec (:reclaimable drafts)) (:reclaimable journals))]
+        items
+        (into (vec (:reclaimable drafts)) (:reclaimable journals))]
 
     (if is-dry-run
       (assoc report

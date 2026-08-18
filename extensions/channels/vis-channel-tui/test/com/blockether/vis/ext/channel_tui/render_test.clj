@@ -126,24 +126,22 @@
         (expect (str/includes? txt "12 results"))
         (expect (not (str/includes? txt "GREP")))))
   (it "never paints an op name, however unheard-of the op"
-      (let
-        [txt (str/join "\n"
-                       (map strip-ansi
-                            (render-forms [(result-form "totally_unknown_op" "1 row")])))]
+      (let [txt (str/join "\n"
+                          (map strip-ansi
+                               (render-forms [(result-form "totally_unknown_op" "1 row")])))]
         (expect (str/includes? txt "1 row"))
         (expect (not (str/includes? txt "TOTALLY_UNKNOWN_OP")))))
   (it "never paints a private transport op a handle method answered"
-      (let
-        [txt (str/join "\n" (map strip-ansi (render-forms [(result-form "_shell_wait" "exit 0")])))]
+      (let [txt (str/join "\n"
+                          (map strip-ansi (render-forms [(result-form "_shell_wait" "exit 0")])))]
         (expect (str/includes? txt "exit 0"))
         (expect (not (str/includes? txt "_SHELL_WAIT")))))
   (it "leaves the block's own output unlabeled"
-      (let
-        [txt (str/join
-               "\n"
-               (map strip-ansi
-                    (render-forms
-                      [{:success? true :code "print(1)" :result-summary "1" :result "1"}])))]
+      (let [txt (str/join
+                  "\n"
+                  (map strip-ansi
+                       (render-forms
+                         [{:success? true :code "print(1)" :result-summary "1" :result "1"}])))]
         (expect (not (str/includes? txt "RESULT"))))))
 
 (defdescribe
@@ -177,32 +175,32 @@
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
   (it
     "keeps a failed program with only two surplus source lines inline in full"
-    (let
-      [code
-       (str "first = 1\n"
-            "second = 2\n" "third = 3\n"
-            "fourth = 4\n" "fifth = 5\n"
-            "print(PYCODEMARKER)\n" "x = 1/0")
+    (let [code
+          (str "first = 1\n"
+               "second = 2\n" "third = 3\n"
+               "fourth = 4\n" "fifth = 5\n"
+               "print(PYCODEMARKER)\n" "x = 1/0")
 
-       entries
-       (format-iteration-entry-entries
-         (iteration/canonicalize
-           {:position 0
-            :thinking nil
-            :forms [{:success? false
-                     :code code
-                     :error {:message
-                             (str "ZeroDivisionError: division by zero\n\n" "7: x = 1/0\n" "   ^")
-                             ;; Runtime metadata may contain only an
-                             ;; excerpt; it must not replace `code`.
-                             :block {:source "RUNTIME_EXCERPT_ONLY" :row 7 :col 1}}
-                     :result nil}]})
-         80
-         1
-         {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+          entries
+          (format-iteration-entry-entries
+            (iteration/canonicalize
+              {:position 0
+               :thinking nil
+               :forms [{:success? false
+                        :code code
+                        :error {:message (str "ZeroDivisionError: division by zero\n\n"
+                                              "7: x = 1/0\n"
+                                              "   ^")
+                                ;; Runtime metadata may contain only an
+                                ;; excerpt; it must not replace `code`.
+                                :block {:source "RUNTIME_EXCERPT_ONLY" :row 7 :col 1}}
+                        :result nil}]})
+            80
+            1
+            {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-       txt
-       (str/join "\n" (map (comp strip-ansi :line) entries))]
+          txt
+          (str/join "\n" (map (comp strip-ansi :line) entries))]
 
       (expect (not (str/includes? txt "PYTHON")))
       (expect (str/includes? txt "first = 1"))
@@ -211,26 +209,25 @@
       (expect (not (str/includes? txt "RUNTIME_EXCERPT_ONLY")))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" txt))))))
   (it "defaults a long failed program collapsed without hiding its source preview or error"
-      (let
-        [code
-         (str "first = 1\nsecond = 2\nthird = 3\nfourth = 4\nfifth = 5\n"
-              "sixth = 6\nseventh = 7\neighth = 8\nx = 1/0")
+      (let [code
+            (str "first = 1\nsecond = 2\nthird = 3\nfourth = 4\nfifth = 5\n"
+                 "sixth = 6\nseventh = 7\neighth = 8\nx = 1/0")
 
-         txt
-         (str/join "\n"
-                   (map (comp strip-sentinels strip-ansi :line)
-                        (format-iteration-entry-entries
-                          (iteration/canonicalize
-                            {:position 0
-                             :thinking nil
-                             :forms [{:success? false
-                                      :code code
-                                      :error {:message "ZeroDivisionError: division by zero"
-                                              :block {:row 9 :col 1}}
-                                      :result nil}]})
-                          80
-                          1
-                          {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})))]
+            txt
+            (str/join "\n"
+                      (map (comp strip-sentinels strip-ansi :line)
+                           (format-iteration-entry-entries
+                             (iteration/canonicalize
+                               {:position 0
+                                :thinking nil
+                                :forms [{:success? false
+                                         :code code
+                                         :error {:message "ZeroDivisionError: division by zero"
+                                                 :block {:row 9 :col 1}}
+                                         :result nil}]})
+                             80
+                             1
+                             {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})))]
 
         (expect (str/includes? txt "PYTHON +"))
         (expect (str/includes? txt "first = 1"))
@@ -244,15 +241,15 @@
              ;; plain code marker made a failed python block read exactly like a
              ;; successful one, so the row must carry the ERROR marker (red fg).
              (it "marks a failed python block's error row as an error row"
-                 (let
-                   [lines
-                    (render-forms [{:success? false
-                                    :code "r = await shell({\"op\": \"background\"})"
-                                    :error {:message "shell op background needs an ERRMARKER id."}
-                                    :result nil}])
+                 (let [lines
+                       (render-forms [{:success? false
+                                       :code "r = await shell({\"op\": \"background\"})"
+                                       :error {:message
+                                               "shell op background needs an ERRMARKER id."}
+                                       :result nil}])
 
-                    err-lines
-                    (filter #(str/includes? (str %) "ERRMARKER") lines)]
+                       err-lines
+                       (filter #(str/includes? (str %) "ERRMARKER") lines)]
 
                    (expect (seq err-lines))
                    (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
@@ -291,32 +288,30 @@
   ;; in the terminal. Parity: the card head wears the figure in the same
   ;; right-aligned slot the id badge owns, on the head's LAST line.
   (it "paints the duration at the right edge of a plain card head"
-      (let
-        [lines
-         (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 2300)])
+      (let [lines
+            (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 2300)])
 
-         head
-         (first (filter #(str/includes? % "12 results") lines))]
+            head
+            (first (filter #(str/includes? % "12 results") lines))]
 
         (expect (some? head) (str "got: " lines))
         (expect (str/ends-with? (str/trimr (strip-sentinels (body-of head))) "2.3s"))))
   (it "paints the duration on the collapsible head, which stays the toggle"
-      (let
-        [entries
-         (format-iteration-entry-entries
-           (iteration/canonicalize {:position 0
-                                    :thinking nil
-                                    :forms [{:success? true
-                                             :code ""
-                                             :result-summary "12 results"
-                                             :result-render "**STDOUT**\n```\none hit\n```"
-                                             :duration-ms 2300}]})
-           80
-           1
-           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+      (let [entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize {:position 0
+                                       :thinking nil
+                                       :forms [{:success? true
+                                                :code ""
+                                                :result-summary "12 results"
+                                                :result-render "**STDOUT**\n```\none hit\n```"
+                                                :duration-ms 2300}]})
+              80
+              1
+              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-         head
-         (first (filter #(str/includes? (body-of (:line %)) "12 results") entries))]
+            head
+            (first (filter #(str/includes? (body-of (:line %)) "12 results") entries))]
 
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
@@ -330,37 +325,35 @@
         (expect (= :toggle-details (:kind (:meta head))))
         (expect (= 77 (count (str/trimr (strip-sentinels (strip-ansi (body-of (:line head))))))))))
   (it "paints nothing when the duration is zero or absent"
-      (let
-        [zero
-         (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 0)])
+      (let [zero
+            (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 0)])
 
-         none
-         (render-forms [(result-form "grep" "12 results")])
+            none
+            (render-forms [(result-form "grep" "12 results")])
 
-         head
-         (fn [lines]
-           (str/trimr (strip-sentinels (body-of (first (filter #(str/includes? % "12 results")
-                                                               lines))))))]
+            head
+            (fn [lines]
+              (str/trimr (strip-sentinels (body-of (first (filter #(str/includes? % "12 results")
+                                                                  lines))))))]
 
         (expect (not (str/includes? (head zero) "0ms")))
         (expect (= (head zero) (head none)))))
   (it "carries the duration on the long-result RESULT disclosure head"
-      (let
-        [entries
-         (format-iteration-entry-entries
-           (iteration/canonicalize {:position 0
-                                    :thinking nil
-                                    :forms [{:success? true
-                                             :code "x = 1"
-                                             :result (str/join "\n"
-                                                               (map #(str "line " %) (range 1 40)))
-                                             :duration-ms 61000}]})
-           80
-           1
-           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+      (let [entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize {:position 0
+                                       :thinking nil
+                                       :forms [{:success? true
+                                                :code "x = 1"
+                                                :result
+                                                (str/join "\n" (map #(str "line " %) (range 1 40)))
+                                                :duration-ms 61000}]})
+              80
+              1
+              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-         head
-         (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
+            head
+            (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
 
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
@@ -378,26 +371,24 @@
         (expect (some #(str/ends-with? (str/trimr (strip-sentinels (body-of %))) "9.0s") lines)
                 (str "got: " lines))))
   (it "rides the duration on a failed call's error row"
-      (let
-        [lines
-         (render-forms [{:success? false
-                         :code "boom()"
-                         :error {:message "kaboom"}
-                         :result nil
-                         :duration-ms 2300}])
+      (let [lines
+            (render-forms [{:success? false
+                            :code "boom()"
+                            :error {:message "kaboom"}
+                            :result nil
+                            :duration-ms 2300}])
 
-         err-line
-         (first (filter #(str/includes? (str %) "kaboom") lines))]
+            err-line
+            (first (filter #(str/includes? (str %) "kaboom") lines))]
 
         (expect (some? err-line) (str "got: " lines))
         (expect (str/starts-with? (str err-line) p/MARKER_ERR_RESULT))
         (expect (str/ends-with? (str/trimr (strip-sentinels (body-of err-line))) "2.3s"))))
   (it "never stamps a second copy when a card head already wears the figure"
-      (let
-        [txt (str/join "\n"
-                       (map (comp strip-sentinels strip-ansi)
-                            (render-forms [(assoc (result-form "grep" "12 results")
-                                             :duration-ms 2300)])))]
+      (let [txt (str/join "\n"
+                          (map (comp strip-sentinels strip-ansi)
+                               (render-forms [(assoc (result-form "grep" "12 results")
+                                                :duration-ms 2300)])))]
         (expect (= 1 (count (re-seq #"2\.3s" txt))) txt))))
 
 (defdescribe input-overflow-hint-test
@@ -428,24 +419,23 @@
         ;; The right-aligned `BLOCK N` / `ITERATION N` / `CODE N` header bands
         ;; were retired per user directive (see comments in render.clj). Per-form
         ;; status footers are gone too; code blocks are source-only.
-        (let
-          [lines
-           (format-iteration-entry {:iteration 0
-                                    :forms [{:code "(reduce + (range 1000))"
-                                             :comment nil
-                                             :render-segments nil
-                                             :stdout nil
-                                             :error nil
-                                             :started-at-ms 1000
-                                             :duration-ms 0
-                                             :success? nil
-                                             :silent? false}]}
-                                   40
-                                   1
-                                   {:now-ms 2500})
+        (let [lines
+              (format-iteration-entry {:iteration 0
+                                       :forms [{:code "(reduce + (range 1000))"
+                                                :comment nil
+                                                :render-segments nil
+                                                :stdout nil
+                                                :error nil
+                                                :started-at-ms 1000
+                                                :duration-ms 0
+                                                :success? nil
+                                                :silent? false}]}
+                                      40
+                                      1
+                                      {:now-ms 2500})
 
-           code-line
-           (first (filter #(str/includes? (strip-ansi %) "reduce") lines))]
+              code-line
+              (first (filter #(str/includes? (strip-ansi %) "reduce") lines))]
 
           ;; A live-running block's raw :code paints verbatim with a MARKER_CODE
           (expect (not-any? #(str/includes? % "BLOCK 1") lines))
@@ -455,23 +445,22 @@
           (expect (not-any? #(str/includes? % "↻") lines))
           (expect (not-any? #(str/includes? % "1.0s") lines)))))
   (it "renders the block's raw code verbatim — the canonical web block-code contract"
-      (let
-        [lines
-         (format-iteration-entry {:iteration 0
-                                  :forms [{:code "git_status()\nprint(42)"
-                                           :comment nil
-                                           :stdout nil
-                                           :error nil
-                                           :started-at-ms nil
-                                           :duration-ms 1
-                                           :success? true
-                                           :silent? false}]}
-                                 60
-                                 1
-                                 {})
+      (let [lines
+            (format-iteration-entry {:iteration 0
+                                     :forms [{:code "git_status()\nprint(42)"
+                                              :comment nil
+                                              :stdout nil
+                                              :error nil
+                                              :started-at-ms nil
+                                              :duration-ms 1
+                                              :success? true
+                                              :silent? false}]}
+                                    60
+                                    1
+                                    {})
 
-         body
-         (str/join "\n" (map (comp strip-ansi body-of) lines))]
+            body
+            (str/join "\n" (map (comp strip-ansi body-of) lines))]
 
         ;; The model's raw :code paints in full — no render-segment filtering,
         ;; no show-raw-code gate (identical to web's `block-code`). Engine-chrome
@@ -481,38 +470,37 @@
         (expect (str/includes? body "print(42)"))))
   (it
     "syntax-highlights malformed Python while retaining its inline error caret"
-    (let
-      [code
-       "def broken(:\n    return 1"
+    (let [code
+          "def broken(:\n    return 1"
 
-       err
-       {:message "invalid syntax"
-        :trace "SyntaxError: invalid syntax"
-        :block {:source code :row 1 :col 12}}
+          err
+          {:message "invalid syntax"
+           :trace "SyntaxError: invalid syntax"
+           :block {:source code :row 1 :col 12}}
 
-       lines
-       (format-iteration-entry {:iteration 0
-                                :forms [{:code code
-                                         :comment nil
-                                         :render-segments nil
-                                         :stdout nil
-                                         :error err
-                                         :started-at-ms nil
-                                         :duration-ms 1
-                                         :success? false
-                                         :silent? false}]}
-                               80
-                               1
-                               {})
+          lines
+          (format-iteration-entry {:iteration 0
+                                   :forms [{:code code
+                                            :comment nil
+                                            :render-segments nil
+                                            :stdout nil
+                                            :error err
+                                            :started-at-ms nil
+                                            :duration-ms 1
+                                            :success? false
+                                            :silent? false}]}
+                                  80
+                                  1
+                                  {})
 
-       visible
-       (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          visible
+          (mapv (comp strip-sentinels strip-ansi body-of) lines)
 
-       body
-       (str/join "\n" visible)
+          body
+          (str/join "\n" visible)
 
-       error-line
-       (first (filter #(str/includes? % "invalid syntax") lines))]
+          error-line
+          (first (filter #(str/includes? % "invalid syntax") lines))]
 
       (expect (str/includes? body "def broken(:"))
       (expect (str/includes? body "return 1"))
@@ -525,40 +513,39 @@
       (expect (= p/MARKER_ERR_RESULT (marker-of error-line)))))
   (it
     "renders a form eval error message exactly once"
-    (let
-      [code
-       "(clj/eval {:code \"(+ 1 2)\"})"
+    (let [code
+          "(clj/eval {:code \"(+ 1 2)\"})"
 
-       msg
-       "nREPL connect failed on localhost:7888 — is the REPL running? Try (clj/ports)."
+          msg
+          "nREPL connect failed on localhost:7888 — is the REPL running? Try (clj/ports)."
 
-       err
-       {:type :clojure.lang/exception-info
-        :message msg
-        :trace (str "clojure.lang.ExceptionInfo: " msg)
-        :block {:source code :row 1 :col 2}}
+          err
+          {:type :clojure.lang/exception-info
+           :message msg
+           :trace (str "clojure.lang.ExceptionInfo: " msg)
+           :block {:source code :row 1 :col 2}}
 
-       lines
-       (format-iteration-entry {:iteration 0
-                                :error err
-                                :forms [{:code code
-                                         :comment nil
-                                         :render-segments nil
-                                         :stdout nil
-                                         :error err
-                                         :started-at-ms nil
-                                         :duration-ms 1
-                                         :success? false
-                                         :silent? false}]}
-                               100
-                               1
-                               {})
+          lines
+          (format-iteration-entry {:iteration 0
+                                   :error err
+                                   :forms [{:code code
+                                            :comment nil
+                                            :render-segments nil
+                                            :stdout nil
+                                            :error err
+                                            :started-at-ms nil
+                                            :duration-ms 1
+                                            :success? false
+                                            :silent? false}]}
+                                  100
+                                  1
+                                  {})
 
-       visible
-       (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          visible
+          (mapv (comp strip-sentinels strip-ansi body-of) lines)
 
-       body
-       (str/join "\n" visible)]
+          body
+          (str/join "\n" visible)]
 
       (expect (str/includes? body "(clj/eval"))
       (expect (not (str/includes? body " 1:")))
@@ -577,24 +564,23 @@
       ;;   iteration-pad
       ;; Plain `:value` form results no longer render — the trailing
       ;; result row is gone for non-tool forms per user directive.
-      (let
-        [lines
-         (format-iteration-entry {:iteration 0
-                                  :forms [{:code "(+ 1 2)"
-                                           :comment nil
-                                           :render-segments nil
-                                           :stdout nil
-                                           :error nil
-                                           :started-at-ms nil
-                                           :duration-ms 1
-                                           :success? true
-                                           :silent? false}]}
-                                 40
-                                 1
-                                 {})
+      (let [lines
+            (format-iteration-entry {:iteration 0
+                                     :forms [{:code "(+ 1 2)"
+                                              :comment nil
+                                              :render-segments nil
+                                              :stdout nil
+                                              :error nil
+                                              :started-at-ms nil
+                                              :duration-ms 1
+                                              :success? true
+                                              :silent? false}]}
+                                    40
+                                    1
+                                    {})
 
-         bodies
-         (mapv (comp strip-ansi body-of) lines)]
+            bodies
+            (mapv (comp strip-ansi body-of) lines)]
 
         ;; The retired status footer took the FIGURE with it, and the companion
         ;; paints one on every band: the status glyph stays gone, the duration
@@ -605,87 +591,83 @@
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
   (it "pads displayed form comments by one column"
       (with-raw-code-on
-        (let
-          [lines
-           (format-iteration-entry {:iteration 0
-                                    :forms [{:code "(+ 1 2)"
-                                             :comment ";; why this runs"
-                                             :render-segments nil
-                                             :stdout nil
-                                             :error nil
-                                             :started-at-ms nil
-                                             :duration-ms 0
-                                             :success? nil
-                                             :silent? false}]}
-                                   40
-                                   1
-                                   {})
+        (let [lines
+              (format-iteration-entry {:iteration 0
+                                       :forms [{:code "(+ 1 2)"
+                                                :comment ";; why this runs"
+                                                :render-segments nil
+                                                :stdout nil
+                                                :error nil
+                                                :started-at-ms nil
+                                                :duration-ms 0
+                                                :success? nil
+                                                :silent? false}]}
+                                      40
+                                      1
+                                      {})
 
-           comment-line
-           (first (filter #(str/includes? % ";; why this runs") lines))]
+              comment-line
+              (first (filter #(str/includes? % ";; why this runs") lines))]
 
           (expect (= p/MARKER_THINKING (marker-of comment-line)))
           (expect (str/starts-with? (body-of comment-line) " ;;")))))
   (describe "provider-fallback-notice-test"
             (it "renders provider fallback recap lines above fallback details"
-                (let
-                  [lines
-                   (format-iteration-entry {:provider-fallbacks
-                                            [{:failed-provider {:id :anthropic-coding-plan
-                                                                :model "claude-opus-4-7"
-                                                                :error
-                                                                "Exceptional status code: 429"}}]}
-                                           120
-                                           1
-                                           {})
+                (let [lines
+                      (format-iteration-entry {:provider-fallbacks
+                                               [{:failed-provider
+                                                 {:id :anthropic-coding-plan
+                                                  :model "claude-opus-4-7"
+                                                  :error "Exceptional status code: 429"}}]}
+                                              120
+                                              1
+                                              {})
 
-                   body
-                   (str/join "\n" (map (comp strip-ansi body-of) lines))]
+                      body
+                      (str/join "\n" (map (comp strip-ansi body-of) lines))]
 
                   ;; The recap rail is retired; provider fallback notices were
                   ;; recap-only rows and no longer surface.
                   (expect (not (str/includes? body "RECAP")))
                   (expect (not (str/includes? body "Provider fallback:"))))))
   (it "formats same-provider retry notices as recap rows"
-      (let
-        [lines
-         (format-iteration-entry {:provider-fallbacks [{:event/type :llm.routing/provider-retry
-                                                        :provider "anthropic-coding-plan"
-                                                        :model "claude-opus-4-7"
-                                                        :reason :rate-limit
-                                                        :delay-ms 2000}]}
-                                 120
-                                 1
-                                 {})
+      (let [lines
+            (format-iteration-entry {:provider-fallbacks [{:event/type :llm.routing/provider-retry
+                                                           :provider "anthropic-coding-plan"
+                                                           :model "claude-opus-4-7"
+                                                           :reason :rate-limit
+                                                           :delay-ms 2000}]}
+                                    120
+                                    1
+                                    {})
 
-         ;; Recap row wraps when wider than the bubble: line N+1
-         ;; carries a leading space (continuation indent). Trim each
-         ;; wrapped fragment then join with a SINGLE space so two
-         ;; meaningful spaces inside the recap badge (\"RECAP  Provider\")
-         ;; survive the merge. Substring check pins CONTENT, not
-         ;; column width.
-         body
-         (->> lines
-              (map (comp str/trim strip-ansi body-of))
-              (str/join " "))]
+            ;; Recap row wraps when wider than the bubble: line N+1
+            ;; carries a leading space (continuation indent). Trim each
+            ;; wrapped fragment then join with a SINGLE space so two
+            ;; meaningful spaces inside the recap badge (\"RECAP  Provider\")
+            ;; survive the merge. Substring check pins CONTENT, not
+            ;; column width.
+            body
+            (->> lines
+                 (map (comp str/trim strip-ansi body-of))
+                 (str/join " "))]
 
         ;; Retired with the recap rail — same-provider retry notices were
         ;; recap-only rows and no longer surface.
         (expect (not (str/includes? body "RECAP")))))
   (it "renders provider error recap lines above provider error details"
-      (let
-        [lines
-         (format-iteration-entry {:error {:type :svar.core/http-error
-                                          :message "Exceptional status code: 429"
-                                          :data {:status 429 :body "rate limit"}}}
-                                 120
-                                 1
-                                 {})
+      (let [lines
+            (format-iteration-entry {:error {:type :svar.core/http-error
+                                             :message "Exceptional status code: 429"
+                                             :data {:status 429 :body "rate limit"}}}
+                                    120
+                                    1
+                                    {})
 
-         body
-         (->> lines
-              (map (comp str/trim strip-sentinels strip-ansi body-of))
-              (str/join " "))]
+            body
+            (->> lines
+                 (map (comp str/trim strip-sentinels strip-ansi body-of))
+                 (str/join " "))]
 
         ;; The recap rail is retired; the provider error itself still
         ;; surfaces its actionable guidance via the error panel.
@@ -697,23 +679,22 @@
       ;; the user typed — so the band shows `sleep 30` in bash and never the
       ;; `await shell({…})` call the engine synthesized around it. A python block
       ;; has no such stand-in: its source IS what the model wrote.
-      (let
-        [entry-lines
-         (fn [form]
-           (format-iteration-entry {:iteration 0
-                                    :forms [(merge {:started-at-ms 1000 :success? nil} form)]}
-                                   80
-                                   1
-                                   {:now-ms 2500}))
+      (let [entry-lines
+            (fn [form]
+              (format-iteration-entry {:iteration 0
+                                       :forms [(merge {:started-at-ms 1000 :success? nil} form)]}
+                                      80
+                                      1
+                                      {:now-ms 2500}))
 
-         shell-lines
-         (entry-lines {:op "shell"
-                       :code "await shell({\"command\": \"sleep 30\"})"
-                       :display-code "sleep 30"
-                       :display-language "bash"})
+            shell-lines
+            (entry-lines {:op "shell"
+                          :code "await shell({\"command\": \"sleep 30\"})"
+                          :display-code "sleep 30"
+                          :display-language "bash"})
 
-         python-lines
-         (entry-lines {:code "print(1)"})]
+            python-lines
+            (entry-lines {:code "print(1)"})]
 
         (expect (some? (first (filter #(str/includes? (strip-ansi %) "sleep 30") shell-lines))))
         (expect (nil? (first (filter #(str/includes? (strip-ansi %) "command\":") shell-lines))))
@@ -756,21 +737,20 @@
 (defdescribe
   provider-transport-error-test
   (it "renders a transport blip (no HTTP status) as a structured provider error, not one plain line"
-      (let
-        [lines
-         (format-iteration-entry {:error {:type :svar.core/http-error
-                                          ;; A socket that died before any byte arrived carries
-                                          ;; NO :status/:body/:request-id — only the wrapper text.
-                                          :message "HTTP/1.1 header parser received no bytes"
-                                          :data {:stream? true}}}
-                                 120
-                                 1
-                                 {})
+      (let [lines
+            (format-iteration-entry {:error {:type :svar.core/http-error
+                                             ;; A socket that died before any byte arrived carries
+                                             ;; NO :status/:body/:request-id — only the wrapper text.
+                                             :message "HTTP/1.1 header parser received no bytes"
+                                             :data {:stream? true}}}
+                                    120
+                                    1
+                                    {})
 
-         body
-         (->> lines
-              (map (comp str/trim strip-sentinels strip-ansi body-of))
-              (str/join " "))]
+            body
+            (->> lines
+                 (map (comp str/trim strip-sentinels strip-ansi body-of))
+                 (str/join " "))]
 
         ;; It must get the shared provider-error treatment: the split
         ;; explanation / NEXT STEP / facts rows — NOT the raw wrapper dumped as a
@@ -806,10 +786,9 @@
                 (or (= n 0x200B) (= n 0x200C) (= n 0x200D) (= n 0xFEFF) (<= 0x2060 n 0x206F))))
             s)
           true
-          :else (let
-                  [c0 (.charAt ^String s 0)
-                   n0 (int c0)
-                   body (subs s 1)]
+          :else (let [c0 (.charAt ^String s 0)
+                      n0 (int c0)
+                      body (subs s 1)]
 
                   (and (<= 0xE000 n0 0xE0FF) (str/blank? body))))))
 
@@ -819,44 +798,42 @@
   ;; margin row above the answer zone, then one answer-bg inside pad
   ;; row before text. If a code-bearing trace already ended with a
   ;; neutral iteration pad, reuse that row as the outside margin.
-  (let
-    [ans
-     "hello"
+  (let [ans
+        "hello"
 
-     settings
-     {:show-thinking true :show-iterations true}
+        settings
+        {:show-thinking true :show-iterations true}
 
-     iter
-     {:forms [{:code "(+ 1 1)"
-               :comment nil
-               :render-segments nil
-               :stdout nil
-               :error nil
-               :started-at-ms nil
-               :duration-ms 1
-               :success? true
-               :silent? false}]}
+        iter
+        {:forms [{:code "(+ 1 1)"
+                  :comment nil
+                  :render-segments nil
+                  :stdout nil
+                  :error nil
+                  :started-at-ms nil
+                  :duration-ms 1
+                  :success? true
+                  :silent? false}]}
 
-     index-of
-     (fn [p needle]
-       (first (keep-indexed (fn [i ln]
-                              (when (str/includes? (strip-ansi ln) needle) i))
-                            (:lines p))))]
+        index-of
+        (fn [p needle]
+          (first (keep-indexed (fn [i ln]
+                                 (when (str/includes? (strip-ansi ln) needle) i))
+                               (:lines p))))]
 
     (it "answer with NO trace renders directly without internal answer padding"
-        (let
-          [p
-           (render/format-answer-with-thinking-data* ans [] 80 settings nil false nil)
+        (let [p
+              (render/format-answer-with-thinking-data* ans [] 80 settings nil false nil)
 
-           idx
-           (index-of p "hello")
+              idx
+              (index-of p "hello")
 
-           ln
-           (:lines p)
+              ln
+              (:lines p)
 
-           pad?
-           (fn [line]
-             (str/starts-with? line p/MARKER_ANSWER_PAD))]
+              pad?
+              (fn [line]
+                (str/starts-with? line p/MARKER_ANSWER_PAD))]
 
           ;; Top-margin blank row pushes content down by one.
           (expect (= 1 idx))
@@ -865,19 +842,18 @@
     (it "engine-mutation recaps no longer render in the trace"
         ;; The RECAP rail is fully retired: an iteration carrying
         ;; `:recaps` produces no RECAP rows above the answer.
-        (let
-          [p
-           (render/format-answer-with-thinking-data*
-             ans
-             [{:recaps ["Title — \"Wyjaśnienie rozmiaru kontekstu\""]}]
-             80
-             settings
-             nil
-             false
-             nil)
+        (let [p
+              (render/format-answer-with-thinking-data*
+                ans
+                [{:recaps ["Title — \"Wyjaśnienie rozmiaru kontekstu\""]}]
+                80
+                settings
+                nil
+                false
+                nil)
 
-           answer-idx
-           (index-of p "hello")]
+              answer-idx
+              (index-of p "hello")]
 
           (expect (some? answer-idx))
           (expect (nil? (index-of p "RECAP")))))
@@ -900,18 +876,18 @@
       ;; identical blank rows appears above the answer (regression
       ;; guard for the old triple-stacked terminal-bg blanks).
       (with-raw-code-on
-        (let
-          [p
-           (render/format-answer-with-thinking-data* ans [iter] 80 settings nil false nil)
+        (let [p
+              (render/format-answer-with-thinking-data* ans [iter] 80 settings nil false nil)
 
-           idx
-           (index-of p "hello")
+              idx
+              (index-of p "hello")
 
-           ln
-           (:lines p)
+              ln
+              (:lines p)
 
-           above
-           (when (and idx (>= idx 3)) [(nth ln (dec idx)) (nth ln (- idx 2)) (nth ln (- idx 3))])]
+              above
+              (when (and idx (>= idx 3))
+                [(nth ln (dec idx)) (nth ln (- idx 2)) (nth ln (- idx 3))])]
 
           (expect (some? idx))
           (expect (visually-blank? (nth ln (dec idx))))
@@ -920,15 +896,14 @@
           ;; `cancel-text` falls back to the answer text when the IR is
           ;; non-empty. Cancelled turns are flat system notes, so they use
           ;; only the outside margin, not answer-bg inside padding.
-          (let
-            [p
-             (render/format-answer-with-thinking-data* ans [iter] 80 settings nil true nil)
+          (let [p
+                (render/format-answer-with-thinking-data* ans [iter] 80 settings nil true nil)
 
-             idx
-             (index-of p "hello")
+                idx
+                (index-of p "hello")
 
-             ln
-             (:lines p)]
+                ln
+                (:lines p)]
 
             (expect (some? idx))
             (expect (visually-blank? (nth ln (dec idx))))
@@ -936,25 +911,24 @@
 
 (defdescribe collapsed-thinking-keeps-streamed-answer-visible-test
              (it "keeps live provider prose outside the collapsed THINKING accordion"
-                 (let
-                   [thinking
-                    (str/join "\n" (repeat 12 "private reasoning row"))
+                 (let [thinking
+                       (str/join "\n" (repeat 12 "private reasoning row"))
 
-                    answer
-                    "This is the full visible answer."
+                       answer
+                       "This is the full visible answer."
 
-                    lines
-                    (:lines (render/format-answer-with-thinking-data*
-                              nil
-                              [{:thinking thinking :content-stream answer}]
-                              80
-                              {:show-thinking true :show-iterations true}
-                              nil
-                              false
-                              {:session-id "sid" :session-turn-id "turn" :detail-expansions {}}))
+                       lines
+                       (:lines (render/format-answer-with-thinking-data*
+                                 nil
+                                 [{:thinking thinking :content-stream answer}]
+                                 80
+                                 {:show-thinking true :show-iterations true}
+                                 nil
+                                 false
+                                 {:session-id "sid" :session-turn-id "turn" :detail-expansions {}}))
 
-                    visible
-                    (mapv (comp str/trim strip-sentinels strip-ansi) lines)]
+                       visible
+                       (mapv (comp str/trim strip-sentinels strip-ansi) lines)]
 
                    (expect (some #(str/includes? % "THINKING  +") visible))
                    (expect (some #(str/includes? % answer) visible)))))
@@ -967,30 +941,29 @@
              ;; including paragraph-separator blanks — as non-blank. When the
              ;; 6-row peek window ended on a blank separator the " …" landed there
              ;; and rendered alone on its own otherwise-empty line.
-             (let
-               [;; A thinking text whose 6th wrapped row is a blank paragraph
-                ;; separator, with enough rows after it to force the collapse.
-                thinking
-                (str "The patch was applied successfully. Now I need to verify the change "
-                     "works by evaluating the namespace in the REPL, then close the task.\n\n"
-                     "Let me verify by loading the file or at least checking the changed "
-                     "lines look correct.\n\n" "The diff looks correct.\n\n"
-                     "More reasoning after the diff that should be hidden.\n"
-                     "Even more hidden reasoning lines here.\n")
+             (let [;; A thinking text whose 6th wrapped row is a blank paragraph
+                   ;; separator, with enough rows after it to force the collapse.
+                   thinking
+                   (str "The patch was applied successfully. Now I need to verify the change "
+                        "works by evaluating the namespace in the REPL, then close the task.\n\n"
+                        "Let me verify by loading the file or at least checking the changed "
+                        "lines look correct.\n\n" "The diff looks correct.\n\n"
+                        "More reasoning after the diff that should be hidden.\n"
+                        "Even more hidden reasoning lines here.\n")
 
-                stid
-                "abcd1234-5678-9999"
+                   stid
+                   "abcd1234-5678-9999"
 
-                visible
-                (->> (:lines (render/format-answer-with-thinking-data*
-                               nil
-                               [{:thinking thinking}]
-                               80
-                               {:show-thinking true :show-iterations true}
-                               nil
-                               false
-                               {:session-id "sid" :session-turn-id stid :detail-expansions {}}))
-                     (mapv (comp str/trimr strip-sentinels strip-ansi body-of)))]
+                   visible
+                   (->> (:lines (render/format-answer-with-thinking-data*
+                                  nil
+                                  [{:thinking thinking}]
+                                  80
+                                  {:show-thinking true :show-iterations true}
+                                  nil
+                                  false
+                                  {:session-id "sid" :session-turn-id stid :detail-expansions {}}))
+                        (mapv (comp str/trimr strip-sentinels strip-ansi body-of)))]
 
                (it "renders the collapsed THINKING peek with a +N more header"
                    (expect (some #(str/includes? % "THINKING  +") visible)))))
@@ -1004,30 +977,28 @@
       ;; The iter≥1 branch always ended with a blank line before the
       ;; spinner, so the bubble visually grew by an extra row the moment
       ;; the first iteration arrived. Keep the blank in both branches.
-      (let
-        [payload
-         (render/progress->lines-data {:iterations []}
-                                      80
-                                      {:show-thinking true :show-iterations true}
-                                      {:now-ms 1000 :turn-start-ms 0})
+      (let [payload
+            (render/progress->lines-data {:iterations []}
+                                         80
+                                         {:show-thinking true :show-iterations true}
+                                         {:now-ms 1000 :turn-start-ms 0})
 
-         lines
-         (mapv strip-ansi (:lines payload))]
+            lines
+            (mapv strip-ansi (:lines payload))]
 
         (expect (= 2 (count lines)))
         (expect (= "" (first lines)))
         (expect (str/includes? (second lines) "Vis is calling the provider"))))
   (it "shows queued submissions inside the live progress bubble"
-      (let
-        [payload
-         (render/progress->lines-data
-           {:iterations []}
-           80
-           {:show-thinking true :show-iterations true}
-           {:now-ms 1000 :turn-start-ms 0 :pending-sends [{:text "please also check logs"}]})
+      (let [payload
+            (render/progress->lines-data
+              {:iterations []}
+              80
+              {:show-thinking true :show-iterations true}
+              {:now-ms 1000 :turn-start-ms 0 :pending-sends [{:text "please also check logs"}]})
 
-         body
-         (strip-ansi (str/join "\n" (:lines payload)))]
+            body
+            (strip-ansi (str/join "\n" (:lines payload)))]
 
         (expect (str/includes? body "Vis is calling the provider"))
         (expect (str/includes? body "please also check logs"))
@@ -1037,17 +1008,17 @@
       ;; (previous turn failed) rendered "Vis is calling the provider… 29m" with
       ;; a ticking clock, reading as an infinite hang. A held, not-started turn
       ;; must never claim a provider call is in flight.
-      (let
-        [payload
-         (render/progress->lines-data {:iterations []}
-                                      80
-                                      {:show-thinking true :show-iterations true}
-                                      {:now-ms 1780000
-                                       :turn-start-ms 0
-                                       :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
+      (let [payload
+            (render/progress->lines-data {:iterations []}
+                                         80
+                                         {:show-thinking true :show-iterations true}
+                                         {:now-ms 1780000
+                                          :turn-start-ms 0
+                                          :queue-paused
+                                          {:reason "turn_failed" :held 1 :gen 1 :at 0}})
 
-         body
-         (strip-ansi (str/join "\n" (:lines payload)))]
+            body
+            (strip-ansi (str/join "\n" (:lines payload)))]
 
         ;; the honest hold, not an active call
         (expect (str/includes? body "Paused"))
@@ -1060,112 +1031,109 @@
       ;; Guard the guard: `queue-paused` only suppresses the spinner for a
       ;; not-started (zero-iteration) held turn. A turn that has produced
       ;; iterations is genuinely in flight and must keep its live spinner.
-      (let
-        [payload
-         (render/progress->lines-data {:iterations [{:iteration 1 :activity :response-parse}]}
-                                      80
-                                      {:show-thinking true :show-iterations true}
-                                      {:now-ms 1000
-                                       :turn-start-ms 0
-                                       :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
+      (let [payload
+            (render/progress->lines-data {:iterations [{:iteration 1 :activity :response-parse}]}
+                                         80
+                                         {:show-thinking true :show-iterations true}
+                                         {:now-ms 1000
+                                          :turn-start-ms 0
+                                          :queue-paused
+                                          {:reason "turn_failed" :held 1 :gen 1 :at 0}})
 
-         body
-         (strip-ansi (str/join "\n" (:lines payload)))]
+            body
+            (strip-ansi (str/join "\n" (:lines payload)))]
 
         (expect (str/includes? body "Vis is parsing model response (iter 1)"))
         (expect (not (str/includes? body "Paused")))))
   (it "distinguishes response parsing from provider waiting"
-      (let
-        [payload
-         (render/progress->lines-data {:iterations [{:iteration 1 :activity :response-parse}]}
-                                      80
-                                      {:show-thinking true :show-iterations true}
-                                      {:now-ms 1000 :turn-start-ms 0})
+      (let [payload
+            (render/progress->lines-data {:iterations [{:iteration 1 :activity :response-parse}]}
+                                         80
+                                         {:show-thinking true :show-iterations true}
+                                         {:now-ms 1000 :turn-start-ms 0})
 
-         body
-         (strip-ansi (str/join "\n" (:lines payload)))]
+            body
+            (strip-ansi (str/join "\n" (:lines payload)))]
 
         (expect (str/includes? body "Vis is parsing model response (iter 1)"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
-    (let
-      [;; Tool output paints purely as the program's stdout — both live
-       ;; and cancelled paths share the renderer.
-       iter
-       {:forms [{:code "(print \"bold result\")"
-                 :comment nil
-                 :render-segments nil
-                 :stdout "bold result"
-                 :error nil
-                 :started-at-ms nil
-                 :duration-ms 1
-                 :success? true
-                 :silent? false}]}
+    (let [;; Tool output paints purely as the program's stdout — both live
+          ;; and cancelled paths share the renderer.
+          iter
+          {:forms [{:code "(print \"bold result\")"
+                    :comment nil
+                    :render-segments nil
+                    :stdout "bold result"
+                    :error nil
+                    :started-at-ms nil
+                    :duration-ms 1
+                    :success? true
+                    :silent? false}]}
 
-       settings
-       {:show-thinking true :show-iterations true}
+          settings
+          {:show-thinking true :show-iterations true}
 
-       live
-       (:lines (render/progress->lines-data {:iterations [iter]}
-                                            80
-                                            settings
-                                            {:now-ms 1000 :turn-start-ms 0}))
+          live
+          (:lines (render/progress->lines-data {:iterations [iter]}
+                                               80
+                                               settings
+                                               {:now-ms 1000 :turn-start-ms 0}))
 
-       cancel
-       (:lines (render/format-answer-with-thinking-data "Cancelled by user."
-                                                        [iter]
-                                                        80
-                                                        settings
-                                                        nil
-                                                        true
-                                                        nil))
+          cancel
+          (:lines (render/format-answer-with-thinking-data "Cancelled by user."
+                                                           [iter]
+                                                           80
+                                                           settings
+                                                           nil
+                                                           true
+                                                           nil))
 
-       clean
-       (fn [line]
-         (strip-sentinels (strip-ansi line)))
+          clean
+          (fn [line]
+            (strip-sentinels (strip-ansi line)))
 
-       trim-tail
-       (fn [xs]
-         (vec (reverse (drop-while visually-blank? (reverse xs)))))
+          trim-tail
+          (fn [xs]
+            (vec (reverse (drop-while visually-blank? (reverse xs)))))
 
-       trace-before
-       (fn [needle lines]
-         (->> lines
-              (take-while #(not (str/includes? (clean %) needle)))
-              trim-tail))
+          trace-before
+          (fn [needle lines]
+            (->> lines
+                 (take-while #(not (str/includes? (clean %) needle)))
+                 trim-tail))
 
-       live-trace
-       (trace-before "Vis is" live)
+          live-trace
+          (trace-before "Vis is" live)
 
-       cancel-trace
-       (trace-before "Cancelled by user." cancel)
+          cancel-trace
+          (trace-before "Cancelled by user." cancel)
 
-       body
-       (str/join "\n" (map clean cancel-trace))]
+          body
+          (str/join "\n" (map clean cancel-trace))]
 
       (expect (= live-trace cancel-trace))
       (expect (str/includes? body "bold result"))
       (expect (not (str/includes? body ":ir")))))
   (it "live progress renders every iteration instead of hiding history"
       (with-raw-code-on
-        (let
-          [mk-entry
-           (fn [n]
-             {:forms [{:code (str "(+ " n " 1)")
-                       :comment nil
-                       :render-segments nil
-                       :stdout nil
-                       :error nil
-                       :started-at-ms nil
-                       :duration-ms 1
-                       :success? true
-                       :silent? false}]})
+        (let [mk-entry
+              (fn [n]
+                {:forms [{:code (str "(+ " n " 1)")
+                          :comment nil
+                          :render-segments nil
+                          :stdout nil
+                          :error nil
+                          :started-at-ms nil
+                          :duration-ms 1
+                          :success? true
+                          :silent? false}]})
 
-           body
-           (strip-ansi (render/progress->text {:iterations (mapv mk-entry (range 5))}
-                                              80
-                                              {:show-thinking true :show-iterations true}
-                                              {:now-ms 1000 :turn-start-ms 0}))]
+              body
+              (strip-ansi (render/progress->text {:iterations (mapv mk-entry (range 5))}
+                                                 80
+                                                 {:show-thinking true :show-iterations true}
+                                                 {:now-ms 1000 :turn-start-ms 0}))]
 
           (expect (not (str/includes? body "hidden while live")))
           (expect (str/includes? body "(+ 0 1)"))
@@ -1175,11 +1143,10 @@
           ;; `{:iterations [{}]}` shape could never have exercised any
           ;; thinking-rendering assertion (regression net for the bug where
           ;; this test was silently a no-op).
-          (let
-            [body (strip-ansi (render/progress->text {:iterations [{:thinking "alpha\nbeta"}]}
-                                                     80
-                                                     {:show-thinking true :show-iterations true}
-                                                     {:now-ms 1000 :turn-start-ms 0}))]
+          (let [body (strip-ansi (render/progress->text {:iterations [{:thinking "alpha\nbeta"}]}
+                                                        80
+                                                        {:show-thinking true :show-iterations true}
+                                                        {:now-ms 1000 :turn-start-ms 0}))]
             (expect (not (str/includes? body "hidden while live")))
             (expect (str/includes? body "alpha"))
             (expect (str/includes? body "beta")))))
@@ -1187,16 +1154,15 @@
       ;; A bang turn never enters iteration-loop, so it streams ONE
       ;; shell-phase chunk while the shell blocks; the spinner must read
       ;; `Vis is running: <cmd>` — never the zero-iterations provider fallback.
-      (let
-        [body (strip-ansi (render/progress->text
-                            {:iterations
-                             [{:iteration 1
-                               :activity :shell-run
-                               :shell/cmd
-                               "cd ../ && git clone git@github.com:Blockether/spel.git"}]}
-                            80
-                            {:show-thinking true :show-iterations true}
-                            {:now-ms 1000 :turn-start-ms 0}))]
+      (let [body (strip-ansi (render/progress->text
+                               {:iterations
+                                [{:iteration 1
+                                  :activity :shell-run
+                                  :shell/cmd
+                                  "cd ../ && git clone git@github.com:Blockether/spel.git"}]}
+                               80
+                               {:show-thinking true :show-iterations true}
+                               {:now-ms 1000 :turn-start-ms 0}))]
         (expect (str/includes? body "Vis is running:"))
         (expect (str/includes? body "git clone"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
@@ -1205,19 +1171,18 @@
       ;; would default to "Vis is calling the provider". A `!`/`!&`/slash turn makes
       ;; NO provider call, so the pending message threads its :command-label through
       ;; `progress-extra`; the spinner must show that, not the provider fallback.
-      (let
-        [body
-         (strip-ansi (render/progress->text
-                       {:iterations []}
-                       80
-                       {:show-thinking true :show-iterations true}
-                       {:now-ms 1000 :turn-start-ms 0 :command-label "Running shell command"}))
+      (let [body
+            (strip-ansi (render/progress->text
+                          {:iterations []}
+                          80
+                          {:show-thinking true :show-iterations true}
+                          {:now-ms 1000 :turn-start-ms 0 :command-label "Running shell command"}))
 
-         normal
-         (strip-ansi (render/progress->text {:iterations []}
-                                            80
-                                            {:show-thinking true :show-iterations true}
-                                            {:now-ms 1000 :turn-start-ms 0}))]
+            normal
+            (strip-ansi (render/progress->text {:iterations []}
+                                               80
+                                               {:show-thinking true :show-iterations true}
+                                               {:now-ms 1000 :turn-start-ms 0}))]
 
         (expect (str/includes? body "Running shell command"))
         (expect (not (str/includes? body "Vis is calling the provider")))
@@ -1227,13 +1192,12 @@
       ;; A registered slash (for example `/draft`) runs LOCALLY via run-slash-turn! and
       ;; never touches a provider, so it streams ONE :slash phase chunk; the spinner
       ;; must read `Vis is running: /<name>` — never the zero-iterations provider fallback.
-      (let
-        [body (strip-ansi (render/progress->text {:iterations [{:iteration 1
-                                                                :activity :slash
-                                                                :slash/label "/draft list"}]}
-                                                 80
-                                                 {:show-thinking true :show-iterations true}
-                                                 {:now-ms 1000 :turn-start-ms 0}))]
+      (let [body (strip-ansi (render/progress->text {:iterations [{:iteration 1
+                                                                   :activity :slash
+                                                                   :slash/label "/draft list"}]}
+                                                    80
+                                                    {:show-thinking true :show-iterations true}
+                                                    {:now-ms 1000 :turn-start-ms 0}))]
         (expect (str/includes? body "Vis is running:"))
         (expect (str/includes? body "/draft list"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
@@ -1241,12 +1205,11 @@
       ;; A `shell` run INSIDE a python block streams
       ;; a :tool-call activity naming the op, so the bubble reads
       ;; "Vis is running: <op>" instead of freezing for the whole call.
-      (let
-        [body (strip-ansi (render/progress->text
-                            {:iterations [{:iteration 1 :activity :tool-call :tool/op "shell"}]}
-                            80
-                            {:show-thinking true :show-iterations true}
-                            {:now-ms 1000 :turn-start-ms 0}))]
+      (let [body (strip-ansi (render/progress->text
+                               {:iterations [{:iteration 1 :activity :tool-call :tool/op "shell"}]}
+                               80
+                               {:show-thinking true :show-iterations true}
+                               {:now-ms 1000 :turn-start-ms 0}))]
         (expect (str/includes? body "Vis is running:"))
         (expect (str/includes? body "shell"))))
   (it "lets the TOOL say what it is doing, instead of its private op and an id"
@@ -1255,16 +1218,15 @@
       ;; name and a handle the caller typed, naming neither the command nor the budget,
       ;; doing its job read as a wait stuck on nothing. A tool that declares a ticker
       ;; phrase owns the sentence; everything else keeps the op+label default.
-      (let
-        [body (strip-ansi (render/progress->text {:iterations [{:iteration 1
-                                                                :activity :tool-call
-                                                                :tool/op "_shell-wait"
-                                                                :tool/label "tt"
-                                                                :tool/phrase
-                                                                "waiting up to 60s for: npm test"}]}
-                                                 120
-                                                 {:show-thinking true :show-iterations true}
-                                                 {:now-ms 1000 :turn-start-ms 0}))]
+      (let [body (strip-ansi (render/progress->text
+                               {:iterations [{:iteration 1
+                                              :activity :tool-call
+                                              :tool/op "_shell-wait"
+                                              :tool/label "tt"
+                                              :tool/phrase "waiting up to 60s for: npm test"}]}
+                               120
+                               {:show-thinking true :show-iterations true}
+                               {:now-ms 1000 :turn-start-ms 0}))]
         (expect (str/includes? body "Vis is waiting up to 60s for: npm test"))
         (expect (not (str/includes? body "tt")))
         (expect (not (str/includes? body "_shell-wait")))))
@@ -1275,15 +1237,14 @@
       ;; Pin both halves of the contract: without `:viewport-rows` the
       ;; full thinking renders; with a tight budget the collapse summary
       ;; bounds the line count.
-      (let
-        [huge-thinking
-         (apply str (repeat 20000 "thinking "))
+      (let [huge-thinking
+            (apply str (repeat 20000 "thinking "))
 
-         full
-         (render/progress->lines-data {:iterations [{:thinking huge-thinking}]}
-                                      96
-                                      {:show-thinking true :show-iterations true}
-                                      {:now-ms 1000 :turn-start-ms 0})]
+            full
+            (render/progress->lines-data {:iterations [{:thinking huge-thinking}]}
+                                         96
+                                         {:show-thinking true :show-iterations true}
+                                         {:now-ms 1000 :turn-start-ms 0})]
 
         ;; No viewport: full body is rendered, just shouldn't crash.
         (expect (pos? (count (:lines full))))
@@ -1297,81 +1258,79 @@
       ;; No `RESULT` label, no `chars hidden` summary, no toggle-details
       ;; click region — collapsible UI is gone.
       (render/invalidate-cache!)
-      (let
-        [huge-result
-         (str/join " " (repeat 1000 "abcdefghij"))
+      (let [huge-result
+            (str/join " " (repeat 1000 "abcdefghij"))
 
-         payload
-         (render/progress->lines-data
-           {:iterations
-            [{:forms [{:code "(+ 1 2)" :stdout nil :duration-ms 1 :success? true :silent? false}]}]}
-           96
-           {:show-thinking true :show-iterations true}
-           {:now-ms 1000 :turn-start-ms 0 :session-id "session" :detail-expansions {}})]
+            payload
+            (render/progress->lines-data
+              {:iterations
+               [{:forms
+                 [{:code "(+ 1 2)" :stdout nil :duration-ms 1 :success? true :silent? false}]}]}
+              96
+              {:show-thinking true :show-iterations true}
+              {:now-ms 1000 :turn-start-ms 0 :session-id "session" :detail-expansions {}})]
 
         (expect (not (str/includes? (:text payload) "RESULT")))
         (expect (not (str/includes? (:text payload) "chars hidden")))
         (expect (not (str/includes? (:text payload) huge-result)))
         (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
-  (it
-    "live progress always renders every iteration with no PROGRESS HISTORY toggle"
-    (with-raw-code-on
-      ;; Per user directive: no collapsible iteration history. Every
-      ;; iteration paints in place; the PROGRESS HISTORY summary band
-      ;; is gone.
-      (let
-        [mk-entry
-         (fn [n]
-           {:forms [{:code (str "(+ " n " 1)")
-                     :comment nil
-                     :render-segments nil
-                     :stdout nil
-                     :error nil
-                     :started-at-ms nil
-                     :duration-ms 1
-                     :success? true
-                     :silent? false}]})
+  (it "live progress always renders every iteration with no PROGRESS HISTORY toggle"
+      (with-raw-code-on
+        ;; Per user directive: no collapsible iteration history. Every
+        ;; iteration paints in place; the PROGRESS HISTORY summary band
+        ;; is gone.
+        (let [mk-entry
+              (fn [n]
+                {:forms [{:code (str "(+ " n " 1)")
+                          :comment nil
+                          :render-segments nil
+                          :stdout nil
+                          :error nil
+                          :started-at-ms nil
+                          :duration-ms 1
+                          :success? true
+                          :silent? false}]})
 
-         payload
-         (render/progress->lines-data
-           {:iterations (mapv mk-entry (range 12))}
-           80
-           {:show-thinking true :show-iterations true}
-           {:now-ms 1000 :turn-start-ms 0 :session-id "session" :detail-expansions {}})
+              payload
+              (render/progress->lines-data
+                {:iterations (mapv mk-entry (range 12))}
+                80
+                {:show-thinking true :show-iterations true}
+                {:now-ms 1000 :turn-start-ms 0 :session-id "session" :detail-expansions {}})
 
-         body
-         (strip-ansi (:text payload))]
+              body
+              (strip-ansi (:text payload))]
 
-        (expect (not (str/includes? body "PROGRESS HISTORY")))
-        (expect (not (str/includes? body "iterations hidden")))
-        (expect (str/includes? body "(+ 0 1)"))
-        (expect (str/includes? body "(+ 11 1)"))
-        (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload))))))
+          (expect (not (str/includes? body "PROGRESS HISTORY")))
+          (expect (not (str/includes? body "iterations hidden")))
+          (expect (str/includes? body "(+ 0 1)"))
+          (expect (str/includes? body "(+ 11 1)"))
+          (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload))))))
   (it "toggles :vis/silent forms in live progress traces"
       (with-raw-code-on
-        (let
-          [progress
-           {:iterations
-            [{:forms [{:code "(set-session-title! \"Greeting\")"
-                       :stdout nil
-                       :duration-ms 1
-                       :success? true
-                       :silent? true}
-                      {:code "(+ 1 2)" :stdout nil :duration-ms 1 :success? true :silent? false}]}]}
+        (let [progress
+              {:iterations
+               [{:forms
+                 [{:code "(set-session-title! \"Greeting\")"
+                   :stdout nil
+                   :duration-ms 1
+                   :success? true
+                   :silent? true}
+                  {:code "(+ 1 2)" :stdout nil :duration-ms 1 :success? true :silent? false}]}]}
 
-           hidden-body
-           (strip-ansi (render/progress->text
-                         progress
-                         80
-                         {:show-thinking true :show-iterations true :show-silent false}
-                         {:now-ms 1000 :turn-start-ms 0}))
+              hidden-body
+              (strip-ansi (render/progress->text
+                            progress
+                            80
+                            {:show-thinking true :show-iterations true :show-silent false}
+                            {:now-ms 1000 :turn-start-ms 0}))
 
-           shown-body
-           (strip-ansi (render/progress->text
-                         progress
-                         80
-                         {:show-thinking true :show-iterations true :show-silent true}
-                         {:now-ms 1000 :turn-start-ms 0}))]
+              shown-body
+              (strip-ansi (render/progress->text
+                            progress
+                            80
+                            {:show-thinking true :show-iterations true :show-silent true}
+                            {:now-ms 1000 :turn-start-ms 0}))]
 
           (expect (not (str/includes? hidden-body "set-session-title!")))
           (expect (str/includes? hidden-body "(+ 1 2)"))
@@ -1382,17 +1341,16 @@
   (describe "repeated-error-collapse-test"
             (it "squashes repeated identical provider errors into one counted row"
                 (render/invalidate-cache!)
-                (let
-                  [err
-                   {:message "Stream ended before terminal marker."
-                    :data {:type :svar.core/stream-truncated}}
+                (let [err
+                      {:message "Stream ended before terminal marker."
+                       :data {:type :svar.core/stream-truncated}}
 
-                   body
-                   (strip-ansi (:text (render/progress->lines-data
-                                        {:iterations (vec (repeat 11 {:error err}))}
-                                        80
-                                        {:show-thinking true :show-iterations true}
-                                        {:now-ms 1000 :turn-start-ms 0})))]
+                      body
+                      (strip-ansi (:text (render/progress->lines-data
+                                           {:iterations (vec (repeat 11 {:error err}))}
+                                           80
+                                           {:show-thinking true :show-iterations true}
+                                           {:now-ms 1000 :turn-start-ms 0})))]
 
                   (expect (str/includes? body "ERROR x 11: Stream ended before terminal marker."))
                   (expect (= 1 (count (re-seq #"ERROR" body))))))))
@@ -1415,31 +1373,30 @@
       ;; reformat path. Bump the threshold here ONLY if you have a
       ;; corresponding bench measurement showing the new floor; never bump
       ;; just to make a flake go away.
-      (let
-        [mk-iter
-         (fn [i]
-           {:thinking (apply str (repeat (+ 200 (* 100 i)) \.))
-            :forms [{:code (str "(do (println :iter " i ") (mapv inc (range 100)))")
-                     :comment nil
-                     :render-segments nil
-                     :stdout nil
-                     :error nil
-                     :started-at-ms nil
-                     :duration-ms 50
-                     :success? true
-                     :silent? false}]})
+      (let [mk-iter
+            (fn [i]
+              {:thinking (apply str (repeat (+ 200 (* 100 i)) \.))
+               :forms [{:code (str "(do (println :iter " i ") (mapv inc (range 100)))")
+                        :comment nil
+                        :render-segments nil
+                        :stdout nil
+                        :error nil
+                        :started-at-ms nil
+                        :duration-ms 50
+                        :success? true
+                        :silent? false}]})
 
-         base
-         (mapv mk-iter (range 14))
+            base
+            (mapv mk-iter (range 14))
 
-         last-base
-         (mk-iter 14)
+            last-base
+            (mk-iter 14)
 
-         bubble-w
-         130
+            bubble-w
+            130
 
-         settings
-         {:show-thinking true :show-iterations true}]
+            settings
+            {:show-thinking true :show-iterations true}]
 
         (render/invalidate-cache!)
         ;; Warm: 3 cycles to JIT the format path.
@@ -1451,18 +1408,16 @@
             {:now-ms 1700000000000 :turn-start-ms 1700000000000 :viewport-rows 50}))
         ;; Streaming: NEW iterations vec each tick (mimics `(vec (vals @timeline))`),
         ;; last iteration's thinking grows by 100 chars per tick.
-        (let
-          [runs
-           30
+        (let [runs
+              30
 
-           t0
-           (System/nanoTime)]
+              t0
+              (System/nanoTime)]
 
           (dotimes [i runs]
-            (let
-              [growing (assoc last-base
-                         :thinking (apply str (:thinking last-base) (repeat (* 100 (inc i)) \.)))
-               its' (conj (vec base) growing)]
+            (let [growing (assoc last-base
+                            :thinking (apply str (:thinking last-base) (repeat (* 100 (inc i)) \.)))
+                  its' (conj (vec base) growing)]
 
               (render/progress->lines-data {:iterations its'}
                                            bubble-w
@@ -1478,25 +1433,24 @@
       ;; copy that has identical content but different `identityHashCode`.
       ;; The second call must be ~free (cache hit). If someone reintroduces
       ;; `identityHashCode`-based keying this test fails immediately.
-      (let
-        [iter
-         {:thinking "some reasoning"
-          :forms [{:code "(+ 1 2)"
-                   :comment nil
-                   :render-segments nil
-                   :stdout nil
-                   :error nil
-                   :started-at-ms nil
-                   :duration-ms 10
-                   :success? true
-                   :silent? false}]}
+      (let [iter
+            {:thinking "some reasoning"
+             :forms [{:code "(+ 1 2)"
+                      :comment nil
+                      :render-segments nil
+                      :stdout nil
+                      :error nil
+                      :started-at-ms nil
+                      :duration-ms 10
+                      :success? true
+                      :silent? false}]}
 
-         iters1
-         (vec (repeat 5 iter))
+            iters1
+            (vec (repeat 5 iter))
 
-         ;; Same content, fresh vec identity, fresh map identities for entries.
-         iters2
-         (mapv #(into {} %) iters1)]
+            ;; Same content, fresh vec identity, fresh map identities for entries.
+            iters2
+            (mapv #(into {} %) iters1)]
 
         (render/invalidate-cache!)
         ;; Warm with iters1.
@@ -1527,95 +1481,91 @@
   ;; splices only the animated spinner row in per tick. These tests pin both
   ;; halves: a spinner-only tick must NOT recompute the body, and the spliced
   ;; output must stay byte-identical to the body except for the spinner row.
-  (let
-    [mk-iter
-     (fn [i]
-       {:thinking (str "reason-" i)
-        :forms [{:code (str "(+ " i " 1)")
-                 :comment nil
-                 :render-segments nil
-                 :stdout (str "out-" i)
-                 :error nil
-                 :started-at-ms nil
-                 :duration-ms 10
-                 :success? true
-                 :silent? false}]})
+  (let [mk-iter
+        (fn [i]
+          {:thinking (str "reason-" i)
+           :forms [{:code (str "(+ " i " 1)")
+                    :comment nil
+                    :render-segments nil
+                    :stdout (str "out-" i)
+                    :error nil
+                    :started-at-ms nil
+                    :duration-ms 10
+                    :success? true
+                    :silent? false}]})
 
-     settings
-     {:show-thinking true :show-iterations true}
+        settings
+        {:show-thinking true :show-iterations true}
 
-     extra
-     (fn [now]
-       {:now-ms now
-        :turn-start-ms 1699999900000
-        :session-id "s1"
-        :session-turn-id "turn-abc12345"
-        :viewport-rows 40})]
+        extra
+        (fn [now]
+          {:now-ms now
+           :turn-start-ms 1699999900000
+           :session-id "s1"
+           :session-turn-id "turn-abc12345"
+           :viewport-rows 40})]
 
-    (it "spinner-only tick reuses the cached body (no re-walk); only the spinner row changes"
-        (let [iters (mapv mk-iter (range 3))]
-          (render/invalidate-cache!)
-          (let
-            [a (render/progress->lines-data {:iterations iters} 130 settings (extra 1700000000000))
-             size-after-first (render/cache-size)
-             ;; +5s: identical content, only the spinner clock advances.
-             b (render/progress->lines-data {:iterations iters} 130 settings (extra 1700000005000))
-             size-after-tick (render/cache-size)]
+    (it
+      "spinner-only tick reuses the cached body (no re-walk); only the spinner row changes"
+      (let [iters (mapv mk-iter (range 3))]
+        (render/invalidate-cache!)
+        (let [a (render/progress->lines-data {:iterations iters} 130 settings (extra 1700000000000))
+              size-after-first (render/cache-size)
+              ;; +5s: identical content, only the spinner clock advances.
+              b (render/progress->lines-data {:iterations iters} 130 settings (extra 1700000005000))
+              size-after-tick (render/cache-size)]
 
-            ;; No new body entry ⇒ the O(bubble) trace/coalesce/strip walk was skipped.
-            (expect (= size-after-first size-after-tick))
-            (expect (= (count (:lines a)) (count (:lines b))))
-            (expect (= (:line-meta a) (:line-meta b)))
-            ;; ONLY the final spinner row differs between the two ticks.
-            (let
-              [diff (keep-indexed (fn [i [x y]]
-                                    (when (not= x y) i))
-                                  (map vector (:lines a) (:lines b)))]
-              (expect (= [(dec (count (:lines a)))] (vec diff))))
-            ;; `:text` mirrors `:lines`: same body, different last (spinner) line.
-            (expect (not= (:text a) (:text b))))))
+          ;; No new body entry ⇒ the O(bubble) trace/coalesce/strip walk was skipped.
+          (expect (= size-after-first size-after-tick))
+          (expect (= (count (:lines a)) (count (:lines b))))
+          (expect (= (:line-meta a) (:line-meta b)))
+          ;; ONLY the final spinner row differs between the two ticks.
+          (let [diff (keep-indexed (fn [i [x y]]
+                                     (when (not= x y) i))
+                                   (map vector (:lines a) (:lines b)))]
+            (expect (= [(dec (count (:lines a)))] (vec diff))))
+          ;; `:text` mirrors `:lines`: same body, different last (spinner) line.
+          (expect (not= (:text a) (:text b))))))
     (it "a content change busts the body cache and grows the trace"
         (render/invalidate-cache!)
-        (let
-          [three
-           (render/progress->lines-data {:iterations (mapv mk-iter (range 3))}
-                                        130
-                                        settings
-                                        (extra 1700000005000))
+        (let [three
+              (render/progress->lines-data {:iterations (mapv mk-iter (range 3))}
+                                           130
+                                           settings
+                                           (extra 1700000005000))
 
-           size3
-           (render/cache-size)
+              size3
+              (render/cache-size)
 
-           four
-           (render/progress->lines-data {:iterations (mapv mk-iter (range 4))}
-                                        130
-                                        settings
-                                        (extra 1700000005000))
+              four
+              (render/progress->lines-data {:iterations (mapv mk-iter (range 4))}
+                                           130
+                                           settings
+                                           (extra 1700000005000))
 
-           size4
-           (render/cache-size)]
+              size4
+              (render/cache-size)]
 
           (expect (> size4 size3))
           (expect (> (count (:lines four)) (count (:lines three))))))
     (it "renders a queued image as its filename, never the raw drop path"
         (render/invalidate-cache!)
-        (let
-          [payload
-           (render/progress->lines-data
-             {:iterations (mapv mk-iter (range 2))}
-             130
-             settings
-             (assoc (extra 1700000005000)
-               :pending-sends [{:text
-                                "/var/folders/67/T/clipboard-2026-07-26-151209.png\nLOOK AT THIS"}
-                               ;; Gateway-mirrored row: the daemon already chipped it.
-                               {:text "/tmp/other.png" :preview-text "other.png"}]))
+        (let [payload
+              (render/progress->lines-data
+                {:iterations (mapv mk-iter (range 2))}
+                130
+                settings
+                (assoc (extra 1700000005000)
+                  :pending-sends
+                  [{:text "/var/folders/67/T/clipboard-2026-07-26-151209.png\nLOOK AT THIS"}
+                   ;; Gateway-mirrored row: the daemon already chipped it.
+                   {:text "/tmp/other.png" :preview-text "other.png"}]))
 
-           lines
-           (mapv str (:lines payload))
+              lines
+              (mapv str (:lines payload))
 
-           queued-row
-           (first (filter #(str/includes? % "clipboard-2026-07-26-151209.png") lines))]
+              queued-row
+              (first (filter #(str/includes? % "clipboard-2026-07-26-151209.png") lines))]
 
           (expect (some? queued-row))
           ;; The chip carries the filename …
@@ -1626,27 +1576,26 @@
           (expect (not (some #(str/includes? % "/tmp/other.png") lines)))))
     (it "queued sends still render after the spinner with the body split path"
         (render/invalidate-cache!)
-        (let
-          [payload
-           (render/progress->lines-data {:iterations (mapv mk-iter (range 2))}
-                                        130
-                                        settings
-                                        (assoc (extra 1700000005000)
-                                          :pending-sends [{:text "first queued message"}
-                                                          {:text "second queued message"}]))
+        (let [payload
+              (render/progress->lines-data {:iterations (mapv mk-iter (range 2))}
+                                           130
+                                           settings
+                                           (assoc (extra 1700000005000)
+                                             :pending-sends [{:text "first queued message"}
+                                                             {:text "second queued message"}]))
 
-           lines
-           (:lines payload)
+              lines
+              (:lines payload)
 
-           spinner-idx
-           (first (keep-indexed (fn [i l]
-                                  (when (str/includes? (str l) "Esc to cancel") i))
-                                lines))
+              spinner-idx
+              (first (keep-indexed (fn [i l]
+                                     (when (str/includes? (str l) "Esc to cancel") i))
+                                   lines))
 
-           queued-idx
-           (first (keep-indexed (fn [i l]
-                                  (when (str/includes? (str l) "Queued") i))
-                                lines))]
+              queued-idx
+              (first (keep-indexed (fn [i l]
+                                     (when (str/includes? (str l) "Queued") i))
+                                   lines))]
 
           (expect (some? spinner-idx))
           (expect (some? queued-idx))
@@ -1660,25 +1609,23 @@
   ;; clock and to the LEFT of the "Esc to cancel" trailer (placement A). The
   ;; phase itself stays a plain "Vis is retrying"; the error detail lives ONLY
   ;; in the tinted suffix, and the copyable :text stays sentinel-free.
-  (let
-    [extra
-     {:now-ms 1700000000000 :turn-start-ms 1700000000000}
+  (let [extra
+        {:now-ms 1700000000000 :turn-start-ms 1700000000000}
 
-     err-iter
-     {:activity :provider-call
-      :error {:type :svar.core/http-error :attempt 2 :max-retries 3 :delay-ms 1000}}
+        err-iter
+        {:activity :provider-call
+         :error {:type :svar.core/http-error :attempt 2 :max-retries 3 :delay-ms 1000}}
 
-     spinner
-     (fn [d]
-       (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
+        spinner
+        (fn [d]
+          (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
 
     (it "wraps the transient-error detail in INLINE_ERR sentinels after the clock"
-        (let
-          [d
-           (render/progress->lines-data {:iterations [err-iter]} 130 {} extra)
+        (let [d
+              (render/progress->lines-data {:iterations [err-iter]} 130 {} extra)
 
-           line
-           (spinner d)]
+              line
+              (spinner d)]
 
           (expect (str/includes? line "Vis is retrying"))
           (expect (str/includes? line p/INLINE_ERR_ON))
@@ -1688,12 +1635,11 @@
                      (long (str/index-of line "Esc to cancel"))))
           (expect (nil? (re-find #"[\uE110-\uE11B]" (:text d))))))
     (it "renders no segment when the last iteration has no error"
-        (let
-          [d
-           (render/progress->lines-data {:iterations [{:activity :provider-call}]} 130 {} extra)
+        (let [d
+              (render/progress->lines-data {:iterations [{:activity :provider-call}]} 130 {} extra)
 
-           line
-           (spinner d)]
+              line
+              (spinner d)]
 
           (expect (not (str/includes? line p/INLINE_ERR_ON)))))))
 
@@ -1702,15 +1648,14 @@
 ;; for every request, so an unbounded loop looked exactly like ordinary work.
 (defdescribe
   spinner-provider-call-reason-test
-  (let
-    [extra
-     {:now-ms 1700000000000 :turn-start-ms 1700000000000}
+  (let [extra
+        {:now-ms 1700000000000 :turn-start-ms 1700000000000}
 
-     spinner
-     (fn [iterations]
-       (first (filter #(str/includes? (str %) "Esc to cancel")
-                      (:lines
-                        (render/progress->lines-data {:iterations iterations} 130 {} extra)))))]
+        spinner
+        (fn [iterations]
+          (first (filter #(str/includes? (str %) "Esc to cancel")
+                         (:lines
+                           (render/progress->lines-data {:iterations iterations} 130 {} extra)))))]
 
     (it "names the human's own submit on the first provider call"
         (expect (str/includes? (spinner [{:activity :provider-call :activity/reason :user-submit}])
@@ -1729,43 +1674,41 @@
   ;; the window a content change reuses the previous body, while the spinner
   ;; row (spliced in fresh) still advances. Default 0 = disabled, so streamed
   ;; growth is reflected on every tick (no behaviour change).
-  (let
-    [cell
-     @#'render/live-body-throttle-cell
+  (let [cell
+        @#'render/live-body-throttle-cell
 
-     throttle-var
-     #'render/live-body-throttle-ms
+        throttle-var
+        #'render/live-body-throttle-ms
 
-     with-throttle
-     (fn [ms f]
-       (alter-var-root throttle-var (constantly (delay ms)))
-       (try (f) (finally (alter-var-root throttle-var (constantly (delay 0))))))
+        with-throttle
+        (fn [ms f]
+          (alter-var-root throttle-var (constantly (delay ms)))
+          (try (f) (finally (alter-var-root throttle-var (constantly (delay 0))))))
 
-     prog
-     (fn [txt]
-       {:iterations [{:assistant-prose txt}]})
+        prog
+        (fn [txt]
+          {:iterations [{:assistant-prose txt}]})
 
-     extra
-     (fn [now]
-       {:now-ms now :turn-start-ms 1699999900000})
+        extra
+        (fn [now]
+          {:now-ms now :turn-start-ms 1699999900000})
 
-     body-lines
-     (fn [d]
-       (remove #(str/includes? (str %) "Esc to cancel") (:lines d)))
+        body-lines
+        (fn [d]
+          (remove #(str/includes? (str %) "Esc to cancel") (:lines d)))
 
-     spinner
-     (fn [d]
-       (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
+        spinner
+        (fn [d]
+          (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
 
     (it "default (0) reflects streamed growth on every tick"
         (render/invalidate-cache!)
         (reset! cell nil)
-        (let
-          [a
-           (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
+        (let [a
+              (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
 
-           b
-           (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000001000))]
+              b
+              (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000001000))]
 
           (expect (not= (body-lines a) (body-lines b)))))
     (it "enabled reuses the body within the window yet still advances the spinner"
@@ -1774,13 +1717,12 @@
         (with-throttle
           500
           (fn []
-            (let
-              [a
-               (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
+            (let [a
+                  (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
 
-               ;; +300ms < 500ms window: heavy trace re-walk skipped, body reused.
-               b
-               (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000000300))]
+                  ;; +300ms < 500ms window: heavy trace re-walk skipped, body reused.
+                  b
+                  (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000000300))]
 
               (expect (= (body-lines a) (body-lines b)))
               (expect (not= (spinner a) (spinner b)))))))
@@ -1790,13 +1732,12 @@
         (with-throttle
           100
           (fn []
-            (let
-              [a
-               (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
+            (let [a
+                  (render/progress->lines-data (prog "alpha") 130 {} (extra 1700000000000))
 
-               ;; +500ms > 100ms window: fresh content projected.
-               b
-               (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000000500))]
+                  ;; +500ms > 100ms window: fresh content projected.
+                  b
+                  (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000000500))]
 
               (expect (not= (body-lines a) (body-lines b)))))))))
 
@@ -1810,25 +1751,24 @@
                   ;; live now share a flat layout: thinking first, then all code
                   ;; blocks. Plain `:value` form results are hidden per user
                   ;; directive, so only code (not `2`) follows the reasoning.
-                  (let
-                    [lines
-                     (format-iteration-entry {:thinking "alpha\nbeta"
-                                              :error nil
-                                              :forms [{:code "(+ 1 1)"
-                                                       :comment nil
-                                                       :render-segments nil
-                                                       :stdout nil
-                                                       :error nil
-                                                       :started-at-ms nil
-                                                       :duration-ms 1
-                                                       :success? true
-                                                       :silent? false}]}
-                                             60
-                                             1
-                                             {:show-header? true})
+                  (let [lines
+                        (format-iteration-entry {:thinking "alpha\nbeta"
+                                                 :error nil
+                                                 :forms [{:code "(+ 1 1)"
+                                                          :comment nil
+                                                          :render-segments nil
+                                                          :stdout nil
+                                                          :error nil
+                                                          :started-at-ms nil
+                                                          :duration-ms 1
+                                                          :success? true
+                                                          :silent? false}]}
+                                                60
+                                                1
+                                                {:show-header? true})
 
-                     ^String body
-                     (strip-ansi (str/join "\n" (map body-of lines)))]
+                        ^String body
+                        (strip-ansi (str/join "\n" (map body-of lines)))]
 
                     (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
                     (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
@@ -1844,31 +1784,30 @@
       ;; blank/marker row, code starts — so a future layout tweak that
       ;; re-introduces a stripe between them surfaces here, not in a
       ;; user-visible asymmetry report.
-      (let
-        [lines
-         (format-iteration-entry {:thinking "alpha"
-                                  :error nil
-                                  :forms [{:code "(+ 1 1)"
-                                           :comment nil
-                                           :render-segments nil
-                                           :stdout nil
-                                           :error nil
-                                           :started-at-ms nil
-                                           :duration-ms 1
-                                           :success? true
-                                           :silent? false}]}
-                                 60
-                                 1
-                                 {:show-header? false :live-preview? true})
+      (let [lines
+            (format-iteration-entry {:thinking "alpha"
+                                     :error nil
+                                     :forms [{:code "(+ 1 1)"
+                                              :comment nil
+                                              :render-segments nil
+                                              :stdout nil
+                                              :error nil
+                                              :started-at-ms nil
+                                              :duration-ms 1
+                                              :success? true
+                                              :silent? false}]}
+                                    60
+                                    1
+                                    {:show-header? false :live-preview? true})
 
-         visible
-         (mapv (comp strip-ansi body-of) lines)
+            visible
+            (mapv (comp strip-ansi body-of) lines)
 
-         alpha-idx
-         (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
+            alpha-idx
+            (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
 
-         code-idx
-         (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))]
+            code-idx
+            (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))]
 
         (expect (some? alpha-idx))
         (expect (some? code-idx))
@@ -1886,39 +1825,40 @@
   ;; wrapping italic at entry. We pin the fix by recording the SGR
   ;; set on every paint call via a stub TextGraphics, then asserting
   ;; bold + italic stack correctly.
-  (let
-    [;; Capture every (putString ...) as [text {:fg :bg :sgr}].
-     captured
-     (atom [])
+  (let [;; Capture every (putString ...) as [text {:fg :bg :sgr}].
+        captured
+        (atom [])
 
-     active
-     (atom #{})
+        active
+        (atom #{})
 
-     fg
-     (atom nil)
+        fg
+        (atom nil)
 
-     bg
-     (atom nil)
+        bg
+        (atom nil)
 
-     ;; Lanterna's TextGraphics is an interface with ~30 methods;
-     ;; we proxy the four paint-styled-line! actually calls.
-     graphics
-     (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-       (clearModifiers [] (reset! active #{}) this)
-       (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr] (swap! active into (seq arr)) this)
-       (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-         (apply swap! active disj (seq arr))
-         this)
-       (getActiveModifiers []
-         ;; Return a defensive EnumSet so paint-styled-line!
-         ;; can `EnumSet/copyOf` it.
-         (if (empty? @active)
-           (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-           (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-       (setForegroundColor [c] (reset! fg c) this)
-       (setBackgroundColor [c] (reset! bg c) this)
-       (putString
-         ([col row text] (swap! captured into (put->styled-runs text @fg @bg @active)) this)))]
+        ;; Lanterna's TextGraphics is an interface with ~30 methods;
+        ;; we proxy the four paint-styled-line! actually calls.
+        graphics
+        (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+          (clearModifiers [] (reset! active #{}) this)
+          (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+            (swap! active into (seq arr))
+            this)
+          (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+            (apply swap! active disj (seq arr))
+            this)
+          (getActiveModifiers []
+            ;; Return a defensive EnumSet so paint-styled-line!
+            ;; can `EnumSet/copyOf` it.
+            (if (empty? @active)
+              (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+              (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+          (setForegroundColor [c] (reset! fg c) this)
+          (setBackgroundColor [c] (reset! bg c) this)
+          (putString
+            ([col row text] (swap! captured into (put->styled-runs text @fg @bg @active)) this)))]
 
     (describe
       "paint-styled-line! inherits the wrapping SGR modifiers"
@@ -1986,52 +1926,51 @@
              ;; must consume them; otherwise Lanterna renders glyphs like  / .
              (it
                "consumes inline code sentinels instead of painting PUA glyphs"
-               (let
-                 [paint-ansi-line!
-                  @#'render/paint-ansi-line!
+               (let [paint-ansi-line!
+                     @#'render/paint-ansi-line!
 
-                  captured
-                  (atom [])
+                     captured
+                     (atom [])
 
-                  active
-                  (atom #{})
+                     active
+                     (atom #{})
 
-                  fg
-                  (atom nil)
+                     fg
+                     (atom nil)
 
-                  bg
-                  (atom nil)
+                     bg
+                     (atom nil)
 
-                  graphics
-                  (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                    (clearModifiers [] (reset! active #{}) this)
-                    (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                      (swap! active into (seq arr))
-                      this)
-                    (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                      (apply swap! active disj (seq arr))
-                      this)
-                    (getActiveModifiers []
-                      (if (empty? @active)
-                        (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                        (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                    (setForegroundColor [c] (reset! fg c) this)
-                    (setBackgroundColor [c] (reset! bg c) this)
-                    (putString
-                      ([col row text]
-                       (swap! captured conj [(put-text text) {:fg @fg :bg @bg :sgr @active}])
-                       this)))
+                     graphics
+                     (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                       (clearModifiers [] (reset! active #{}) this)
+                       (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                         (swap! active into (seq arr))
+                         this)
+                       (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                         (apply swap! active disj (seq arr))
+                         this)
+                       (getActiveModifiers []
+                         (if (empty? @active)
+                           (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                           (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                       (setForegroundColor [c] (reset! fg c) this)
+                       (setBackgroundColor [c] (reset! bg c) this)
+                       (putString
+                         ([col row text]
+                          (swap! captured conj [(put-text text) {:fg @fg :bg @bg :sgr @active}])
+                          this)))
 
-                  line
-                  (str "Searched " p/INLINE_CODE_ON
-                       "[\"extensions\"]" p/INLINE_CODE_OFF
-                       " with " p/INLINE_CODE_ON
-                       "{:any [\"circling\"]}" p/INLINE_CODE_OFF
-                       ". Use " p/INLINE_CODE_ON
-                       "v/preview" p/INLINE_CODE_OFF)
+                     line
+                     (str "Searched " p/INLINE_CODE_ON
+                          "[\"extensions\"]" p/INLINE_CODE_OFF
+                          " with " p/INLINE_CODE_ON
+                          "{:any [\"circling\"]}" p/INLINE_CODE_OFF
+                          ". Use " p/INLINE_CODE_ON
+                          "v/preview" p/INLINE_CODE_OFF)
 
-                  visible
-                  "Searched [\"extensions\"] with {:any [\"circling\"]}. Use v/preview"]
+                     visible
+                     "Searched [\"extensions\"] with {:any [\"circling\"]}. Use v/preview"]
 
                  (paint-ansi-line! graphics 0 0 line t/code-result-fg t/code-ok-bg)
                  (let [painted (apply str (map first @captured))]
@@ -2039,67 +1978,65 @@
                    (expect (not (str/includes? painted p/INLINE_CODE_ON)))
                    (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
-(defdescribe code-pad-payload-paint-test
-             ;; MARKER_CODE_*_PAD can carry optional payload text. Regression: pad
-             ;; painter filled bg then discarded payload.
-             (it
-               "paints code-pad payload text, not only its background"
-               (let
-                 [puts
-                  (atom [])
+(defdescribe
+  code-pad-payload-paint-test
+  ;; MARKER_CODE_*_PAD can carry optional payload text. Regression: pad
+  ;; painter filled bg then discarded payload.
+  (it
+    "paints code-pad payload text, not only its background"
+    (let [puts
+          (atom [])
 
-                  active
-                  (atom #{})
+          active
+          (atom #{})
 
-                  fg
-                  (atom nil)
+          fg
+          (atom nil)
 
-                  bg
-                  (atom nil)
+          bg
+          (atom nil)
 
-                  graphics
-                  (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                    (clearModifiers [] (reset! active #{}) this)
-                    (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                      (swap! active into (seq arr))
-                      this)
-                    (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                      (apply swap! active disj (seq arr))
-                      this)
-                    (getActiveModifiers []
-                      (if (empty? @active)
-                        (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                        (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                    (setForegroundColor [c] (reset! fg c) this)
-                    (setBackgroundColor [c] (reset! bg c) this)
-                    (fillRectangle [_ _ _] this)
-                    (setCharacter [_ _ _] this)
-                    (putString
-                      ([col row text]
-                       (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg :sgr @active})
-                       this)))
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [c] (reset! fg c) this)
+            (setBackgroundColor [c] (reset! bg c) this)
+            (fillRectangle [_ _ _] this)
+            (setCharacter [_ _ _] this)
+            (putString
+              ([col row text]
+               (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg :sgr @active})
+               this)))
 
-                  footer
-                  (str p/MARKER_CODE_OK_PAD " t24/i1/b1 ")]
+          footer
+          (str p/MARKER_CODE_OK_PAD " t24/i1/b1 ")]
 
-                 (render/draw-chat-bubble!
-                   graphics
-                   {:role :assistant :timestamp nil :prewrapped-lines [footer]}
-                   0
-                   0
-                   80)
-                 (let
-                   [painted
-                    (apply str (map :text @puts))
+      (render/draw-chat-bubble! graphics
+                                {:role :assistant :timestamp nil :prewrapped-lines [footer]}
+                                0
+                                0
+                                80)
+      (let [painted
+            (apply str (map :text @puts))
 
-                    stamp
-                    (first (filter #(= "t24/i1/b1" (:text %)) @puts))]
+            stamp
+            (first (filter #(= "t24/i1/b1" (:text %)) @puts))]
 
-                   (expect (str/includes? painted "t24/i1/b1"))
-                   (expect (not (str/includes? painted "✓")))
-                   (expect (not (str/includes? painted "12ms")))
-                   (expect (= t/dialog-hint (:fg stamp)))
-                   (expect (contains? (:sgr stamp) com.googlecode.lanterna.SGR/ITALIC))))))
+        (expect (str/includes? painted "t24/i1/b1"))
+        (expect (not (str/includes? painted "✓")))
+        (expect (not (str/includes? painted "12ms")))
+        (expect (= t/dialog-hint (:fg stamp)))
+        (expect (contains? (:sgr stamp) com.googlecode.lanterna.SGR/ITALIC))))))
 
 (defdescribe answer-text-inline-sentinel-paint-test
              ;; Final-answer prose uses MARKER_ANSWER_TXT for normal paragraphs.
@@ -2109,45 +2046,44 @@
              ;; raw PUA glyphs like  and  around `/command`.
              (it
                "consumes inline code sentinels in plain final-answer text"
-               (let
-                 [captured
-                  (atom [])
+               (let [captured
+                     (atom [])
 
-                  active
-                  (atom #{})
+                     active
+                     (atom #{})
 
-                  fg
-                  (atom nil)
+                     fg
+                     (atom nil)
 
-                  bg
-                  (atom nil)
+                     bg
+                     (atom nil)
 
-                  graphics
-                  (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                    (clearModifiers [] (reset! active #{}) this)
-                    (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                      (swap! active into (seq arr))
-                      this)
-                    (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                      (apply swap! active disj (seq arr))
-                      this)
-                    (getActiveModifiers []
-                      (if (empty? @active)
-                        (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                        (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                    (setForegroundColor [c] (reset! fg c) this)
-                    (setBackgroundColor [c] (reset! bg c) this)
-                    (fillRectangle [_pos _size _ch] this)
-                    (setCharacter [_col _row _ch] this)
-                    (putString ([_col _row text] (swap! captured conj (put-text text)) this)))
+                     graphics
+                     (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                       (clearModifiers [] (reset! active #{}) this)
+                       (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                         (swap! active into (seq arr))
+                         this)
+                       (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                         (apply swap! active disj (seq arr))
+                         this)
+                       (getActiveModifiers []
+                         (if (empty? @active)
+                           (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                           (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                       (setForegroundColor [c] (reset! fg c) this)
+                       (setBackgroundColor [c] (reset! bg c) this)
+                       (fillRectangle [_pos _size _ch] this)
+                       (setCharacter [_col _row _ch] this)
+                       (putString ([_col _row text] (swap! captured conj (put-text text)) this)))
 
-                  line
-                  (str p/MARKER_ANSWER_TXT
-                       "Use "
-                       p/INLINE_CODE_ON
-                       "/command"
-                       p/INLINE_CODE_OFF
-                       " (or pick from slash suggestions).")]
+                     line
+                     (str p/MARKER_ANSWER_TXT
+                          "Use "
+                          p/INLINE_CODE_ON
+                          "/command"
+                          p/INLINE_CODE_OFF
+                          " (or pick from slash suggestions).")]
 
                  (render/draw-chat-bubble!
                    graphics
@@ -2198,9 +2134,8 @@
                   (let [{:keys [thumb-h]} (g 360 56 nil)]
                     (expect (= 1 thumb-h))))
               (it "And the thumb still slides through the full track"
-                  (let
-                    [top (:thumb-top-rel (g 1000 5 0))
-                     bot (:thumb-top-rel (g 1000 5 995))]
+                  (let [top (:thumb-top-rel (g 1000 5 0))
+                        bot (:thumb-top-rel (g 1000 5 995))]
 
                     (expect (= 0 top))
                     (expect (= 4 bot))))))) ;; track-h(5) - thumb-h(1) = 4
@@ -2323,36 +2258,35 @@
   reasoning-preview-rendering-test
   (it
     "expands very long reasoning only when the badge is toggled open"
-    (let
-      [cid
-       "session"
+    (let [cid
+          "session"
 
-       turn-id
-       "123e4567-e89b-12d3-a456-426614174000"
+          turn-id
+          "123e4567-e89b-12d3-a456-426614174000"
 
-       node
-       "thinking:t123e4567:i1:reasoning"
+          node
+          "thinking:t123e4567:i1:reasoning"
 
-       thinking
-       (str/join "\n\n" (map #(format "line-%02d detail text" %) (range 1 51)))
+          thinking
+          (str/join "\n\n" (map #(format "line-%02d detail text" %) (range 1 51)))
 
-       render*
-       (fn [exp]
-         (render/invalidate-cache!)
-         (render/format-answer-with-thinking-data
-           "done"
-           [{:thinking thinking}]
-           96
-           {:show-thinking true :show-iterations true}
-           nil
-           false
-           {:session-id cid :session-turn-id turn-id :detail-expansions exp}))
+          render*
+          (fn [exp]
+            (render/invalidate-cache!)
+            (render/format-answer-with-thinking-data
+              "done"
+              [{:thinking thinking}]
+              96
+              {:show-thinking true :show-iterations true}
+              nil
+              false
+              {:session-id cid :session-turn-id turn-id :detail-expansions exp}))
 
-       cbody
-       (strip-ansi (:text (render* {})))
+          cbody
+          (strip-ansi (:text (render* {})))
 
-       ebody
-       (strip-ansi (:text (render* {[cid node] true})))]
+          ebody
+          (strip-ansi (:text (render* {[cid node] true})))]
 
       (expect (str/includes? cbody "THINKING"))
       (expect (not (str/includes? cbody "line-25")))
@@ -2366,104 +2300,101 @@
       ;; Bare return values are never echoed: a form that printed nothing
       ;; renders no result body, no PREVIEW/RAW switcher, no toggle.
       (render/invalidate-cache!)
-      (let
-        [body
-         "only line of preview output"
+      (let [body
+            "only line of preview output"
 
-         trace
-         [{:forms [{:code "(cat file)"
-                    :comment nil
-                    :render-segments nil
-                    :stdout nil
-                    :error nil
-                    :started-at-ms nil
-                    :duration-ms 1
-                    :success? true
-                    :silent? false}]}]
+            trace
+            [{:forms [{:code "(cat file)"
+                       :comment nil
+                       :render-segments nil
+                       :stdout nil
+                       :error nil
+                       :started-at-ms nil
+                       :duration-ms 1
+                       :success? true
+                       :silent? false}]}]
 
-         payload
-         (render/format-answer-with-thinking-data
-           nil
-           trace
-           96
-           {:show-iterations true}
-           nil
-           false
-           {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
+            payload
+            (render/format-answer-with-thinking-data
+              nil
+              trace
+              96
+              {:show-iterations true}
+              nil
+              false
+              {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
 
         (expect (not (str/includes? (:text payload) body)))
         (expect (not (str/includes? (:text payload) "raw-only")))
         (expect (not (str/includes? (:text payload) "PREVIEW")))
         (expect (not (str/includes? (:text payload) "● RAW")))
         (expect (not-any? #(= :preview-switcher (:kind %)) (:line-meta payload)))))
-  (it
-    "hides huge plain value results entirely without a collapse summary"
-    ;; Per user directive: collapsible disclosure was removed. Plain
-    ;; `:value` form results never paint a body — no `RESULT` label,
-    ;; no `chars hidden` summary, no `[iteration N · block M]` band.
-    (render/invalidate-cache!)
-    (let
-      [huge-result
-       (str/join " " (repeat 4000 "abcdefghij"))
+  (it "hides huge plain value results entirely without a collapse summary"
+      ;; Per user directive: collapsible disclosure was removed. Plain
+      ;; `:value` form results never paint a body — no `RESULT` label,
+      ;; no `chars hidden` summary, no `[iteration N · block M]` band.
+      (render/invalidate-cache!)
+      (let [huge-result
+            (str/join " " (repeat 4000 "abcdefghij"))
 
-       trace
-       [{:forms [{:code "(+ 1 2)"
-                  :comment nil
-                  :render-segments nil
-                  :stdout nil
-                  :error nil
-                  :started-at-ms nil
-                  :duration-ms 1
-                  :success? true
-                  :silent? false}]}]
+            trace
+            [{:forms [{:code "(+ 1 2)"
+                       :comment nil
+                       :render-segments nil
+                       :stdout nil
+                       :error nil
+                       :started-at-ms nil
+                       :duration-ms 1
+                       :success? true
+                       :silent? false}]}]
 
-       turn-id
-       "123e4567-e89b-12d3-a456-426614174000"
+            turn-id
+            "123e4567-e89b-12d3-a456-426614174000"
 
-       payload
-       (render/format-answer-with-thinking-data nil
-                                                trace
-                                                96
-                                                {:show-iterations true}
-                                                nil
-                                                false
-                                                {:session-id "session" :session-turn-id turn-id})]
+            payload
+            (render/format-answer-with-thinking-data nil
+                                                     trace
+                                                     96
+                                                     {:show-iterations true}
+                                                     nil
+                                                     false
+                                                     {:session-id "session"
+                                                      :session-turn-id turn-id})]
 
-      (expect (not (str/includes? (:text payload) "RESULT")))
-      (expect (not (str/includes? (:text payload) "chars hidden")))
-      (expect (not (str/includes? (:text payload) "[iteration 1 · block 1]")))
-      (expect (not (str/includes? (:text payload) huge-result)))
-      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
+        (expect (not (str/includes? (:text payload) "RESULT")))
+        (expect (not (str/includes? (:text payload) "chars hidden")))
+        (expect (not (str/includes? (:text payload) "[iteration 1 · block 1]")))
+        (expect (not (str/includes? (:text payload) huge-result)))
+        (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
   (it "collapses completed reasoning behind the badge on the answer view"
       ;; Completed reasoning defaults collapsed; the legacy
       ;; `:detail-expansions` toggle now drives expansion again.
-      (let
-        [node
-         "thinking:tturn-1:i1:reasoning"
+      (let [node
+            "thinking:tturn-1:i1:reasoning"
 
-         thinking
-         (str/join "\n\n" (map #(str "line " % " detail text") (range 1 51)))
+            thinking
+            (str/join "\n\n" (map #(str "line " % " detail text") (range 1 51)))
 
-         trace
-         [{:thinking thinking :code [] :results [] :durations [] :successes []}]
+            trace
+            [{:thinking thinking :code [] :results [] :durations [] :successes []}]
 
-         render*
-         (fn [exp]
-           (render/invalidate-cache!)
-           (render/format-answer-with-thinking-data
-             "done"
-             trace
-             120
-             {:show-iterations true :show-thinking true}
-             nil
-             false
-             {:session-id "session" :session-turn-id "turn-1" :detail-expansions exp}))
+            render*
+            (fn [exp]
+              (render/invalidate-cache!)
+              (render/format-answer-with-thinking-data
+                "done"
+                trace
+                120
+                {:show-iterations true :show-thinking true}
+                nil
+                false
+                {:session-id "session" :session-turn-id "turn-1" :detail-expansions exp}))
 
-         cbody
-         (strip-ansi (:text (render* {})))
+            cbody
+            (strip-ansi (:text (render* {})))
 
-         ebody
-         (strip-ansi (:text (render* {["session" node] true})))]
+            ebody
+            (strip-ansi (:text (render* {["session" node] true})))]
 
         (expect (str/includes? cbody "THINKING"))
         (expect (not (str/includes? cbody "line 25")))
@@ -2473,58 +2404,57 @@
   (it
     "never paints a collapsed summary band"
     (render/invalidate-cache!)
-    (let
-      [huge-result
-       (str/join " " (repeat 1000 "abcdefghij"))
+    (let [huge-result
+          (str/join " " (repeat 1000 "abcdefghij"))
 
-       trace
-       [{:forms [{:code "(+ 1 2)"
-                  :comment nil
-                  :render-segments nil
-                  :stdout nil
-                  :error nil
-                  :started-at-ms nil
-                  :duration-ms 1
-                  :success? true
-                  :silent? false}]}]
+          trace
+          [{:forms [{:code "(+ 1 2)"
+                     :comment nil
+                     :render-segments nil
+                     :stdout nil
+                     :error nil
+                     :started-at-ms nil
+                     :duration-ms 1
+                     :success? true
+                     :silent? false}]}]
 
-       payload
-       (render/format-answer-with-thinking-data
-         nil
-         trace
-         96
-         {:show-iterations true}
-         nil
-         false
-         {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          payload
+          (render/format-answer-with-thinking-data
+            nil
+            trace
+            96
+            {:show-iterations true}
+            nil
+            false
+            {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
 
-       puts
-       (atom [])
+          puts
+          (atom [])
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       bg
-       (atom nil)
+          bg
+          (atom nil)
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [_] this)
-         (setBackgroundColor [c] (reset! bg c) this)
-         (putString [_col _row text] (swap! puts conj {:text text :bg @bg :sgr @active}) this)
-         (fillRectangle [_ _ _] this)
-         (setCharacter [_ _ _] this))]
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [_] this)
+            (setBackgroundColor [c] (reset! bg c) this)
+            (putString [_col _row text] (swap! puts conj {:text text :bg @bg :sgr @active}) this)
+            (fillRectangle [_ _ _] this)
+            (setCharacter [_ _ _] this))]
 
       (render/draw-chat-bubble! graphics
                                 {:role :assistant
@@ -2546,34 +2476,40 @@
 
 (defdescribe
   errored-form-rendering-test
-  (it
-    "an errored form surfaces its error message inline"
-    (render/invalidate-cache!)
-    (let
-      [err
-       {:message "boom" :type "java.lang.RuntimeException" :block {:source "(boom)" :row 1 :col 1}}
+  (it "an errored form surfaces its error message inline"
+      (render/invalidate-cache!)
+      (let [err
+            {:message "boom"
+             :type "java.lang.RuntimeException"
+             :block {:source "(boom)" :row 1 :col 1}}
 
-       trace
-       [{:forms [{:code "(boom)"
-                  :comment nil
-                  :render-segments nil
-                  :stdout nil
-                  :error err
-                  :started-at-ms nil
-                  :duration-ms 1
-                  :success? false
-                  :silent? false}]}]
+            trace
+            [{:forms [{:code "(boom)"
+                       :comment nil
+                       :render-segments nil
+                       :stdout nil
+                       :error err
+                       :started-at-ms nil
+                       :duration-ms 1
+                       :success? false
+                       :silent? false}]}]
 
-       opts
-       {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"}
+            opts
+            {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"}
 
-       payload
-       (render/format-answer-with-thinking-data nil trace 96 {:show-iterations true} nil false opts)
+            payload
+            (render/format-answer-with-thinking-data nil
+                                                     trace
+                                                     96
+                                                     {:show-iterations true}
+                                                     nil
+                                                     false
+                                                     opts)
 
-       text
-       (strip-sentinels (strip-ansi (:text payload)))]
+            text
+            (strip-sentinels (strip-ansi (:text payload)))]
 
-      (expect (str/includes? text "boom")))))
+        (expect (str/includes? text "boom")))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Retired answer disclosure tags must not create collapsible output.
@@ -2581,23 +2517,22 @@
 
 (defdescribe retired-answer-disclosure-test
              (it "ignores :details/:summary as structure and emits no summary lane"
-                 (let
-                   [answer
-                    [:ast {}
-                     [:details {:open? false} [:summary {} [:span {} "Plan"]]
-                      [:p {} [:span {} "alpha"]] [:p {} [:span {} "beta"]]]]
+                 (let [answer
+                       [:ast {}
+                        [:details {:open? false} [:summary {} [:span {} "Plan"]]
+                         [:p {} [:span {} "alpha"]] [:p {} [:span {} "beta"]]]]
 
-                    payload
-                    (render/format-answer-markdown-data
-                      answer
-                      80
-                      {:session-id "cid" :detail-expansions {["cid" "answer:details:d1"] false}})
+                       payload
+                       (render/format-answer-markdown-data
+                         answer
+                         80
+                         {:session-id "cid" :detail-expansions {["cid" "answer:details:d1"] false}})
 
-                    lines
-                    (:lines payload)
+                       lines
+                       (:lines payload)
 
-                    visible
-                    (str/join "\n" (map strip-sentinels lines))]
+                       visible
+                       (str/join "\n" (map strip-sentinels lines))]
 
                    (expect (not-any? #(= p/MARKER_MD_SUMMARY (marker-of %)) lines))
                    (expect (str/includes? visible "Planalphabeta")))))
@@ -2670,15 +2605,14 @@
 (defdescribe answer-separator-test
              (it "does not draw a bottom border between reasoning and final answer"
                  (render/invalidate-cache!)
-                 (let
-                   [payload (render/format-answer-with-thinking-data "done"
-                                                                     [{:thinking "reasoning"}]
-                                                                     80
-                                                                     {:show-thinking true
-                                                                      :show-iterations true}
-                                                                     nil
-                                                                     false
-                                                                     {})]
+                 (let [payload (render/format-answer-with-thinking-data "done"
+                                                                        [{:thinking "reasoning"}]
+                                                                        80
+                                                                        {:show-thinking true
+                                                                         :show-iterations true}
+                                                                        nil
+                                                                        false
+                                                                        {})]
                    (expect (not (str/includes? (:text payload) p/MARKER_ANSWER_SEP)))
                    (expect (not-any? #(str/starts-with? % p/MARKER_ANSWER_SEP) (:lines payload))))))
 
@@ -2687,32 +2621,31 @@
   (it "does not register a per-message copy button"
       (cr/reset!)
       (cr/begin-frame!)
-      (let
-        [message
-         {:role :assistant :text "hello world"}
+      (let [message
+            {:role :assistant :text "hello world"}
 
-         start
-         4
+            start
+            4
 
-         left
-         2
+            left
+            2
 
-         width
-         36
+            width
+            36
 
-         viewport-top
-         7
+            viewport-top
+            7
 
-         height
-         (render/draw-chat-bubble! (dummy-text-graphics)
-                                   message
-                                   start
-                                   left
-                                   width
-                                   {:viewport-top viewport-top :viewport-h 40})
+            height
+            (render/draw-chat-bubble! (dummy-text-graphics)
+                                      message
+                                      start
+                                      left
+                                      width
+                                      {:viewport-top viewport-top :viewport-h 40})
 
-         hit-col
-         (+ left 2)]
+            hit-col
+            (+ left 2)]
 
         (cr/commit-frame!)
         (expect (= 3 height))
@@ -2720,92 +2653,91 @@
                         (map #(cr/lookup hit-col %)
                              (range viewport-top (+ viewport-top start height)))))))
   (it "renders cached token usage in the assistant bubble footer"
-      (let
-        [puts
-         (atom [])
+      (let [puts
+            (atom [])
 
-         graphics
-         (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-           (clearModifiers [] this)
-           (enableModifiers [_] this)
-           (disableModifiers [_] this)
-           (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-           (setForegroundColor [_] this)
-           (setBackgroundColor [_] this)
-           (putString [_col row text] (swap! puts conj {:row row :text text}) this)
-           (fillRectangle [_ _ _] this)
-           (setCharacter [_ _ _] this))
+            graphics
+            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers [] this)
+              (enableModifiers [_] this)
+              (disableModifiers [_] this)
+              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+              (setForegroundColor [_] this)
+              (setBackgroundColor [_] this)
+              (putString [_col row text] (swap! puts conj {:row row :text text}) this)
+              (fillRectangle [_ _ _] this)
+              (setCharacter [_ _ _] this))
 
-         height
-         (render/draw-chat-bubble! graphics
-                                   {:role :assistant
-                                    :text "hello"
-                                    :message-meta-mode :full
-                                    :tokens {"input" 100 "output" 20 "cached" 70}}
-                                   4 2
-                                   60 {:viewport-h 40})]
+            height
+            (render/draw-chat-bubble! graphics
+                                      {:role :assistant
+                                       :text "hello"
+                                       :message-meta-mode :full
+                                       :tokens {"input" 100 "output" 20 "cached" 70}}
+                                      4 2
+                                      60 {:viewport-h 40})]
 
         (expect (= 5 height))
         (expect (some #(str/includes? (:text %) "100→20 (cached 70)") @puts))))
   (it "omits zero cached token usage in the assistant bubble footer"
-      (let
-        [puts
-         (atom [])
+      (let [puts
+            (atom [])
 
-         graphics
-         (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-           (clearModifiers [] this)
-           (enableModifiers [_] this)
-           (disableModifiers [_] this)
-           (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-           (setForegroundColor [_] this)
-           (setBackgroundColor [_] this)
-           (putString [_col row text] (swap! puts conj {:row row :text text}) this)
-           (fillRectangle [_ _ _] this)
-           (setCharacter [_ _ _] this))
+            graphics
+            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers [] this)
+              (enableModifiers [_] this)
+              (disableModifiers [_] this)
+              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+              (setForegroundColor [_] this)
+              (setBackgroundColor [_] this)
+              (putString [_col row text] (swap! puts conj {:row row :text text}) this)
+              (fillRectangle [_ _ _] this)
+              (setCharacter [_ _ _] this))
 
-         height
-         (render/draw-chat-bubble! graphics
-                                   {:role :assistant
-                                    :text "hello"
-                                    :message-meta-mode :full
-                                    :tokens {"input" 100 "output" 20 "cached" 0}}
-                                   4 2
-                                   60 {:viewport-h 40})]
+            height
+            (render/draw-chat-bubble! graphics
+                                      {:role :assistant
+                                       :text "hello"
+                                       :message-meta-mode :full
+                                       :tokens {"input" 100 "output" 20 "cached" 0}}
+                                      4 2
+                                      60 {:viewport-h 40})]
 
         (expect (= 5 height))
         (expect (some #(str/includes? (:text %) "100→20") @puts))
         (expect (not-any? #(str/includes? (:text %) "cached 0") @puts))))
   (it
     "leaves one blank row between assistant answer and bubble footer"
-    (let
-      [puts
-       (atom [])
+    (let [puts
+          (atom [])
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] this)
-         (enableModifiers [_] this)
-         (disableModifiers [_] this)
-         (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-         (setForegroundColor [_] this)
-         (setBackgroundColor [_] this)
-         (putString [_col row text] (swap! puts conj {:row row :text (put-text text)}) this)
-         (fillRectangle [_ _ _] this)
-         (setCharacter [_ _ _] this))
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] this)
+            (enableModifiers [_] this)
+            (disableModifiers [_] this)
+            (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+            (setForegroundColor [_] this)
+            (setBackgroundColor [_] this)
+            (putString [_col row text] (swap! puts conj {:row row :text (put-text text)}) this)
+            (fillRectangle [_ _ _] this)
+            (setCharacter [_ _ _] this))
 
-       height
-       (render/draw-chat-bubble!
-         graphics
-         {:role :assistant :text "hello" :message-meta-mode :full :tokens {"input" 100 "output" 20}}
-         4 2
-         60 {:viewport-h 40})
+          height
+          (render/draw-chat-bubble! graphics
+                                    {:role :assistant
+                                     :text "hello"
+                                     :message-meta-mode :full
+                                     :tokens {"input" 100 "output" 20}}
+                                    4 2
+                                    60 {:viewport-h 40})
 
-       answer-row
-       (:row (first (filter #(= "hello" (:text %)) @puts)))
+          answer-row
+          (:row (first (filter #(= "hello" (:text %)) @puts)))
 
-       footer-row
-       (:row (first (filter #(str/includes? (:text %) "100→20") @puts)))]
+          footer-row
+          (:row (first (filter #(str/includes? (:text %) "100→20") @puts)))]
 
       (expect (= 5 height))
       (expect (= 2 (- footer-row answer-row)))))
@@ -2815,69 +2747,67 @@
       ;; Iteration / silent-form bookkeeping no longer rides this footer, so a
       ;; turn that only carries iteration metadata produces no footer line at all
       ;; and the bubble collapses to the bare answer height (no footer rows).
-      (let
-        [puts
-         (atom [])
+      (let [puts
+            (atom [])
 
-         graphics
-         (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-           (clearModifiers [] this)
-           (enableModifiers [_] this)
-           (disableModifiers [_] this)
-           (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-           (setForegroundColor [_] this)
-           (setBackgroundColor [_] this)
-           (putString [_col row text] (swap! puts conj {:row row :text text}) this)
-           (fillRectangle [_ _ _] this)
-           (setCharacter [_ _ _] this))
+            graphics
+            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers [] this)
+              (enableModifiers [_] this)
+              (disableModifiers [_] this)
+              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+              (setForegroundColor [_] this)
+              (setBackgroundColor [_] this)
+              (putString [_col row text] (swap! puts conj {:row row :text text}) this)
+              (fillRectangle [_ _ _] this)
+              (setCharacter [_ _ _] this))
 
-         height
-         (render/draw-chat-bubble! graphics
-                                   {:role :assistant
-                                    :text "hello"
-                                    :message-meta-mode :full
-                                    :iteration-count 3
-                                    :traces [{:forms [{:silent? true} {:silent? false}]}
-                                             {:forms [{:silent? true}]}]}
-                                   4 2
-                                   60 {:viewport-h 40})]
+            height
+            (render/draw-chat-bubble! graphics
+                                      {:role :assistant
+                                       :text "hello"
+                                       :message-meta-mode :full
+                                       :iteration-count 3
+                                       :traces [{:forms [{:silent? true} {:silent? false}]}
+                                                {:forms [{:silent? true}]}]}
+                                      4 2
+                                      60 {:viewport-h 40})]
 
         (expect (= 3 height))
         (expect (not-any? #(str/includes? (str (:text %)) "iter") @puts))
         (expect (not-any? #(str/includes? (str (:text %)) "silent") @puts))))
   (it
     "ignores legacy turn separator flag on user prompts"
-    (let
-      [puts
-       (atom [])
+    (let [puts
+          (atom [])
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [_] this)
-         (setBackgroundColor [_] this)
-         (putString [_col row text] (swap! puts conj {:row row :text text :sgr @active}) this)
-         (fillRectangle [_pos _size _ch] this)
-         (setCharacter [_ _ _] this))
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [_] this)
+            (setBackgroundColor [_] this)
+            (putString [_col row text] (swap! puts conj {:row row :text text :sgr @active}) this)
+            (fillRectangle [_pos _size _ch] this)
+            (setCharacter [_ _ _] this))
 
-       height
-       (render/draw-chat-bubble! graphics
-                                 {:role :user :text "hello" :turn-separator? true}
-                                 4 2
-                                 30 {:viewport-h 40})]
+          height
+          (render/draw-chat-bubble! graphics
+                                    {:role :user :text "hello" :turn-separator? true}
+                                    4 2
+                                    30 {:viewport-h 40})]
 
       (expect (= 5 height))
       (expect (not-any? #(str/includes? (or (:text %) "") "──") @puts))
@@ -2887,61 +2817,62 @@
                     @puts))))
   (it
     "renders user messages with a left rail and markdown styling"
-    (let
-      [puts
-       (atom [])
+    (let [puts
+          (atom [])
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [_] this)
-         (setBackgroundColor [_] this)
-         (putString [_col row text]
-           (swap! puts conj {:row row :text (put-text text) :sgr @active})
-           this)
-         (fillRectangle [_ _ _] this)
-         (setCharacter [_ _ _] this))
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [_] this)
+            (setBackgroundColor [_] this)
+            (putString [_col row text]
+              (swap! puts conj {:row row :text (put-text text) :sgr @active})
+              this)
+            (fillRectangle [_ _ _] this)
+            (setCharacter [_ _ _] this))
 
-       ;; Inline markdown styling for user-message bubbles now lives
-       ;; in the `virtual.clj` projection layer that supplies
-       ;; `:prewrapped-lines` to `draw-chat-bubble!`. The bubble
-       ;; painter itself no longer parses markdown from `:text`
-       ;; (the IR→prewrapped lift happens upstream). Feed prewrapped
-       ;; lines directly so the assertion exercises the painter, not
-       ;; the retired in-painter markdown lift.
-       rendered
-       (render/format-answer-markdown-data (vis/markdown->ast "**SIEMA**\n\n> quoted text") 50 nil)
+          ;; Inline markdown styling for user-message bubbles now lives
+          ;; in the `virtual.clj` projection layer that supplies
+          ;; `:prewrapped-lines` to `draw-chat-bubble!`. The bubble
+          ;; painter itself no longer parses markdown from `:text`
+          ;; (the IR→prewrapped lift happens upstream). Feed prewrapped
+          ;; lines directly so the assertion exercises the painter, not
+          ;; the retired in-painter markdown lift.
+          rendered
+          (render/format-answer-markdown-data (vis/markdown->ast "**SIEMA**\n\n> quoted text")
+                                              50
+                                              nil)
 
-       message
-       {:role :user
-        :text "**SIEMA**\n\n> quoted text"
-        :prewrapped-lines (:lines rendered)
-        :line-meta (:line-meta rendered)}
+          message
+          {:role :user
+           :text "**SIEMA**\n\n> quoted text"
+           :prewrapped-lines (:lines rendered)
+           :line-meta (:line-meta rendered)}
 
-       start
-       4
+          start
+          4
 
-       left
-       2
+          left
+          2
 
-       width
-       50
+          width
+          50
 
-       height
-       (render/draw-chat-bubble! graphics message start left width {:viewport-h 40})]
+          height
+          (render/draw-chat-bubble! graphics message start left width {:viewport-h 40})]
 
       (expect (pos? height))
       ;; SIEMA appears on one of the painted rows; markdown styling
@@ -2955,150 +2886,149 @@
       (expect (some #(str/includes? (or (:text %) "") "quoted text") @puts))))
   (it
     "draws assistant answer text aligned with the Vis label"
-    (let
-      [puts
-       (atom [])
+    (let [puts
+          (atom [])
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [_] this)
-         (setBackgroundColor [_] this)
-         (putString [col row text] (swap! puts conj {:col col :row row :text (put-text text)}) this)
-         (fillRectangle [_ _ _] this)
-         (setCharacter [_ _ _] this))
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [_] this)
+            (setBackgroundColor [_] this)
+            (putString [col row text]
+              (swap! puts conj {:col col :row row :text (put-text text)})
+              this)
+            (fillRectangle [_ _ _] this)
+            (setCharacter [_ _ _] this))
 
-       rendered
-       (render/format-answer-markdown-data (vis/markdown->ast "hello") 50 nil)
+          rendered
+          (render/format-answer-markdown-data (vis/markdown->ast "hello") 50 nil)
 
-       left
-       2
+          left
+          2
 
-       _height
-       (render/draw-chat-bubble! graphics
-                                 {:role :assistant
-                                  :text ""
-                                  :prewrapped-lines (:lines rendered)
-                                  :line-meta (:line-meta rendered)}
-                                 4 left
-                                 50 {:viewport-h 40})
+          _height
+          (render/draw-chat-bubble! graphics
+                                    {:role :assistant
+                                     :text ""
+                                     :prewrapped-lines (:lines rendered)
+                                     :line-meta (:line-meta rendered)}
+                                    4 left
+                                    50 {:viewport-h 40})
 
-       answer-put
-       (first (filter #(str/includes? (:text %) "hello") @puts))]
+          answer-put
+          (first (filter #(str/includes? (:text %) "hello") @puts))]
 
       (expect (= left (:col answer-put)))))
   (it
     "draws markdown fenced code one column inside the bubble band"
-    (let
-      [fills
-       (atom [])
+    (let [fills
+          (atom [])
 
-       puts
-       (atom [])
+          puts
+          (atom [])
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       fg
-       (atom nil)
+          fg
+          (atom nil)
 
-       bg
-       (atom nil)
+          bg
+          (atom nil)
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [c] (reset! fg c) this)
-         (setBackgroundColor [c] (reset! bg c) this)
-         (putString [col row text]
-           (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg})
-           this)
-         (fillRectangle [pos size _ch]
-           (swap! fills conj
-             {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
-              :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
-              :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
-              :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
-              :fg @fg
-              :bg @bg})
-           this)
-         (setCharacter [_ _ _] this))
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [c] (reset! fg c) this)
+            (setBackgroundColor [c] (reset! bg c) this)
+            (putString [col row text]
+              (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg})
+              this)
+            (fillRectangle [pos size _ch]
+              (swap! fills conj
+                {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
+                 :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
+                 :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
+                 :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
+                 :fg @fg
+                 :bg @bg})
+              this)
+            (setCharacter [_ _ _] this))
 
-       rendered
-       (render/format-answer-markdown-data (vis/markdown->ast "```clojure\n(+ 1 2)\n```") 50 nil)
+          rendered
+          (render/format-answer-markdown-data (vis/markdown->ast "```clojure\n(+ 1 2)\n```") 50 nil)
 
-       left
-       2
+          left
+          2
 
-       width
-       50
+          width
+          50
 
-       ;; ANSWER fenced-code rows are inset from the band's left edge by
-       ;; `code-block-h-pad` (the band still fills from `left`).
-       text-x
-       (+ left @#'render/code-block-h-pad)
+          ;; ANSWER fenced-code rows are inset from the band's left edge by
+          ;; `code-block-h-pad` (the band still fills from `left`).
+          text-x
+          (+ left @#'render/code-block-h-pad)
 
-       _height
-       (render/draw-chat-bubble! graphics
-                                 {:role :assistant
-                                  :text ""
-                                  :prewrapped-lines (:lines rendered)
-                                  :line-meta (:line-meta rendered)}
-                                 4
-                                 left
-                                 width
-                                 {:viewport-h 40})
+          _height
+          (render/draw-chat-bubble! graphics
+                                    {:role :assistant
+                                     :text ""
+                                     :prewrapped-lines (:lines rendered)
+                                     :line-meta (:line-meta rendered)}
+                                    4
+                                    left
+                                    width
+                                    {:viewport-h 40})
 
-       code-put
-       ;; Colorization splits the code line into one putString per color run,
-       ;; so the leading chunk (which starts the code at text-x) no longer
-       ;; contains the whole form. Match that leading chunk, ANSI-stripped.
-       (first (filter #(str/includes? (strip-ansi (str (:text %))) "(+") @puts))
+          code-put
+          ;; Colorization splits the code line into one putString per color run,
+          ;; so the leading chunk (which starts the code at text-x) no longer
+          ;; contains the whole form. Match that leading chunk, ANSI-stripped.
+          (first (filter #(str/includes? (strip-ansi (str (:text %))) "(+") @puts))
 
-       code-fill
-       (first (filter #(and (= t/code-block-bg (:bg %)) (= (:row code-put) (:row %))) @fills))]
+          code-fill
+          (first (filter #(and (= t/code-block-bg (:bg %)) (= (:row code-put) (:row %))) @fills))]
 
       (expect (= text-x (:col code-put)))
       (expect (= left (:col code-fill)))
       (expect (= width (:w code-fill)))))
   (it "renders blank fenced-code rows nested in a list"
-      (let
-        [fence
-         (apply str (repeat 3 (char 96)))
+      (let [fence
+            (apply str (repeat 3 (char 96)))
 
-         markdown
-         (str "- inspect:\n\n    " fence "clojure\n\n    (+ 1 2)\n    " fence)
+            markdown
+            (str "- inspect:\n\n    " fence "clojure\n\n    (+ 1 2)\n    " fence)
 
-         rendered
-         (render/format-answer-markdown-data (vis/markdown->ast markdown) 50 nil)
+            rendered
+            (render/format-answer-markdown-data (vis/markdown->ast markdown) 50 nil)
 
-         nested-blank?
-         (some (fn [[line meta]]
-                 (and (= 1 (count line)) (:list-nested-code? meta) (= 2 (:list-indent meta))))
-               (map vector (:lines rendered) (:line-meta rendered)))]
+            nested-blank?
+            (some (fn [[line meta]]
+                    (and (= 1 (count line)) (:list-nested-code? meta) (= 2 (:list-indent meta))))
+                  (map vector (:lines rendered) (:line-meta rendered)))]
 
         (expect nested-blank?)
         (expect (pos? (render/draw-chat-bubble! (dummy-text-graphics)
@@ -3110,71 +3040,70 @@
                                                 50 {:viewport-h 40})))))
   (it
     "leaves only the final gap after the user bubble fill"
-    (let
-      [fills
-       (atom [])
+    (let [fills
+          (atom [])
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       graphics
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [_] this)
-         (setBackgroundColor [_] this)
-         (putString ([_ _ _] this))
-         (fillRectangle [pos size _ch]
-           (swap! fills conj
-             {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
-              :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
-              :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
-              :h (.getRows ^com.googlecode.lanterna.TerminalSize size)})
-           this)
-         (setCharacter [_ _ _] this))
+          graphics
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [_] this)
+            (setBackgroundColor [_] this)
+            (putString ([_ _ _] this))
+            (fillRectangle [pos size _ch]
+              (swap! fills conj
+                {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
+                 :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
+                 :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
+                 :h (.getRows ^com.googlecode.lanterna.TerminalSize size)})
+              this)
+            (setCharacter [_ _ _] this))
 
-       message
-       {:role :user :text "hello world"}
+          message
+          {:role :user :text "hello world"}
 
-       start
-       4
+          start
+          4
 
-       left
-       2
+          left
+          2
 
-       width
-       36
+          width
+          36
 
-       viewport-top
-       7
+          viewport-top
+          7
 
-       height
-       (render/draw-chat-bubble! graphics
-                                 message
-                                 start
-                                 left
-                                 width
-                                 {:viewport-top viewport-top :viewport-h 40})
+          height
+          (render/draw-chat-bubble! graphics
+                                    message
+                                    start
+                                    left
+                                    width
+                                    {:viewport-top viewport-top :viewport-h 40})
 
-       gap-row
-       (+ start height -1)
+          gap-row
+          (+ start height -1)
 
-       bubble-fill
-       (some (fn [fill]
-               (when (and (= left (:col fill)) (pos? (:h fill))) fill))
-             @fills)
+          bubble-fill
+          (some (fn [fill]
+                  (when (and (= left (:col fill)) (pos? (:h fill))) fill))
+                @fills)
 
-       bubble-last-row
-       (+ (:row bubble-fill) (:h bubble-fill) -1)]
+          bubble-last-row
+          (+ (:row bubble-fill) (:h bubble-fill) -1)]
 
       (expect (= 5 height))
       (expect (= 3 (:h bubble-fill)))
@@ -3184,172 +3113,166 @@
       (expect (< (:w bubble-fill) width))
       (expect (= bubble-last-row (dec gap-row))))))
 
-(defdescribe bubble-row-clipping-test
-             (it "clips prewrapped formatter rows at bubble content width"
-                 (let
-                   [plain
-                    (apply str (repeat 80 "x"))
+(defdescribe
+  bubble-row-clipping-test
+  (it "clips prewrapped formatter rows at bubble content width"
+      (let [plain
+            (apply str (repeat 80 "x"))
 
-                    marked
-                    (str p/MARKER_CODE_OK (apply str (repeat 80 "y")))
+            marked
+            (str p/MARKER_CODE_OK (apply str (repeat 80 "y")))
 
-                    clipped
-                    (clip-lines-preserving-markers [plain marked] 17)]
+            clipped
+            (clip-lines-preserving-markers [plain marked] 17)]
 
-                   (expect (= 2 (count clipped)))
-                   (expect (= (subs plain 0 17) (first clipped)))
-                   (expect (= p/MARKER_CODE_OK (marker-of (second clipped))))
-                   (expect (<= (p/display-width (first clipped)) 17))
-                   (expect (<= (p/display-width (body-of (second clipped))) 17))))
-             (it "clips ANSI-colored Clojure formatter rows without handing ESC to Lanterna"
-                 (let
-                   [ansi-line
-                    (str p/MARKER_CODE_OK
-                         "\u001b[32m(\u001b[0m\u001b[34mdef\u001b[0m "
-                         "\u001b[30mrequest-classification\u001b[0m "
-                         "\u001b[35m:evidence-bearing-code-change\u001b[0m")
+        (expect (= 2 (count clipped)))
+        (expect (= (subs plain 0 17) (first clipped)))
+        (expect (= p/MARKER_CODE_OK (marker-of (second clipped))))
+        (expect (<= (p/display-width (first clipped)) 17))
+        (expect (<= (p/display-width (body-of (second clipped))) 17))))
+  (it "clips ANSI-colored Clojure formatter rows without handing ESC to Lanterna"
+      (let [ansi-line
+            (str p/MARKER_CODE_OK
+                 "\u001b[32m(\u001b[0m\u001b[34mdef\u001b[0m "
+                 "\u001b[30mrequest-classification\u001b[0m "
+                 "\u001b[35m:evidence-bearing-code-change\u001b[0m")
 
-                    clipped
-                    (first (clip-lines-preserving-markers [ansi-line] 12))]
+            clipped
+            (first (clip-lines-preserving-markers [ansi-line] 12))]
 
-                   (expect (= p/MARKER_CODE_OK (marker-of clipped)))
-                   (expect (str/includes? clipped "\u001b[32m"))
-                   (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12))))
-             (it "truncate-with-suffix keeps ANSI colour on a highlighted thinking peek row"
-                 ;; A collapsed thinking band appends " …" to its last peek row via
-                 ;; `truncate-with-suffix`. That row can be a syntax-highlighted code line
-                 ;; carrying `\u001b[..m` SGR runs; truncation must stay ANSI-aware so the
-                 ;; ESC bytes survive (colours kept) and the SGR params don't leak as text.
-                 (let
-                   [code-line
-                    "\u001b[36mdefn\u001b[0m qux [w] (+ w \u001b[34m3\u001b[0m))"
+        (expect (= p/MARKER_CODE_OK (marker-of clipped)))
+        (expect (str/includes? clipped "\u001b[32m"))
+        (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12))))
+  (it "truncate-with-suffix keeps ANSI colour on a highlighted thinking peek row"
+      ;; A collapsed thinking band appends " …" to its last peek row via
+      ;; `truncate-with-suffix`. That row can be a syntax-highlighted code line
+      ;; carrying `\u001b[..m` SGR runs; truncation must stay ANSI-aware so the
+      ;; ESC bytes survive (colours kept) and the SGR params don't leak as text.
+      (let [code-line
+            "\u001b[36mdefn\u001b[0m qux [w] (+ w \u001b[34m3\u001b[0m))"
 
-                    out
-                    (truncate-with-suffix code-line " …" 30)]
+            out
+            (truncate-with-suffix code-line " …" 30)]
 
-                   (expect (str/includes? out "\u001b[36m"))
-                   (expect (str/includes? out "\u001b[0m"))
-                   ;; No bare SGR param text leaks once the real escapes are stripped.
-                   (expect (not (re-find #"\[[0-9;]*m" (strip-ansi out))))
-                   (expect (<= (p/display-width (strip-ansi out)) 30))))
-             (it
-               "reuses clipped prewrapped rows while scrolling huge trace bubbles"
-               (render/invalidate-cache!)
-               (let
-                 [huge-line
-                  (str p/MARKER_CODE_OK (apply str (repeat 4000 "x")))
+        (expect (str/includes? out "\u001b[36m"))
+        (expect (str/includes? out "\u001b[0m"))
+        ;; No bare SGR param text leaks once the real escapes are stripped.
+        (expect (not (re-find #"\[[0-9;]*m" (strip-ansi out))))
+        (expect (<= (p/display-width (strip-ansi out)) 30))))
+  (it "reuses clipped prewrapped rows while scrolling huge trace bubbles"
+      (render/invalidate-cache!)
+      (let [huge-line
+            (str p/MARKER_CODE_OK (apply str (repeat 4000 "x")))
 
-                  message
-                  {:role :assistant :timestamp nil :prewrapped-lines (vec (repeat 1000 huge-line))}
+            message
+            {:role :assistant :timestamp nil :prewrapped-lines (vec (repeat 1000 huge-line))}
 
-                  draw!
-                  #(render/draw-chat-bubble! (dummy-text-graphics)
-                                             message
-                                             0 2
-                                             100 {:viewport-top 0 :viewport-h 35})]
+            draw!
+            #(render/draw-chat-bubble! (dummy-text-graphics)
+                                       message
+                                       0 2
+                                       100 {:viewport-top 0 :viewport-h 35})]
 
-                 (draw!)
-                 (let
-                   [t0
-                    (System/nanoTime)
+        (draw!)
+        (let [t0
+              (System/nanoTime)
 
-                    _
-                    (draw!)
+              _
+              (draw!)
 
-                    ms
-                    (/ (- (System/nanoTime) t0) 1e6)]
+              ms
+              (/ (- (System/nanoTime) t0) 1e6)]
 
-                   (expect (< ms 20.0))))))
+          (expect (< ms 20.0))))))
 
 (defdescribe
   slash-command-suggestions-overlay-test
   (it
     "draws a bordered, BOLD, accent-stripe title with flex hint pairs"
-    (let
-      [puts
-       (atom [])
+    (let [puts
+          (atom [])
 
-       fills
-       (atom [])
+          fills
+          (atom [])
 
-       fg
-       (atom nil)
+          fg
+          (atom nil)
 
-       bg
-       (atom nil)
+          bg
+          (atom nil)
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       g
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [c] (reset! fg c) this)
-         (setBackgroundColor [c] (reset! bg c) this)
-         (getForegroundColor [] @fg)
-         (getBackgroundColor [] @bg)
-         (putString [col row text]
-           (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg :sgr @active})
-           this)
-         (fillRectangle [pos size _ch]
-           (swap! fills conj
-             {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
-              :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
-              :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
-              :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
-              :fg @fg
-              :bg @bg})
-           this)
-         (setCharacter [_ _ _] this))
+          g
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [c] (reset! fg c) this)
+            (setBackgroundColor [c] (reset! bg c) this)
+            (getForegroundColor [] @fg)
+            (getBackgroundColor [] @bg)
+            (putString [col row text]
+              (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg :sgr @active})
+              this)
+            (fillRectangle [pos size _ch]
+              (swap! fills conj
+                {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
+                 :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
+                 :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
+                 :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
+                 :fg @fg
+                 :bg @bg})
+              this)
+            (setCharacter [_ _ _] this))
 
-       ;; More matches than the overlay cap must stay a compact, scrollable
-       ;; menu instead of consuming all available transcript height.
-       suggestions
-       (mapv (fn [i]
-               {:label (str "command-" i)
-                :slash/usage (str "/command-" i)
-                :slash/selected? (zero? i)})
-             (range 12))
+          ;; More matches than the overlay cap must stay a compact, scrollable
+          ;; menu instead of consuming all available transcript height.
+          suggestions
+          (mapv (fn [i]
+                  {:label (str "command-" i)
+                   :slash/usage (str "/command-" i)
+                   :slash/selected? (zero? i)})
+                (range 12))
 
-       input-top
-       20
+          input-top
+          20
 
-       cols
-       80
+          cols
+          80
 
-       n
-       8
+          n
+          8
 
-       ;; Layout (from top to bottom):
-       ;;   margin-row -> title-row -> border-row -> sug rows ...
-       first-sug
-       (- input-top n)
+          ;; Layout (from top to bottom):
+          ;;   margin-row -> title-row -> border-row -> sug rows ...
+          first-sug
+          (- input-top n)
 
-       border-row
-       (dec first-sug)
+          border-row
+          (dec first-sug)
 
-       title-row
-       (dec border-row)
+          title-row
+          (dec border-row)
 
-       margin-row
-       (dec title-row)
+          margin-row
+          (dec title-row)
 
-       ;; Horizontal margin matches input box rule pad (2 cols).
-       pad
-       2
+          ;; Horizontal margin matches input box rule pad (2 cols).
+          pad
+          2
 
-       inner-w
-       (- cols (* 2 pad))]
+          inner-w
+          (- cols (* 2 pad))]
 
       (render/draw-slash-command-suggestions! g suggestions input-top cols)
       ;; Title row sits ABOVE the border row (border under title).
@@ -3392,12 +3315,11 @@
       ;; Title items spread across the inner width (space-between):
       ;; first item sits inside the left margin, last item in the
       ;; right half of the inner span.
-      (let
-        [title-puts
-         (filter #(= title-row (:row %)) @puts)
+      (let [title-puts
+            (filter #(= title-row (:row %)) @puts)
 
-         cols-used
-         (mapv :col title-puts)]
+            cols-used
+            (mapv :col title-puts)]
 
         (expect (some #(<= pad % (+ pad 2)) cols-used))
         (expect (some #(>= % (+ pad (quot inner-w 2))) cols-used)))
@@ -3428,21 +3350,20 @@
                         @puts))
       ;; Each suggestion row paints a markdown-style chip:
       ;;   <code-bg fill> /cmd <code-bg fill end> ` - ` <italic desc>
-      (let
-        [sug-rows
-         (filter #(<= first-sug (:row %)) @puts)
+      (let [sug-rows
+            (filter #(<= first-sug (:row %)) @puts)
 
-         usages
-         (filter #(str/starts-with? (:text %) "/") sug-rows)
+            usages
+            (filter #(str/starts-with? (:text %) "/") sug-rows)
 
-         seps
-         (filter #(= " - " (:text %)) sug-rows)
+            seps
+            (filter #(= " - " (:text %)) sug-rows)
 
-         descs
-         (filter #(contains? (:sgr %) com.googlecode.lanterna.SGR/ITALIC) sug-rows)
+            descs
+            (filter #(contains? (:sgr %) com.googlecode.lanterna.SGR/ITALIC) sug-rows)
 
-         chip-fills
-         (filter #(and (<= first-sug (:row %)) (= t/code-block-bg (:bg %))) @fills)]
+            chip-fills
+            (filter #(and (<= first-sug (:row %)) (= t/code-block-bg (:bg %))) @fills)]
 
         ;; One chip fill, usage, separator and description per suggestion.
         (expect (= n (count chip-fills)))
@@ -3453,12 +3374,11 @@
         ;; padding on each side, ` - ` follows the chip, italic desc
         ;; follows the separator. The chip starts AFTER the selection
         ;; gutter (`p/SELECTION_WIDTH` cols inside the inset body).
-        (doseq
-          [[chip u s d] (map vector
-                             (sort-by :row chip-fills)
-                             (sort-by :row usages)
-                             (sort-by :row seps)
-                             (sort-by :row descs))]
+        (doseq [[chip u s d] (map vector
+                                  (sort-by :row chip-fills)
+                                  (sort-by :row usages)
+                                  (sort-by :row seps)
+                                  (sort-by :row descs))]
           ;; Chip lives past the selection gutter — first chip col is
           ;; at least `pad + p/SELECTION_WIDTH` (cursor + 1-col margin).
           (expect (>= (:col chip)
@@ -3477,41 +3397,40 @@
           (expect (= (:col d) (+ (:col s) (count (:text s)))))))))
   (it
     "drops the border row when there is not enough vertical space"
-    (let
-      [puts
-       (atom [])
+    (let [puts
+          (atom [])
 
-       active
-       (atom #{})
+          active
+          (atom #{})
 
-       g
-       (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-         (clearModifiers [] (reset! active #{}) this)
-         (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (swap! active into (seq arr))
-           this)
-         (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-           (apply swap! active disj (seq arr))
-           this)
-         (getActiveModifiers []
-           (if (empty? @active)
-             (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-             (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-         (setForegroundColor [_] this)
-         (setBackgroundColor [_] this)
-         (getForegroundColor [] nil)
-         (getBackgroundColor [] nil)
-         (putString [col row text] (swap! puts conj {:col col :row row :text text}) this)
-         (fillRectangle [_ _ _] this)
-         (setCharacter [_ _ _] this))
+          g
+          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+            (clearModifiers [] (reset! active #{}) this)
+            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (swap! active into (seq arr))
+              this)
+            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+              (apply swap! active disj (seq arr))
+              this)
+            (getActiveModifiers []
+              (if (empty? @active)
+                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+            (setForegroundColor [_] this)
+            (setBackgroundColor [_] this)
+            (getForegroundColor [] nil)
+            (getBackgroundColor [] nil)
+            (putString [col row text] (swap! puts conj {:col col :row row :text text}) this)
+            (fillRectangle [_ _ _] this)
+            (setCharacter [_ _ _] this))
 
-       ;; input-top = 2: only enough room for title (1 row) + 1
-       ;; suggestion. Border + margin must drop.
-       suggestions
-       [{:label "a" :slash/usage "/a" :slash/selected? true}]
+          ;; input-top = 2: only enough room for title (1 row) + 1
+          ;; suggestion. Border + margin must drop.
+          suggestions
+          [{:label "a" :slash/usage "/a" :slash/selected? true}]
 
-       input-top
-       2]
+          input-top
+          2]
 
       (render/draw-slash-command-suggestions! g suggestions input-top 40)
       ;; Title row sits at row 0 (above the single suggestion at row 1).
@@ -3556,12 +3475,11 @@
              ;; served the pre-display body forever and the formatted band never appeared
              ;; until the call finished. Caught by capturing the same frame before/after
              ;; the display fields land: the two paints were byte-identical.
-             (let
-               [fp
-                #'render/form-fingerprint
+             (let [fp
+                   #'render/form-fingerprint
 
-                base
-                {:code "sh.logs()"}]
+                   base
+                   {:code "sh.logs()"}]
 
                (it "display-code busts the fingerprint"
                    (expect (not= (fp base) (fp (assoc base :display-code "# shell logs verify"))))
@@ -3570,10 +3488,9 @@
                (it "display-language busts the fingerprint"
                    (expect (not= (fp base) (fp (assoc base :display-language "bash")))))
                (it "identical display fields still hit the same fingerprint"
-                   (let
-                     [full (assoc base
-                             :display-code "sleep 30"
-                             :display-language "bash")]
+                   (let [full (assoc base
+                                :display-code "sleep 30"
+                                :display-language "bash")]
                      (expect (= (fp full) (fp full)))))))
 
 (defdescribe
@@ -3584,12 +3501,11 @@
   ;; every user bubble's cached height). A user prompt CAN carry a collapsible
   ;; `[Pasted #N]` disclosure, though — so `expand-all` and its own per-turn
   ;; expansions must still key it (see the paste-disclosure path).
-  (let
-    [sid
-     "s1"
+  (let [sid
+        "s1"
 
-     expansions
-     {["s1" "iteration:tabc12345:i1:result"] true}]
+        expansions
+        {["s1" "iteration:tabc12345:i1:result"] true}]
 
     (it "user message key is constant regardless of expansions"
         (expect (= (render/message-detail-expansions-key sid {:role :user :text "hi"} {})
@@ -3652,19 +3568,18 @@
   ;; and the transcript never repainted until a per-node click finally changed a
   ;; vector key ("C-x ] does nothing until I click something"). The bulk state
   ;; MUST alter the key.
-  (let
-    [turn-key
-     @#'render/turn-detail-expansions-key
+  (let [turn-key
+        @#'render/turn-detail-expansions-key
 
-     relevant-key
-     @#'render/relevant-detail-expansions-key
+        relevant-key
+        @#'render/relevant-detail-expansions-key
 
-     base
-     {:session-id "cid" :session-turn-id "abc12345-0000" :node-id "iteration:tabc1234:i1:result"}
+        base
+        {:session-id "cid" :session-turn-id "abc12345-0000" :node-id "iteration:tabc1234:i1:result"}
 
-     with
-     (fn [f de]
-       (f (assoc base :detail-expansions de)))]
+        with
+        (fn [f de]
+          (f (assoc base :detail-expansions de)))]
 
     (it "turn key differs for collapse vs expand baseline"
         (expect (not= (with turn-key {:vis.channel-tui/baseline :collapse})
@@ -3687,24 +3602,23 @@
   ;; `input/collapse-paste-placeholders` emits) renders as a collapsible
   ;; disclosure: the token is the chevron summary row, the payload the body
   ;; shown only when expanded.
-  (let
-    [ast
-     [:ast {} [:p {} [:span {} "look at this"]]
-      [:code {:lang "vis-paste"} "[Pasted #1: 3 lines, 11B]\nAAA\nBBB\nCCC\n"]]
+  (let [ast
+        [:ast {} [:p {} [:span {} "look at this"]]
+         [:code {:lang "vis-paste"} "[Pasted #1: 3 lines, 11B]\nAAA\nBBB\nCCC\n"]]
 
-     sid
-     "s1"
+        sid
+        "s1"
 
-     turn
-     "client-turn-1"
+        turn
+        "client-turn-1"
 
-     opts
-     (fn [de]
-       {:session-id sid :session-turn-id turn :detail-expansions de :section :user})
+        opts
+        (fn [de]
+          {:session-id sid :session-turn-id turn :detail-expansions de :section :user})
 
-     node-id
-     (@#'render/detail-node-id
-      {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
+        node-id
+        (@#'render/detail-node-id
+         {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
 
     (it "collapsed by default: summary chevron shows, payload hidden"
         (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
@@ -3716,17 +3630,16 @@
           (expect (str/includes? txt "AAA"))
           (expect (str/includes? txt "CCC"))))
     (it "the summary row carries toggle-details click meta scoped to this node"
-        (let
-          [{:keys [lines line-meta]}
-           (render/format-answer-markdown-data ast 76 (opts {}))
+        (let [{:keys [lines line-meta]}
+              (render/format-answer-markdown-data ast 76 (opts {}))
 
-           idx
-           (first (keep-indexed (fn [i l]
-                                  (when (str/includes? l "Pasted #1") i))
-                                lines))
+              idx
+              (first (keep-indexed (fn [i l]
+                                     (when (str/includes? l "Pasted #1") i))
+                                   lines))
 
-           meta
-           (nth line-meta idx)]
+              meta
+              (nth line-meta idx)]
 
           (expect (= :toggle-details (:kind meta)))
           (expect (= (str node-id) (:node-id meta)))
@@ -3739,29 +3652,27 @@
   ;; layout (or a text fallback shows on image-incapable terminals) — no
   ;; expansion state, so the transcript height never jumps and the picture is
   ;; never painted at a stale position.
-  (let
-    [ast
-     [:ast {}
-      [:code {:lang "vis-image"}
-       "[Image #1: shot.png 1200×800, 245KB]\n/tmp/shot.png\nimage/png\n1200x800\n245KB\n"]]
+  (let [ast
+        [:ast {}
+         [:code {:lang "vis-image"}
+          "[Image #1: shot.png 1200×800, 245KB]\n/tmp/shot.png\nimage/png\n1200x800\n245KB\n"]]
 
-     sid
-     "s1"
+        sid
+        "s1"
 
-     turn
-     "client-turn-1"
+        turn
+        "client-turn-1"
 
-     opts
-     (fn [de]
-       {:session-id sid :session-turn-id turn :detail-expansions de :section :user})]
+        opts
+        (fn [de]
+          {:session-id sid :session-turn-id turn :detail-expansions de :section :user})]
 
     (it "graphical terminal: paint-meta row + reserved box are allocated by default"
         (with-redefs [timg/images-protocol (constantly :kitty)]
-          (let
-            [{:keys [line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
-             img-rows (filter #(= :image (:kind %)) line-meta)
-             pad-rows (filter #(= :image-pad (:kind %)) line-meta)
-             img (:img (first img-rows))]
+          (let [{:keys [line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
+                img-rows (filter #(= :image (:kind %)) line-meta)
+                pad-rows (filter #(= :image-pad (:kind %)) line-meta)
+                img (:img (first img-rows))]
 
             (expect (= 1 (count img-rows)))
             (expect (= "/tmp/shot.png" (:path img)))
@@ -3797,16 +3708,15 @@
   tool-card-body-indent-test
   (it
     "keeps one header spacer, glues each label to its content, and breathes one blank row between sections + a trailing pad"
-    (let
-      [texts
-       (entry-text (tool-card-entries {:label "REPL"
-                                       :summary "(+ 1 1) ⇒ 2"
-                                       :body
-                                       "**RESULT**\n```clojure\n2\n```\n\n**STDOUT**\n```\nhi\n```"}
-                                      {:fill-w 76 :session-id nil :detail-expansions {}}))
+    (let [texts
+          (entry-text (tool-card-entries
+                        {:label "REPL"
+                         :summary "(+ 1 1) ⇒ 2"
+                         :body "**RESULT**\n```clojure\n2\n```\n\n**STDOUT**\n```\nhi\n```"}
+                        {:fill-w 76 :session-id nil :detail-expansions {}}))
 
-       body-texts
-       (vec (remove str/blank? (drop 2 texts)))]
+          body-texts
+          (vec (remove str/blank? (drop 2 texts)))]
 
       (expect (= "" (second texts)))
       (expect (= ["  RESULT" "  2" "  STDOUT" "  hi"] body-texts))
@@ -3834,13 +3744,13 @@
              ;; collapses and the image overpaints the rows below it.
              (it "graphical terminal: reserved image box survives op-card body compaction"
                  (with-redefs [timg/images-protocol (constantly :kitty)]
-                   (let
-                     [entries (tool-card-entries
-                                {:body (str "````vis-image\n[Image: shot.png 1578×444, 45.7 KB]\n"
+                   (let [entries (tool-card-entries
+                                   {:body (str
+                                            "````vis-image\n[Image: shot.png 1578×444, 45.7 KB]\n"
                                             "/tmp/shot.png\nimage/png\n1578x444\n45.7 KB\n````")}
-                                {:fill-w 76 :session-id nil :detail-expansions {} :node-id "n1"})
-                      img-rows (filter #(#{:image :image-pad} (:kind (:meta %))) entries)
-                      img (:img (:meta (first img-rows)))]
+                                   {:fill-w 76 :session-id nil :detail-expansions {} :node-id "n1"})
+                         img-rows (filter #(#{:image :image-pad} (:kind (:meta %))) entries)
+                         img (:img (:meta (first img-rows)))]
 
                      (expect (pos? (long (:rows img))))
                      ;; every reserved row (paint + pads) is present after compaction
@@ -3853,42 +3763,40 @@
              ;; rows, and `coalesce-bubble-blanks` folded the survivors into ONE
              ;; row — while `:img` still claimed the full height, so the paint layer
              ;; source-cropped the picture down to its top sliver.
-             (let
-               [fence
-                (fn [w h]
-                  (str "````vis-image\n[Image: shot.png "
-                       w
-                       "×"
-                       h
-                       ", 45.7 KB]\n"
-                       "/tmp/shot.png\nimage/png\n" w
-                       "x" h
-                       "\n45.7 KB\n````\n" "{'filename': 'shot.png'}"))
+             (let [fence
+                   (fn [w h]
+                     (str "````vis-image\n[Image: shot.png "
+                          w
+                          "×"
+                          h
+                          ", 45.7 KB]\n"
+                          "/tmp/shot.png\nimage/png\n" w
+                          "x" h
+                          "\n45.7 KB\n````\n" "{'filename': 'shot.png'}"))
 
-                painted
-                (fn [w h fill-w]
-                  (with-redefs [timg/images-protocol (constantly :kitty)]
-                    (render/invalidate-cache!)
-                    (let
-                      [body (fence w h)
-                       {:keys [line-meta]} (render/format-answer-with-thinking-data
-                                             nil
-                                             [{:forms [{:code "print(attach(\"/tmp/shot.png\"))"
-                                                        :stdout body
-                                                        :result body
-                                                        :duration-ms 1
-                                                        :success? true}]}]
-                                             fill-w
-                                             {:show-iterations true}
-                                             nil
-                                             false
-                                             {:session-id "s"
-                                              :session-turn-id
-                                              "123e4567-e89b-12d3-a456-426614174000"
-                                              :detail-expansions {}})
-                       rows (filter #(#{:image :image-pad} (:kind %)) line-meta)]
+                   painted
+                   (fn [w h fill-w]
+                     (with-redefs [timg/images-protocol (constantly :kitty)]
+                       (render/invalidate-cache!)
+                       (let [body (fence w h)
+                             {:keys [line-meta]}
+                             (render/format-answer-with-thinking-data
+                               nil
+                               [{:forms [{:code "print(attach(\"/tmp/shot.png\"))"
+                                          :stdout body
+                                          :result body
+                                          :duration-ms 1
+                                          :success? true}]}]
+                               fill-w
+                               {:show-iterations true}
+                               nil
+                               false
+                               {:session-id "s"
+                                :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                                :detail-expansions {}})
+                             rows (filter #(#{:image :image-pad} (:kind %)) line-meta)]
 
-                      {:rows (count rows) :img (:img (first rows))})))]
+                         {:rows (count rows) :img (:img (first rows))})))]
 
                (it "the WHOLE reserved box survives the RESULT preview and blank coalescing"
                    (let [{:keys [rows img]} (painted 1206 2622 180)]
@@ -3909,30 +3817,29 @@
   ;; Prose / thinking is the only separator: a narrated head OPENS a run (its
   ;; narration renders above the merged forms); an INTERIOR narrated call, or an
   ;; iteration-level error, breaks the run.
-  (let
-    [ctx
-     {:fill-w 76 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
+  (let [ctx
+        {:fill-w 76 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
 
-     tool
-     (fn [i t s]
-       [i {:forms [(result-form t s)]}])
+        tool
+        (fn [i t s]
+          [i {:forms [(result-form t s)]}])
 
-     narr
-     (fn [i t s]
-       [i {:forms [(result-form t s)] :thinking "hmm"}])
+        narr
+        (fn [i t s]
+          [i {:forms [(result-form t s)] :thinking "hmm"}])
 
-     ;; iter-fn stub: one CALL# row per render, tagged with the head idx and
-     ;; the merged form count so the run-grouping is directly observable.
-     iter-fn
-     (fn [[idx entry]]
-       [{:line (str "CALL#" idx "×" (count (:forms entry))) :meta nil}])
+        ;; iter-fn stub: one CALL# row per render, tagged with the head idx and
+        ;; the merged form count so the run-grouping is directly observable.
+        iter-fn
+        (fn [[idx entry]]
+          [{:line (str "CALL#" idx "×" (count (:forms entry))) :meta nil}])
 
-     calls
-     (fn [pairs]
-       (->> (render-iteration-entries pairs iter-fn false true ctx)
-            (map :line)
-            (filter #(str/starts-with? (str %) "CALL#"))
-            vec))]
+        calls
+        (fn [pairs]
+          (->> (render-iteration-entries pairs iter-fn false true ctx)
+               (map :line)
+               (filter #(str/starts-with? (str %) "CALL#"))
+               vec))]
 
     (it "a run of consecutive mixed-tool iterations merges into ONE render with every form"
         (expect (= ["CALL#0×3"]
@@ -3969,12 +3876,11 @@
 
 (defdescribe wrap-text-lanterna-parity-test
              (it "packs plain single-spaced prose exactly like the lanterna fork's wordWrap"
-                 (doseq
-                   [[s w] [["launch pad rocket" 10]
-                           ["the quick brown fox jumps over the lazy dog" 16]
-                           ["zażółć gęślą jaźń i jeszcze trochę tekstu na próbę" 14]
-                           ["abcdefghijklmnopqrstuvwxyz0123456789" 10] ["日本語のテキストは切れ目なく続く" 8]
-                           ["🚀🚀🚀 rocket launch pad 🚀🚀🚀" 10]]]
+                 (doseq [[s w] [["launch pad rocket" 10]
+                                ["the quick brown fox jumps over the lazy dog" 16]
+                                ["zażółć gęślą jaźń i jeszcze trochę tekstu na próbę" 14]
+                                ["abcdefghijklmnopqrstuvwxyz0123456789" 10] ["日本語のテキストは切れ目なく続く" 8]
+                                ["🚀🚀🚀 rocket launch pad 🚀🚀🚀" 10]]]
                    (expect (= (vec (p/word-wrap s w)) (render/wrap-text* s w))
                            (str "diverged from TerminalTextUtils/wordWrap on " (pr-str s) " @" w))))
              (it "does not retreat a word when the cut lands exactly on a word boundary"
@@ -3998,16 +3904,15 @@
 
 (defdescribe wrap-text-sentinel-rebalance-test
              (it "re-opens and re-closes inline style sentinels on every wrapped line"
-                 (let
-                   [s
-                    (str "aaa " p/INLINE_BOLD_ON "bold words here" p/INLINE_BOLD_OFF " tail")
+                 (let [s
+                       (str "aaa " p/INLINE_BOLD_ON "bold words here" p/INLINE_BOLD_OFF " tail")
 
-                    lines
-                    (render/wrap-text* s 8)
+                       lines
+                       (render/wrap-text* s 8)
 
-                    visible
-                    (fn [l]
-                      (apply str (remove #(p/inline-sentinel? (str %)) l)))]
+                       visible
+                       (fn [l]
+                         (apply str (remove #(p/inline-sentinel? (str %)) l)))]
 
                    ;; content survives the wrap
                    (expect (= (visible s) (str/join " " (map (comp str/trim visible) lines))))
@@ -4028,32 +3933,31 @@
   ;; control off screen once expanded.
   (it
     "puts `PYTHON +N more` ABOVE the peeked code, not after it"
-    (let
-      [entries
-       (format-iteration-entry-entries
-         (iteration/canonicalize {:position 0
-                                  :thinking nil
-                                  :forms [{:success? true
-                                           :code
-                                           "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                                           :result-summary "ok"
-                                           :result "ok"}]})
-         80
-         1
-         {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+    (let [entries
+          (format-iteration-entry-entries
+            (iteration/canonicalize
+              {:position 0
+               :thinking nil
+               :forms [{:success? true
+                        :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                        :result-summary "ok"
+                        :result "ok"}]})
+            80
+            1
+            {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-       lines
-       (mapv (comp body-of strip-ansi :line) entries)
+          lines
+          (mapv (comp body-of strip-ansi :line) entries)
 
-       toggle-i
-       (first (keep-indexed (fn [i l]
-                              (when (str/includes? l "PYTHON") i))
-                            lines))
+          toggle-i
+          (first (keep-indexed (fn [i l]
+                                 (when (str/includes? l "PYTHON") i))
+                               lines))
 
-       first-code-i
-       (first (keep-indexed (fn [i l]
-                              (when (= "a = 1" l) i))
-                            lines))]
+          first-code-i
+          (first (keep-indexed (fn [i l]
+                                 (when (= "a = 1" l) i))
+                               lines))]
 
       (expect (some? toggle-i))
       (expect (some? first-code-i))
@@ -4063,50 +3967,49 @@
       (expect (str/includes? (nth lines toggle-i) "+3 more"))
       (expect (not (some #{"f = 6"} lines)))))
   (it "counts folded Python source lines, not their visual rows"
-      (let
-        [source-line
-         (str "value = '" (apply str (repeat 120 "x")) "'")
+      (let [source-line
+            (str "value = '" (apply str (repeat 120 "x")) "'")
 
-         code
-         (str/join "\n" (map #(str source-line " # " %) (range 1 9)))
+            code
+            (str/join "\n" (map #(str source-line " # " %) (range 1 9)))
 
-         entries
-         (format-iteration-entry-entries
-           (iteration/canonicalize
-             {:position 0 :thinking nil :forms [{:success? true :display-code code :result "ok"}]})
-           40
-           1
-           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+            entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize {:position 0
+                                       :thinking nil
+                                       :forms [{:success? true :display-code code :result "ok"}]})
+              40
+              1
+              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-         lines
-         (mapv (comp body-of strip-ansi :line) entries)
+            lines
+            (mapv (comp body-of strip-ansi :line) entries)
 
-         summary
-         (first (filter #(str/includes? % "PYTHON") lines))]
+            summary
+            (first (filter #(str/includes? % "PYTHON") lines))]
 
         (expect (str/includes? summary "+3 more"))))
   (it "uses the code band's bottom edge as Python result spacing"
-      (let
-        [entries
-         (format-iteration-entry-entries
-           (iteration/canonicalize {:position 0
-                                    :thinking nil
-                                    :forms
-                                    [{:success? true
-                                      :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                                      :result-summary "ok"
-                                      :result "ok"}]})
-           80
-           1
-           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+      (let [entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize
+                {:position 0
+                 :thinking nil
+                 :forms [{:success? true
+                          :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                          :result-summary "ok"
+                          :result "ok"}]})
+              80
+              1
+              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-         lines
-         (mapv (comp body-of strip-ansi :line) entries)
+            lines
+            (mapv (comp body-of strip-ansi :line) entries)
 
-         last-code-i
-         (first (keep-indexed (fn [i line]
-                                (when (= "e = 5" line) i))
-                              lines))]
+            last-code-i
+            (first (keep-indexed (fn [i line]
+                                   (when (= "e = 5" line) i))
+                                 lines))]
 
         (expect (= p/MARKER_CODE_PAD (marker-of (:line (nth entries (inc last-code-i))))))
         ;; The row under the pad is the result HEADLINE — the value's own tally
@@ -4122,51 +4025,50 @@
              ;; folded the whole transcript.
              (it
                "registers a toggle click region on the `PYTHON` row it paints"
-               (let
-                 [entries
-                  (format-iteration-entry-entries
-                    (iteration/canonicalize
-                      {:position 0
-                       :thinking nil
-                       :forms [{:success? true
-                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                                :result "ok"}]})
-                    80
-                    1
-                    {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+               (let [entries
+                     (format-iteration-entry-entries
+                       (iteration/canonicalize
+                         {:position 0
+                          :thinking nil
+                          :forms [{:success? true
+                                   :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                                   :result "ok"}]})
+                       80
+                       1
+                       {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-                  toggle-i
-                  (first (keep-indexed (fn [i e]
-                                         (when (str/includes? (str (:line e)) "PYTHON") i))
-                                       entries))
+                     toggle-i
+                     (first (keep-indexed (fn [i e]
+                                            (when (str/includes? (str (:line e)) "PYTHON") i))
+                                          entries))
 
-                  _
-                  (do (cr/reset!) (cr/begin-frame!))
+                     _
+                     (do (cr/reset!) (cr/begin-frame!))
 
-                  _height
-                  (render/draw-chat-bubble! (dummy-text-graphics)
-                                            {:role :assistant
-                                             :text ""
-                                             :prewrapped-lines (mapv :line entries)
-                                             :line-meta (mapv :meta entries)}
-                                            0 2
-                                            80 {:viewport-top 0 :viewport-h 60})
+                     _height
+                     (render/draw-chat-bubble! (dummy-text-graphics)
+                                               {:role :assistant
+                                                :text ""
+                                                :prewrapped-lines (mapv :line entries)
+                                                :line-meta (mapv :meta entries)}
+                                               0 2
+                                               80 {:viewport-top 0 :viewport-h 60})
 
-                  _
-                  (cr/commit-frame!)
+                     _
+                     (cr/commit-frame!)
 
-                  ;; The bubble adds its own chrome row, so the painted screen row of the
-                  ;; header is not the entry index. Scan the whole bubble instead: exactly
-                  ;; ONE row may answer, and it must be the header.
-                  hits
-                  (into []
-                        (keep (fn [row]
-                                (when-some [h (cr/lookup 4 (long row))]
-                                  (assoc h :row row))))
-                        (range 0 (+ 2 (count entries) 4)))
+                     ;; The bubble adds its own chrome row, so the painted screen row of the
+                     ;; header is not the entry index. Scan the whole bubble instead: exactly
+                     ;; ONE row may answer, and it must be the header.
+                     hits
+                     (into []
+                           (keep (fn [row]
+                                   (when-some [h (cr/lookup 4 (long row))]
+                                     (assoc h :row row))))
+                           (range 0 (+ 2 (count entries) 4)))
 
-                  hit
-                  (first hits)]
+                     hit
+                     (first hits)]
 
                  (expect (some? toggle-i))
                  (expect (= 1 (count hits)))
@@ -4187,66 +4089,65 @@
   ;; rectangle is checked against the glyphs actually on screen.
   (it
     "registers a :url region over exactly the label painted inside the cell"
-    (let
-      [markdown
-       (str "| Repo | Ticket |\n" "| --- | --- |\n"
-            "| glms-web | [CARS-9862](https://example.com/browse/CARS-9862) |\n\n"
-            "Outside: [CARS-9862](https://example.com/browse/CARS-9862)\n")
+    (let [markdown
+          (str "| Repo | Ticket |\n" "| --- | --- |\n"
+               "| glms-web | [CARS-9862](https://example.com/browse/CARS-9862) |\n\n"
+               "Outside: [CARS-9862](https://example.com/browse/CARS-9862)\n")
 
-       rendered
-       (render/format-answer-markdown-data (vis/markdown->ast markdown) 60 nil)
+          rendered
+          (render/format-answer-markdown-data (vis/markdown->ast markdown) 60 nil)
 
-       terminal
-       (com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal.
-         (com.googlecode.lanterna.TerminalSize. 80 40))
+          terminal
+          (com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal.
+            (com.googlecode.lanterna.TerminalSize. 80 40))
 
-       screen
-       (doto (com.googlecode.lanterna.screen.TerminalScreen. terminal) (.startScreen))
+          screen
+          (doto (com.googlecode.lanterna.screen.TerminalScreen. terminal) (.startScreen))
 
-       g
-       (.newTextGraphics screen)
+          g
+          (.newTextGraphics screen)
 
-       _
-       (do (cr/reset!) (cr/begin-frame!))
+          _
+          (do (cr/reset!) (cr/begin-frame!))
 
-       _
-       (render/draw-chat-bubble! g
-                                 {:role :assistant
-                                  :text ""
-                                  :prewrapped-lines (:lines rendered)
-                                  :line-meta (:line-meta rendered)}
-                                 0 2
-                                 60 {:viewport-top 0 :viewport-h 60})
+          _
+          (render/draw-chat-bubble! g
+                                    {:role :assistant
+                                     :text ""
+                                     :prewrapped-lines (:lines rendered)
+                                     :line-meta (:line-meta rendered)}
+                                    0 2
+                                    60 {:viewport-top 0 :viewport-h 60})
 
-       _
-       (cr/commit-frame!)
+          _
+          (cr/commit-frame!)
 
-       cell
-       (fn [col row]
-         (.getBackCharacter screen (int col) (int row)))
+          cell
+          (fn [col row]
+            (.getBackCharacter screen (int col) (int row)))
 
-       row-text
-       (fn [row]
-         (apply str
-           (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter (cell % row))
-                (range 0 40))))
+          row-text
+          (fn [row]
+            (apply str
+              (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter (cell % row))
+                   (range 0 40))))
 
-       url-hit
-       (fn [col row]
-         (let [h (cr/lookup col row)]
-           (when (= :url (:kind h)) h)))
+          url-hit
+          (fn [col row]
+            (let [h (cr/lookup col row)]
+              (when (= :url (:kind h)) h)))
 
-       table-row
-       (first (filter #(str/includes? (row-text %) "glms-web") (range 0 20)))
+          table-row
+          (first (filter #(str/includes? (row-text %) "glms-web") (range 0 20)))
 
-       prose-row
-       (first (filter #(str/includes? (row-text %) "Outside:") (range 0 20)))
+          prose-row
+          (first (filter #(str/includes? (row-text %) "Outside:") (range 0 20)))
 
-       hit
-       (first (keep #(url-hit % table-row) (range 0 40)))
+          hit
+          (first (keep #(url-hit % table-row) (range 0 40)))
 
-       {:keys [col width]}
-       (:bounds hit)]
+          {:keys [col width]}
+          (:bounds hit)]
 
       (expect (some? table-row))
       (expect (some? prose-row))
@@ -4289,25 +4190,24 @@
   ;; phases of shell output -- was welded shut. Structural padding is still
   ;; normalized; interior blanks survive as exactly one row.
   (it "keeps the paragraph break inside a quoted commit MESSAGE"
-      (let
-        [lines
-         (mapv card-plain
-               (format-iteration-entry
-                 {:iteration 0
-                  :forms [{:op "shell"
-                           :code "shell(\"git commit\")"
-                           :result-summary "commit — feat: thing"
-                           :result-render
-                           (str "**COMMAND**\n```bash\ngit commit -m feat: thing\n```\n\n"
-                                "**MESSAGE**\n> feat: thing\n>\n> body line\n")
-                           :started-at-ms 1000
-                           :success? true}]}
-                 80
-                 1
-                 {:now-ms 2500}))
+      (let [lines
+            (mapv card-plain
+                  (format-iteration-entry
+                    {:iteration 0
+                     :forms [{:op "shell"
+                              :code "shell(\"git commit\")"
+                              :result-summary "commit — feat: thing"
+                              :result-render
+                              (str "**COMMAND**\n```bash\ngit commit -m feat: thing\n```\n\n"
+                                   "**MESSAGE**\n> feat: thing\n>\n> body line\n")
+                              :started-at-ms 1000
+                              :success? true}]}
+                    80
+                    1
+                    {:now-ms 2500}))
 
-         msg-idx
-         (card-index-of lines "MESSAGE")]
+            msg-idx
+            (card-index-of lines "MESSAGE")]
 
         (expect (some? msg-idx) (str "got: " lines))
         (expect (= ["│ feat: thing" "│" "│ body line"] (subvec lines (inc msg-idx) (+ msg-idx 4))))
@@ -4315,25 +4215,24 @@
         (expect (= "" (nth lines (dec msg-idx))))
         (expect (not= "" (nth lines (- msg-idx 2))))))
   (it "keeps a blank line the shell wrote inside its STDOUT"
-      (let
-        [lines
-         (mapv card-plain
-               (format-iteration-entry
-                 {:iteration 0
-                  :forms [{:op "shell"
-                           :code "shell({\"command\": \"run.sh\"})"
-                           :result-summary "$ run.sh"
-                           :result-render (str
-                                            "**COMMAND**\n```bash\nrun.sh\n```\n\n"
-                                            "**STDOUT**\n```\nphase one ok\n\nphase two ok\n```\n")
-                           :started-at-ms 1000
-                           :success? true}]}
-                 80
-                 1
-                 {:now-ms 2500}))
+      (let [lines
+            (mapv card-plain
+                  (format-iteration-entry
+                    {:iteration 0
+                     :forms [{:op "shell"
+                              :code "shell({\"command\": \"run.sh\"})"
+                              :result-summary "$ run.sh"
+                              :result-render
+                              (str "**COMMAND**\n```bash\nrun.sh\n```\n\n"
+                                   "**STDOUT**\n```\nphase one ok\n\nphase two ok\n```\n")
+                              :started-at-ms 1000
+                              :success? true}]}
+                    80
+                    1
+                    {:now-ms 2500}))
 
-         out-idx
-         (card-index-of lines "STDOUT")]
+            out-idx
+            (card-index-of lines "STDOUT")]
 
         (expect (some? out-idx) (str "got: " lines))
         (expect (= ["phase one ok" "" "phase two ok"] (subvec lines (inc out-idx) (+ out-idx 4))))
@@ -4345,40 +4244,38 @@
 ;; therefore a HANDLE — headline plus one hint — and every row of it carries the
 ;; document, so the paint loop can turn the whole card into one click region
 ;; that opens the host file in the system viewer.
-(defdescribe
-  tool-card-doc-block-test
-  (let
-    [ast
-     [:ast {}
-      [:code {:lang "vis-doc"}
-       (str "[Document: report.pdf PDF, 1.2 MB]\n/tmp/vis-python/report.pdf\n"
-            "application/pdf\nreport.pdf\n1.2 MB")]]
+(defdescribe tool-card-doc-block-test
+             (let [ast
+                   [:ast {}
+                    [:code {:lang "vis-doc"}
+                     (str "[Document: report.pdf PDF, 1.2 MB]\n/tmp/vis-python/report.pdf\n"
+                          "application/pdf\nreport.pdf\n1.2 MB")]]
 
-     data
-     (render/format-answer-markdown-data* ast 76 {})
+                   data
+                   (render/format-answer-markdown-data* ast 76 {})
 
-     lines
-     (vec (:lines data))
+                   lines
+                   (vec (:lines data))
 
-     docs
-     (into #{} (keep :doc) (:line-meta data))]
+                   docs
+                   (into #{} (keep :doc) (:line-meta data))]
 
-    (it "paints the headline and the open hint, not the raw fence"
-        (expect (some #(str/includes? % "[Document: report.pdf PDF, 1.2 MB]") lines))
-        (expect (some #(str/includes? % "click to open in the system viewer") lines))
-        (expect (not-any? #(str/includes? % "application/pdf") lines))
-        (expect (not-any? #(str/includes? % "/tmp/vis-python/report.pdf") lines)))
-    (it "carries one and the same host file on every row of the card"
-        (expect (= 1 (count docs)))
-        (expect (= {:path "/tmp/vis-python/report.pdf"
-                    :mime "application/pdf"
-                    :name "report.pdf"
-                    :size-label "1.2 MB"
-                    :title "report.pdf"}
-                   (first docs)))
-        ;; every painted row of the card is clickable, blanks included: a card
-        ;; whose middle row does nothing is a card that swallows a click.
-        (expect (= (count (filter :doc (:line-meta data))) (dec (count lines)))))))
+               (it "paints the headline and the open hint, not the raw fence"
+                   (expect (some #(str/includes? % "[Document: report.pdf PDF, 1.2 MB]") lines))
+                   (expect (some #(str/includes? % "click to open in the system viewer") lines))
+                   (expect (not-any? #(str/includes? % "application/pdf") lines))
+                   (expect (not-any? #(str/includes? % "/tmp/vis-python/report.pdf") lines)))
+               (it "carries one and the same host file on every row of the card"
+                   (expect (= 1 (count docs)))
+                   (expect (= {:path "/tmp/vis-python/report.pdf"
+                               :mime "application/pdf"
+                               :name "report.pdf"
+                               :size-label "1.2 MB"
+                               :title "report.pdf"}
+                              (first docs)))
+                   ;; every painted row of the card is clickable, blanks included: a card
+                   ;; whose middle row does nothing is a card that swallows a click.
+                   (expect (= (count (filter :doc (:line-meta data))) (dec (count lines)))))))
 
 ;; ── A failed turn is a CARD, in the terminal too ──
 ;;
@@ -4390,53 +4287,53 @@
 ;; truth from a real paint: every row of an all-error bubble wears the card.
 (defdescribe
   error-card-paint-test
-  (let
-    [rgb
-     (fn [^com.googlecode.lanterna.TextColor$RGB c]
-       [(.getRed c) (.getGreen c) (.getBlue c)])
+  (let [rgb
+        (fn [^com.googlecode.lanterna.TextColor$RGB c]
+          [(.getRed c) (.getGreen c) (.getBlue c)])
 
-     blocks
-     (chat/error-content {"error" (str "Provider stream stalled: no output at all for 123507ms "
-                                       "while waiting in :provider-call")})
+        blocks
+        (chat/error-content {"error" (str "Provider stream stalled: no output at all for 123507ms "
+                                          "while waiting in :provider-call")})
 
-     md
-     (chat/content->markdown blocks)
+        md
+        (chat/content->markdown blocks)
 
-     rendered
-     (render/format-answer-markdown-data (vis/markdown->ast md) 72 nil)
+        rendered
+        (render/format-answer-markdown-data (vis/markdown->ast md) 72 nil)
 
-     message
-     {:role :assistant
-      :text md
-      :content blocks
-      :prewrapped-lines (:lines rendered)
-      :line-meta (:line-meta rendered)}
+        message
+        {:role :assistant
+         :text md
+         :content blocks
+         :prewrapped-lines (:lines rendered)
+         :line-meta (:line-meta rendered)}
 
-     captured
-     (cap/capture!
-       {:cols 80
-        :rows 10
-        :paint! (fn [{:keys [screen]}]
-                  (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                    (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 76 {:viewport-h 20})
-                    (.refresh s)))})
+        captured
+        (cap/capture!
+          {:cols 80
+           :rows 10
+           :paint!
+           (fn [{:keys [screen]}]
+             (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+               (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 76 {:viewport-h 20})
+               (.refresh s)))})
 
-     grid
-     (first (:frames captured))
+        grid
+        (first (:frames captured))
 
-     ;; The card is exactly the rows carrying its own left edge bar.
-     card-rows
-     (filterv (fn [row]
-                (some #(= "│" (:ch %)) row))
-       grid)
+        ;; The card is exactly the rows carrying its own left edge bar.
+        card-rows
+        (filterv (fn [row]
+                   (some #(= "│" (:ch %)) row))
+          grid)
 
-     ;; Bubble band only: `bx` 2, `bubble-w` 76.
-     band
-     (fn [row]
-       (subvec (vec row) 2 78))
+        ;; Bubble band only: `bx` 2, `bubble-w` 76.
+        band
+        (fn [row]
+          (subvec (vec row) 2 78))
 
-     ink
-     (into [] (comp (mapcat band) (remove #(= " " (:ch %)))) card-rows)]
+        ink
+        (into [] (comp (mapcat band) (remove #(= " " (:ch %)))) card-rows)]
 
     (it "paints the whole card on the warning surface, never on the answer's"
         ;; top padding + the machine code on its own row + the blank paragraph
@@ -4449,15 +4346,14 @@
     ;; it. The band used to hug the role banner and end flush with the final
     ;; sentence.
     (it "keeps a margin row above the band and a padding row inside it"
-        (let
-          [card-top
-           (first (keep-indexed (fn [i row]
-                                  (when (some #(= "│" (:ch %)) row) i))
-                                grid))
+        (let [card-top
+              (first (keep-indexed (fn [i row]
+                                     (when (some #(= "│" (:ch %)) row) i))
+                                   grid))
 
-           text-of
-           (fn [row]
-             (str/trim (apply str (map :ch (band row)))))]
+              text-of
+              (fn [row]
+                (str/trim (apply str (map :ch (band row)))))]
 
           (expect (= "Vis" (text-of (nth grid (- (long card-top) 2)))))
           (expect (= "" (text-of (nth grid (dec (long card-top))))))
@@ -4493,66 +4389,66 @@
 ;; strings alone cannot prove a single bold cell.
 (defdescribe
   band-label-emphasis-test
-  (let
-    [thinking
-     (str "The patch was applied successfully. Now I need to verify the change "
-          "works by evaluating the namespace in the REPL, then close the task.\n\n"
-          "Let me verify by loading the file or at least checking the changed "
-          "lines look correct.\n\n" "The diff looks correct.\n\n"
-          "More reasoning after the diff that should be hidden.\n"
-          "Even more hidden reasoning lines here.\n")
+  (let [thinking
+        (str "The patch was applied successfully. Now I need to verify the change "
+             "works by evaluating the namespace in the REPL, then close the task.\n\n"
+             "Let me verify by loading the file or at least checking the changed "
+             "lines look correct.\n\n" "The diff looks correct.\n\n"
+             "More reasoning after the diff that should be hidden.\n"
+             "Even more hidden reasoning lines here.\n")
 
-     trace
-     [{:thinking thinking
-       :forms [{:success? true
-                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                :result-render (str/join " " (repeat 200 "abcdefghij"))
-                :result-kind :value
-                :duration-ms 1
-                :silent? false}]}]
+        trace
+        [{:thinking thinking
+          :forms [{:success? true
+                   :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                   :result-render (str/join " " (repeat 200 "abcdefghij"))
+                   :result-kind :value
+                   :duration-ms 1
+                   :silent? false}]}]
 
-     _
-     (render/invalidate-cache!)
+        _
+        (render/invalidate-cache!)
 
-     rendered
-     (render/format-answer-with-thinking-data*
-       nil
-       trace
-       80
-       {:show-thinking true :show-iterations true}
-       nil
-       false
-       {:session-id "sid" :session-turn-id "abcd1234-5678-9999" :detail-expansions {}})
+        rendered
+        (render/format-answer-with-thinking-data*
+          nil
+          trace
+          80
+          {:show-thinking true :show-iterations true}
+          nil
+          false
+          {:session-id "sid" :session-turn-id "abcd1234-5678-9999" :detail-expansions {}})
 
-     message
-     {:role :assistant
-      :text ""
-      :prewrapped-lines (:lines rendered)
-      :line-meta (:line-meta rendered)}
+        message
+        {:role :assistant
+         :text ""
+         :prewrapped-lines (:lines rendered)
+         :line-meta (:line-meta rendered)}
 
-     grid
-     (first (:frames
-              (cap/capture!
-                {:cols 90
-                 :rows 40
-                 :paint!
-                 (fn [{:keys [screen]}]
-                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                     (render/draw-chat-bubble! (.newTextGraphics s) message 1 2 84 {:viewport-h 40})
-                     (.refresh s)))})))
+        grid
+        (first (:frames (cap/capture!
+                          {:cols 90
+                           :rows 40
+                           :paint! (fn [{:keys [screen]}]
+                                     (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                       (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                 message
+                                                                 1 2
+                                                                 84 {:viewport-h 40})
+                                       (.refresh s)))})))
 
-     row-text
-     (fn [row]
-       (str/trimr (apply str (map :ch row))))
+        row-text
+        (fn [row]
+          (str/trimr (apply str (map :ch row))))
 
-     ;; The one painted row carrying this band's label.
-     band-row
-     (fn [needle]
-       (first (filter #(str/includes? (row-text %) needle) grid)))
+        ;; The one painted row carrying this band's label.
+        band-row
+        (fn [needle]
+          (first (filter #(str/includes? (row-text %) needle) grid)))
 
-     ink
-     (fn [row pred]
-       (apply str (map :ch (filter pred row))))]
+        ink
+        (fn [row pred]
+          (apply str (map :ch (filter pred row))))]
 
     (it "paints the collapsed code band's name bold and leaves its tally quiet"
         (let [row (band-row "PYTHON")]
@@ -4579,26 +4475,25 @@
 ;; both states now, exactly like the code band.
 (defdescribe
   long-result-disclosure-label-test
-  (let
-    [long-result
-     (str/join "\n" (map #(str "line " % " of the value") (range 1 40)))
+  (let [long-result
+        (str/join "\n" (map #(str "line " % " of the value") (range 1 40)))
 
-     label-of
-     (fn [detail-expansions]
-       (render/invalidate-cache!)
-       (->> (:lines (render/format-answer-with-thinking-data*
-                      nil
-                      [{:forms [{:success? true :code "x = 1" :result long-result}]}]
-                      80
-                      {:show-thinking true :show-iterations true}
-                      nil
-                      false
-                      {:session-id "sid"
-                       :session-turn-id "abcd1234-5678-9999"
-                       :detail-expansions detail-expansions}))
-            (map (comp str/trim strip-sentinels strip-ansi body-of))
-            (filter #(str/includes? % "RESULT"))
-            first))]
+        label-of
+        (fn [detail-expansions]
+          (render/invalidate-cache!)
+          (->> (:lines (render/format-answer-with-thinking-data*
+                         nil
+                         [{:forms [{:success? true :code "x = 1" :result long-result}]}]
+                         80
+                         {:show-thinking true :show-iterations true}
+                         nil
+                         false
+                         {:session-id "sid"
+                          :session-turn-id "abcd1234-5678-9999"
+                          :detail-expansions detail-expansions}))
+               (map (comp str/trim strip-sentinels strip-ansi body-of))
+               (filter #(str/includes? % "RESULT"))
+               first))]
 
     (it "names the collapsed disclosure and counts what it hides"
         (expect (= "▸ RESULT +8 more lines" (label-of {}))))
@@ -4606,17 +4501,16 @@
         (expect (= "▾ RESULT" (label-of {:vis.channel-tui/expand-all-details? true}))))
     (it "wraps that name in the painter's bold sentinels"
         (render/invalidate-cache!)
-        (let
-          [line (->> (:lines (render/format-answer-with-thinking-data*
-                               nil
-                               [{:forms [{:success? true :code "x = 1" :result long-result}]}]
-                               80
-                               {:show-thinking true :show-iterations true}
-                               nil
-                               false
-                               {:session-id "sid"
-                                :session-turn-id "abcd1234-5678-9999"
-                                :detail-expansions {}}))
-                     (filter #(str/includes? (str %) "RESULT"))
-                     first)]
+        (let [line (->> (:lines (render/format-answer-with-thinking-data*
+                                  nil
+                                  [{:forms [{:success? true :code "x = 1" :result long-result}]}]
+                                  80
+                                  {:show-thinking true :show-iterations true}
+                                  nil
+                                  false
+                                  {:session-id "sid"
+                                   :session-turn-id "abcd1234-5678-9999"
+                                   :detail-expansions {}}))
+                        (filter #(str/includes? (str %) "RESULT"))
+                        first)]
           (expect (str/includes? (str line) (str p/INLINE_BOLD_ON "RESULT" p/INLINE_BOLD_OFF)))))))

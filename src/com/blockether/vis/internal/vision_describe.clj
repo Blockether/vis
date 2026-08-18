@@ -202,10 +202,9 @@
   "Epoch millis for an ISO-8601 stamp, or nil when the row is unreadable. A hand-edited
    or truncated stamp reads as MISSING, which expires the row rather than trusting it."
   [s]
-  (when-let
-    [text (some-> s
-                  str
-                  not-empty)]
+  (when-let [text (some-> s
+                          str
+                          not-empty)]
     (try (.toEpochMilli (Instant/parse text)) (catch Throwable _ nil))))
 
 (defn- fresh?
@@ -267,12 +266,11 @@
 (defn- wire->eye
   [w]
   (when (map? w)
-    (let
-      [provider
-       (get w "provider")
+    (let [provider
+          (get w "provider")
 
-       at
-       (stamp->ms (get w "learned_at"))]
+          at
+          (stamp->ms (get w "learned_at"))]
 
       (when (and (not (str/blank? (str provider))) (fresh? at))
         {:provider-id (keyword (str provider))
@@ -312,36 +310,35 @@
   (try
     (config/update-machine-config!
       (fn [raw]
-        (let
-          [stored
-           (get raw MEMORY_KEY)
+        (let [stored
+              (get raw MEMORY_KEY)
 
-           providers
-           (merge (wire->blind-providers (get stored "blind_providers")) @image-blind-providers)
+              providers
+              (merge (wire->blind-providers (get stored "blind_providers")) @image-blind-providers)
 
-           models
-           (merge-with (fn [a b]
-                         {:learned-at (max (long (:learned-at a)) (long (:learned-at b)))
-                          :providers (into (or (:providers a) #{}) (:providers b))})
-                       (wire->blind-models (get stored "blind_models"))
-                       @image-blind-models)
+              models
+              (merge-with (fn [a b]
+                            {:learned-at (max (long (:learned-at a)) (long (:learned-at b)))
+                             :providers (into (or (:providers a) #{}) (:providers b))})
+                          (wire->blind-models (get stored "blind_models"))
+                          @image-blind-models)
 
-           eye
-           (eye->wire @proven-eye)
+              eye
+              (eye->wire @proven-eye)
 
-           wire
-           (cond-> {}
-             (seq providers)
-             (assoc "blind_providers" (blind-providers->wire providers))
+              wire
+              (cond-> {}
+                (seq providers)
+                (assoc "blind_providers" (blind-providers->wire providers))
 
-             (seq models)
-             (assoc "blind_models" (blind-models->wire models))
+                (seq models)
+                (assoc "blind_models" (blind-models->wire models))
 
-             (some? eye)
-             (assoc "working_eye" eye))
+                (some? eye)
+                (assoc "working_eye" eye))
 
-           next-raw
-           (if (seq wire) (assoc raw MEMORY_KEY wire) (dissoc raw MEMORY_KEY))]
+              next-raw
+              (if (seq wire) (assoc raw MEMORY_KEY wire) (dissoc raw MEMORY_KEY))]
 
           (when (not= raw next-raw) next-raw)))
       :vision-memory)
@@ -382,19 +379,18 @@
   [provider-id model]
   (load-memory!)
   (when-not (str/blank? (str provider-id))
-    (let
-      [now
-       (now-ms)
+    (let [now
+          (now-ms)
 
-       eye
-       {:provider-id provider-id
-        :model (some-> model
-                       str
-                       not-empty)
-        :learned-at now}
+          eye
+          {:provider-id provider-id
+           :model (some-> model
+                          str
+                          not-empty)
+           :learned-at now}
 
-       [previous _]
-       (reset-vals! proven-eye eye)]
+          [previous _]
+          (reset-vals! proven-eye eye)]
 
       (when (or (not= (dissoc previous :learned-at) (dissoc eye :learned-at))
                 (nil? (:learned-at previous))
@@ -411,13 +407,12 @@
    through, so a restart cannot resurrect the endpoint that just broke."
   [{:keys [provider-id model]}]
   (load-memory!)
-  (let
-    [[previous current] (swap-vals! proven-eye
-                                    (fn [eye]
-                                      (when-not (or (and provider-id
-                                                         (= provider-id (:provider-id eye)))
-                                                    (and model (= model (:model eye))))
-                                        eye)))]
+  (let [[previous current] (swap-vals! proven-eye
+                                       (fn [eye]
+                                         (when-not (or (and provider-id
+                                                            (= provider-id (:provider-id eye)))
+                                                       (and model (= model (:model eye))))
+                                           eye)))]
     (when (not= previous current) (persist-memory!)))
   nil)
 
@@ -461,10 +456,10 @@
                      " rejected an image content part; "
                      "sending it text only until that fact expires")))
     (forget-working-eye! {:provider-id provider-id})
-    (let
-      [[previous _] (swap-vals! image-blind-providers
-                                (fn [m]
-                                  (if (contains? m provider-id) m (assoc m provider-id (now-ms)))))]
+    (let [[previous _] (swap-vals!
+                         image-blind-providers
+                         (fn [m]
+                           (if (contains? m provider-id) m (assoc m provider-id (now-ms)))))]
       ;; Only the FIRST refusal is news; re-stamping on every later one would keep a
       ;; provider blind for as long as anything kept failing there.
       (when-not (contains? previous provider-id) (persist-memory!))))
@@ -478,10 +473,9 @@
    has eyes for, and the name stays out everywhere it is offered."
   [model provider-id]
   (load-memory!)
-  (when-let
-    [model-name (some-> model
-                        str
-                        not-empty)]
+  (when-let [model-name (some-> model
+                                str
+                                not-empty)]
     (when-not (contains? @image-blind-models model-name)
       (tel/log!
         {:level :warn :id ::model-image-blind :data {:model model-name :provider provider-id}}
@@ -489,15 +483,14 @@
              " rejected image input; "
              "no image is offered to that model until that fact expires")))
     (forget-working-eye! {:model model-name})
-    (let
-      [[previous current] (swap-vals! image-blind-models
-                                      (fn [m]
-                                        (update m
-                                                model-name
-                                                (fn [row]
-                                                  {:learned-at (or (:learned-at row) (now-ms))
-                                                   :providers (conj (or (:providers row) #{})
-                                                                    provider-id)}))))]
+    (let [[previous current] (swap-vals! image-blind-models
+                                         (fn [m]
+                                           (update m
+                                                   model-name
+                                                   (fn [row]
+                                                     {:learned-at (or (:learned-at row) (now-ms))
+                                                      :providers (conj (or (:providers row) #{})
+                                                                       provider-id)}))))]
       (when (not= previous current) (persist-memory!)))
     model-name))
 
@@ -566,12 +559,11 @@
    propagated would abort turns that carry no images at all."
   [router]
   (when (map? router)
-    (let
-      [blind
-       (blind-provider-ids)
+    (let [blind
+          (blind-provider-ids)
 
-       blind-models
-       (blind-model-names)]
+          blind-models
+          (blind-model-names)]
 
       (try (svar-router/resolve-effective-model router (describe-routing blind blind-models))
            (catch Throwable t
@@ -594,12 +586,11 @@
 (defn- content-digest
   "Cache key: the payload's own bytes plus the container they ride in."
   [{:keys [base64 media-type]}]
-  (let
-    [md
-     (MessageDigest/getInstance "SHA-256")
+  (let [md
+        (MessageDigest/getInstance "SHA-256")
 
-     digest
-     (.digest md (.getBytes (str media-type "|" base64) StandardCharsets/UTF_8))]
+        digest
+        (.digest md (.getBytes (str media-type "|" base64) StandardCharsets/UTF_8))]
 
     (.encodeToString (Base64/getUrlEncoder) digest)))
 
@@ -684,14 +675,13 @@
    guessed, so an image described after a cross-provider retry is attributed to
    the model that really looked at it."
   [outcome fallback-model]
-  (when-let
-    [text (some-> outcome
-                  :ok
-                  :result
-                  :description
-                  str
-                  str/trim
-                  not-empty)]
+  (when-let [text (some-> outcome
+                          :ok
+                          :result
+                          :description
+                          str
+                          str/trim
+                          not-empty)]
     {:text (truncate text MAX_DESCRIPTION_CHARS)
      :model (or (not-empty (str (:routed/model (:ok outcome)))) (str fallback-model))}))
 
@@ -706,12 +696,11 @@
    NAMES that answered they cannot read pixels, which their provider survives."
   [router routing context deadline-at fallback-model pairs]
   (reduce (fn [acc [idx fut image]]
-            (let
-              [remaining
-               (max 0 (- (long deadline-at) (System/currentTimeMillis)))
+            (let [remaining
+                  (max 0 (- (long deadline-at) (System/currentTimeMillis)))
 
-               outcome
-               (deref fut remaining ::deadline)]
+                  outcome
+                  (deref fut remaining ::deadline)]
 
               (cond (= ::deadline outcome)
                     (do (future-cancel fut)
@@ -722,22 +711,21 @@
                           "Vision description exceeded its hard deadline; image stays undescribed")
                         acc)
                     (:error outcome)
-                    (let
-                      [err
-                       (:error outcome)
+                    (let [err
+                          (:error outcome)
 
-                       provider-id
-                       (:provider-id (ex-data err))
+                          provider-id
+                          (:provider-id (ex-data err))
 
-                       ;; A wire with no image part and a model that cannot read
-                       ;; pixels are both permanent, but they generalize
-                       ;; differently: learn each row at the scope it proves
-                       ;; instead of taking the whole endpoint down for either.
-                       learned
-                       (perr/image-rejections err)
+                          ;; A wire with no image part and a model that cannot read
+                          ;; pixels are both permanent, but they generalize
+                          ;; differently: learn each row at the scope it proves
+                          ;; instead of taking the whole endpoint down for either.
+                          learned
+                          (perr/image-rejections err)
 
-                       blinded
-                       (into #{} (comp (filter #(= :model (:scope %))) (keep :model)) learned)]
+                          blinded
+                          (into #{} (comp (filter #(= :model (:scope %))) (keep :model)) learned)]
 
                       (run! remember-image-refusal! learned)
                       (forget-working-eye! {:provider-id provider-id})
@@ -803,79 +791,76 @@
   [router context images]
   (when (and (seq images) (enabled?))
     (when-let [model (sighted-model router)]
-      (let
-        [entries (mapv (fn [image]
-                         (let [k (content-digest image)]
-                           {:image image :key k :cached (get @description-cache k)}))
-                       images)
-         ;; ONE ask per distinct payload. The same picture attached twice, or a
-         ;; figure replayed under a second name, otherwise pays twice and burns
-         ;; two of the burst slots for one description.
-         pending (->> entries
-                      (map-indexed (fn [idx entry]
-                                     (assoc entry :idx idx)))
-                      (remove :cached)
-                      (remove #(str/blank? (str (:base64 (:image %)))))
-                      (distinct-by :key)
-                      (take MAX_DESCRIBED_PER_PASS)
-                      vec)
-         deadline-at (+ (System/currentTimeMillis) (long DESCRIBE_HARD_DEADLINE_MS))
-         ;; A provider that ERRORS — stale credentials, a gateway 400, a 5xx — must
-         ;; not take the whole fleet's eyes down with it. Every round excludes the
-         ;; providers that already broke (the error itself names them) and offers
-         ;; what they dropped to the next-best model. Proven live: two Copilot
-         ;; providers failed in a row on one absent credential, and the image was
-         ;; only described because a third provider got the offer.
-         by-index (loop
-                    [pairs (mapv (juxt :idx :image) pending)
-                     ;; Start from what earlier passes already learned: a wire that has no
-                     ;; image part never grows one mid-session, and a model that cannot read
-                     ;; pixels does not learn to.
-                     excluded (blind-provider-ids)
-                     excluded-models (blind-model-names)
-                     round 0
-                     done {}]
+      (let [entries (mapv (fn [image]
+                            (let [k (content-digest image)]
+                              {:image image :key k :cached (get @description-cache k)}))
+                          images)
+            ;; ONE ask per distinct payload. The same picture attached twice, or a
+            ;; figure replayed under a second name, otherwise pays twice and burns
+            ;; two of the burst slots for one description.
+            pending (->> entries
+                         (map-indexed (fn [idx entry]
+                                        (assoc entry :idx idx)))
+                         (remove :cached)
+                         (remove #(str/blank? (str (:base64 (:image %)))))
+                         (distinct-by :key)
+                         (take MAX_DESCRIBED_PER_PASS)
+                         vec)
+            deadline-at (+ (System/currentTimeMillis) (long DESCRIBE_HARD_DEADLINE_MS))
+            ;; A provider that ERRORS — stale credentials, a gateway 400, a 5xx — must
+            ;; not take the whole fleet's eyes down with it. Every round excludes the
+            ;; providers that already broke (the error itself names them) and offers
+            ;; what they dropped to the next-best model. Proven live: two Copilot
+            ;; providers failed in a row on one absent credential, and the image was
+            ;; only described because a third provider got the offer.
+            by-index (loop [pairs (mapv (juxt :idx :image) pending)
+                            ;; Start from what earlier passes already learned: a wire that has no
+                            ;; image part never grows one mid-session, and a model that cannot read
+                            ;; pixels does not learn to.
+                            excluded (blind-provider-ids)
+                            excluded-models (blind-model-names)
+                            round 0
+                            done {}]
 
-                    (if (or (empty? pairs)
-                            ;; Bounded by the FLEET, not by a fixed number: every round removes
-                            ;; at least one provider or one model, and a bigger fleet is exactly
-                            ;; the case where a broken family sits in front of a working pair of
-                            ;; eyes.
-                            (>= (long round)
-                                (min (long MAX_DESCRIBE_ROUNDS) (long (fleet-offers router))))
-                            ;; Every provider in the fleet already broke: there is nobody left
-                            ;; to offer the image to, and svar would only throw locally.
-                            (empty? (remove #(contains? excluded (:id %)) (:providers router)))
-                            (<= (- (long deadline-at) (System/currentTimeMillis)) 0))
-                      done
-                      (let
-                        [outcome (describe-round router
-                                                 (describe-routing excluded excluded-models)
-                                                 context
-                                                 deadline-at
-                                                 (:name model)
-                                                 pairs)
-                         learned (into #{} (remove excluded) (:broken outcome))
-                         learned-models (into #{} (remove excluded-models) (:blinded outcome))
-                         described (merge done (:done outcome))]
+                       (if (or (empty? pairs)
+                               ;; Bounded by the FLEET, not by a fixed number: every round removes
+                               ;; at least one provider or one model, and a bigger fleet is exactly
+                               ;; the case where a broken family sits in front of a working pair of
+                               ;; eyes.
+                               (>= (long round)
+                                   (min (long MAX_DESCRIBE_ROUNDS) (long (fleet-offers router))))
+                               ;; Every provider in the fleet already broke: there is nobody left
+                               ;; to offer the image to, and svar would only throw locally.
+                               (empty? (remove #(contains? excluded (:id %)) (:providers router)))
+                               (<= (- (long deadline-at) (System/currentTimeMillis)) 0))
+                         done
+                         (let [outcome (describe-round router
+                                                       (describe-routing excluded excluded-models)
+                                                       context
+                                                       deadline-at
+                                                       (:name model)
+                                                       pairs)
+                               learned (into #{} (remove excluded) (:broken outcome))
+                               learned-models (into #{} (remove excluded-models) (:blinded outcome))
+                               described (merge done (:done outcome))]
 
-                        ;; Nothing NEW is out: another round would call the same provider with
-                        ;; the same model and the same result, so stop and let the caller
-                        ;; degrade.
-                        (if (or (seq learned) (seq learned-models))
-                          (recur (:failed outcome)
-                                 (into excluded learned)
-                                 (into excluded-models learned-models)
-                                 (inc (long round))
-                                 described)
-                          described))))
-         ;; Keyed by payload, not position: every entry sharing a digest with a
-         ;; described one gets the same text, cached once.
-         by-digest (into {}
-                         (keep (fn [{:keys [idx key]}]
-                                 (when-let [description (get by-index idx)]
-                                   [key (cache-put! key description)])))
-                         pending)]
+                           ;; Nothing NEW is out: another round would call the same provider with
+                           ;; the same model and the same result, so stop and let the caller
+                           ;; degrade.
+                           (if (or (seq learned) (seq learned-models))
+                             (recur (:failed outcome)
+                                    (into excluded learned)
+                                    (into excluded-models learned-models)
+                                    (inc (long round))
+                                    described)
+                             described))))
+            ;; Keyed by payload, not position: every entry sharing a digest with a
+            ;; described one gets the same text, cached once.
+            by-digest (into {}
+                            (keep (fn [{:keys [idx key]}]
+                                    (when-let [description (get by-index idx)]
+                                      [key (cache-put! key description)])))
+                            pending)]
 
         (mapv (fn [{:keys [key cached]}]
                 (or cached (get by-digest key)))
@@ -896,18 +881,17 @@
    inherit the first row's report — and an agent reading a description under the
    wrong picture testifies to something nobody saw."
   [router context attachments]
-  (let
-    [wired
-     (:attached (attachments/wire-images attachments))
+  (let [wired
+        (:attached (attachments/wire-images attachments))
 
-     label-counts
-     (frequencies (map attachments/image-label wired))
+        label-counts
+        (frequencies (map attachments/image-label wired))
 
-     addressable
-     (filterv #(= 1 (get label-counts (attachments/image-label %))) wired)
+        addressable
+        (filterv #(= 1 (get label-counts (attachments/image-label %))) wired)
 
-     descriptions
-     (describe-images router context addressable)]
+        descriptions
+        (describe-images router context addressable)]
 
     (if (seq descriptions)
       (into {}
@@ -928,15 +912,14 @@
    details no one described. Pixel-exact work still goes through the bytes."
   [described]
   (when (seq described)
-    (let
-      [models
-       (into (sorted-set) (keep #(not-empty (str (:model %)))) described)
+    (let [models
+          (into (sorted-set) (keep #(not-empty (str (:model %)))) described)
 
-       body
-       (str/join "\n"
-                 (map (fn [{:keys [label text]}]
-                        (str "- " label ": " text))
-                      described))]
+          body
+          (str/join "\n"
+                    (map (fn [{:keys [label text]}]
+                           (str "- " label ": " text))
+                         described))]
 
       {:role "user"
        :content (str "["

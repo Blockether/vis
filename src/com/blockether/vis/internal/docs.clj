@@ -79,28 +79,27 @@
   "Inject id= on h2/h3 and return [html-with-ids toc] where toc is
    [{:level 2|3 :id :text} …] — the right-rail 'on this page' index."
   [^String html]
-  (let
-    [toc
-     (atom [])
+  (let [toc
+        (atom [])
 
-     html'
-     (str/replace html
-                  #"<h([23])>(.*?)</h[23]>"
-                  (fn [[_ lvl inner]]
-                    (let [id (slugify inner)]
-                      (swap! toc conj {:level (parse-long lvl) :id id :text (strip-tags inner)})
-                      (str "<h"
-                           lvl
-                           " id=\""
-                           id
-                           "\">"
-                           "<a class=\"anchor\" href=\"#"
-                           id
-                           "\">"
-                           inner
-                           "</a></h"
-                           lvl
-                           ">"))))]
+        html'
+        (str/replace html
+                     #"<h([23])>(.*?)</h[23]>"
+                     (fn [[_ lvl inner]]
+                       (let [id (slugify inner)]
+                         (swap! toc conj {:level (parse-long lvl) :id id :text (strip-tags inner)})
+                         (str "<h"
+                              lvl
+                              " id=\""
+                              id
+                              "\">"
+                              "<a class=\"anchor\" href=\"#"
+                              id
+                              "\">"
+                              inner
+                              "</a></h"
+                              lvl
+                              ">"))))]
 
     [html' @toc]))
 
@@ -141,48 +140,47 @@
    freshness check is a stat pass. Expensive: a slurp and a markdown render per
    page, which is why `collect` guards it with `url-mark`."
   []
-  (let
-    [page-urls
-     (atom [])
+  (let [page-urls
+        (atom [])
 
-     site
-     (atom {:title "Vis" :tagline "" :repo nil})
+        site
+        (atom {:title "Vis" :tagline "" :repo nil})
 
-     pages
-     (vec
-       (mapcat (fn [^URL mu]
-                 (let [m (edn/read-string (slurp mu))]
-                   (when-let [s (:site m)]
-                     (swap! site merge s))
-                   (keep (fn [{:keys [file title section order blurb]}]
-                           (when-let
-                             [md (let [u (sibling-url mu file)]
-                                   (swap! page-urls conj u)
-                                   (try (slurp u) (catch Exception _ nil)))]
-                             (let [[html toc] (anchors+toc (md->html md))]
-                               {:slug (str/replace file #"\.md$" "")
-                                :title (or title (first-h1 md) file)
-                                :section section
-                                :blurb blurb
-                                :order (or order 100)
-                                :md md
-                                :html html
-                                :toc toc})))
-                         (:pages m))))
-               (manifest-urls)))
+        pages
+        (vec
+          (mapcat (fn [^URL mu]
+                    (let [m (edn/read-string (slurp mu))]
+                      (when-let [s (:site m)]
+                        (swap! site merge s))
+                      (keep (fn [{:keys [file title section order blurb]}]
+                              (when-let [md (let [u (sibling-url mu file)]
+                                              (swap! page-urls conj u)
+                                              (try (slurp u) (catch Exception _ nil)))]
+                                (let [[html toc] (anchors+toc (md->html md))]
+                                  {:slug (str/replace file #"\.md$" "")
+                                   :title (or title (first-h1 md) file)
+                                   :section section
+                                   :blurb blurb
+                                   :order (or order 100)
+                                   :md md
+                                   :html html
+                                   :toc toc})))
+                            (:pages m))))
+                  (manifest-urls)))
 
-     ;; Sections appear in the order of their lowest page `:order`, not
-     ;; alphabetically — so manifest `:order` controls sidebar section
-     ;; placement. Within a section, pages sort by `:order` then title.
-     sec-order
-     (into {}
-           (map (fn [[sec ps]]
-                  [sec (reduce min (map #(or (:order %) 100) ps))]))
-           (group-by :section pages))
+        ;; Sections appear in the order of their lowest page `:order`, not
+        ;; alphabetically — so manifest `:order` controls sidebar section
+        ;; placement. Within a section, pages sort by `:order` then title.
+        sec-order
+        (into {}
+              (map (fn [[sec ps]]
+                     [sec (reduce min (map #(or (:order %) 100) ps))]))
+              (group-by :section pages))
 
-     ordered
-     (sort-by (juxt #(if (= "index" (:slug %)) 0 1) #(get sec-order (:section %) 100) :order :title)
-              pages)]
+        ordered
+        (sort-by
+          (juxt #(if (= "index" (:slug %)) 0 1) #(get sec-order (:section %) 100) :order :title)
+          pages)]
 
     {:result {:site @site :pages (vec ordered)} :page-urls @page-urls}))
 
@@ -197,17 +195,16 @@
    and only if THEY changed is one re-read to learn the page list. An unchanged
    tree costs one stat per manifest plus one per page."
   []
-  (let
-    [manifests
-     (mapv url-mark (manifest-urls))
+  (let [manifests
+        (mapv url-mark (manifest-urls))
 
-     cached
-     @page-cache
+        cached
+        @page-cache
 
-     fresh?
-     (and cached
-          (= manifests (:manifests cached))
-          (= (page-marks (:page-urls cached)) (:pages cached)))]
+        fresh?
+        (and cached
+             (= manifests (:manifests cached))
+             (= (page-marks (:page-urls cached)) (:pages cached)))]
 
     (if fresh?
       cached
@@ -499,22 +496,20 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 
 (defn- nav-html
   [{:keys [pages]} active-slug mode]
-  (let
-    [by-sec
-     (group-by :section pages)
+  (let [by-sec
+        (group-by :section pages)
 
-     sections
-     (cons nil (distinct (remove nil? (map :section pages))))]
+        sections
+        (cons nil (distinct (remove nil? (map :section pages))))]
 
     (str "<nav class=\"nav\">"
          (apply str
-           (for
-             [sec
-              sections
+           (for [sec
+                 sections
 
-              :let [ps
-                    (get by-sec sec)]
-              :when (seq ps)]
+                 :let [ps
+                       (get by-sec sec)]
+                 :when (seq ps)]
 
              (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
                   (apply str
@@ -712,11 +707,10 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 (defn- asset-response
   [^String rel]
   (when-let [u (io/resource (str "vis-docs/assets/" rel))]
-    (let
-      [ct (cond (str/ends-with? rel ".woff2") "font/woff2"
-                (str/ends-with? rel ".png") "image/png"
-                (str/ends-with? rel ".svg") "image/svg+xml"
-                :else "application/octet-stream")]
+    (let [ct (cond (str/ends-with? rel ".woff2") "font/woff2"
+                   (str/ends-with? rel ".png") "image/png"
+                   (str/ends-with? rel ".svg") "image/svg+xml"
+                   :else "application/octet-stream")]
       {:status 200
        :headers {"content-type" ct "cache-control" "public,max-age=31536000,immutable"}
        :body (io/input-stream u)})))
@@ -725,17 +719,16 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   "Ring handler for the docs site. Returns nil for paths it does not own (so the
    gateway can fall through). Owns `/docs`, `/docs/<slug>`, `/docs/assets/**`."
   [{:keys [uri headers] :or {uri ""}}]
-  (let
-    [{:keys [pages] :as site-data}
-     (collect)
+  (let [{:keys [pages] :as site-data}
+        (collect)
 
-     path
-     (-> uri
-         (str/replace #"^/docs/?" "")
-         (str/replace #"/$" ""))
+        path
+        (-> uri
+            (str/replace #"^/docs/?" "")
+            (str/replace #"/$" ""))
 
-     accept-encoding
-     (get headers "accept-encoding")]
+        accept-encoding
+        (get headers "accept-encoding")]
 
     (cond (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
           (or (= path "") (= path "index"))

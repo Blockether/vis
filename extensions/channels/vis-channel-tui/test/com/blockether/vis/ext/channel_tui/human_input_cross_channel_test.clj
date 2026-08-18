@@ -42,12 +42,11 @@
    BOTH surfaces live: the screen's own channel listener on `:tui` and the
    gateway bridge on `:app`."
   [f]
-  (let
-    [seen
-     (atom [])
+  (let [seen
+        (atom [])
 
-     tap-key
-     (keyword "human-input-cross-channel-test" (str (System/nanoTime)))]
+        tap-key
+        (keyword "human-input-cross-channel-test" (str (System/nanoTime)))]
 
     (reset! state/app-db {:render-version 0})
     (gw/install!)
@@ -102,28 +101,26 @@
 (deftest one-request-opens-on-the-tui-and-the-app-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "req-" (random-uuid))
+            rid
+            (str "req-" (random-uuid))
 
-         answer
-         (ask! sid
-               rid
-               [{:id "note" :type "plaintext" :label "Note" :is-required true}
-                {:id "confirm" :type "checkbox" :label "Confirm"}])]
+            answer
+            (ask! sid
+                  rid
+                  [{:id "note" :type "plaintext" :label "Note" :is-required true}
+                   {:id "confirm" :type "checkbox" :label "Confirm"}])]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (events-of seen "human_input.request" rid))))
              (testing "both surfaces render the SAME form, from one engine projection"
-               (let
-                 [[event-sid event]
-                  (first (events-of seen "human_input.request" rid))
+               (let [[event-sid event]
+                     (first (events-of seen "human_input.request" rid))
 
-                  view
-                  (get-in @state/app-db [:human-input :request])]
+                     view
+                     (get-in @state/app-db [:human-input :request])]
 
                  (is (= sid event-sid))
                  (is (= (:title view) (get-in event ["request" "title"])))
@@ -155,15 +152,14 @@
 (deftest an-answer-typed-in-the-tui-releases-the-app-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "req-" (random-uuid))
+            rid
+            (str "req-" (random-uuid))
 
-         answer
-         (ask! sid rid [{:id "user" :type "plaintext" :label "User" :is-required true}])]
+            answer
+            (ask! sid rid [{:id "user" :type "plaintext" :label "User" :is-required true}])]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (gw/pending sid))))
@@ -184,15 +180,14 @@
 (deftest a-rejected-answer-reads-the-same-on-both-surfaces-test
   (with-surfaces!
     (fn [_seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "req-" (random-uuid))
+            rid
+            (str "req-" (random-uuid))
 
-         answer
-         (ask! sid rid [{:id "key" :type "plaintext" :label "API key" :is-required true}])]
+            answer
+            (ask! sid rid [{:id "key" :type "plaintext" :label "API key" :is-required true}])]
 
         (try (is (await-true #(tui-open? rid)))
              (let [app-outcome (gw/submit! rid {"key" "   "})]
@@ -218,18 +213,17 @@
 (deftest either-surface-can-cancel-the-other-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         from-app
-         (str "req-" (random-uuid))
+            from-app
+            (str "req-" (random-uuid))
 
-         from-tui
-         (str "req-" (random-uuid))
+            from-tui
+            (str "req-" (random-uuid))
 
-         fields
-         [{:id "ok" :type "checkbox" :label "Confirm"}]]
+            fields
+            [{:id "ok" :type "checkbox" :label "Confirm"}]]
 
         (testing "the app dismisses the request and the terminal dialog goes away"
           (let [answer (ask! sid from-app fields)]
@@ -251,24 +245,23 @@
 (deftest a-second-parked-request-queues-behind-the-first-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         open-id
-         (str "open-" (random-uuid))
+            open-id
+            (str "open-" (random-uuid))
 
-         queued-id
-         (str "queued-" (random-uuid))
+            queued-id
+            (str "queued-" (random-uuid))
 
-         open-answer
-         (ask! sid open-id [{:id "user" :type "plaintext" :label "User" :is-required true}])
+            open-answer
+            (ask! sid open-id [{:id "user" :type "plaintext" :label "User" :is-required true}])
 
-         _
-         (is (await-true #(tui-open? open-id)))
+            _
+            (is (await-true #(tui-open? open-id)))
 
-         queued-answer
-         (ask! sid queued-id [{:id "why" :type "plaintext" :label "Why" :is-required true}])]
+            queued-answer
+            (ask! sid queued-id [{:id "why" :type "plaintext" :label "Why" :is-required true}])]
 
         (try (testing "the terminal shows one form at a time, the app is offered both"
                (is (await-true #(= 1 (count (:human-input-queue @state/app-db)))))
@@ -292,20 +285,20 @@
 (deftest a-timeout-clears-the-form-from-both-surfaces-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "expired-" (random-uuid))
+            rid
+            (str "expired-" (random-uuid))
 
-         answer
-         (do (attach! sid)
-             (future (engine/request! {:id rid
-                                       :session-id sid
-                                       :title "Deploy?"
-                                       :timeout-ms 400
-                                       :fields [{:id "user" :type "plaintext" :label "User"}]})))]
+            answer
+            (do (attach! sid)
+                (future (engine/request! {:id rid
+                                          :session-id sid
+                                          :title "Deploy?"
+                                          :timeout-ms 400
+                                          :fields
+                                          [{:id "user" :type "plaintext" :label "User"}]})))]
 
         (is (await-true #(tui-open? rid)))
         (testing "nobody answered: the extension resumes and no surface keeps a dead form"
@@ -322,20 +315,20 @@
 (deftest an-indefinite-request-parks-on-both-surfaces-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "forever-" (random-uuid))
+            rid
+            (str "forever-" (random-uuid))
 
-         answer
-         (do (attach! sid)
-             (future (engine/request! {:id rid
-                                       :session-id sid
-                                       :title "Deploy?"
-                                       :timeout-ms 0
-                                       :fields [{:id "user" :type "plaintext" :label "User"}]})))]
+            answer
+            (do (attach! sid)
+                (future (engine/request! {:id rid
+                                          :session-id sid
+                                          :title "Deploy?"
+                                          :timeout-ms 0
+                                          :fields
+                                          [{:id "user" :type "plaintext" :label "User"}]})))]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (gw/pending sid))))
@@ -357,36 +350,35 @@
 (deftest both-surfaces-answering-at-once-settles-the-run-once-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "storm-" (random-uuid))
+            rid
+            (str "storm-" (random-uuid))
 
-         answer
-         (ask! sid rid [{:id "user" :type "plaintext" :label "User" :is-required true}])
+            answer
+            (ask! sid rid [{:id "user" :type "plaintext" :label "User" :is-required true}])
 
-         _
-         (is (await-true #(and (tui-open? rid) (seq (gw/pending sid)))))
+            _
+            (is (await-true #(and (tui-open? rid) (seq (gw/pending sid)))))
 
-         gate
-         (java.util.concurrent.CountDownLatch. 1)
+            gate
+            (java.util.concurrent.CountDownLatch. 1)
 
-         ;; Six phones and a terminal answer the same form in the same instant.
-         racers
-         (doall (conj (vec (for [i (range 6)]
-                             (future (.await gate) (gw/submit! rid {"user" (str "app-" i)}))))
-                      (future (.await gate) (press! (KeyStroke. KeyType/Escape)))))
+            ;; Six phones and a terminal answer the same form in the same instant.
+            racers
+            (doall (conj (vec (for [i (range 6)]
+                                (future (.await gate) (gw/submit! rid {"user" (str "app-" i)}))))
+                         (future (.await gate) (press! (KeyStroke. KeyType/Escape)))))
 
-         _
-         (.countDown gate)
+            _
+            (.countDown gate)
 
-         _
-         (run! deref racers)
+            _
+            (run! deref racers)
 
-         result
-         (deref answer 5000 ::timeout)]
+            result
+            (deref answer 5000 ::timeout)]
 
         (testing "the extension is released exactly once, by exactly one surface"
           (is (not= ::timeout result))
@@ -403,23 +395,22 @@
 (deftest a-request-that-forbids-cancelling-forbids-it-on-both-surfaces-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "must-answer-" (random-uuid))
+            rid
+            (str "must-answer-" (random-uuid))
 
-         answer
-         (do (attach! sid)
-             (future (engine/request!
-                       {:id rid
-                        :session-id sid
-                        :title "Deploy?"
-                        :is-cancellable false
-                        :timeout-ms 5000
-                        :fields
-                        [{:id "note" :type "plaintext" :label "Note" :is-required true}]})))]
+            answer
+            (do (attach! sid)
+                (future (engine/request!
+                          {:id rid
+                           :session-id sid
+                           :title "Deploy?"
+                           :is-cancellable false
+                           :timeout-ms 5000
+                           :fields
+                           [{:id "note" :type "plaintext" :label "Note" :is-required true}]})))]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (events-of seen "human_input.request" rid))))
@@ -454,34 +445,32 @@
 (deftest an-otp-and-its-rules-hold-on-both-surfaces-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "req-" (random-uuid))
+            rid
+            (str "req-" (random-uuid))
 
-         answer
-         (ask! sid
-               rid
-               [{:id "code" :type "otp" :label "One-time code" :is-required true :max-length 4}
-                {:id "notify"
-                 :type "plaintext"
-                 :label "Notify"
-                 :default "ops@example.com"
-                 :validate (fn [value]
-                             (when-not (re-find #"@" value) "must be an email address"))}])]
+            answer
+            (ask! sid
+                  rid
+                  [{:id "code" :type "otp" :label "One-time code" :is-required true :max-length 4}
+                   {:id "notify"
+                    :type "plaintext"
+                    :label "Notify"
+                    :default "ops@example.com"
+                    :validate (fn [value]
+                                (when-not (re-find #"@" value) "must be an email address"))}])]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (events-of seen "human_input.request" rid))))
              (testing "not one validator crosses the wire"
-               (let
-                 [fields
-                  (get-in (second (first (events-of seen "human_input.request" rid)))
-                          ["request" "fields"])
+               (let [fields
+                     (get-in (second (first (events-of seen "human_input.request" rid)))
+                             ["request" "fields"])
 
-                  by-id
-                  (into {} (map (juxt #(get % "id") identity)) fields)]
+                     by-id
+                     (into {} (map (juxt #(get % "id") identity)) fields)]
 
                  (is (= "otp" (get-in by-id ["code" "type"])))
                  ;; One `max_length` and no `min_length` means a FIXED length:
@@ -602,12 +591,11 @@
         (is (= hi-spec/otp-defaults (ts-numbers source "HUMAN_INPUT_OTP_DEFAULTS")))))))
 
 (deftest both-surfaces-mark-a-choice-the-same-way-test
-  (let
-    [source
-     (app-source "lib/human-input.ts")
+  (let [source
+        (app-source "lib/human-input.ts")
 
-     sheet
-     (app-source "components/HumanInputPrompt.tsx")]
+        sheet
+        (app-source "components/HumanInputPrompt.tsx")]
 
     (is (some? source))
     (is (some? sheet))
@@ -650,30 +638,28 @@
 (deftest a-daemon-side-request-reaches-the-terminal-test
   (with-surfaces!
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "req-" (random-uuid))
+            rid
+            (str "req-" (random-uuid))
 
-         answer
-         (ask! sid
-               rid
-               [{:id "note" :type "plaintext" :label "Note" :is-required true}
-                {:id "env"
-                 :type "select"
-                 :label "Env"
-                 :options [{:value "prod" :label "prod"} {:value "dev" :label "dev"}]}])]
+            answer
+            (ask! sid
+                  rid
+                  [{:id "note" :type "plaintext" :label "Note" :is-required true}
+                   {:id "env"
+                    :type "select"
+                    :label "Env"
+                    :options [{:value "prod" :label "prod"} {:value "dev" :label "dev"}]}])]
 
         (try (is (await-true #(seq (events-of seen "human_input.request" rid))))
              (testing "the session event PROJECTS — the only route out of the daemon"
-               (let
-                 [[_ event]
-                  (first (events-of seen "human_input.request" rid))
+               (let [[_ event]
+                     (first (events-of seen "human_input.request" rid))
 
-                  chunk
-                  (#'chat/gateway-event->chunk event)]
+                     chunk
+                     (#'chat/gateway-event->chunk event)]
 
                  (is (= :human-input-open (:phase chunk)))
                  (is (= rid (get-in chunk [:request "id"])))
@@ -688,12 +674,11 @@
                (is (= {:is-accepted true} (gw/submit! rid {"note" "ship it" "env" "prod"})))
                (is (true? (:is-submitted (deref answer 2000 ::timeout))))
                (is (await-true #(seq (events-of seen "human_input.close" rid))))
-               (let
-                 [[_ event]
-                  (first (events-of seen "human_input.close" rid))
+               (let [[_ event]
+                     (first (events-of seen "human_input.close" rid))
 
-                  chunk
-                  (#'chat/gateway-event->chunk event)]
+                     chunk
+                     (#'chat/gateway-event->chunk event)]
 
                  (is (= :human-input-close (:phase chunk)))
                  (is (= rid (:request-id chunk)))
@@ -726,23 +711,21 @@
 ;; at all — its id resolves to nothing here, and the parked run stayed blocked
 ;; whatever the operator typed.
 (deftest a-daemon-side-answer-goes-over-the-gateway-test
-  (let
-    [calls
-     (atom [])
+  (let [calls
+        (atom [])
 
-     form
-     (hi/init-form (daemon-view "req-remote"))]
+        form
+        (hi/init-form (daemon-view "req-remote"))]
 
-    (with-redefs
-      [vis/gateway-submit-human-input!
-       (fn [sid rid values]
-         (swap! calls conj [:submit sid rid values])
-         {:is-accepted true})
+    (with-redefs [vis/gateway-submit-human-input!
+                  (fn [sid rid values]
+                    (swap! calls conj [:submit sid rid values])
+                    {:is-accepted true})
 
-       vis/gateway-cancel-human-input!
-       (fn [sid rid]
-         (swap! calls conj [:cancel sid rid])
-         true)]
+                  vis/gateway-cancel-human-input!
+                  (fn [sid rid]
+                    (swap! calls conj [:cancel sid rid])
+                    true)]
 
       (is (= {:is-accepted true} (#'screen/human-input-answer! form :submit {"note" "hi"})))
       (is (true? (#'screen/human-input-answer! form :cancel nil)))
@@ -755,29 +738,27 @@
 ;; answer must name its own request over the gateway that owns it.
 (deftest every-daemon-side-request-is-replayed-on-attach-test
   (reset! state/app-db {:render-version 0})
-  (let
-    [sid
-     (str "s-" (random-uuid))
+  (let [sid
+        (str "s-" (random-uuid))
 
-     rids
-     ["replay-one" "replay-two" "replay-three"]
+        rids
+        ["replay-one" "replay-two" "replay-three"]
 
-     calls
-     (atom [])]
+        calls
+        (atom [])]
 
     ;; The tab is attached to `sid` — a replayed form belongs to that session.
     (swap! state/app-db assoc :session {:id sid})
     (try
-      (with-redefs
-        [vis/gateway-human-input-requests
-         (fn [asked]
-           (is (= sid asked))
-           (mapv #(wire/->wire (daemon-view % sid)) rids))
+      (with-redefs [vis/gateway-human-input-requests
+                    (fn [asked]
+                      (is (= sid asked))
+                      (mapv #(wire/->wire (daemon-view % sid)) rids))
 
-         vis/gateway-submit-human-input!
-         (fn [answered-sid rid values]
-           (swap! calls conj [answered-sid rid values])
-           {:is-accepted true})]
+                    vis/gateway-submit-human-input!
+                    (fn [answered-sid rid values]
+                      (swap! calls conj [answered-sid rid values])
+                      {:is-accepted true})]
 
         (#'screen/replay-human-input! sid)
         (testing "all of them, oldest first: one open dialog and the rest queued"

@@ -71,18 +71,17 @@
    `nil` when the form has neither headline nor body — there is no card, and the
    channel renders whatever the form itself carries."
   [{:keys [op result-summary result-render]}]
-  (let
-    [summary
-     (some-> result-summary
-             str
-             str/trim
-             not-empty)
+  (let [summary
+        (some-> result-summary
+                str
+                str/trim
+                not-empty)
 
-     body
-     (some-> result-render
-             str
-             str/trimr
-             not-empty)]
+        body
+        (some-> result-render
+                str
+                str/trimr
+                not-empty)]
 
     (when (or summary body) {:op op :summary summary :body body :collapsible? (boolean body)})))
 
@@ -100,12 +99,11 @@
   "Head-clip one display string to `MAX_FORM_WIRE_CHARS`, announcing what it
    dropped. nil for a string that is blank once trailing space is gone."
   [^String s]
-  (let
-    [s
-     (str/trimr (str s))
+  (let [s
+        (str/trimr (str s))
 
-     n
-     (long (count s))]
+        n
+        (long (count s))]
 
     (when (pos? n)
       (if (> n (long MAX_FORM_WIRE_CHARS))

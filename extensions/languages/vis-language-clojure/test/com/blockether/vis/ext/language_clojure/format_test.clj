@@ -9,12 +9,11 @@
 ;; the caller's source.
 (defdescribe format-string-test
              (it "normalizes indentation of a mis-indented multi-line form"
-                 (let
-                   [src
-                    "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
+                 (let [src
+                       "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
 
-                    out
-                    (fmt/format-string src)]
+                       out
+                       (fmt/format-string src)]
 
                    (expect (string? out))
                    (expect (not= src out))
@@ -22,12 +21,11 @@
                    (expect (str/includes? out "\n  (let"))
                    (expect (str/includes? out "\n    (* y 2)"))))
              (it "leaves a one-liner on one line (cljfmt does not reflow)"
-                 (let
-                   [src
-                    "(defn foo [x] (* x 2))"
+                 (let [src
+                       "(defn foo [x] (* x 2))"
 
-                    out
-                    (fmt/format-string src)]
+                       out
+                       (fmt/format-string src)]
 
                    (expect (= 1 (count (str/split-lines out))))))
              (it "returns the source unchanged when it cannot parse"
@@ -44,27 +42,25 @@
 (defdescribe format-source-cache-test
              (it "returns the very same string object on a repeat format"
                  (fmt/clear-result-cache!)
-                 (let
-                   [src
-                    "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
+                 (let [src
+                       "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
 
-                    a
-                    (fmt/format-source src nil)
+                       a
+                       (fmt/format-source src nil)
 
-                    b
-                    (fmt/format-source src nil)]
+                       b
+                       (fmt/format-source src nil)]
 
                    (expect (not= src a))
                    ;; identical?, not = : a recomputation would build a new string
                    (expect (identical? a b))))
              (it "seeds the OUTPUT as its own fixed point, so re-formatting it hits"
                  (fmt/clear-result-cache!)
-                 (let
-                   [src
-                    "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
+                 (let [src
+                       "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
 
-                    out
-                    (fmt/format-source src nil)]
+                       out
+                       (fmt/format-source src nil)]
 
                    (expect (not= src out))
                    ;; never computed directly, yet already cached: identical?
@@ -72,47 +68,44 @@
                    (expect (identical? out (fmt/format-source out nil)))))
              (it "recomputes after clear-result-cache!"
                  (fmt/clear-result-cache!)
-                 (let
-                   [src
-                    "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
+                 (let [src
+                       "(defn foo [x]\n(let [y (inc x)]\n(* y 2)))"
 
-                    a
-                    (fmt/format-source src nil)
+                       a
+                       (fmt/format-source src nil)
 
-                    _
-                    (fmt/clear-result-cache!)
+                       _
+                       (fmt/clear-result-cache!)
 
-                    b
-                    (fmt/format-source src nil)]
+                       b
+                       (fmt/format-source src nil)]
 
                    (expect (= a b))
                    (expect (not (identical? a b)))))
              (it "misses on a different source"
                  (fmt/clear-result-cache!)
-                 (let
-                   [a
-                    (fmt/format-source "(defn foo [x]\n(* x 2))" nil)
+                 (let [a
+                       (fmt/format-source "(defn foo [x]\n(* x 2))" nil)
 
-                    b
-                    (fmt/format-source "(defn bar [x]\n(* x 3))" nil)]
+                       b
+                       (fmt/format-source "(defn bar [x]\n(* x 3))" nil)]
 
                    (expect (not= a b))))
              (it "misses when the governing zprint config is edited"
                  (fmt/clear-result-cache!)
-                 (let
-                   [dir
-                    (doto (java.io.File. (System/getProperty "java.io.tmpdir")
-                                         (str "vis-fmt-cache-" (System/nanoTime)))
-                      (.mkdirs))
+                 (let [dir
+                       (doto (java.io.File. (System/getProperty "java.io.tmpdir")
+                                            (str "vis-fmt-cache-" (System/nanoTime)))
+                         (.mkdirs))
 
-                    cfg
-                    (java.io.File. dir ".zprint.edn")
+                       cfg
+                       (java.io.File. dir ".zprint.edn")
 
-                    src-file
-                    (java.io.File. dir "a.clj")
+                       src-file
+                       (java.io.File. dir "a.clj")
 
-                    src
-                    "(defn foo [aaaaaaaaaa bbbbbbbbbb] (+ aaaaaaaaaa bbbbbbbbbb aaaaaaaaaa))"]
+                       src
+                       "(defn foo [aaaaaaaaaa bbbbbbbbbb] (+ aaaaaaaaaa bbbbbbbbbb aaaaaaaaaa))"]
 
                    (try (spit cfg "{:width 120}")
                         (spit src-file src)

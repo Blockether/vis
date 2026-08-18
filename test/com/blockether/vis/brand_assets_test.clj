@@ -16,9 +16,8 @@
   "`{:w :h :px}` with `:px` the raw RGBA bytes of the file on disk."
   [path]
   (let [f (io/file path)]
-    (with-open
-      [in (io/input-stream f)
-       img (imaging/decode (.readAllBytes in))]
+    (with-open [in (io/input-stream f)
+                img (imaging/decode (.readAllBytes in))]
 
       {:w (imaging/width img)
        :h (imaging/height img)
@@ -39,23 +38,22 @@
    the eye glint and the smile highlight into exactly this: a hole that shows the
    page through the mark."
   [{:keys [^long w ^long h ^bytes px]}]
-  (let
-    [n
-     (* w h)
+  (let [n
+        (* w h)
 
-     clear?
-     (fn [^long i]
-       (< (chan px i 3) 8))
+        clear?
+        (fn [^long i]
+          (< (chan px i 3) 8))
 
-     seen
-     (boolean-array n)
+        seen
+        (boolean-array n)
 
-     stack
-     (java.util.ArrayDeque.)
+        stack
+        (java.util.ArrayDeque.)
 
-     push!
-     (fn [^long i]
-       (when (and (clear? i) (not (aget seen i))) (aset seen i true) (.push stack (int i))))]
+        push!
+        (fn [^long i]
+          (when (and (clear? i) (not (aget seen i))) (aset seen i true) (.push stack (int i))))]
 
     (dotimes [x w]
       (push! x)
@@ -64,29 +62,26 @@
       (push! (* y w))
       (push! (+ (* y w) (dec w))))
     (while (not (.isEmpty stack))
-      (let
-        [i
-         (long (.pop stack))
+      (let [i
+            (long (.pop stack))
 
-         x
-         (rem i w)
+            x
+            (rem i w)
 
-         y
-         (quot i w)]
+            y
+            (quot i w)]
 
-        (doseq
-          [dx
-           [-1 0 1]
+        (doseq [dx
+                [-1 0 1]
 
-           dy
-           [-1 0 1]]
+                dy
+                [-1 0 1]]
 
-          (let
-            [nx
-             (+ x (long dx))
+          (let [nx
+                (+ x (long dx))
 
-             ny
-             (+ y (long dy))]
+                ny
+                (+ y (long dy))]
 
             (when (and (>= nx 0) (< nx w) (>= ny 0) (< ny h)) (push! (+ nx (* ny w))))))))
     (count (filter (fn [^long i]
@@ -98,13 +93,12 @@
    fades out through its own colours; a mark whose white paper was merely keyed
    out keeps that paper in every soft edge, and it reads as a white fringe."
   [{:keys [^long w ^long h ^bytes px]}]
-  (count (for
-           [i
-            (range (* w h))
+  (count (for [i
+               (range (* w h))
 
-            :let [a
-                  (chan px i 3)]
-            :when (and (< 8 a 250) (> (min (chan px i 0) (chan px i 1) (chan px i 2)) 235))]
+               :let [a
+                     (chan px i 3)]
+               :when (and (< 8 a 250) (> (min (chan px i 0) (chan px i 1) (chan px i 2)) 235))]
 
            i)))
 
@@ -117,12 +111,11 @@
 (defdescribe
   brand-assets-test
   (it "every transparent logo really is transparent, with clear corners"
-      (doseq
-        [path
-         transparent-assets
+      (doseq [path
+              transparent-assets
 
-         :let [img
-               (rgba path)]]
+              :let [img
+                    (rgba path)]]
 
         (expect (.exists (io/file path)) path)
         (expect (false? (:is-opaque img)) (str path " must carry an alpha channel"))

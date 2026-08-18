@@ -95,9 +95,10 @@
   "Apply `f` to the value behind `handle` in place. No-op once it is gone, so a
    late write from a half-finished op cannot resurrect a freed entry."
   [kind handle f & args]
-  (swap! tables update kind
-         (fn [t]
-           (if (contains? t (long handle)) (apply update t (long handle) f args) t)))
+  (swap! tables update
+    kind
+    (fn [t]
+      (if (contains? t (long handle)) (apply update t (long handle) f args) t)))
   nil)
 
 (defn- release!
@@ -114,15 +115,14 @@
   "Drop `handle` from its table and from its owner's set, returning the value it
    held. The owner is looked up, never passed in."
   [kind handle]
-  (let
-    [h
-     (long handle)
+  (let [h
+        (long handle)
 
-     v
-     (value kind h)
+        v
+        (value kind h)
 
-     scope
-     (get-in @owners [kind h])]
+        scope
+        (get-in @owners [kind h])]
 
     (swap! tables update kind dissoc h)
     (swap! owners update kind dissoc h)
@@ -134,7 +134,8 @@
    already gone, because it is reached from both the guest's own `close()` and
    from teardown."
   [kind handle]
-  (when-let [v (forget! kind handle)] (release! kind handle v))
+  (when-let [v (forget! kind handle)]
+    (release! kind handle v))
   nil)
 
 (defn- evict-oldest!
@@ -146,7 +147,8 @@
     (let [t (get @tables kind)]
       (when (>= (count t) (long cap))
         (let [oldest (first (sort (keys t)))]
-          (when-let [v (forget! kind oldest)] (release! kind oldest v))
+          (when-let [v (forget! kind oldest)]
+            (release! kind oldest v))
           (tel/log! {:level :debug :id ::evicted-oldest :data {:kind kind :handle oldest :cap cap}}
                     (str "sandbox resource " kind " hit its cap; released the oldest")))))))
 
@@ -157,7 +159,8 @@
    process-wide and closes its own throwaway Context immediately."
   [scope kind v]
   (when-not (declared? kind)
-    (throw (ex-info (str "sandbox resource " kind " was opened but never declared -"
+    (throw (ex-info (str "sandbox resource " kind
+                         " was opened but never declared -"
                          " add it to the shim's :shim/resources so teardown knows how to free it")
                     {:type ::undeclared-resource :kind kind})))
   (evict-oldest! kind)
@@ -180,7 +183,9 @@
       (swap! owned dissoc scope)
       (doseq [[kind handles] held
               h handles]
-        (when-let [v (forget! kind h)] (release! kind h v)))))
+
+        (when-let [v (forget! kind h)]
+          (release! kind h v)))))
   nil)
 
 (defn live-count

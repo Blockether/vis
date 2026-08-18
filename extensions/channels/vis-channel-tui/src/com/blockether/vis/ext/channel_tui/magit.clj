@@ -189,12 +189,10 @@
    Returns a vec of lines; a one-line notice when the repo has no commits."
   ([root] (log-graph-lines root {}))
   ([root {:keys [all? max] :or {max 250}}]
-   (let
-     [args (cond->
-             ["log" "--graph" "--color=always" (str "--max-count=" (long max))
-              (str "--pretty=format:" log-graph-format)]
-             all?
-             (conj "--all"))]
+   (let [args (cond-> ["log" "--graph" "--color=always" (str "--max-count=" (long max))
+                       (str "--pretty=format:" log-graph-format)]
+                all?
+                (conj "--all"))]
      (or (not-empty (ok-lines root args)) ["(no commits yet)"]))))
 
 (defn stashes
@@ -235,9 +233,8 @@
     :commits   [{:sha :subject} …]}"
   [root]
   (when-let [p (git/porcelain-tokens (as-file root) {:untracked-all? true})]
-    (let
-      [entries (:entries p)
-       upstream? (boolean (:upstream? p))]
+    (let [entries (:entries p)
+          upstream? (boolean (:upstream? p))]
 
       {:branch (:branch p)
        :detached? (boolean (:detached? p))
@@ -281,10 +278,9 @@
                   (mapv #(str "+" %)))))
          (catch Throwable _ nil))
 
-    (let
-      [args (if (= :staged area)
-              ["diff" "--cached" "--no-color" "--" path]
-              ["diff" "--no-color" "--" path])]
+    (let [args (if (= :staged area)
+                 ["diff" "--cached" "--no-color" "--" path]
+                 ["diff" "--no-color" "--" path])]
       (some->> (ok-lines root args)
                ;; drop the `diff --git`/index/--- +++ preamble: the row above
                ;; already names the file, the hunks are the signal.
@@ -329,20 +325,19 @@
    accepts. Header is everything before the first `@@`; each hunk runs from its
    `@@` line up to (not including) the next one."
   [lines]
-  (let
-    [header
-     (vec (take-while #(not (str/starts-with? % "@@")) lines))
+  (let [header
+        (vec (take-while #(not (str/starts-with? % "@@")) lines))
 
-     body
-     (drop (count header) lines)
+        body
+        (drop (count header) lines)
 
-     hunks
-     (reduce (fn [acc l]
-               (if (str/starts-with? l "@@")
-                 (conj acc [l])
-                 (if (seq acc) (conj (pop acc) (conj (peek acc) l)) acc)))
-             []
-             body)]
+        hunks
+        (reduce (fn [acc l]
+                  (if (str/starts-with? l "@@")
+                    (conj acc [l])
+                    (if (seq acc) (conj (pop acc) (conj (peek acc) l)) acc)))
+                []
+                body)]
 
     {:header header :hunks hunks}))
 
@@ -351,17 +346,16 @@
    WITHOUT trimming — trailing whitespace on a blank context line must survive so
    the reconstructed patch stays byte-faithful for `git apply`."
   [root path cached?]
-  (let
-    [args
-     (cond-> ["diff" "--no-color"]
-       cached?
-       (conj "--cached")
+  (let [args
+        (cond-> ["diff" "--no-color"]
+          cached?
+          (conj "--cached")
 
-       true
-       (into ["--" path]))
+          true
+          (into ["--" path]))
 
-     {:keys [exit out]}
-     (git! root args)]
+        {:keys [exit out]}
+        (git! root args)]
 
     (when (and (= 0 exit) (seq (str out))) (str/split-lines (str out)))))
 
@@ -474,34 +468,33 @@
    --force), :dry-run? adds `--dry-run`, :no-verify? adds `--no-verify` to skip
    pre-push hooks."
   [root {:keys [set-upstream? force? remote dry-run? no-verify?]}]
-  (let
-    [branch
-     (ok-out root ["rev-parse" "--abbrev-ref" "HEAD"])
+  (let [branch
+        (ok-out root ["rev-parse" "--abbrev-ref" "HEAD"])
 
-     on-branch?
-     (not (or (str/blank? (str branch)) (= "HEAD" branch)))
+        on-branch?
+        (not (or (str/blank? (str branch)) (= "HEAD" branch)))
 
-     target
-     (or remote "origin")
+        target
+        (or remote "origin")
 
-     args
-     (cond-> ["push"]
-       force?
-       (conj "--force-with-lease")
+        args
+        (cond-> ["push"]
+          force?
+          (conj "--force-with-lease")
 
-       dry-run?
-       (conj "--dry-run")
+          dry-run?
+          (conj "--dry-run")
 
-       no-verify?
-       (conj "--no-verify")
+          no-verify?
+          (conj "--no-verify")
 
-       set-upstream?
-       (into ["-u" target (str branch)])
+          set-upstream?
+          (into ["-u" target (str branch)])
 
-       (and (not set-upstream?) (some? remote))
-       (into (cond-> [target]
-               on-branch?
-               (conj (str branch)))))]
+          (and (not set-upstream?) (some? remote))
+          (into (cond-> [target]
+                  on-branch?
+                  (conj (str branch)))))]
 
     (action-result "Pushed" (git! root args {:timeout-secs network-timeout-secs}))))
 
@@ -586,30 +579,28 @@
    a review ref has no history to lease-check, and `-u` would retarget the
    branch's upstream at `refs/for/<branch>` — push directly to use them."
   [root {:keys [remote branch topic dry-run? no-verify? force? set-upstream?]}]
-  (let
-    [rejected (cond-> []
-                force?
-                (conj "Force with lease")
+  (let [rejected (cond-> []
+                   force?
+                   (conj "Force with lease")
 
-                set-upstream?
-                (conj "Set upstream"))]
+                   set-upstream?
+                   (conj "Set upstream"))]
     (if (seq rejected)
       {:ok? false
        :msg
        (str "A review push cannot carry " (str/join " or " rejected) " — push directly instead")}
-      (let
-        [remote (or remote (gerrit-remote root) "origin")
-         branch (or branch (gerrit-target-branch root))
-         spec (refs-for-spec branch topic)
-         args (cond-> ["push"]
-                dry-run?
-                (conj "--dry-run")
+      (let [remote (or remote (gerrit-remote root) "origin")
+            branch (or branch (gerrit-target-branch root))
+            spec (refs-for-spec branch topic)
+            args (cond-> ["push"]
+                   dry-run?
+                   (conj "--dry-run")
 
-                no-verify?
-                (conj "--no-verify")
+                   no-verify?
+                   (conj "--no-verify")
 
-                :always
-                (into [remote spec]))]
+                   :always
+                   (into [remote spec]))]
 
         (action-result (str "Pushed for review → refs/for/"
                             branch
@@ -645,11 +636,10 @@
    'No local changes to save' when there is nothing to stash — surface that
    as a failure so the dialog doesn't claim success."
   [root message]
-  (let
-    [r (git! root
-             (cond-> ["stash" "push" "--include-untracked"]
-               (not (str/blank? (str message)))
-               (into ["-m" (str message)])))]
+  (let [r (git! root
+                (cond-> ["stash" "push" "--include-untracked"]
+                  (not (str/blank? (str message)))
+                  (into ["-m" (str message)])))]
     (if (and (= 0 (:exit r)) (str/includes? (str (:out r)) "No local changes to save"))
       {:ok? false :msg "No local changes to save"}
       (action-result "Stashed" r))))
@@ -719,17 +709,16 @@
    so the cursor can land on them for hunk-level `s`/`u`."
   [{:keys [area title rows expanded diff-fn]}]
   (when (seq rows)
-    (let
-      [open?
-       (section-open? expanded area)
+    (let [open?
+          (section-open? expanded area)
 
-       header
-       {:kind :section
-        :area area
-        :members rows
-        :collapsible? true
-        :collapsed? (not open?)
-        :text (str title " (" (count rows) ")")}]
+          header
+          {:kind :section
+           :area area
+           :members rows
+           :collapsible? true
+           :collapsed? (not open?)
+           :text (str title " (" (count rows) ")")}]
 
       (if-not open?
         [header]
@@ -737,16 +726,14 @@
               (mapcat
                 (fn [row]
                   (if (and expanded (contains? expanded [(:area row) (:path row)]))
-                    (let
-                      [stageable? (and (= :file (:kind row))
-                                       (contains? #{:staged :unstaged} (:area row)))]
+                    (let [stageable? (and (= :file (:kind row))
+                                          (contains? #{:staged :unstaged} (:area row)))]
                       (into [row]
                             ;; number diff lines by their enclosing `@@` hunk so a
                             ;; stageable file's rows carry `:hunk`/`:stageable?`
                             (:acc (reduce (fn [{:keys [hunk acc]} l]
-                                            (let
-                                              [head? (str/starts-with? (str l) "@@")
-                                               hunk (if head? (inc (long hunk)) hunk)]
+                                            (let [head? (str/starts-with? (str l) "@@")
+                                                  hunk (if head? (inc (long hunk)) hunk)]
 
                                               {:hunk hunk
                                                :acc (conj acc
@@ -767,25 +754,23 @@
 (defn head-rows
   "The `Head:` / `Merge:` preamble of the status buffer."
   [{:keys [branch detached? head head-subject upstream? upstream ahead behind]}]
-  (let
-    [sha8
-     (some-> head
-             (subs 0 (min 8 (count (str head)))))
+  (let [sha8
+        (some-> head
+                (subs 0 (min 8 (count (str head)))))
 
-     head-label
-     (if detached? (str "detached " sha8) (str branch))
+        head-label
+        (if detached? (str "detached " sha8) (str branch))
 
-     sync
-     (cond-> []
-       (pos? (long (or ahead 0)))
-       (conj (str "ahead " ahead))
+        sync
+        (cond-> []
+          (pos? (long (or ahead 0)))
+          (conj (str "ahead " ahead))
 
-       (pos? (long (or behind 0)))
-       (conj (str "behind " behind)))]
+          (pos? (long (or behind 0)))
+          (conj (str "behind " behind)))]
 
-    (cond->
-      [{:kind :info
-        :text (str "Head:     " head-label (when head-subject (str "  " head-subject)))}]
+    (cond-> [{:kind :info
+              :text (str "Head:     " head-label (when head-subject (str "  " head-subject)))}]
       upstream?
       (conj {:kind :info
              :text (str "Merge:    "
@@ -806,96 +791,96 @@
   ([model expanded] (status-rows model expanded nil))
   ([{:keys [untracked unstaged staged unmerged stashes commits upstream unpushed unpulled]
      :as model} expanded diff-fn]
-   (let
-     [commit-rows
-      (fn [area title commits*]
-        (when (seq commits*)
-          (let
-            [open?
-             (section-open? expanded area)
+   (let [commit-rows
+         (fn [area title commits*]
+           (when (seq commits*)
+             (let [open?
+                   (section-open? expanded area)
 
-             header
-             {:kind :section :area area :collapsible? true :collapsed? (not open?) :text title}]
+                   header
+                   {:kind :section
+                    :area area
+                    :collapsible? true
+                    :collapsed? (not open?)
+                    :text title}]
 
-            (if-not open?
-              [header]
-              (into
+               (if-not open?
+                 [header]
+                 (into [header]
+                       (mapcat (fn [{:keys [sha subject]}]
+                                 (let [row {:kind :commit
+                                            :area area
+                                            :sha sha
+                                            :text (str "  " sha " " subject)}]
+                                   (if (and expanded (contains? expanded [area sha]))
+                                     (into [row]
+                                           (map (fn [l]
+                                                  {:kind :diff :text (str "    " l)}))
+                                           (or (when diff-fn (diff-fn row)) ["(no diff)"]))
+                                     [row]))))
+                       commits*)))))
+
+         upstream-label
+         (or upstream "@{upstream}")
+
+         sections
+         [(section-rows {:area :untracked
+                         :title "Untracked files"
+                         :rows (mapv untracked-row untracked)
+                         :expanded expanded
+                         :diff-fn diff-fn})
+          (section-rows {:area :unmerged
+                         :title "Unmerged (conflicts)"
+                         :rows (mapv #(file-row :unmerged %) unmerged)
+                         :expanded expanded
+                         :diff-fn diff-fn})
+          (section-rows {:area :unstaged
+                         :title "Unstaged changes"
+                         :rows (mapv #(file-row :unstaged %) unstaged)
+                         :expanded expanded
+                         :diff-fn diff-fn})
+          (section-rows {:area :staged
+                         :title "Staged changes"
+                         :rows (mapv #(file-row :staged %) staged)
+                         :expanded expanded
+                         :diff-fn diff-fn})
+          (when (seq stashes)
+            (let [open?
+                  (section-open? expanded :stashes)
+
+                  header
+                  {:kind :section
+                   :area :stashes
+                   :collapsible? true
+                   :collapsed? (not open?)
+                   :text (str "Stashes (" (count stashes) ")")}]
+
+              (if-not open?
                 [header]
-                (mapcat (fn [{:keys [sha subject]}]
-                          (let
-                            [row
-                             {:kind :commit :area area :sha sha :text (str "  " sha " " subject)}]
-                            (if (and expanded (contains? expanded [area sha]))
-                              (into [row]
-                                    (map (fn [l]
-                                           {:kind :diff :text (str "    " l)}))
-                                    (or (when diff-fn (diff-fn row)) ["(no diff)"]))
-                              [row]))))
-                commits*)))))
+                (into [header]
+                      (mapcat (fn [{:keys [ref message]}]
+                                (let [row {:kind :stash
+                                           :area :stashes
+                                           :ref ref
+                                           :text (str "  " ref ": " message)}]
+                                  (if (and expanded (contains? expanded [:stashes ref]))
+                                    (into [row]
+                                          (map (fn [l]
+                                                 {:kind :diff :text (str "    " l)}))
+                                          (or (when diff-fn (diff-fn row)) ["(no diff)"]))
+                                    [row]))))
+                      stashes))))
+          (if (seq unpushed)
+            (commit-rows :unpushed
+                         (str "Unmerged into " upstream-label " (" (count unpushed) ")")
+                         unpushed)
+            (commit-rows :commits "Recent commits" commits))
+          (commit-rows :unpulled
+                       (str "Unpulled from " upstream-label " (" (count unpulled) ")")
+                       unpulled)]
 
-      upstream-label
-      (or upstream "@{upstream}")
-
-      sections
-      [(section-rows {:area :untracked
-                      :title "Untracked files"
-                      :rows (mapv untracked-row untracked)
-                      :expanded expanded
-                      :diff-fn diff-fn})
-       (section-rows {:area :unmerged
-                      :title "Unmerged (conflicts)"
-                      :rows (mapv #(file-row :unmerged %) unmerged)
-                      :expanded expanded
-                      :diff-fn diff-fn})
-       (section-rows {:area :unstaged
-                      :title "Unstaged changes"
-                      :rows (mapv #(file-row :unstaged %) unstaged)
-                      :expanded expanded
-                      :diff-fn diff-fn})
-       (section-rows {:area :staged
-                      :title "Staged changes"
-                      :rows (mapv #(file-row :staged %) staged)
-                      :expanded expanded
-                      :diff-fn diff-fn})
-       (when (seq stashes)
-         (let
-           [open?
-            (section-open? expanded :stashes)
-
-            header
-            {:kind :section
-             :area :stashes
-             :collapsible? true
-             :collapsed? (not open?)
-             :text (str "Stashes (" (count stashes) ")")}]
-
-           (if-not open?
-             [header]
-             (into [header]
-                   (mapcat (fn [{:keys [ref message]}]
-                             (let
-                               [row {:kind :stash
-                                     :area :stashes
-                                     :ref ref
-                                     :text (str "  " ref ": " message)}]
-                               (if (and expanded (contains? expanded [:stashes ref]))
-                                 (into [row]
-                                       (map (fn [l]
-                                              {:kind :diff :text (str "    " l)}))
-                                       (or (when diff-fn (diff-fn row)) ["(no diff)"]))
-                                 [row]))))
-                   stashes))))
-       (if (seq unpushed)
-         (commit-rows :unpushed
-                      (str "Unmerged into " upstream-label " (" (count unpushed) ")")
-                      unpushed)
-         (commit-rows :commits "Recent commits" commits))
-       (commit-rows :unpulled
-                    (str "Unpulled from " upstream-label " (" (count unpulled) ")")
-                    unpulled)]
-
-      clean?
-      (not (or (seq untracked) (seq unstaged) (seq staged) (seq unmerged)))]
+         clean?
+         (not (or (seq untracked) (seq unstaged) (seq staged) (seq unmerged)))]
 
      (vec (concat (head-rows model)
                   [(blank-row)]
@@ -917,12 +902,11 @@
   "Index of the first selectable row at-or-after `idx` (wrapping search both
    directions handled by the caller); nil when nothing is selectable."
   [rows idx]
-  (let
-    [n
-     (count rows)
+  (let [n
+        (count rows)
 
-     idx
-     (long idx)]
+        idx
+        (long idx)]
 
     (or (some #(when (selectable? (nth rows %)) %) (range (min (max idx 0) n) n))
         (some #(when (selectable? (nth rows %)) %) (range (min (max idx 0) n))))))
@@ -977,13 +961,12 @@
     (let [v (clojure.core/get m k)]
       (if (some? v)
         v
-        (let
-          [n (name k)
-           n (if (str/ends-with? n "?")
-               (let [base (subs n 0 (dec (count n)))]
-                 (if (str/starts-with? base "is-") base (str "is-" base)))
-               n)
-           sk (str/replace n "-" "_")]
+        (let [n (name k)
+              n (if (str/ends-with? n "?")
+                  (let [base (subs n 0 (dec (count n)))]
+                    (if (str/starts-with? base "is-") base (str "is-" base)))
+                  n)
+              sk (str/replace n "-" "_")]
 
           (if-some [v' (clojure.core/get m (keyword sk))]
             v'
@@ -992,11 +975,10 @@
 (defn- root-label
   "Human label for a repo entry: the basename of its REAL (trunk) directory."
   [path]
-  (let
-    [n (some-> path
-               str
-               as-file
-               .getName)]
+  (let [n (some-> path
+                  str
+                  as-file
+                  .getName)]
     (if (str/blank? (str n)) (str path) (str n))))
 
 (defn workspace-roots
@@ -1004,11 +986,10 @@
    `:root` is its working clone and `:repo-root` remains its trunk. Accepts the
    gateway workspace map in either in-process kebab or canonical snake shape."
   [ws fallback-root]
-  (or (when-let
-        [root (or (wget ws :root)
-                  (some-> fallback-root
-                          str
-                          not-empty))]
+  (or (when-let [root (or (wget ws :root)
+                          (some-> fallback-root
+                                  str
+                                  not-empty))]
         [{:root (str root)
           :trunk (str (or (wget ws :repo-root) root))
           :label (root-label (or (wget ws :repo-root) root))
@@ -1120,43 +1101,41 @@
    canonical path, which `distinct-roots` has already made unique. A label
    nothing collides with is left exactly as it was."
   [entries]
-  (let
-    [segments-of
-     (fn [entry]
-       (path-segments (canonical-path (or (:trunk entry) (:root entry)))))
+  (let [segments-of
+        (fn [entry]
+          (path-segments (canonical-path (or (:trunk entry) (:root entry)))))
 
-     tail-depth
-     (fn [peers]
-       (let
-         [segments
-          (mapv segments-of peers)
+        tail-depth
+        (fn [peers]
+          (let [segments
+                (mapv segments-of peers)
 
-          deepest
-          (long (reduce max 1 (map count segments)))]
+                deepest
+                (long (reduce max 1 (map count segments)))]
 
-         (or (first (filter (fn [n]
-                              (apply distinct? (map #(path-tail % n) segments)))
-                            (range 2 (inc deepest))))
-             deepest)))
+            (or (first (filter (fn [n]
+                                 (apply distinct? (map #(path-tail % n) segments)))
+                               (range 2 (inc deepest))))
+                deepest)))
 
-     depths
-     (into {}
-           (keep (fn [[label peers]]
-                   (when (< 1 (count peers)) [label (tail-depth peers)])))
-           (group-by :label entries))
+        depths
+        (into {}
+              (keep (fn [[label peers]]
+                      (when (< 1 (count peers)) [label (tail-depth peers)])))
+              (group-by :label entries))
 
-     relabelled
-     (mapv (fn [entry]
-             (if-let [n (get depths (:label entry))]
-               (assoc entry :label (path-tail (segments-of entry) n))
-               entry))
-           entries)
+        relabelled
+        (mapv (fn [entry]
+                (if-let [n (get depths (:label entry))]
+                  (assoc entry :label (path-tail (segments-of entry) n))
+                  entry))
+              entries)
 
-     repeated
-     (into #{}
-           (keep (fn [[label n]]
-                   (when (< 1 (long n)) label)))
-           (frequencies (map :label relabelled)))]
+        repeated
+        (into #{}
+              (keep (fn [[label n]]
+                      (when (< 1 (long n)) label)))
+              (frequencies (map :label relabelled)))]
 
     (mapv (fn [entry]
             (cond-> entry
@@ -1172,12 +1151,11 @@
   [ws]
   (into {}
         (keep (fn [entry]
-                (let
-                  [trunk
-                   (workspace/normalize-root (if (string? entry) entry (wget entry :trunk)))
+                (let [trunk
+                      (workspace/normalize-root (if (string? entry) entry (wget entry :trunk)))
 
-                   clone
-                   (workspace/normalize-root (when-not (string? entry) (wget entry :clone)))]
+                      clone
+                      (workspace/normalize-root (when-not (string? entry) (wget entry :clone)))]
 
                   (when trunk [trunk (or clone trunk)]))))
         (wget ws :filesystem-roots)))
@@ -1222,38 +1200,35 @@
    never write through a root the draft promised to isolate."
   ([ws] (configured-roots ws (catalog-entries)))
   ([ws entries]
-   (let
-     [clones
-      (draft-clones ws)
+   (let [clones
+         (draft-clones ws)
 
-      drafted?
-      (let
-        [trunk
-         (wget ws :repo-root)
+         drafted?
+         (let [trunk
+               (wget ws :repo-root)
 
-         root
-         (wget ws :root)]
+               root
+               (wget ws :root)]
 
-        (boolean (and trunk root (not= (str trunk) (str root)))))]
+           (boolean (and trunk root (not= (str trunk) (str root)))))]
 
      (into []
            (keep
              (fn [entry]
-               (let
-                 [trunk
-                  (workspace/normalize-root (get entry "path"))
+               (let [trunk
+                     (workspace/normalize-root (get entry "path"))
 
-                  policy
-                  (config-spec/entry-draft-policy entry)
+                     policy
+                     (config-spec/entry-draft-policy entry)
 
-                  clone
-                  (get clones trunk)
+                     clone
+                     (get clones trunk)
 
-                  withheld?
-                  (and drafted?
-                       (or (= :not-allowed policy)
-                           (and (contains? workspace/isolating-draft-policies policy)
-                                (nil? clone))))]
+                     withheld?
+                     (and drafted?
+                          (or (= :not-allowed policy)
+                              (and (contains? workspace/isolating-draft-policies policy)
+                                   (nil? clone))))]
 
                  (when (and trunk
                             (not withheld?)
@@ -1311,31 +1286,32 @@
   [{:keys [branch detached? head untracked unstaged staged unmerged ahead behind] :as model}]
   (if-not model
     "not a git repository"
-    (let
-      [head-label
-       (if detached? (str "detached " (subs (str head) 0 (min 8 (count (str head))))) (str branch))
+    (let [head-label
+          (if detached?
+            (str "detached " (subs (str head) 0 (min 8 (count (str head)))))
+            (str branch))
 
-       buckets
-       (cond-> []
-         (seq unmerged)
-         (conj (str (count unmerged) " conflicted"))
+          buckets
+          (cond-> []
+            (seq unmerged)
+            (conj (str (count unmerged) " conflicted"))
 
-         (seq staged)
-         (conj (str (count staged) " staged"))
+            (seq staged)
+            (conj (str (count staged) " staged"))
 
-         (seq unstaged)
-         (conj (str (count unstaged) " unstaged"))
+            (seq unstaged)
+            (conj (str (count unstaged) " unstaged"))
 
-         (seq untracked)
-         (conj (str (count untracked) " untracked")))
+            (seq untracked)
+            (conj (str (count untracked) " untracked")))
 
-       sync
-       (cond-> []
-         (pos? (long (or ahead 0)))
-         (conj (str "ahead " ahead))
+          sync
+          (cond-> []
+            (pos? (long (or ahead 0)))
+            (conj (str "ahead " ahead))
 
-         (pos? (long (or behind 0)))
-         (conj (str "behind " behind)))]
+            (pos? (long (or behind 0)))
+            (conj (str "behind " behind)))]
 
       (str/join "  ·  "
                 (cond-> [head-label (if (seq buckets) (str/join ", " buckets) "clean")]
@@ -1381,20 +1357,19 @@
   (let [multi? (> (count repos) 1)]
     (vec
       (mapcat (fn [{:keys [root model] :as repo}]
-                (let
-                  [expanded-here (into #{}
-                                       (keep (fn [[r a p]]
-                                               (when (= r root) [a p])))
-                                       (or expanded #{}))
-                   open? (or (not multi?) (repo-open? expanded root model))
-                   diff-here (when diff-fn
-                               (fn [row]
-                                 (diff-fn (assoc row :root root))))
-                   body (when open?
-                          (mapv #(assoc % :root root)
-                                (if model
-                                  (status-rows model expanded-here diff-here)
-                                  [{:kind :info :text "Not a git repository"}])))]
+                (let [expanded-here (into #{}
+                                          (keep (fn [[r a p]]
+                                                  (when (= r root) [a p])))
+                                          (or expanded #{}))
+                      open? (or (not multi?) (repo-open? expanded root model))
+                      diff-here (when diff-fn
+                                  (fn [row]
+                                    (diff-fn (assoc row :root root))))
+                      body (when open?
+                             (mapv #(assoc % :root root)
+                                   (if model
+                                     (status-rows model expanded-here diff-here)
+                                     [{:kind :info :text "Not a git repository"}])))]
 
                   (if multi?
                     (into [(repo-row (assoc repo :collapsed? (not open?)))]
@@ -1416,11 +1391,10 @@
    its nil `:model`) so a repo-less session still renders the single-root
    `Not a git repository` empty state instead of a blank buffer."
   [repo-entries]
-  (let
-    [with-models
-     (vec (pmap #(assoc % :model (status-model (:root %))) repo-entries))
+  (let [with-models
+        (vec (pmap #(assoc % :model (status-model (:root %))) repo-entries))
 
-     repos
-     (filterv :model with-models)]
+        repos
+        (filterv :model with-models)]
 
     (if (seq repos) repos (vec (take 1 with-models)))))

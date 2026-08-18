@@ -55,18 +55,19 @@
    failed start reading it AFTERWARDS gets `Stream closed` and loses exactly the
    words that explain the failure. Pumping from the start keeps both safe."
   [^java.io.BufferedReader reader]
-  (let
-    [lines
-     (atom [])
+  (let [lines
+        (atom [])
 
-     done
-     (promise)]
+        done
+        (promise)]
 
     (doto (Thread. ^Runnable
                    (fn []
                      (try (loop []
+
                             (when-let [line (.readLine reader)]
-                              (swap! lines (fn [ls] (vec (take-last stderr-tail-lines (conj ls line)))))
+                              (swap! lines (fn [ls]
+                                             (vec (take-last stderr-tail-lines (conj ls line)))))
                               (recur)))
                           (catch Throwable _ nil)
                           (finally (deliver done true)))))
@@ -81,9 +82,7 @@
    race."
   [info]
   (let [{:keys [lines done]} (:stderr info)]
-    (when lines
-      (deref done 500 nil)
-      (vec (remove str/blank? @lines)))))
+    (when lines (deref done 500 nil) (vec (remove str/blank? @lines)))))
 
 (defn status
   "STRING-keyed lifecycle view (crosses as a tool `:result`): `result`, `cwd`,
@@ -92,24 +91,20 @@
    command — which is the shape every language answers. `env` is the delta this
    REPL was STARTED with, by NAME and digest only, and never a value."
   [dir]
-  (let
-    [info
-     (get @processes dir)
+  (let [info
+        (get @processes dir)
 
-     running?
-     (alive? info)]
+        running?
+        (alive? info)]
 
-    (cond->
-      {"result" "status"
-       "cwd" dir
-       "status" (if running? "up" "down")}
-
+    (cond-> {"result" "status" "cwd" dir "status" (if running? "up" "down")}
       running?
       (assoc "running" true)
 
       running?
-      (assoc "pid" (some-> ^Process (:process info)
-                           .pid))
+      (assoc "pid"
+        (some-> ^Process (:process info)
+                .pid))
 
       (and running? (:cmd info))
       (assoc "cmd" (:cmd info))
@@ -124,15 +119,13 @@
       (throw (ex-info "Bun REPL is not running for this dir — repl_start(\"typescript\") first."
                       {:type :ts/no-repl :dir dir})))
     (locking info
-      (let
-        [^BufferedWriter w (:writer info)
-         ^BufferedReader r (:reader info)]
+      (let [^BufferedWriter w (:writer info)
+            ^BufferedReader r (:reader info)]
 
         (.write w (str (json/write-json-str req) "\n"))
         (.flush w)
-        (let
-          [fut (future (.readLine r))
-           line (deref fut timeout-ms ::timeout)]
+        (let [fut (future (.readLine r))
+              line (deref fut timeout-ms ::timeout)]
 
           (if (= line ::timeout)
             (do (future-cancel fut)
@@ -149,44 +142,43 @@
   [dir {:keys [session-id] :as opts} env-fingerprint]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
-  (let
-    [cmd
-     (conj (runner/resolve-command dir) "-e" (server-script))
+  (let [cmd
+        (conj (runner/resolve-command dir) "-e" (server-script))
 
-     ;; Resolve argv + proxy env atomically. Unknown/disposed sessions are denied
-     ;; before spawn, and direct outbound traffic remains behind Seatbelt.
-     launch
-     (vis/session-process-launch session-id cmd {:env (get opts "env")})
+        ;; Resolve argv + proxy env atomically. Unknown/disposed sessions are denied
+        ;; before spawn, and direct outbound traffic remains behind Seatbelt.
+        launch
+        (vis/session-process-launch session-id cmd {:env (get opts "env")})
 
-     pb
-     (doto (ProcessBuilder. ^java.util.List (:argv launch))
-       (.directory (io/file dir))
-       (.redirectErrorStream false))
+        pb
+        (doto (ProcessBuilder. ^java.util.List (:argv launch))
+          (.directory (io/file dir))
+          (.redirectErrorStream false))
 
-     _env
-     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-       (when (:replace-env? launch) (.clear e))
-       (doseq [[k v] (:env launch)]
-         (.put e ^String k ^String v))
-       ;; An inherited environment still carries what this start asked to UNSET.
-       (doseq [k (:env-remove launch)]
-         (.remove e ^String k)))
+        _env
+        (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+          (when (:replace-env? launch) (.clear e))
+          (doseq [[k v] (:env launch)]
+            (.put e ^String k ^String v))
+          ;; An inherited environment still carries what this start asked to UNSET.
+          (doseq [k (:env-remove launch)]
+            (.remove e ^String k)))
 
-     p
-     (.start pb)
+        p
+        (.start pb)
 
-     info
-     {:process p
-      :writer (io/writer (.getOutputStream p))
-       :reader (io/reader (.getInputStream p))
-       :stderr (drain-stderr! (io/reader (.getErrorStream p)))
-      :cmd (display-cmd cmd)
-      :pid (.pid p)
-      :started-at (System/currentTimeMillis)
-      ;; WHAT THIS REPL RUNS WITH, by name and digest: what the next start is
-      ;; compared against, so a reuse can be refused without a value ever
-      ;; reaching a result, a log or the transcript.
-      :env-fingerprint env-fingerprint}]
+        info
+        {:process p
+         :writer (io/writer (.getOutputStream p))
+         :reader (io/reader (.getInputStream p))
+         :stderr (drain-stderr! (io/reader (.getErrorStream p)))
+         :cmd (display-cmd cmd)
+         :pid (.pid p)
+         :started-at (System/currentTimeMillis)
+         ;; WHAT THIS REPL RUNS WITH, by name and digest: what the next start is
+         ;; compared against, so a reuse can be refused without a value ever
+         ;; reaching a result, a log or the transcript.
+         :env-fingerprint env-fingerprint}]
 
     (swap! processes assoc dir info)
     ;; "up" only once the child ANSWERS — the same handshake the Python REPL
@@ -201,22 +193,19 @@
            (try (.destroy p) (catch Throwable _ nil))
            (try (.waitFor p) (catch Throwable _ nil))
            (try (when (.isAlive p) (.destroyForcibly p)) (catch Throwable _ nil))
-           (let
-             [exit-code
-              (try (.exitValue p) (catch Throwable _ nil))
+           (let [exit-code
+                 (try (.exitValue p) (catch Throwable _ nil))
 
-              tail
-              (stderr-tail info)]
+                 tail
+                 (stderr-tail info)]
 
              (swap! processes dissoc dir)
-             (cond->
-               {"result" "failed"
-                "status" "failed"
-                "pid" (.pid p)
-                "cmd" (display-cmd cmd)
-                "cwd" dir
-                "message" (str "Bun REPL failed its startup handshake: " (.getMessage e))}
-
+             (cond-> {"result" "failed"
+                      "status" "failed"
+                      "pid" (.pid p)
+                      "cmd" (display-cmd cmd)
+                      "cwd" dir
+                      "message" (str "Bun REPL failed its startup handshake: " (.getMessage e))}
                exit-code
                (assoc "exit" exit-code)
 
@@ -238,22 +227,18 @@
 
    Returns a STRING-keyed lifecycle map."
   [dir opts]
-  (let
-    [id
-     (or (get opts "id") (str "bunrepl:" dir))
+  (let [id
+        (or (get opts "id") (str "bunrepl:" dir))
 
-     env-fingerprint
-     (vis/env-fingerprint (vis/call-env-values (get opts "env")))]
+        env-fingerprint
+        (vis/env-fingerprint (vis/call-env-values (get opts "env")))]
 
     (if (alive? (get @processes dir))
-      (let [refusal (vis/env-mismatch-refusal id
-                                              (:env-fingerprint (get @processes dir))
-                                              env-fingerprint)]
+      (let [refusal
+            (vis/env-mismatch-refusal id (:env-fingerprint (get @processes dir)) env-fingerprint)]
         (when refusal
           (throw (ex-info (:message refusal)
-                          {:type :ts/repl-env-mismatch
-                           :id id
-                           :env (:differing refusal)})))
+                          {:type :ts/repl-env-mismatch :id id :env (:differing refusal)})))
         (assoc (status dir) "result" "already-running"))
       (spawn! dir opts env-fingerprint))))
 

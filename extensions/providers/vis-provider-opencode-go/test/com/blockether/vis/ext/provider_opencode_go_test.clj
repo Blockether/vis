@@ -31,12 +31,11 @@
 (defdescribe per-model-wire-routing-test
              (it "declares OpenAI-wire models as bare strings (svar default chat wire)"
                  (reload!)
-                 (let
-                   [models
-                    (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
+                 (let [models
+                       (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
 
-                    bare
-                    (filter string? models)]
+                       bare
+                       (filter string? models)]
 
                    ;; GLM / Kimi / DeepSeek / MiMo / Hy3 ride the OpenAI chat wire.
                    (expect (some #(= "glm-5.2" %) bare))
@@ -45,12 +44,11 @@
                    (expect (some #(= "hy3" %) bare))))
              (it "declares Anthropic-wire models as maps with :api-style :anthropic"
                  (reload!)
-                 (let
-                   [models
-                    (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
+                 (let [models
+                       (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
 
-                    styled
-                    (filter map? models)]
+                       styled
+                       (filter map? models)]
 
                    ;; MiniMax / Qwen ride the Anthropic Messages wire via per-model override.
                    (expect (seq styled))
@@ -64,25 +62,24 @@
 ;; builder's catalog into the binary and left its `HttpClient` in the image heap:
 ;; "HttpClientFacade found in the image heap" failed every native build after
 ;; v0.1.32. The catalog must be static here; the live one arrives at runtime.
-(defdescribe
-  static-catalog-test
-  (it "builds its default catalog without touching the network"
-      (reload!)
-      (let [models (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])]
-        (expect (seq models))
-        ;; No delay, no promise, no future: the value is already there.
-        (expect (vector? models)))))
+(defdescribe static-catalog-test
+             (it "builds its default catalog without touching the network"
+                 (reload!)
+                 (let [models (get-in (vis/provider-by-id :opencode-go)
+                                      [:provider/preset :default-models])]
+                   (expect (seq models))
+                   ;; No delay, no promise, no future: the value is already there.
+                   (expect (vector? models)))))
 
 (defdescribe enrich-models-test
              (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"
-                 (let
-                   [enriched
-                    (#'opencode-go/enrich-models
-                     {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
-                     nil)
+                 (let [enriched
+                       (#'opencode-go/enrich-models
+                        {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
+                        nil)
 
-                    by-name
-                    (into {} (map (juxt :name identity)) enriched)]
+                       by-name
+                       (into {} (map (juxt :name identity)) enriched)]
 
                    ;; A model the shipped list never had still reaches /messages,
                    ;; because the wire is a function of the id, not of this file.
@@ -90,10 +87,9 @@
                    (expect (= :anthropic (:api-style (by-name "qwen3.8-max"))))
                    (expect (nil? (:api-style (by-name "glm-5.2"))))))
              (it "never overrides an :api-style that config already decided"
-                 (let
-                   [enriched (#'opencode-go/enrich-models
-                              {:models [{:name "minimax-m3" :api-style :openai}]}
-                              nil)]
+                 (let [enriched (#'opencode-go/enrich-models
+                                 {:models [{:name "minimax-m3" :api-style :openai}]}
+                                 nil)]
                    (expect (= :openai (:api-style (first enriched))))))
              (it "is registered on the provider, so the live catalog is enriched too"
                  (reload!)

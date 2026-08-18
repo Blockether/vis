@@ -36,12 +36,11 @@
       (expect (.contains help "--reasoning-effort"))
       (expect (.contains help "COMMANDS"))))
   (it "aligns every block: headings at column 0, rows at column 2, one gutter each"
-      (let
-        [^String help
-         (commandline/render-tree (#'main/root-command))
+      (let [^String help
+            (commandline/render-tree (#'main/root-command))
 
-         commands-at
-         (.indexOf help "\nCOMMANDS\n")]
+            commands-at
+            (.indexOf help "\nCOMMANDS\n")]
 
         (expect (.contains help "\nUSAGE\n"))
         (expect (pos? commands-at))
@@ -85,23 +84,21 @@
           (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
         (expect (.contains (str out) "vis-agent providers"))))
   (it "loads channels before rendering channels parent help"
-      (let
-        [out
-         (java.io.StringWriter.)
+      (let [out
+            (java.io.StringWriter.)
 
-         discovered?
-         (atom false)
+            discovered?
+            (atom false)
 
-         fake-channel
-         {:channel/id ::fast-help-test
-          :channel/cmd "zzz-test"
-          :channel/doc "Test channel for help."
-          :channel/main-fn (fn [_args])}]
+            fake-channel
+            {:channel/id ::fast-help-test
+             :channel/cmd "zzz-test"
+             :channel/doc "Test channel for help."
+             :channel/main-fn (fn [_args])}]
 
-        (try (with-redefs
-               [main/discover-all! (fn []
-                                     (reset! discovered? true)
-                                     (registry/register-channel! fake-channel))]
+        (try (with-redefs [main/discover-all! (fn []
+                                                (reset! discovered? true)
+                                                (registry/register-channel! fake-channel))]
                (binding [*out* out]
                  (expect (true? (#'main/fast-help-dispatched? false ["channels" "--help"]))))
                (expect (true? @discovered?))
@@ -134,19 +131,18 @@
   gateway-command-help-test
   (it
     "says in `gateway` help which subcommands follow --gateway, and which never leave this machine"
-    (let
-      [subs
-       (into {} (map (juxt :cmd/name identity)) (registry/registered-under ["gateway"]))
+    (let [subs
+          (into {} (map (juxt :cmd/name identity)) (registry/registered-under ["gateway"]))
 
-       parent
-       (first (filter #(= "gateway" (:cmd/name %)) (registry/registered-under [])))
+          parent
+          (first (filter #(= "gateway" (:cmd/name %)) (registry/registered-under [])))
 
-       says-remote?
-       (fn [cmd-name]
-         (str/includes? (str (:cmd/doc (get subs cmd-name))
-                             " "
-                             (str/join " " (:cmd/examples (get subs cmd-name))))
-                        "--gateway"))]
+          says-remote?
+          (fn [cmd-name]
+            (str/includes? (str (:cmd/doc (get subs cmd-name))
+                                " "
+                                (str/join " " (:cmd/examples (get subs cmd-name))))
+                           "--gateway"))]
 
       (expect (str/includes? (:cmd/usage parent) "--gateway HOST[:PORT] --gateway-token TOKEN"))
       ;; `status` and `pair` answer from the --gateway target, `stop` refuses one
@@ -310,12 +306,11 @@
 
 (defdescribe sessions-command-test
              (it "registers canonical session verbs under host-owned sessions command"
-                 (let
-                   [{:keys [command]}
-                    (commandline/find-leaf (#'main/root-command) ["vis-agent" "sessions"])
+                 (let [{:keys [command]}
+                       (commandline/find-leaf (#'main/root-command) ["vis-agent" "sessions"])
 
-                    ^String help
-                    (commandline/render-command command ["vis-agent" "sessions"])]
+                       ^String help
+                       (commandline/render-command command ["vis-agent" "sessions"])]
 
                    (expect (.contains help
                                       "vis-agent sessions <list|show|fork|delete|search|export>"))
@@ -344,31 +339,30 @@
   "Model ids may contain a slash (`z-ai/glm-4.6v`). `--model` must not read that
    prefix as a provider tag when a configured provider lists the WHOLE name."
   (it "promotes the provider whose catalog owns the slash-containing model"
-      (let
-        [config
-         {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
-                      {:id :openrouter :models [{:name "gpt-oss-120b"} {:name "z-ai/glm-4.6v"}]}]}
+      (let [config
+            {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
+                         {:id :openrouter
+                          :models [{:name "gpt-oss-120b"} {:name "z-ai/glm-4.6v"}]}]}
 
-         out
-         (#'main/config-with-model-override config "z-ai/glm-4.6v")
+            out
+            (#'main/config-with-model-override config "z-ai/glm-4.6v")
 
-         [active]
-         (:providers out)]
+            [active]
+            (:providers out)]
 
         (expect (= :openrouter (:id active)))
         (expect (= "z-ai/glm-4.6v" (:name (first (:models active)))))
         (expect (= [:openrouter :anthropic] (mapv :id (:providers out))))))
   (it "still tags a real provider prefix"
-      (let
-        [config
-         {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
-                      {:id :openrouter :models [{:name "gpt-oss-120b"}]}]}
+      (let [config
+            {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
+                         {:id :openrouter :models [{:name "gpt-oss-120b"}]}]}
 
-         out
-         (#'main/config-with-model-override config "openrouter/gpt-oss-120b")
+            out
+            (#'main/config-with-model-override config "openrouter/gpt-oss-120b")
 
-         [active]
-         (:providers out)]
+            [active]
+            (:providers out)]
 
         (expect (= :openrouter (:id active)))
         (expect (= "gpt-oss-120b" (:name (first (:models active))))))))
@@ -392,20 +386,20 @@
              (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
              (expect (true? (:vis/user-error (ex-data e))))))))
 
-(defdescribe
-  launcher-owned-commands-test
-  (it "keeps the launcher's runtime and update out of the binary's command tree"
-      ;; The `vis-agent` wrapper runs both itself and never forwards them,
-      ;; so registering them here only advertised commands this runtime
-      ;; cannot execute.
-      (let [by-name (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
-        (doseq [nm ["runtime" "update"]]
-          (expect (nil? (get by-name nm))))))
-  (it "still documents them where the launcher owns them: the RUNTIME help section"
-      (let [^String help (commandline/render-tree (#'main/root-command))]
-        (expect (str/includes? help "RUNTIME (WHAT RUNS)"))
-        (doseq [row ["vis-agent runtime" "vis-agent update"]]
-          (expect (str/includes? help row))))))
+(defdescribe launcher-owned-commands-test
+             (it "keeps the launcher's runtime and update out of the binary's command tree"
+                 ;; The `vis-agent` wrapper runs both itself and never forwards them,
+                 ;; so registering them here only advertised commands this runtime
+                 ;; cannot execute.
+                 (let [by-name
+                       (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
+                   (doseq [nm ["runtime" "update"]]
+                     (expect (nil? (get by-name nm))))))
+             (it "still documents them where the launcher owns them: the RUNTIME help section"
+                 (let [^String help (commandline/render-tree (#'main/root-command))]
+                   (expect (str/includes? help "RUNTIME (WHAT RUNS)"))
+                   (doseq [row ["vis-agent runtime" "vis-agent update"]]
+                     (expect (str/includes? help row))))))
 
 ;;; ── `vis-agent projects` ──────────────────────────────────────────────────────
 ;;
@@ -420,10 +414,9 @@
 
 (defdescribe
   project-id-resolution-test
-  (let
-    [projects [{:id "9f2c1a44-0000-0000-0000-000000000001" :name "vis"}
-               {:id "9f2c1a44-0000-0000-0000-000000000002" :name "spel"}
-               {:id "b1000000-0000-0000-0000-000000000003" :name "svar"}]]
+  (let [projects [{:id "9f2c1a44-0000-0000-0000-000000000001" :name "vis"}
+                  {:id "9f2c1a44-0000-0000-0000-000000000002" :name "spel"}
+                  {:id "b1000000-0000-0000-0000-000000000003" :name "svar"}]]
     (it "resolves a full id, and an unambiguous prefix"
         (expect (= ["svar"] (mapv :name (match-projects projects "b1000000"))))
         (expect (= ["vis"]
@@ -439,25 +432,23 @@
 
 (defdescribe
   cli-project-delete-blast-radius-test
-  (let
-    [pid
-     "9f2c1a44-0000-0000-0000-000000000001"
+  (let [pid
+        "9f2c1a44-0000-0000-0000-000000000001"
 
-     exec
-     (fn [opts]
-       (let [log (atom [])]
-         (with-redefs
-           [lp/project-session-ids (fn [p]
-                                     (if (= pid p) ["s-a" "s-b"] []))
-            workspace/discard-session-clones! (fn [_d sid]
-                                                (swap! log conj [:drafts sid])
-                                                (future nil))
-            lp/delete! (fn [sid]
-                         (swap! log conj [:session sid]))
-            lp/delete-project! (fn [p]
-                                 (swap! log conj [:project p]))]
+        exec
+        (fn [opts]
+          (let [log (atom [])]
+            (with-redefs [lp/project-session-ids (fn [p]
+                                                   (if (= pid p) ["s-a" "s-b"] []))
+                          workspace/discard-session-clones! (fn [_d sid]
+                                                              (swap! log conj [:drafts sid])
+                                                              (future nil))
+                          lp/delete! (fn [sid]
+                                       (swap! log conj [:session sid]))
+                          lp/delete-project! (fn [p]
+                                               (swap! log conj [:project p]))]
 
-           {:result (delete-project-tree! ::db pid opts) :log @log})))]
+              {:result (delete-project-tree! ::db pid opts) :log @log})))]
 
     (it "keeps the scatter default: the project row goes, not one conversation"
         (let [{:keys [result log]} (exec {})]

@@ -69,27 +69,25 @@
 
 (defn- window-row
   [{:keys [id label window]} data]
-  (let
-    [percent
-     (:percent data)
+  (let [percent
+        (:percent data)
 
-     used
-     (when (number? percent) (clamp-percent percent))
+        used
+        (when (number? percent) (clamp-percent percent))
 
-     reset-ms
-     (resets-at-ms (or (:resetsAt data) (:resets_at data) (:resets-at data)))]
+        reset-ms
+        (resets-at-ms (or (:resetsAt data) (:resets_at data) (:resets-at data)))]
 
-    (cond->
-      {:id id
-       :label label
-       :scope :account
-       :kind :rate
-       :precision (if (number? percent) :exact :unknown)
-       :source :provider-api
-       :is-unlimited false
-       :window (cond-> window
-                 reset-ms
-                 (assoc :resets-at-ms reset-ms))}
+    (cond-> {:id id
+             :label label
+             :scope :account
+             :kind :rate
+             :precision (if (number? percent) :exact :unknown)
+             :source :provider-api
+             :is-unlimited false
+             :window (cond-> window
+                       reset-ms
+                       (assoc :resets-at-ms reset-ms))}
       (number? used)
       (assoc :used
         used :limit
@@ -107,19 +105,18 @@
    reports all three, so a missing one means the shape changed and a row with no
    numbers would claim knowledge Vis does not have."
   [payload]
-  (let
-    [usage
-     (:usage payload)
+  (let [usage
+        (:usage payload)
 
-     rows
-     (into []
-           (keep (fn [{:keys [json-key] :as spec}]
-                   (when-let [data (get usage json-key)]
-                     (window-row spec data))))
-           WINDOW_SPECS)
+        rows
+        (into []
+              (keep (fn [{:keys [json-key] :as spec}]
+                      (when-let [data (get usage json-key)]
+                        (window-row spec data))))
+              WINDOW_SPECS)
 
-     exhausted
-     (filterv #(rate-limited? (get usage (:json-key %))) WINDOW_SPECS)]
+        exhausted
+        (filterv #(rate-limited? (get usage (:json-key %))) WINDOW_SPECS)]
 
     (cond-> {:limits rows}
       (empty? rows)
@@ -136,18 +133,17 @@
    non-2xx so the caller can tell a rejected key (401) from a key without a Go
    subscription (403)."
   [api-key]
-  (let
-    [response
-     (http/get usage-url
-               {:headers {"Accept" "application/json" "Authorization" (str "Bearer " api-key)}
-                :timeout 30000
-                :throw false})
+  (let [response
+        (http/get usage-url
+                  {:headers {"Accept" "application/json" "Authorization" (str "Bearer " api-key)}
+                   :timeout 30000
+                   :throw false})
 
-     status
-     (:status response)
+        status
+        (:status response)
 
-     body
-     (:body response)]
+        body
+        (:body response)]
 
     (if (<= 200 status 299)
       (json/read-json body :key-fn keyword)

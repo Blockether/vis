@@ -58,12 +58,11 @@
    file's final newline) is dropped, so the vector's count IS the file's line
    count and index 0 is line 1."
   [^String s]
-  (let
-    [arr
-     (.split s "\n" -1)
+  (let [arr
+        (.split s "\n" -1)
 
-     v
-     (vec arr)]
+        v
+        (vec arr)]
 
     (if (and (pos? (count v)) (= "" (peek v))) (pop v) v)))
 
@@ -72,12 +71,11 @@
    `(count content)` when `line-idx` reaches past the last line. Public so the
    edit-span planner can map line indices back to char positions for splicing."
   ^long [^String content ^long line-idx]
-  (loop
-    [pos
-     0
+  (loop [pos
+         0
 
-     i
-     0]
+         i
+         0]
 
     (if (= i line-idx)
       pos
@@ -105,15 +103,14 @@
    rather than java.util.Formatter (~1.5x slower), and leans on the trimmed
    `String/hashCode` because that is a JIT intrinsic."
   ^String [line]
-  (let
-    [h
-     (int (bit-and (.hashCode (str/trim (str line))) (long hash-mask)))
+  (let [h
+        (int (bit-and (.hashCode (str/trim (str line))) (long hash-mask)))
 
-     hex
-     (Integer/toHexString h)
+        hex
+        (Integer/toHexString h)
 
-     c
-     (.length hex)]
+        c
+        (.length hex)]
 
     (if (< c (long hash-width)) (str (subs hash-zero-pad c) hex) hex)))
 
@@ -146,12 +143,11 @@
    common JSON/LLM mistake, where `\"4439:a80\"` arrives WITH its literal quotes
    and `parse-long` chokes on the leading one."
   ^String [x]
-  (let
-    [s
-     (str x)
+  (let [s
+        (str x)
 
-     cut
-     (long (or (str/index-of s hashline-gutter) (count s)))]
+        cut
+        (long (or (str/index-of s hashline-gutter) (count s)))]
 
     (-> (subs s 0 cut)
         str/trim
@@ -163,12 +159,11 @@
   "Parse the 1-based line number out of a `<line>:<hash>` anchor, rendered or
    bare."
   ^long [anchor]
-  (let
-    [s
-     (anchor-token anchor)
+  (let [s
+        (anchor-token anchor)
 
-     i
-     (str/index-of s hashline-anchor-sep)]
+        i
+        (str/index-of s hashline-anchor-sep)]
 
     (Long/parseLong (subs s 0 (long i)))))
 
@@ -207,12 +202,11 @@
   (^String [tuples ^String indent]
    (->> tuples
         (map (fn [[ln s]]
-               (let
-                 [^String s
-                  (str s)
+               (let [^String s
+                     (str s)
 
-                  ^String s
-                  (if (str/ends-with? s "\r") (subs s 0 (dec (.length s))) s)]
+                     ^String s
+                     (if (str/ends-with? s "\r") (subs s 0 (dec (.length s))) s)]
 
                  (str indent (line-anchor ln s) hashline-gutter s))))
         (str/join "\n"))))
@@ -251,15 +245,14 @@
    A WHOLE RENDERED LINE parses exactly like a bare token: `anchor-token` cuts
    the gutter and the text behind it first, so the hash is only ever the hex."
   [anchor]
-  (let
-    [s
-     (anchor-token anchor)
+  (let [s
+        (anchor-token anchor)
 
-     i
-     (.indexOf s (int \:))
+        i
+        (.indexOf s (int \:))
 
-     line
-     (when-not (neg? i) (parse-long (subs s 0 i)))]
+        line
+        (when-not (neg? i) (parse-long (subs s 0 i)))]
 
     (if (and (not (neg? i)) line)
       {:line line :hash (str/lower-case (subs s (inc i)))}
@@ -287,12 +280,11 @@
   [lines which {:keys [line hash malformed raw]}]
   (if malformed
     {:error {:reason :anchor-malformed :which which :anchor raw}}
-    (let
-      [idx0
-       (dec (long line))
+    (let [idx0
+          (dec (long line))
 
-       n
-       (long (count lines))]
+          n
+          (long (count lines))]
 
       (cond (or (neg? idx0) (>= idx0 n))
             {:error {:reason :anchor-line-out-of-range :which which :line line :lines n}}
@@ -309,11 +301,10 @@
                                :stated-line line
                                :current-anchor (line-anchor line (nth lines idx0))
                                :current-text (nth lines idx0)}}
-                      (let
-                        [tol (long hash-line-drift-tolerance)
-                         in-win (filterv (fn [i]
-                                           (<= (Math/abs (- (inc (long i)) (long line))) tol))
-                                  matches)]
+                      (let [tol (long hash-line-drift-tolerance)
+                            in-win (filterv (fn [i]
+                                              (<= (Math/abs (- (inc (long i)) (long line))) tol))
+                                     matches)]
 
                         (cond
                           ;; 2. drifted — one nearby match, follow the content
@@ -322,17 +313,16 @@
                           ;;    Refuse (three hex chars make "unique in file" weak evidence), but
                           ;;    when it now sits at EXACTLY ONE line the correct anchor is that
                           ;;    line plus this same hash — hand it back for a one-step recovery.
-                          (empty? in-win) {:error (cond->
-                                                    {:reason :anchor-misplaced
-                                                     :which which
-                                                     :hash hash
-                                                     :stated-line line
-                                                     :found-lines (mapv #(inc (long %)) matches)}
-                                                    (= 1 (count matches))
-                                                    (assoc :current-anchor
-                                                      (line-anchor (inc (long (first matches)))
-                                                                   (nth lines
-                                                                        (long (first matches))))))}
+                          (empty? in-win) {:error
+                                           (cond-> {:reason :anchor-misplaced
+                                                    :which which
+                                                    :hash hash
+                                                    :stated-line line
+                                                    :found-lines (mapv #(inc (long %)) matches)}
+                                             (= 1 (count matches))
+                                             (assoc :current-anchor
+                                               (line-anchor (inc (long (first matches)))
+                                                            (nth lines (long (first matches))))))}
                           ;; 3. several nearby matches — the hash cannot disambiguate, so the
                           ;;    explicit line wins (the duplicate-line case)
                           :else {:index idx0}))))))))
@@ -350,29 +340,27 @@
    twin, so a read and a write address lines identically but only the write
    refuses."
   [^String current from-anchor to-anchor]
-  (let
-    [lines
-     (split-content-lines current)
+  (let [lines
+        (split-content-lines current)
 
-     from-a
-     (parse-anchor from-anchor)
+        from-a
+        (parse-anchor from-anchor)
 
-     to-a
-     (if (or (nil? to-anchor) (= (str to-anchor) (str from-anchor)))
-       from-a
-       (parse-anchor to-anchor))
+        to-a
+        (if (or (nil? to-anchor) (= (str to-anchor) (str from-anchor)))
+          from-a
+          (parse-anchor to-anchor))
 
-     fr
-     (resolve-one-anchor lines :from from-a)]
+        fr
+        (resolve-one-anchor lines :from from-a)]
 
     (if (:error fr)
       fr
       (let [tr (if (identical? from-a to-a) fr (resolve-one-anchor lines :to to-a))]
         (if (:error tr)
           tr
-          (let
-            [fi (long (:index fr))
-             ti (long (:index tr))]
+          (let [fi (long (:index fr))
+                ti (long (:index tr))]
 
             (if (< ti fi)
               {:error {:reason :anchor-range-inverted :from-line (inc fi) :to-line (inc ti)}}
@@ -389,45 +377,42 @@
    genuinely unlocatable anchor (`:anchor-malformed`, no line number, or
    `:anchor-line-out-of-range`, a line outside the file)."
   [^String current from-anchor to-anchor]
-  (let
-    [lines
-     (split-content-lines current)
+  (let [lines
+        (split-content-lines current)
 
-     n
-     (long (count lines))
+        n
+        (long (count lines))
 
-     resolve-read
-     (fn [which anchor]
-       (let
-         [a
-          (parse-anchor anchor)
+        resolve-read
+        (fn [which anchor]
+          (let [a
+                (parse-anchor anchor)
 
-          r
-          (resolve-one-anchor lines which a)]
+                r
+                (resolve-one-anchor lines which a)]
 
-         (cond (:index r) (assoc r :stale? false)
-               ;; The hash is gone (the content changed) or matches only far lines,
-               ;; but the anchor still names an in-range line — show that line.
-               (and (:line a)
-                    (contains? #{:anchor-not-found :anchor-misplaced} (get-in r [:error :reason]))
-                    (<= 1 (long (:line a)) n))
-               {:index (dec (long (:line a))) :stale? true}
-               :else r)))
+            (cond (:index r) (assoc r :stale? false)
+                  ;; The hash is gone (the content changed) or matches only far lines,
+                  ;; but the anchor still names an in-range line — show that line.
+                  (and (:line a)
+                       (contains? #{:anchor-not-found :anchor-misplaced}
+                                  (get-in r [:error :reason]))
+                       (<= 1 (long (:line a)) n))
+                  {:index (dec (long (:line a))) :stale? true}
+                  :else r)))
 
-     fr
-     (resolve-read :from from-anchor)]
+        fr
+        (resolve-read :from from-anchor)]
 
     (if (:error fr)
       fr
-      (let
-        [tr (if (or (nil? to-anchor) (= (str to-anchor) (str from-anchor)))
-              fr
-              (resolve-read :to to-anchor))]
+      (let [tr (if (or (nil? to-anchor) (= (str to-anchor) (str from-anchor)))
+                 fr
+                 (resolve-read :to to-anchor))]
         (if (:error tr)
           tr
-          (let
-            [fi (long (:index fr))
-             ti (long (:index tr))]
+          (let [fi (long (:index fr))
+                ti (long (:index tr))]
 
             {:from-line (inc (min fi ti))
              :to-line (inc (max fi ti))
@@ -438,25 +423,23 @@
    substring span in `content`, keeping the region's trailing terminator
    OUTSIDE the replaced region."
   [^String content ^long line-start ^long line-end]
-  (let
-    [char-start
-     (char-offset-at-line content line-start)
+  (let [char-start
+        (char-offset-at-line content line-start)
 
-     char-end-raw
-     (char-offset-at-line content line-end)
+        char-end-raw
+        (char-offset-at-line content line-end)
 
-     char-end
-     (let
-       [e (long (if (and (< char-end-raw (count content))
-                         (pos? char-end-raw)
-                         (= \newline (.charAt content (dec char-end-raw))))
-                  (dec char-end-raw)
-                  char-end-raw))]
-       ;; CRLF: the terminator is TWO chars. Dropping only the `\n` leaves the
-       ;; `\r` INSIDE the replaced region, so an ordinary line replace silently
-       ;; rewrites that one line's ending to bare LF and mixes endings in a CRLF
-       ;; file. Keep the whole `\r\n` outside the span.
-       (if (and (> e char-start) (= \return (.charAt content (dec e)))) (dec e) e))]
+        char-end
+        (let [e (long (if (and (< char-end-raw (count content))
+                               (pos? char-end-raw)
+                               (= \newline (.charAt content (dec char-end-raw))))
+                        (dec char-end-raw)
+                        char-end-raw))]
+          ;; CRLF: the terminator is TWO chars. Dropping only the `\n` leaves the
+          ;; `\r` INSIDE the replaced region, so an ordinary line replace silently
+          ;; rewrites that one line's ending to bare LF and mixes endings in a CRLF
+          ;; file. Keep the whole `\r\n` outside the span.
+          (if (and (> e char-start) (= \return (.charAt content (dec e)))) (dec e) e))]
 
     [char-start char-end]))
 
@@ -477,9 +460,8 @@
   (let [res (resolve-anchor-range current from-anchor to-anchor)]
     (if (:error res)
       res
-      (let
-        [line-start (dec (long (:from-line res)))
-         line-end (long (:to-line res))]
+      (let [line-start (dec (long (:from-line res)))
+            line-end (long (:to-line res))]
 
         (if (= "" (str replacement))
           ;; DELETION: take the WHOLE physical line(s) INCLUDING the trailing
@@ -488,42 +470,40 @@
           ;; the span (so a REPLACE never doubles the newline) — but for an empty
           ;; replacement that rule makes a single blank-line delete a zero-width
           ;; no-op and a multi-line delete leave one line behind.
-          (let
-            [char-start (char-offset-at-line current line-start)
-             char-end (char-offset-at-line current line-end)]
+          (let [char-start (char-offset-at-line current line-start)
+                char-end (char-offset-at-line current line-end)]
 
             {:start char-start
              :end char-end
              :replacement ""
              :from-line (:from-line res)
              :to-line (:to-line res)})
-          (let
-            [[char-start char-end] (line-span->char-span current line-start line-end)
-             ;; The terminator is INSIDE the span only at EOF — `line-span->char-span`
-             ;; keeps every other line's `\n` outside it. Reading the last char of a
-             ;; span that ends anywhere else answers the PREVIOUS line's `\n` whenever
-             ;; the span's last line is EMPTY, and the replacement was then padded with
-             ;; a newline it must not carry: every replace over a span ending on a blank
-             ;; line grew one extra blank line.
-             matched-ends-nl? (and (= (long char-end) (.length current))
-                                   (< (long char-start) (long char-end))
-                                   (= \newline (.charAt current (dec (long char-end)))))
-             ;; The terminator that IS inside the span belongs to the file's last line;
-             ;; re-add the SAME one (`\r\n` in a CRLF file, else `\n`) so a last-line
-             ;; replace does not downgrade that line's ending.
-             matched-ends-crlf? (and matched-ends-nl?
-                                     (< (long char-start) (dec (long char-end)))
-                                     (= \return (.charAt current (- (long char-end) 2))))
-             ;; The replacement's OWN terminator is redundant — the matched region's is
-             ;; preserved — so a block copied with its trailing newline would otherwise
-             ;; add a blank line nobody asked for, once per edit and silently. Exactly
-             ;; ONE is dropped, so `"…\n\n"` still says "and then one blank line".
-             body (cond (str/ends-with? replacement "\r\n")
-                        (subs replacement 0 (- (.length replacement) 2))
-                        (str/ends-with? replacement "\n")
-                        (subs replacement 0 (dec (.length replacement)))
-                        :else replacement)
-             rewritten (if matched-ends-nl? (str body (if matched-ends-crlf? "\r\n" "\n")) body)]
+          (let [[char-start char-end] (line-span->char-span current line-start line-end)
+                ;; The terminator is INSIDE the span only at EOF — `line-span->char-span`
+                ;; keeps every other line's `\n` outside it. Reading the last char of a
+                ;; span that ends anywhere else answers the PREVIOUS line's `\n` whenever
+                ;; the span's last line is EMPTY, and the replacement was then padded with
+                ;; a newline it must not carry: every replace over a span ending on a blank
+                ;; line grew one extra blank line.
+                matched-ends-nl? (and (= (long char-end) (.length current))
+                                      (< (long char-start) (long char-end))
+                                      (= \newline (.charAt current (dec (long char-end)))))
+                ;; The terminator that IS inside the span belongs to the file's last line;
+                ;; re-add the SAME one (`\r\n` in a CRLF file, else `\n`) so a last-line
+                ;; replace does not downgrade that line's ending.
+                matched-ends-crlf? (and matched-ends-nl?
+                                        (< (long char-start) (dec (long char-end)))
+                                        (= \return (.charAt current (- (long char-end) 2))))
+                ;; The replacement's OWN terminator is redundant — the matched region's is
+                ;; preserved — so a block copied with its trailing newline would otherwise
+                ;; add a blank line nobody asked for, once per edit and silently. Exactly
+                ;; ONE is dropped, so `"…\n\n"` still says "and then one blank line".
+                body (cond (str/ends-with? replacement "\r\n")
+                           (subs replacement 0 (- (.length replacement) 2))
+                           (str/ends-with? replacement "\n")
+                           (subs replacement 0 (dec (.length replacement)))
+                           :else replacement)
+                rewritten (if matched-ends-nl? (str body (if matched-ends-crlf? "\r\n" "\n")) body)]
 
             {:start char-start
              :end char-end

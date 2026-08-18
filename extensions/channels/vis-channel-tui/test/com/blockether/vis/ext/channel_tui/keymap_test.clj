@@ -81,12 +81,11 @@
                  (expect (= "C-x c" (keymap/label-or-palette :pick-model))))
              (it "bindings is empty, so nothing collides with an emacs editing key"
                  (expect (empty? keymap/bindings))
-                 (let
-                   [reserved
-                    (conj emacs-letters \c)
+                 (let [reserved
+                       (conj emacs-letters \c)
 
-                    keys
-                    (set (map :key keymap/bindings))]
+                       keys
+                       (set (map :key keymap/bindings))]
 
                    (expect (empty? (set/intersection reserved keys))))))
 
@@ -120,9 +119,8 @@
   ;; C-x is a TRANSIENT band (an Emacs hydra / doom leader), not a dead prefix
   ;; waiting in the echo area: the spec is what the band paints, and it may never
   ;; offer a key the chord itself does not resolve.
-  (let
-    [spec (fn [db]
-            (keymap/prefix-spec db))]
+  (let [spec (fn [db]
+               (keymap/prefix-spec db))]
     (it "is a legal transient the band can paint" (expect (nil? (tr/check (spec {})))))
     (it "every row is a real C-x chord, and every reachable verb has a row"
         (let [items (mapcat :items (:groups (spec {})))]
@@ -146,9 +144,8 @@
                                      (some #(= :show-palette (:id %)) (:items g)))
                                    (:groups (spec {}))))))))
     (it "context-only verbs appear only where they can act"
-        (let
-          [ids (fn [db]
-                 (set (map :id (mapcat :items (:groups (spec db))))))]
+        (let [ids (fn [db]
+                    (set (map :id (mapcat :items (:groups (spec db))))))]
           (expect (not (contains? (ids {}) :close-tab)))
           (expect (not (contains? (ids {}) :fork-at-turn)))
           (expect (contains? (ids {:tabs [{:id :a} {:id :b}]}) :close-tab))

@@ -85,18 +85,17 @@
   "The parsed, validated contract. Read from the classpath — embedded in the native
    image by build.clj's `-H:IncludeResources=vis-contract/.*`."
   (delay
-    (let
-      [resource
-       (io/resource resource-path)
+    (let [resource
+          (io/resource resource-path)
 
-       _
-       (when-not resource
-         (throw (ex-info (str "the Python host contract is missing from the classpath: "
-                              resource-path)
-                         {:type :vis/contract-missing :resource resource-path})))
+          _
+          (when-not resource
+            (throw (ex-info (str "the Python host contract is missing from the classpath: "
+                                 resource-path)
+                            {:type :vis/contract-missing :resource resource-path})))
 
-       parsed
-       (edn/read-string (slurp resource))]
+          parsed
+          (edn/read-string (slurp resource))]
 
       (when-not (s/valid? :contract/python-host parsed)
         (throw (ex-info (str resource-path " is not a valid Python host contract")
@@ -205,12 +204,11 @@
 
 (defn- op->json
   [{:op/keys [name global arity summary outside refusal]}]
-  (cond->
-    (array-map "name" name
-               "global" global
-               "arity" arity
-               "summary" summary
-               "outside" (clojure.core/name outside))
+  (cond-> (array-map "name" name
+                     "global" global
+                     "arity" arity
+                     "summary" summary
+                     "outside" (clojure.core/name outside))
     refusal
     (assoc "refusal" refusal)))
 

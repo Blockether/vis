@@ -64,17 +64,16 @@
    exactly where the engine throws for an extension that runs, and that line is
    what the checker reports."
   [envelope-json & _]
-  (let
-    [envelope
-     (json/read-json (str envelope-json) :key-fn identity)
+  (let [envelope
+        (json/read-json (str envelope-json) :key-fn identity)
 
-     declared
-     (get envelope "view")
+        declared
+        (get envelope "view")
 
-     view
-     (human-input/normalize-live-view (cond-> declared
-                                        (map? declared)
-                                        (dissoc "channel_id" "channel_ids")))]
+        view
+        (human-input/normalize-live-view (cond-> declared
+                                           (map? declared)
+                                           (dissoc "channel_id" "channel_ids")))]
 
     (wire/json-str {:view-id (:id view) :is-open true :view view})))
 
@@ -141,22 +140,21 @@
   "Check `files` (anything `io/file` accepts). A file that cannot be read is its
    own `unreadable` problem rather than an aborted run."
   [files]
-  (let
-    [read-one
-     (fn [f]
-       (let [^File file (io/file f)]
-         (try [(.getPath file) (slurp file)] (catch Exception e [(.getPath file) e]))))
+  (let [read-one
+        (fn [f]
+          (let [^File file (io/file f)]
+            (try [(.getPath file) (slurp file)] (catch Exception e [(.getPath file) e]))))
 
-     pairs
-     (mapv read-one files)
+        pairs
+        (mapv read-one files)
 
-     ok
-     (filterv (fn [[_ source]]
-                (string? source))
-       pairs)
+        ok
+        (filterv (fn [[_ source]]
+                   (string? source))
+          pairs)
 
-     reports
-     (into {} (map (juxt :path identity)) (check-sources ok))]
+        reports
+        (into {} (map (juxt :path identity)) (check-sources ok))]
 
     (mapv (fn [[path source]]
             (if (string? source)
@@ -200,12 +198,11 @@
   "The whole run as the text `vis-agent extension check` prints: one line per
    file, one indented line per problem, and a closing tally."
   [reports]
-  (let
-    [total
-     (reduce + 0 (map (comp long :checked) reports))
+  (let [total
+        (reduce + 0 (map (comp long :checked) reports))
 
-     bad
-     (reduce + 0 (map (comp count :problems) reports))]
+        bad
+        (reduce + 0 (map (comp count :problems) reports))]
 
     (str/join "\n"
               (concat (mapcat report-lines reports)

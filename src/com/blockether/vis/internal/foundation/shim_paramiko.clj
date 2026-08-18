@@ -63,13 +63,12 @@
 
 (defn- op-connect
   [scope opts]
-  (let
-    [{:strs [hostname port username password key_filename passphrase timeout_ms policy look_for_keys
-             compress auth_none]}
-     opts
+  (let [{:strs [hostname port username password key_filename passphrase timeout_ms policy
+                look_for_keys compress auth_none]}
+        opts
 
-     js
-     (JSch.)]
+        js
+        (JSch.)]
 
     (when (non-empty? key_filename)
       (if (non-empty? passphrase)
@@ -80,15 +79,14 @@
                (not (non-empty? key_filename))
                (not (false? look_for_keys)))
       (add-default-keys! js))
-    (let
-      [uname
-       (if (non-empty? username) (str username) (System/getProperty "user.name"))
+    (let [uname
+          (if (non-empty? username) (str username) (System/getProperty "user.name"))
 
-       ^Session sess
-       (.getSession js uname (str hostname) (int (or port 22)))
+          ^Session sess
+          (.getSession js uname (str hostname) (int (or port 22)))
 
-       props
-       (Properties.)]
+          props
+          (Properties.)]
 
       (when (non-empty? password) (.setPassword sess (str password)))
       (.put props "StrictHostKeyChecking" (if (= policy "reject") "yes" "no"))
@@ -104,27 +102,25 @@
 
 (defn- op-exec
   [conn-h ^String command timeout-ms ^String stdin-b64]
-  (let
-    [sess
-     (sess-of conn-h)
+  (let [sess
+        (sess-of conn-h)
 
-     ^ChannelExec ch
-     (.openChannel sess "exec")
+        ^ChannelExec ch
+        (.openChannel sess "exec")
 
-     out
-     (ByteArrayOutputStream.)
+        out
+        (ByteArrayOutputStream.)
 
-     err
-     (ByteArrayOutputStream.)]
+        err
+        (ByteArrayOutputStream.)]
 
     (.setCommand ch command)
     (.setOutputStream ch out)
     (.setErrStream ch err)
     (when (non-empty? stdin-b64) (.setInputStream ch (ByteArrayInputStream. (b64dec stdin-b64))))
     (.connect ch)
-    (let
-      [deadline (when (and timeout-ms (pos? (long timeout-ms)))
-                  (+ (System/currentTimeMillis) (long timeout-ms)))]
+    (let [deadline (when (and timeout-ms (pos? (long timeout-ms)))
+                     (+ (System/currentTimeMillis) (long timeout-ms)))]
       (loop []
 
         (cond (.isClosed ch) nil
@@ -142,10 +138,7 @@
   (boolean (when-let [^Session s (res/value ::sessions conn-h)]
              (.isConnected s))))
 
-(defn- op-ssh-close
-  [conn-h]
-  (res/close! ::sessions conn-h)
-  nil)
+(defn- op-ssh-close [conn-h] (res/close! ::sessions conn-h) nil)
 
 ;; SFTP operations (JSch ChannelSftp).
 
@@ -162,12 +155,11 @@
 
 (defn- op-sftp-open
   [scope conn-h]
-  (let
-    [sess
-     (sess-of conn-h)
+  (let [sess
+        (sess-of conn-h)
 
-     ch
-     (.openChannel sess "sftp")]
+        ch
+        (.openChannel sess "sftp")]
 
     (.connect ch)
     (res/open! scope ::sftp ch)))
@@ -183,23 +175,21 @@
 
 (defn- op-sftp-stat
   [h ^String path follow?]
-  (let
-    [ch
-     (sftp-of h)
+  (let [ch
+        (sftp-of h)
 
-     a
-     (if follow? (.stat ch path) (.lstat ch path))]
+        a
+        (if follow? (.stat ch path) (.lstat ch path))]
 
     (attrs->map path nil a)))
 
 (defn- op-sftp-get
   [h ^String remote]
-  (let
-    [ch
-     (sftp-of h)
+  (let [ch
+        (sftp-of h)
 
-     bos
-     (ByteArrayOutputStream.)]
+        bos
+        (ByteArrayOutputStream.)]
 
     (with-open [is (.get ch remote)]
       (io/copy is bos))
@@ -233,10 +223,7 @@
 
 (defn- op-sftp-pwd [h] (.pwd (sftp-of h)))
 
-(defn- op-sftp-close
-  [h]
-  (res/close! ::sftp h)
-  nil)
+(defn- op-sftp-close [h] (res/close! ::sftp h) nil)
 
 (defn- ssh-envelope
   "Run thunk `f`, returning [true result] on success or [false message] on any
@@ -285,22 +272,20 @@
 
 (defn- op-key-generate
   [kind bits passphrase]
-  (let
-    [kt
-     (key-type kind)
+  (let [kt
+        (key-type kind)
 
-     size
-     (int (or bits (default-key-bits kt)))
+        size
+        (int (or bits (default-key-bits kt)))
 
-     ^KeyPair kp
-     (if (zero? size) (KeyPair/genKeyPair (JSch.) kt) (KeyPair/genKeyPair (JSch.) kt size))]
+        ^KeyPair kp
+        (if (zero? size) (KeyPair/genKeyPair (JSch.) kt) (KeyPair/genKeyPair (JSch.) kt size))]
 
-    (try (let
-           [out
-            (ByteArrayOutputStream.)
+    (try (let [out
+               (ByteArrayOutputStream.)
 
-            passb
-            (passphrase-bytes passphrase)]
+               passb
+               (passphrase-bytes passphrase)]
 
            (if (or (= kt KeyPair/ED25519) (= kt KeyPair/ED448))
              (.writeOpenSSHv1PrivateKey kp out passb)
@@ -319,9 +304,7 @@
          (keypair->map kp private-b64)
          (finally (.dispose kp)))))
 
-(defn- reg-server!
-  [scope entry]
-  (res/open! scope ::servers entry))
+(defn- reg-server! [scope entry] (res/open! scope ::servers entry))
 
 (defn- guest->clj
   "Coerce a polyglot return `Value` (or a plain value) to a Clojure scalar."
@@ -380,36 +363,36 @@
    (logging \"Could not stop thread\"), which used to strand the MINA server and leak
    its threads (and leak MINA instances across turns/sessions)."
   [scope auth-pw-fn forward-fn auth-none-fn]
-  (let
-    [hostkey
-     (.resolve (Files/createTempDirectory "vis-sshd-hostkey" (make-array FileAttribute 0))
-               "hostkey.ser")
+  (let [hostkey
+        (.resolve (Files/createTempDirectory "vis-sshd-hostkey" (make-array FileAttribute 0))
+                  "hostkey.ser")
 
-     server
-     (doto (SshServer/setUpDefaultServer)
-       (.setHost "127.0.0.1")
-       (.setPort 0)
-       (.setKeyPairProvider (SimpleGeneratorHostKeyProvider. hostkey))
-       (.setUserAuthFactories [(none-auth-factory auth-none-fn) UserAuthPasswordFactory/INSTANCE])
-       (.setPasswordAuthenticator (reify
-                                    PasswordAuthenticator
-                                      (authenticate [_ u p _session]
-                                        (try (= 0 (guest-call auth-pw-fn [u p]))
-                                             (catch Throwable _ false)))))
-       (.setForwardingFilter (reify
-                               ForwardingFilter
-                                 (canForwardAgent [_ _session _request-type] false)
-                                 (canForwardX11 [_ _session _request-type] false)
-                                 (canListen [_ address _session]
-                                   (try (boolean (guest-call
-                                                   forward-fn
-                                                   [(.getHostName ^SshdSocketAddress address)
-                                                    (.getPort ^SshdSocketAddress address)]))
-                                        (catch Throwable _ false)))
-                                 (canConnect [_ _type _address _session] true))))
+        server
+        (doto (SshServer/setUpDefaultServer)
+          (.setHost "127.0.0.1")
+          (.setPort 0)
+          (.setKeyPairProvider (SimpleGeneratorHostKeyProvider. hostkey))
+          (.setUserAuthFactories [(none-auth-factory auth-none-fn)
+                                  UserAuthPasswordFactory/INSTANCE])
+          (.setPasswordAuthenticator (reify
+                                       PasswordAuthenticator
+                                         (authenticate [_ u p _session]
+                                           (try (= 0 (guest-call auth-pw-fn [u p]))
+                                                (catch Throwable _ false)))))
+          (.setForwardingFilter (reify
+                                  ForwardingFilter
+                                    (canForwardAgent [_ _session _request-type] false)
+                                    (canForwardX11 [_ _session _request-type] false)
+                                    (canListen [_ address _session]
+                                      (try (boolean (guest-call
+                                                      forward-fn
+                                                      [(.getHostName ^SshdSocketAddress address)
+                                                       (.getPort ^SshdSocketAddress address)]))
+                                           (catch Throwable _ false)))
+                                    (canConnect [_ _type _address _session] true))))
 
-     h
-     (reg-server! scope {:server server :hostkey hostkey})]
+        h
+        (reg-server! scope {:server server :hostkey hostkey})]
 
     ;; Reap the instant the relayed SSH session ends, on a fresh daemon thread so
     ;; the stop never re-enters MINA's own session-close callback.
@@ -512,19 +495,21 @@
             "Import and socket-less `start_server()` start nothing; live servers cap at 32 and "
             "self-reap. Not supported: `invoke_shell`; use `exec_command`/SFTP.")
        :shim/bindings paramiko-bridge-bindings
-       :shim/resources
-       {::sessions {:resource/label "SSH session"
-                    :resource/release (fn [_h ^Session s] (.disconnect s))
-                    :resource/max 32}
-        ::sftp {:resource/label "SFTP channel"
-                :resource/release (fn [_h ^ChannelSftp c] (.disconnect c))
-                :resource/max 32}
-        ;; Each server also self-reaps when its relayed connection ends (the
-        ;; `SessionListener` above), so the cap only bites a guest that opens
-        ;; them faster than they close.
-        ::servers {:resource/label "SSH server"
-                   :resource/release (fn [_h entry] (.stop ^SshServer (:server entry) true))
-                   :resource/max 32}}
+       :shim/resources {::sessions {:resource/label "SSH session"
+                                    :resource/release (fn [_h ^Session s]
+                                                        (.disconnect s))
+                                    :resource/max 32}
+                        ::sftp {:resource/label "SFTP channel"
+                                :resource/release (fn [_h ^ChannelSftp c]
+                                                    (.disconnect c))
+                                :resource/max 32}
+                        ;; Each server also self-reaps when its relayed connection ends (the
+                        ;; `SessionListener` above), so the cap only bites a guest that opens
+                        ;; them faster than they close.
+                        ::servers {:resource/label "SSH server"
+                                   :resource/release (fn [_h entry]
+                                                       (.stop ^SshServer (:server entry) true))
+                                   :resource/max 32}}
        :shim/source "vis-shims/paramiko.py"}]}))
 
 (vis/register-extension! vis-extension)

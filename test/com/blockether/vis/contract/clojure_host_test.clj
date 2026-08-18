@@ -30,12 +30,11 @@
       (expect (every? #(.isDirectory (io/file %)) (contract/extension-roots))))
   (it
     "names only internal namespaces that still exist"
-    (let
-      [{:debt/keys [production test]}
-       (contract/internal-debt)
+    (let [{:debt/keys [production test]}
+          (contract/internal-debt)
 
-       missing
-       (remove #(io/resource (ns->resource %)) (concat production test))]
+          missing
+          (remove #(io/resource (ns->resource %)) (concat production test))]
 
       (expect
         (empty? missing)
@@ -46,16 +45,14 @@
   (it
     "fails when an extension reaches past the facade into a namespace the contract does not freeze"
     (when-let [root (repo-root)]
-      (let
-        [found (contract/internal-requires root)
-         debt (contract/internal-debt)
-         new-coupling
-         (for
-           [scope [:debt/production :debt/test]
-            [nsname paths] (sort-by key (get found scope))
-            :when (not (contains? (get debt scope) nsname))]
+      (let [found (contract/internal-requires root)
+            debt (contract/internal-debt)
+            new-coupling
+            (for [scope [:debt/production :debt/test]
+                  [nsname paths] (sort-by key (get found scope))
+                  :when (not (contains? (get debt scope) nsname))]
 
-           (str nsname " (" (name scope) ") required by " (str/join ", " (sort paths))))]
+              (str nsname " (" (name scope) ") required by " (str/join ", " (sort paths))))]
 
         (expect
           (empty? new-coupling)
@@ -68,15 +65,13 @@
   (it
     "fails when frozen coupling is stale, so the debt list can only shrink"
     (when-let [root (repo-root)]
-      (let
-        [found (contract/internal-requires root)
-         debt (contract/internal-debt)
-         stale (for
-                 [scope [:debt/production :debt/test]
-                  nsname (sort (get debt scope))
-                  :when (not (contains? (get found scope) nsname))]
+      (let [found (contract/internal-requires root)
+            debt (contract/internal-debt)
+            stale (for [scope [:debt/production :debt/test]
+                        nsname (sort (get debt scope))
+                        :when (not (contains? (get found scope) nsname))]
 
-                 (str nsname " (" (name scope) ")"))]
+                    (str nsname " (" (name scope) ")"))]
 
         (expect
           (empty? stale)
@@ -88,9 +83,8 @@
   ;; known require is pinned to the file that writes it.
   (it "attributes a require it finds to the extension file that wrote it"
       (when-let [root (repo-root)]
-        (let
-          [paths (get-in (contract/internal-requires root)
-                         [:debt/production 'com.blockether.vis.internal.theme])]
+        (let [paths (get-in (contract/internal-requires root)
+                            [:debt/production 'com.blockether.vis.internal.theme])]
           (expect (seq paths))
           (expect (some #(str/includes? % "vis-channel-tui") paths)
                   (str "the TUI channel requires internal.theme; the scanner saw " paths))))))

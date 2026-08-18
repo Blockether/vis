@@ -68,26 +68,23 @@
   yields I instead of I,. If a token is all punctuation it is returned unchanged
   so we never emit an empty token."
   [token]
-  (let
-    [stripped (-> token
-                  (str/replace #"^[\p{Punct}\p{S}]+" "")
-                  (str/replace #"[\p{Punct}\p{S}]+$" ""))]
+  (let [stripped (-> token
+                     (str/replace #"^[\p{Punct}\p{S}]+" "")
+                     (str/replace #"[\p{Punct}\p{S}]+$" ""))]
     (if (str/blank? stripped) token stripped)))
 
 (defn- collapse-repeated-runs
   [tokens]
-  (loop
-    [tokens
-     (vec tokens)
+  (loop [tokens
+         (vec tokens)
 
-     i
-     0]
+         i
+         0]
 
     (if (>= i (count tokens))
       tokens
-      (if-let
-        [n (some #(when (repeated-run? tokens i %) %)
-                 (range (min 4 (quot (- (count tokens) i) 2)) 0 -1))]
+      (if-let [n (some #(when (repeated-run? tokens i %) %)
+                       (range (min 4 (quot (- (count tokens) i) 2)) 0 -1))]
         (recur (vec (concat (map strip-outer-punct (subvec tokens 0 (+ i (long n))))
                             (subvec tokens (+ i (long n) (long n)))))
                i)
@@ -102,13 +99,12 @@
   remove standalone hesitation sounds and collapse adjacent repeated words/short
   phrases from Parakeet stutter output."
   [text]
-  (let
-    [tokens (-> (str text)
-                (str/replace #"(?i)\b(?:you know|i mean)\b" " ")
-                (str/split #"\s+")
-                (->> (remove str/blank?)
-                     (remove filler-token?)
-                     vec))]
+  (let [tokens (-> (str text)
+                   (str/replace #"(?i)\b(?:you know|i mean)\b" " ")
+                   (str/split #"\s+")
+                   (->> (remove str/blank?)
+                        (remove filler-token?)
+                        vec))]
     (->> tokens
          collapse-repeated-runs
          (str/join " ")
@@ -120,12 +116,11 @@
    thinking, so it is carried through instead of being flattened into a stack
    message nobody can act on."
   [t]
-  (let
-    [message
-     (or (ex-message t) (str t))
+  (let [message
+        (or (ex-message t) (str t))
 
-     remediation
-     (:remediation (ex-data t))]
+        remediation
+        (:remediation (ex-data t))]
 
     (if (and remediation (not (str/includes? message remediation)))
       (str message " " remediation)
@@ -144,16 +139,16 @@
           {:op :notify :text "Voice is still transcribing the previous recording" :level :warn})
         (:recorder @state) (publish!
                              {:op :notify :text "Voice recording is already running" :level :warn})
-        :else (let [workspace-id (ctx-workspace-id ctx)]
-                ;; Reaching for the microphone SILENCES the answer being spoken: a
-                ;; machine that keeps talking while the human talks is not holding a
-                ;; conversation. No-op when nothing is playing.
-                (output/stop!)
-                ;; A microphone that refuses (no input device, permission not
-                ;; granted) used to throw out of the keymap: the status line kept
-                ;; whatever it said and the human was told nothing at all.
-                (if-let
-                  [rec (try (recorder/start!)
+        :else
+        (let [workspace-id (ctx-workspace-id ctx)]
+          ;; Reaching for the microphone SILENCES the answer being spoken: a
+          ;; machine that keeps talking while the human talks is not holding a
+          ;; conversation. No-op when nothing is playing.
+          (output/stop!)
+          ;; A microphone that refuses (no input device, permission not
+          ;; granted) used to throw out of the keymap: the status line kept
+          ;; whatever it said and the human was told nothing at all.
+          (if-let [rec (try (recorder/start!)
                             (catch Throwable t
                               (reset! state
                                 {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
@@ -163,21 +158,20 @@
                                                     (recording-failure-text t))
                                          :level :error})
                               nil))]
-                  (do (reset! state
-                        {:recorder rec :ticker nil :transcribing? false :workspace-id workspace-id})
-                      (let [ticker (start-ticker! rec (:started-at-ms rec))]
-                        (swap! state assoc :ticker ticker))
-                      (voice-status! "● Recording 00:00" :warn))
-                  nil))))
+            (do (reset! state
+                  {:recorder rec :ticker nil :transcribing? false :workspace-id workspace-id})
+                (let [ticker (start-ticker! rec (:started-at-ms rec))]
+                  (swap! state assoc :ticker ticker))
+                (voice-status! "● Recording 00:00" :warn))
+            nil))))
 
 (defn- progress-label
   "What the status line says while the engine works. A phase without a number is
    still an answer (\"preparing\"), a phase WITH one is the whole point: the human
    sees the recording being consumed instead of guessing whether it hung."
   [{:keys [phase progress]}]
-  (let
-    [pct (some-> progress
-                 long)]
+  (let [pct (some-> progress
+                    long)]
     (case phase
       :preparing
       (if (and pct (pos? (long pct)))
@@ -196,16 +190,16 @@
   [audio-file workspace-id]
   (future
     (try (voice-status! "● Sending to voice engine..." :info)
-         (let
-           [text
-            ;; the ENGINE is whatever is registered (local Parakeet today, a
-            ;; whisper.cpp server tomorrow): the TUI never names one.
-            (voice/transcribe! {:audio-path (str audio-file)
-                                :on-progress (fn [update-map]
-                                               (voice-status! (progress-label update-map) :info))})
+         (let [text
+               ;; the ENGINE is whatever is registered (local Parakeet today, a
+               ;; whisper.cpp server tomorrow): the TUI never names one.
+               (voice/transcribe! {:audio-path (str audio-file)
+                                   :on-progress (fn [update-map]
+                                                  (voice-status! (progress-label update-map)
+                                                                 :info))})
 
-            blank?
-            (or (nil? text) (str/blank? text))]
+               blank?
+               (or (nil? text) (str/blank? text))]
 
            (idle-status!)
            (if blank?
@@ -225,39 +219,37 @@
 
 (defn stop-and-transcribe!
   [_ctx]
-  (cond (:transcribing? @state)
-        (publish!
-          {:op :notify :text "Voice is still transcribing the previous recording" :level :warn})
-        (:recorder @state)
-        (let
-          [recording-state
-           @state
+  (cond
+    (:transcribing? @state)
+    (publish! {:op :notify :text "Voice is still transcribing the previous recording" :level :warn})
+    (:recorder @state)
+    (let [recording-state
+          @state
 
-           rec
-           (:recorder recording-state)
+          rec
+          (:recorder recording-state)
 
-           workspace-id
-           (:workspace-id recording-state)
+          workspace-id
+          (:workspace-id recording-state)
 
-           ;; The state is cleared BEFORE anything can throw. A recorder that fails
-           ;; to close used to leave `:recorder` set for the rest of the process,
-           ;; so every later Ctrl+B answered "already running" and the only cure
-           ;; anyone found was restarting Vis.
-           audio-file
-           (try (recorder/stop! rec)
-                (catch Throwable t
-                  (reset! state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-                  (idle-status!)
-                  (publish! {:op :notify
-                             :text (str "Voice recording failed: " (recording-failure-text t))
-                             :level :error})
-                  nil))]
+          ;; The state is cleared BEFORE anything can throw. A recorder that fails
+          ;; to close used to leave `:recorder` set for the rest of the process,
+          ;; so every later Ctrl+B answered "already running" and the only cure
+          ;; anyone found was restarting Vis.
+          audio-file
+          (try (recorder/stop! rec)
+               (catch Throwable t
+                 (reset! state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+                 (idle-status!)
+                 (publish! {:op :notify
+                            :text (str "Voice recording failed: " (recording-failure-text t))
+                            :level :error})
+                 nil))]
 
-          (when audio-file
-            (reset! state
-              {:recorder nil :ticker nil :transcribing? true :workspace-id workspace-id})
-            (transcribe-and-insert! audio-file workspace-id)))
-        :else (publish! {:op :notify :text "Voice recording is not running" :level :warn})))
+      (when audio-file
+        (reset! state {:recorder nil :ticker nil :transcribing? true :workspace-id workspace-id})
+        (transcribe-and-insert! audio-file workspace-id)))
+    :else (publish! {:op :notify :text "Voice recording is not running" :level :warn})))
 
 (defn cancel-recording!
   [_ctx]

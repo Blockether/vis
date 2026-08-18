@@ -223,44 +223,43 @@
   [language result]
   (if-not (map? result)
     result
-    (let
-      [pass
-       (->count (get result "pass"))
+    (let [pass
+          (->count (get result "pass"))
 
-       faults
-       (->faults (get result "failures"))
+          faults
+          (->faults (get result "failures"))
 
-       reported-errored
-       (->count (get result "errored"))
+          reported-errored
+          (->count (get result "errored"))
 
-       fail
-       (->count (get result "fail"))
+          fail
+          (->count (get result "fail"))
 
-       ;; Unreported: every listed fault carries its "type", but only a fault
-       ;; list that accounts for EVERY failure may be counted — pytest's summary
-       ;; line reports `3 failed` and names none of them, and 0 faults typed
-       ;; "error" out of 0 listed is UNKNOWN, not zero.
-       errored
-       (or reported-errored
-           (when (and fail (= (count faults) fail))
-             (count (filter #(= "error" (get % "type")) faults))))
+          ;; Unreported: every listed fault carries its "type", but only a fault
+          ;; list that accounts for EVERY failure may be counted — pytest's summary
+          ;; line reports `3 failed` and names none of them, and 0 faults typed
+          ;; "error" out of 0 listed is UNKNOWN, not zero.
+          errored
+          (or reported-errored
+              (when (and fail (= (count faults) fail))
+                (count (filter #(= "error" (get % "type")) faults))))
 
-       skipped
-       (->count (get result "skipped"))
+          skipped
+          (->count (get result "skipped"))
 
-       total
-       (or (->count (get result "total"))
-           (when (and pass fail) (+ (long pass) (long fail) (long (or skipped 0)))))
+          total
+          (or (->count (get result "total"))
+              (when (and pass fail) (+ (long pass) (long fail) (long (or skipped 0)))))
 
-       exit
-       (->count (get result "exit"))
+          exit
+          (->count (get result "exit"))
 
-       is-pass
-       (cond (some? (get result "is_pass")) (boolean (get result "is_pass"))
-             (seq (str (get result "error"))) false
-             (some? fail) (zero? (long fail))
-             (some? exit) (zero? (long exit))
-             :else nil)]
+          is-pass
+          (cond (some? (get result "is_pass")) (boolean (get result "is_pass"))
+                (seq (str (get result "error"))) false
+                (some? fail) (zero? (long fail))
+                (some? exit) (zero? (long exit))
+                :else nil)]
 
       (-> (merge test-result-base result)
           (assoc "language" (or (get result "language") language)

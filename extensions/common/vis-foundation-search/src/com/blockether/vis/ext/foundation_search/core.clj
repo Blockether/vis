@@ -128,20 +128,18 @@
 (defn- split-tools
   [s]
   (when-let [s (normalize-string s)]
-    (let
-      [tools (->> (str/split s #",")
-                  (map str/trim)
-                  (remove str/blank?)
-                  vec)]
+    (let [tools (->> (str/split s #",")
+                     (map str/trim)
+                     (remove str/blank?)
+                     vec)]
       (when (seq tools) tools))))
 
 (defn- normalize-tools
   [x]
   (cond (string? x) (split-tools x)
-        (sequential? x) (let
-                          [tools (->> x
-                                      (keep normalize-string)
-                                      vec)]
+        (sequential? x) (let [tools (->> x
+                                         (keep normalize-string)
+                                         vec)]
                           (when (seq tools) tools))
         :else nil))
 
@@ -270,40 +268,38 @@
 
 (defn- endpoint
   [{:keys [url tools api-key]}]
-  (let
-    [uri
-     (URI/create url)
+  (let [uri
+        (URI/create url)
 
-     pairs
-     (parse-query (.getRawQuery uri))
+        pairs
+        (parse-query (.getRawQuery uri))
 
-     pairs
-     (cond-> pairs
-       (and (seq tools) (not-any? #(= "tools" (first %)) pairs))
-       (upsert-query-param "tools" (str/join "," tools))
+        pairs
+        (cond-> pairs
+          (and (seq tools) (not-any? #(= "tools" (first %)) pairs))
+          (upsert-query-param "tools" (str/join "," tools))
 
-       (and (not (str/blank? api-key)) (not-any? #(= "exaApiKey" (first %)) pairs))
-       (upsert-query-param "exaApiKey" api-key))
+          (and (not (str/blank? api-key)) (not-any? #(= "exaApiKey" (first %)) pairs))
+          (upsert-query-param "exaApiKey" api-key))
 
-     query
-     (render-query pairs)]
+        query
+        (render-query pairs)]
 
     (uri-base uri query)))
 
 (defn redact-endpoint
   "Redact `exaApiKey` query param from an endpoint string."
   [endpoint]
-  (try (let
-         [uri
-          (URI/create endpoint)
+  (try (let [uri
+             (URI/create endpoint)
 
-          pairs
-          (mapv (fn [[k v]]
-                  [k (if (= k "exaApiKey") "REDACTED" v)])
-                (parse-query (.getRawQuery uri)))
+             pairs
+             (mapv (fn [[k v]]
+                     [k (if (= k "exaApiKey") "REDACTED" v)])
+                   (parse-query (.getRawQuery uri)))
 
-          query
-          (render-query pairs)]
+             query
+             (render-query pairs)]
 
          (uri-base uri query))
        (catch Throwable _ endpoint)))
@@ -372,23 +368,22 @@
 
 (defn- send-json-rpc!
   [{:keys [endpoint timeout-ms method params notification?]}]
-  (let
-    [id
-     (when-not notification? (json-rpc-id))
+  (let [id
+        (when-not notification? (json-rpc-id))
 
-     payload
-     (cond-> {:jsonrpc "2.0" :method method}
-       id
-       (assoc :id id)
+        payload
+        (cond-> {:jsonrpc "2.0" :method method}
+          id
+          (assoc :id id)
 
-       params
-       (assoc :params params))
+          params
+          (assoc :params params))
 
-     resp
-     (send-http! (json-request endpoint timeout-ms payload))
+        resp
+        (send-http! (json-request endpoint timeout-ms payload))
 
-     parsed
-     (parse-response resp id notification?)]
+        parsed
+        (parse-response resp id notification?)]
 
     (when-let [err (:error parsed)]
       (throw (ex-info (str "MCP error " (:code err) ": " (:message err))
@@ -410,12 +405,11 @@
 
 (defn- call-mcp-tool!
   [tool-name args]
-  (let
-    [cfg
-     (effective-config)
+  (let [cfg
+        (effective-config)
 
-     ep
-     (endpoint cfg)]
+        ep
+        (endpoint cfg)]
 
     (initialize! cfg ep)
     {:endpoint ep
@@ -428,24 +422,22 @@
 
 (defn- take-under-byte-cap
   [lines max-bytes]
-  (loop
-    [out
-     []
+  (loop [out
+         []
 
-     remaining
-     (seq lines)
+         remaining
+         (seq lines)
 
-     used
-     0]
+         used
+         0]
 
     (if-not remaining
       out
-      (let
-        [line
-         (first remaining)
+      (let [line
+            (first remaining)
 
-         extra
-         (+ (long (utf8-bytes line)) (if (seq out) 1 0))]
+            extra
+            (+ (long (utf8-bytes line)) (if (seq out) 1 0))]
 
         (if (> (+ used extra) (long max-bytes))
           out
@@ -454,48 +446,47 @@
 (defn truncate-text
   "Bound `text` by line and UTF-8 byte limits. Returns truncation map."
   [text {:keys [max-bytes max-lines]}]
-  (let
-    [text
-     (str text)
+  (let [text
+        (str text)
 
-     max-lines
-     (long (or max-lines default-max-lines))
+        max-lines
+        (long (or max-lines default-max-lines))
 
-     max-bytes
-     (long (or max-bytes default-max-bytes))
+        max-bytes
+        (long (or max-bytes default-max-bytes))
 
-     all-lines
-     (str/split-lines text)
+        all-lines
+        (str/split-lines text)
 
-     line-cut
-     (vec (take max-lines all-lines))
+        line-cut
+        (vec (take max-lines all-lines))
 
-     byte-cut
-     (take-under-byte-cap line-cut max-bytes)
+        byte-cut
+        (take-under-byte-cap line-cut max-bytes)
 
-     content
-     (str/join "\n" byte-cut)
+        content
+        (str/join "\n" byte-cut)
 
-     total-lines
-     (count all-lines)
+        total-lines
+        (count all-lines)
 
-     total-bytes
-     (utf8-bytes text)
+        total-bytes
+        (utf8-bytes text)
 
-     cut-lines
-     (count line-cut)
+        cut-lines
+        (count line-cut)
 
-     out-lines
-     (count byte-cut)
+        out-lines
+        (count byte-cut)
 
-     out-bytes
-     (utf8-bytes content)
+        out-bytes
+        (utf8-bytes content)
 
-     by-lines?
-     (> total-lines cut-lines)
+        by-lines?
+        (> total-lines cut-lines)
 
-     by-bytes?
-     (> cut-lines out-lines)]
+        by-bytes?
+        (> cut-lines out-lines)]
 
     {:content content
      :truncated? (or by-lines? by-bytes?)
@@ -576,48 +567,45 @@
      - Consecutive markers collapse (a line already ending in the marker
        is not doubled)."
   [excerpt]
-  (let
-    [lines
-     (str/split-lines (or excerpt ""))
+  (let [lines
+        (str/split-lines (or excerpt ""))
 
-     marker
-     " [...]"]
+        marker
+        " [...]"]
 
-    (loop
-      [ls
-       lines
+    (loop [ls
+           lines
 
-       in-fence?
-       false
+           in-fence?
+           false
 
-       out
-       []]
+           out
+           []]
 
       (if (empty? ls)
         (str/join "\n" out)
-        (let
-          [ln
-           (first ls)
+        (let [ln
+              (first ls)
 
-           fence?
-           (re-find code-fence-re ln)
+              fence?
+              (re-find code-fence-re ln)
 
-           bracket?
-           (and (not fence?) (re-matches exa-bracket-marker-re ln))
+              bracket?
+              (and (not fence?) (re-matches exa-bracket-marker-re ln))
 
-           bare?
-           (and (not fence?) (re-matches exa-bare-marker-re ln))
+              bare?
+              (and (not fence?) (re-matches exa-bare-marker-re ln))
 
-           ;; Nearest non-blank content line above, or nil when a fence
-           ;; delimiter / the start is hit first (marker abuts a fence).
-           prev
-           (when (or bracket? bare?)
-             (loop [i (dec (count out))]
-               (when (>= i 0)
-                 (let [s (nth out i)]
-                   (cond (str/blank? s) (recur (dec i))
-                         (re-find code-fence-re s) nil
-                         :else i)))))]
+              ;; Nearest non-blank content line above, or nil when a fence
+              ;; delimiter / the start is hit first (marker abuts a fence).
+              prev
+              (when (or bracket? bare?)
+                (loop [i (dec (count out))]
+                  (when (>= i 0)
+                    (let [s (nth out i)]
+                      (cond (str/blank? s) (recur (dec i))
+                            (re-find code-fence-re s) nil
+                            :else i)))))]
 
           (cond
             ;; `[...]` anywhere, or a bare ellipsis in prose → fold inline
@@ -649,28 +637,27 @@
    diff lines. The trailing ` [...]` that `normalize-exa-excerpt` folds on
    is stripped first so it doesn't hide a sentence's terminal period."
   [body-lines]
-  (let
-    [strip
-     (fn [s]
-       (str/replace s #"\s*\[\.\.\.\]\s*$" ""))
+  (let [strip
+        (fn [s]
+          (str/replace s #"\s*\[\.\.\.\]\s*$" ""))
 
-     lines
-     (map strip (remove str/blank? body-lines))
+        lines
+        (map strip (remove str/blank? body-lines))
 
-     n
-     (count lines)
+        n
+        (count lines)
 
-     bul
-     (count (filter #(re-find #"^\s*[-*]\s+\S" %) lines))
+        bul
+        (count (filter #(re-find #"^\s*[-*]\s+\S" %) lines))
 
-     hd
-     (count (filter #(re-find #"^#{1,6}\s+\S" %) lines))
+        hd
+        (count (filter #(re-find #"^#{1,6}\s+\S" %) lines))
 
-     plus
-     (count (filter #(re-find #"^\s*\+\s" %) lines))
+        plus
+        (count (filter #(re-find #"^\s*\+\s" %) lines))
 
-     sent
-     (count (filter #(and (> (count %) 55) (re-find #"\.\s*$" %)) lines))]
+        sent
+        (count (filter #(and (> (count %) 55) (re-find #"\.\s*$" %)) lines))]
 
     (and (>= n 3) (zero? plus) (or (>= sent 1) (>= bul 2)) (>= (+ bul hd sent) (* 0.6 n)))))
 
@@ -688,9 +675,8 @@
    dilute the prose ratio."
   [excerpt]
   (let [lines (vec (str/split-lines (or excerpt "")))]
-    (loop
-      [i 0
-       open nil]
+    (loop [i 0
+           open nil]
 
       (if (>= i (count lines))
         (if (and open
@@ -727,76 +713,74 @@
       :authors string or nil
       :source  :exa}"
   [^String text citation-type]
-  (let
-    [text
-     (or text "")
+  (let [text
+        (or text "")
 
-     ;; Split on the leading `Title: ` boundary (start of file OR a fresh
-     ;; entry after a blank line). Keep the prefix attached to each chunk.
-     chunks
-     (->> (str/split (str "\n" text) #"\nTitle: ")
-          rest)]
+        ;; Split on the leading `Title: ` boundary (start of file OR a fresh
+        ;; entry after a blank line). Keep the prefix attached to each chunk.
+        chunks
+        (->> (str/split (str "\n" text) #"\nTitle: ")
+             rest)]
 
     ;; drop the empty pre-first-Title slice
     (vec
-      (for
-        [chunk
-         chunks
+      (for [chunk
+            chunks
 
-         :let [lines
-               (str/split-lines chunk)
+            :let [lines
+                  (str/split-lines chunk)
 
-               title
-               (str/trim (or (first lines) ""))
+                  title
+                  (str/trim (or (first lines) ""))
 
-               rest-lines
-               (rest lines)
+                  rest-lines
+                  (rest lines)
 
-               ;; Pull URL / Published / Author headers off the top
-               hdr-line
-               (fn [pfx]
-                 (some #(when (str/starts-with? % pfx) (str/trim (subs % (count pfx)))) rest-lines))
+                  ;; Pull URL / Published / Author headers off the top
+                  hdr-line
+                  (fn [pfx]
+                    (some #(when (str/starts-with? % pfx) (str/trim (subs % (count pfx))))
+                          rest-lines))
 
-               url
-               (hdr-line "URL: ")
+                  url
+                  (hdr-line "URL: ")
 
-               published
-               (hdr-line "Published: ")
+                  published
+                  (hdr-line "Published: ")
 
-               authors-raw
-               (hdr-line "Author: ")
+                  authors-raw
+                  (hdr-line "Author: ")
 
-               authors
-               (when (and authors-raw (not (str/blank? authors-raw)) (not= "N/A" authors-raw))
-                 authors-raw)
+                  authors
+                  (when (and authors-raw (not (str/blank? authors-raw)) (not= "N/A" authors-raw))
+                    authors-raw)
 
-               ;; Excerpt = everything from the line AFTER "Highlights:"
-               ;; (or after the header bundle when no Highlights header)
-               excerpt-lines
-               (let
-                 [after-highlights (drop 1
-                                         (drop-while #(not (or (= % "Highlights:")
-                                                               (str/starts-with? % "Highlights:")))
-                                                     rest-lines))]
-                 (if (seq after-highlights)
-                   after-highlights
-                   ;; No Highlights line — drop the bare header lines
-                   ;; (URL / Published / Author / Code-Highlights label)
-                   ;; and keep the rest as the excerpt.
-                   (drop-while #(re-matches #"^(URL|Published|Author|Code/Highlights):.*" %)
-                               rest-lines)))
+                  ;; Excerpt = everything from the line AFTER "Highlights:"
+                  ;; (or after the header bundle when no Highlights header)
+                  excerpt-lines
+                  (let [after-highlights (drop 1
+                                               (drop-while
+                                                 #(not (or (= % "Highlights:")
+                                                           (str/starts-with? % "Highlights:")))
+                                                 rest-lines))]
+                    (if (seq after-highlights)
+                      after-highlights
+                      ;; No Highlights line — drop the bare header lines
+                      ;; (URL / Published / Author / Code-Highlights label)
+                      ;; and keep the rest as the excerpt.
+                      (drop-while #(re-matches #"^(URL|Published|Author|Code/Highlights):.*" %)
+                                  rest-lines)))
 
-               excerpt
-               (-> (str/trim (str/join "\n" excerpt-lines))
-                   normalize-exa-excerpt
-                   unwrap-doc-fences)]]
+                  excerpt
+                  (-> (str/trim (str/join "\n" excerpt-lines))
+                      normalize-exa-excerpt
+                      unwrap-doc-fences)]]
 
-        (cond->
-          {"type" (kw->snake citation-type)
-           "title" title
-           "url" (or url "")
-           "excerpt" excerpt
-           "source" "exa"}
+        (cond-> {"type" (kw->snake citation-type)
+                 "title" title
+                 "url" (or url "")
+                 "excerpt" excerpt
+                 "source" "exa"}
           published
           (assoc "published" published)
 
@@ -846,13 +830,12 @@
    STRINGS-ONLY: string keys, enum values (`op`, `source`) snake-cased so the
    map crosses the boundary already string-clean."
   [{:keys [op query citations source endpoint truncated? fallback-from]}]
-  (cond->
-    {"op" (kw->snake op)
-     "query" (str query)
-     "citations" (vec citations)
-     "citation_count" (count citations)
-     "truncated" (boolean truncated?)
-     "source" (kw->snake source)}
+  (cond-> {"op" (kw->snake op)
+           "query" (str query)
+           "citations" (vec citations)
+           "citation_count" (count citations)
+           "truncated" (boolean truncated?)
+           "source" (kw->snake source)}
     endpoint
     (assoc "endpoint" endpoint)
 
@@ -863,22 +846,20 @@
   "Wrap a successful search call in the canonical tool envelope so it
    travels through `invoke-symbol-wrapper` the same way v/* tools do."
   [{:keys [op tool query citations source endpoint truncated? fallback-from]}]
-  (let
-    [payload (search-result-payload {:op op
-                                     :query query
-                                     :citations citations
-                                     :source source
-                                     :endpoint endpoint
-                                     :truncated? truncated?
-                                     :fallback-from fallback-from})]
+  (let [payload (search-result-payload {:op op
+                                        :query query
+                                        :citations citations
+                                        :source source
+                                        :endpoint endpoint
+                                        :truncated? truncated?
+                                        :fallback-from fallback-from})]
     (extension/success {:result payload
                         :op op
-                        :metadata (cond->
-                                    {:tool (str tool)
-                                     :source source
-                                     :citation-count (get payload "citation_count")
-                                     :truncated? (get payload "truncated")
-                                     :query (str query)}
+                        :metadata (cond-> {:tool (str tool)
+                                           :source source
+                                           :citation-count (get payload "citation_count")
+                                           :truncated? (get payload "truncated")
+                                           :query (str query)}
                                     endpoint
                                     (assoc :endpoint endpoint)
 
@@ -892,36 +873,34 @@
    `:error` map so the channel renderer paints the fail card
    from the envelope side."
   [{:keys [op tool query source endpoint citation-type ^Throwable throwable]}]
-  (let
-    [msg
-     (or (some-> throwable
-                 ex-message)
-         "search failed")
+  (let [msg
+        (or (some-> throwable
+                    ex-message)
+            "search failed")
 
-     error-entry
-     (cond->
-       {"type" (kw->snake citation-type)
-        "title" (str "search failed: " query)
-        "url" ""
-        "excerpt" msg
-        "source" (kw->snake source)
-        "error" true}
-       (some-> throwable
-               ex-data
-               :type)
-       (assoc "error_type"
-         (kw->snake (-> throwable
-                        ex-data
-                        :type))))
+        error-entry
+        (cond-> {"type" (kw->snake citation-type)
+                 "title" (str "search failed: " query)
+                 "url" ""
+                 "excerpt" msg
+                 "source" (kw->snake source)
+                 "error" true}
+          (some-> throwable
+                  ex-data
+                  :type)
+          (assoc "error_type"
+            (kw->snake (-> throwable
+                           ex-data
+                           :type))))
 
-     payload
-     (-> (search-result-payload {:op op
-                                 :query query
-                                 :citations [error-entry]
-                                 :source source
-                                 :endpoint endpoint
-                                 :truncated? false})
-         (assoc "error" true))]
+        payload
+        (-> (search-result-payload {:op op
+                                    :query query
+                                    :citations [error-entry]
+                                    :source source
+                                    :endpoint endpoint
+                                    :truncated? false})
+            (assoc "error" true))]
 
     (extension/failure
       {:result payload
@@ -951,17 +930,16 @@
   "Read the token from a logged-in `gh` CLI without exposing it in config or logs.
    Returns nil when the CLI is missing, unauthenticated, or too slow."
   []
-  (try (let
-         [process
-          (.start (doto (ProcessBuilder. ^"[Ljava.lang.String;"
-                                         (into-array String ["gh" "auth" "token"]))
-                    (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))
+  (try (let [process
+             (.start (doto (ProcessBuilder. ^"[Ljava.lang.String;"
+                                            (into-array String ["gh" "auth" "token"]))
+                       (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))
 
-          output
-          (future (slurp (io/reader (.getInputStream process))))
+             output
+             (future (slurp (io/reader (.getInputStream process))))
 
-          finished?
-          (.waitFor process 2 TimeUnit/SECONDS)]
+             finished?
+             (.waitFor process 2 TimeUnit/SECONDS)]
 
          (if (and finished? (zero? (.exitValue process)))
            (not-empty (str/trim (deref output 1000 "")))
@@ -976,17 +954,17 @@
         (ex-info
           "GitHub Code Search requires an authenticated GitHub CLI. Run `gh auth login` and grant it access to the repositories you need."
           {:type :search/github-auth-required})))
-    (let
-      [per-page (min 100 (long (positive-long (get opts "num_results") 10)))
-       url (str github-code-endpoint "?q=" (encode-url query) "&per_page=" per-page)
-       headers {"accept" "application/vnd.github.text-match+json"
-                "authorization" (str "Bearer " token)
-                "user-agent" "vis-foundation-search/0.1"}
-       response (if *github-get-fn*
-                  (*github-get-fn* url {:headers headers :throw false :timeout default-timeout-ms})
-                  (http/get url {:headers headers :throw false :timeout default-timeout-ms}))
-       status (:status response)
-       body (str (or (:body response) ""))]
+    (let [per-page (min 100 (long (positive-long (get opts "num_results") 10)))
+          url (str github-code-endpoint "?q=" (encode-url query) "&per_page=" per-page)
+          headers {"accept" "application/vnd.github.text-match+json"
+                   "authorization" (str "Bearer " token)
+                   "user-agent" "vis-foundation-search/0.1"}
+          response (if *github-get-fn*
+                     (*github-get-fn* url
+                                      {:headers headers :throw false :timeout default-timeout-ms})
+                     (http/get url {:headers headers :throw false :timeout default-timeout-ms}))
+          status (:status response)
+          body (str (or (:body response) ""))]
 
       (when (or (nil? status) (< (long status) 200) (>= (long status) 300))
         (throw (ex-info (str "GitHub HTTP " status ": " (subs body 0 (min 240 (count body))))
@@ -996,17 +974,16 @@
 (defn- github-citations
   [response citation-type]
   (mapv (fn [{:keys [name path html_url repository text_matches]}]
-          (let
-            [repo-name
-             (or (get repository :full_name) "GitHub")
+          (let [repo-name
+                (or (get repository :full_name) "GitHub")
 
-             fragments
-             (keep :fragment text_matches)
+                fragments
+                (keep :fragment text_matches)
 
-             excerpt
-             (if (seq fragments)
-               (str/join "\n\n" fragments)
-               (str "GitHub code result: " repo-name "/" (or path name "")))]
+                excerpt
+                (if (seq fragments)
+                  (str/join "\n\n" fragments)
+                  (str "GitHub code result: " repo-name "/" (or path name "")))]
 
             {"type" (kw->snake citation-type)
              "title" (str repo-name "/" (or path name ""))
@@ -1018,12 +995,11 @@
 (defn- search-github-code!
   ([op tool query opts citation-type] (search-github-code! op tool query opts citation-type nil))
   ([op tool query opts citation-type fallback-from]
-   (let
-     [response
-      (github-request query opts)
+   (let [response
+         (github-request query opts)
 
-      citations
-      (github-citations response citation-type)]
+         citations
+         (github-citations response citation-type)]
 
      (search-success {:op op
                       :tool tool
@@ -1041,22 +1017,21 @@
   ([op tool-name args citation-type query] (call-exa! op tool-name args citation-type query nil))
   ([op tool-name args citation-type query fallback]
    (try
-     (let
-       [{:keys [endpoint result]}
-        (call-mcp-tool! tool-name args)
+     (let [{:keys [endpoint result]}
+           (call-mcp-tool! tool-name args)
 
-        raw
-        (mcp-result->text result)
+           raw
+           (mcp-result->text result)
 
-        {:keys [content truncated?]}
-        (truncate-text raw (effective-limits {}))
+           {:keys [content truncated?]}
+           (truncate-text raw (effective-limits {}))
 
-        citations
-        (parse-exa-text content citation-type)
+           citations
+           (parse-exa-text content citation-type)
 
-        redacted-ep
-        (some-> endpoint
-                redact-endpoint)]
+           redacted-ep
+           (some-> endpoint
+                   redact-endpoint)]
 
        (search-success {:op op
                         :tool tool-name
@@ -1102,18 +1077,17 @@
    `gh auth login` rather than attempting an unsupported anonymous search."
   ([query] (search-code query {}))
   ([query opts]
-   (let
-     [query
-      (str query)
+   (let [query
+         (str query)
 
-      opts
-      (or opts {})
+         opts
+         (or opts {})
 
-      provider
-      (str (or (get opts "provider") "auto"))
+         provider
+         (str (or (get opts "provider") "auto"))
 
-      provider-opts
-      (dissoc opts "provider")]
+         provider-opts
+         (dissoc opts "provider")]
 
      (case provider
        "auto"
@@ -1184,25 +1158,24 @@
 (defn- github-download-response
   ([url] (github-download-response url github-archive-max-bytes))
   ([url max-bytes]
-   (let
-     [response
-      (if *github-get-fn*
-        (*github-get-fn* url
-                         {:as :bytes
-                          :throw false
-                          :timeout default-timeout-ms
-                          :headers {"user-agent" "vis-foundation-search/0.1"}})
-        (http/get url
-                  {:as :bytes
-                   :throw false
-                   :timeout default-timeout-ms
-                   :headers {"user-agent" "vis-foundation-search/0.1"}}))
+   (let [response
+         (if *github-get-fn*
+           (*github-get-fn* url
+                            {:as :bytes
+                             :throw false
+                             :timeout default-timeout-ms
+                             :headers {"user-agent" "vis-foundation-search/0.1"}})
+           (http/get url
+                     {:as :bytes
+                      :throw false
+                      :timeout default-timeout-ms
+                      :headers {"user-agent" "vis-foundation-search/0.1"}}))
 
-      status
-      (:status response)
+         status
+         (:status response)
 
-      body
-      (:body response)]
+         body
+         (:body response)]
 
      (when (or (nil? status) (< (long status) 200) (>= (long status) 300))
        (throw (ex-info (str "GitHub archive HTTP " status)
@@ -1228,52 +1201,46 @@
 
 (defn- archive-files
   [archive-bytes prefix max-files max-bytes]
-  (let
-    [max-files
-     (long max-files)
+  (let [max-files
+        (long max-files)
 
-     max-bytes
-     (long max-bytes)]
+        max-bytes
+        (long max-bytes)]
 
-    (with-open
-      [gzip
-       (GZIPInputStream. (ByteArrayInputStream. ^bytes archive-bytes))
+    (with-open [gzip
+                (GZIPInputStream. (ByteArrayInputStream. ^bytes archive-bytes))
 
-       tar
-       (TarArchiveInputStream. gzip)]
+                tar
+                (TarArchiveInputStream. gzip)]
 
-      (loop
-        [files
-         []
+      (loop [files
+             []
 
-         total-bytes
-         0
+             total-bytes
+             0
 
-         truncated?
-         false]
+             truncated?
+             false]
 
         (if-let [entry (.getNextTarEntry tar)]
           (let [path (archive-relative-path (.getName entry))]
             (if (or (.isDirectory entry) (nil? path) (not (requested-path? path prefix)))
               (recur files total-bytes truncated?)
-              (let
-                [remaining (- max-bytes total-bytes)
-                 declared-size (.getSize entry)]
+              (let [remaining (- max-bytes total-bytes)
+                    declared-size (.getSize entry)]
 
                 (if (or (zero? remaining) (>= (count files) max-files))
                   (recur files total-bytes true)
-                  (let
-                    [limit (long (Math/min remaining declared-size))
-                     out (ByteArrayOutputStream. (int limit))
-                     buffer (byte-array 8192)]
+                  (let [limit (long (Math/min remaining declared-size))
+                        out (ByteArrayOutputStream. (int limit))
+                        buffer (byte-array 8192)]
 
                     (loop [left limit]
                       (when (pos? (long left))
-                        (let
-                          [read (.read tar
-                                       buffer
-                                       0
-                                       (int (Math/min (long left) (long (alength buffer)))))]
+                        (let [read (.read tar
+                                          buffer
+                                          0
+                                          (int (Math/min (long left) (long (alength buffer)))))]
                           (when (pos? read)
                             (.write out buffer 0 read)
                             (recur (long (- (long left) (long read))))))))
@@ -1295,47 +1262,45 @@
    `max_bytes` (default 51200, max 131072) bound returned content."
   ([repository] (download-code repository {}))
   ([repository opts]
-   (let
-     [repository
-      (github-repository! repository)
+   (let [repository
+         (github-repository! repository)
 
-      opts
-      (or opts {})
+         opts
+         (or opts {})
 
-      ref
-      (github-ref! (get opts "ref"))
+         ref
+         (github-ref! (get opts "ref"))
 
-      prefix
-      (some-> (get opts "path")
-              str
-              str/trim
-              not-empty)
+         prefix
+         (some-> (get opts "path")
+                 str
+                 str/trim
+                 not-empty)
 
-      max-files
-      (long (min (long github-download-max-files)
-                 (long (positive-long (get opts "max_files") github-download-default-files))))
+         max-files
+         (long (min (long github-download-max-files)
+                    (long (positive-long (get opts "max_files") github-download-default-files))))
 
-      max-bytes
-      (long (min (long github-download-max-bytes)
-                 (long (positive-long (get opts "max_bytes") github-download-default-bytes))))
+         max-bytes
+         (long (min (long github-download-max-bytes)
+                    (long (positive-long (get opts "max_bytes") github-download-default-bytes))))
 
-      url
-      (github-archive-url repository ref)]
+         url
+         (github-archive-url repository ref)]
 
-     (try (let
-            [{:strs [files truncated]}
-             (archive-files (github-download-response url) prefix max-files max-bytes)
+     (try (let [{:strs [files truncated]}
+                (archive-files (github-download-response url) prefix max-files max-bytes)
 
-             citations
-             (mapv (fn [{:strs [path content truncated]}]
-                     {"type" "code"
-                      "title" (str repository "/" path)
-                      "url"
-                      (str "https://github.com/" repository "/blob/" (encode-url ref) "/" path)
-                      "excerpt" content
-                      "source" "github"
-                      "truncated" (boolean truncated)})
-                   files)]
+                citations
+                (mapv (fn [{:strs [path content truncated]}]
+                        {"type" "code"
+                         "title" (str repository "/" path)
+                         "url"
+                         (str "https://github.com/" repository "/blob/" (encode-url ref) "/" path)
+                         "excerpt" content
+                         "source" "github"
+                         "truncated" (boolean truncated)})
+                      files)]
 
             (search-success {:op :download-code
                              :tool "github-codeload"
@@ -1355,13 +1320,12 @@
 
 (defn- archive-safe-relative-path!
   [entry-name]
-  (let
-    [path
-     (archive-relative-path entry-name)
+  (let [path
+        (archive-relative-path entry-name)
 
-     segments
-     (some-> path
-             (str/split #"/"))]
+        segments
+        (some-> path
+                (str/split #"/"))]
 
     (when-not (and (seq segments)
                    (every? #(and (not (str/blank? %)) (not= "." %) (not= ".." %)) segments)
@@ -1377,30 +1341,27 @@
 
 (defn- extract-github-archive!
   [^bytes archive-bytes ^Path destination]
-  (with-open
-    [gzip
-     (GZIPInputStream. (ByteArrayInputStream. archive-bytes))
+  (with-open [gzip
+              (GZIPInputStream. (ByteArrayInputStream. archive-bytes))
 
-     tar
-     (TarArchiveInputStream. gzip)]
+              tar
+              (TarArchiveInputStream. gzip)]
 
-    (loop
-      [files
-       0
+    (loop [files
+           0
 
-       total-bytes
-       0]
+           total-bytes
+           0]
 
       (if-let [entry (.getNextTarEntry tar)]
         (let [entry-name (.getName entry)]
           (if (nil? (archive-relative-path entry-name))
             (recur files total-bytes)
-            (let
-              [^String relative (archive-safe-relative-path! entry-name)
-               ^Path output (-> ^Path destination
-                                (.resolve ^String relative)
-                                (.normalize))
-               size (.getSize entry)]
+            (let [^String relative (archive-safe-relative-path! entry-name)
+                  ^Path output (-> ^Path destination
+                                   (.resolve ^String relative)
+                                   (.normalize))
+                  size (.getSize entry)]
 
               (when-not (.startsWith output destination)
                 (throw (ex-info "GitHub archive entry escapes its destination"
@@ -1436,30 +1397,29 @@
 
 (defn- archive-output-path!
   ^Path [workspace-root repository ref directory]
-  (let
-    [^Path root
-     (.toPath (io/file workspace-root))
+  (let [^Path root
+        (.toPath (io/file workspace-root))
 
-     ^Path root
-     (.toAbsolutePath root)
+        ^Path root
+        (.toAbsolutePath root)
 
-     _
-     (Files/createDirectories root (make-array FileAttribute 0))
+        _
+        (Files/createDirectories root (make-array FileAttribute 0))
 
-     default-name
-     (str/replace (str repository "-" ref) #"[^A-Za-z0-9_.-]+" "-")
+        default-name
+        (str/replace (str repository "-" ref) #"[^A-Za-z0-9_.-]+" "-")
 
-     ^String relative
-     (or (some-> directory
-                 str
-                 str/trim
-                 not-empty)
-         (str "downloads/" default-name))
+        ^String relative
+        (or (some-> directory
+                    str
+                    str/trim
+                    not-empty)
+            (str "downloads/" default-name))
 
-     ^Path candidate
-     (-> ^Path root
-         (.resolve ^String relative)
-         (.normalize))]
+        ^Path candidate
+        (-> ^Path root
+            (.resolve ^String relative)
+            (.normalize))]
 
     (when (or (.isAbsolute (io/file relative)) (not (.startsWith candidate root)))
       (throw (ex-info "directory must stay within the workspace root"
@@ -1477,35 +1437,33 @@
   ([repository] (download-archive repository {}))
   ([repository opts] (download-archive (workspace/cwd) repository opts))
   ([workspace-root repository opts]
-   (let
-     [opts
-      (or opts {})
+   (let [opts
+         (or opts {})
 
-      repository
-      (github-repository! repository)
+         repository
+         (github-repository! repository)
 
-      ref
-      (github-ref! (get opts "ref"))
+         ref
+         (github-ref! (get opts "ref"))
 
-      url
-      (github-archive-url repository ref)
+         url
+         (github-archive-url repository ref)
 
-      destination
-      (archive-output-path! workspace-root repository ref (get opts "directory"))]
+         destination
+         (archive-output-path! workspace-root repository ref (get opts "directory"))]
 
      (try (when (Files/exists destination (make-array LinkOption 0))
             (throw (ex-info "archive destination already exists; choose another directory"
                             {:type :search/github-archive-destination-exists
                              :path (str destination)})))
-          (let
-            [archive-bytes
-             (github-download-response url github-full-archive-max-bytes)
+          (let [archive-bytes
+                (github-download-response url github-full-archive-max-bytes)
 
-             _
-             (Files/createDirectories destination (make-array FileAttribute 0))
+                _
+                (Files/createDirectories destination (make-array FileAttribute 0))
 
-             {:keys [files bytes]}
-             (extract-github-archive! archive-bytes destination)]
+                {:keys [files bytes]}
+                (extract-github-archive! archive-bytes destination)]
 
             (extension/success {:op :download-archive
                                 :result {"op" "download_archive"
@@ -1542,36 +1500,35 @@
    arxiv's stable schema; no clojure.data.xml dep needed."
   [^bytes xml-bytes]
   (try
-    (let
-      [stream
-       (ByteArrayInputStream. xml-bytes)
+    (let [stream
+          (ByteArrayInputStream. xml-bytes)
 
-       parsed
-       (xml/parse stream)
+          parsed
+          (xml/parse stream)
 
-       entries
-       (filter #(= :entry (:tag %)) (:content parsed))
+          entries
+          (filter #(= :entry (:tag %)) (:content parsed))
 
-       extract
-       (fn [entry tag]
-         (some->> (:content entry)
-                  (filter #(= tag (:tag %)))
-                  first
-                  :content
-                  first
-                  (#(when (string? %) (str/trim %)))))
+          extract
+          (fn [entry tag]
+            (some->> (:content entry)
+                     (filter #(= tag (:tag %)))
+                     first
+                     :content
+                     first
+                     (#(when (string? %) (str/trim %)))))
 
-       extract-author
-       (fn [entry]
-         (some->> (:content entry)
-                  (filter #(= :author (:tag %)))
-                  first
-                  :content
-                  (filter #(= :name (:tag %)))
-                  first
-                  :content
-                  first
-                  (#(when (string? %) (str/trim %)))))]
+          extract-author
+          (fn [entry]
+            (some->> (:content entry)
+                     (filter #(= :author (:tag %)))
+                     first
+                     :content
+                     (filter #(= :name (:tag %)))
+                     first
+                     :content
+                     first
+                     (#(when (string? %) (str/trim %)))))]
 
       (mapv (fn [e]
               {"type" "paper"
@@ -1600,54 +1557,52 @@
    Gotcha: \"excerpt\" is the abstract (plain text); on failure \"citations\"[0] has \"error\": True."
   ([query] (search-papers query {}))
   ([query opts]
-   (let
-     [max-results
-      ;; `num_results` everywhere; `max_results` is the retired papers-only
-      ;; spelling, still accepted.
-      (or (get opts "num_results") (get opts "max_results") ARXIV_DEFAULT_MAX_RESULTS)
+   (let [max-results
+         ;; `num_results` everywhere; `max_results` is the retired papers-only
+         ;; spelling, still accepted.
+         (or (get opts "num_results") (get opts "max_results") ARXIV_DEFAULT_MAX_RESULTS)
 
-      sort-key
-      (or (get opts "sort") "relevance")
+         sort-key
+         (or (get opts "sort") "relevance")
 
-      timeout-ms
-      (or (get opts "timeout_ms") ARXIV_DEFAULT_TIMEOUT_MS)
+         timeout-ms
+         (or (get opts "timeout_ms") ARXIV_DEFAULT_TIMEOUT_MS)
 
-      url
-      (str ARXIV_API_BASE
-           "?search_query="
-           (URLEncoder/encode (str "all:" query) "UTF-8")
-           "&start=0"
-           "&max_results="
-           max-results
-           "&sortBy="
-           (case sort-key
-             "lastUpdatedDate"
-             "lastUpdatedDate"
+         url
+         (str ARXIV_API_BASE
+              "?search_query="
+              (URLEncoder/encode (str "all:" query) "UTF-8")
+              "&start=0"
+              "&max_results="
+              max-results
+              "&sortBy="
+              (case sort-key
+                "lastUpdatedDate"
+                "lastUpdatedDate"
 
-             "submittedDate"
-             "submittedDate"
+                "submittedDate"
+                "submittedDate"
 
-             "relevance"
-             "relevance"
+                "relevance"
+                "relevance"
 
-             "relevance")
-           "&sortOrder=descending")]
+                "relevance")
+              "&sortOrder=descending")]
 
-     (try (let
-            [resp
-             (http/get url
-                       {:timeout timeout-ms :headers {"User-Agent" "vis-foundation-search/0.1"}})
+     (try (let [resp
+                (http/get url
+                          {:timeout timeout-ms :headers {"User-Agent" "vis-foundation-search/0.1"}})
 
-             body
-             (:body resp)
+                body
+                (:body resp)
 
-             body-bytes
-             (cond (string? body) (.getBytes ^String body StandardCharsets/UTF_8)
-                   (bytes? body) body
-                   :else (.getBytes (str body) StandardCharsets/UTF_8))
+                body-bytes
+                (cond (string? body) (.getBytes ^String body StandardCharsets/UTF_8)
+                      (bytes? body) body
+                      :else (.getBytes (str body) StandardCharsets/UTF_8))
 
-             citations
-             (parse-arxiv-atom body-bytes)]
+                citations
+                (parse-arxiv-atom body-bytes)]
 
             (search-success {:op :search-papers
                              :tool "arxiv"
@@ -1676,15 +1631,14 @@
    Returns the query, ranked `citations` (`type`/`title`/`url`/`excerpt`/...), count, truncation, source, and endpoint. Read `excerpt` directly; failures put `error` on the first citation."
   ([query] (search query {}))
   ([query opts]
-   (let
-     [opts
-      (or opts {})
+   (let [opts
+         (or opts {})
 
-      kind
-      (str (or (get opts "kind") "web"))
+         kind
+         (str (or (get opts "kind") "web"))
 
-      opts
-      (dissoc opts "kind")]
+         opts
+         (dissoc opts "kind")]
 
      (case kind
        "web"

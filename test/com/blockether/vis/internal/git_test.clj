@@ -76,21 +76,20 @@
              ;; `.waitFor` threw at once and `run-git` returned while its `git` child kept
              ;; running — one orphan per call, each able to hold the index lock.
              (it "reaps its child when the calling thread is already interrupted"
-                 (let
-                   [before
-                    (git-descendants)
+                 (let [before
+                       (git-descendants)
 
-                    result
-                    (promise)
+                       result
+                       (promise)
 
-                    worker
-                    (doto (Thread. (fn []
-                                     (.interrupt (Thread/currentThread))
-                                     (deliver result
-                                              (git/run-git (io/file (System/getProperty "user.dir"))
-                                                           ["-c" "alias.snooze=!sleep 20"
-                                                            "snooze"]))))
-                      (.start))]
+                       worker
+                       (doto (Thread. (fn []
+                                        (.interrupt (Thread/currentThread))
+                                        (deliver result
+                                                 (git/run-git
+                                                   (io/file (System/getProperty "user.dir"))
+                                                   ["-c" "alias.snooze=!sleep 20" "snooze"]))))
+                         (.start))]
 
                    (.join worker 10000)
                    (expect (nil? (:exit (deref result 5000 {:exit :never-returned}))))

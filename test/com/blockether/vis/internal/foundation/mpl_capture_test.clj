@@ -25,20 +25,19 @@
    (`[[name content] …]`) were written into one fresh temp dir — the whole
    incidental-capture filter in a single call."
   [named-contents]
-  (let
-    [dir
-     (java.nio.file.Files/createTempDirectory "vis-capture-test"
-                                              (make-array java.nio.file.attribute.FileAttribute 0))
+  (let [dir
+        (java.nio.file.Files/createTempDirectory "vis-capture-test"
+                                                 (make-array java.nio.file.attribute.FileAttribute
+                                                             0))
 
-     sink
-     (atom [])]
+        sink
+        (atom [])]
 
-    (binding
-      [cap/*attachment-sink*
-       sink
+    (binding [cap/*attachment-sink*
+              sink
 
-       cap/*outbox-seen*
-       (atom #{})]
+              cap/*outbox-seen*
+              (atom #{})]
 
       (doseq [[name content] named-contents]
         (let [p (.resolve dir ^String name)]
@@ -107,16 +106,15 @@
 
 (defdescribe display-cache-file-test
              (it "writes one content-addressed file and reuses it for identical bytes"
-                 (let
-                   [dir
-                    (.toFile (java.nio.file.Files/createTempDirectory
-                               "vis-mpl-display"
-                               (make-array java.nio.file.attribute.FileAttribute 0)))
+                 (let [dir
+                       (.toFile (java.nio.file.Files/createTempDirectory
+                                  "vis-mpl-display"
+                                  (make-array java.nio.file.attribute.FileAttribute 0)))
 
-                    [a b]
-                    (binding [cap/*display-home* (.getPath dir)]
-                      [(cap/display-cache-file "fig-" "png" (.getBytes "picture"))
-                       (cap/display-cache-file "fig-" "png" (.getBytes "picture"))])]
+                       [a b]
+                       (binding [cap/*display-home* (.getPath dir)]
+                         [(cap/display-cache-file "fig-" "png" (.getBytes "picture"))
+                          (cap/display-cache-file "fig-" "png" (.getBytes "picture"))])]
 
                    (expect (= (.getPath a) (.getPath b)))
                    (expect (= 1 (count (.listFiles dir))))
@@ -125,17 +123,16 @@
              ;; `housekeeping/sweep-stale!` would age out a picture that had been rendered
              ;; again this morning because its content was first seen a month ago.
              (it "re-stamps the file it reuses, so its age is the last render and not the first"
-                 (let
-                   [dir
-                    (.toFile (java.nio.file.Files/createTempDirectory
-                               "vis-mpl-display-age"
-                               (make-array java.nio.file.attribute.FileAttribute 0)))
+                 (let [dir
+                       (.toFile (java.nio.file.Files/createTempDirectory
+                                  "vis-mpl-display-age"
+                                  (make-array java.nio.file.attribute.FileAttribute 0)))
 
-                    bs
-                    (.getBytes "picture")
+                       bs
+                       (.getBytes "picture")
 
-                    old
-                    (- (System/currentTimeMillis) (* 40 86400000))]
+                       old
+                       (- (System/currentTimeMillis) (* 40 86400000))]
 
                    (binding [cap/*display-home* (.getPath dir)]
                      (let [first-render (cap/display-cache-file "fig-" "png" bs)]

@@ -7,13 +7,12 @@
 (defdescribe
   content-contract-test
   (it "accepts the canonical role-labelled message"
-      (let
-        [message (content/message {:id "turn_1"
-                                   :role "assistant"
-                                   :status "completed"
-                                   :created-at 100
-                                   :completed-at 110
-                                   :content [(content/prose "b1" "Hello **world**")]})]
+      (let [message (content/message {:id "turn_1"
+                                      :role "assistant"
+                                      :status "completed"
+                                      :created-at 100
+                                      :completed-at 110
+                                      :content [(content/prose "b1" "Hello **world**")]})]
         (expect (s/valid? ::content/message message))
         (expect (= #{"id" "role" "status" "content" "created_at" "completed_at"}
                    (set (keys message))))
@@ -51,12 +50,11 @@
         (expect (s/valid? ::content/block block))
         (expect (= "A concise spoken answer." (content/text-projection [block])))))
   (it "preserves canonical error blocks in wrapped final answers"
-      (let
-        [error
-         (content/error "e1" "provider_unavailable" "Try again later." true)
+      (let [error
+            (content/error "e1" "provider_unavailable" "Try again later." true)
 
-         blocks
-         (content/answer-content {:answer [error]})]
+            blocks
+            (content/answer-content {:answer [error]})]
 
         (expect (= [error] blocks))
         (expect (s/valid? ::content/block (first blocks)))))
@@ -84,10 +82,9 @@
                               "status" "completed"
                               "output" {:provider :openai-codex}}))))
   (it "canonicalizes nested tool values to string keys and string enums"
-      (let
-        [block (content/tool {:tool "run_tests"
-                              :status :completed
-                              :output {:provider :openai-codex :actual {:model "gpt-5.6"}}})]
+      (let [block (content/tool {:tool "run_tests"
+                                 :status :completed
+                                 :output {:provider :openai-codex :actual {:model "gpt-5.6"}}})]
         (expect (= {"provider" "openai-codex" "actual" {"model" "gpt-5.6"}} (get block "output")))
         (expect (s/valid? ::content/block block))))
   (it "keeps typed errors as data"

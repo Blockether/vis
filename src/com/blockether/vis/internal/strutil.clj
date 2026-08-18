@@ -6,12 +6,11 @@
 (defn truncate
   "Head-clip `s` to at most `n` chars (no ellipsis)."
   [s ^long n]
-  (let
-    [s
-     (str s)
+  (let [s
+        (str s)
 
-     c
-     (long (count s))]
+        c
+        (long (count s))]
 
     (if (> c n) (subs s 0 n) s)))
 
@@ -23,10 +22,9 @@
    so everything after it renders as prose instead of code. CommonMark permits
    longer fences: pick the shortest safe one."
   [body]
-  (let
-    [max-run (->> (re-seq #"`+" (str body))
-                  (map count)
-                  (reduce max 0))]
+  (let [max-run (->> (re-seq #"`+" (str body))
+                     (map count)
+                     (reduce max 0))]
     (apply str (repeat (max 3 (inc (long max-run))) "`"))))
 
 (defn fenced
@@ -34,12 +32,11 @@
    optional `lang` info string. Callers keep their own blank/nil guards."
   ([body] (fenced body nil))
   ([body lang]
-   (let
-     [body
-      (str body)
+   (let [body
+         (str body)
 
-      delimiter
-      (fence-delimiter body)]
+         delimiter
+         (fence-delimiter body)]
 
      (str delimiter (or lang "") "\n" body "\n" delimiter))))
 
@@ -79,9 +76,8 @@
    elision marker. nil when nothing is left, so a blank tick falls back to the
    text already on screen instead of wiping it."
   [text]
-  (when-let
-    [s (some-> text
-               str)]
+  (when-let [s (some-> text
+                       str)]
     (not-empty (-> s
                    (str/replace #"[ \t\r\f\v]+\r?\n" "\n")
                    (str/replace #"(?:\r?\n){2,}" "\n")

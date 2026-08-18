@@ -158,10 +158,9 @@
    reads selector spellings of its OWN (clojure resolves namespaces) needs the
    same coercion `normalize-selectors` applies to `:paths`."
   [x]
-  (let
-    [xs (cond (nil? x) []
-              (sequential? x) x
-              :else [x])]
+  (let [xs (cond (nil? x) []
+                 (sequential? x) x
+                 :else [x])]
     (->> xs
          (map str)
          (map str/trim)
@@ -202,19 +201,18 @@
    wins over everything, a non-empty var list narrows by name, and :include
    gates by tag when present."
   [{:keys [vars include exclude]} {test-ns :ns test-name :name tags :tags}]
-  (let
-    [tags
-     (set tags)
+  (let [tags
+        (set tags)
 
-     inc*
-     (set include)
+        inc*
+        (set include)
 
-     exc*
-     (set exclude)
+        exc*
+        (set exclude)
 
-     var-hit?
-     (fn [{:keys [ns name]}]
-       (and (or (nil? ns) (= ns test-ns)) (= name test-name)))]
+        var-hit?
+        (fn [{:keys [ns name]}]
+          (and (or (nil? ns) (= ns test-ns)) (= name test-name)))]
 
     (cond (some exc* tags) false
           (and (seq vars) (not (some var-hit? vars))) false

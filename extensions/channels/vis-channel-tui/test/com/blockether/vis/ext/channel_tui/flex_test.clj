@@ -17,12 +17,11 @@
 
 (defn- painted
   [node col row]
-  (let
-    [sink
-     (atom [])
+  (let [sink
+        (atom [])
 
-     w
-     (flex/render! (recording-graphics sink) col row node)]
+        w
+        (flex/render! (recording-graphics sink) col row node)]
 
     {:width w :calls @sink}))
 
@@ -37,9 +36,8 @@
                    (let [{:keys [calls]} (painted (flex/row ["AA" "BB"]) 0 0)]
                      (expect (= [[0 0 "AA"] [2 0 "BB"]] calls))))
                (it "right-aligns the cluster inside a fixed width"
-                   (let
-                     [{:keys [width calls]}
-                      (painted (flex/row ["AA" "BBB"] {:gap 1 :width 20 :align :right}) 100 5)]
+                   (let [{:keys [width calls]}
+                         (painted (flex/row ["AA" "BBB"] {:gap 1 :width 20 :align :right}) 100 5)]
                      (expect (= 20 width))
                      (expect (= [[114 5 "AA"] [117 5 "BBB"]] calls))))
                (it "center-aligns the cluster inside a fixed width"
@@ -61,12 +59,12 @@
 (defdescribe flex-node-test
              (describe "node bridge"
                        (it "wraps an existing width + paint thunk unchanged"
-                           (let
-                             [{:keys [width calls]} (painted (flex/node 5
-                                                                        (fn [g c r]
-                                                                          (.putString g c r "hi")))
-                                                             2
-                                                             4)]
+                           (let [{:keys [width calls]} (painted (flex/node
+                                                                  5
+                                                                  (fn [g c r]
+                                                                    (.putString g c r "hi")))
+                                                                2
+                                                                4)]
                              (expect (= 5 width))
                              (expect (= [[2 4 "hi"]] calls))))
                        (it "render! returns 0 and paints nothing for nil"

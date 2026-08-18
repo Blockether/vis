@@ -277,10 +277,9 @@
    Names that resolve to nothing are simply absent from the result (never an
    empty string, so an extension's `os.environ.get(...) or default` still works)."
   [declared]
-  (let
-    [names (normalize-env-names (concat (or declared [])
-                                        (config/declared-environment-names)
-                                        (keys (config/workspace-environment-values))))]
+  (let [names (normalize-env-names (concat (or declared [])
+                                           (config/declared-environment-names)
+                                           (keys (config/workspace-environment-values))))]
     (into {}
           (keep (fn [n]
                   (when-let [v (config/extension-env-value n)]
@@ -309,29 +308,28 @@
    emulated posix would otherwise leave the extension holding a per-context
    child-slot index that names no process."
   ^Context [label]
-  (let
-    [emit
-     (process-handler/log-emit label)
+  (let [emit
+        (process-handler/log-emit label)
 
-     handoff
-     (process-handler/pid-handoff)
+        handoff
+        (process-handler/pid-handoff)
 
-     ^Context ctx
-     (-> (Context/newBuilder (into-array String ["python"]))
-         (.engine ^Engine (env/new-engine!))
-         (.allowAllAccess false)
-         (.allowIO IOAccess/ALL)
-         (.allowCreateThread true)
-         (.allowCreateProcess true)
-         (.allowNativeAccess false)
-         (.allowPolyglotAccess PolyglotAccess/NONE)
-         (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
-         (.out (process-handler/line-sink-stream (fn [line]
-                                                   (emit "stdout" line))))
-         (.err (process-handler/line-sink-stream (fn [line]
-                                                   (emit "stderr" line))))
-         (.processHandler (process-handler/contained-handler emit handoff))
-         (.build))]
+        ^Context ctx
+        (-> (Context/newBuilder (into-array String ["python"]))
+            (.engine ^Engine (env/new-engine!))
+            (.allowAllAccess false)
+            (.allowIO IOAccess/ALL)
+            (.allowCreateThread true)
+            (.allowCreateProcess true)
+            (.allowNativeAccess false)
+            (.allowPolyglotAccess PolyglotAccess/NONE)
+            (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
+            (.out (process-handler/line-sink-stream (fn [line]
+                                                      (emit "stdout" line))))
+            (.err (process-handler/line-sink-stream (fn [line]
+                                                      (emit "stderr" line))))
+            (.processHandler (process-handler/contained-handler emit handoff))
+            (.build))]
 
     ;; Bound BEFORE the repair evaluates, because the repair captures it: it is
     ;; how the guest's `Popen` learns the OS pid of the child it just started.
@@ -438,20 +436,19 @@
       (reify
         ProxyExecutable
           (execute [_ args]
-            (let
-              [request-json (env/->clj (aget args 0))
-               validators-json (when (> (alength args) 1) (env/->clj (aget args 1)))
-               ^Value runner (when (> (alength args) 2) (aget args 2))
-               run (when (some-> runner
-                                 .canExecute)
-                     (fn [field-name index value values]
-                       (let
-                         [verdict (env/->clj (.execute runner
-                                                       (object-array [(str field-name) (long index)
-                                                                      (json/write-json-str value)
-                                                                      (json/write-json-str
-                                                                        values)])))]
-                         (when (some? verdict) (json/read-json (str verdict) :key-fn identity)))))]
+            (let [request-json (env/->clj (aget args 0))
+                  validators-json (when (> (alength args) 1) (env/->clj (aget args 1)))
+                  ^Value runner (when (> (alength args) 2) (aget args 2))
+                  run (when (some-> runner
+                                    .canExecute)
+                        (fn [field-name index value values]
+                          (let [verdict (env/->clj (.execute runner
+                                                             (object-array
+                                                               [(str field-name) (long index)
+                                                                (json/write-json-str value)
+                                                                (json/write-json-str values)])))]
+                            (when (some? verdict)
+                              (json/read-json (str verdict) :key-fn identity)))))]
 
               (env/->py ((requiring-resolve 'com.blockether.vis.internal.human-input/request-json!)
                           request-json
@@ -487,10 +484,9 @@
                 "__vis_host_declare_env__"
                 (->executable
                   (fn [names-json]
-                    (let
-                      [names (try (json/read-json (str names-json) :key-fn identity)
-                                  (catch Throwable _ nil))
-                       resolved (resolve-declared-env names)]
+                    (let [names (try (json/read-json (str names-json) :key-fn identity)
+                                     (catch Throwable _ nil))
+                          resolved (resolve-declared-env names)]
 
                       ;; Log NAMES only -- env values are secrets and never appear in logs.
                       (tel/log! {:level :debug
@@ -647,9 +643,9 @@
     (let [argv (vec args)]
       (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv)})
            (catch Throwable t
-             (if-let
-               [fresh
-                (and (not *healing-symbol*) (context-dead? ctx) (live-symbol-fn ext-name sym ctx))]
+             (if-let [fresh (and (not *healing-symbol*)
+                                 (context-dead? ctx)
+                                 (live-symbol-fn ext-name sym ctx))]
                (binding [*healing-symbol* true]
                  (apply fresh argv))
                (extension/failure
@@ -700,17 +696,16 @@
   (fn [sctx]
     ;; The payload crosses INTO Python (string keys); the response crossed
     ;; BACK via `->clj` (string keys as well).
-    (let
-      [payload
-       {"channel" (some-> (:channel/id sctx)
-                          name)
-        "args" (mapv str (:command/argv sctx))
-        "raw" (str (:command/raw sctx))
-        "session_id" (some-> (:session/id sctx)
-                             str)}
+    (let [payload
+          {"channel" (some-> (:channel/id sctx)
+                             name)
+           "args" (mapv str (:command/argv sctx))
+           "raw" (str (:command/raw sctx))
+           "session_id" (some-> (:session/id sctx)
+                                str)}
 
-       res
-       (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
+          res
+          (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
 
       (cond (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
             (string? res) {:slash/status :ok :slash/title res}
@@ -733,13 +728,12 @@
    loop."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env op-kw args next-fn]
-    (let
-      [res (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args)])
-                (catch Throwable t
-                  (tel/log! {:level :warn
-                             :id ::op-hook-failed
-                             :data {:extension ext-name :op op-kw :error (ex-message t)}})
-                  nil))]
+    (let [res (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args)])
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::op-hook-failed
+                                :data {:extension ext-name :op op-kw :error (ex-message t)}})
+                     nil))]
       (if (and (map? res) (= "block" (get res "marker")))
         (extension/failure
           {:result nil
@@ -760,15 +754,14 @@
    the whole reason a gate is its own shape."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env op-kw gate-ctx]
-    (try (let
-           [payload
-            (reduce-kv (fn [m k v]
-                         (assoc m (name k) (str v)))
-                       {}
-                       gate-ctx)
+    (try (let [payload
+               (reduce-kv (fn [m k v]
+                            (assoc m (name k) (str v)))
+                          {}
+                          gate-ctx)
 
-            res
-            (call-py-ext ext-name env ctx pyfn [payload])]
+               res
+               (call-py-ext ext-name env ctx pyfn [payload])]
 
            (when (and (map? res) (= "block" (get res "marker")))
              {:reason (str (or (get res "reason")
@@ -804,32 +797,30 @@
    FAIL-CLOSED: a hook error DENIES (a security filter must never fail open)."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [c]
-    (let
-      [pyctx
-       (cond->
-         {"phase" (some-> (:phase c)
-                          name)
-          "method" (some-> (:method c)
-                           str)
-          "host" (:host c)
-          "path" (:path c)
-          "headers" (or (:headers c) {})}
-         (contains? c :status)
-         (assoc "status" (:status c)))
+    (let [pyctx
+          (cond-> {"phase" (some-> (:phase c)
+                                   name)
+                   "method" (some-> (:method c)
+                                    str)
+                   "host" (:host c)
+                   "path" (:path c)
+                   "headers" (or (:headers c) {})}
+            (contains? c :status)
+            (assoc "status" (:status c)))
 
-       err
-       (atom nil)
+          err
+          (atom nil)
 
-       res
-       (try (call-py-ext ext-name nil ctx pyfn [pyctx])
-            (catch Throwable t
-              (let [e (extension/normalize-error t)]
-                (reset! err e)
-                (tel/log! {:level :warn
-                           :id ::network-filter-failed
-                           :data {:extension ext-name :error (:message e)}})
-                {"marker" "block"
-                 "reason" (str "network filter error in '" ext-name "': " (:message e))})))]
+          res
+          (try (call-py-ext ext-name nil ctx pyfn [pyctx])
+               (catch Throwable t
+                 (let [e (extension/normalize-error t)]
+                   (reset! err e)
+                   (tel/log! {:level :warn
+                              :id ::network-filter-failed
+                              :data {:extension ext-name :error (:message e)}})
+                   {"marker" "block"
+                    "reason" (str "network filter error in '" ext-name "': " (:message e))})))]
 
       (if (and (map? res) (= "block" (get res "marker")))
         (cond-> {:allow? false :reason (str (or (get res "reason") "blocked by network filter"))}
@@ -859,23 +850,22 @@
    A Python-declared symbol is a plain sandbox function: its `doc` is what
    `doc(name)` answers, and it is never advertised as a provider tool."
   [ext-name alias-sym ^Context ctx spec]
-  (let
-    [sym
-     (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
+  (let [sym
+        (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
 
-     pyfn
-     (get spec "fn")
+        pyfn
+        (get spec "fn")
 
-     argv
-     (cond-> (mapv clojure.core/symbol (get spec "params"))
-       (get spec "varargs")
-       (-> (conj '&)
-           (conj 'args)))
+        argv
+        (cond-> (mapv clojure.core/symbol (get spec "params"))
+          (get spec "varargs")
+          (-> (conj '&)
+              (conj 'args)))
 
-     opts
-     (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
-       (get spec "hidden")
-       (assoc :hidden? true))]
+        opts
+        (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
+          (get spec "hidden")
+          (assoc :hidden? true))]
 
     (extension/symbol-entry {:symbol sym
                              :fn (tool-adapter ext-name sym ctx pyfn)
@@ -885,16 +875,14 @@
 
 (defn- ->slash-spec
   [ext-name ^Context ctx spec]
-  (let
-    [doc
-     (get spec "doc")
+  (let [doc
+        (get spec "doc")
 
-     usage
-     (get spec "usage")]
+        usage
+        (get spec "usage")]
 
-    (cond->
-      {:slash/name (str (get spec "name"))
-       :slash/run-fn (slash-adapter ext-name ctx (get spec "run"))}
+    (cond-> {:slash/name (str (get spec "name"))
+             :slash/run-fn (slash-adapter ext-name ctx (get spec "run"))}
       (string? doc)
       (assoc :slash/doc doc)
 
@@ -903,12 +891,11 @@
 
 (defn- ->op-hook-entries
   [ext-name ^Context ctx spec]
-  (let
-    [before?
-     (= "before" (str (get spec "phase")))
+  (let [before?
+        (= "before" (str (get spec "phase")))
 
-     pyfn
-     (get spec "fn")]
+        pyfn
+        (get spec "fn")]
 
     ;; `:op` keys the INTERNAL op-hook registry (keyword-keyed, matched against
     ;; canonical tool op keywords). The vocabulary is author-declared config,
@@ -968,12 +955,11 @@
   [fields m]
   (when (map? m)
     (reduce-kv (fn [acc k v]
-                 (let
-                   [kk
-                    (wire/engine-key k)
+                 (let [kk
+                       (wire/engine-key k)
 
-                    f
-                    (get fields kk)]
+                       f
+                       (get fields kk)]
 
                    (assoc acc kk (if f (f v) v))))
                {}
@@ -1065,9 +1051,8 @@
    caller logs it and yields nil)."
   [ext-name ^Context ctx ^Value pyfn args]
   (loop [args (vec args)]
-    (let
-      [r (try {:ok (call-py-ext ext-name nil ctx pyfn args)}
-              (catch Throwable t (if (seq args) {:retry (vec (butlast args))} (throw t))))]
+    (let [r (try {:ok (call-py-ext ext-name nil ctx pyfn args)}
+                 (catch Throwable t (if (seq args) {:retry (vec (butlast args))} (throw t))))]
       (if (contains? r :ok) (:ok r) (recur (:retry r))))))
 
 (defn- provider-fn-adapter
@@ -1100,14 +1085,13 @@
    error propagates — the caller (TUI/CLI) frames it as an auth failure."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [print!]
-    (let
-      [printer
-       (->executable (fn [line]
-                       (print! (str line))
-                       nil))
+    (let [printer
+          (->executable (fn [line]
+                          (print! (str line))
+                          nil))
 
-       r
-       (call-py-ext ext-name nil ctx pyfn [printer])]
+          r
+          (call-py-ext ext-name nil ctx pyfn [printer])]
 
       (if (string? r) (get auth-success-results r r) r))))
 
@@ -1151,12 +1135,11 @@
    enrichment' — the router still builds on svar's conservative defaults."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [svar-provider router-opts]
-    (try (let
-           [r (call-py-ext ext-name
-                           nil
-                           ctx
-                           pyfn
-                           [(stringify-deep svar-provider) (stringify-deep router-opts)])]
+    (try (let [r (call-py-ext ext-name
+                              nil
+                              ctx
+                              pyfn
+                              [(stringify-deep svar-provider) (stringify-deep router-opts)])]
            (when (sequential? r) (mapv ->svar-model r)))
          (catch Throwable t
            (tel/log! {:level :warn
@@ -1184,18 +1167,16 @@
   "`spec` is a Python `vis.provider(...)` dict — STRING keys. Each callable slot
    is adapted with the field table its own host schema declares."
   [ext-name ^Context ctx spec]
-  (let
-    [adapt
-     (fn [pk fields]
-       (let [v (get spec pk)]
-         (when (instance? Value v) (provider-fn-adapter ext-name ctx v fields))))
+  (let [adapt
+        (fn [pk fields]
+          (let [v (get spec pk)]
+            (when (instance? Value v) (provider-fn-adapter ext-name ctx v fields))))
 
-     preset
-     (decode preset-fields (get spec "preset"))]
+        preset
+        (decode preset-fields (get spec "preset"))]
 
-    (cond->
-      {:provider/id (clojure.core/keyword (str (get spec "id")))
-       :provider/label (str (get spec "label"))}
+    (cond-> {:provider/id (clojure.core/keyword (str (get spec "id")))
+             :provider/label (str (get spec "label"))}
       (seq preset)
       (assoc :provider/preset preset)
 
@@ -1235,54 +1216,52 @@
 (defn- registration->spec
   "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."
   [^Context ctx reg]
-  (let
-    [ext-name
-     (str (get reg "name"))
+  (let [ext-name
+        (str (get reg "name"))
 
-     alias-sym
-     (some-> (get reg "alias")
-             str
-             clojure.core/symbol)
+        alias-sym
+        (some-> (get reg "alias")
+                str
+                clojure.core/symbol)
 
-     symbols
-     (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
+        symbols
+        (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
 
-     slashes
-     (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
+        slashes
+        (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
 
-     op-hooks
-     (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
+        op-hooks
+        (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
 
-     prompt
-     (get reg "prompt")
+        prompt
+        (get reg "prompt")
 
-     ctx-fn
-     (get reg "ctx")
+        ctx-fn
+        (get reg "ctx")
 
-     activation
-     (get reg "activation")
+        activation
+        (get reg "activation")
 
-     providers
-     (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))
+        providers
+        (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))
 
-     network-filters
-     (mapv (fn [rf]
-             (network-filter-adapter ext-name ctx (get rf "fn")))
-           (get reg "network_filters"))
+        network-filters
+        (mapv (fn [rf]
+                (network-filter-adapter ext-name ctx (get rf "fn")))
+              (get reg "network_filters"))
 
-     declared-env
-     (mapv (fn [n]
-             {:name n :required? true})
-           (normalize-env-names (get reg "env")))]
+        declared-env
+        (mapv (fn [n]
+                {:name n :required? true})
+              (normalize-env-names (get reg "env")))]
 
-    (cond->
-      {:ext/name ext-name
-       :ext/description (str (get reg "description"))
-       :ext/kind (str (or (get reg "kind") "python"))
-       :ext/source-nses ['com.blockether.vis.internal.python-extensions]
-       :ext/engine (cond-> {:ext.engine/symbols symbols}
-                     alias-sym
-                     (assoc :ext.engine/alias alias-sym))}
+    (cond-> {:ext/name ext-name
+             :ext/description (str (get reg "description"))
+             :ext/kind (str (or (get reg "kind") "python"))
+             :ext/source-nses ['com.blockether.vis.internal.python-extensions]
+             :ext/engine (cond-> {:ext.engine/symbols symbols}
+                           alias-sym
+                           (assoc :ext.engine/alias alias-sym))}
       (get reg "version")
       (assoc :ext/version (str (get reg "version")))
 
@@ -1396,20 +1375,18 @@
    Test modules (`test_*.py` / `*_test.py`) are skipped — they are run by
    `test-python-extensions!`, not loaded. Deduped on canonical path."
   [dirs]
-  (let
-    [files (for
-             [^File d (map io/file dirs)
-              :when (.isDirectory d)
-              ^File child (sort-by #(.getName ^File %) (.listFiles d))
-              ^File f (cond (and (.isFile child)
-                                 (str/ends-with? (.getName child) ".py")
-                                 (not (test-file? child)))
-                            [child]
-                            (.isDirectory child) (let [ep (io/file child "extension.py")]
-                                                   (when (.isFile ep) [ep]))
-                            :else nil)]
+  (let [files (for [^File d (map io/file dirs)
+                    :when (.isDirectory d)
+                    ^File child (sort-by #(.getName ^File %) (.listFiles d))
+                    ^File f (cond (and (.isFile child)
+                                       (str/ends-with? (.getName child) ".py")
+                                       (not (test-file? child)))
+                                  [child]
+                                  (.isDirectory child) (let [ep (io/file child "extension.py")]
+                                                         (when (.isFile ep) [ep]))
+                                  :else nil)]
 
-             f)]
+                f)]
     (->> files
          (reduce (fn [[seen acc] ^File f]
                    (let [p (.getCanonicalPath f)]
@@ -1439,10 +1416,9 @@
    that branch, so a symlink cycle terminates."
   [^File root]
   (let [root-path (.toPath (.getAbsoluteFile root))]
-    (loop
-      [[^File dir & more] [root]
-       seen #{}
-       out []]
+    (loop [[^File dir & more] [root]
+           seen #{}
+           out []]
 
       (if (nil? dir)
         (vec (sort-by first out))
@@ -1544,24 +1520,23 @@
    the context closed) on any failure."
   ([^File f] (load-file! f nil))
   ([^File f frozen]
-   (let
-     [path
-      (.getCanonicalPath f)
+   (let [path
+         (.getCanonicalPath f)
 
-      frozen
-      (or frozen (freeze-root! (import-root f)))
+         frozen
+         (or frozen (freeze-root! (import-root f)))
 
-      ^File snap
-      (:dir frozen)
+         ^File snap
+         (:dir frozen)
 
-      source
-      (slurp (io/file snap (.getName f)))
+         source
+         (slurp (io/file snap (.getName f)))
 
-      sha
-      (extension/sha256-hex source)
+         sha
+         (extension/sha256-hex source)
 
-      ctx
-      (build-context (.getName f))]
+         ctx
+         (build-context (.getName f))]
 
      (try (bind-host! ctx (.getName f))
           (locking ctx
@@ -1579,22 +1554,20 @@
                           "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                           "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
             (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
-          (let
-            [g
-             (.getBindings ctx "python")
+          (let [g
+                (.getBindings ctx "python")
 
-             reg
-             (call-py ctx (.getMember g "__vis_registration__") [])]
+                reg
+                (call-py ctx (.getMember g "__vis_registration__") [])]
 
             (when (nil? reg)
               (throw (ex-info (str (.getName f) " never called vis.extension(...)")
                               {:type ::no-registration :file path})))
-            (let
-              [spec
-               (registration->spec ctx reg)
+            (let [spec
+                  (registration->spec ctx reg)
 
-               validated
-               (extension/register-extension! spec)]
+                  validated
+                  (extension/register-extension! spec)]
 
               (tel/log! {:level :info
                          :id ::loaded
@@ -1629,43 +1602,41 @@
    fails; the caller then reports the original failure."
   [ext-name sym ^Context dead-ctx]
   (try
-    (when-let
-      [[path entry] (first (filter (fn [[_ e]]
-                                     (= ext-name (:ext-name e)))
-                                   @loaded))]
-      (let
-        [entry
-         (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
-           entry
-           ;; The rebuild re-executes the extension, and its whole import root
-           ;; may have moved since this process loaded it — a heal is not a back
-           ;; door for bytes nobody reloaded, and a sidecar module is as much the
-           ;; extension as its entry file. A process serves exactly what its own
-           ;; start or the last `/reload` loaded, so a changed tree heals into
-           ;; nothing and the caller reports the original failure until the next
-           ;; `/reload`.
-           (if-not (= (:code-sha entry) (code-sha (import-root (io/file path))))
-             (do (tel/log! {:level :warn
-                            :id ::heal-refused
-                            :data {:extension ext-name :file path}
-                            :msg (str "Python extension '" ext-name
-                                      "' changed on disk since it was loaded - not running the"
-                                      " new version; run /reload to pick it up")})
-                 nil)
-             (let
-               [rebuilt (load-file! (io/file path)
-                                    (let [snap (io/file (:snapshot entry))]
-                                      (when (.isDirectory snap)
-                                        {:dir snap :code-sha (:code-sha entry)})))]
-               (swap! loaded assoc path (dissoc rebuilt :path))
-               (close-quietly! dead-ctx)
-               (tel/log! {:level :info
-                          :id ::context-rebuilt
-                          :data {:extension ext-name :file path :symbol (str sym)}
-                          :msg
-                          (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
-               (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded))) :removed []})
-               rebuilt)))]
+    (when-let [[path entry] (first (filter (fn [[_ e]]
+                                             (= ext-name (:ext-name e)))
+                                           @loaded))]
+      (let [entry
+            (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
+              entry
+              ;; The rebuild re-executes the extension, and its whole import root
+              ;; may have moved since this process loaded it — a heal is not a back
+              ;; door for bytes nobody reloaded, and a sidecar module is as much the
+              ;; extension as its entry file. A process serves exactly what its own
+              ;; start or the last `/reload` loaded, so a changed tree heals into
+              ;; nothing and the caller reports the original failure until the next
+              ;; `/reload`.
+              (if-not (= (:code-sha entry) (code-sha (import-root (io/file path))))
+                (do (tel/log! {:level :warn
+                               :id ::heal-refused
+                               :data {:extension ext-name :file path}
+                               :msg (str "Python extension '" ext-name
+                                         "' changed on disk since it was loaded - not running the"
+                                         " new version; run /reload to pick it up")})
+                    nil)
+                (let [rebuilt (load-file! (io/file path)
+                                          (let [snap (io/file (:snapshot entry))]
+                                            (when (.isDirectory snap)
+                                              {:dir snap :code-sha (:code-sha entry)})))]
+                  (swap! loaded assoc path (dissoc rebuilt :path))
+                  (close-quietly! dead-ctx)
+                  (tel/log! {:level :info
+                             :id ::context-rebuilt
+                             :data {:extension ext-name :file path :symbol (str sym)}
+                             :msg
+                             (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
+                  (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded)))
+                                             :removed []})
+                  rebuilt)))]
         (some (fn [e]
                 (when (= sym (:ext.symbol/symbol e)) (:ext.symbol/fn e)))
               (get-in (:ext entry) [:ext/engine :ext.engine/symbols]))))
@@ -1697,43 +1668,41 @@
   ([] (load-python-extensions! nil))
   ([{:keys [dirs]}]
    (register-loader-extension!)
-   (let
-     [dirs
-      (or dirs (default-extension-dirs))
+   (let [dirs
+         (or dirs (default-extension-dirs))
 
-      files
-      (scan dirs)
+         files
+         (scan dirs)
 
-      roots
-      (atom {})
+         roots
+         (atom {})
 
-      per-root
-      (fn [k ^File root f]
-        (let [rk (.getCanonicalPath root)]
-          (or (get-in @roots [rk k])
-              (let [v (f root)]
-                (swap! roots assoc-in [rk k] v)
-                v))))
+         per-root
+         (fn [k ^File root f]
+           (let [rk (.getCanonicalPath root)]
+             (or (get-in @roots [rk k])
+                 (let [v (f root)]
+                   (swap! roots assoc-in [rk k] v)
+                   v))))
 
-      fp
-      (mapv (fn [^File f]
-              [(.getCanonicalPath f) (extension/sha256-hex (slurp f))
-               (per-root :code-sha (import-root f) code-sha)])
-            files)]
+         fp
+         (mapv (fn [^File f]
+                 [(.getCanonicalPath f) (extension/sha256-hex (slurp f))
+                  (per-root :code-sha (import-root f) code-sha)])
+               files)]
 
      (if (= fp @last-fingerprint)
        {:loaded (count @loaded) :failed (count @failures) :changed? false}
-       (let
-         [old-loaded
-          @loaded
+       (let [old-loaded
+             @loaded
 
-          old-names
-          (set (map :ext-name (vals old-loaded)))
+             old-names
+             (set (map :ext-name (vals old-loaded)))
 
-          scanned
-          (set (map (fn [^File f]
-                      (.getCanonicalPath f))
-                    files))]
+             scanned
+             (set (map (fn [^File f]
+                         (.getCanonicalPath f))
+                       files))]
 
          (reset! failures [])
          ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
@@ -1747,20 +1716,17 @@
          ;; run the SAME loader and diverge only in the fallback for a failed
          ;; load — nothing to fall back to vs. the retained last-good.
          (doseq [^File f files]
-           (let
-             [path (.getCanonicalPath f)
-              prev-ctx (get-in @loaded [path :context])]
+           (let [path (.getCanonicalPath f)
+                 prev-ctx (get-in @loaded [path :context])]
 
-             (try (let
-                    [{:keys [ext-name] :as entry}
-                     (load-file! f (per-root :frozen (import-root f) freeze-root!))]
+             (try (let [{:keys [ext-name] :as entry}
+                        (load-file! f (per-root :frozen (import-root f) freeze-root!))]
                     ;; A later file (project dir) registering the same extension
                     ;; name supersedes an earlier one at a DIFFERENT path — the
                     ;; registry already swapped the registration; close the
                     ;; superseded context so its adapters can't linger.
-                    (doseq
-                      [[opath {oname :ext-name ^Context octx :context}] @loaded
-                       :when (and (= oname ext-name) (not= opath path))]
+                    (doseq [[opath {oname :ext-name ^Context octx :context}] @loaded
+                            :when (and (= oname ext-name) (not= opath path))]
 
                       (close-quietly! octx)
                       (swap! loaded dissoc opath))
@@ -1775,11 +1741,10 @@
                     (swap! failures conj {:file (str f) :error (ex-message t)})))))
          ;; Files that vanished from disk since the last scan (deleted / renamed)
          ;; have no entry to retain — deregister and close so they don't linger.
-         (doseq
-           [[opath {:keys [ext-name] :as e}]
-            @loaded
+         (doseq [[opath {:keys [ext-name] :as e}]
+                 @loaded
 
-            :when (not (scanned opath))]
+                 :when (not (scanned opath))]
 
            (try (extension/deregister-extension! ext-name) (catch Throwable _))
            (close-quietly! (:context e))
@@ -1788,14 +1753,12 @@
          ;; (its own reload failed) still points at its snapshot, so only trees
          ;; nothing references are removed.
          (let [live (set (keep :snapshot (vals @loaded)))]
-           (doseq
-             [s (distinct (keep :snapshot (vals old-loaded)))
-              :when (not (live s))]
+           (doseq [s (distinct (keep :snapshot (vals old-loaded)))
+                   :when (not (live s))]
 
              (delete-tree! (io/file s)))
-           (doseq
-             [^File s (keep (comp :dir :frozen) (vals @roots))
-              :when (not (live (.getCanonicalPath s)))]
+           (doseq [^File s (keep (comp :dir :frozen) (vals @roots))
+                   :when (not (live (.getCanonicalPath s)))]
 
              (delete-tree! s)))
          (reset! last-fingerprint fp)
@@ -1803,12 +1766,11 @@
          ;; palette). Without this a /reload only updates the GLOBAL
          ;; registry: new extensions stay invisible to running sessions
          ;; and stale env rows keep calling into the closed contexts.
-         (let
-           [entries
-            (vals @loaded)
+         (let [entries
+               (vals @loaded)
 
-            new-names
-            (set (map :ext-name entries))]
+               new-names
+               (set (map :ext-name entries))]
 
            (notify-change-listeners! {:extensions (vec (keep :ext entries))
                                       :removed (vec (sort (remove new-names old-names)))}))
@@ -1849,14 +1811,12 @@
    pre- and post-reload merged config. Each changed key reports only that it
    moved. nil when nothing changed."
   [old new]
-  (let
-    [tokens (keep (fn [k]
-                    (let
-                      [o (get old k)
-                       n (get new k)]
+  (let [tokens (keep (fn [k]
+                       (let [o (get old k)
+                             n (get new k)]
 
-                      (when (not= o n) (name k))))
-                  diffed-config-keys)]
+                         (when (not= o n) (name k))))
+                     diffed-config-keys)]
     (when (seq tokens) (str/join ", " tokens))))
 
 (defn- reload-slash
@@ -1865,44 +1825,44 @@
   ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
   ;; templates, and any extension-owned discovery cache registered as a
   ;; reload hook (harness skills/agents).
-  (let
-    [{:keys [loaded failed]}
-     (reload-python-extensions!)
+  (let [{:keys [loaded failed]}
+        (reload-python-extensions!)
 
-     old-config
-     (config/current-config)
+        old-config
+        (config/current-config)
 
-     _config
-     (config/reload-config!)
+        _config
+        (config/reload-config!)
 
-     ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
-     ;; otherwise hydrated ONLY at process start (gateway
-     ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
-     ;; in-memory registry keeps the pre-edit value, so turning a capability off
-     ;; in `vis.yml` (e.g. `web_search: false`) had no effect until a full
-     ;; restart — `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
-     ;; from the freshly re-read raw config so YAML is the source of truth again;
-     ;; ids absent from the file keep their current in-memory value.
-     _toggles
-     (try (toggles/hydrate-from-config! (or (config/load-config-raw) {})) (catch Throwable _ nil))
+        ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
+        ;; otherwise hydrated ONLY at process start (gateway
+        ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
+        ;; in-memory registry keeps the pre-edit value, so turning a capability off
+        ;; in `vis.yml` (e.g. `web_search: false`) had no effect until a full
+        ;; restart — `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
+        ;; from the freshly re-read raw config so YAML is the source of truth again;
+        ;; ids absent from the file keep their current in-memory value.
+        _toggles
+        (try (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
+             (catch Throwable _ nil))
 
-     cfg-changes
-     (config-diff old-config (config/current-config))
+        cfg-changes
+        (config-diff old-config (config/current-config))
 
-     hook-results
-     (extension/run-reload-hooks!)
+        hook-results
+        (extension/run-reload-hooks!)
 
-     failed-hooks
-     (into []
-           (keep (fn [[id r]]
-                   (when-not (:ok? r) id)))
-           hook-results)
+        failed-hooks
+        (into []
+              (keep (fn [[id r]]
+                      (when-not (:ok? r) id)))
+              hook-results)
 
-     guidance
-     (try (agents/reload!) nil (catch Throwable t (ex-message t)))
+        guidance
+        (try (agents/reload!) nil (catch Throwable t (ex-message t)))
 
-     template-cnt
-     (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
+        template-cnt
+        (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
 
     {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
      :slash/title
@@ -1931,54 +1891,51 @@
    host[:port] → a SOCKS-phase ctx (host + port only, like ssh/db). Returns
    `{:scheme s :ctx m}` or `{:error msg}`."
   [argv]
-  (let
-    [[a b]
-     (remove str/blank? argv)
+  (let [[a b]
+        (remove str/blank? argv)
 
-     [method target]
-     (if (and a b (contains? http-methods (str/upper-case a))) [(str/upper-case a) b] ["GET" a])]
+        [method target]
+        (if (and a b (contains? http-methods (str/upper-case a))) [(str/upper-case a) b] ["GET" a])]
 
     (cond (str/blank? target) {:error "Usage: /net-probe [METHOD] <url | host[:port]>"}
           (re-find #"(?i)^https?://" target)
-          (try (let
-                 [u
-                  (java.net.URI. target)
+          (try (let [u
+                     (java.net.URI. target)
 
-                  host
-                  (.getHost u)
+                     host
+                     (.getHost u)
 
-                  scheme
-                  (str/lower-case (str (.getScheme u)))
+                     scheme
+                     (str/lower-case (str (.getScheme u)))
 
-                  port
-                  (let [p (.getPort u)]
-                    (if (pos? p) p (if (= "https" scheme) 443 80)))
+                     port
+                     (let [p (.getPort u)]
+                       (if (pos? p) p (if (= "https" scheme) 443 80)))
 
-                  raw
-                  (.getRawPath u)
+                     raw
+                     (.getRawPath u)
 
-                  query
-                  (.getRawQuery u)
+                     query
+                     (.getRawQuery u)
 
-                  base
-                  (if (str/blank? raw) "/" raw)
+                     base
+                     (if (str/blank? raw) "/" raw)
 
-                  path
-                  (if (str/blank? query) base (str base "?" query))]
+                     path
+                     (if (str/blank? query) base (str base "?" query))]
 
                  (if (str/blank? host)
                    {:error (str "Can't parse a host out of " target)}
                    {:scheme scheme
                     :ctx {:phase :http :method method :host host :path path :port port}}))
                (catch Exception e {:error (str "Bad URL: " (ex-message e))}))
-          :else (let
-                  [[host ports]
-                   (str/split target #":" 2)
+          :else (let [[host ports]
+                      (str/split target #":" 2)
 
-                   port
-                   (some-> ports
-                           str/trim
-                           parse-long)]
+                      port
+                      (some-> ports
+                              str/trim
+                              parse-long)]
 
                   (if (str/blank? host)
                     {:error (str "Can't parse a host out of " target)}
@@ -1996,21 +1953,20 @@
 
 (defn- render-probe
   [{:keys [scheme ctx]} {:keys [tier1 filters final]}]
-  (let
-    [{:keys [host port method path]}
-     ctx
+  (let [{:keys [host port method path]}
+        ctx
 
-     row
-     (fn [{:keys [owner allow? reason error]}]
-       (str "  • "
-            owner
-            " → "
-            (if allow? "ALLOW" "DENY")
-            (when (and (not allow?) reason (not error)) (str " — " reason))
-            (when error
-              (str "\n      ⚠ CRASHED (fail-closed): "
-                   (:message error)
-                   (when (:trace error) (str "\n" (:trace error)))))))]
+        row
+        (fn [{:keys [owner allow? reason error]}]
+          (str "  • "
+               owner
+               " → "
+               (if allow? "ALLOW" "DENY")
+               (when (and (not allow?) reason (not error)) (str " — " reason))
+               (when error
+                 (str "\n      ⚠ CRASHED (fail-closed): "
+                      (:message error)
+                      (when (:trace error) (str "\n" (:trace error)))))))]
 
     (str "Target: "
          (str/upper-case (str scheme))
@@ -2043,20 +1999,18 @@
   (let [parsed (parse-probe-target (remove str/blank? [method target]))]
     (if-let [e (:error parsed)]
       (json/write-json-str {"error" e})
-      (let
-        [{:keys [scheme ctx]} parsed
-         hdrs (try (let
-                     [m (when-not (str/blank? headers-json)
-                          (json/read-json headers-json :key-fn identity))]
-                     (when (map? m) m))
-                   (catch Throwable _ nil))
-         ctx (cond-> ctx
-               (seq hdrs)
-               (assoc :headers hdrs)
+      (let [{:keys [scheme ctx]} parsed
+            hdrs (try (let [m (when-not (str/blank? headers-json)
+                                (json/read-json headers-json :key-fn identity))]
+                        (when (map? m) m))
+                      (catch Throwable _ nil))
+            ctx (cond-> ctx
+                  (seq hdrs)
+                  (assoc :headers hdrs)
 
-               (not (str/blank? body))
-               (assoc :body body))
-         {:keys [tier1 filters]} (egress/probe (session-network-policy) ctx)]
+                  (not (str/blank? body))
+                  (assoc :body body))
+            {:keys [tier1 filters]} (egress/probe (session-network-policy) ctx)]
 
         (json/write-json-str
           {"scheme" scheme
@@ -2112,12 +2066,11 @@
     ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
     ;; on the runner (which itself depends on this ns's trusted-context builder
     ;; — the one seam that would otherwise be a require cycle).
-    (let
-      [test-cli!
-       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)
+    (let [test-cli!
+          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)
 
-       test-slash
-       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)]
+          test-slash
+          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)]
 
       (extension/register-extension!
         {:ext/name "python-extensions"

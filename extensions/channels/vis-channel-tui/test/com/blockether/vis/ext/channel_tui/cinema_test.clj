@@ -46,10 +46,9 @@
   ([^bytes ba ^String tag] (ascii-index ba tag 0))
   ([^bytes ba ^String tag from]
    (let [t (.getBytes tag "US-ASCII")]
-     (first (for
-              [i (range (long from) (- (alength ba) (alength t)))
-               :when (every? #(= (aget ba (+ (long i) (long %))) (aget t (int %)))
-                             (range (alength t)))]
+     (first (for [i (range (long from) (- (alength ba) (alength t)))
+                  :when (every? #(= (aget ba (+ (long i) (long %))) (aget t (int %)))
+                                (range (alength t)))]
 
               i)))))
 
@@ -69,12 +68,11 @@
 
 (defdescribe frames->mp4-test
              (it "writes a real, non-empty MP4 container"
-                 (let
-                   [f
-                    (mp4! "vis-cinema-test.mp4" 24 true)
+                 (let [f
+                       (mp4! "vis-cinema-test.mp4" 24 true)
 
-                    ba
-                    (bytes-of f)]
+                       ba
+                       (bytes-of f)]
 
                    (expect (.exists f))
                    ;; `ftyp` is the first box of every ISO base-media file.
@@ -82,12 +80,11 @@
                    (expect (some? (ascii-index ba "avc1")))
                    (expect (< 1000 (alength ba)))))
              (it "sizes the video from the CELL metrics, in even H.264 dimensions"
-                 (let
-                   [[w h]
-                    (avc-dimensions (bytes-of (mp4! "vis-cinema-test.mp4" 24 true)))
+                 (let [[w h]
+                       (avc-dimensions (bytes-of (mp4! "vis-cinema-test.mp4" 24 true)))
 
-                    [w2 _]
-                    (avc-dimensions (bytes-of (mp4! "vis-cinema-wide-test.mp4" 48 true)))]
+                       [w2 _]
+                       (avc-dimensions (bytes-of (mp4! "vis-cinema-wide-test.mp4" 48 true)))]
 
                    (expect (pos? w))
                    (expect (pos? h))
@@ -97,12 +94,11 @@
                    ;; Twice the columns is twice the frame, give or take one rounding cell.
                    (expect (< (Math/abs (- (double w2) (* 2.0 w))) (/ w 12.0)))))
              (it "actually PAINTS the glyphs -- text costs bits, blank cells do not"
-                 (let
-                   [inked
-                    (alength (bytes-of (mp4! "vis-cinema-test.mp4" 24 true)))
+                 (let [inked
+                       (alength (bytes-of (mp4! "vis-cinema-test.mp4" 24 true)))
 
-                    blank
-                    (alength (bytes-of (mp4! "vis-cinema-blank-test.mp4" 24 false)))]
+                       blank
+                       (alength (bytes-of (mp4! "vis-cinema-blank-test.mp4" 24 false)))]
 
                    (expect (> inked (* 1.5 blank))))))
 
@@ -123,10 +119,9 @@
   [rows]
   (into {}
         (keep-indexed (fn [y row]
-                        (when-let
-                          [x (first (keep-indexed (fn [x px]
-                                                    (when (not= [255 255 255] px) x))
-                                                  row))]
+                        (when-let [x (first (keep-indexed (fn [x px]
+                                                            (when (not= [255 255 255] px) x))
+                                                          row))]
                           [y x]))
                       rows)))
 
@@ -134,34 +129,32 @@
   grid->png-test
   "`grid->png!` is the \"look at the pixels\" path: ONE captured grid straight to a
    PNG, through the same ops the screencast encodes."
-  (it
-    "paints an untouched grid on the theme's paper, never on a black void"
-    ;; Regression: Lanterna reports an unpainted cell's colour as DEFAULT, which
-    ;; reads back as ANSI black -- every screenshot of the app came out on black
-    ;; paper, a colour the app never shows.
-    (let
-      [paper
-       (:bg (cinema/cell nil))
+  (it "paints an untouched grid on the theme's paper, never on a black void"
+      ;; Regression: Lanterna reports an unpainted cell's colour as DEFAULT, which
+      ;; reads back as ANSI black -- every screenshot of the app came out on black
+      ;; paper, a colour the app never shows.
+      (let [paper
+            (:bg (cinema/cell nil))
 
-       painted
-       (set (apply concat
-              (cap/png-rows (png! "vis-cinema-paper.png" [(vec (repeat 8 (cinema/cell nil)))]))))]
+            painted
+            (set (apply concat
+                   (cap/png-rows (png! "vis-cinema-paper.png"
+                                       [(vec (repeat 8 (cinema/cell nil)))]))))]
 
-      (expect (not= [0 0 0] paper))
-      (expect (= #{paper} painted))))
+        (expect (not= [0 0 0] paper))
+        (expect (= #{paper} painted))))
   (it "joins box-drawing cells into one unbroken rule, with no seam between columns"
       ;; A font's `\u2500` stops at its own advance, so drawn as GLYPHS a border shows
       ;; hairline gaps at the cell seams; drawn as bars through the cell centre it
       ;; cannot. Every column of the middle raster row must therefore carry ink.
-      (let
-        [rows
-         (cap/png-rows
-           (png!
-             "vis-cinema-rule.png"
-             [(row "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" 8 [0 0 0] [255 255 255])]))
+      (let [rows
+            (cap/png-rows
+              (png!
+                "vis-cinema-rule.png"
+                [(row "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" 8 [0 0 0] [255 255 255])]))
 
-         middle
-         (nth rows (quot (count rows) 2))]
+            middle
+            (nth rows (quot (count rows) 2))]
 
         (expect (pos? (count middle)))
         (expect (every? #(not= [255 255 255] %) middle))))
@@ -170,69 +163,66 @@
       ;; to exactly the same outlines as `:weight 400`: the table card's bold
       ;; header -- `:bold true` in the Lanterna back-buffer -- rasterized as plain
       ;; text, and every screenshot taken of it lied about the app.
-      (let
-        [ink
-         (fn [nm bold]
-           (cap/ink (png! nm [(row "Name Size" 12 [0 0 0] [255 255 255] bold)])))
+      (let [ink
+            (fn [nm bold]
+              (cap/ink (png! nm [(row "Name Size" 12 [0 0 0] [255 255 255] bold)])))
 
-         plain
-         (ink "vis-cinema-plain.png" false)
+            plain
+            (ink "vis-cinema-plain.png" false)
 
-         heavy
-         (ink "vis-cinema-bold.png" true)]
+            heavy
+            (ink "vis-cinema-bold.png" true)]
 
         (expect (pos? plain))
         (expect (> heavy (* 1.1 plain)))))
-  (it "slants an ITALIC run instead of painting it upright"
-      ;; Regression: the embedded mono face ships upright ONLY, so `:italic true`
-      ;; on a draw op paints the very same outlines back -- every `p/ITALIC` cell
-      ;; the transcript, the dialogs and the header paint was photographed as
-      ;; roman text.
-      (let
-        [roman
-         (cap/png-rows (png! "vis-cinema-roman.png" [(row "Name Size" 12 [0 0 0] [255 255 255])]))
+  (it
+    "slants an ITALIC run instead of painting it upright"
+    ;; Regression: the embedded mono face ships upright ONLY, so `:italic true`
+    ;; on a draw op paints the very same outlines back -- every `p/ITALIC` cell
+    ;; the transcript, the dialogs and the header paint was photographed as
+    ;; roman text.
+    (let [roman
+          (cap/png-rows (png! "vis-cinema-roman.png" [(row "Name Size" 12 [0 0 0] [255 255 255])]))
 
-         slanted
-         (cap/png-rows (png! "vis-cinema-italic.png"
-                             [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :italic)]))
+          slanted
+          (cap/png-rows (png! "vis-cinema-italic.png"
+                              [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :italic)]))
 
-         upright-profile
-         (left-ink roman)
+          upright-profile
+          (left-ink roman)
 
-         slanted-profile
-         (left-ink slanted)
+          slanted-profile
+          (left-ink slanted)
 
-         top
-         (apply min (keys upright-profile))
+          top
+          (apply min (keys upright-profile))
 
-         bottom
-         (apply max (keys upright-profile))]
+          bottom
+          (apply max (keys upright-profile))]
 
-        (expect (seq upright-profile))
-        (expect (not= roman slanted))
-        ;; a shear MOVES ink sideways; it must not lose the type on the way
-        (expect (< 0.7 (/ (double (cap/ink slanted)) (double (cap/ink roman))) 1.4))
-        ;; the top of the glyphs leans right, the baseline stays where it was
-        (expect (> (long (get slanted-profile top)) (+ 2 (long (get upright-profile top)))))
-        (expect (<= (long (get slanted-profile bottom))
-                    (+ 1 (long (get upright-profile bottom)))))))
+      (expect (seq upright-profile))
+      (expect (not= roman slanted))
+      ;; a shear MOVES ink sideways; it must not lose the type on the way
+      (expect (< 0.7 (/ (double (cap/ink slanted)) (double (cap/ink roman))) 1.4))
+      ;; the top of the glyphs leans right, the baseline stays where it was
+      (expect (> (long (get slanted-profile top)) (+ 2 (long (get upright-profile top)))))
+      (expect (<= (long (get slanted-profile bottom)) (+ 1 (long (get upright-profile bottom)))))))
   (it "paints an UNDERLINE run as a real rule under the baseline"
       ;; Regression: `SGR/UNDERLINE` -- every link the TUI prints -- was dropped by
       ;; the capture outright, so an underlined run rasterized as plain text.
-      (let
-        [rule?
-         (fn [rows]
-           (boolean (some (fn [r]
-                            (every? #(not= [255 255 255] %) (take 80 r)))
-                          rows)))
+      (let [rule?
+            (fn [rows]
+              (boolean (some (fn [r]
+                               (every? #(not= [255 255 255] %) (take 80 r)))
+                             rows)))
 
-         plain
-         (cap/png-rows (png! "vis-cinema-plain-rule.png"
-                             [(row "Name Size" 12 [0 0 0] [255 255 255])]))
+            plain
+            (cap/png-rows (png! "vis-cinema-plain-rule.png"
+                                [(row "Name Size" 12 [0 0 0] [255 255 255])]))
 
-         lined
-         (cap/png-rows (png! "vis-cinema-underline.png"
-                             [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :underline)]))]
+            lined
+            (cap/png-rows (png! "vis-cinema-underline.png"
+                                [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :underline)]))]
 
         (expect (not (rule? plain)))
         (expect (rule? lined))

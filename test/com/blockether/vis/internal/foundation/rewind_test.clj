@@ -33,27 +33,24 @@
   "Runs `body` with a private store root, a private work dir, no git baseline,
    and a clean memo. Both temp trees are removed afterwards."
   [[store work] & body]
-  `(let
-     [root#
-      (tmp-dir "vis-rewind-store")
+  `(let [root#
+         (tmp-dir "vis-rewind-store")
 
-      wd#
-      (tmp-dir "vis-rewind-work")]
+         wd#
+         (tmp-dir "vis-rewind-work")]
 
-     (try (binding
-            [rw/*store-root*
-             root#
+     (try (binding [rw/*store-root*
+                    root#
 
-             rw/*git-baseline?*
-             false]
+                    rw/*git-baseline?*
+                    false]
 
             (rw/reset-memo!)
-            (let
-              [~store
-               root#
+            (let [~store
+                  root#
 
-               ~work
-               wd#]
+                  ~work
+                  wd#]
 
               ~@body))
           (finally (rm-rf root#) (rm-rf wd#)))))
@@ -96,12 +93,11 @@
 (defdescribe round-trip-test
              (it "restores the exact pre-mutation bytes"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (put! (wfile work "a.txt") "ORIGINAL")
+                             (let [f
+                                   (put! (wfile work "a.txt") "ORIGINAL")
 
-                                s
-                                "sess-round"]
+                                   s
+                                   "sess-round"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "WRECKED")
@@ -112,15 +108,14 @@
                                  (expect (= "complete" (get r "coverage")))))))
              (it "round-trips unicode, CRLF and NUL bytes without mangling them"
                  (with-store [_ work]
-                             (let
-                               [content
-                                "héllo — 世界\r\nline2\u0000tail"
+                             (let [content
+                                   "héllo — 世界\r\nline2\u0000tail"
 
-                                f
-                                (put! (wfile work "utf8 with spaces.txt") content)
+                                   f
+                                   (put! (wfile work "utf8 with spaces.txt") content)
 
-                                s
-                                "sess-utf8"]
+                                   s
+                                   "sess-utf8"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "")
@@ -128,12 +123,11 @@
                                (expect (= content (slurp f))))))
              (it "round-trips a zero-byte file"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (put! (wfile work "empty.txt") "")
+                             (let [f
+                                   (put! (wfile work "empty.txt") "")
 
-                                s
-                                "sess-empty"]
+                                   s
+                                   "sess-empty"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "no longer empty")
@@ -142,12 +136,11 @@
                                (expect (zero? (.length f))))))
              (it "deletes a file that did not exist before the turn"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (wfile work "created.txt")
+                             (let [f
+                                   (wfile work "created.txt")
 
-                                s
-                                "sess-created"]
+                                   s
+                                   "sess-created"]
 
                                (expect (not (.exists f)))
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
@@ -157,12 +150,11 @@
                                  (expect (= 1 (get r "deleted")))))))
              (it "recreates a file the turn deleted, including its exec bit"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (put! (wfile work "script.sh") "#!/bin/sh\necho hi\n")
+                             (let [f
+                                   (put! (wfile work "script.sh") "#!/bin/sh\necho hi\n")
 
-                                s
-                                "sess-deleted"]
+                                   s
+                                   "sess-deleted"]
 
                                (.setExecutable f true)
                                (rw/record-pre! (ctx s 1 :fs) [(abs f)])
@@ -174,12 +166,11 @@
                                (expect (.canExecute f)))))
              (it "is idempotent — restoring twice leaves the same tree"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (put! (wfile work "a.txt") "ORIGINAL")
+                             (let [f
+                                   (put! (wfile work "a.txt") "ORIGINAL")
 
-                                s
-                                "sess-idem"]
+                                   s
+                                   "sess-idem"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "WRECKED")
@@ -193,15 +184,14 @@
   turn-semantics-test
   (it "keeps the FIRST pre-image of a turn, not the last"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "V1")
+                  (let [f
+                        (put! (wfile work "a.txt") "V1")
 
-                     s
-                     "sess-first-wins"
+                        s
+                        "sess-first-wins"
 
-                     c
-                     (ctx s 1 :patch)]
+                        c
+                        (ctx s 1 :patch)]
 
                     (rw/record-pre! c [(abs f)])
                     (spit f "V2")
@@ -213,15 +203,14 @@
                     (expect (= 1 (count (filter #(= "pre" (get % "kind")) (rw/journal s))))))))
   (it "rewinds to a chosen turn without undoing earlier turns"
       (with-store [_ work]
-                  (let
-                    [a
-                     (put! (wfile work "a.txt") "A1")
+                  (let [a
+                        (put! (wfile work "a.txt") "A1")
 
-                     b
-                     (put! (wfile work "b.txt") "B1")
+                        b
+                        (put! (wfile work "b.txt") "B1")
 
-                     s
-                     "sess-multi"]
+                        s
+                        "sess-multi"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
@@ -234,12 +223,11 @@
                     (expect (= "A1" (slurp a))))))
   (it "restores a path to its state at the START of the target turn"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "T1")
+                  (let [f
+                        (put! (wfile work "a.txt") "T1")
 
-                     s
-                     "sess-earliest"]
+                        s
+                        "sess-earliest"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "T2")
@@ -255,15 +243,14 @@
                     (expect (= "T2" (slurp f))))))
   (it "reports one rewind point per turn, in order, with the prompt"
       (with-store [_ work]
-                  (let
-                    [a
-                     (put! (wfile work "a.txt") "A")
+                  (let [a
+                        (put! (wfile work "a.txt") "A")
 
-                     b
-                     (put! (wfile work "b.txt") "B")
+                        b
+                        (put! (wfile work "b.txt") "B")
 
-                     s
-                     "sess-points"]
+                        s
+                        "sess-points"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (rw/record-pre! (ctx s 2 :patch) [(abs a) (abs b)])
@@ -280,12 +267,11 @@
                     (expect (= [] (rw/points s))))))
   (it "does not leak the memo across turns of the same session"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "V1")
+                  (let [f
+                        (put! (wfile work "a.txt") "V1")
 
-                     s
-                     "sess-memo"]
+                        s
+                        "sess-memo"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "V2")
@@ -307,12 +293,11 @@
                     (expect (= 1 (count (objects s)))))))
   (it "survives a corrupt journal tail — a crashed append cannot brick history"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "GOOD")
+                  (let [f
+                        (put! (wfile work "a.txt") "GOOD")
 
-                     s
-                     "sess-corrupt"]
+                        s
+                        "sess-corrupt"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (append-raw! s "{\"kind\": \"pre\", trunc")
@@ -326,12 +311,11 @@
   (it "refuses a hand-edited journal entry that points outside an absolute path"
       (with-store
         [_ work]
-        (let
-          [s
-           "sess-traversal"
+        (let [s
+              "sess-traversal"
 
-           victim
-           (put! (wfile work "victim.txt") "UNTOUCHED")]
+              victim
+              (put! (wfile work "victim.txt") "UNTOUCHED")]
 
           (append-raw! s
                        (str "{\"kind\":\"pre\",\"state\":\"absent\",\"turn\":1,\"session\":\"" s
@@ -347,12 +331,11 @@
             (expect (= "UNTOUCHED" (slurp victim)) "a non-normalized path is never applied")))))
   (it "skips instead of crashing when a blob has vanished from the pool"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "a.txt") "ORIGINAL")
 
-                     s
-                     "sess-lost-blob"]
+                        s
+                        "sess-lost-blob"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "WRECKED")
@@ -372,20 +355,18 @@
                       (expect (<= (count (.getName d)) 128))))))
   (it "never rewrites a pooled blob once written"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "STABLE")
+                  (let [f
+                        (put! (wfile work "a.txt") "STABLE")
 
-                     s
-                     "sess-immutable"]
+                        s
+                        "sess-immutable"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
-                    (let
-                      [o
-                       (first (objects s))
+                    (let [o
+                          (first (objects s))
 
-                       before
-                       (.lastModified ^File o)]
+                          before
+                          (.lastModified ^File o)]
 
                       (spit f "STABLE")
                       (rw/record-pre! (ctx s 2 :patch) [(abs f)])
@@ -399,15 +380,14 @@
   (it "restores a symlink as a SYMLINK, not as a copy of its target"
       (with-store
         [_ work]
-        (let
-          [target
-           (put! (wfile work "target.txt") "TARGET")
+        (let [target
+              (put! (wfile work "target.txt") "TARGET")
 
-           link
-           (wfile work "link.txt")
+              link
+              (wfile work "link.txt")
 
-           s
-           "sess-symlink"]
+              s
+              "sess-symlink"]
 
           (Files/createSymbolicLink (.toPath link) (.toPath target) (make-array FileAttribute 0))
           (rw/record-pre! (ctx s 1 :fs) [(abs link)])
@@ -419,15 +399,14 @@
   (it "pre-images the SYMLINK itself and leaves its target alone"
       (with-store
         [_ work]
-        (let
-          [target
-           (put! (wfile work "target.txt") "TARGET")
+        (let [target
+              (put! (wfile work "target.txt") "TARGET")
 
-           link
-           (wfile work "link.txt")
+              link
+              (wfile work "link.txt")
 
-           s
-           "sess-symlink-target"]
+              s
+              "sess-symlink-target"]
 
           (Files/createSymbolicLink (.toPath link) (.toPath target) (make-array FileAttribute 0))
           (rw/record-pre! (ctx s 1 :fs) [(abs link)])
@@ -437,12 +416,11 @@
           (expect (= "TARGET" (slurp target))))))
   (it "restores a whole subtree the turn deleted, and prunes what it added"
       (with-store [_ work]
-                  (let
-                    [d
-                     (wfile work "tree")
+                  (let [d
+                        (wfile work "tree")
 
-                     s
-                     "sess-tree"]
+                        s
+                        "sess-tree"]
 
                     (put! (io/file d "one.txt") "ONE")
                     (put! (io/file d "nested" "two.txt") "TWO")
@@ -454,12 +432,11 @@
                     (expect (= "TWO" (slurp (io/file d "nested" "two.txt")))))))
   (it "prunes a file the turn ADDED to a captured directory"
       (with-store [_ work]
-                  (let
-                    [d
-                     (wfile work "tree")
+                  (let [d
+                        (wfile work "tree")
 
-                     s
-                     "sess-tree-prune"]
+                        s
+                        "sess-tree-prune"]
 
                     (put! (io/file d "one.txt") "ONE")
                     (rw/record-pre! (ctx s 1 :fs) [(abs d)] {:recurse? true})
@@ -469,12 +446,11 @@
                     (expect (not (.exists (io/file d "intruder.txt")))))))
   (it "restores a file that the turn replaced with a directory"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "shape.txt") "I AM A FILE")
+                  (let [f
+                        (put! (wfile work "shape.txt") "I AM A FILE")
 
-                     s
-                     "sess-file-to-dir"]
+                        s
+                        "sess-file-to-dir"]
 
                     (rw/record-pre! (ctx s 1 :fs) [(abs f)])
                     (io/delete-file f)
@@ -485,12 +461,11 @@
                     (expect (= "I AM A FILE" (slurp f))))))
   (it "restores a directory that the turn replaced with a file"
       (with-store [_ work]
-                  (let
-                    [d
-                     (wfile work "shape")
+                  (let [d
+                        (wfile work "shape")
 
-                     s
-                     "sess-dir-to-file"]
+                        s
+                        "sess-dir-to-file"]
 
                     (put! (io/file d "inner.txt") "INNER")
                     (rw/record-pre! (ctx s 1 :fs) [(abs d)] {:recurse? true})
@@ -502,14 +477,12 @@
   (it "marks an oversized file uncovered instead of pretending to cover it"
       (with-store [_ work]
                   (binding [rw/*max-blob-bytes* 8]
-                    (let
-                      [f (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
-                       s "sess-big"]
+                    (let [f (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
+                          s "sess-big"]
 
                       (rw/record-pre! (ctx s 1 :patch) [(abs f)])
-                      (let
-                        [e (first (rw/journal s))
-                         pl (rw/plan s 1)]
+                      (let [e (first (rw/journal s))
+                            pl (rw/plan s 1)]
 
                         (expect (= "uncovered" (get e "kind")))
                         (expect (= "too-large" (get e "reason")))
@@ -519,9 +492,8 @@
   (it "counts an oversized file as an uncovered rewind point, not a silent skip"
       (with-store [_ work]
                   (binding [rw/*max-blob-bytes* 8]
-                    (let
-                      [f (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
-                       s "sess-big-points"]
+                    (let [f (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
+                          s "sess-big-points"]
 
                       (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                       (expect (= 1 (get (first (rw/points s)) "uncovered"))))))))
@@ -531,15 +503,14 @@
 (defdescribe dry-run-test
              (it "reports the plan without touching a single byte"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (put! (wfile work "a.txt") "ORIGINAL")
+                             (let [f
+                                   (put! (wfile work "a.txt") "ORIGINAL")
 
-                                gone
-                                (wfile work "created.txt")
+                                   gone
+                                   (wfile work "created.txt")
 
-                                s
-                                "sess-dry"]
+                                   s
+                                   "sess-dry"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f) (abs gone)])
                                (spit f "WRECKED")
@@ -564,32 +535,30 @@
   around-hook-test
   (it "returns the wrapped op's value unchanged"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "a.txt") "ORIGINAL")
 
-                     s
-                     "sess-hook-value"
+                        s
+                        "sess-hook-value"
 
-                     args
-                     {:path (abs f)}
+                        args
+                        {:path (abs f)}
 
-                     out
-                     (rw/around-hook (env-for s 1)
-                                     :patch
-                                     args
-                                     (fn [a]
-                                       {:echo a :ok true}))]
+                        out
+                        (rw/around-hook (env-for s 1)
+                                        :patch
+                                        args
+                                        (fn [a]
+                                          {:echo a :ok true}))]
 
                     (expect (= {:echo args :ok true} out)))))
   (it "captures a pre-image before the op runs"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "a.txt") "ORIGINAL")
 
-                     s
-                     "sess-hook-capture"]
+                        s
+                        "sess-hook-capture"]
 
                     (rw/around-hook (env-for s 3)
                                     :patch
@@ -602,21 +571,20 @@
                     (expect (= "ORIGINAL" (slurp f))))))
   (it "still captures when the wrapped op THROWS — a failed write can be partial"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "a.txt") "ORIGINAL")
 
-                     s
-                     "sess-hook-throw"
+                        s
+                        "sess-hook-throw"
 
-                     thrown
-                     (try (rw/around-hook (env-for s 1)
-                                          :patch
-                                          {:path (abs f)}
-                                          (fn [_]
-                                            (spit f "HALF")
-                                            (throw (ex-info "boom" {}))))
-                          (catch Exception e e))]
+                        thrown
+                        (try (rw/around-hook (env-for s 1)
+                                             :patch
+                                             {:path (abs f)}
+                                             (fn [_]
+                                               (spit f "HALF")
+                                               (throw (ex-info "boom" {}))))
+                             (catch Exception e e))]
 
                     (expect (instance? clojure.lang.ExceptionInfo thrown))
                     (expect (= "boom" (ex-message thrown)))
@@ -624,12 +592,11 @@
                     (expect (= "ORIGINAL" (slurp f))))))
   (it "is a pass-through when disabled"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "a.txt") "ORIGINAL")
 
-                     s
-                     "sess-hook-off"]
+                        s
+                        "sess-hook-off"]
 
                     (binding [rw/*enabled?* false]
                       (expect (= :ok
@@ -641,12 +608,11 @@
                     (expect (= [] (rw/journal s))))))
   (it "never fails the tool when the store itself is unusable"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "a.txt") "ORIGINAL")
 
-                     blocker
-                     (put! (wfile work "blocked") "not a directory")]
+                        blocker
+                        (put! (wfile work "blocked") "not a directory")]
 
                     ;; Point the store root at a REGULAR FILE: every store write must fail.
                     (binding [rw/*store-root* blocker]
@@ -657,33 +623,32 @@
                                                  (fn [_]
                                                    :ok))))))))
   (it "finds paths at any nesting depth and under every path key"
-      (with-store
-        [_ work]
-        (let
-          [a
-           (put! (wfile work "a.txt") "A")
+      (with-store [_ work]
+                  (let [a
+                        (put! (wfile work "a.txt") "A")
 
-           b
-           (put! (wfile work "b.txt") "B")
+                        b
+                        (put! (wfile work "b.txt") "B")
 
-           c
-           (put! (wfile work "c.txt") "C")
+                        c
+                        (put! (wfile work "c.txt") "C")
 
-           s
-           "sess-hook-walk"
+                        s
+                        "sess-hook-walk"
 
-           args
-           {:edits [{:path (abs a)} {"path" (abs b)}] :nested {:deep {:files [(abs c)]}}}]
+                        args
+                        {:edits [{:path (abs a)} {"path" (abs b)}]
+                         :nested {:deep {:files [(abs c)]}}}]
 
-          (rw/around-hook (env-for s 1)
-                          :patch
-                          args
-                          (fn [_]
-                            :ok))
-          (let [paths (set (map #(get % "path") (rw/journal s)))]
-            (expect (contains? paths (abs a)))
-            (expect (contains? paths (abs b)))
-            (expect (contains? paths (abs c)))))))
+                    (rw/around-hook (env-for s 1)
+                                    :patch
+                                    args
+                                    (fn [_]
+                                      :ok))
+                    (let [paths (set (map #(get % "path") (rw/journal s)))]
+                      (expect (contains? paths (abs a)))
+                      (expect (contains? paths (abs b)))
+                      (expect (contains? paths (abs c)))))))
   (it "hooks every mutating op and the shell sweep"
       (expect (= #{:patch :fs :format_code} rw/mutation-ops))
       (expect (contains? rw/sweep-ops :shell))
@@ -694,56 +659,53 @@
 
 ;; Concurrency
 
-(defdescribe
-  concurrency-test
-  (it "keeps the journal line-atomic under parallel captures"
-      (with-store [_ work]
-                  (let
-                    [s
-                     "sess-parallel"
+(defdescribe concurrency-test
+             (it "keeps the journal line-atomic under parallel captures"
+                 (with-store
+                   [_ work]
+                   (let [s
+                         "sess-parallel"
 
-                     n
-                     40
+                         n
+                         40
 
-                     files
-                     (mapv (fn [i]
-                             (put! (wfile work (str "f" i ".txt")) (str "content-" i)))
-                           (range n))]
+                         files
+                         (mapv (fn [i]
+                                 (put! (wfile work (str "f" i ".txt")) (str "content-" i)))
+                               (range n))]
 
-                    (->> files
-                         (mapv (fn [f]
-                                 (future (rw/record-pre! (ctx s 1 :patch) [(abs f)]))))
-                         (run! deref))
-                    (let
-                      [lines
-                       (journal-lines s)
+                     (->> files
+                          (mapv (fn [f]
+                                  (future (rw/record-pre! (ctx s 1 :patch) [(abs f)]))))
+                          (run! deref))
+                     (let [lines
+                           (journal-lines s)
 
-                       es
-                       (rw/journal s)]
+                           es
+                           (rw/journal s)]
 
-                      (expect (= n (count lines)) "one line per capture, never a torn write")
-                      (expect (= n (count es)) "every line parses")
-                      (expect (= n (count (set (map #(get % "path") es)))))))))
-  (it "captures a path exactly once even when many threads race on it"
-      (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "hot.txt") "ORIGINAL")
+                       (expect (= n (count lines)) "one line per capture, never a torn write")
+                       (expect (= n (count es)) "every line parses")
+                       (expect (= n (count (set (map #(get % "path") es)))))))))
+             (it "captures a path exactly once even when many threads race on it"
+                 (with-store [_ work]
+                             (let [f
+                                   (put! (wfile work "hot.txt") "ORIGINAL")
 
-                     s
-                     "sess-race-one-path"]
+                                   s
+                                   "sess-race-one-path"]
 
-                    (->> (range 40)
-                         (mapv (fn [_]
-                                 (future (rw/record-pre! (ctx s 1 :patch) [(abs f)]))))
-                         (run! deref))
-                    (spit f "WRECKED")
-                    (rw/restore! s 1)
-                    (expect (= "ORIGINAL" (slurp f)))
-                    ;; The memo may admit a few racers, but every pre-image is identical, so
-                    ;; the pool holds exactly one blob and the plan holds exactly one entry.
-                    (expect (= 1 (count (objects s))))
-                    (expect (= 1 (count (get (rw/plan s 1) "restore"))))))))
+                               (->> (range 40)
+                                    (mapv (fn [_]
+                                            (future (rw/record-pre! (ctx s 1 :patch) [(abs f)]))))
+                                    (run! deref))
+                               (spit f "WRECKED")
+                               (rw/restore! s 1)
+                               (expect (= "ORIGINAL" (slurp f)))
+                               ;; The memo may admit a few racers, but every pre-image is identical, so
+                               ;; the pool holds exactly one blob and the plan holds exactly one entry.
+                               (expect (= 1 (count (objects s))))
+                               (expect (= 1 (count (get (rw/plan s 1) "restore"))))))))
 
 ;; Extension contract
 
@@ -788,21 +750,19 @@
                     (expect (= [] (:points (:slash/data r)))))))
   (it "renders the points as a GFM table, one row per turn"
       (with-store [_ work]
-                  (let
-                    [a
-                     (put! (wfile work "src" "app.clj") "A")
+                  (let [a
+                        (put! (wfile work "src" "app.clj") "A")
 
-                     s
-                     "sess-render"]
+                        s
+                        "sess-render"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
-                    (let
-                      [r
-                       (run-rewind s work [])
+                    (let [r
+                          (run-rewind s work [])
 
-                       ls
-                       (str/split-lines (:slash/body r))]
+                          ls
+                          (str/split-lines (:slash/body r))]
 
                       (expect (str/includes? (:slash/title r) "1 rewind point"))
                       (expect (= "| Turn | Files | Ops | What you asked |" (first ls)))
@@ -816,21 +776,19 @@
   (it "keeps a user prompt from tearing the table apart"
       (with-store
         [_ work]
-        (let
-          [a
-           (put! (wfile work "src" "app.clj") "A")
+        (let [a
+              (put! (wfile work "src" "app.clj") "A")
 
-           s
-           "sess-pipe"]
+              s
+              "sess-pipe"]
 
           (rw/record-pre! (assoc (ctx s 1 :patch) :user-request "run a | b\nand pipe it") [(abs a)])
           (spit a "A2")
-          (let
-            [ls
-             (str/split-lines (:slash/body (run-rewind s work [])))
+          (let [ls
+                (str/split-lines (:slash/body (run-rewind s work [])))
 
-             row
-             (nth ls 2)]
+                row
+                (nth ls 2)]
 
             ;; 4 columns + 2 rim pipes, counting only UNESCAPED bars:
             ;; a raw `|` or newline from the prompt would add cells or
@@ -840,22 +798,20 @@
             (expect (str/includes? row "b and pipe") "newlines are folded, not emitted")))))
   (it "gives every dry-run bullet a verb and a workspace-relative path"
       (with-store [_ work]
-                  (let
-                    [a
-                     (put! (wfile work "src" "app.clj") "A")
+                  (let [a
+                        (put! (wfile work "src" "app.clj") "A")
 
-                     s
-                     "sess-plan"]
+                        s
+                        "sess-plan"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs a) (abs (wfile work "src" "new.clj"))])
                     (spit a "A2")
                     (put! (wfile work "src" "new.clj") "NEW")
-                    (let
-                      [r
-                       (run-rewind s work ["1" "--dry-run"])
+                    (let [r
+                          (run-rewind s work ["1" "--dry-run"])
 
-                       bullets
-                       (filter #(str/starts-with? % "- ") (str/split-lines (:slash/body r)))]
+                          bullets
+                          (filter #(str/starts-with? % "- ") (str/split-lines (:slash/body r)))]
 
                       (expect (str/includes? (:slash/title r) "Rewind plan for turn 1"))
                       (expect (= 2 (count bullets)))
@@ -872,12 +828,11 @@
                       (expect (= "A2" (slurp a)) "a dry run touches nothing")))))
   (it "reports what it actually did after applying"
       (with-store [_ work]
-                  (let
-                    [a
-                     (put! (wfile work "src" "app.clj") "A")
+                  (let [a
+                        (put! (wfile work "src" "app.clj") "A")
 
-                     s
-                     "sess-apply"]
+                        s
+                        "sess-apply"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
@@ -915,29 +870,27 @@
     "adds a Ctx column carrying each turn's context size"
     (with-store
       [_ work]
-      (let
-        [a
-         (put! (wfile work "src" "app.clj") "A")
+      (let [a
+            (put! (wfile work "src" "app.clj") "A")
 
-         s
-         "sess-ctx-list"]
+            s
+            "sess-ctx-list"]
 
         (rw/record-pre! (ctx s 1 :patch) [(abs a)])
         (spit a "A2")
-        (let
-          [r
-           (run-rewind-with-store
-             s
-             work
-             []
-             (fn [_ _]
-               [{:position 1 :input-tokens 12480 :output-tokens 500 :iteration-count 3}]))
+        (let [r
+              (run-rewind-with-store
+                s
+                work
+                []
+                (fn [_ _]
+                  [{:position 1 :input-tokens 12480 :output-tokens 500 :iteration-count 3}]))
 
-           ls
-           (str/split-lines (:slash/body r))
+              ls
+              (str/split-lines (:slash/body r))
 
-           point
-           (first (:points (:slash/data r)))]
+              point
+              (first (:points (:slash/data r)))]
 
           (expect (= "| Turn | Files | Ops | Ctx | What you asked |" (first ls)))
           ;; `format "%.1f"` is locale-dependent and rendered "12,5k" on a
@@ -951,25 +904,23 @@
                      (get (:context (:slash/data r)) 1)))))))
   (it "still lists points when the session store is unreachable"
       (with-store [_ work]
-                  (let
-                    [a
-                     (put! (wfile work "src" "app.clj") "A")
+                  (let [a
+                        (put! (wfile work "src" "app.clj") "A")
 
-                     s
-                     "sess-ctx-down"]
+                        s
+                        "sess-ctx-down"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
-                    (let
-                      [r
-                       (run-rewind-with-store s
-                                              work
-                                              []
-                                              (fn [_ _]
-                                                (throw (ex-info "db down" {}))))
+                    (let [r
+                          (run-rewind-with-store s
+                                                 work
+                                                 []
+                                                 (fn [_ _]
+                                                   (throw (ex-info "db down" {}))))
 
-                       ls
-                       (str/split-lines (:slash/body r))]
+                          ls
+                          (str/split-lines (:slash/body r))]
 
                       (expect (= :ok (:slash/status r)))
                       (expect (= "| Turn | Files | Ops | What you asked |" (first ls))
@@ -979,26 +930,24 @@
   (it "tells a dry run which turns stay in the conversation"
       (with-store
         [_ work]
-        (let
-          [a
-           (put! (wfile work "src" "app.clj") "A")
+        (let [a
+              (put! (wfile work "src" "app.clj") "A")
 
-           s
-           "sess-ctx-plan"]
+              s
+              "sess-ctx-plan"]
 
           (rw/record-pre! (ctx s 1 :patch) [(abs a)])
           (spit a "A2")
-          (let
-            [r
-             (run-rewind-with-store s
-                                    work
-                                    ["1" "--dry-run"]
-                                    (fn [_ _]
-                                      [{:position 1 :input-tokens 12000 :iteration-count 2}
-                                       {:position 2 :input-tokens 34000 :iteration-count 4}]))
+          (let [r
+                (run-rewind-with-store s
+                                       work
+                                       ["1" "--dry-run"]
+                                       (fn [_ _]
+                                         [{:position 1 :input-tokens 12000 :iteration-count 2}
+                                          {:position 2 :input-tokens 34000 :iteration-count 4}]))
 
-             body
-             (:slash/body r)]
+                body
+                (:slash/body r)]
 
             (expect (str/includes? body "**Context is untouched**"))
             (expect (str/includes? body "2 turns from turn 1 on are still in the conversation")
@@ -1011,25 +960,23 @@
   (it "keeps the conversation caveat in past tense after applying"
       (with-store
         [_ work]
-        (let
-          [a
-           (put! (wfile work "src" "app.clj") "A")
+        (let [a
+              (put! (wfile work "src" "app.clj") "A")
 
-           s
-           "sess-ctx-applied"]
+              s
+              "sess-ctx-applied"]
 
           (rw/record-pre! (ctx s 1 :patch) [(abs a)])
           (spit a "A2")
-          (let
-            [r
-             (run-rewind-with-store s
-                                    work
-                                    ["1"]
-                                    (fn [_ _]
-                                      [{:position 1 :input-tokens 12000 :iteration-count 2}]))
+          (let [r
+                (run-rewind-with-store s
+                                       work
+                                       ["1"]
+                                       (fn [_ _]
+                                         [{:position 1 :input-tokens 12000 :iteration-count 2}]))
 
-             body
-             (:slash/body r)]
+                body
+                (:slash/body r)]
 
             (expect (= "A" (slurp a)))
             (expect (str/includes? body "**Context is untouched**"))
@@ -1042,12 +989,11 @@
 (defdescribe invented-directory-test
              (it "removes the directories the turn invented, not just the file"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (wfile work "a" "b" "c" "new.txt")
+                             (let [f
+                                   (wfile work "a" "b" "c" "new.txt")
 
-                                s
-                                "sess-invented"]
+                                   s
+                                   "sess-invented"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (put! f "created by the turn")
@@ -1059,15 +1005,14 @@
                                (expect (not (.exists (wfile work "a")))))))
              (it "keeps a directory that already held something"
                  (with-store [_ work]
-                             (let
-                               [kept
-                                (put! (wfile work "d" "keep.txt") "PRE-EXISTING")
+                             (let [kept
+                                   (put! (wfile work "d" "keep.txt") "PRE-EXISTING")
 
-                                f
-                                (wfile work "d" "e" "new.txt")
+                                   f
+                                   (wfile work "d" "e" "new.txt")
 
-                                s
-                                "sess-invented-keep"]
+                                   s
+                                   "sess-invented-keep"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (put! f "created by the turn")
@@ -1078,15 +1023,14 @@
                                (expect (= "PRE-EXISTING" (slurp kept))))))
              (it "keeps an invented directory the turn also filled with an unrecorded sibling"
                  (with-store [_ work]
-                             (let
-                               [f
-                                (wfile work "g" "h" "new.txt")
+                             (let [f
+                                   (wfile work "g" "h" "new.txt")
 
-                                sibling
-                                (wfile work "g" "h" "unrecorded.txt")
+                                   sibling
+                                   (wfile work "g" "h" "unrecorded.txt")
 
-                                s
-                                "sess-invented-sibling"]
+                                   s
+                                   "sess-invented-sibling"]
 
                                (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (put! f "created by the turn")
@@ -1121,15 +1065,14 @@
   hostile-journal-type-test
   (it "survives a durable journal line whose turn is a STRING, not a number"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "a.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "a.txt") "ORIGINAL")
 
-                     ghost
-                     (wfile work "ghost.txt")
+                        ghost
+                        (wfile work "ghost.txt")
 
-                     s
-                     "sess-hostile-types"]
+                        s
+                        "sess-hostile-types"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "WRECKED")
@@ -1150,12 +1093,11 @@
     "treats a missing turn the same way instead of throwing"
     (with-store
       [_ work]
-      (let
-        [f
-         (put! (wfile work "a.txt") "ORIGINAL")
+      (let [f
+            (put! (wfile work "a.txt") "ORIGINAL")
 
-         s
-         "sess-hostile-missing-turn"]
+            s
+            "sess-hostile-missing-turn"]
 
         (rw/record-pre! (ctx s 1 :patch) [(abs f)])
         (append-raw! s "{\"kind\":\"pre\",\"state\":\"absent\",\"path\":\"/nope/never.txt\"}")
@@ -1174,15 +1116,14 @@
   symlink-test
   (it "pre-images the file a symlinked path writes THROUGH, not only the link"
       (with-store [_ work]
-                  (let
-                    [t
-                     (put! (wfile work "target.txt") "TARGET")
+                  (let [t
+                        (put! (wfile work "target.txt") "TARGET")
 
-                     l
-                     (io/file work "link.txt")
+                        l
+                        (io/file work "link.txt")
 
-                     s
-                     "sess-symlink"]
+                        s
+                        "sess-symlink"]
 
                     (Files/createSymbolicLink (.toPath l) (.toPath t) (make-array FileAttribute 0))
                     (rw/record-pre! (ctx s 1 :patch) [(abs l)])
@@ -1196,18 +1137,17 @@
                       (expect (Files/isSymbolicLink (.toPath l)))))))
   (it "degrades on a dangling link, a symlink LOOP and a linked directory"
       (with-store [_ work]
-                  (let
-                    [dangling
-                     (io/file work "dangling")
+                  (let [dangling
+                        (io/file work "dangling")
 
-                     a
-                     (io/file work "a")
+                        a
+                        (io/file work "a")
 
-                     b
-                     (io/file work "b")
+                        b
+                        (io/file work "b")
 
-                     s
-                     "sess-symlink-edges"]
+                        s
+                        "sess-symlink-edges"]
 
                     (Files/createSymbolicLink (.toPath dangling)
                                               (.toPath (io/file work "nope"))
@@ -1233,15 +1173,14 @@
    per doubling, while the set is flat."
   (it "drops a path that is also restorable and keeps a genuinely uncovered one"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "small.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "small.txt") "ORIGINAL")
 
-                     g
-                     (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
+                        g
+                        (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
 
-                     s
-                     "sess-plan-dedup"]
+                        s
+                        "sess-plan-dedup"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     ;; Turn 2 finds the SAME file grown past the blob limit, so it
@@ -1257,12 +1196,11 @@
                       (expect (= [(abs g)] (mapv #(get % "path") (get pl "uncovered"))))))))
   (it "reports complete coverage when every uncovered path is also restorable"
       (with-store [_ work]
-                  (let
-                    [f
-                     (put! (wfile work "small.txt") "ORIGINAL")
+                  (let [f
+                        (put! (wfile work "small.txt") "ORIGINAL")
 
-                     s
-                     "sess-plan-dedup-complete"]
+                        s
+                        "sess-plan-dedup-complete"]
 
                     (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f (apply str (repeat 1000 "y")))

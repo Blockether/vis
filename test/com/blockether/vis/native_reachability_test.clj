@@ -154,12 +154,11 @@
   "The `builtin-extension-nses` vector `build.clj` writes into the image's
    build-time preload list, read from the source it actually ships."
   []
-  (let
-    [src
-     (slurp (io/file "build.clj"))
+  (let [src
+        (slurp (io/file "build.clj"))
 
-     at
-     (str/index-of src "(def ^:private builtin-extension-nses")]
+        at
+        (str/index-of src "(def ^:private builtin-extension-nses")]
 
     (set (edn/read-string (subs src (str/index-of src "[" at))))))
 
@@ -173,12 +172,11 @@
 ;; list and not the other is a binary that cannot start.
 (defdescribe builtin-extension-nses-reach-the-native-image-test
              (it "keeps build.clj's preload copy identical to the list vis requires"
-                 (let
-                   [shipped
-                    (set (map str @#'extension/builtin-extension-nses))
+                 (let [shipped
+                       (set (map str @#'extension/builtin-extension-nses))
 
-                    preloaded
-                    (build-clj-builtin-nses)]
+                       preloaded
+                       (build-clj-builtin-nses)]
 
                    (expect (= shipped preloaded)
                            (str "build.clj's builtin-extension-nses drifted. Missing from the "
@@ -200,15 +198,14 @@
    discovery) plus `:image-nses` (build-time initialized only). Both end up in
    the image's preload list; only the first is required at startup."
   []
-  (set (for
-         [f
-          (extension-manifest-files)
+  (set (for [f
+             (extension-manifest-files)
 
-          [_ entry]
-          (edn/read-string (slurp f))
+             [_ entry]
+             (edn/read-string (slurp f))
 
-          ns
-          (concat (:nses entry) (:image-nses entry))]
+             ns
+             (concat (:nses entry) (:image-nses entry))]
 
          (str ns))))
 
@@ -244,12 +241,11 @@
 ;; stayed green while the binary could not start its own terminal UI.
 (defdescribe nses-loaded-by-name-reach-the-native-image-test
              (it "declares every extension namespace vis resolves by name at run time"
-                 (let
-                   [declared
-                    (declared-image-nses)
+                 (let [declared
+                       (declared-image-nses)
 
-                    missing
-                    (sort (remove declared (nses-loaded-by-name)))]
+                       missing
+                       (sort (remove declared (nses-loaded-by-name)))]
 
                    (expect (empty? missing)
                            (str "these namespaces are loaded by NAME at run time but no extension "

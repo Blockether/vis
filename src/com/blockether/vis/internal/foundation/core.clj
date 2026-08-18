@@ -35,18 +35,17 @@
 (defn- session-workspace-block
   "Resolve the env's pinned workspace and render the canonical session workspace CTX block."
   [env]
-  (let
-    [db
-     (:db-info env)
+  (let [db
+        (:db-info env)
 
-     ws-id
-     (or (:workspace/id env)
-         (some-> env
-                 :workspace
-                 :id))
+        ws-id
+        (or (:workspace/id env)
+            (some-> env
+                    :workspace
+                    :id))
 
-     pair
-     (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
+        pair
+        (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
 
     (workspace-ctx/render-block (assoc (or pair {:workspace (fallback-workspace env)})
                                   :filesystem-roots (workspace/env-filesystem-roots env)))))
@@ -62,14 +61,13 @@
    The old redundant `(:project ctx)` contribution is gone; slim digest
    covers it."
   [env]
-  (let
-    [ws-block
-     (session-workspace-block env)
+  (let [ws-block
+        (session-workspace-block env)
 
-     ;; Recomputed EVERY turn from active-extensions, so the model sees a
-     ;; language pack's verbs (repl_eval/test/format) the turn it activates.
-     lang-tools
-     (language-surface/capability-data env)]
+        ;; Recomputed EVERY turn from active-extensions, so the model sees a
+        ;; language pack's verbs (repl_eval/test/format) the turn it activates.
+        lang-tools
+        (language-surface/capability-data env)]
 
     (cond-> {}
       ws-block

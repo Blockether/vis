@@ -141,12 +141,11 @@
    prose follows and the reason a paragraph beside a table has a straight right
    edge instead of four words and a hole."
   [text width]
-  (let
-    [w
-     (max 1 (long width))
+  (let [w
+        (max 1 (long width))
 
-     flat
-     (flat-text text)]
+        flat
+        (flat-text text)]
 
     (if (str/blank? flat)
       []
@@ -169,24 +168,22 @@
    the styled twin of `primitives/ellipsize`, so a cell too long for its column
    says so with the same `…` the rest of the TUI uses."
   [runs w]
-  (loop
-    [out
-     []
+  (loop [out
+         []
 
-     used
-     0
+         used
+         0
 
-     rs
-     (seq runs)]
+         rs
+         (seq runs)]
 
     (if (or (nil? rs) (>= (long used) (long w)))
       out
-      (let
-        [{:keys [text style]}
-         (first rs)
+      (let [{:keys [text style]}
+            (first rs)
 
-         shown
-         (p/ellipsize (str text) (- (long w) (long used)))]
+            shown
+            (p/ellipsize (str text) (- (long w) (long used)))]
 
         (recur (cond-> out
                  (seq shown)
@@ -199,15 +196,14 @@
    `1m 12s`, `2h 4m`. It rides the band's own rule beside the title, because the
    first question about a running thing is how long it has been running."
   [ms]
-  (let
-    [secs
-     (quot (max 0 (long ms)) 1000)
+  (let [secs
+        (quot (max 0 (long ms)) 1000)
 
-     mins
-     (quot secs 60)
+        mins
+        (quot secs 60)
 
-     hours
-     (quot mins 60)]
+        hours
+        (quot mins 60)]
 
     (cond (< secs 60) (str secs "s")
           (< mins 60) (str mins "m " (rem secs 60) "s")
@@ -363,12 +359,11 @@
    TAIL — the newest lines are the reason anybody is watching — and every keyed
    node the HEAD of the order it declared."
   [items is-expanded is-tail]
-  (let
-    [n
-     (count items)
+  (let [n
+        (count items)
 
-     limit
-     (long node-window)]
+        limit
+        (long node-window)]
 
     (if (or is-expanded (<= n limit))
       {:shown (vec items) :behind 0}
@@ -424,24 +419,22 @@
    widening the terminal restores the columns instead of re-measuring them from
    whatever rows happen to be on screen."
   [widths text-w]
-  (let
-    [n
-     (count widths)
+  (let [n
+        (count widths)
 
-     chrome
-     (table-chrome n)
+        chrome
+        (table-chrome n)
 
-     room
-     (max n (- (long text-w) chrome))]
+        room
+        (max n (- (long text-w) chrome))]
 
     (loop [ws (mapv #(max 1 (long %)) widths)]
       (if (or (<= (long (reduce + 0 ws)) room) (every? #(<= (long %) 1) ws))
         ws
-        (let
-          [idx (first (apply max-key
-                        (fn [[_ w]]
-                          (long w))
-                        (map-indexed vector ws)))]
+        (let [idx (first (apply max-key
+                           (fn [[_ w]]
+                             (long w))
+                           (map-indexed vector ws)))]
           (recur (update ws idx #(max 1 (dec (long %))))))))))
 
 (defn- filled-widths
@@ -453,23 +446,21 @@
    table still loading, and because the column that holds free text is the one
    that can use the room."
   [widths text-w]
-  (let
-    [n
-     (count widths)
+  (let [n
+        (count widths)
 
-     chrome
-     (table-chrome n)
+        chrome
+        (table-chrome n)
 
-     slack
-     (- (long text-w) chrome (long (reduce + 0 (map long widths))))]
+        slack
+        (- (long text-w) chrome (long (reduce + 0 (map long widths))))]
 
     (if (or (zero? n) (<= slack 0))
       (vec widths)
-      (let
-        [idx (first (apply max-key
-                      (fn [[_ w]]
-                        (long w))
-                      (map-indexed vector widths)))]
+      (let [idx (first (apply max-key
+                         (fn [[_ w]]
+                           (long w))
+                         (map-indexed vector widths)))]
         (update (vec widths) idx #(+ (long %) slack))))))
 
 (defn- run-segments
@@ -499,12 +490,11 @@
   "One table cell: its inline markdown cut to the column and padded to it, on the
    side its declared alignment asks for."
   [runs w align fg styles]
-  (let
-    [cut
-     (runs-cut runs w)
+  (let [cut
+        (runs-cut runs w)
 
-     pad
-     (apply str (repeat (max 0 (- (long w) (runs-width cut))) \space))]
+        pad
+        (apply str (repeat (max 0 (- (long w) (runs-width cut))) \space))]
 
     (if (= :right align)
       (into [{:text pad}] (run-segments cut fg styles))
@@ -553,14 +543,13 @@
 
 (defmethod node-rows :status
   [{:keys [id text detail tone]} {:keys [text-w]}]
-  (let
-    [glyph
-     (str (get tone-glyph tone "·") " ")
+  (let [glyph
+        (str (get tone-glyph tone "·") " ")
 
-     ;; The glyph's two columns become a hanging indent under it, so a statement
-     ;; that wraps reads as ONE paragraph and not as two unrelated rows.
-     body
-     (max 4 (- (long text-w) 2))]
+        ;; The glyph's two columns become a hanging indent under it, so a statement
+        ;; that wraps reads as ONE paragraph and not as two unrelated rows.
+        body
+        (max 4 (- (long text-w) 2))]
 
     (into (vec (map-indexed
                  (fn [idx runs]
@@ -581,20 +570,19 @@
   (if (seq stats)
     ;; A strip, not a column: the counters pack onto as few rows as the terminal
     ;; allows, because a score reads at a glance or not at all.
-    (let
-      [cells
-       (mapv (fn [{:keys [label value-text tone] :as stat}]
-               {:label (md-runs label)
-                :value (md-runs value-text)
-                :tone tone
-                :is-fresh (contains? fresh (:id stat))})
-             stats)
+    (let [cells
+          (mapv (fn [{:keys [label value-text tone] :as stat}]
+                  {:label (md-runs label)
+                   :value (md-runs value-text)
+                   :tone tone
+                   :is-fresh (contains? fresh (:id stat))})
+                stats)
 
-       width
-       (fn [{:keys [label value]}]
-         ;; What [[paint-entry!]] really puts down — `label value` and the gap
-         ;; after it — so a row is measured by exactly what it costs.
-         (+ 4 (runs-width label) (runs-width value)))]
+          width
+          (fn [{:keys [label value]}]
+            ;; What [[paint-entry!]] really puts down — `label value` and the gap
+            ;; after it — so a row is measured by exactly what it costs.
+            (+ 4 (runs-width label) (runs-width value)))]
 
       (->> cells
            (reduce (fn [rows cell]
@@ -613,43 +601,43 @@
   [{:keys [id steps]} {:keys [text-w fresh is-expanded]}]
   (if (seq steps)
     (let [{:keys [shown behind]} (windowed steps is-expanded false)]
-      (cond->
-        (mapv
-          (fn [{:keys [label detail value tone] :as step}]
-            (let
-              [is-fresh (contains? fresh (:id step))
-               ink (tone-fg tone)
-               styles (if is-fresh [p/BOLD] [])
-               said (into [{:text (str (get tone-glyph tone "·") " ") :fg ink :styles styles}]
-                          cat
-                          [(run-segments (md-runs label) ink styles)
-                           (when (seq (flat-text detail))
-                             (into [{:text " — " :fg t/dialog-hint}]
-                                   (run-segments (md-runs detail) t/dialog-hint [])))])
-               ;; What the step REPORTS rides the right edge, where a table
-               ;; keeps its numbers, so a checklist and a table beside it read
-               ;; down the same column.
-               reported (when (seq (flat-text value))
-                          (run-segments (md-runs value) t/dialog-hint []))
-               segments
-               (cond-> said
-                 reported
-                 (conj {:text (apply str
-                                (repeat
-                                  (max 1 (- (long text-w) (runs-width said) (runs-width reported)))
-                                  \space))})
+      (cond-> (mapv
+                (fn [{:keys [label detail value tone] :as step}]
+                  (let [is-fresh (contains? fresh (:id step))
+                        ink (tone-fg tone)
+                        styles (if is-fresh [p/BOLD] [])
+                        said (into
+                               [{:text (str (get tone-glyph tone "·") " ") :fg ink :styles styles}]
+                               cat
+                               [(run-segments (md-runs label) ink styles)
+                                (when (seq (flat-text detail))
+                                  (into [{:text " — " :fg t/dialog-hint}]
+                                        (run-segments (md-runs detail) t/dialog-hint [])))])
+                        ;; What the step REPORTS rides the right edge, where a table
+                        ;; keeps its numbers, so a checklist and a table beside it read
+                        ;; down the same column.
+                        reported (when (seq (flat-text value))
+                                   (run-segments (md-runs value) t/dialog-hint []))
+                        segments (cond-> said
+                                   reported
+                                   (conj {:text (apply str
+                                                  (repeat (max 1
+                                                               (- (long text-w)
+                                                                  (runs-width said)
+                                                                  (runs-width reported)))
+                                                          \space))})
 
-                 reported
-                 (into reported))]
+                                   reported
+                                   (into reported))]
 
-              {:kind :step
-               :node-id id
-               :item-id (:id step)
-               :tone tone
-               :is-fresh is-fresh
-               :segments segments
-               :text (segment-line segments)}))
-          shown)
+                    {:kind :step
+                     :node-id id
+                     :item-id (:id step)
+                     :tone tone
+                     :is-fresh is-fresh
+                     :segments segments
+                     :text (segment-line segments)}))
+                shown)
         (pos? (long behind))
         (conj (more-row id behind "step"))))
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
@@ -657,14 +645,13 @@
 (defmethod node-rows :log
   [{:keys [id lines total-lines]} {:keys [is-expanded]}]
   (if (seq lines)
-    (let
-      [{:keys [shown]}
-       (windowed lines is-expanded true)
+    (let [{:keys [shown]}
+          (windowed lines is-expanded true)
 
-       ;; What is behind the log is what the RECORD holds, not what the window
-       ;; cut: the sink keeps every line that was ever accepted.
-       behind
-       (- (long (or total-lines (count lines))) (count shown))]
+          ;; What is behind the log is what the RECORD holds, not what the window
+          ;; cut: the sink keeps every line that was ever accepted.
+          behind
+          (- (long (or total-lines (count lines))) (count shown))]
 
       (into (if (pos? behind)
               [{:kind :note
@@ -678,68 +665,67 @@
 
 (defmethod node-rows :table
   [{:keys [id columns] :as node} {:keys [text-w widths fresh is-expanded]}]
-  (let
-    [ordered
-     (live/ordered-rows node)
+  (let [ordered
+        (live/ordered-rows node)
 
-     {:keys [shown behind]}
-     (windowed ordered is-expanded false)
+        {:keys [shown behind]}
+        (windowed ordered is-expanded false)
 
-     ;; Measured from the painted window and never narrower than last time; the
-     ;; FIT is what a cramped terminal does to the paint, and it is deliberately
-     ;; not what the pane remembers.
-     measured
-     (grown-widths (get widths id) (desired-widths columns shown))
+        ;; Measured from the painted window and never narrower than last time; the
+        ;; FIT is what a cramped terminal does to the paint, and it is deliberately
+        ;; not what the pane remembers.
+        measured
+        (grown-widths (get widths id) (desired-widths columns shown))
 
-     ;; Squeezed if it must be, then GROWN into whatever the band has left: a
-     ;; table is a block, and a block that ends in mid-air reads as unfinished.
-     ws
-     (filled-widths (fitted-widths measured text-w) text-w)
+        ;; Squeezed if it must be, then GROWN into whatever the band has left: a
+        ;; table is a block, and a block that ends in mid-air reads as unfinished.
+        ws
+        (filled-widths (fitted-widths measured text-w) text-w)
 
-     aligns
-     (mapv #(or (:align %) :left) columns)
+        aligns
+        (mapv #(or (:align %) :left) columns)
 
-     line
-     (fn [cells fg styles]
-       (let [segments (table-segments ws cells aligns fg styles)]
-         {:segments segments :text (segment-line segments)}))
+        line
+        (fn [cells fg styles]
+          (let [segments (table-segments ws cells aligns fg styles)]
+            {:segments segments :text (segment-line segments)}))
 
-     rule
-     (fn [edge]
-       {:kind :trule :node-id id :text (rule-line ws edge)})
+        rule
+        (fn [edge]
+          {:kind :trule :node-id id :text (rule-line ws edge)})
 
-     ;; A rail between EVERY pair of rows: a live table is read while it fills,
-     ;; and the eye needs the line that says where one row's answer ends and the
-     ;; next one begins — especially when a cell wears a tone of its own.
-     body
-     (if (seq shown)
-       (into []
-             (comp (map-indexed (fn [idx row]
-                                  (let [is-fresh (contains? fresh (:id row))]
-                                    [(when (pos? (long idx)) (rule :mid))
-                                     (merge {:kind :trow
-                                             :node-id id
-                                             :item-id (:id row)
-                                             :tone (:tone row)
-                                             :is-fresh is-fresh}
-                                            (line (map-indexed (fn [col-idx _]
-                                                                 (md-runs (cell-of row col-idx)))
-                                                               columns)
-                                                  (tone-fg (:tone row))
-                                                  (if is-fresh [p/BOLD] [])))])))
-                   cat
-                   (remove nil?))
-             shown)
-       (let [segments (span-segments ws (empty-text :table) t/dialog-hint [p/ITALIC])]
-         [{:kind :empty :node-id id :segments segments :text (segment-line segments)}]))]
+        ;; A rail between EVERY pair of rows: a live table is read while it fills,
+        ;; and the eye needs the line that says where one row's answer ends and the
+        ;; next one begins — especially when a cell wears a tone of its own.
+        body
+        (if (seq shown)
+          (into []
+                (comp (map-indexed (fn [idx row]
+                                     (let [is-fresh (contains? fresh (:id row))]
+                                       [(when (pos? (long idx)) (rule :mid))
+                                        (merge {:kind :trow
+                                                :node-id id
+                                                :item-id (:id row)
+                                                :tone (:tone row)
+                                                :is-fresh is-fresh}
+                                               (line (map-indexed (fn [col-idx _]
+                                                                    (md-runs (cell-of row col-idx)))
+                                                                  columns)
+                                                     (tone-fg (:tone row))
+                                                     (if is-fresh [p/BOLD] [])))])))
+                      cat
+                      (remove nil?))
+                shown)
+          (let [segments (span-segments ws (empty-text :table) t/dialog-hint [p/ITALIC])]
+            [{:kind :empty :node-id id :segments segments :text (segment-line segments)}]))]
 
-    (with-meta (cond->
-                 (-> [(rule :top)
-                      (merge {:kind :thead :node-id id}
-                             (line (mapv #(md-runs (:label %)) columns) t/dialog-hint [p/BOLD]))
-                      (rule :mid)]
-                     (into body)
-                     (conj (rule :bottom)))
+    (with-meta (cond-> (-> [(rule :top)
+                            (merge
+                              {:kind :thead :node-id id}
+                              (line (mapv #(md-runs (:label %)) columns) t/dialog-hint [p/BOLD]))
+                            (rule :mid)]
+                           (into body)
+                           (conj (rule :bottom)))
                  (pos? (long behind))
                  (conj (more-row id behind "row")))
       {:widths {id measured}})))
@@ -748,18 +734,17 @@
   [{:keys [id links]} {:keys [fresh is-expanded]}]
   (if (seq links)
     (let [{:keys [shown behind]} (windowed links is-expanded false)]
-      (cond->
-        (mapv (fn [{:keys [label target-kind target tone] :as link}]
-                {:kind :link
-                 :node-id id
-                 :item-id (:id link)
-                 :text (flat-text label)
-                 :runs (md-runs label)
-                 :target (str target)
-                 :target-kind target-kind
-                 :tone tone
-                 :is-fresh (contains? fresh (:id link))})
-              shown)
+      (cond-> (mapv (fn [{:keys [label target-kind target tone] :as link}]
+                      {:kind :link
+                       :node-id id
+                       :item-id (:id link)
+                       :text (flat-text label)
+                       :runs (md-runs label)
+                       :target (str target)
+                       :target-kind target-kind
+                       :tone tone
+                       :is-fresh (contains? fresh (:id link))})
+                    shown)
         (pos? (long behind))
         (conj (more-row id behind "link"))))
     [{:kind :empty :node-id id :text (empty-text :link)}]))
@@ -807,26 +792,25 @@
    The row of air between two sections belongs to whoever stacks them, never to
    the node, so two nodes standing side by side start on the same line."
   [node ctx fresh text-w]
-  (let
-    [children
-     (not-empty (:fields node))
+  (let [children
+        (not-empty (:fields node))
 
-     cell-w
-     (when children (columns/cell-width text-w (count children)))
+        cell-w
+        (when children (columns/cell-width text-w (count children)))
 
-     is-split
-     (boolean (and children (= :row (:direction node)) (>= (long cell-w) (long min-column-w))))
+        is-split
+        (boolean (and children (= :row (:direction node)) (>= (long cell-w) (long min-column-w))))
 
-     parts
-     (when children (mapv #(node-section % ctx fresh (if is-split cell-w text-w)) children))
+        parts
+        (when children (mapv #(node-section % ctx fresh (if is-split cell-w text-w)) children))
 
-     body
-     (cond (nil? children) (node-rows node (ctx node text-w))
-           is-split (split-rows parts)
-           :else (stacked-rows parts))
+        body
+        (cond (nil? children) (node-rows node (ctx node text-w))
+              is-split (split-rows parts)
+              :else (stacked-rows parts))
 
-     label
-     (flat-text (:label node))]
+        label
+        (flat-text (:label node))]
 
     (with-meta (cond-> []
                  (seq label)
@@ -847,24 +831,23 @@
    what the tables measured this pass, on its way back into the pane through
    [[painted]]."
   [pane text-w]
-  (let
-    [{:keys [view widths fresh expanded]}
-     pane
+  (let [{:keys [view widths fresh expanded]}
+        pane
 
-     ctx
-     (fn [node w]
-       {:text-w w
-        :widths widths
-        :fresh (get-in fresh [:items (:id node)] #{})
-        :is-expanded (contains? (set expanded) (:id node))})
+        ctx
+        (fn [node w]
+          {:text-w w
+           :widths widths
+           :fresh (get-in fresh [:items (:id node)] #{})
+           :is-expanded (contains? (set expanded) (:id node))})
 
-     head
-     (mapv (fn [runs]
-             {:kind :prose :runs runs :text (segment-line runs)})
-           (md-lines (:description view) text-w))
+        head
+        (mapv (fn [runs]
+                {:kind :prose :runs runs :text (segment-line runs)})
+              (md-lines (:description view) text-w))
 
-     sections
-     (mapv #(node-section % ctx fresh (long text-w)) (:nodes view))]
+        sections
+        (mapv #(node-section % ctx fresh (long text-w)) (:nodes view))]
 
     (with-meta (into head (stacked-rows sections))
       {:widths (reduce merge {} (map (comp :widths meta) sections))})))
@@ -889,25 +872,24 @@
    collapsed) falls back to the node it belonged to, and then to the raw offset,
    so the eye lands near what it was on instead of at the top."
   ^long [pane rows visible]
-  (let
-    [rows
-     (vec rows)
+  (let [rows
+        (vec rows)
 
-     limit
-     (max 0 (- (count rows) (long visible)))
+        limit
+        (max 0 (- (count rows) (long visible)))
 
-     [node-id item-id :as anchor]
-     (:anchor pane)
+        [node-id item-id :as anchor]
+        (:anchor pane)
 
-     found
-     (when anchor
-       (or (first (keep-indexed (fn [idx row]
-                                  (when (and (= node-id (:node-id row)) (= item-id (:item-id row)))
-                                    idx))
-                                rows))
-           (first (keep-indexed (fn [idx row]
-                                  (when (= node-id (:node-id row)) idx))
-                                rows))))]
+        found
+        (when anchor
+          (or (first (keep-indexed
+                       (fn [idx row]
+                         (when (and (= node-id (:node-id row)) (= item-id (:item-id row))) idx))
+                       rows))
+              (first (keep-indexed (fn [idx row]
+                                     (when (= node-id (:node-id row)) idx))
+                                   rows))))]
 
     (cond (:is-following pane) limit
           found (clamp (long found) 0 limit)
@@ -921,14 +903,13 @@
    the first thing the human asks a picture that appeared on its own is who put
    it there."
   [pane now-ms]
-  (let
-    [{:keys [title source created-at]}
-     (:view pane)
+  (let [{:keys [title source created-at]}
+        (:view pane)
 
-     ;; A settled view stops counting: what a finished run wears is how long it
-     ;; TOOK, not how long ago it ended.
-     end
-     (long (or (:ended-at (:settled pane)) now-ms))]
+        ;; A settled view stops counting: what a finished run wears is how long it
+        ;; TOOK, not how long ago it ended.
+        end
+        (long (or (:ended-at (:settled pane)) now-ms))]
 
     (str/join " · "
               (remove str/blank?
@@ -939,15 +920,14 @@
   "The one line a view is worth when it is not the pane in front: its newest
    status, else its progress, else what it is called."
   [pane]
-  (let
-    [nodes
-     (get-in pane [:view :nodes])
+  (let [nodes
+        (get-in pane [:view :nodes])
 
-     status
-     (first (filter #(= :status (:type %)) nodes))
+        status
+        (first (filter #(= :status (:type %)) nodes))
 
-     progress
-     (first (filter #(= :progress (:type %)) nodes))]
+        progress
+        (first (filter #(= :progress (:type %)) nodes))]
 
     (cond (and status (seq (flat-text (:text status)))) {:text (flat-text (:text status))
                                                          :tone (:tone status)}
@@ -1096,24 +1076,22 @@
    The fraction is the engine's own [[live/fraction]], so a node that declared
    `:done` of `:total` and one that declared a `:value` paint the same bar."
   [{:keys [done total] :as entry}]
-  (let
-    [counted
-     (when done (str done (when total (str "/" total)) " done"))
+  (let [counted
+        (when done (str done (when total (str "/" total)) " done"))
 
-     value
-     (live/fraction entry)]
+        value
+        (live/fraction entry)]
 
     (if (nil? value)
       (str/join "  ·  " (remove str/blank? ["working" counted]))
-      (let
-        [pct
-         (live/percent value)
+      (let [pct
+            (live/percent value)
 
-         filled
-         (clamp (long (Math/round (* (double bar-w) (double value)))) 0 (long bar-w))
+            filled
+            (clamp (long (Math/round (* (double bar-w) (double value)))) 0 (long bar-w))
 
-         bar
-         (str (apply str (repeat filled "▰")) (apply str (repeat (- (long bar-w) filled) "▱")))]
+            bar
+            (str (apply str (repeat filled "▰")) (apply str (repeat (- (long bar-w) filled) "▱")))]
 
         (str/join "  ·  " (remove str/blank? [(str bar "  " pct "%") counted]))))))
 
@@ -1213,15 +1191,14 @@
         ;; The terminal already knows how to open a URL and a path — a live link
         ;; registers as the SAME click region the transcript's own links do, so
         ;; there is no second opener to keep in step.
-        (when-let
-          [kind (case (:target-kind entry)
-                  :url
-                  :url
+        (when-let [kind (case (:target-kind entry)
+                          :url
+                          :url
 
-                  :path
-                  :file
+                          :path
+                          :file
 
-                  nil)]
+                          nil)]
           (cr/register! {:bounds
                          {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
                          :kind kind
@@ -1244,9 +1221,8 @@
     :columns
     (do (fill! g left row inner-w t/dialog-fg)
         (reduce (fn [pos [[x width] cell]]
-                  (let
-                    [here (when cell
-                            (paint-entry! g (+ (long left) (long x)) row width view-id cell))]
+                  (let [here (when cell
+                               (paint-entry! g (+ (long left) (long x)) row width view-id cell))]
                     (or pos here)))
                 nil
                 (map vector (columns/slots inner-w (count (:cells entry))) (:cells entry))))
@@ -1277,30 +1253,29 @@
    A SETTLED view says instead how it ENDED, how much record it left and how long
    it ran — the three things asked of a finished run — and its line is pressable."
   [pane]
-  (let
-    [{:keys [reason ended-at]}
-     (:settled pane)
+  (let [{:keys [reason ended-at]}
+        (:settled pane)
 
-     view
-     (:view pane)
+        view
+        (:view pane)
 
-     lines
-     (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
+        lines
+        (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
 
-     tone
-     (if (settled? pane)
-       (case reason
-         :completed
-         :ok
+        tone
+        (if (settled? pane)
+          (case reason
+            :completed
+            :ok
 
-         :failed
-         :error
+            :failed
+            :error
 
-         :interrupted
-         :warn
+            :interrupted
+            :warn
 
-         :idle)
-       (:tone (status-summary pane)))]
+            :idle)
+          (:tone (status-summary pane)))]
 
     {:kind :collapsed
      :node-id nil
@@ -1327,12 +1302,11 @@
    the transcript'."
   [cols rows panes content-top prompt-h]
   (when (seq panes)
-    (let
-      [region
-       (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
+    (let [region
+          (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
 
-       {:keys [sep-row foot-row]}
-       (tr/band-geometry region 1 false)]
+          {:keys [sep-row foot-row]}
+          (tr/band-geometry region 1 false)]
 
       [(long sep-row) (long foot-row)])))
 
@@ -1357,53 +1331,51 @@
    (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]
    (when (seq panes)
-     (let
-       [{:keys [left inner-w] :as region}
-        (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
+     (let [{:keys [left inner-w] :as region}
+           (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
        (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
-         (let
-           [left (long left)
-            inner-w (long inner-w)
-            body-w (dec inner-w)
-            ;; The body opens one column inside the rails and the row painters
-            ;; take the next one, so nothing a view paints ever touches a rail —
-            ;; and the right lane stays clear for the scrollbar.
-            text-w (max 8 (- body-w 4))
-            ;; The pane IN FRONT is the newest view still RUNNING. A settled one has
-            ;; already given its rows back to the transcript and keeps only the
-            ;; line that reopens it — so when every view has settled the band IS
-            ;; that line, until the human presses it.
-            front (last (remove dormant? panes))
-            others (if front (vec (remove #(identical? % front) panes)) (vec panes))
-            collapsed (mapv collapsed-row others)
-            rows-plan (if front (plan front text-w) [])
-            ;; Half the rows between the top of the transcript and the prompt, at
-            ;; the most: the run this view reports on is still being read above it.
-            room (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
-            ;; An ARMED stop takes two body rows: the line the human types into and
-            ;; the rule that fences it off from the view above. The band asks WHY it
-            ;; is being stopped where it is being stopped, and the answer rides
-            ;; along with the stop — but the question is the BAND speaking, not one
-            ;; more row of the run's own report, so it is ruled off on both sides.
-            stop (stop-prompt front)
-            ;; What the band WANTS: every collapsed line, the plan, the row the
-            ;; fenced hint rule costs, and that note line when it is armed.
-            wanted (+ (count collapsed) (count rows-plan) 1 (if stop 2 0))
-            {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
-            (tr/band-geometry region (min wanted room) false)
-            ;; The band CLOSES below its hint bar, exactly like the form's: the
-            ;; bar takes the row the closing rule used to own, the rule drops onto
-            ;; the host's hint row, and the fence above the bar costs the body one
-            ;; row.
-            hint-at (long foot-rule-row)
-            rule-at (long foot-row)
-            hint-rule-at (dec hint-at)
-            visible (max 1 (dec (long visible)))
-            body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
-            total (count rows-plan)
-            start (if front (offset front rows-plan body-visible) 0)
-            shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
-            view-id (view-id front)]
+         (let [left (long left)
+               inner-w (long inner-w)
+               body-w (dec inner-w)
+               ;; The body opens one column inside the rails and the row painters
+               ;; take the next one, so nothing a view paints ever touches a rail —
+               ;; and the right lane stays clear for the scrollbar.
+               text-w (max 8 (- body-w 4))
+               ;; The pane IN FRONT is the newest view still RUNNING. A settled one has
+               ;; already given its rows back to the transcript and keeps only the
+               ;; line that reopens it — so when every view has settled the band IS
+               ;; that line, until the human presses it.
+               front (last (remove dormant? panes))
+               others (if front (vec (remove #(identical? % front) panes)) (vec panes))
+               collapsed (mapv collapsed-row others)
+               rows-plan (if front (plan front text-w) [])
+               ;; Half the rows between the top of the transcript and the prompt, at
+               ;; the most: the run this view reports on is still being read above it.
+               room (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
+               ;; An ARMED stop takes two body rows: the line the human types into and
+               ;; the rule that fences it off from the view above. The band asks WHY it
+               ;; is being stopped where it is being stopped, and the answer rides
+               ;; along with the stop — but the question is the BAND speaking, not one
+               ;; more row of the run's own report, so it is ruled off on both sides.
+               stop (stop-prompt front)
+               ;; What the band WANTS: every collapsed line, the plan, the row the
+               ;; fenced hint rule costs, and that note line when it is armed.
+               wanted (+ (count collapsed) (count rows-plan) 1 (if stop 2 0))
+               {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
+               (tr/band-geometry region (min wanted room) false)
+               ;; The band CLOSES below its hint bar, exactly like the form's: the
+               ;; bar takes the row the closing rule used to own, the rule drops onto
+               ;; the host's hint row, and the fence above the bar costs the body one
+               ;; row.
+               hint-at (long foot-rule-row)
+               rule-at (long foot-row)
+               hint-rule-at (dec hint-at)
+               visible (max 1 (dec (long visible)))
+               body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
+               total (count rows-plan)
+               start (if front (offset front rows-plan body-visible) 0)
+               shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
+               view-id (view-id front)]
 
            (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
            ;; The title is the rule's own label — `── CI · 1m 12s ──` — so the
@@ -1430,9 +1402,8 @@
                            view-id
                            {:kind :blank}))
            (when stop
-             (let
-               [note-row (dec (long hint-rule-at))
-                note-rule-at (dec note-row)]
+             (let [note-row (dec (long hint-rule-at))
+                   note-rule-at (dec note-row)]
 
                (when (> note-rule-at (max (long sep-row) (long top-limit)))
                  (tr/draw-rule! g region note-rule-at))

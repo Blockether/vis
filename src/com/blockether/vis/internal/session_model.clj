@@ -80,12 +80,11 @@
    two-element answer distinguishes \"nothing pending\" from \"pending CLEAR\"
    (back to the router default), which a bare nil cannot."
   [sid]
-  (let
-    [k
-     (str sid)
+  (let [k
+        (str sid)
 
-     p
-     @pending]
+        p
+        @pending]
 
     (if (contains? p k) [true (pending->val (get p k))] [false nil])))
 
@@ -98,11 +97,10 @@
     (let [k (str sid)]
       (if (contains? @pending k)
         (pending->val (get @pending k))
-        (let
-          [now (System/currentTimeMillis)
-           c (get @display-cache k)
-           at (long (or (:at c) 0))
-           c (get @display-cache k)]
+        (let [now (System/currentTimeMillis)
+              c (get @display-cache k)
+              at (long (or (:at c) 0))
+              c (get @display-cache k)]
 
           (if (and c (< (- now at) (long display-ttl-ms)))
             (:v c)
@@ -162,37 +160,35 @@
   ([db-info sid provider model] (set-model! db-info sid provider model nil))
   ([db-info sid provider model reason]
    (when (and db-info sid)
-     (let
-       [model
-        (some-> model
-                str
-                str/trim
-                not-empty)
+     (let [model
+           (some-> model
+                   str
+                   str/trim
+                   not-empty)
 
-        provider
-        (some-> provider
-                str
-                str/trim
-                not-empty)
+           provider
+           (some-> provider
+                   str
+                   str/trim
+                   not-empty)
 
-        k
-        (str sid)]
+           k
+           (str sid)]
 
        (swap! pending assoc k {:db-info db-info :provider provider :model model})
        (swap! display-cache dissoc k)
        (when-let [^ScheduledFuture old (get @flush-futures k)]
          (.cancel old false))
-       (let
-         [^ScheduledExecutorService s
-          scheduler
+       (let [^ScheduledExecutorService s
+             scheduler
 
-          f
-          (.schedule s
-                     ^Runnable
-                     (fn []
-                       (flush-one! k))
-                     (long debounce-ms)
-                     TimeUnit/MILLISECONDS)]
+             f
+             (.schedule s
+                        ^Runnable
+                        (fn []
+                          (flush-one! k))
+                        (long debounce-ms)
+                        TimeUnit/MILLISECONDS)]
 
          (swap! flush-futures assoc k f))
        ;; Broadcast AFTER the in-memory value is live, so a listener that re-reads

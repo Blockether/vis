@@ -30,9 +30,8 @@
   "The `bun test` argv one call builds, minus the machine's own bun binary — the
    grammar, without depending on a bun install."
   [opts]
-  (with-redefs
-    [runner/resolve-command (fn [_]
-                              ["bun"])]
+  (with-redefs [runner/resolve-command (fn [_]
+                                         ["bun"])]
     (vec (drop 1 (test-command "." opts)))))
 
 ;; ONE selector in every pack: a path may carry the test name after `::`, so bun
@@ -51,10 +50,9 @@
              (it "adds no -t at all when no entry names a test"
                  (expect (= ["test" "src"] (cmd-tail {"paths" ["src"]}))))
              (it "refuses the REMOVED filter key instead of narrowing twice"
-                 (let
-                   [e (try (core/ts-test-fn {:workspace/root "." :session-id "sid"}
-                                            {"paths" ["src"] "filter" "adds"})
-                           nil
-                           (catch clojure.lang.ExceptionInfo e e))]
+                 (let [e (try (core/ts-test-fn {:workspace/root "." :session-id "sid"}
+                                               {"paths" ["src"] "filter" "adds"})
+                              nil
+                              (catch clojure.lang.ExceptionInfo e e))]
                    (expect (= :ts/bad-args (:type (ex-data e))))
                    (expect (re-find #"::adds|node id" (ex-message e))))))

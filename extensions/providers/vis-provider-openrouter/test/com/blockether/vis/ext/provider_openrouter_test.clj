@@ -7,12 +7,11 @@
 (defdescribe provider-registration-test
              (it "registers the OpenRouter provider extension entry"
                  (require 'com.blockether.vis.ext.provider-openrouter :reload)
-                 (let
-                   [provider
-                    (vis/provider-by-id :openrouter)
+                 (let [provider
+                       (vis/provider-by-id :openrouter)
 
-                    ext-nses
-                    (set (map :ext/name (vis/registered-extensions)))]
+                       ext-nses
+                       (set (map :ext/name (vis/registered-extensions)))]
 
                    (expect (= :openrouter (:provider/id provider)))
                    (expect (= "OpenRouter" (:provider/label provider)))
@@ -98,12 +97,11 @@
   ;; capped case above over `fetch-key-info!`.
   (it "marks an uncapped key unlimited and still reports usage"
       (require 'com.blockether.vis.ext.provider-openrouter :reload)
-      (let
-        [dynamic
-         (#'openrouter/key-info->dynamic-limits {:data {:usage 1.25 :limit nil}})
+      (let [dynamic
+            (#'openrouter/key-info->dynamic-limits {:data {:usage 1.25 :limit nil}})
 
-         row
-         (get-in dynamic [:limits 0])]
+            row
+            (get-in dynamic [:limits 0])]
 
         (expect (true? (:is-unlimited row)))
         (expect (= 1.25 (:used row)))

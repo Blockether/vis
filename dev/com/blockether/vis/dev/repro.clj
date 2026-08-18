@@ -74,21 +74,20 @@
    number of trailer entries the (current) preserved-thinking
    replay fn would have kept for the wire request."
   [iters idx]
-  (let
-    [prefix
-     (take idx iters)
+  (let [prefix
+        (take idx iters)
 
-     trailer
-     (mapv iteration->trailer-entry prefix)
+        trailer
+        (mapv iteration->trailer-entry prefix)
 
-     target
-     (replay-target (nth iters idx))
+        target
+        (replay-target (nth iters idx))
 
-     compatible
-     (#'lp/compatible-preserved-thinking-trailer-iters trailer target)
+        compatible
+        (#'lp/compatible-preserved-thinking-trailer-iters trailer target)
 
-     replays
-     (#'lp/preserved-thinking-replay-messages compatible)]
+        replays
+        (#'lp/preserved-thinking-replay-messages compatible)]
 
     {:trailer-size (count trailer)
      :compatible (count compatible)
@@ -108,12 +107,11 @@
    token counts with the replay metrics the assembly path would have
    used for THIS iteration's outbound request."
   [iters idx]
-  (let
-    [iter
-     (nth iters idx)
+  (let [iter
+        (nth iters idx)
 
-     replay
-     (replay-counts-for-iter iters idx)]
+        replay
+        (replay-counts-for-iter iters idx)]
 
     (merge {:position (:position iter)
             :status (:status iter)
@@ -145,37 +143,36 @@
       :totals     { :input-tokens :output-tokens :cached-tokens
                     :replay-msgs :thinking-chars ... }}"
   [session-id turn-id]
-  (let
-    [db
-     (vis/db-info)
+  (let [db
+        (vis/db-info)
 
-     turn
-     (->> (vis/db-list-session-turns db session-id)
-          (filter #(= turn-id (:id %)))
-          first)
+        turn
+        (->> (vis/db-list-session-turns db session-id)
+             (filter #(= turn-id (:id %)))
+             first)
 
-     iters
-     (vis/db-list-session-turn-iterations db turn-id)
+        iters
+        (vis/db-list-session-turn-iterations db turn-id)
 
-     rows
-     (mapv #(iter-summary iters %) (range (count iters)))
+        rows
+        (mapv #(iter-summary iters %) (range (count iters)))
 
-     totals
-     (reduce (fn [acc r]
-               (-> acc
-                   (update :input-tokens + (or (:input-tokens r) 0))
-                   (update :output-tokens + (or (:output-tokens r) 0))
-                   (update :cached-tokens + (or (:cached-tokens r) 0))
-                   (update :reasoning-tokens + (or (:reasoning-tokens r) 0))
-                   (update :replay-msgs + (or (:replay-msgs r) 0))
-                   (update :thinking-chars + (or (:thinking-chars r) 0))))
-             {:input-tokens 0
-              :output-tokens 0
-              :cached-tokens 0
-              :reasoning-tokens 0
-              :replay-msgs 0
-              :thinking-chars 0}
-             rows)]
+        totals
+        (reduce (fn [acc r]
+                  (-> acc
+                      (update :input-tokens + (or (:input-tokens r) 0))
+                      (update :output-tokens + (or (:output-tokens r) 0))
+                      (update :cached-tokens + (or (:cached-tokens r) 0))
+                      (update :reasoning-tokens + (or (:reasoning-tokens r) 0))
+                      (update :replay-msgs + (or (:replay-msgs r) 0))
+                      (update :thinking-chars + (or (:thinking-chars r) 0))))
+                {:input-tokens 0
+                 :output-tokens 0
+                 :cached-tokens 0
+                 :reasoning-tokens 0
+                 :replay-msgs 0
+                 :thinking-chars 0}
+                rows)]
 
     {:turn-position (:position turn)
      :turn-status (:status turn)
@@ -193,15 +190,14 @@
       :title :provider :model
       :turns [<replay-turn-result>+]}"
   [session-id]
-  (let
-    [db
-     (vis/db-info)
+  (let [db
+        (vis/db-info)
 
-     sess
-     (vis/db-get-session db session-id)
+        sess
+        (vis/db-get-session db session-id)
 
-     turns
-     (vis/db-list-session-turns db session-id)]
+        turns
+        (vis/db-list-session-turns db session-id)]
 
     {:session-id session-id
      :title (:title sess)
@@ -214,14 +210,13 @@
    only one turn out of many looped \u2014 most regressions show up on the
    third or later turn, so cherry-picking is the common case."
   [session-id turn-position]
-  (let
-    [db
-     (vis/db-info)
+  (let [db
+        (vis/db-info)
 
-     turn
-     (->> (vis/db-list-session-turns db session-id)
-          (filter #(= turn-position (:position %)))
-          first)]
+        turn
+        (->> (vis/db-list-session-turns db session-id)
+             (filter #(= turn-position (:position %)))
+             first)]
 
     (when turn (replay-turn session-id (:id turn)))))
 
@@ -243,26 +238,26 @@
   [session-id]
   (let [{:keys [turns]} (replay-session session-id)]
     (mapv (fn [{:keys [turn-position iterations]}]
-            (let
-              [n (count iterations)
-               tail (take-last 5 iterations)
-               cache-vals (map (fnil identity 0) (map :cached-tokens tail))
-               cache-spread (when (seq cache-vals)
-                              (- (long (reduce max cache-vals)) (long (reduce min cache-vals))))
-               cache-min (when (seq cache-vals) (reduce min cache-vals))
-               cache-plateau? (and (>= n 5)
-                                   (pos? (long (or cache-min 0)))
-                                   (< (long (or cache-spread 0))
-                                      (max 1.0 (* 0.05 (double (or cache-min 1))))))
-               replay-counts (set (map :replay-msgs iterations))
-               replay-flatlined? (and (>= n 3) (or (= #{0} replay-counts) (= #{1} replay-counts)))
-               rt (vec (sort (map (fnil identity 0) (map :reasoning-tokens iterations))))
-               med (when (seq rt) (nth rt (quot (count rt) 2)))
-               rt-last (some-> (last iterations)
-                               :reasoning-tokens
-                               (or 0))
-               reasoning-spiral?
-               (and (>= n 5) (pos? (long (or med 0))) (>= (long rt-last) (* 2 (long med))))]
+            (let [n (count iterations)
+                  tail (take-last 5 iterations)
+                  cache-vals (map (fnil identity 0) (map :cached-tokens tail))
+                  cache-spread (when (seq cache-vals)
+                                 (- (long (reduce max cache-vals)) (long (reduce min cache-vals))))
+                  cache-min (when (seq cache-vals) (reduce min cache-vals))
+                  cache-plateau? (and (>= n 5)
+                                      (pos? (long (or cache-min 0)))
+                                      (< (long (or cache-spread 0))
+                                         (max 1.0 (* 0.05 (double (or cache-min 1))))))
+                  replay-counts (set (map :replay-msgs iterations))
+                  replay-flatlined? (and (>= n 3)
+                                         (or (= #{0} replay-counts) (= #{1} replay-counts)))
+                  rt (vec (sort (map (fnil identity 0) (map :reasoning-tokens iterations))))
+                  med (when (seq rt) (nth rt (quot (count rt) 2)))
+                  rt-last (some-> (last iterations)
+                                  :reasoning-tokens
+                                  (or 0))
+                  reasoning-spiral?
+                  (and (>= n 5) (pos? (long (or med 0))) (>= (long rt-last) (* 2 (long med))))]
 
               {:turn-position turn-position
                :iterations n

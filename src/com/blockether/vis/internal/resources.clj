@@ -63,16 +63,15 @@
    `\"session\"` is stamped from the owning session."
   [session {:keys [id kind label status detail pid owner language]}
    {:keys [stop-fn logs-fn health-fn]}]
-  (cond->
-    {"id" (str id)
-     "session" (skey session)
-     "kind" (sval (or kind :resource))
-     "label" (str (or label id))
-     "status" (sval (or status :up))
-     "can_stop" (boolean stop-fn)
-     "can_logs" (boolean logs-fn)
-     "can_health" (boolean health-fn)
-     "created_at" (System/currentTimeMillis)}
+  (cond-> {"id" (str id)
+           "session" (skey session)
+           "kind" (sval (or kind :resource))
+           "label" (str (or label id))
+           "status" (sval (or status :up))
+           "can_stop" (boolean stop-fn)
+           "can_logs" (boolean logs-fn)
+           "can_health" (boolean health-fn)
+           "created_at" (System/currentTimeMillis)}
     detail
     (assoc "detail" detail)
 
@@ -95,20 +94,18 @@
   [sid id expected transform]
   (loop []
 
-    (let
-      [snapshot
-       @registry
+    (let [snapshot
+          @registry
 
-       current
-       (get-in snapshot [sid id])]
+          current
+          (get-in snapshot [sid id])]
 
       (when (identical? expected current)
-        (let
-          [updated
-           (transform current)
+        (let [updated
+              (transform current)
 
-           next-registry
-           (assoc-in snapshot [sid id] updated)]
+              next-registry
+              (assoc-in snapshot [sid id] updated)]
 
           (if (compare-and-set! registry snapshot next-registry) updated (recur)))))))
 
@@ -118,21 +115,19 @@
   [sid id expected]
   (loop []
 
-    (let
-      [snapshot
-       @registry
+    (let [snapshot
+          @registry
 
-       current
-       (get-in snapshot [sid id])]
+          current
+          (get-in snapshot [sid id])]
 
       (if-not (identical? expected current)
         false
-        (let
-          [remaining
-           (dissoc (get snapshot sid) id)
+        (let [remaining
+              (dissoc (get snapshot sid) id)
 
-           next-registry
-           (if (seq remaining) (assoc snapshot sid remaining) (dissoc snapshot sid))]
+              next-registry
+              (if (seq remaining) (assoc snapshot sid remaining) (dissoc snapshot sid))]
 
           (if (compare-and-set! registry snapshot next-registry) true (recur)))))))
 
@@ -144,15 +139,14 @@
    reports `can_stop false`). Returns the stored DATA map."
   ([session resource] (register! session resource nil))
   ([session resource {:keys [stop-fn alive-fn logs-fn health-fn] :as fns}]
-   (let
-     [sid
-      (skey session)
+   (let [sid
+         (skey session)
 
-      id
-      (str (:id resource))
+         id
+         (str (:id resource))
 
-      data
-      (->data session resource fns)]
+         data
+         (->data session resource fns)]
 
      (swap! registry assoc-in
        [sid id]
@@ -176,22 +170,21 @@
    replaced while the patch was being prepared. Returns the updated DATA map or
    nil."
   [session id patch]
-  (let
-    [sid
-     (skey session)
+  (let [sid
+        (skey session)
 
-     id
-     (str id)
+        id
+        (str id)
 
-     expected
-     (get-in @registry [sid id])]
+        expected
+        (get-in @registry [sid id])]
 
     (when expected
       ;; Normalize after capturing the generation: option coercion or caller code
       ;; can take time, and its result belongs only to the record it started from.
       (let [normalized (normalize-patch patch)]
-        (when-let
-          [updated (replace-record-if-current! sid id expected #(update % :data merge normalized))]
+        (when-let [updated
+                   (replace-record-if-current! sid id expected #(update % :data merge normalized))]
           (:data updated))))))
 
 (defn unregister!
@@ -199,18 +192,17 @@
    (does NOT run its stop-fn — caller decides). A concurrent replacement is never
    removed. Returns true only when the captured generation was removed."
   [session id]
-  (let
-    [sid
-     (skey session)
+  (let [sid
+        (skey session)
 
-     id
-     (str id)
+        id
+        (str id)
 
-     expected
-     (get-in @registry [sid id])
+        expected
+        (get-in @registry [sid id])
 
-     removed?
-     (and expected (remove-record-if-current! sid id expected))]
+        removed?
+        (and expected (remove-record-if-current! sid id expected))]
 
     (boolean removed?)))
 
@@ -220,24 +212,23 @@
    blocked survives. Returns the vector of generations actually pruned. Cheap
    enough to call before every list/render."
   [session]
-  (let
-    [sid
-     (skey session)
+  (let [sid
+        (skey session)
 
-     snapshot
-     (get @registry sid)
+        snapshot
+        (get @registry sid)
 
-     dead
-     (into []
-           (filter (fn [[_ record]]
-                     (not (record-alive? record))))
-           snapshot)
+        dead
+        (into []
+              (filter (fn [[_ record]]
+                        (not (record-alive? record))))
+              snapshot)
 
-     removed
-     (into []
-           (keep (fn [[id record]]
-                   (when (remove-record-if-current! sid id record) id)))
-           dead)]
+        removed
+        (into []
+              (keep (fn [[id record]]
+                      (when (remove-record-if-current! sid id record) id)))
+              dead)]
 
     removed))
 
@@ -253,18 +244,18 @@
    :starting :failed :down …); nil / a throw / a timeout means UNKNOWN and leaves
    the stored status alone. Best-effort."
   [session]
-  (let
-    [sid
-     (skey session)
+  (let [sid
+        (skey session)
 
-     probes
-     (into []
-           (keep (fn [[id {:keys [health-fn] :as record}]]
-                   (when health-fn [id record (future (try (health-fn) (catch Throwable _ nil)))])))
-           (get @registry sid))
+        probes
+        (into []
+              (keep (fn [[id {:keys [health-fn] :as record}]]
+                      (when health-fn
+                        [id record (future (try (health-fn) (catch Throwable _ nil)))])))
+              (get @registry sid))
 
-     changed?
-     (volatile! false)]
+        changed?
+        (volatile! false)]
 
     (doseq [[id record fut] probes]
       (let [st (deref fut health-timeout-ms nil)]
@@ -309,21 +300,19 @@
   [sid id]
   (loop []
 
-    (let
-      [snapshot
-       @registry
+    (let [snapshot
+          @registry
 
-       record
-       (get-in snapshot [sid id])]
+          record
+          (get-in snapshot [sid id])]
 
       (cond (nil? record) {:result :unknown}
             (nil? (:stop-fn record)) {:result :not-stoppable}
-            :else (let
-                    [remaining
-                     (dissoc (get snapshot sid) id)
+            :else (let [remaining
+                        (dissoc (get snapshot sid) id)
 
-                     next-registry
-                     (if (seq remaining) (assoc snapshot sid remaining) (dissoc snapshot sid))]
+                        next-registry
+                        (if (seq remaining) (assoc snapshot sid remaining) (dissoc snapshot sid))]
 
                     (if (compare-and-set! registry snapshot next-registry)
                       {:result :claimed :record record}
@@ -338,15 +327,14 @@
    retry handle and any replacement registered during teardown. Returns a result
    map."
   [session id]
-  (let
-    [sid
-     (skey session)
+  (let [sid
+        (skey session)
 
-     id
-     (str id)
+        id
+        (str id)
 
-     {:keys [result record]}
-     (claim-stoppable! sid id)]
+        {:keys [result record]}
+        (claim-stoppable! sid id)]
 
     (case result
       :unknown
@@ -358,8 +346,8 @@
        :message "Resource has no stop handle (owner must re-register after a restart)."}
 
       :claimed
-      (let
-        [res (try {:ok (do ((:stop-fn record)) true)} (catch Throwable t {:error (ex-message t)}))]
+      (let [res (try {:ok (do ((:stop-fn record)) true)}
+                     (catch Throwable t {:error (ex-message t)}))]
         (if-let [message (:error res)]
           (do
             ;; A thrown stop is not proof that the underlying resource died.
@@ -377,47 +365,44 @@
    registered; a failed stop retains its handle for a later retry. Best-effort;
    returns the vector of stop! results."
   [session]
-  (loop
-    [results
-     []
+  (loop [results
+         []
 
-     skipped
-     {}
+         skipped
+         {}
 
-     budget
-     1024]
+         budget
+         1024]
 
-    (let
-      [sid
-       (skey session)
+    (let [sid
+          (skey session)
 
-       snapshot
-       (get @registry sid)
+          snapshot
+          (get @registry sid)
 
-       actionable
-       (into []
-             (remove (fn [[id record]]
-                       (identical? record (get skipped id))))
-             snapshot)]
+          actionable
+          (into []
+                (remove (fn [[id record]]
+                          (identical? record (get skipped id))))
+                snapshot)]
 
       (cond (empty? actionable) results
             (<= budget 0)
             (conj results
                   {:result :error :id "*" :message "Resource teardown exceeded 1024 generations."})
             :else
-            (let
-              [steps
-               (mapv (fn [[id record]]
-                       [id record (stop! session id)])
-                     actionable)
+            (let [steps
+                  (mapv (fn [[id record]]
+                          [id record (stop! session id)])
+                        actionable)
 
-               skipped
-               (reduce (fn [m [id record result]]
-                         (if (contains? #{:not-stoppable :error} (:result result))
-                           (assoc m id record)
-                           (dissoc m id)))
-                       skipped
-                       steps)]
+                  skipped
+                  (reduce (fn [m [id record result]]
+                            (if (contains? #{:not-stoppable :error} (:result result))
+                              (assoc m id record)
+                              (dissoc m id)))
+                          skipped
+                          steps)]
 
               (recur (into results (map #(nth % 2)) steps) skipped (- budget (count steps))))))))
 
@@ -431,15 +416,14 @@
    session), so non-stoppable and failed generations that stay registered cannot
    spin this loop. Returns `{session-id [stop! results]}`."
   [select?]
-  (loop
-    [acc
-     {}
+  (loop [acc
+         {}
 
-     visited
-     #{}
+         visited
+         #{}
 
-     budget
-     1024]
+         budget
+         1024]
 
     (let [pending (into [] (comp (remove visited) (filter select?)) (keys @registry))]
       (cond (empty? pending) acc

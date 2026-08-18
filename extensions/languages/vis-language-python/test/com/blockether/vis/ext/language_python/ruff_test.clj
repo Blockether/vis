@@ -69,9 +69,8 @@
                         (finally (cleanup root)))))
              (it "walks the whole project by default and SKIPS .venv"
                  (let [root (sample-project)]
-                   (try (let
-                          [r (:result (pyruff/py-format-fn (env root) {}))
-                           paths (set (map #(get % "path") (get r "files")))]
+                   (try (let [r (:result (pyruff/py-format-fn (env root) {}))
+                              paths (set (map #(get % "path") (get r "files")))]
 
                           (expect (contract/valid? :format-fn r))
                           (expect (= #{"src/pkg/a.py" "tests/test_a.py"} paths))
@@ -93,12 +92,11 @@
   py-lint-fn-test
   "ruff lint behind the lint_code facade."
   (it "lints a code string and grades findings by severity"
-      (let
-        [r
-         (:result (pyruff/py-lint-fn nil {"code" "import os\nx = 1\n"}))
+      (let [r
+            (:result (pyruff/py-lint-fn nil {"code" "import os\nx = 1\n"}))
 
-         codes
-         (into {} (map (juxt #(get % "type") #(get % "level"))) (get r "findings"))]
+            codes
+            (into {} (map (juxt #(get % "type") #(get % "level"))) (get r "findings"))]
 
         (expect (contract/valid? :lint-fn r))
         ;; an unused import is a WARNING — the file still runs
@@ -120,12 +118,11 @@
         (expect (= 0 (get r "error") (get r "warning") (get r "info")))))
   (it "lints the whole project by default, relativizing files and skipping .venv"
       (let [root (sample-project)]
-        (try (let
-               [r (:result (pyruff/py-lint-fn (env root) {}))
-                by-file (reduce (fn [m f]
-                                  (update m (get f "file") (fnil conj #{}) (get f "type")))
-                                {}
-                                (get r "findings"))]
+        (try (let [r (:result (pyruff/py-lint-fn (env root) {}))
+                   by-file (reduce (fn [m f]
+                                     (update m (get f "file") (fnil conj #{}) (get f "type")))
+                                   {}
+                                   (get r "findings"))]
 
                (expect (contract/valid? :lint-fn r))
                (expect (= 2 (get r "files")))
@@ -167,10 +164,9 @@
                  (let [root (tmp-dir)]
                    (try (spit! root "src/a.py" "x = 1\n")
                         (spit! root "tests/test_a.py" "y = 2\n")
-                        (let
-                          [r (:result (pyruff/py-lint-fn (env root)
-                                                         {"path" "src"
-                                                          "paths" ["tests/test_a.py"]}))]
+                        (let [r (:result (pyruff/py-lint-fn (env root)
+                                                            {"path" "src"
+                                                             "paths" ["tests/test_a.py"]}))]
                           (expect (= ["src" "tests/test_a.py"] (get r "targets"))))
                         (finally (cleanup root)))))
              (it "reports a whole-project lint by the files it walked"
@@ -241,9 +237,8 @@
                                     "[lint.per-file-ignores]\n\"scripts/*.py\" = [\"F401\"]\n"))
                         (spit! root "scripts/s.py" "import os\n")
                         (spit! root "lib.py" "import os\n")
-                        (let
-                          [ignored (:result (pyruff/py-lint-fn (env root) {"path" "scripts"}))
-                           flagged (:result (pyruff/py-lint-fn (env root) {"path" "lib.py"}))]
+                        (let [ignored (:result (pyruff/py-lint-fn (env root) {"path" "scripts"}))
+                              flagged (:result (pyruff/py-lint-fn (env root) {"path" "lib.py"}))]
 
                           (expect (= [] (get ignored "findings")))
                           (expect (= "F401" (get-in flagged ["findings" 0 "type"]))))
@@ -252,12 +247,11 @@
                  (let [root (sample-project)]
                    (try
                      ;; 100 chars fit the project width; 20 does not -> E501 appears
-                     (let
-                       [long-line (str "x = \"" (apply str (repeat 40 "a")) "\"\n")
-                        wide (:result (pyruff/py-lint-fn (env root) {"code" long-line}))
-                        narrow (:result (pyruff/py-lint-fn
-                                          (env root)
-                                          {"code" long-line "line_length" 20 "select" "E501"}))]
+                     (let [long-line (str "x = \"" (apply str (repeat 40 "a")) "\"\n")
+                           wide (:result (pyruff/py-lint-fn (env root) {"code" long-line}))
+                           narrow (:result (pyruff/py-lint-fn
+                                             (env root)
+                                             {"code" long-line "line_length" 20 "select" "E501"}))]
 
                        (expect (= [] (get wide "findings")))
                        (expect (= "E501" (get-in narrow ["findings" 0 "type"]))))
@@ -293,9 +287,8 @@
                  (let [root (tmp-dir)]
                    (try (spit! root "src/a.py" "x = 1\n")
                         (spit! root "docs/guide.md" "# hi\n")
-                        (let
-                          [r (pyruff/py-lint-fn (env root) {"paths" ["src" "docs"]})
-                           m (get-in r [:error :message])]
+                        (let [r (pyruff/py-lint-fn (env root) {"paths" ["src" "docs"]})
+                              m (get-in r [:error :message])]
 
                           (expect (false? (:success? r)))
                           (expect (re-find #"docs" m))

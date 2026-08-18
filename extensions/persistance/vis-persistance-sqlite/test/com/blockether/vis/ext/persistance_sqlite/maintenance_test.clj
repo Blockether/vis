@@ -11,24 +11,22 @@
 (defn- temp-store
   "A file-backed store nobody else shares: `[path datasource]`."
   []
-  (let
-    [f
-     (File/createTempFile "vis-vacuum-" ".db")
+  (let [f
+        (File/createTempFile "vis-vacuum-" ".db")
 
-     path
-     (.getAbsolutePath f)]
+        path
+        (.getAbsolutePath f)]
 
     (.delete f)
     [path (doto (org.sqlite.SQLiteDataSource.) (.setUrl (str "jdbc:sqlite:" path)))]))
 
 (defn- exec!
   [^javax.sql.DataSource ds ^String sql]
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     st
-     (.createStatement conn)]
+              st
+              (.createStatement conn)]
 
     (.executeUpdate st sql)))
 
@@ -36,12 +34,11 @@
   "Write `n` rows of ~4 KB so the store grows real pages."
   [^javax.sql.DataSource ds ^long n]
   (exec! ds "CREATE TABLE IF NOT EXISTS bulk (id INTEGER PRIMARY KEY, payload BLOB)")
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     ps
-     (.prepareStatement conn "INSERT INTO bulk (payload) VALUES (?)")]
+              ps
+              (.prepareStatement conn "INSERT INTO bulk (payload) VALUES (?)")]
 
     (.setAutoCommit conn false)
     (let [payload (byte-array 4096 (byte 7))]
@@ -56,18 +53,18 @@
   (doseq [suffix ["" "-wal" "-shm" ".vacuum"]]
     (try (.delete (File. (str path suffix))) (catch Throwable _ nil))))
 
-(defdescribe
-  free-space-test
-  (it "reports the freelist SQLite is holding, not the file size"
-      (let [[path ds] (temp-store)]
-        (try (fill! ds 2000)
-             (expect (zero? (long (:freelist-count (maintenance/free-space ds)))))
-             (exec! ds "DELETE FROM bulk")
-             (let [{:keys [free-bytes file-bytes freelist-count]} (maintenance/free-space ds)]
-               (expect (pos? (long freelist-count)))
-               (expect (pos? (long free-bytes)))
-               (expect (> (double free-bytes) (* 0.5 (double (long file-bytes))))))
-             (finally (cleanup! path))))))
+(defdescribe free-space-test
+             (it "reports the freelist SQLite is holding, not the file size"
+                 (let [[path ds] (temp-store)]
+                   (try (fill! ds 2000)
+                        (expect (zero? (long (:freelist-count (maintenance/free-space ds)))))
+                        (exec! ds "DELETE FROM bulk")
+                        (let [{:keys [free-bytes file-bytes freelist-count]} (maintenance/free-space
+                                                                               ds)]
+                          (expect (pos? (long freelist-count)))
+                          (expect (pos? (long free-bytes)))
+                          (expect (> (double free-bytes) (* 0.5 (double (long file-bytes))))))
+                        (finally (cleanup! path))))))
 
 (defdescribe compact-store-is-left-alone-test
              (it "a store with nothing to reclaim is never rewritten and leaves no marker"
@@ -83,21 +80,19 @@
   vacuum-window-test
   (it
     "reclaims a big freelist once, then holds the fortnight before doing it again"
-    (let
-      [[path ds]
-       (temp-store)
+    (let [[path ds]
+          (temp-store)
 
-       opts
-       {:min-free-bytes 1024}]
+          opts
+          {:min-free-bytes 1024}]
 
       (try (fill! ds 2000)
            (exec! ds "DELETE FROM bulk")
-           (let
-             [before
-              (.length (File. path))
+           (let [before
+                 (.length (File. path))
 
-              report
-              (maintenance/maybe-vacuum! ds path opts)]
+                 report
+                 (maintenance/maybe-vacuum! ds path opts)]
 
              (expect (true? (:is-vacuumed report)))
              (expect (= :vacuumed (:reason report)))
@@ -112,14 +107,13 @@
              (expect (false? (:is-vacuumed report)))
              (expect (= :recent (:reason report))))
            ;; A fortnight later it is due again.
-           (let
-             [later
-              (+ (System/currentTimeMillis)
-                 (* (long maintenance/vacuum-interval-days) (long day-ms))
-                 1000)
+           (let [later
+                 (+ (System/currentTimeMillis)
+                    (* (long maintenance/vacuum-interval-days) (long day-ms))
+                    1000)
 
-              report
-              (maintenance/maybe-vacuum! ds path (assoc opts :now-ms later))]
+                 report
+                 (maintenance/maybe-vacuum! ds path (assoc opts :now-ms later))]
 
              (expect (true? (:is-vacuumed report)))
              (expect (zero? (long (:freelist-count (maintenance/free-space ds))))))

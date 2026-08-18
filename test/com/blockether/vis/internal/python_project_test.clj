@@ -12,10 +12,9 @@
 (defdescribe project-layout-warning-test
              (it "retries once and warns when the GraalPy context cannot be built"
                  (let [calls (atom 0)]
-                   (with-redefs
-                     [pyx/build-context (fn [_label]
-                                          (swap! calls inc)
-                                          (throw (ex-info "cold context" {})))]
+                   (with-redefs [pyx/build-context (fn [_label]
+                                                     (swap! calls inc)
+                                                     (throw (ex-info "cold context" {})))]
                      (let [layout (pyproj/project-layout tmp)]
                        (expect (= [] (:import-roots layout)))
                        (expect (= [] (:testpaths layout)))
@@ -23,18 +22,16 @@
                        (expect (re-find #"cold context" (str (:warning layout))))
                        (expect (re-find #"retried once" (str (:warning layout))))))))
              (it "stops retrying as soon as a read succeeds"
-                 (let
-                   [calls
-                    (atom 0)
+                 (let [calls
+                       (atom 0)
 
-                    real
-                    pyx/build-context]
+                       real
+                       pyx/build-context]
 
-                   (with-redefs
-                     [pyx/build-context (fn [label]
-                                          (if (= 1 (swap! calls inc))
-                                            (throw (ex-info "cold context" {}))
-                                            (real label)))]
+                   (with-redefs [pyx/build-context (fn [label]
+                                                     (if (= 1 (swap! calls inc))
+                                                       (throw (ex-info "cold context" {}))
+                                                       (real label)))]
                      (let [layout (pyproj/project-layout tmp)]
                        (expect (nil? (:warning layout)))
                        (expect (= 2 @calls))))))

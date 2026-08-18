@@ -36,9 +36,8 @@
 
 (defn- workspace-has-bun?
   [env]
-  (let
-    [root (some-> (:workspace/root env)
-                  io/file)]
+  (let [root (some-> (:workspace/root env)
+                     io/file)]
     (when (and root (.isDirectory root))
       (or (some #(.exists (io/file root %)) ["bunfig.toml" "bun.lock" "bun.lockb" ".bun-version"])
           ;; a generic package.json workspace with TS/TSX/JS/JSX sources runs on
@@ -65,10 +64,9 @@
 
 (defn- repl-resource-id
   [dir id]
-  (let
-    [id (some-> id
-                str
-                str/trim)]
+  (let [id (some-> id
+                   str
+                   str/trim)]
     (if (seq id) id (str "bunrepl:" dir))))
 
 (defn register-repl-resource!
@@ -103,42 +101,40 @@
    workspace app dirs, else nil."
   [root dir]
   (when (= (str dir) (.getCanonicalPath (io/file root)))
-    (let
-      [pj
-       (io/file root "package.json")
+    (let [pj
+          (io/file root "package.json")
 
-       m
-       (when (.exists pj) (try (json/read-json (slurp pj)) (catch Throwable _ nil)))
+          m
+          (when (.exists pj) (try (json/read-json (slurp pj)) (catch Throwable _ nil)))
 
-       ws
-       (get m "workspaces")
+          ws
+          (get m "workspaces")
 
-       globs
-       (cond (sequential? ws) ws
-             (map? ws) (get ws "packages")
-             :else nil)]
+          globs
+          (cond (sequential? ws) ws
+                (map? ws) (get ws "packages")
+                :else nil)]
 
       (when (seq globs)
-        (let
-          [candidates
-           (->> globs
-                (mapcat (fn [g]
-                          (let [g (str g)]
-                            (if (str/ends-with? g "/*")
-                              (let [d (io/file root (subs g 0 (- (count g) 2)))]
-                                (when (.isDirectory d) (.listFiles d)))
-                              [(io/file root g)]))))
-                (filter (fn [^java.io.File f]
-                          (and f (.isDirectory f) (.exists (io/file f "package.json")))))
-                (map (fn [^java.io.File f]
-                       (str (.getName (.getParentFile f)) "/" (.getName f))))
-                sort
-                (take 8))
+        (let [candidates
+              (->> globs
+                   (mapcat (fn [g]
+                             (let [g (str g)]
+                               (if (str/ends-with? g "/*")
+                                 (let [d (io/file root (subs g 0 (- (count g) 2)))]
+                                   (when (.isDirectory d) (.listFiles d)))
+                                 [(io/file root g)]))))
+                   (filter (fn [^java.io.File f]
+                             (and f (.isDirectory f) (.exists (io/file f "package.json")))))
+                   (map (fn [^java.io.File f]
+                          (str (.getName (.getParentFile f)) "/" (.getName f))))
+                   sort
+                   (take 8))
 
-           suggestion
-           (or (first (filter #(str/ends-with? % "/api") candidates))
-               (first candidates)
-               "apps/<app>")]
+              suggestion
+              (or (first (filter #(str/ends-with? % "/api") candidates))
+                  (first candidates)
+                  "apps/<app>")]
 
           (str "This is a Bun MONOREPO ROOT (package.json has \"workspaces\") — a REPL "
                "here picks up the ROOT tsconfig/package.json, so app code misbehaves "
@@ -150,54 +146,53 @@
                " To force a root REPL anyway: repl_start(\"typescript\", {\"cwd\": \".\"})."))))))
 
 (defn ts-start-repl-fn
-   "REPL-lifecycle handler for TypeScript/Bun. The facade's `repl_start` / `repl_status` /
+  "REPL-lifecycle handler for TypeScript/Bun. The facade's `repl_start` / `repl_status` /
    `repl_stop` verbs reach a pack as a positional `op` STRING plus opts
    `{dir, id, env}` — there is NO restart (stop, then start), and a `repl_start`
    for a REPL that is already running REUSES it, refusing only when this call
    named a different `env`. `op` arrives as a STRING from the model
    (strings-only boundary) — dispatch on it, no keyword minting."
   [env op opts]
-  (let
-    [root
-     (env-root env)
+  (let [root
+        (env-root env)
 
-      ;; A MISSING op must never spawn: every pack defaults to "status", the one
-      ;; step with no side effect.
-      op
-      (if (string? op) op "status")
+        ;; A MISSING op must never spawn: every pack defaults to "status", the one
+        ;; step with no side effect.
+        op
+        (if (string? op) op "status")
 
-     id
-     (or (get opts "id") (get opts "repl_id"))
+        id
+        (or (get opts "id") (get opts "repl_id"))
 
-     dir
-     (resolve-dir root (get opts "cwd"))]
+        dir
+        (resolve-dir root (get opts "cwd"))]
 
-     (case op
-       "status"
-       (extension/success {:result (assoc (repl/status dir) "id" (repl-resource-id dir id))})
+    (case op
+      "status"
+      (extension/success {:result (assoc (repl/status dir) "id" (repl-resource-id dir id))})
 
-       "stop"
-       (let [r (assoc (repl/stop! dir) "id" (repl-resource-id dir id))]
-         (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
-         (extension/success {:result r}))
+      "stop"
+      (let [r (assoc (repl/stop! dir) "id" (repl-resource-id dir id))]
+        (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
+        (extension/success {:result r}))
 
-       "start"
-       (do
-         ;; Starting at a monorepo ROOT without an explicit cwd is (almost)
-         ;; always a mistake — refuse with the app-dir hint. Explicit
-         ;; {"cwd": "."} still forces a root REPL.
-         (when (nil? (get opts "cwd"))
-           (when-let [hint (monorepo-root-hint root dir)]
-             (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
-         (let [r (assoc (repl/start! dir (assoc (or opts {})
-                                           "id" (repl-resource-id dir id)
-                                           :session-id (:session-id env)))
-                   "id" (repl-resource-id dir id))]
-           (register-repl-resource! (:session-id env) dir r id)
-           (extension/success {:result r})))
+      "start"
+      (do
+        ;; Starting at a monorepo ROOT without an explicit cwd is (almost)
+        ;; always a mistake — refuse with the app-dir hint. Explicit
+        ;; {"cwd": "."} still forces a root REPL.
+        (when (nil? (get opts "cwd"))
+          (when-let [hint (monorepo-root-hint root dir)]
+            (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
+        (let [r (assoc (repl/start! dir
+                                    (assoc (or opts {})
+                                      "id" (repl-resource-id dir id)
+                                      :session-id (:session-id env)))
+                  "id" (repl-resource-id dir id))]
+          (register-repl-resource! (:session-id env) dir r id)
+          (extension/success {:result r})))
 
-      (throw (ex-info (str "TypeScript REPL lifecycle: unknown op "
-                           (pr-str op)
+      (throw (ex-info (str "TypeScript REPL lifecycle: unknown op " (pr-str op)
                            " — the verbs are repl_start / repl_status / repl_stop; there is no"
                            " repl_connect for Bun, Vis owns the runtime process.")
                       {:type :ts/bad-args :got op})))))
@@ -208,21 +203,20 @@
    (globals persist across calls; top-level await works;
    `reload(path)` re-imports a project module cache-busted)."
   [env arg]
-  (let
-    [root
-     (env-root env)
+  (let [root
+        (env-root env)
 
-     code
-     (cond (string? arg) arg
-           (map? arg) (str (or (get arg "code") (get arg "source")))
-           :else (throw (ex-info "repl_eval(typescript) expects a code string or {\"code\": ...}"
-                                 {:type :ts/bad-args :got arg})))
+        code
+        (cond (string? arg) arg
+              (map? arg) (str (or (get arg "code") (get arg "source")))
+              :else (throw (ex-info "repl_eval(typescript) expects a code string or {\"code\": ...}"
+                                    {:type :ts/bad-args :got arg})))
 
-     dir
-     (resolve-dir root (and (map? arg) (get arg "cwd")))
+        dir
+        (resolve-dir root (and (map? arg) (get arg "cwd")))
 
-     tmo
-     (and (map? arg) (get arg "timeout_ms"))]
+        tmo
+        (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
       ;; Preserve the more specific monorepo error when the caller omitted dir.
@@ -255,17 +249,16 @@
    no separate erroring outcome, so a test that threw is one of its `fail`s and
    the result carries no `errored`."
   [^String s]
-  (let
-    [n
-     (fn [re]
-       (some-> (second (re-find re (str s)))
-               parse-long))
+  (let [n
+        (fn [re]
+          (some-> (second (re-find re (str s)))
+                  parse-long))
 
-     pass
-     (n #"(?m)^\s*(\d+) pass")
+        pass
+        (n #"(?m)^\s*(\d+) pass")
 
-     fail
-     (n #"(?m)^\s*(\d+) fail")]
+        fail
+        (n #"(?m)^\s*(\d+) fail")]
 
     (cond-> {}
       pass
@@ -281,15 +274,14 @@
    ALTERNATE inside it instead of fighting over the flag. Pure, so the grammar is
    pinned without launching bun."
   [dir opts]
-  (let
-    [ids
-     (mapv contract/split-node-id (map str (get opts "paths")))
+  (let [ids
+        (mapv contract/split-node-id (map str (get opts "paths")))
 
-     locations
-     (into [] (keep :path) ids)
+        locations
+        (into [] (keep :path) ids)
 
-     names
-     (into [] (comp (keep :var) (distinct)) ids)]
+        names
+        (into [] (comp (keep :var) (distinct)) ids)]
 
     (cond-> (conj (runner/resolve-command dir) "test")
       (seq names)
@@ -307,49 +299,48 @@
    `filter` key: one grammar names where AND which, in every pack.
    Returns the parsed pass/fail counts + the output tail."
   [env arg]
-  (let
-    [root
-     (env-root env)
+  (let [root
+        (env-root env)
 
-     opts
-     (if (map? arg) arg {})
+        opts
+        (if (map? arg) arg {})
 
-     _
-     (when (contains? opts "filter")
-       (throw (ex-info (str "run_tests(typescript) no longer takes filter — put the test name IN"
-                            " the path as a node id instead. {\"paths\":"
-                            " [\"src/math.test.ts::adds\"]} runs that one test, and \"::adds\""
-                            " finds it wherever it lives.")
-                       {:type :ts/bad-args :got arg})))
+        _
+        (when (contains? opts "filter")
+          (throw (ex-info (str "run_tests(typescript) no longer takes filter — put the test name IN"
+                               " the path as a node id instead. {\"paths\":"
+                               " [\"src/math.test.ts::adds\"]} runs that one test, and \"::adds\""
+                               " finds it wherever it lives.")
+                          {:type :ts/bad-args :got arg})))
 
-     dir
-     (resolve-dir root (get opts "cwd"))
+        dir
+        (resolve-dir root (get opts "cwd"))
 
-     cmd
-     (test-command dir opts)
+        cmd
+        (test-command dir opts)
 
-     launch
-     (vis/session-process-launch (:session-id env) cmd)
+        launch
+        (vis/session-process-launch (:session-id env) cmd)
 
-     pb
-     (doto (ProcessBuilder. ^java.util.List (:argv launch))
-       (.directory (io/file dir))
-       (.redirectErrorStream true))
+        pb
+        (doto (ProcessBuilder. ^java.util.List (:argv launch))
+          (.directory (io/file dir))
+          (.redirectErrorStream true))
 
-     _env
-     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-       (when (:replace-env? launch) (.clear e))
-       (doseq [[k v] (:env launch)]
-         (.put e ^String k ^String v)))
+        _env
+        (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+          (when (:replace-env? launch) (.clear e))
+          (doseq [[k v] (:env launch)]
+            (.put e ^String k ^String v)))
 
-     p
-     (.start pb)
+        p
+        (.start pb)
 
-     out
-     (future (slurp (.getInputStream p)))
+        out
+        (future (slurp (.getInputStream p)))
 
-     done?
-     (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
+        done?
+        (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
 
     (when-not done? (.destroyForcibly p))
     (let [s (str @out)]

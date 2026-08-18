@@ -42,33 +42,31 @@
                                             (finally (providers/set-router-rebuild-hook! prev)))))])
 
 (deftest live-limits-unauthenticated-overrides-a-stale-credential-status
-  (with-redefs
-    [registry/provider-by-id
-     (constantly {:provider/status-fn (constantly {:is-authenticated true})
-                  :provider/limits-fn (constantly nil)})
+  (with-redefs [registry/provider-by-id
+                (constantly {:provider/status-fn (constantly {:is-authenticated true})
+                             :provider/limits-fn (constantly nil)})
 
-     provider-limits/provider-limits
-     (constantly {:provider-id :anthropic-coding-plan
-                  :status :unauthenticated
-                  :static {}
-                  :dynamic {:limits [] :note "Claude subscription is no longer active."}})]
+                provider-limits/provider-limits
+                (constantly {:provider-id :anthropic-coding-plan
+                             :status :unauthenticated
+                             :static {}
+                             :dynamic {:limits []
+                                       :note "Claude subscription is no longer active."}})]
 
     (let [status (providers/provider-status {:id :anthropic-coding-plan})]
       (is (false? (:is-authenticated status)))
       (is (= "Claude subscription is no longer active." (:error status))))))
 
 (deftest configured-providers-cached-warm-reads-never-re-enumerate
-  (let
-    [calls
-     (atom 0)
+  (let [calls
+        (atom 0)
 
-     fleet
-     [{:id :fake :models [{:name "m1"}]}]]
+        fleet
+        [{:id :fake :models [{:name "m1"}]}]]
 
-    (with-redefs
-      [config/load-config (fn []
-                            (swap! calls inc)
-                            {:providers fleet})]
+    (with-redefs [config/load-config (fn []
+                                       (swap! calls inc)
+                                       {:providers fleet})]
       (providers/invalidate-configured-providers!)
       (is (= fleet (providers/configured-providers-cached))
           "cold read enumerates synchronously ONCE and returns the real fleet")
@@ -83,35 +81,32 @@
   ;; frame. The enumeration (~200ms on machines with slow file IO) must NEVER
   ;; run synchronously on a warm caller — a stale snapshot is served as-is
   ;; while ONE background refresh replaces it.
-  (let
-    [;; The refresh is held OPEN on this gate instead of a sleep: "in flight" has
-     ;; to be a FACT while the single-flight assertion runs. A 200ms bet loses on
-     ;; a loaded runner — the refresh finished between the reads, a later read
-     ;; found the snapshot stale again and enumerated a second time, and the
-     ;; assertion failed for a race the product does not have (CI, macos-latest).
-     gate
-     (promise)
+  (let [;; The refresh is held OPEN on this gate instead of a sleep: "in flight" has
+        ;; to be a FACT while the single-flight assertion runs. A 200ms bet loses on
+        ;; a loaded runner — the refresh finished between the reads, a later read
+        ;; found the snapshot stale again and enumerated a second time, and the
+        ;; assertion failed for a race the product does not have (CI, macos-latest).
+        gate
+        (promise)
 
-     calls
-     (atom 0)
+        calls
+        (atom 0)
 
-     fleet
-     [{:id :fake :models [{:name "m1"}]}]
+        fleet
+        [{:id :fake :models [{:name "m1"}]}]
 
-     cache
-     (rv 'fleet-cache)]
+        cache
+        (rv 'fleet-cache)]
 
-    (with-redefs
-      [config/load-config (fn []
-                            (swap! calls inc)
-                            (deref gate 10000 nil)
-                            {:providers fleet})]
+    (with-redefs [config/load-config (fn []
+                                       (swap! calls inc)
+                                       (deref gate 10000 nil)
+                                       {:providers fleet})]
       ;; plant a STALE snapshot
       (reset! @cache {:at 0 :val [{:id :old}]})
-      (let
-        [t0 (System/nanoTime)
-         stale (providers/configured-providers-cached)
-         stale-ms (/ (- (System/nanoTime) t0) 1e6)]
+      (let [t0 (System/nanoTime)
+            stale (providers/configured-providers-cached)
+            stale-ms (/ (- (System/nanoTime) t0) 1e6)]
 
         (is (= [{:id :old}] stale) "stale read serves the last-known snapshot immediately")
         (is (< stale-ms 50.0) "stale read must NOT block on the enumeration")
@@ -133,24 +128,22 @@
   ;; The issue #29 follow-up: invalidate on change (long TTL stays safe), so a
   ;; provider add/remove/reorder shows in the footer cycle count immediately.
   (let [cache (rv 'fleet-cache)]
-    (with-redefs
-      [config/load-global-config-raw (constantly {:providers []})
-       config/load-config (constantly {:providers []})
-       config/save-config! (fn [& _]
-                             nil)
-       config/reload-config! (constantly nil)]
+    (with-redefs [config/load-global-config-raw (constantly {:providers []})
+                  config/load-config (constantly {:providers []})
+                  config/save-config! (fn [& _]
+                                        nil)
+                  config/reload-config! (constantly nil)]
 
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/save-providers! [] nil)
       (is (nil? @@cache) "save-providers! drops the snapshot"))
-    (with-redefs
-      [config/remove-config-provider! (fn [& _]
-                                        true)
-       config/load-global-config-raw (constantly {})
-       config/load-config (constantly {:providers []})
-       config/save-config! (fn [& _]
-                             nil)
-       config/reload-config! (constantly nil)]
+    (with-redefs [config/remove-config-provider! (fn [& _]
+                                                   true)
+                  config/load-global-config-raw (constantly {})
+                  config/load-config (constantly {:providers []})
+                  config/save-config! (fn [& _]
+                                        nil)
+                  config/reload-config! (constantly nil)]
 
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/remove-provider! :warm nil)
@@ -163,26 +156,24 @@
    no registry, no disk, so a fleet mutation is observable as config alone."
   [raw f]
   (let [state (atom raw)]
-    (with-redefs
-      [config/load-global-config-raw (fn []
-                                       @state)
-       config/save-config! (fn [raw' & _]
-                             (reset! state raw')
-                             nil)
-       config/reload-config! (constantly nil)
-       config/load-config (fn []
-                            {:providers (vec (get @state "providers"))
-                             :default-provider (get @state "default_provider")
-                             :default-model (get @state "default_model")})
-       config/remove-config-provider!
-       (fn [provider-id & _]
-         (let
-           [before (vec (get @state "providers"))
-            after (vec (remove #(= (keyword (name provider-id)) (:id %)) before))]
+    (with-redefs [config/load-global-config-raw (fn []
+                                                  @state)
+                  config/save-config! (fn [raw' & _]
+                                        (reset! state raw')
+                                        nil)
+                  config/reload-config! (constantly nil)
+                  config/load-config (fn []
+                                       {:providers (vec (get @state "providers"))
+                                        :default-provider (get @state "default_provider")
+                                        :default-model (get @state "default_model")})
+                  config/remove-config-provider!
+                  (fn [provider-id & _]
+                    (let [before (vec (get @state "providers"))
+                          after (vec (remove #(= (keyword (name provider-id)) (:id %)) before))]
 
-           (swap! state assoc "providers" after)
-           (not= before after)))
-       providers/authenticated-preset-providers (constantly [])]
+                      (swap! state assoc "providers" after)
+                      (not= before after)))
+                  providers/authenticated-preset-providers (constantly [])]
 
       (providers/invalidate-configured-providers!)
       (f)
@@ -195,29 +186,28 @@
 ;; provider left `default_provider` naming what had just been deleted instead of
 ;; promoting whoever was left.
 (deftest a-fleet-mutation-retags-the-primary-root
-  (let
-    [acme
-     {:id :acme :models [{:name "acme-1"}]}
+  (let [acme
+        {:id :acme :models [{:name "acme-1"}]}
 
-     beta
-     {:id :beta :models [{:name "beta-1"}]}
+        beta
+        {:id :beta :models [{:name "beta-1"}]}
 
-     tagged-acme
-     {"providers" [acme] "default_provider" "acme" "default_model" "acme-1"}
+        tagged-acme
+        {"providers" [acme] "default_provider" "acme" "default_model" "acme-1"}
 
-     added
-     (with-machine-config {} #(providers/save-providers! [acme] nil))
+        added
+        (with-machine-config {} #(providers/save-providers! [acme] nil))
 
-     second-added
-     (with-machine-config (assoc tagged-acme "providers" [acme])
-                          #(providers/save-providers! [acme beta] nil))
+        second-added
+        (with-machine-config (assoc tagged-acme "providers" [acme])
+                             #(providers/save-providers! [acme beta] nil))
 
-     promoted
-     (with-machine-config (assoc tagged-acme "providers" [acme beta])
-                          #(providers/remove-provider! :acme nil))
+        promoted
+        (with-machine-config (assoc tagged-acme "providers" [acme beta])
+                             #(providers/remove-provider! :acme nil))
 
-     emptied
-     (with-machine-config tagged-acme #(providers/remove-provider! :acme nil))]
+        emptied
+        (with-machine-config tagged-acme #(providers/remove-provider! :acme nil))]
 
     (is (= "acme" (get added "default_provider"))
         "the first provider a fleet gains IS the default root")
@@ -237,19 +227,19 @@
   ;; (token files / keychain) even before they're saved into `:providers` — the
   ;; whole point of `picker-fleet` vs `configured-providers`.
   (let [detected (atom true)]
-    (with-redefs
-      [config/load-config (constantly {:providers [{:id :openai :models [{:name "gpt-x"}]}]})
-       registry/registered-providers (constantly [{:provider/id :anthropic-coding-plan
-                                                   :provider/detect-fn (fn []
-                                                                         (when @detected
-                                                                           {:access-token "tok"}))}
-                                                  {:provider/id :openai
-                                                   :provider/detect-fn (fn []
-                                                                         {:access-token "tok"})}])
-       config/provider-template
-       (fn [pid]
-         (when (= pid :anthropic-coding-plan)
-           {:id pid :api-style :anthropic :default-models ["claude-opus-4-8"]}))]
+    (with-redefs [config/load-config (constantly {:providers [{:id :openai
+                                                               :models [{:name "gpt-x"}]}]})
+                  registry/registered-providers
+                  (constantly [{:provider/id :anthropic-coding-plan
+                                :provider/detect-fn (fn []
+                                                      (when @detected {:access-token "tok"}))}
+                               {:provider/id :openai
+                                :provider/detect-fn (fn []
+                                                      {:access-token "tok"})}])
+                  config/provider-template
+                  (fn [pid]
+                    (when (= pid :anthropic-coding-plan)
+                      {:id pid :api-style :anthropic :default-models ["claude-opus-4-8"]}))]
 
       (providers/invalidate-configured-providers!)
       (let [extra (providers/authenticated-preset-providers)]
@@ -272,13 +262,12 @@
   ;; PRESET_ORDER, so it sorted to Long/MAX_VALUE at the end — split from
   ;; business/individual by zai/mistral (top, middle, then stranded at the
   ;; bottom). Guard the whole family stays a single contiguous run.
-  (let
-    [order
-     @(ns-resolve 'com.blockether.vis.internal.config 'PRESET_ORDER)
+  (let [order
+        @(ns-resolve 'com.blockether.vis.internal.config 'PRESET_ORDER)
 
-     idxs
-     (mapv #(.indexOf ^java.util.List order %)
-           [:github-copilot-business :github-copilot-individual :github-copilot-enterprise])]
+        idxs
+        (mapv #(.indexOf ^java.util.List order %)
+              [:github-copilot-business :github-copilot-individual :github-copilot-enterprise])]
 
     (is (every? nat-int? idxs) "all three Copilot tiers are listed in PRESET_ORDER")
     (let [sorted (sort idxs)]
@@ -286,49 +275,45 @@
           "the three Copilot tiers form one contiguous run — no other preset splits them"))))
 
 (deftest configured-provider-catalog-cannot-be-narrowed
-  (with-redefs
-    [config/load-config-raw
-     (constantly {"providers" [{"id" "openai"
-                                "models" [{"name" "gpt-custom" "output_limit" 123}]}]})
+  (with-redefs [config/load-config-raw
+                (constantly {"providers" [{"id" "openai"
+                                           "models" [{"name" "gpt-custom" "output_limit" 123}]}]})
 
-     config/provider-template
-     (constantly {:id :openai :default-models ["gpt-default" "gpt-custom" "gpt-extra"]})]
+                config/provider-template
+                (constantly {:id :openai :default-models ["gpt-default" "gpt-custom" "gpt-extra"]})]
 
     (is (= [{:name "gpt-custom" :output-limit 123} {:name "gpt-default"} {:name "gpt-extra"}]
            (:models (first (:providers (config/load-config)))))
         "persisted metadata wins, while every preset model remains available")))
 
 (deftest explicit-default-selection-is-order-independent-and-persists-without-reordering
-  (let
-    [fleet
-     [{:id :openai :models [{:name "gpt-5"}]}
-      {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
+  (let [fleet
+        [{:id :openai :models [{:name "gpt-5"}]}
+         {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
 
-     saved
-     (atom nil)]
+        saved
+        (atom nil)]
 
-    (with-redefs
-      [config/load-config (constantly {:default-provider "anthropic-coding-plan"
-                                       :default-model "claude-fable-5"
-                                       :providers fleet})]
+    (with-redefs [config/load-config (constantly {:default-provider "anthropic-coding-plan"
+                                                  :default-model "claude-fable-5"
+                                                  :providers fleet})]
       (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
              (providers/default-selection fleet))))
-    (with-redefs
-      [providers/picker-fleet
-       (constantly fleet)
+    (with-redefs [providers/picker-fleet
+                  (constantly fleet)
 
-       config/load-global-config-raw
-       (constantly {"theme" "dark"
-                    "providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
-                                 {"id" "anthropic-coding-plan"
-                                  "models" [{"name" "claude-opus-4-8"}]}]})
+                  config/load-global-config-raw
+                  (constantly {"theme" "dark"
+                               "providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
+                                            {"id" "anthropic-coding-plan"
+                                             "models" [{"name" "claude-opus-4-8"}]}]})
 
-       config/save-config!
-       (fn [wire _]
-         (reset! saved wire))
+                  config/save-config!
+                  (fn [wire _]
+                    (reset! saved wire))
 
-       config/reload-config!
-       (constantly nil)]
+                  config/reload-config!
+                  (constantly nil)]
 
       (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
              (providers/save-default-selection! :anthropic-coding-plan "claude-fable-5" :test)))
@@ -347,39 +332,37 @@
   ;; provider exposes was refused with "Unknown model for provider" and the TUI
   ;; reported "Default rejected". Whatever the picker offers must be selectable,
   ;; and the saved pair must survive the next read.
-  (let
-    [fleet
-     [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
-      {:id :openrouter :models [{:name "glm-5.2"}]}]
+  (let [fleet
+        [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
+         {:id :openrouter :models [{:name "glm-5.2"}]}]
 
-     saved
-     (atom nil)]
+        saved
+        (atom nil)]
 
-    (with-redefs
-      [providers/picker-fleet
-       (constantly fleet)
+    (with-redefs [providers/picker-fleet
+                  (constantly fleet)
 
-       providers/fetch-models
-       (fn [provider]
-         (when (= :openrouter (:id provider)) ["z-ai/glm-4.6v"]))
+                  providers/fetch-models
+                  (fn [provider]
+                    (when (= :openrouter (:id provider)) ["z-ai/glm-4.6v"]))
 
-       config/provider-template
-       (constantly nil)
+                  config/provider-template
+                  (constantly nil)
 
-       config/load-config
-       (constantly {:default-provider "anthropic-coding-plan"
-                    :default-model "claude-fable-5"
-                    :providers fleet})
+                  config/load-config
+                  (constantly {:default-provider "anthropic-coding-plan"
+                               :default-model "claude-fable-5"
+                               :providers fleet})
 
-       config/load-global-config-raw
-       (constantly {"providers" [{"id" "openrouter" "models" [{"name" "glm-5.2"}]}]})
+                  config/load-global-config-raw
+                  (constantly {"providers" [{"id" "openrouter" "models" [{"name" "glm-5.2"}]}]})
 
-       config/save-config!
-       (fn [wire _]
-         (reset! saved wire))
+                  config/save-config!
+                  (fn [wire _]
+                    (reset! saved wire))
 
-       config/reload-config!
-       (constantly nil)]
+                  config/reload-config!
+                  (constantly nil)]
 
       (is (= {:provider-id :openrouter :model "z-ai/glm-4.6v"}
              (providers/save-default-selection! :openrouter "z-ai/glm-4.6v" :test))
@@ -389,9 +372,8 @@
       (is (= ["glm-5.2" "z-ai/glm-4.6v"] (mapv :name (:models (first (get @saved "providers")))))
           "the chosen model joins the persisted catalog")
       (is (= {:provider-id :openrouter :model "z-ai/glm-4.6v"}
-             (with-redefs
-               [config/load-config (constantly {:default-provider "openrouter"
-                                                :default-model "z-ai/glm-4.6v"})]
+             (with-redefs [config/load-config (constantly {:default-provider "openrouter"
+                                                           :default-model "z-ai/glm-4.6v"})]
                (providers/default-selection
                  [{:id :openrouter :models (:models (first (get @saved "providers")))}])))
           "so the pair round-trips instead of reverting to the provider's first model"))))
@@ -401,22 +383,20 @@
   ;; alphabetically reshuffled the user's fleet on every render (and moved the
   ;; intended default off the top). Configured models lead, in file order; the
   ;; live catalog is appended after them, sorted.
-  (with-redefs
-    [providers/fetch-models
-     (constantly ["zebra-live" "alpha-live"])
+  (with-redefs [providers/fetch-models
+                (constantly ["zebra-live" "alpha-live"])
 
-     config/provider-template
-     (constantly nil)
+                config/provider-template
+                (constantly nil)
 
-     config/provider-model-visible?
-     (constantly true)]
+                config/provider-model-visible?
+                (constantly true)]
 
-    (let
-      [provider
-       {:id :fake :models [{:name "zzz-first"} {:name "my-local"} {:name "alpha-live"}]}
+    (let [provider
+          {:id :fake :models [{:name "zzz-first"} {:name "my-local"} {:name "alpha-live"}]}
 
-       {:keys [models]}
-       (providers/model-options provider (providers/default-model-names provider) true)]
+          {:keys [models]}
+          (providers/model-options provider (providers/default-model-names provider) true)]
 
       (is (= ["zzz-first" "my-local" "alpha-live" "zebra-live"] models)
           "vis.yml order is preserved verbatim; catalog-only ids follow, sorted")
@@ -424,53 +404,49 @@
           "configured names come straight off the provider map, in file order"))))
 
 (deftest fallback-selection-is-explicit-and-always-on-another-provider
-  (let
-    [fleet
-     [{:id :openai :models [{:name "gpt-5"}]}
-      {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
+  (let [fleet
+        [{:id :openai :models [{:name "gpt-5"}]}
+         {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
 
-     primary
-     {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
+        primary
+        {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
 
-     base
-     {:default-provider "anthropic-coding-plan" :default-model "claude-fable-5" :providers fleet}
+        base
+        {:default-provider "anthropic-coding-plan" :default-model "claude-fable-5" :providers fleet}
 
-     saved
-     (atom nil)]
+        saved
+        (atom nil)]
 
-    (with-redefs
-      [config/load-config (constantly (assoc base
-                                        :fallback-provider "openai"
-                                        :fallback-model "gpt-5"))]
+    (with-redefs [config/load-config (constantly (assoc base
+                                                   :fallback-provider "openai"
+                                                   :fallback-model "gpt-5"))]
       (is (= {:provider-id :openai :model "gpt-5"} (providers/fallback-selection fleet primary))))
     (with-redefs [config/load-config (constantly base)]
       (is (nil? (providers/fallback-selection fleet primary))
           "an unset tag never invents a second choice"))
-    (with-redefs
-      [config/load-config (constantly (assoc base
-                                        :fallback-provider "anthropic-coding-plan"
-                                        :fallback-model "claude-opus-4-8"))]
+    (with-redefs [config/load-config (constantly (assoc base
+                                                   :fallback-provider "anthropic-coding-plan"
+                                                   :fallback-model "claude-opus-4-8"))]
       (is (nil? (providers/fallback-selection fleet primary))
           "a tag on the primary's own provider is no fallback at all"))
-    (with-redefs
-      [providers/picker-fleet
-       (constantly fleet)
+    (with-redefs [providers/picker-fleet
+                  (constantly fleet)
 
-       config/load-config
-       (constantly base)
+                  config/load-config
+                  (constantly base)
 
-       config/load-global-config-raw
-       (constantly {"default_provider" "anthropic-coding-plan"
-                    "default_model" "claude-fable-5"
-                    "fallback_provider" "stale"
-                    "fallback_model" "stale-1"})
+                  config/load-global-config-raw
+                  (constantly {"default_provider" "anthropic-coding-plan"
+                               "default_model" "claude-fable-5"
+                               "fallback_provider" "stale"
+                               "fallback_model" "stale-1"})
 
-       config/save-config!
-       (fn [wire _]
-         (reset! saved wire))
+                  config/save-config!
+                  (fn [wire _]
+                    (reset! saved wire))
 
-       config/reload-config!
-       (constantly nil)]
+                  config/reload-config!
+                  (constantly nil)]
 
       (is (= {:provider-id :openai :model "gpt-5"}
              (providers/save-fallback-selection! :openai "gpt-5" :test)))
@@ -488,37 +464,35 @@
       (is (nil? (get @saved "fallback_model"))))))
 
 (deftest tagging-a-new-primary-drops-a-fallback-that-would-collide-with-it
-  (let
-    [fleet
-     [{:id :openai :models [{:name "gpt-5"}]}
-      {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]
+  (let [fleet
+        [{:id :openai :models [{:name "gpt-5"}]}
+         {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]
 
-     saved
-     (atom nil)]
+        saved
+        (atom nil)]
 
-    (with-redefs
-      [providers/picker-fleet
-       (constantly fleet)
+    (with-redefs [providers/picker-fleet
+                  (constantly fleet)
 
-       config/load-config
-       (constantly {:default-provider "anthropic-coding-plan"
-                    :default-model "claude-fable-5"
-                    :fallback-provider "openai"
-                    :fallback-model "gpt-5"
-                    :providers fleet})
+                  config/load-config
+                  (constantly {:default-provider "anthropic-coding-plan"
+                               :default-model "claude-fable-5"
+                               :fallback-provider "openai"
+                               :fallback-model "gpt-5"
+                               :providers fleet})
 
-       config/load-global-config-raw
-       (constantly {"default_provider" "anthropic-coding-plan"
-                    "default_model" "claude-fable-5"
-                    "fallback_provider" "openai"
-                    "fallback_model" "gpt-5"})
+                  config/load-global-config-raw
+                  (constantly {"default_provider" "anthropic-coding-plan"
+                               "default_model" "claude-fable-5"
+                               "fallback_provider" "openai"
+                               "fallback_model" "gpt-5"})
 
-       config/save-config!
-       (fn [wire _]
-         (reset! saved wire))
+                  config/save-config!
+                  (fn [wire _]
+                    (reset! saved wire))
 
-       config/reload-config!
-       (constantly nil)]
+                  config/reload-config!
+                  (constantly nil)]
 
       (is (= {:provider-id :openai :model "gpt-5"}
              (providers/save-default-selection! :openai "gpt-5" :test)))
@@ -531,19 +505,18 @@
   ;; "Log out" for a key-only provider forgets the CREDENTIAL and nothing else:
   ;; the config entry — models, base-url, tags — has to survive so signing back in
   ;; is one key away (issue #80).
-  (let
-    [saved
-     (atom nil)
+  (let [saved
+        (atom nil)
 
-     fleet
-     [{:id :zai-coding-plan
-       :api-key "sk-live"
-       :base-url "https://example.invalid"
-       :models [{:name "glm-4.7"}]} {:id :openai :api-key "sk-other"}]
+        fleet
+        [{:id :zai-coding-plan
+          :api-key "sk-live"
+          :base-url "https://example.invalid"
+          :models [{:name "glm-4.7"}]} {:id :openai :api-key "sk-other"}]
 
-     entry
-     (fn [providers id]
-       (some #(when (= id (:id %)) %) providers))]
+        entry
+        (fn [providers id]
+          (some #(when (= id (:id %)) %) providers))]
 
     (with-redefs-fn {#'config/load-global-config-raw (constantly {:providers fleet})
                      (rv 'update-providers!) (fn [f _source]
@@ -568,9 +541,8 @@
         (is (nil? @saved))))))
 
 (deftest reprioritize-providers-renumbers-from-vector-position
-  (let
-    [renumbered (providers/reprioritize-providers [{:id :a :priority 7} {:id :b :priority 0}
-                                                   {:id :c}])]
+  (let [renumbered (providers/reprioritize-providers [{:id :a :priority 7} {:id :b :priority 0}
+                                                      {:id :c}])]
     (is (= [:a :b :c] (mapv :id renumbered)))
     (is (= [0 1 2] (mapv :priority renumbered)))
     (is (vector? renumbered))
@@ -580,13 +552,11 @@
   ;; svar sorts candidates by `:priority`, never by vector position, so a dead
   ;; local endpoint that keeps `:priority 0` is still its FIRST pick — the health
   ;; gate sank it in name only and the turn burned minutes against a dead port.
-  (with-redefs
-    [providers/provider-reachable? (fn [provider]
-                                     (not= :lmstudio (:id provider)))]
-    (let
-      [{:keys [router demoted]} (providers/demote-unreachable-providers
-                                  {:providers [{:id :lmstudio :priority 0}
-                                               {:id :zai-coding-plan :priority 1}]})]
+  (with-redefs [providers/provider-reachable? (fn [provider]
+                                                (not= :lmstudio (:id provider)))]
+    (let [{:keys [router demoted]} (providers/demote-unreachable-providers
+                                     {:providers [{:id :lmstudio :priority 0}
+                                                  {:id :zai-coding-plan :priority 1}]})]
       (is (= [:lmstudio] demoted))
       (is (= [:zai-coding-plan :lmstudio] (mapv :id (:providers router))))
       (is (= [0 1] (mapv :priority (:providers router)))))))
@@ -614,18 +584,17 @@
   ;; A probe still in flight is NOT a verdict. Both report forms used to render
   ;; the placeholder status as a definitive "no" and retract it one refresh
   ;; later, which is exactly what a provider card showed while it was loading.
-  (let
-    [limits
-     {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}
+  (let [limits
+        {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}
 
-     loading
-     {:is-authenticated nil :loading? true}
+        loading
+        {:is-authenticated nil :loading? true}
 
-     text
-     (providers/status-text {:id :slow} loading limits)
+        text
+        (providers/status-text {:id :slow} loading limits)
 
-     md
-     (providers/status-md {:id :slow} loading limits)]
+        md
+        (providers/status-md {:id :slow} loading limits)]
 
     (is (str/includes? text "Authenticated: checking…"))
     (is (not (str/includes? text "Authenticated: no")))
@@ -641,33 +610,32 @@
 ;; provider-status request — and the card behind it — open until the HTTP client
 ;; gave up 30s later.
 (deftest provider-probe-never-runs-unbounded-test
-  (let
-    [gate
-     (promise)
+  (let [gate
+        (promise)
 
-     probe
-     ;; The production ceiling is 5s, and proving a wedged callback is walled off
-     ;; costs that ceiling in wall-clock — twice, once per callback kind. The
-     ;; contract under test is the WALL, not its length, so shrink it: 10s of
-     ;; sleeping became 2s.
-     (fn [provider]
-       (with-redefs [providers/probe-timeout-ms 1000]
-         (deref (cancel/worker-future "provider-probe-test"
-                                      #(providers/safe-provider-status provider))
-                8000
-                ::still-running)))
+        probe
+        ;; The production ceiling is 5s, and proving a wedged callback is walled off
+        ;; costs that ceiling in wall-clock — twice, once per callback kind. The
+        ;; contract under test is the WALL, not its length, so shrink it: 10s of
+        ;; sleeping became 2s.
+        (fn [provider]
+          (with-redefs [providers/probe-timeout-ms 1000]
+            (deref (cancel/worker-future "provider-probe-test"
+                                         #(providers/safe-provider-status provider))
+                   8000
+                   ::still-running)))
 
-     status
-     (probe {:id :wedged
-             :provider/status-fn (fn []
-                                   @gate
-                                   {:is-authenticated true})})
+        status
+        (probe {:id :wedged
+                :provider/status-fn (fn []
+                                      @gate
+                                      {:is-authenticated true})})
 
-     detected
-     (probe {:id :wedged
-             :provider/detect-fn (fn []
-                                   @gate
-                                   true)})]
+        detected
+        (probe {:id :wedged
+                :provider/detect-fn (fn []
+                                      @gate
+                                      true)})]
 
     (deliver gate true)
     (is (not= ::still-running status))
@@ -684,26 +652,25 @@
 ;; fell back to the process-wide DB, and a jailed spawn was scoped to the process
 ;; cwd instead of the caller's workspace.
 (deftest provider-probe-keeps-the-callers-session-context-test
-  (let
-    [env
-     {:session-id "s-probe" :workspace {:root (str (workspace/cwd))}}
+  (let [env
+        {:session-id "s-probe" :workspace {:root (str (workspace/cwd))}}
 
-     seen
-     (extension/with-context {:env env}
-                             (providers/safe-provider-status
-                               {:id :ctx
-                                :provider/status-fn (fn []
-                                                      {:is-authenticated true
-                                                       :session (:session-id
-                                                                  extension/*current-environment*)
-                                                       :root workspace/*workspace-root*})}))
+        seen
+        (extension/with-context {:env env}
+                                (providers/safe-provider-status
+                                  {:id :ctx
+                                   :provider/status-fn
+                                   (fn []
+                                     {:is-authenticated true
+                                      :session (:session-id extension/*current-environment*)
+                                      :root workspace/*workspace-root*})}))
 
-     detected
-     (extension/with-context {:env env}
-                             (providers/safe-provider-status
-                               {:id :ctx
-                                :provider/detect-fn #(:session-id
-                                                       extension/*current-environment*)}))]
+        detected
+        (extension/with-context {:env env}
+                                (providers/safe-provider-status
+                                  {:id :ctx
+                                   :provider/detect-fn #(:session-id
+                                                          extension/*current-environment*)}))]
 
     (is (= "s-probe" (:session seen)))
     (is (= (workspace/workspace-root env) (:root seen)))
@@ -714,14 +681,13 @@
 ;; Clojure map literal (`{"max_budget" 100.0, "spend" 25.49}`) instead of a
 ;; readable "key: value" line.
 (deftest status-text-formats-nested-usage-map-readably
-  (let
-    [status
-     {"is_authenticated" true "usage" {"max_budget" 100.0 "spend" 25.49 "remaining_requests" 42}}
+  (let [status
+        {"is_authenticated" true "usage" {"max_budget" 100.0 "spend" 25.49 "remaining_requests" 42}}
 
-     text
-     (providers/status-text {:id :anthropic-coding-plan}
-                            status
-                            {:status :ok :dynamic {:limits []}})]
+        text
+        (providers/status-text {:id :anthropic-coding-plan}
+                               status
+                               {:status :ok :dynamic {:limits []}})]
 
     (is (str/includes? text "Usage: max_budget: 100.0, remaining_requests: 42, spend: 25.49"))
     (is (not (str/includes? text "{\"max_budget\"")))))
@@ -732,36 +698,34 @@
   ;; that snapshotted it) kept the OLD root — a new session's first turn ran the
   ;; previous model until the user re-pinned it on the session. A config-affecting
   ;; save must rebuild the shared router the same turn a new session will snapshot.
-  (let
-    [fleet
-     [{:id :openai :models [{:name "gpt-5"}]}
-      {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]
+  (let [fleet
+        [{:id :openai :models [{:name "gpt-5"}]}
+         {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]
 
-     rebuilt
-     (atom 0)
+        rebuilt
+        (atom 0)
 
-     prev
-     (providers/router-rebuild-hook-val)]
+        prev
+        (providers/router-rebuild-hook-val)]
 
     (try (providers/set-router-rebuild-hook! (fn []
                                                (swap! rebuilt inc)))
-         (with-redefs
-           [providers/picker-fleet
-            (constantly fleet)
+         (with-redefs [providers/picker-fleet
+                       (constantly fleet)
 
-            providers/fetch-models
-            (constantly nil)
+                       providers/fetch-models
+                       (constantly nil)
 
-            config/load-global-config-raw
-            (constantly {"providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
-                                      {"id" "anthropic-coding-plan"
-                                       "models" [{"name" "claude-fable-5"}]}]})
+                       config/load-global-config-raw
+                       (constantly {"providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
+                                                 {"id" "anthropic-coding-plan"
+                                                  "models" [{"name" "claude-fable-5"}]}]})
 
-            config/save-config!
-            (fn [_ _])
+                       config/save-config!
+                       (fn [_ _])
 
-            config/reload-config!
-            (constantly nil)]
+                       config/reload-config!
+                       (constantly nil)]
 
            (is (=
                  {:provider-id :anthropic-coding-plan :model "claude-fable-5"}

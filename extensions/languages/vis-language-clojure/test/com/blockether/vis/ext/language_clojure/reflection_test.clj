@@ -10,12 +10,11 @@
 (defdescribe
   compile-warnings-test
   (it "flags an unresolved interop call as a reflection warning"
-      (let
-        [fs
-         (reflection/compile-warnings "(defn r [x] (.length x))" "<stdin>")
+      (let [fs
+            (reflection/compile-warnings "(defn r [x] (.length x))" "<stdin>")
 
-         refl
-         (first (filter #(= "reflection" (get % "type")) fs))]
+            refl
+            (first (filter #(= "reflection" (get % "type")) fs))]
 
         (expect (contains? (types fs) "reflection"))
         (expect (= "warning" (get refl "level")))
@@ -25,12 +24,11 @@
         (expect (number? (get refl "col")))
         (expect (string? (get refl "message")))))
   (it "flags boxed numeric ops as a boxed-math warning"
-      (let
-        [fs
-         (reflection/compile-warnings "(defn add [a b] (+ a b))" "<stdin>")
+      (let [fs
+            (reflection/compile-warnings "(defn add [a b] (+ a b))" "<stdin>")
 
-         boxed
-         (first (filter #(= "boxed-math" (get % "type")) fs))]
+            boxed
+            (first (filter #(= "boxed-math" (get % "type")) fs))]
 
         (expect (contains? (types fs) "boxed-math"))
         (expect (= "general" (get boxed "provider")))
@@ -104,8 +102,8 @@
       (let [fs (reflection/compile-warnings "(let [x (identity \"s\")] (.length x))" "<stdin>")]
         (expect (contains? (types fs) "reflection"))))
   (it "keeps warning rows pointing at the real source line"
-      (let
-        [fs (reflection/compile-warnings "(ns probe.rows)\n\n(defn r [x] (.length x))" "<stdin>")]
+      (let [fs (reflection/compile-warnings "(ns probe.rows)\n\n(defn r [x] (.length x))"
+                                            "<stdin>")]
         (expect (= 3 (get (first fs) "row"))))))
 
 
@@ -129,28 +127,28 @@
        "    \"vis_phantom_dep.clj\" \"vis_phantom_dep.clj\")\n" "  nil)\n"
        "(defn own [s] (.length s))\n" "(load-dependency)\n"))
 
-(defdescribe
-  compile-warnings-attribution-test
-  (it "reports only the target's own warnings, never a dependency's"
-      (reset! dependency-loads 0)
-      (let
-        [code
-         (dependency-loading-code)
+(defdescribe compile-warnings-attribution-test
+             (it "reports only the target's own warnings, never a dependency's"
+                 (reset! dependency-loads 0)
+                 (let [code
+                       (dependency-loading-code)
 
-         ;; the target's own (and only) warning, wherever it sits
-         own-row
-         (inc (count (take-while #(not (str/starts-with? % "(defn own")) (str/split-lines code))))
+                       ;; the target's own (and only) warning, wherever it sits
+                       own-row
+                       (inc (count (take-while #(not (str/starts-with? % "(defn own"))
+                                               (str/split-lines code))))
 
-         fs
-         (reflection/compile-warnings code "/tmp/vis-lint-attribution-target.clj")]
+                       fs
+                       (reflection/compile-warnings code "/tmp/vis-lint-attribution-target.clj")]
 
-        ;; The dependency really was compiled here — otherwise this proves nothing.
-        (expect (= 1 @dependency-loads))
-        (expect (= 1 (count fs)))
-        (expect (= own-row (get (first fs) "row")))
-        (expect (= "reflection" (get (first fs) "type")))
-        (expect (= #{"/tmp/vis-lint-attribution-target.clj"} (set (map #(get % "file") fs))))
-        (expect (not-any? #(str/includes? (get % "message") "unchecked_add") fs)))))
+                   ;; The dependency really was compiled here — otherwise this proves nothing.
+                   (expect (= 1 @dependency-loads))
+                   (expect (= 1 (count fs)))
+                   (expect (= own-row (get (first fs) "row")))
+                   (expect (= "reflection" (get (first fs) "type")))
+                   (expect (= #{"/tmp/vis-lint-attribution-target.clj"}
+                              (set (map #(get % "file") fs))))
+                   (expect (not-any? #(str/includes? (get % "message") "unchecked_add") fs)))))
 
 (def compiles
   "How many times [[counted-compile]] has been expanded — i.e. how many times the
@@ -185,12 +183,11 @@
   (it "compiles one source once, however often it is linted"
       (reflection/reset-cache!)
       (reset! compiles 0)
-      (let
-        [a
-         (reflection/compile-warnings probe-source "a.clj")
+      (let [a
+            (reflection/compile-warnings probe-source "a.clj")
 
-         b
-         (reflection/compile-warnings probe-source "a.clj")]
+            b
+            (reflection/compile-warnings probe-source "a.clj")]
 
         (expect (seq a))
         (expect (contains? (types a) "reflection"))
@@ -202,12 +199,11 @@
   (it "keys on the bytes and restamps the reported file"
       (reflection/reset-cache!)
       (reset! compiles 0)
-      (let
-        [a
-         (reflection/compile-warnings probe-source "one.clj")
+      (let [a
+            (reflection/compile-warnings probe-source "one.clj")
 
-         b
-         (reflection/compile-warnings probe-source "two.clj")]
+            b
+            (reflection/compile-warnings probe-source "two.clj")]
 
         (expect (= 1 @compiles))
         (expect (every? #(= "two.clj" (get % "file")) b))
@@ -234,37 +230,35 @@
       (reflection/reset-cache!)
       (expect (= {"hits" 0 "misses" 0 "size" 0} (dissoc (reflection/cache-info) "generation")))))
 
-(defdescribe
-  compile-warnings-never-touches-a-loaded-namespace-test
-  (it "leaves the live namespace, its vars and the lib registry exactly as they were"
-      (let
-        [target
-         'vis-lint-live-namespace-probe
+(defdescribe compile-warnings-never-touches-a-loaded-namespace-test
+             (it "leaves the live namespace, its vars and the lib registry exactly as they were"
+                 (let [target
+                       'vis-lint-live-namespace-probe
 
-         live
-         "(ns vis-lint-live-namespace-probe) (defn answer [] :live)"
+                       live
+                       "(ns vis-lint-live-namespace-probe) (defn answer [] :live)"
 
-         ;; Same namespace, different (stale, warning-producing) bytes — an
-         ;; unsaved buffer, an older checkout, a file being edited right now.
-         stale
-         (str "(ns vis-lint-live-namespace-probe)"
-              " (defn answer [] :linted)"
-              " (defn broken [^String s] (.nope s))")]
+                       ;; Same namespace, different (stale, warning-producing) bytes — an
+                       ;; unsaved buffer, an older checkout, a file being edited right now.
+                       stale
+                       (str "(ns vis-lint-live-namespace-probe)"
+                            " (defn answer [] :linted)"
+                            " (defn broken [^String s] (.nope s))")]
 
-        (try (binding [*ns* *ns*]
-               (load-string live))
-             (let
-               [libs-before
-                (set (loaded-libs))
+                   (try (binding [*ns* *ns*]
+                          (load-string live))
+                        (let [libs-before
+                              (set (loaded-libs))
 
-                nses-before
-                (set (map ns-name (all-ns)))
+                              nses-before
+                              (set (map ns-name (all-ns)))
 
-                fs
-                (reflection/compile-warnings stale "stale.clj")]
+                              fs
+                              (reflection/compile-warnings stale "stale.clj")]
 
-               (expect (contains? (types fs) "reflection"))
-               (expect (= :live ((ns-resolve (find-ns target) 'answer))))
-               (expect (= libs-before (set (loaded-libs))))
-               (expect (= nses-before (set (map ns-name (all-ns))))))
-             (finally (remove-ns target) (dosync (commute (loaded-libs-ref) disj target)))))))
+                          (expect (contains? (types fs) "reflection"))
+                          (expect (= :live ((ns-resolve (find-ns target) 'answer))))
+                          (expect (= libs-before (set (loaded-libs))))
+                          (expect (= nses-before (set (map ns-name (all-ns))))))
+                        (finally (remove-ns target)
+                                 (dosync (commute (loaded-libs-ref) disj target)))))))

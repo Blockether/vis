@@ -38,20 +38,19 @@
   "`/rename <new title>` — set the current session's title. Reuses the
    gateway's single title mutation point."
   [ctx]
-  (let
-    [sid
-     (or (:session/id ctx) (:session-id ctx))
+  (let [sid
+        (or (:session/id ctx) (:session-id ctx))
 
-     db
-     (or (:db-info ctx) (:db ctx))
+        db
+        (or (:db-info ctx) (:db ctx))
 
-     atom*
-     (:session-title-atom ctx)
+        atom*
+        (:session-title-atom ctx)
 
-     title
-     (some-> (str/join " " (:command/argv ctx))
-             str/trim
-             not-empty)]
+        title
+        (some-> (str/join " " (:command/argv ctx))
+                str/trim
+                not-empty)]
 
     (cond (nil? sid) (err "Send a message first, then /rename <title> (session not ready yet)")
           (nil? title) (err "Name it: /rename <new title>")
@@ -66,32 +65,30 @@
    extension. Defaults to `vis-transcript-<id8>.<ext>` in the working
    directory. Same renderers as `vis-agent sessions export --md|--html`."
   [ctx forced-fmt]
-  (let
-    [sid
-     (or (:session/id ctx) (:session-id ctx))
+  (let [sid
+        (or (:session/id ctx) (:session-id ctx))
 
-     db
-     (or (:db-info ctx) (:db ctx))
+        db
+        (or (:db-info ctx) (:db ctx))
 
-     path
-     (some-> (str/join " " (:command/argv ctx))
-             str/trim
-             not-empty)]
+        path
+        (some-> (str/join " " (:command/argv ctx))
+                str/trim
+                not-empty)]
 
     (cond (nil? sid) (err "Send a message first, then /export (session not ready yet)")
           (nil? db) (err "No database available to export from.")
-          :else (let
-                  [fmt
-                   (or forced-fmt (path->fmt path))
+          :else (let [fmt
+                      (or forced-fmt (path->fmt path))
 
-                   ext
-                   (if (= fmt :html) "html" "md")
+                      ext
+                      (if (= fmt :html) "html" "md")
 
-                   fname
-                   (or path (str "vis-transcript-" (subs (str sid) 0 8) "." ext))
+                      fname
+                      (or path (str "vis-transcript-" (subs (str sid) 0 8) "." ext))
 
-                   target
-                   (io/file fname)]
+                      target
+                      (io/file fname)]
 
                   (when-let [parent (.getParentFile ^java.io.File target)]
                     (.mkdirs parent))

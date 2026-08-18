@@ -46,37 +46,34 @@
           {:kind :calendar :unit :month :size 1 :resets-at-ms (epoch-ms "2026-09-01T00:00:00.000Z")}
           (:window (nth rows 2))))))
   (it "flags an exhausted window on the row and on the report"
-      (let
-        [report
-         (go-limits/usage->dynamic-limits
-           (assoc-in usage-payload
-             [:usage :rolling]
-             {:status "rate-limited" :percent 100 :resetsAt "2026-08-14T12:00:00.000Z"}))
+      (let [report
+            (go-limits/usage->dynamic-limits
+              (assoc-in usage-payload
+                [:usage :rolling]
+                {:status "rate-limited" :percent 100 :resetsAt "2026-08-14T12:00:00.000Z"}))
 
-         row
-         (first (:limits report))]
+            row
+            (first (:limits report))]
 
         (expect (= 100.0 (:used row)))
         (expect (= 0.0 (:remaining row)))
         (expect (string? (:note row)))
         (expect (re-find #"rolling" (:note report)))))
   (it "survives a window without a percent instead of inventing one"
-      (let
-        [report
-         (go-limits/usage->dynamic-limits
-           {:usage {:rolling {:status "ok" :resetsAt "2026-08-14T12:00:00.000Z"}}})
+      (let [report
+            (go-limits/usage->dynamic-limits
+              {:usage {:rolling {:status "ok" :resetsAt "2026-08-14T12:00:00.000Z"}}})
 
-         row
-         (first (:limits report))]
+            row
+            (first (:limits report))]
 
         (expect (= 1 (count (:limits report))))
         (expect (= :unknown (:precision row)))
         (expect (nil? (:used row)))
         (expect (nil? (:remaining row)))))
   (it "drops a window whose reset instant is unparseable rather than throwing"
-      (let
-        [report (go-limits/usage->dynamic-limits
-                  {:usage {:weekly {:status "ok" :percent 5 :resetsAt "not-a-timestamp"}}})]
+      (let [report (go-limits/usage->dynamic-limits
+                     {:usage {:weekly {:status "ok" :percent 5 :resetsAt "not-a-timestamp"}}})]
         (expect (= [:opencode-go-7d] (mapv :id (:limits report))))
         (expect (nil? (get-in report [:limits 0 :window :resets-at-ms])))))
   (it "returns an explanatory note when the payload carries no windows"

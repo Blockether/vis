@@ -33,39 +33,36 @@
    Authorization header there would hand the user's token to a third party.
    Returns the response whose `:body` is the stream."
   [url headers]
-  (loop
-    [url
-     url
+  (loop [url
+         url
 
-     headers
-     (or headers {})
+         headers
+         (or headers {})
 
-     hops
-     0]
+         hops
+         0]
 
-    (let
-      [response
-       (http/get url
-                 {:client @download-http-client
-                  :as :stream
-                  :timeout 120000
-                  :throw false
-                  :follow-redirects :never
-                  :headers headers})
+    (let [response
+          (http/get url
+                    {:client @download-http-client
+                     :as :stream
+                     :timeout 120000
+                     :throw false
+                     :follow-redirects :never
+                     :headers headers})
 
-       status
-       (long (:status response))
+          status
+          (long (:status response))
 
-       next-url
-       (header response "location")]
+          next-url
+          (header response "location")]
 
       (cond (and (<= 300 status 399) next-url (< hops (long max-redirects)))
-            (let
-              [from
-               (URI/create url)
+            (let [from
+                  (URI/create url)
 
-               to
-               (.resolve from (URI/create next-url))]
+                  to
+                  (.resolve from (URI/create next-url))]
 
               (try (.close ^java.io.InputStream (:body response)) (catch Throwable _))
               (recur (str to) (if (= (.getHost to) (.getHost from)) headers {}) (inc hops)))
@@ -94,44 +91,42 @@
    verifying costs no second read and no second copy."
   [url path {:keys [on-progress headers sha256]}]
   (.mkdirs (.getParentFile (io/file path)))
-  (let
-    [uri
-     (URI/create url)
+  (let [uri
+        (URI/create url)
 
-     response
-     (if (= "file" (.getScheme uri))
-       (let [file (io/file uri)]
-         {:body (io/input-stream file) :headers {"content-length" (str (.length file))}})
-       (open-stream! url headers))
+        response
+        (if (= "file" (.getScheme uri))
+          (let [file (io/file uri)]
+            {:body (io/input-stream file) :headers {"content-length" (str (.length file))}})
+          (open-stream! url headers))
 
-     ^long total
-     (try (Long/parseLong (str (header response "content-length"))) (catch Throwable _ -1))
+        ^long total
+        (try (Long/parseLong (str (header response "content-length"))) (catch Throwable _ -1))
 
-     ^MessageDigest digest
-     (MessageDigest/getInstance "SHA-256")
+        ^MessageDigest digest
+        (MessageDigest/getInstance "SHA-256")
 
-     written
-     (with-open
-       [^java.io.InputStream in
-        (:body response)
+        written
+        (with-open [^java.io.InputStream in
+                    (:body response)
 
-        ^FileOutputStream out
-        (FileOutputStream. (io/file path))]
+                    ^FileOutputStream out
+                    (FileOutputStream. (io/file path))]
 
-       (let [buf (byte-array 1048576)]
-         (loop [done 0]
-           (let [n (.read in buf)]
-             (if (neg? n)
-               done
-               (do (.write out buf 0 n)
-                   (.update digest buf 0 n)
-                   (let [done' (+ done n)]
-                     (when (and on-progress (pos? total))
-                       (on-progress (min 99 (long (* 100 (/ (double done') (double total)))))))
-                     (recur done'))))))))
+          (let [buf (byte-array 1048576)]
+            (loop [done 0]
+              (let [n (.read in buf)]
+                (if (neg? n)
+                  done
+                  (do (.write out buf 0 n)
+                      (.update digest buf 0 n)
+                      (let [done' (+ done n)]
+                        (when (and on-progress (pos? total))
+                          (on-progress (min 99 (long (* 100 (/ (double done') (double total)))))))
+                        (recur done'))))))))
 
-     actual
-     (hex (.digest digest))]
+        actual
+        (hex (.digest digest))]
 
     (when (and (pos? total) (not= total written))
       (.delete (io/file path))
@@ -159,13 +154,12 @@
 
 (defn- safe-entry-name
   [entry-name]
-  (let
-    [parts (->> (str/split entry-name #"/")
-                (remove str/blank?)
-                ;; Release archives contain a top-level directory. Strip it so
-                ;; the installed layout is the same whichever source delivered
-                ;; it — Hugging Face serves the files without that wrapper.
-                rest)]
+  (let [parts (->> (str/split entry-name #"/")
+                   (remove str/blank?)
+                   ;; Release archives contain a top-level directory. Strip it so
+                   ;; the installed layout is the same whichever source delivered
+                   ;; it — Hugging Face serves the files without that wrapper.
+                   rest)]
     (when (and (seq parts) (not-any? #(or (= % "..") (str/includes? % "\\")) parts))
       (str/join File/separator parts))))
 
@@ -178,35 +172,32 @@
   ([archive-path target-dir] (extract-tar-bz2! archive-path target-dir nil))
   ([archive-path target-dir on-progress]
    (.mkdirs (io/file target-dir))
-   (let
-     [archive
-      (io/file archive-path)
+   (let [archive
+         (io/file archive-path)
 
-      total
-      (.length archive)]
+         total
+         (.length archive)]
 
-     (with-open
-       [^FileInputStream fis
-        (FileInputStream. archive)
+     (with-open [^FileInputStream fis
+                 (FileInputStream. archive)
 
-        bz
-        (BZip2CompressorInputStream. fis)
+                 bz
+                 (BZip2CompressorInputStream. fis)
 
-        tar
-        (TarArchiveInputStream. bz)]
+                 tar
+                 (TarArchiveInputStream. bz)]
 
-       (let
-         [^java.nio.channels.FileChannel channel
-          (.getChannel fis)
+       (let [^java.nio.channels.FileChannel channel
+             (.getChannel fis)
 
-          buf
-          (byte-array 262144)
+             buf
+             (byte-array 262144)
 
-          report!
-          (fn []
-            (when (and on-progress (pos? total))
-              (on-progress (min 99
-                                (long (* 100 (/ (double (.position channel)) (double total))))))))]
+             report!
+             (fn []
+               (when (and on-progress (pos? total))
+                 (on-progress
+                   (min 99 (long (* 100 (/ (double (.position channel)) (double total))))))))]
 
          (loop []
 

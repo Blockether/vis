@@ -267,23 +267,21 @@
    to `input/resolve-prefix-key`, so the label and the key can never drift from
    the chord that actually fires."
   [db]
-  (let
-    [by-group
-     (group-by :group (available-prefix-commands db))
+  (let [by-group
+        (group-by :group (available-prefix-commands db))
 
-     palette
-     {:key (str prefix-palette-key) :type :action :id :show-palette :label "command palette…"}]
+        palette
+        {:key (str prefix-palette-key) :type :action :id :show-palette :label "command palette…"}]
 
     {:title (str (chord prefix-key) " — vis commands")
      :groups (into []
                    (keep (fn [g]
-                           (let
-                             [items (cond->
-                                      (mapv
-                                        (fn [{:keys [action key label]}]
-                                          {:key (str key) :type :action :id action :label label})
-                                        (get by-group g))
-                                      (= g "Tools")
-                                      (conj palette))]
+                           (let [items
+                                 (cond-> (mapv
+                                           (fn [{:keys [action key label]}]
+                                             {:key (str key) :type :action :id action :label label})
+                                           (get by-group g))
+                                   (= g "Tools")
+                                   (conj palette))]
                              (when (seq items) {:title g :items items}))))
                    prefix-groups)}))

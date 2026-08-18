@@ -26,15 +26,14 @@
 
 (defn- write-yaml!
   [path data]
-  (let
-    [wire (walk/postwalk (fn [node]
-                           (cond (keyword? node) (name node)
-                                 (map? node) (into {}
-                                                   (map (fn [[k v]]
-                                                          [(str/replace (str k) "-" "_") v]))
-                                                   node)
-                                 :else node))
-                         data)]
+  (let [wire (walk/postwalk (fn [node]
+                              (cond (keyword? node) (name node)
+                                    (map? node) (into {}
+                                                      (map (fn [[k v]]
+                                                             [(str/replace (str k) "-" "_") v]))
+                                                      node)
+                                    :else node))
+                            data)]
     (spit path (yamlstar/dump wire))))
 
 (defn- write-policy!
@@ -70,78 +69,71 @@
                   {:op :fs/access :fn (var-get #'bridge/bridge-fs-access-gate)}]
                  (:ext/op-hooks bridge/vis-extension))))
   (it "allows an ordinary commit when Bridge is not configured"
-      (let
-        [root
-         (temp-root "bridge-ext-no-gate")
+      (let [root
+            (temp-root "bridge-ext-no-gate")
 
-         called
-         (atom nil)
+            called
+            (atom nil)
 
-         result
-         (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
-                             :git/commit
-                             []
-                             (fn [args]
-                               (reset! called args)
-                               :committed))]
+            result
+            (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
+                                :git/commit
+                                []
+                                (fn [args]
+                                  (reset! called args)
+                                  :committed))]
 
         (expect (= :committed result))
         (expect (= [] @called))))
   (it
     "approves only the exact semantic candidate supplied by Vis"
-    (let
-      [root
-       (temp-root "bridge-ext-gate-candidate")
+    (let [root
+          (temp-root "bridge-ext-gate-candidate")
 
-       _
-       (configure-project! root root)
+          _
+          (configure-project! root root)
 
-       seen-opts
-       (atom nil)
+          seen-opts
+          (atom nil)
 
-       context
-       {:root root :candidate-tree "candidate" :index-preserving? true}]
+          context
+          {:root root :candidate-tree "candidate" :index-preserving? true}]
 
-      (with-redefs
-        [br/check (fn [_profile opts]
-                    (reset! seen-opts opts)
-                    {:status "clear"
-                     :issue-count 0
-                     :change-detection {:candidate-tree "candidate"
-                                        :approval {:status "approved"}}})]
+      (with-redefs [br/check (fn [_profile opts]
+                               (reset! seen-opts opts)
+                               {:status "clear"
+                                :issue-count 0
+                                :change-detection {:candidate-tree "candidate"
+                                                   :approval {:status "approved"}}})]
         (expect (= :committed (bridge-commit-gate context :git/commit [] (constantly :committed))))
         (expect (true? (:index? @seen-opts)))
         (expect (true? (:approve? @seen-opts))))
-      (with-redefs
-        [br/check (fn [_profile _opts]
-                    {:status "clear"
-                     :issue-count 0
-                     :change-detection {:candidate-tree "different"
-                                        :approval {:status "approved"}}})]
-        (let
-          [error (try (bridge-commit-gate context :git/commit [] (constantly :committed))
-                      nil
-                      (catch clojure.lang.ExceptionInfo e e))]
+      (with-redefs [br/check (fn [_profile _opts]
+                               {:status "clear"
+                                :issue-count 0
+                                :change-detection {:candidate-tree "different"
+                                                   :approval {:status "approved"}}})]
+        (let [error (try (bridge-commit-gate context :git/commit [] (constantly :committed))
+                         nil
+                         (catch clojure.lang.ExceptionInfo e e))]
           (expect (some? error))
           (expect (str/includes? (ex-message error) "candidate changed"))))))
   (it "ignores configured child repositories when the commit root is unconfigured"
-      (let
-        [root
-         (mark-repository! (temp-root "bridge-ext-parent-commit"))
+      (let [root
+            (mark-repository! (temp-root "bridge-ext-parent-commit"))
 
-         child
-         (str root "/nested")
+            child
+            (str root "/nested")
 
-         _
-         (configure-project! root child)
+            _
+            (configure-project! root child)
 
-         called
-         (atom nil)]
+            called
+            (atom nil)]
 
-        (with-redefs
-          [br/check (fn [& _]
-                      (throw (ex-info "child has unmet obligations"
-                                      {:type :test/child-obligations})))]
+        (with-redefs [br/check (fn [& _]
+                                 (throw (ex-info "child has unmet obligations"
+                                                 {:type :test/child-obligations})))]
           (expect (= :committed
                      (bridge-commit-gate
                        {:root root :candidate-tree "parent-candidate" :index-preserving? true}
@@ -153,39 +145,36 @@
           (expect (= [] @called)))))
   (it
     "gates commits made directly in a configured child repository"
-    (let
-      [parent
-       (mark-repository! (temp-root "bridge-ext-parent-with-child"))
+    (let [parent
+          (mark-repository! (temp-root "bridge-ext-parent-with-child"))
 
-       child
-       (str parent "/nested")
+          child
+          (str parent "/nested")
 
-       _
-       (configure-project! parent child)
+          _
+          (configure-project! parent child)
 
-       check-called?
-       (atom false)
+          check-called?
+          (atom false)
 
-       commit-called?
-       (atom false)]
+          commit-called?
+          (atom false)]
 
-      (with-redefs
-        [br/check (fn [_profile _opts]
-                    (reset! check-called? true)
-                    {:status "blocked"
-                     :issue-count 1
-                     :change-detection {:candidate-tree "child-candidate"
-                                        :approval {:status "pending"}}})]
-        (let
-          [error (try (bridge-commit-gate
-                        {:root child :candidate-tree "child-candidate" :index-preserving? true}
-                        :git/commit
-                        []
-                        (fn [_args]
-                          (reset! commit-called? true)
-                          :committed))
-                      nil
-                      (catch clojure.lang.ExceptionInfo e e))]
+      (with-redefs [br/check (fn [_profile _opts]
+                               (reset! check-called? true)
+                               {:status "blocked"
+                                :issue-count 1
+                                :change-detection {:candidate-tree "child-candidate"
+                                                   :approval {:status "pending"}}})]
+        (let [error (try (bridge-commit-gate
+                           {:root child :candidate-tree "child-candidate" :index-preserving? true}
+                           :git/commit
+                           []
+                           (fn [_args]
+                             (reset! commit-called? true)
+                             :committed))
+                         nil
+                         (catch clojure.lang.ExceptionInfo e e))]
           (expect (true? @check-called?))
           (expect (false? @commit-called?))
           (expect (= :vis.bridge/commit-not-approved (:type (ex-data error)))))))))
@@ -209,15 +198,14 @@
       (expect (= :mutation (vis/op-tag :br/init)))
       (expect (= :mutation (vis/op-tag :br/run-evidence))))
   (it "emits concise routing only in configured workspaces"
-      (let
-        [root
-         (temp-root "bridge-ext-prompt")
+      (let [root
+            (temp-root "bridge-ext-prompt")
 
-         env
-         {:workspace/root root}
+            env
+            {:workspace/root root}
 
-         prompt-fn
-         (:ext/prompt-fn bridge/vis-extension)]
+            prompt-fn
+            (:ext/prompt-fn bridge/vis-extension)]
 
         (expect (nil? (prompt-fn env)))
         (bridge/init env)
@@ -231,15 +219,14 @@
 
 (defdescribe bridge-toggle-test
              (it "registers a persistent default-on toggle that controls activation"
-                 (let
-                   [spec
-                    (vis/toggle-spec "bridge")
+                 (let [spec
+                       (vis/toggle-spec "bridge")
 
-                    activation-fn
-                    (:ext/activation-fn bridge/vis-extension)
+                       activation-fn
+                       (:ext/activation-fn bridge/vis-extension)
 
-                    original
-                    (vis/toggle-enabled? "bridge")]
+                       original
+                       (vis/toggle-enabled? "bridge")]
 
                    (expect (= {:id "bridge"
                                :label "Bridge verification"
@@ -253,24 +240,22 @@
                         (finally (vis/toggle-set-enabled! "bridge" original)))))
              ;; Regression, this report: disabling Bridge still left its commit-verification hook active.
              (it "does not run the commit gate while Bridge is disabled"
-                 (let
-                   [root
-                    (temp-root "bridge-ext-disabled-gate")
+                 (let [root
+                       (temp-root "bridge-ext-disabled-gate")
 
-                    _
-                    (configure-project! root root)
+                       _
+                       (configure-project! root root)
 
-                    original
-                    (vis/toggle-enabled? "bridge")
+                       original
+                       (vis/toggle-enabled? "bridge")
 
-                    check-called?
-                    (atom false)]
+                       check-called?
+                       (atom false)]
 
                    (try (vis/toggle-set-enabled! "bridge" false)
-                        (with-redefs
-                          [br/check (fn [& _]
-                                      (reset! check-called? true)
-                                      (throw (ex-info "disabled Bridge hook ran" {})))]
+                        (with-redefs [br/check (fn [& _]
+                                                 (reset! check-called? true)
+                                                 (throw (ex-info "disabled Bridge hook ran" {})))]
                           (expect (= :committed
                                      (extension/invoke-operation :git/commit
                                                                  {:root root
@@ -297,30 +282,29 @@
       (expect (= {} (bridge-context (temp-root "bridge-ext-session-empty")))))
   (it
     "discovers one configured child repository and defaults bare operations to it"
-    (let
-      [root
-       (temp-root "bridge-ext-session-one")
+    (let [root
+          (temp-root "bridge-ext-session-one")
 
-       child
-       (str root "/project")
+          child
+          (str root "/project")
 
-       _
-       (mark-repository! child)
+          _
+          (mark-repository! child)
 
-       before
-       (bridge-context root)
+          before
+          (bridge-context root)
 
-       profile-path
-       (configure-project! root child)
+          profile-path
+          (configure-project! root child)
 
-       context
-       (bridge-context root)
+          context
+          (bridge-context root)
 
-       bridge-slice
-       (get-in context ["session_env" "bridge"])
+          bridge-slice
+          (get-in context ["session_env" "bridge"])
 
-       check-result
-       (bridge/check {:workspace/root root})]
+          check-result
+          (bridge/check {:workspace/root root})]
 
       ;; Repository roots are cached, but profile files are probed on every
       ;; contribution, so configuring a known repo is visible immediately.
@@ -331,18 +315,17 @@
       (expect (true? (:success? check-result)))
       (expect (= profile-path (get-in (result-of check-result) ["profile_path"])))))
   (it "discovers the .yml fallback used by Bridge 0.3"
-      (let
-        [root
-         (temp-root "bridge-ext-session-yml")
+      (let [root
+            (temp-root "bridge-ext-session-yml")
 
-         child
-         (str root "/project")
+            child
+            (str root "/project")
 
-         profile-path
-         (configure-project! root child)
+            profile-path
+            (configure-project! root child)
 
-         yml-path
-         (str child "/.bridge/profile.yml")]
+            yml-path
+            (str child "/.bridge/profile.yml")]
 
         (expect (.renameTo (io/file profile-path) (io/file yml-path)))
         (expect (= yml-path
@@ -350,42 +333,41 @@
                            ["session_env" "bridge" "default_profile_path"])))))
   (it
     "requires explicit selection when multiple child repositories are configured"
-    (let
-      [root
-       (temp-root "bridge-ext-session-many")
+    (let [root
+          (temp-root "bridge-ext-session-many")
 
-       alpha
-       (str root "/alpha")
+          alpha
+          (str root "/alpha")
 
-       beta
-       (str root "/beta")
+          beta
+          (str root "/beta")
 
-       _
-       (mark-repository! alpha)
+          _
+          (mark-repository! alpha)
 
-       _
-       (mark-repository! beta)
+          _
+          (mark-repository! beta)
 
-       alpha-profile
-       (configure-project! root alpha)
+          alpha-profile
+          (configure-project! root alpha)
 
-       beta-profile
-       (configure-project! root beta)
+          beta-profile
+          (configure-project! root beta)
 
-       bridge-slice
-       (get-in (bridge-context root) ["session_env" "bridge"])
+          bridge-slice
+          (get-in (bridge-context root) ["session_env" "bridge"])
 
-       ambiguous
-       (bridge/check {:workspace/root root})
+          ambiguous
+          (bridge/check {:workspace/root root})
 
-       guard-result
-       (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
-                           :git/commit
-                           []
-                           (constantly :committed))
+          guard-result
+          (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
+                              :git/commit
+                              []
+                              (constantly :committed))
 
-       selected
-       (bridge/check {:workspace/root root} {"profile" beta-profile})]
+          selected
+          (bridge/check {:workspace/root root} {"profile" beta-profile})]
 
       (expect (= [alpha-profile beta-profile]
                  (mapv #(get % "profile_path") (get bridge-slice "projects"))))
@@ -399,53 +381,50 @@
       (expect (str/includes? ((:ext/prompt-fn bridge/vis-extension) {:workspace/root root})
                              "profile"))))
   (it "gives the active-root profile precedence over configured nested repositories"
-      (let
-        [root
-         (temp-root "bridge-ext-session-root")
+      (let [root
+            (temp-root "bridge-ext-session-root")
 
-         nested
-         (str root "/nested")
+            nested
+            (str root "/nested")
 
-         _
-         (mark-repository! root)
+            _
+            (mark-repository! root)
 
-         _
-         (mark-repository! nested)
+            _
+            (mark-repository! nested)
 
-         root-profile
-         (configure-project! root root)
+            root-profile
+            (configure-project! root root)
 
-         _
-         (configure-project! root nested)
+            _
+            (configure-project! root nested)
 
-         bridge-slice
-         (get-in (bridge-context root) ["session_env" "bridge"])
+            bridge-slice
+            (get-in (bridge-context root) ["session_env" "bridge"])
 
-         result
-         (bridge/profile {:workspace/root root})]
+            result
+            (bridge/profile {:workspace/root root})]
 
         (expect (= root-profile (get bridge-slice "default_profile_path")))
         (expect (true? (:success? result)))
         (expect (= root-profile (get-in (result-of result) ["profile_path"])))))
   (it "disables sole-project defaulting when repository discovery is truncated"
-      (let
-        [root
-         (temp-root "bridge-ext-session-truncated")
+      (let [root
+            (temp-root "bridge-ext-session-truncated")
 
-         child
-         (str root "/project")
+            child
+            (str root "/project")
 
-         profile-path
-         (configure-project! root child)
+            profile-path
+            (configure-project! root child)
 
-         inventory
-         {:root root :count 1 :repositories [{:path "project" :root child}] :truncated? true}]
+            inventory
+            {:root root :count 1 :repositories [{:path "project" :root child}] :truncated? true}]
 
         (with-redefs [vis/repository-inventory (constantly inventory)]
-          (let
-            [bridge-slice (get-in (bridge-context root) ["session_env" "bridge"])
-             ambiguous (bridge/check {:workspace/root root})
-             selected (bridge/check {:workspace/root root} {"profile" profile-path})]
+          (let [bridge-slice (get-in (bridge-context root) ["session_env" "bridge"])
+                ambiguous (bridge/check {:workspace/root root})
+                selected (bridge/check {:workspace/root root} {"profile" profile-path})]
 
             (expect (= true (get bridge-slice "discovery_truncated")))
             (expect (not (contains? bridge-slice "default_profile_path")))
@@ -456,18 +435,17 @@
 (defdescribe bridge-multirepo-init-test
              (it
                "refuses bare initialization in a non-repository parent and accepts an explicit root"
-               (let
-                 [root
-                  (temp-root "bridge-ext-init-parent")
+               (let [root
+                     (temp-root "bridge-ext-init-parent")
 
-                  child
-                  (mark-repository! (str root "/project"))
+                     child
+                     (mark-repository! (str root "/project"))
 
-                  bare
-                  (bridge/init {:workspace/root root})
+                     bare
+                     (bridge/init {:workspace/root root})
 
-                  explicit
-                  (bridge/init {:workspace/root root} {"root" child})]
+                     explicit
+                     (bridge/init {:workspace/root root} {"root" child})]
 
                  (expect (false? (:success? bare)))
                  (expect (str/includes? (get-in bare [:error :message]) "explicit project root"))
@@ -475,27 +453,26 @@
                  (expect (true? (:success? explicit)))
                  (expect (= child (get-in (result-of explicit) ["workspace_root"])))))
              (it "initializes the active repository instead of adopting a configured nested profile"
-                 (let
-                   [root
-                    (temp-root "bridge-ext-init-active")
+                 (let [root
+                       (temp-root "bridge-ext-init-active")
 
-                    nested
-                    (str root "/nested")
+                       nested
+                       (str root "/nested")
 
-                    _
-                    (mark-repository! root)
+                       _
+                       (mark-repository! root)
 
-                    _
-                    (mark-repository! nested)
+                       _
+                       (mark-repository! nested)
 
-                    nested-profile
-                    (configure-project! root nested)
+                       nested-profile
+                       (configure-project! root nested)
 
-                    result
-                    (bridge/init {:workspace/root root})
+                       result
+                       (bridge/init {:workspace/root root})
 
-                    root-profile
-                    (str root "/.bridge/profile.yaml")]
+                       root-profile
+                       (str root "/.bridge/profile.yaml")]
 
                    (expect (true? (:success? result)))
                    (expect (= false (get-in (result-of result) ["already_configured"])))
@@ -519,24 +496,22 @@
       (let [root (temp-root "bridge-ext-protected-unconfigured")]
         (expect (nil? (refusal root "file-write" (str root "/.bridge/profile.yaml"))))))
   (it "allows everything when policy enforcement is disabled"
-      (let
-        [root
-         (temp-root "bridge-ext-protected-disabled")
+      (let [root
+            (temp-root "bridge-ext-protected-disabled")
 
-         env
-         {:workspace/root root}]
+            env
+            {:workspace/root root}]
 
         (bridge/init env)
         (write-policy! root {:enforce? false :rules [{:path-pattern ".bridge/" :access "none"}]})
         (expect (nil? (refusal root "file-write" (str root "/.bridge/profile.yaml"))))))
   (it
     "keeps ordinary paths usable and explains malformed Bridge configuration"
-    (let
-      [root
-       (mark-repository! (temp-root "bridge-ext-invalid-config"))
+    (let [root
+          (mark-repository! (temp-root "bridge-ext-invalid-config"))
 
-       profile-path
-       (str root "/.bridge/profile.yaml")]
+          profile-path
+          (str root "/.bridge/profile.yaml")]
 
       (.mkdirs (io/file root ".bridge"))
       (write-yaml! profile-path
@@ -559,24 +534,22 @@
         (expect (str/includes? (get-in result [:error :message]) "unknown-field at [:surprise]"))
         (expect (= "Update this Bridge configuration to the installed schema, then retry."
                    (get-in result [:error :hint]))))
-      (let
-        [public-profile
-         (get (extension/wrap-extension bridge/vis-extension {:workspace/root root}) 'profile)
+      (let [public-profile
+            (get (extension/wrap-extension bridge/vis-extension {:workspace/root root}) 'profile)
 
-         error
-         (try (public-profile) nil (catch clojure.lang.ExceptionInfo e e))]
+            error
+            (try (public-profile) nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (str/includes? (ex-message error) "unknown-field at [:surprise]")))))
   (it "an enforced :none rule refuses the read and the write with the policy's own reason"
-      (let
-        [root
-         (temp-root "bridge-ext-protected")
+      (let [root
+            (temp-root "bridge-ext-protected")
 
-         env
-         {:workspace/root root}
+            env
+            {:workspace/root root}
 
-         reason
-         "Use br/* tools for Bridge-owned state."]
+            reason
+            "Use br/* tools for Bridge-owned state."]
 
         (bridge/init env)
         (write-policy! root
@@ -590,15 +563,14 @@
         (expect (nil? (refusal root "file-write" (str root "/src/app.clj"))))
         (expect (nil? (refusal root "file-write" "/tmp/elsewhere.txt")))))
   (it "a :read-only rule refuses the write and allows the read"
-      (let
-        [root
-         (temp-root "bridge-ext-protected-read-only")
+      (let [root
+            (temp-root "bridge-ext-protected-read-only")
 
-         env
-         {:workspace/root root}
+            env
+            {:workspace/root root}
 
-         hint
-         "Policy changes require human approval."]
+            hint
+            "Policy changes require human approval."]
 
         (bridge/init env)
         (write-policy! root
@@ -609,18 +581,17 @@
         (expect (= hint (refusal root "file-write" (str root "/.bridge/verification-policy.yaml"))))
         (expect (nil? (refusal root "file-read" (str root "/.bridge/verification-policy.yaml"))))))
   (it "prefixes policy patterns when the Bridge profile root is below the workspace"
-      (let
-        [root
-         (temp-root "bridge-ext-protected-subroot")
+      (let [root
+            (temp-root "bridge-ext-protected-subroot")
 
-         project-root
-         (str root "/project")
+            project-root
+            (str root "/project")
 
-         env
-         {:workspace/root root}
+            env
+            {:workspace/root root}
 
-         profile-path
-         (str root "/.bridge/profile.yaml")]
+            profile-path
+            (str root "/.bridge/profile.yaml")]
 
         (bridge/init env)
         (.mkdirs (java.io.File. project-root ".bridge"))
@@ -637,24 +608,23 @@
             (refusal root "file-write" (str root "/project/.bridge/state.edn"))))
         (expect (nil? (refusal root "file-write" (str root "/.bridge/state.edn"))))))
   (it "the nested project's rule wins over its ancestor's"
-      (let
-        [root
-         (temp-root "bridge-ext-protected-projects")
+      (let [root
+            (temp-root "bridge-ext-protected-projects")
 
-         nested
-         (str root "/nested")
+            nested
+            (str root "/nested")
 
-         _
-         (mark-repository! root)
+            _
+            (mark-repository! root)
 
-         _
-         (mark-repository! nested)
+            _
+            (mark-repository! nested)
 
-         _
-         (configure-project! root root)
+            _
+            (configure-project! root root)
 
-         _
-         (configure-project! root nested)]
+            _
+            (configure-project! root nested)]
 
         (write-policy! root
                        {:enforce? true
@@ -670,32 +640,31 @@
   bridge-unconfigured-workspace-test
   (it
     "can initialize an unconfigured workspace and run the CLI"
-    (let
-      [root
-       (str (java.nio.file.Files/createTempDirectory
-              "bridge-ext-test"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let [root
+          (str (java.nio.file.Files/createTempDirectory
+                 "bridge-ext-test"
+                 (make-array java.nio.file.attribute.FileAttribute 0)))
 
-       _
-       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+          _
+          (spit (str root "/deps.edn") "{:aliases {:test {}}}")
 
-       env
-       {:workspace/root root}
+          env
+          {:workspace/root root}
 
-       init-result
-       (bridge/init env)
+          init-result
+          (bridge/init env)
 
-       profile-result
-       (bridge/profile env)
+          profile-result
+          (bridge/profile env)
 
-       check-result
-       (bridge/check env)
+          check-result
+          (bridge/check env)
 
-       list-result
-       (bridge/list-evidence env)
+          list-result
+          (bridge/list-evidence env)
 
-       run-result
-       (bridge/run-evidence env "unit" {"is_dry_run" true})]
+          run-result
+          (bridge/run-evidence env "unit" {"is_dry_run" true})]
 
       (expect (true? (:success? init-result)))
       (expect (= true (get-in (result-of init-result) ["configured"])))
@@ -718,17 +687,16 @@
 (defdescribe
   bridge-no-profile-error-test
   (it "returns an error when no profile is configured"
-      (let
-        [root
-         (str (java.nio.file.Files/createTempDirectory
-                "bridge-ext-no-profile"
-                (make-array java.nio.file.attribute.FileAttribute 0)))
+      (let [root
+            (str (java.nio.file.Files/createTempDirectory
+                   "bridge-ext-no-profile"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
 
-         env
-         {:workspace/root root}
+            env
+            {:workspace/root root}
 
-         run-result
-         (bridge/run-evidence env "unit" {"is_dry_run" true})]
+            run-result
+            (bridge/run-evidence env "unit" {"is_dry_run" true})]
 
         (expect (false? (:success? run-result)))
         (expect (not (str/includes? (or (get-in run-result [:error :hint]) "") "bb bridge")))
@@ -736,17 +704,17 @@
 
 (defdescribe bridge-init-idempotent-test
              (it "init is iempotent"
-                 (let
-                   [env
-                    {:workspace/root (str (java.nio.file.Files/createTempDirectory
-                                            "bridge-ext-idempotent"
-                                            (make-array java.nio.file.attribute.FileAttribute 0)))}
+                 (let [env
+                       {:workspace/root (str (java.nio.file.Files/createTempDirectory
+                                               "bridge-ext-idempotent"
+                                               (make-array java.nio.file.attribute.FileAttribute
+                                                           0)))}
 
-                    first-result
-                    (bridge/init env)
+                       first-result
+                       (bridge/init env)
 
-                    second-result
-                    (bridge/init env)]
+                       second-result
+                       (bridge/init env)]
 
                    (expect (true? (:success? first-result)))
                    (expect (= false (get-in (result-of first-result) ["already_configured"])))
@@ -761,32 +729,31 @@
   bridge-check-flattens-status-test
   (it
     "check returns flattened status summary"
-    (let
-      [root
-       (str (java.nio.file.Files/createTempDirectory
-              "bridge-ext-flatten"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let [root
+          (str (java.nio.file.Files/createTempDirectory
+                 "bridge-ext-flatten"
+                 (make-array java.nio.file.attribute.FileAttribute 0)))
 
-       _
-       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+          _
+          (spit (str root "/deps.edn") "{:aliases {:test {}}}")
 
-       _
-       (.mkdirs (java.io.File. root "src"))
+          _
+          (.mkdirs (java.io.File. root "src"))
 
-       _
-       (spit (str root "/src/core.clj") "(ns core)")
+          _
+          (spit (str root "/src/core.clj") "(ns core)")
 
-       env
-       {:workspace/root root}
+          env
+          {:workspace/root root}
 
-       _
-       (bridge/init env)
+          _
+          (bridge/init env)
 
-       result
-       (bridge/check env {"changed_files" ["src/core.clj"]})
+          result
+          (bridge/check env {"changed_files" ["src/core.clj"]})
 
-       r
-       (result-of result)]
+          r
+          (result-of result)]
 
       (expect (true? (:success? result)))
       (expect (= "attention-required" (get-in r ["status"])))
@@ -811,12 +778,11 @@
                   (expect (string? (extension/symbol-signature entry))
                           (str (:ext.symbol/symbol entry) " renders no call signature"))))
             (it "carries a model-facing description and a result contract"
-                (doseq
-                  [entry
-                   bridge/bridge-symbols
+                (doseq [entry
+                        bridge/bridge-symbols
 
-                   :let [{:ext.symbol/keys [description result symbol]}
-                         entry]]
+                        :let [{:ext.symbol/keys [description result symbol]}
+                              entry]]
 
                   (expect (not (str/blank? description)) (str symbol " has no :description"))
                   (expect (not (str/blank? result)) (str symbol " has no :result"))
@@ -824,15 +790,14 @@
                   (expect (not (str/includes? description "await "))
                           (str symbol " hand-writes its call"))))
             (it "names every option key it reads, with a note"
-                (doseq
-                  [entry
-                   bridge/bridge-symbols
+                (doseq [entry
+                        bridge/bridge-symbols
 
-                   :let [params
-                         (:ext.symbol/params entry)
+                        :let [params
+                              (:ext.symbol/params entry)
 
-                         line
-                         (extension/symbol-keys-line entry)]]
+                              line
+                              (extension/symbol-keys-line entry)]]
 
                   (expect (seq params) (str (:ext.symbol/symbol entry) " declares no :params"))
                   (doseq [{param-name :name param-note :note} params]

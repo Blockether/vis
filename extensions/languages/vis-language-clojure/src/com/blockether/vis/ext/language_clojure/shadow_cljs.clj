@@ -84,18 +84,17 @@
    [...]}`, or `{:error ...}` naming exactly what is missing. The argv is a
    PREFIX — the caller appends `compile <build> ...` to it."
   [root]
-  (let
-    [dir
-     (io/file (str root))
+  (let [dir
+        (io/file (str root))
 
-     bin
-     (io/file dir "node_modules" ".bin" "shadow-cljs")
+        bin
+        (io/file dir "node_modules" ".bin" "shadow-cljs")
 
-     deps-alias
-     (deps-alias-with-shadow (read-edn (io/file dir "deps.edn")))
+        deps-alias
+        (deps-alias-with-shadow (read-edn (io/file dir "deps.edn")))
 
-     lein
-     (:lein (config root))]
+        lein
+        (:lein (config root))]
 
     (cond (.isFile bin) {:kind :npm :argv [(.getPath bin)]}
           (= :root deps-alias) {:kind :deps :argv ["clojure" "-M" "-m" cli-main]}
@@ -140,24 +139,22 @@
    the first `:node-test`, then `:karma`, then `:browser-test`, each in id order
    so two runs of the same project never pick differently."
   [cfg requested]
-  (let
-    [builds
-     (:builds cfg)
+  (let [builds
+        (:builds cfg)
 
-     entries
-     (sort-by (comp str key) builds)
+        entries
+        (sort-by (comp str key) builds)
 
-     chosen
-     (fn [[id build]]
-       {:id id :target (:target build) :build build})]
+        chosen
+        (fn [[id build]]
+          {:id id :target (:target build) :build build})]
 
     (if (seq (str requested))
-      (let
-        [id
-         (keyword (str/replace (str requested) #"^:" ""))
+      (let [id
+            (keyword (str/replace (str requested) #"^:" ""))
 
-         build
-         (get builds id)]
+            build
+            (get builds id)]
 
         (cond
           (nil? build) {:error (str "shadow-cljs.edn has no build " id
@@ -170,12 +167,11 @@
                 (pr-str (:target build))
                 ", which runs no tests — a test build targets :node-test, :karma or :browser-test")}
           :else (chosen [id build])))
-      (if-let
-        [hit (some (fn [target]
-                     (some (fn [[_ build :as entry]]
-                             (when (= target (:target build)) entry))
-                           entries))
-                   [:node-test :karma :browser-test])]
+      (if-let [hit (some (fn [target]
+                           (some (fn [[_ build :as entry]]
+                                   (when (= target (:target build)) entry))
+                                 entries))
+                         [:node-test :karma :browser-test])]
         (chosen hit)
         {:error
          (str
@@ -209,9 +205,8 @@
       {:error (str "no shadow-cljs.edn in "
                    root
                    " — ClojureScript tests (*_test.cljs) run through a shadow-cljs build")}
-      (let
-        [{:keys [error id target]} (test-build cfg build)
-         {launcher-error :error argv :argv kind :kind} (launcher root)]
+      (let [{:keys [error id target]} (test-build cfg build)
+            {launcher-error :error argv :argv kind :kind} (launcher root)]
 
         (cond error {:error error}
               ;; Refused BEFORE the launcher is resolved: installing shadow-cljs
@@ -230,18 +225,17 @@
                            " or add a headless test build (:node-test, or :karma with"
                            " node_modules/.bin/karma installed)")}
               launcher-error {:error launcher-error}
-              :else (let
-                      [merged (cond-> {}
-                                (= :node-test target)
-                                (assoc :autorun true)
+              :else (let [merged (cond-> {}
+                                   (= :node-test target)
+                                   (assoc :autorun true)
 
-                                (seq nses)
-                                (assoc :ns-regexp (ns-regexp nses)))
-                       compile-argv (into (vec argv)
-                                          (cond-> ["compile" (name id)]
-                                            (seq merged)
-                                            (into ["--config-merge" (pr-str merged)])))
-                       base {:build (name id) :target target :kind kind}]
+                                   (seq nses)
+                                   (assoc :ns-regexp (ns-regexp nses)))
+                          compile-argv (into (vec argv)
+                                             (cond-> ["compile" (name id)]
+                                               (seq merged)
+                                               (into ["--config-merge" (pr-str merged)])))
+                          base {:build (name id) :target target :kind kind}]
 
                       (if (= :karma (target-kind target))
                         (let [karma (io/file (str root) "node_modules" ".bin" "karma")]

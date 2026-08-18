@@ -51,9 +51,8 @@
       (let [drafts (tmp-dir "vis-hk-fresh")]
         (draft-dir! drafts "repo" "ws-a" 1)
         (draft-dir! drafts "repo" "ws-b" 3)
-        (binding
-          [workspace/*drafts-home* (.getPath drafts)
-           housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
+        (binding [workspace/*drafts-home* (.getPath drafts)
+                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
 
           (let [report (housekeeping/scan {:days 14})]
             (expect (zero? (:count report)))
@@ -63,13 +62,11 @@
       (let [drafts (tmp-dir "vis-hk-orphan")]
         (draft-dir! drafts "repo" "ancient" 40)
         (draft-dir! drafts "repo" "recent" 2)
-        (binding
-          [workspace/*drafts-home* (.getPath drafts)
-           housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
+        (binding [workspace/*drafts-home* (.getPath drafts)
+                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
 
-          (let
-            [report (housekeeping/scan {:days 14})
-             item (first (:reclaimable (:drafts report)))]
+          (let [report (housekeeping/scan {:days 14})
+                item (first (:reclaimable (:drafts report)))]
 
             (expect (= 1 (:count report)))
             (expect (= {:orphan 1} (kinds report)))
@@ -80,29 +77,26 @@
       ;; A clone that is worked in daily can keep an old directory mtime, because
       ;; a directory's timestamp only moves when entries are added or removed.
       ;; Deleting such a tree would destroy live work.
-      (let
-        [drafts
-         (tmp-dir "vis-hk-mtime")
+      (let [drafts
+            (tmp-dir "vis-hk-mtime")
 
-         dir
-         (draft-dir! drafts "repo" "busy" 90)]
+            dir
+            (draft-dir! drafts "repo" "busy" 90)]
 
         (touch! dir "fresh.txt" 0 "still in use")
         (.setLastModified dir (- (System/currentTimeMillis) (* 90 day-ms)))
-        (binding
-          [workspace/*drafts-home*
-           (.getPath drafts)
+        (binding [workspace/*drafts-home*
+                  (.getPath drafts)
 
-           housekeeping/*events-home*
-           (.getPath (tmp-dir "vis-hk-ev"))]
+                  housekeeping/*events-home*
+                  (.getPath (tmp-dir "vis-hk-ev"))]
 
           (expect (zero? (:count (housekeeping/scan {:days 14})))))))
   (it "honours an explicit :days cutoff"
       (let [drafts (tmp-dir "vis-hk-days")]
         (draft-dir! drafts "repo" "ws" 20)
-        (binding
-          [workspace/*drafts-home* (.getPath drafts)
-           housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
+        (binding [workspace/*drafts-home* (.getPath drafts)
+                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
 
           (expect (zero? (:count (housekeeping/scan {:days 30}))))
           (expect (= 1 (:count (housekeeping/scan {:days 7})))))))
@@ -110,9 +104,8 @@
       (let [drafts (tmp-dir "vis-hk-dot")]
         (touch! drafts (str ".trash" File/separator "old" File/separator "f.txt") 99 "x")
         (touch! drafts (str ".fresh-seed" File/separator "seed" File/separator "f.txt") 99 "x")
-        (binding
-          [workspace/*drafts-home* (.getPath drafts)
-           housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
+        (binding [workspace/*drafts-home* (.getPath drafts)
+                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
 
           (expect (zero? (:count (housekeeping/scan {:days 14}))))))))
 
@@ -124,13 +117,11 @@
                    (touch! events "old.ndjson" 30 "{}\n")
                    (touch! events "live.ndjson" 0 "{}\n")
                    (touch! events "notes.txt" 30 "not a journal")
-                   (binding
-                     [workspace/*drafts-home* (.getPath (tmp-dir "vis-hk-d"))
-                      housekeeping/*events-home* (.getPath events)]
+                   (binding [workspace/*drafts-home* (.getPath (tmp-dir "vis-hk-d"))
+                             housekeeping/*events-home* (.getPath events)]
 
-                     (let
-                       [report (housekeeping/scan {:days 14})
-                        journals (:journals report)]
+                     (let [report (housekeeping/scan {:days 14})
+                           journals (:journals report)]
 
                        (expect (= 2 (:file-count journals)))
                        (expect (= ["old.ndjson"] (mapv :label (:reclaimable journals))))
@@ -141,23 +132,21 @@
 (defdescribe
   purge-test
   (it "dry-run deletes nothing and still returns the full plan"
-      (let
-        [drafts
-         (tmp-dir "vis-hk-dry")
+      (let [drafts
+            (tmp-dir "vis-hk-dry")
 
-         events
-         (tmp-dir "vis-hk-dry-ev")
+            events
+            (tmp-dir "vis-hk-dry-ev")
 
-         dir
-         (draft-dir! drafts "repo" "old" 40)]
+            dir
+            (draft-dir! drafts "repo" "old" 40)]
 
         (touch! events "old.ndjson" 40 "{}\n")
-        (binding
-          [workspace/*drafts-home*
-           (.getPath drafts)
+        (binding [workspace/*drafts-home*
+                  (.getPath drafts)
 
-           housekeeping/*events-home*
-           (.getPath events)]
+                  housekeeping/*events-home*
+                  (.getPath events)]
 
           (let [report (housekeeping/purge! {:days 14 :is-dry-run true})]
             (expect (true? (:is-dry-run report)))
@@ -167,27 +156,25 @@
             (expect (.isDirectory dir))
             (expect (.exists (io/file events "old.ndjson")))))))
   (it "reclaims stale orphan trees and stale journals, and leaves fresh ones alone"
-      (let
-        [drafts
-         (tmp-dir "vis-hk-purge")
+      (let [drafts
+            (tmp-dir "vis-hk-purge")
 
-         events
-         (tmp-dir "vis-hk-purge-ev")
+            events
+            (tmp-dir "vis-hk-purge-ev")
 
-         old
-         (draft-dir! drafts "repo" "old" 40)
+            old
+            (draft-dir! drafts "repo" "old" 40)
 
-         fresh
-         (draft-dir! drafts "repo" "fresh" 1)]
+            fresh
+            (draft-dir! drafts "repo" "fresh" 1)]
 
         (touch! events "old.ndjson" 40 "{}\n")
         (touch! events "live.ndjson" 0 "{}\n")
-        (binding
-          [workspace/*drafts-home*
-           (.getPath drafts)
+        (binding [workspace/*drafts-home*
+                  (.getPath drafts)
 
-           housekeeping/*events-home*
-           (.getPath events)]
+                  housekeeping/*events-home*
+                  (.getPath events)]
 
           (let [report (housekeeping/purge! {:days 14})]
             (expect (false? (:is-dry-run report)))
@@ -202,22 +189,20 @@
   (it "never deletes outside the two roots it owns"
       ;; The `under?` guard is the only thing between a bad `:root` and an
       ;; arbitrary `rm -rf`, so it is asserted directly.
-      (let
-        [outside
-         (tmp-dir "vis-hk-outside")
+      (let [outside
+            (tmp-dir "vis-hk-outside")
 
-         victim
-         (touch! outside "precious.txt" 99 "do not delete")
+            victim
+            (touch! outside "precious.txt" 99 "do not delete")
 
-         drafts
-         (tmp-dir "vis-hk-guard")]
+            drafts
+            (tmp-dir "vis-hk-guard")]
 
-        (binding
-          [workspace/*drafts-home*
-           (.getPath drafts)
+        (binding [workspace/*drafts-home*
+                  (.getPath drafts)
 
-           housekeeping/*events-home*
-           (.getPath (tmp-dir "vis-hk-ev"))]
+                  housekeeping/*events-home*
+                  (.getPath (tmp-dir "vis-hk-ev"))]
 
           (housekeeping/purge! {:days 14}))
         (expect (.exists victim)))))
@@ -241,18 +226,17 @@
    that bound only the seam it cares about would leave the other targets
    resolving to the operator's real `~/.vis` — and this sweep deletes."
   [{:keys [logs cache rewind events]} f]
-  (binding
-    [housekeeping/*logs-home*
-     (.getPath ^File (or logs (tmp-dir "vis-hk-idle-logs")))
+  (binding [housekeeping/*logs-home*
+            (.getPath ^File (or logs (tmp-dir "vis-hk-idle-logs")))
 
-     housekeeping/*cache-home*
-     (.getPath ^File (or cache (tmp-dir "vis-hk-idle-cache")))
+            housekeeping/*cache-home*
+            (.getPath ^File (or cache (tmp-dir "vis-hk-idle-cache")))
 
-     housekeeping/*rewind-home*
-     (.getPath ^File (or rewind (tmp-dir "vis-hk-idle-rewind")))
+            housekeeping/*rewind-home*
+            (.getPath ^File (or rewind (tmp-dir "vis-hk-idle-rewind")))
 
-     housekeeping/*events-home*
-     (.getPath ^File (or events (tmp-dir "vis-hk-idle-events")))]
+            housekeeping/*events-home*
+            (.getPath ^File (or events (tmp-dir "vis-hk-idle-events")))]
 
     (f)))
 
@@ -278,18 +262,17 @@
   ;; `logs/shell/<run>/<id>.log`, one directory per command -- was immortal. A
   ;; single week of them outweighed everything the sweep could see.
   (it "deletes stale logs inside the per-command shell directories and prunes the ones it empties"
-      (let
-        [logs
-         (tmp-dir "vis-hk-logs-nested")
+      (let [logs
+            (tmp-dir "vis-hk-logs-nested")
 
-         stale
-         (touch! logs (str "shell" File/separator "run-1" File/separator "npm-test.log") 90 "x")
+            stale
+            (touch! logs (str "shell" File/separator "run-1" File/separator "npm-test.log") 90 "x")
 
-         fresh
-         (touch! logs (str "shell" File/separator "run-2" File/separator "npm-build.log") 1 "y")
+            fresh
+            (touch! logs (str "shell" File/separator "run-2" File/separator "npm-build.log") 1 "y")
 
-         report
-         (target (with-homes {:logs logs} #(housekeeping/sweep-stale! nil)) :logs)]
+            report
+            (target (with-homes {:logs logs} #(housekeeping/sweep-stale! nil)) :logs)]
 
         (expect (= 2 (:file-count report)))
         (expect (= 1 (:deleted report)))
@@ -308,15 +291,14 @@
                                      :logs))))
         (expect (zero? (count (.listFiles logs))))))
   (it "never follows or deletes a symlink, so a link out of the root costs nothing"
-      (let
-        [logs
-         (tmp-dir "vis-hk-logs-link")
+      (let [logs
+            (tmp-dir "vis-hk-logs-link")
 
-         outside
-         (touch! (tmp-dir "vis-hk-outside") "keep.txt" 400 "keep")
+            outside
+            (touch! (tmp-dir "vis-hk-outside") "keep.txt" 400 "keep")
 
-         link
-         (io/file logs "ancient-link.log")]
+            link
+            (io/file logs "ancient-link.log")]
 
         (Files/createSymbolicLink (.toPath link) (.toPath outside) (make-array FileAttribute 0))
         (with-homes {:logs logs} #(housekeeping/sweep-stale! nil))
@@ -330,9 +312,8 @@
       (let [events (tmp-dir "vis-hk-events")]
         (touch! events "live.ndjson" 1 "{}")
         (touch! events "orphan.ndjson" 30 "{}")
-        (let
-          [report (target (with-homes {:events events} #(housekeeping/sweep-stale! nil))
-                          :gateway-events)]
+        (let [report (target (with-homes {:events events} #(housekeeping/sweep-stale! nil))
+                             :gateway-events)]
           (expect (= 2 (:file-count report)))
           (expect (= 1 (:deleted report)))
           (expect (= ["live.ndjson"] (mapv #(.getName ^File %) (.listFiles events)))))))
@@ -348,9 +329,8 @@
       (let [cache (tmp-dir "vis-hk-cache-tui")]
         (touch! cache (str "tui-attachments" File/separator "old.png") 45 "old")
         (touch! cache (str "tui-attachments" File/separator "new.png") 2 "new")
-        (let
-          [report (target (with-homes {:cache cache} #(housekeeping/sweep-stale! nil))
-                          :tui-attachments)]
+        (let [report (target (with-homes {:cache cache} #(housekeeping/sweep-stale! nil))
+                             :tui-attachments)]
           (expect (= 1 (:deleted report)))
           (expect (= ["new.png"]
                      (mapv #(.getName ^File %) (.listFiles (io/file cache "tui-attachments"))))))))
@@ -359,41 +339,40 @@
         (touch! cache (str "display" File/separator "fig-1.png") 9 "aaaaa")
         (touch! cache (str "display" File/separator "fig-2.png") 6 "bbbbb")
         (touch! cache (str "display" File/separator "fig-3.png") 3 "ccccc")
-        (let
-          [report (target (with-homes {:cache cache}
-                                      #(housekeeping/sweep-stale! {:budget-bytes 10}))
-                          :display)]
+        (let [report (target (with-homes {:cache cache}
+                                         #(housekeeping/sweep-stale! {:budget-bytes 10}))
+                             :display)]
           (expect (= 1 (:over-budget-deleted report)))
           (expect (= 5 (:bytes report)))
           (expect (= #{"fig-2.png" "fig-3.png"}
                      (set (map #(.getName ^File %) (.listFiles (io/file cache "display")))))))))
-  (it
-    "deletes a whole rewind store once its newest file has aged out, and leaves a live one whole"
-    (let
-      [rewind
-       (tmp-dir "vis-hk-rewind")
+  (it "deletes a whole rewind store once its newest file has aged out, and leaves a live one whole"
+      (let [rewind
+            (tmp-dir "vis-hk-rewind")
 
-       dead
-       (touch! rewind (str "dead-session" File/separator "journal.ndjson") 30 "{}")
+            dead
+            (touch! rewind (str "dead-session" File/separator "journal.ndjson") 30 "{}")
 
-       live
-       (touch! rewind (str "live-session" File/separator "journal.ndjson") 30 "{}")
+            live
+            (touch! rewind (str "live-session" File/separator "journal.ndjson") 30 "{}")
 
-       blob
-       (touch! rewind (str "live-session" File/separator "objects" File/separator "blob") 1 "fresh")
+            blob
+            (touch! rewind
+                    (str "live-session" File/separator "objects" File/separator "blob")
+                    1
+                    "fresh")
 
-       report
-       (target (with-homes {:rewind rewind} #(housekeeping/sweep-stale! nil)) :rewind)]
+            report
+            (target (with-homes {:rewind rewind} #(housekeeping/sweep-stale! nil)) :rewind)]
 
-      (expect (= 2 (:file-count report)))
-      (expect (= 1 (:deleted report)))
-      (expect (not (.exists (.getParentFile dead))))
-      (expect (.exists live))
-      (expect (.exists blob))))
+        (expect (= 2 (:file-count report)))
+        (expect (= 1 (:deleted report)))
+        (expect (not (.exists (.getParentFile dead))))
+        (expect (.exists live))
+        (expect (.exists blob))))
   (it "degrades to zero work when none of the directories exist"
-      (let
-        [report (with-homes {:logs (io/file (tmp-dir "vis-hk-none") "nope")}
-                            #(housekeeping/sweep-stale! nil))]
+      (let [report (with-homes {:logs (io/file (tmp-dir "vis-hk-none") "nope")}
+                               #(housekeeping/sweep-stale! nil))]
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
         (expect (= [:logs :gateway-events :display :tui-attachments :rewind]

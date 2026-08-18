@@ -29,9 +29,8 @@
                  (let [url "https://example.com/a?b=1"]
                    (expect (= {:scheme :https :target url :line nil} (eo/safe-target url)))))
              (it "absolutizes a workspace-relative path and lifts its #L anchor"
-                 (let
-                   [{:keys [scheme target line]} (eo/safe-target
-                                                   "src/com/blockether/vis/internal/paths.clj#L12")]
+                 (let [{:keys [scheme target line]}
+                       (eo/safe-target "src/com/blockether/vis/internal/paths.clj#L12")]
                    (expect (= :rel scheme))
                    (expect (= 12 line) "the #L suffix becomes data, it never stays in the target")
                    (expect (str/starts-with? target "/") "the opener needs an absolute path")

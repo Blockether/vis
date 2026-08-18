@@ -18,13 +18,12 @@
 
 (deftest outbound-http-uses-babashka-http-client-test
   (testing "production Clojure never bypasses babashka.http-client with a direct JDK HTTP client"
-    (let
-      [offenders (->> (clojure-sources)
-                      (keep (fn [file]
-                              (let [source (slurp file)]
-                                (when (or (str/includes? source "java.net.http")
-                                          (str/includes? source "java.net.URLConnection")
-                                          (str/includes? source "java.net.HttpURLConnection"))
-                                  (.getPath ^java.io.File file)))))
-                      vec)]
+    (let [offenders (->> (clojure-sources)
+                         (keep (fn [file]
+                                 (let [source (slurp file)]
+                                   (when (or (str/includes? source "java.net.http")
+                                             (str/includes? source "java.net.URLConnection")
+                                             (str/includes? source "java.net.HttpURLConnection"))
+                                     (.getPath ^java.io.File file)))))
+                         vec)]
       (is (= [] offenders) (str "Direct JDK HTTP clients found in: " (str/join ", " offenders))))))

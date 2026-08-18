@@ -38,12 +38,11 @@
 (defdescribe
   interpreter-test
   (it "prefers a project-local .venv interpreter when present"
-      (let
-        [root
-         (tmp-dir)
+      (let [root
+            (tmp-dir)
 
-         py
-         (io/file root ".venv" "bin" "python")]
+            py
+            (io/file root ".venv" "bin" "python")]
 
         (try (.mkdirs (.getParentFile py))
              (spit py "#!/bin/sh\n")
@@ -55,15 +54,14 @@
       ;; Canonicalizing it leaves the virtualenv, `pyvenv.cfg` is never
       ;; read, and the run dies with `No module named pytest`
       ;; (Blockether/vis#98).
-      (let
-        [root
-         (tmp-dir)
+      (let [root
+            (tmp-dir)
 
-         base
-         (io/file root "base" "python3")
+            base
+            (io/file root "base" "python3")
 
-         py
-         (io/file root ".venv" "bin" "python3")]
+            py
+            (io/file root ".venv" "bin" "python3")]
 
         (try (.mkdirs (.getParentFile base))
              (spit base "#!/bin/sh\n")
@@ -100,8 +98,8 @@
       (expect (nil? (interp/pinned-command "/proj" {})))
       (expect (nil? (interp/pinned-command "/proj" {"python" {"interpreter" ["" "  "]}}))))
   (it "prefers the pin over detection"
-      (with-redefs
-        [config/load-config-raw (constantly {"python" {"interpreter" ["vis-agent" "python"]}})]
+      (with-redefs [config/load-config-raw (constantly {"python" {"interpreter" ["vis-agent"
+                                                                                 "python"]}})]
         (expect (= ["vis-agent" "python"]
                    (interp/resolve-command (System/getProperty "java.io.tmpdir"))))))
   (it "reads python.runner, ignoring anything that is not a backend"
@@ -193,64 +191,66 @@
                (let [r (repl/eval! dir "1/0" 10000)]
                  (expect (false? (get r "ok")))
                  (expect (re-find #"ZeroDivisionError" (str (get r "exc")))))
-                (let [up (repl/status dir)]
-                  (expect (= "up" (get up "status")))
-                  ;; ONE status shape for every language: a key rides only where
-                  ;; it MEANS something
-                  (expect (true? (get up "running")))
-                  (expect (get up "pid")))
-                (repl/stop! dir)
-                (let [down (repl/status dir)]
-                  (expect (= "down" (get down "status")))
-                  (expect (not (contains? down "running")))
-                  (expect (not (contains? down "pid")))
-                  (expect (not (contains? down "cmd"))))
+               (let [up (repl/status dir)]
+                 (expect (= "up" (get up "status")))
+                 ;; ONE status shape for every language: a key rides only where
+                 ;; it MEANS something
+                 (expect (true? (get up "running")))
+                 (expect (get up "pid")))
+               (repl/stop! dir)
+               (let [down (repl/status dir)]
+                 (expect (= "down" (get down "status")))
+                 (expect (not (contains? down "running")))
+                 (expect (not (contains? down "pid")))
+                 (expect (not (contains? down "cmd"))))
                (finally (repl/stop! dir))))))
   ;; Regression, issue #repl-consistency: a second `repl_start` KILLED the live
   ;; Python process and spawned a new one, so the session's globals vanished while
   ;; the call reported plain success — where Clojure answered "already-running".
   ;; A live REPL is reused in EVERY language now, and the env it was started with
   ;; is part of its identity.
-  (it "reuses a live REPL and refuses a start naming a different env"
-      (when (has-python?)
-        (let [dir (.getPath (tmp-dir))]
-          (try
-            (let [first-start (repl/start! dir {:session-id test-session-id
-                                                "env" {"VIS_REPL_MARK" "one"}})]
-              (expect (= "started" (get first-start "result")))
-              ;; the env rides by NAME + digest, never by value
-              (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
-              (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
-              ;; and it really reached the child
-              (expect (re-find #"one" (str (get (repl/eval! dir "import os; os.environ['VIS_REPL_MARK']" 10000) "value"))))
-              (repl/eval! dir "vis_mark = 7" 10000)
-              (let [same (repl/start! dir {:session-id test-session-id
-                                          "env" {"VIS_REPL_MARK" "one"}})]
-                (expect (= "already-running" (get same "result")))
-                ;; SAME process — the state the session stands on survived
-                (expect (= "7" (get (repl/eval! dir "vis_mark" 10000) "value"))))
-              (let [refused (try (repl/start! dir {:session-id test-session-id
-                                                  "env" {"VIS_REPL_MARK" "two"}})
-                                 nil
-                                 (catch clojure.lang.ExceptionInfo e e))]
-                (expect (some? refused))
-                (expect (= :py/repl-env-mismatch (:type (ex-data refused))))
-                (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
-                ;; the refusal names the KEY, never the value
-                (expect (not (str/includes? (.getMessage refused) "two")))
-                (expect (str/includes? (.getMessage refused) "repl_stop"))))
-            (finally (repl/stop! dir))))))
+  (it
+    "reuses a live REPL and refuses a start naming a different env"
+    (when (has-python?)
+      (let [dir (.getPath (tmp-dir))]
+        (try (let [first-start
+                   (repl/start! dir {:session-id test-session-id "env" {"VIS_REPL_MARK" "one"}})]
+               (expect (= "started" (get first-start "result")))
+               ;; the env rides by NAME + digest, never by value
+               (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
+               (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
+               ;; and it really reached the child
+               (expect (re-find
+                         #"one"
+                         (str (get (repl/eval! dir "import os; os.environ['VIS_REPL_MARK']" 10000)
+                                   "value"))))
+               (repl/eval! dir "vis_mark = 7" 10000)
+               (let [same (repl/start! dir
+                                       {:session-id test-session-id "env" {"VIS_REPL_MARK" "one"}})]
+                 (expect (= "already-running" (get same "result")))
+                 ;; SAME process — the state the session stands on survived
+                 (expect (= "7" (get (repl/eval! dir "vis_mark" 10000) "value"))))
+               (let [refused (try (repl/start! dir
+                                               {:session-id test-session-id
+                                                "env" {"VIS_REPL_MARK" "two"}})
+                                  nil
+                                  (catch clojure.lang.ExceptionInfo e e))]
+                 (expect (some? refused))
+                 (expect (= :py/repl-env-mismatch (:type (ex-data refused))))
+                 (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
+                 ;; the refusal names the KEY, never the value
+                 (expect (not (str/includes? (.getMessage refused) "two")))
+                 (expect (str/includes? (.getMessage refused) "repl_stop"))))
+             (finally (repl/stop! dir))))))
   ;; Regression, issue #123: a pinned `vis-agent python` command rejected `-u`,
   ;; but start still reported an unusable process as up and exposed its driver source.
   (it "fails startup when the child cannot complete the ping handshake"
       (let [dir (.getPath (tmp-dir))]
-        (try (let
-               [result (with-redefs
-                         [interp/resolve-command (constantly ["sh" "-c"
-                                                              "printf 'not-json\\n'; sleep 30"])]
-                         (repl/start! dir {:session-id test-session-id}))]
+        (try (let [result (with-redefs [interp/resolve-command
+                                        (constantly ["sh" "-c" "printf 'not-json\\n'; sleep 30"])]
+                            (repl/start! dir {:session-id test-session-id}))]
                (expect (= "failed" (get result "status")))
-                (expect (re-find #"invalid response" (get result "message")))
+               (expect (re-find #"invalid response" (get result "message")))
                (expect (= "<vis python driver>" (last (get result "cmd"))))
                (expect (= :py/no-repl
                           (try (repl/eval! dir "1" 1000)
@@ -262,12 +262,9 @@
   ;; `log_tail` / `exit`, so a failed start could not be read the same way twice.
   (it "reports a dead launch by the keys EVERY language uses"
       (let [dir (.getPath (tmp-dir))]
-        (try (let
-               [result
-                (with-redefs
-                  [interp/resolve-command (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
-                  (repl/start! dir {:session-id test-session-id}))]
-
+        (try (let [result (with-redefs [interp/resolve-command
+                                        (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
+                            (repl/start! dir {:session-id test-session-id}))]
                (expect (= "failed" (get result "result")))
                (expect (= "failed" (get result "status")))
                (expect (string? (get result "message")))
@@ -290,15 +287,14 @@
   facade-test
   (it "repl_eval requires explicit repl and then returns the value"
       (when (has-python?)
-        (let
-          [root
-           (tmp-dir)
+        (let [root
+              (tmp-dir)
 
-           dir
-           (.getCanonicalPath root)
+              dir
+              (.getCanonicalPath root)
 
-           env
-           {:workspace/root (.getPath root) :session-id test-session-id}]
+              env
+              {:workspace/root (.getPath root) :session-id test-session-id}]
 
           (try (expect (= :py/no-repl
                           (try (core/py-repl-eval-fn env "3 * 7")
@@ -310,34 +306,32 @@
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))
   (it "shows a home-relative, retryable cwd when no REPL is running"
-      (let
-        [home
-         (System/getProperty "user.home")
+      (let [home
+            (System/getProperty "user.home")
 
-         cwd
-         "~/vis-python-not-running"
+            cwd
+            "~/vis-python-not-running"
 
-         env
-         {:workspace/root home :session-id test-session-id}
+            env
+            {:workspace/root home :session-id test-session-id}
 
-         msg
-         (try (core/py-repl-eval-fn env {"code" "1 + 1" "cwd" cwd})
-              nil
-              (catch clojure.lang.ExceptionInfo e (.getMessage e)))]
+            msg
+            (try (core/py-repl-eval-fn env {"code" "1 + 1" "cwd" cwd})
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (.getMessage e)))]
 
         (expect (str/includes? msg cwd))
         (expect (not (str/includes? msg home)))))
   (it "repl status/stop lifecycle ops route through the manager"
       (when (has-python?)
-        (let
-          [root
-           (tmp-dir)
+        (let [root
+              (tmp-dir)
 
-           dir
-           (.getCanonicalPath root)
+              dir
+              (.getCanonicalPath root)
 
-           env
-           {:workspace/root (.getPath root) :session-id test-session-id}]
+              env
+              {:workspace/root (.getPath root) :session-id test-session-id}]
 
           (try
             (expect (:success? (core/py-start-repl-fn env "start" nil)))

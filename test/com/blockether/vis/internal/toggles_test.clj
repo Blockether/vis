@@ -40,21 +40,18 @@
                      ;; Live override survived the re-register.
                      (expect (true? (t/enabled? "test_beta"))))))
              (it "rejects invalid specs with :vis.toggles/invalid-spec"
-                 (let
-                   [thrown? (try (t/register-toggle! {:label "no-id"})
-                                 false
-                                 (catch clojure.lang.ExceptionInfo e
-                                   (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                 (let [thrown? (try (t/register-toggle! {:label "no-id"})
+                                    false
+                                    (catch clojure.lang.ExceptionInfo e
+                                      (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
                    (expect thrown?)))
              (it "rejects every non-string or non-snake_case id shape"
-                 (doseq
-                   [id [:ns/kw "ns/name" "kebab-case" "UPPER_CASE" "_leading" "trailing_"
-                        "double__underscore" "" " "]]
-                   (let
-                     [thrown? (try (t/register-toggle! {:id id :label "bad" :default false})
-                                   false
-                                   (catch clojure.lang.ExceptionInfo e
-                                     (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                 (doseq [id [:ns/kw "ns/name" "kebab-case" "UPPER_CASE" "_leading" "trailing_"
+                             "double__underscore" "" " "]]
+                   (let [thrown? (try (t/register-toggle! {:id id :label "bad" :default false})
+                                      false
+                                      (catch clojure.lang.ExceptionInfo e
+                                        (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
                      (expect thrown?)))))
 
 (defdescribe
@@ -79,12 +76,11 @@
                  (with-clean-state
                    (fn []
                      (t/register-toggle! {:id "test_epsilon" :label "Epsilon" :default false})
-                     (let
-                       [events
-                        (atom [])
+                     (let [events
+                           (atom [])
 
-                        dispose
-                        (t/add-listener! #(swap! events conj %))]
+                           dispose
+                           (t/add-listener! #(swap! events conj %))]
 
                        (t/set-enabled! "test_epsilon" true)
                        (t/set-enabled! "test_epsilon" true) ;; no-op transition
@@ -105,12 +101,11 @@
                  (with-clean-state (fn []
                                      (t/register-toggle!
                                        {:id "test_zeta" :label "Zeta" :default false})
-                                     (let
-                                       [events
-                                        (atom [])
+                                     (let [events
+                                           (atom [])
 
-                                        dispose
-                                        (t/add-listener! #(swap! events conj %))]
+                                           dispose
+                                           (t/add-listener! #(swap! events conj %))]
 
                                        (try (t/set-enabled! "test_zeta" true)
                                             (t/clear-state!)
@@ -229,23 +224,21 @@
   (it "a settings row is never a paragraph: over-long copy is refused"
       ;; A settings row is a control plus ONE line of help; a paragraph of
       ;; rationale buried the toggle it described in the TUI and the app.
-      (let
-        [thrown? (try (t/register-toggle! {:id "test_wordy"
-                                           :label "Wordy"
-                                           :default false
-                                           :description
-                                           (apply str (repeat (inc t/max-description-length) "x"))})
-                      false
-                      (catch clojure.lang.ExceptionInfo e
-                        (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+      (let [thrown? (try (t/register-toggle!
+                           {:id "test_wordy"
+                            :label "Wordy"
+                            :default false
+                            :description (apply str (repeat (inc t/max-description-length) "x"))})
+                         false
+                         (catch clojure.lang.ExceptionInfo e
+                           (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
         (expect (true? thrown?))
         (expect (nil? (t/toggle-spec "test_wordy")))))
   (it "every registered toggle's description fits a settings row"
-      (doseq
-        [{:keys [description]}
-         (t/registered-toggles)
+      (doseq [{:keys [description]}
+              (t/registered-toggles)
 
-         :when description]
+              :when description]
 
         (expect (t/settings-description? description)))))
 
@@ -286,9 +279,8 @@
   (it "shows up in the Settings list of BOTH channels from that one declaration"
       ;; No `:channels` set and no `:settings? false`, so the TUI dialog and the
       ;; companion sheet (`/v1/settings`) each render it without their own wiring.
-      (let
-        [ids (fn [specs]
-               (set (map :id specs)))]
+      (let [ids (fn [specs]
+                  (set (map :id specs)))]
         (expect (contains? (ids (t/toggles-for-channel :tui)) "provider_fallback"))
         (expect (contains? (ids (t/toggles-for-channel :web)) "provider_fallback"))))
   (it "reads true by default and follows an override"
@@ -313,9 +305,8 @@
         (expect (= :provider (:group spec)))
         (expect (t/settings-description? (:description spec)))))
   (it "shows up in the Settings list of BOTH channels from that one declaration"
-      (let
-        [ids (fn [specs]
-               (set (map :id specs)))]
+      (let [ids (fn [specs]
+                  (set (map :id specs)))]
         (expect (contains? (ids (t/toggles-for-channel :tui)) "refusal_fallback"))
         (expect (contains? (ids (t/toggles-for-channel :web)) "refusal_fallback"))))
   (it "is a DIFFERENT switch from provider fallback, not an alias of it"
@@ -326,55 +317,54 @@
            (finally (t/reset-to-default! "provider_fallback")))
       (t/set-value! "refusal_fallback" false)
       (try (expect (true? (t/enabled? "provider_fallback")))
-            (finally (t/reset-to-default! "refusal_fallback")))))
+           (finally (t/reset-to-default! "refusal_fallback")))))
 
 ;; Regression: `POST /v1/settings {"value" "false"}` turned a boolean setting ON,
 ;; because a wire string was cast by truthiness — the human asked for OFF and the
 ;; gateway answered 200 with the opposite stored.
-(defdescribe wire-value-test
-             (it "reads every boolean spelling a client may send"
-                 (with-clean-state
-                   (fn []
-                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
-                     (expect (= {:value true} (t/wire-value "test_wire_bool" true)))
-                     (expect (= {:value false} (t/wire-value "test_wire_bool" false)))
-                     (doseq [token ["true" "TRUE" " on " "yes" "1"]]
-                       (expect (= {:value true} (t/wire-value "test_wire_bool" token))))
-                     (doseq [token ["false" "FALSE" " off " "no" "0"]]
-                       (expect (= {:value false} (t/wire-value "test_wire_bool" token)))))))
-             (it "answers a MAP, so the legal value false is not read as nothing"
-                 (with-clean-state
-                   (fn []
-                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
-                     (expect (some? (t/wire-value "test_wire_bool" false)))
-                     (expect (false? (:value (t/wire-value "test_wire_bool" false)))))))
-             (it "refuses a token the registered type cannot name"
-                 (with-clean-state
-                   (fn []
-                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
-                     (doseq [junk ["maybe" "" "  " 1 0 nil {} :true]]
-                       (expect (nil? (t/wire-value "test_wire_bool" junk)))))))
-             (it "matches an enum choice by name, case-insensitively, and refuses the rest"
-                 (with-clean-state
-                   (fn []
-                     (t/register-toggle! {:id "test_wire_enum" :label "Wire enum" :type :enum
-                                          :choices ["quick" "deep"] :default "quick"})
-                     (expect (= {:value "deep"} (t/wire-value "test_wire_enum" " DEEP ")))
-                     (expect (= {:value "quick"} (t/wire-value "test_wire_enum" :quick)))
-                     (expect (nil? (t/wire-value "test_wire_enum" "banana")))
-                     (expect (nil? (t/wire-value "test_wire_enum" true))))))
-             (it "never resolves an unregistered id"
-                 (with-clean-state
-                   (fn []
-                     (expect (nil? (t/wire-value "test_wire_absent" true))))))
-             (it "set-value! refuses a non-boolean instead of casting it to its opposite"
-                 (with-clean-state
-                   (fn []
-                     (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
-                     (let [refused (try (t/set-value! "test_wire_bool" "false")
-                                        ::stored
-                                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
-                       (expect (= :vis.toggles/invalid-value refused)))
-                     (expect (true? (t/enabled? "test_wire_bool")))
-                     (t/set-value! "test_wire_bool" false)
-                     (expect (false? (t/enabled? "test_wire_bool")))))))
+(defdescribe
+  wire-value-test
+  (it "reads every boolean spelling a client may send"
+      (with-clean-state (fn []
+                          (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                          (expect (= {:value true} (t/wire-value "test_wire_bool" true)))
+                          (expect (= {:value false} (t/wire-value "test_wire_bool" false)))
+                          (doseq [token ["true" "TRUE" " on " "yes" "1"]]
+                            (expect (= {:value true} (t/wire-value "test_wire_bool" token))))
+                          (doseq [token ["false" "FALSE" " off " "no" "0"]]
+                            (expect (= {:value false} (t/wire-value "test_wire_bool" token)))))))
+  (it "answers a MAP, so the legal value false is not read as nothing"
+      (with-clean-state (fn []
+                          (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                          (expect (some? (t/wire-value "test_wire_bool" false)))
+                          (expect (false? (:value (t/wire-value "test_wire_bool" false)))))))
+  (it "refuses a token the registered type cannot name"
+      (with-clean-state (fn []
+                          (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                          (doseq [junk ["maybe" "" "  " 1 0 nil {} :true]]
+                            (expect (nil? (t/wire-value "test_wire_bool" junk)))))))
+  (it "matches an enum choice by name, case-insensitively, and refuses the rest"
+      (with-clean-state (fn []
+                          (t/register-toggle! {:id "test_wire_enum"
+                                               :label "Wire enum"
+                                               :type :enum
+                                               :choices ["quick" "deep"]
+                                               :default "quick"})
+                          (expect (= {:value "deep"} (t/wire-value "test_wire_enum" " DEEP ")))
+                          (expect (= {:value "quick"} (t/wire-value "test_wire_enum" :quick)))
+                          (expect (nil? (t/wire-value "test_wire_enum" "banana")))
+                          (expect (nil? (t/wire-value "test_wire_enum" true))))))
+  (it "never resolves an unregistered id"
+      (with-clean-state (fn []
+                          (expect (nil? (t/wire-value "test_wire_absent" true))))))
+  (it "set-value! refuses a non-boolean instead of casting it to its opposite"
+      (with-clean-state (fn []
+                          (t/register-toggle! {:id "test_wire_bool" :label "Wire" :default true})
+                          (let [refused (try (t/set-value! "test_wire_bool" "false")
+                                             ::stored
+                                             (catch clojure.lang.ExceptionInfo e
+                                               (:type (ex-data e))))]
+                            (expect (= :vis.toggles/invalid-value refused)))
+                          (expect (true? (t/enabled? "test_wire_bool")))
+                          (t/set-value! "test_wire_bool" false)
+                          (expect (false? (t/enabled? "test_wire_bool")))))))

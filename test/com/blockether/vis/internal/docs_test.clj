@@ -21,12 +21,11 @@
                  (expect (= "<a href=\"skills.html\">x</a>"
                             (rewrite-md-links "<a href=\"skills.md\">x</a>" :static))))
              (it "absolute URLs and absolute paths pass through untouched"
-                 (let
-                   [ext
-                    "<a href=\"https://example.com/readme.md\">x</a>"
+                 (let [ext
+                       "<a href=\"https://example.com/readme.md\">x</a>"
 
-                    abs
-                    "<a href=\"/raw/readme.md\">x</a>"]
+                       abs
+                       "<a href=\"/raw/readme.md\">x</a>"]
 
                    (expect (= ext (rewrite-md-links ext :live)))
                    (expect (= abs (rewrite-md-links abs :live))))))
@@ -73,8 +72,8 @@
   (it "names every entry key `doc(name)` renders, and both structural lines"
       (let [md (extending-md)]
         (expect (string? md))
-        (doseq
-          [needle [":description" ":params" ":result" ":call" "Keys:" "(REQUIRED)" "Raw result:"]]
+        (doseq [needle [":description" ":params" ":result" ":call" "Keys:" "(REQUIRED)"
+                        "Raw result:"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
   (it "shows an `apropos` row with all four of its keys"
       (let [md (extending-md)]
@@ -94,16 +93,14 @@
   extending-page-teaches-the-live-view-test
   (it "names the opener, the log builder that could not be called `log`, and what a loop reads"
       (let [md (extending-md)]
-        (doseq
-          [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted" "flush_ms"
-                   "view.is_from_human" "view.note"]]
+        (doseq [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted"
+                        "flush_ms" "view.is_from_human" "view.note"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
   ;; Layout is the half an author cannot infer: without these two paragraphs a run writes a
   ;; second node where one paragraph BESIDE the table was meant, and marks up a string the
   ;; page never promised to paint.
   (it "teaches where a node stands and what a human-facing string may carry"
       (let [md (extending-md)]
-        (doseq
-          [needle ["vis.row(" "vis.column(" "inline markdown" "wraps and justifies" "stay verbatim"
-                   "`Escape` or `Enter` sends the stop"]]
+        (doseq [needle ["vis.row(" "vis.column(" "inline markdown" "wraps and justifies"
+                        "stay verbatim" "`Escape` or `Enter` sends the stop"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))

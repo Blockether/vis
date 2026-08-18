@@ -12,18 +12,17 @@
 
 (defn- write-silence-wav!
   [^java.io.File file seconds]
-  (let
-    [format
-     (AudioFormat. 16000.0 16 1 true false)
+  (let [format
+        (AudioFormat. 16000.0 16 1 true false)
 
-     frame-count
-     (long (* 16000 seconds))
+        frame-count
+        (long (* 16000 seconds))
 
-     audio-bytes
-     (byte-array (* frame-count 2))
+        audio-bytes
+        (byte-array (* frame-count 2))
 
-     stream
-     (AudioInputStream. (ByteArrayInputStream. audio-bytes) format frame-count)]
+        stream
+        (AudioInputStream. (ByteArrayInputStream. audio-bytes) format frame-count)]
 
     (AudioSystem/write stream AudioFileFormat$Type/WAVE file)
     file))
@@ -37,10 +36,9 @@
                   :tokens "/m/tokens.txt"}
                  (asr/model-files "/m"))))
   (it "detects installed model files"
-      (let
-        [dir (.toFile (java.nio.file.Files/createTempDirectory
-                        "vis-voice-asr-test"
-                        (make-array java.nio.file.attribute.FileAttribute 0)))]
+      (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                           "vis-voice-asr-test"
+                           (make-array java.nio.file.attribute.FileAttribute 0)))]
         (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
           (spit (io/file dir name) "x"))
         (expect (true? (asr/model-installed? (str dir))))))
@@ -62,9 +60,8 @@
       ;; handing this to the native WaveReader SIGSEGVs the whole JVM
       (let [wav (java.io.File/createTempFile "vis-voice-asr-truncated" ".wav")]
         (write-silence-wav! wav 2.0)
-        (let
-          [bytes (java.nio.file.Files/readAllBytes (.toPath wav))
-           cut (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
+        (let [bytes (java.nio.file.Files/readAllBytes (.toPath wav))
+              cut (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
 
           (java.nio.file.Files/write (.toPath wav)
                                      cut
@@ -100,24 +97,22 @@
                               ex-data
                               :type)))))))
   (it "surfaces invalid WAVs from transcribe-file! before any native code runs"
-      (let
-        [dir
-         (.toFile (java.nio.file.Files/createTempDirectory
-                    "vis-voice-asr-model-test"
-                    (make-array java.nio.file.attribute.FileAttribute 0)))
+      (let [dir
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-voice-asr-model-test"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
 
-         wav
-         (java.io.File/createTempFile "vis-voice-asr-truncated2" ".wav")]
+            wav
+            (java.io.File/createTempFile "vis-voice-asr-truncated2" ".wav")]
 
         (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
           (spit (io/file dir name) "x"))
         (write-silence-wav! wav 2.0)
-        (let
-          [bytes
-           (java.nio.file.Files/readAllBytes (.toPath wav))
+        (let [bytes
+              (java.nio.file.Files/readAllBytes (.toPath wav))
 
-           cut
-           (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
+              cut
+              (java.util.Arrays/copyOf bytes (int (/ (alength bytes) 4)))]
 
           (java.nio.file.Files/write (.toPath wav)
                                      cut
@@ -131,61 +126,57 @@
                             (-> e
                                 ex-data
                                 :type))))))))
-  (it
-    "rejects empty or too-short recordings before ONNX inference"
-    (let
-      [dir
-       (.toFile (java.nio.file.Files/createTempDirectory
-                  "vis-voice-asr-model-test"
-                  (make-array java.nio.file.attribute.FileAttribute 0)))
+  (it "rejects empty or too-short recordings before ONNX inference"
+      (let [dir
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-voice-asr-model-test"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
 
-       wav
-       (java.io.File/createTempFile "vis-voice-asr-too-short" ".wav")]
+            wav
+            (java.io.File/createTempFile "vis-voice-asr-too-short" ".wav")]
 
-      (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
-        (spit (io/file dir name) "x"))
-      (write-silence-wav! wav 0.0)
-      (with-redefs [asr/ensure-model! identity]
-        ;; Every platform's native rides in its own jar now, so the WaveReader
-        ;; this check needs always loads: a LinkageError here is a real failure
-        ;; and is no longer swallowed as a skip.
-        (try (asr/transcribe-file! (str dir) (str wav))
-             (expect false)
-             (catch clojure.lang.ExceptionInfo e
-               (expect (= "Voice recording too short - try again" (ex-message e)))
-               (expect (= :voice-asr/audio-too-short
-                          (-> e
-                              ex-data
-                              :type)))
-               (expect (= 0
-                          (-> e
-                              ex-data
-                              :samples)))
-               (expect (= asr/min-audio-seconds
-                          (-> e
-                              ex-data
-                              :min-duration-seconds)))))))))
+        (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
+          (spit (io/file dir name) "x"))
+        (write-silence-wav! wav 0.0)
+        (with-redefs [asr/ensure-model! identity]
+          ;; Every platform's native rides in its own jar now, so the WaveReader
+          ;; this check needs always loads: a LinkageError here is a real failure
+          ;; and is no longer swallowed as a skip.
+          (try (asr/transcribe-file! (str dir) (str wav))
+               (expect false)
+               (catch clojure.lang.ExceptionInfo e
+                 (expect (= "Voice recording too short - try again" (ex-message e)))
+                 (expect (= :voice-asr/audio-too-short
+                            (-> e
+                                ex-data
+                                :type)))
+                 (expect (= 0
+                            (-> e
+                                ex-data
+                                :samples)))
+                 (expect (= asr/min-audio-seconds
+                            (-> e
+                                ex-data
+                                :min-duration-seconds)))))))))
 
 (defn- fake-model-archive!
   "A tiny tar.bz2 shaped like the release archive — a top-level directory holding
    the four model files — so the install path can be driven without the network."
   ^File []
-  (let
-    [archive
-     (File/createTempFile "vis-voice-model-test-" ".tar.bz2")
+  (let [archive
+        (File/createTempFile "vis-voice-model-test-" ".tar.bz2")
 
-     payload
-     (byte-array (* 512 1024))]
+        payload
+        (byte-array (* 512 1024))]
 
-    (with-open
-      [out
-       (FileOutputStream. archive)
+    (with-open [out
+                (FileOutputStream. archive)
 
-       bz
-       (BZip2CompressorOutputStream. out)
+                bz
+                (BZip2CompressorOutputStream. out)
 
-       tar
-       (TarArchiveOutputStream. bz)]
+                tar
+                (TarArchiveOutputStream. bz)]
 
       (doseq [file-name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
         (let [entry (TarArchiveEntry. (str "sherpa-onnx-model/" file-name))]
@@ -200,36 +191,34 @@
   (it "reports progress through the UNPACK too, not only the transfer"
       ;; Regression: the download reported 0..99 and extraction reported nothing,
       ;; so a ~465MB bzip2 archive sat on "99%" for minutes and looked hung.
-      (let
-        [archive
-         (fake-model-archive!)
+      (let [archive
+            (fake-model-archive!)
 
-         target
-         (str (io/file (System/getProperty "java.io.tmpdir")
-                       (str "vis-voice-model-dir-" (System/nanoTime))))
+            target
+            (str (io/file (System/getProperty "java.io.tmpdir")
+                          (str "vis-voice-model-dir-" (System/nanoTime))))
 
-         seen
-         (atom [])]
+            seen
+            (atom [])]
 
-        (try (with-redefs
-               [asr/model-asset
-                (constantly {:id "parakeet-test"
-                             :requires ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx"
-                                        "tokens.txt"]
-                             :sources [{:host :test :kind :archive :url (str (.toURI archive))}]})]
+        (try (with-redefs [asr/model-asset
+                           (constantly
+                             {:id "parakeet-test"
+                              :requires ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx"
+                                         "tokens.txt"]
+                              :sources [{:host :test :kind :archive :url (str (.toURI archive))}]})]
                (#'asr/install-model!
                 target
                 (fn [update]
                   (swap! seen conj update))))
-             (let
-               [updates
-                @seen
+             (let [updates
+                   @seen
 
-                downloading
-                (filter #(= :downloading (:phase %)) updates)
+                   downloading
+                   (filter #(= :downloading (:phase %)) updates)
 
-                extracting
-                (filter #(= :extracting (:phase %)) updates)]
+                   extracting
+                   (filter #(= :extracting (:phase %)) updates)]
 
                (expect (seq downloading))
                (expect (seq extracting))

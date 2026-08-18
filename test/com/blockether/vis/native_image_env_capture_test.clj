@@ -27,9 +27,8 @@
    Skips strings, regex literals, character literals and line comments."
   ^long [^String text ^long start]
   (let [n (.length text)]
-    (loop
-      [i start
-       depth 0]
+    (loop [i start
+           depth 0]
 
       (if (>= i n)
         n
@@ -44,12 +43,11 @@
                    depth)
 
             \"
-            (let
-              [close (loop [j (inc i)]
-                       (cond (>= j n) n
-                             (= \\ (.charAt text j)) (recur (+ j 2))
-                             (= \" (.charAt text j)) (inc j)
-                             :else (recur (inc j))))]
+            (let [close (loop [j (inc i)]
+                          (cond (>= j n) n
+                                (= \\ (.charAt text j)) (recur (+ j 2))
+                                (= \" (.charAt text j)) (inc j)
+                                :else (recur (inc j))))]
               (recur (long close) depth))
 
             \(
@@ -64,9 +62,8 @@
   "Every top-level parenthesized form in `text`, as source strings."
   [^String text]
   (let [n (.length text)]
-    (loop
-      [i (long 0)
-       acc []]
+    (loop [i (long 0)
+           acc []]
 
       (if (>= i n)
         acc
@@ -126,12 +123,11 @@
    recursing once per character of the literal, so one long docstring overflowed
    the stack on a 1 MB-stack JVM (Linux CI) while passing on macOS's larger one."
   [^String form]
-  (let
-    [n
-     (.length form)
+  (let [n
+        (.length form)
 
-     sb
-     (StringBuilder. n)]
+        sb
+        (StringBuilder. n)]
 
     (loop [i 0]
       (when (< i n)
@@ -175,17 +171,16 @@
   "`{:file :line :form}` for every top-level `def`/`defonce` in the shipped source
    whose load-time code (deferred subforms removed) satisfies `(match? form text)`."
   [match?]
-  (for
-    [^java.io.File f
-     (clj-files)
+  (for [^java.io.File f
+        (clj-files)
 
-     :let [text
-           (slurp f)]
-     [^long offset form]
-     (top-level-forms text)
+        :let [text
+              (slurp f)]
+        [^long offset form]
+        (top-level-forms text)
 
-     :when (re-find #"^\(def(once)?[\s^]" form)
-     :when (match? (strip-lazy form) text)]
+        :when (re-find #"^\(def(once)?[\s^]" form)
+        :when (match? (strip-lazy form) text)]
 
     {:file (.getPath f)
      :line (inc (count (re-seq #"\n" (subs text 0 offset))))
@@ -218,27 +213,25 @@
                                (for [{:keys [file line form]} found]
                                  (str "  " file ":" line "  " form)))))))
   (it "the scanner itself sees an eager read and forgives a deferred one"
-      (let
-        [eager
-         "(def home (System/getProperty \"user.home\"))"
+      (let [eager
+            "(def home (System/getProperty \"user.home\"))"
 
-         lazy
-         "(def home (delay (System/getProperty \"user.home\")))"]
+            lazy
+            "(def home (delay (System/getProperty \"user.home\")))"]
 
         (expect (re-find env-read (strip-lazy eager)))
         (expect (nil? (re-find env-read (strip-lazy lazy))))
         (expect
           (= 2 (count (top-level-forms (str eager "\n;; (def x (System/getenv \"A\"))\n" lazy)))))))
   (it "a top-level call to a runtime-path helper counts as a read"
-      (let
-        [eager
-         "(def refresher (make-refresher {:lock-path (str (auth-file) \".lock\")}))"
+      (let [eager
+            "(def refresher (make-refresher {:lock-path (str (auth-file) \".lock\")}))"
 
-         lazy
-         "(def refresher (delay (make-refresher {:lock-path (str (auth-file) \".lock\")})))"
+            lazy
+            "(def refresher (delay (make-refresher {:lock-path (str (auth-file) \".lock\")})))"
 
-         qualified
-         "(def db (config/default-db-spec))"]
+            qualified
+            "(def db (config/default-db-spec))"]
 
         (expect (re-find env-read (strip-lazy eager)))
         (expect (re-find env-read (strip-lazy qualified)))
@@ -259,24 +252,23 @@
                                (for [{:keys [file line form]} found]
                                  (str "  " file ":" line "  " form)))))))
   (it "the force scanner reads code, not prose, and knows a delay from an atom"
-      (let
-        [file
-         (str "(def live-catalog (delay (fetch!)))\n" "(def active-theme-id (atom :dark))\n")
+      (let [file
+            (str "(def live-catalog (delay (fetch!)))\n" "(def active-theme-id (atom :dark))\n")
 
-         eager
-         "(def models (or (force live-catalog) SEED))"
+            eager
+            "(def models (or (force live-catalog) SEED))"
 
-         derefed
-         "(def models @live-catalog)"
+            derefed
+            "(def models @live-catalog)"
 
-         atom-deref
-         "(def default-theme (theme/theme @active-theme-id))"
+            atom-deref
+            "(def default-theme (theme/theme @active-theme-id))"
 
-         lazy
-         "(def models (delay (force live-catalog)))"
+            lazy
+            "(def models (delay (force live-catalog)))"
 
-         prose
-         "(def models \"Ask @maintainer for the catalog.\" SEED)"]
+            prose
+            "(def models \"Ask @maintainer for the catalog.\" SEED)"]
 
         (expect (forces-deferred? (strip-lazy eager) file))
         (expect (forces-deferred? (strip-lazy derefed) file))

@@ -37,15 +37,14 @@
         ;; The outside host reads these names out of the `vis_contract` document; an op
         ;; the engine does not know would make an extension that runs inside Vis
         ;; refuse outside it (or the other way round).
-        (let
-          [{:shell/keys [default-op spawn-ops handle-ops]}
-           (contract/shell-vocabulary)
+        (let [{:shell/keys [default-op spawn-ops handle-ops]}
+              (contract/shell-vocabulary)
 
-           op-type
-           (fn [op]
-             (try (fshell/shell-dispatch {} {"op" op})
-                  nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+              op-type
+              (fn [op]
+                (try (fshell/shell-dispatch {} {"op" op})
+                     nil
+                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
           (expect (every? #(not= ::fshell/unknown-op (op-type %)) (concat spawn-ops handle-ops)))
           (expect (= ::fshell/unknown-op (op-type "detonate")))
@@ -56,17 +55,16 @@
         ;; Same seam one layer up: the `vis` module reads these names out of the
         ;; document, so an op the engine cannot dispatch would strand a live view
         ;; the moment an extension pushed into it.
-        (let
-          [{:live/keys [default-op spawn-ops handle-ops flush-ms]}
-           (contract/live-vocabulary)
+        (let [{:live/keys [default-op spawn-ops handle-ops flush-ms]}
+              (contract/live-vocabulary)
 
-           op-type
-           (fn [op]
-             (try (human-input/live-dispatch (cond-> {}
-                                               op
-                                               (assoc "op" op)))
-                  nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+              op-type
+              (fn [op]
+                (try (human-input/live-dispatch (cond-> {}
+                                                  op
+                                                  (assoc "op" op)))
+                     nil
+                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
           (expect (every? #(not= :vis/human-input-unknown-live-op (op-type %))
                           (concat spawn-ops handle-ops)))

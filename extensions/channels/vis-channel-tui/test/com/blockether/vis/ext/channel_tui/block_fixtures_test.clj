@@ -76,14 +76,13 @@
   "An iteration-entry with ONE proof envelope (one fence). `status` (when
    given) is honoured by `entry-status`."
   [form & {:keys [status error]}]
-  (cond->
-    {:position 0
-     :code (:code form)
-     :forms [(cond-> form
-               error
-               (assoc :success?
-                 false :error
-                 error))]}
+  (cond-> {:position 0
+           :code (:code form)
+           :forms [(cond-> form
+                     error
+                     (assoc :success?
+                       false :error
+                       error))]}
     (some? status)
     (assoc :status status)
 
@@ -161,12 +160,11 @@
                              (expect (= "t1/i1" (:scope block)))
                              (expect (= :ok (:status block)))))
                        (it "renders no stdout body and no header (bare values are never echoed)"
-                           (let
-                             [lines
-                              (rendered (plain-value-entry))
+                           (let [lines
+                                 (rendered (plain-value-entry))
 
-                              body
-                              (str/join "\n" lines)]
+                                 body
+                                 (str/join "\n" lines)]
 
                              ;; Bare return values never reach the model's context, so they are
                              ;; not painted here either. No `3`, no ITERATION header.
@@ -177,14 +175,13 @@
 
 (defn- value-error-entry
   []
-  (let
-    [code
-     "(/ 1 0)"
+  (let [code
+        "(/ 1 0)"
 
-     err
-     {:message "Divide by zero"
-      :trace "java.lang.ArithmeticException: Divide by zero"
-      :block {:source code :row 1 :col 1}}]
+        err
+        {:message "Divide by zero"
+         :trace "java.lang.ArithmeticException: Divide by zero"
+         :block {:source code :row 1 :col 1}}]
 
     {:position 0
      :forms [{:scope "t1/i1/f1"
@@ -204,12 +201,11 @@
                              (expect (= :error (:status block)))
                              (expect (some? (:error block)))))
                        (it "renders an inline caret + message under the code"
-                           (let
-                             [lines
-                              (rendered (value-error-entry))
+                           (let [lines
+                                 (rendered (value-error-entry))
 
-                              body
-                              (str/join "\n" lines)]
+                                 body
+                                 (str/join "\n" lines)]
 
                              (expect (str/includes? body "^"))
                              (expect (str/includes? body "Divide by zero"))))))

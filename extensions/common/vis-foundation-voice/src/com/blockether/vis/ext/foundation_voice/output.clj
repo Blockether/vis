@@ -50,10 +50,9 @@
    of them instead of after the whole answer."
   [^File file]
   (with-open [^AudioInputStream stream (AudioSystem/getAudioInputStream file)]
-    (let
-      [fmt (.getFormat stream)
-       ^SourceDataLine line (AudioSystem/getLine (DataLine$Info. SourceDataLine fmt))
-       buffer (byte-array chunk-bytes)]
+    (let [fmt (.getFormat stream)
+          ^SourceDataLine line (AudioSystem/getLine (DataLine$Info. SourceDataLine fmt))
+          buffer (byte-array chunk-bytes)]
 
       (try (.open line fmt)
            (.start line)
@@ -86,14 +85,13 @@
          "vis-voice-speak"
          (fn []
            (try (speaking-status! "\u266a Speaking")
-                (let
-                  [request (cond-> {:text prose}
-                             engine-id
-                             (assoc :engine-id engine-id)
+                (let [request (cond-> {:text prose}
+                                engine-id
+                                (assoc :engine-id engine-id)
 
-                             voice-id
-                             (assoc :voice-id voice-id))
-                   audio-file (io/file (str (:audio-path (voice/synthesize! request))))]
+                                voice-id
+                                (assoc :voice-id voice-id))
+                      audio-file (io/file (str (:audio-path (voice/synthesize! request))))]
 
                   (try (play-file! audio-file) (finally (io/delete-file audio-file true))))
                 (idle-status!)

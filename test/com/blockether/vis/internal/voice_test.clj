@@ -16,40 +16,36 @@
   "Run `f` with EXACTLY these engines registered — `{:transcribe [...] :synthesize [...]}`
    — then restore both registries and both pins."
   [by-direction f]
-  (let
-    [before
-     (into {} (map (juxt identity voice/engines)) voice/directions)
+  (let [before
+        (into {} (map (juxt identity voice/engines)) voice/directions)
 
-     clear!
-     (fn []
-       (doseq
-         [d
-          voice/directions
+        clear!
+        (fn []
+          (doseq [d
+                  voice/directions
 
-          e
-          (voice/engines d)]
+                  e
+                  (voice/engines d)]
 
-         (voice/unregister-engine! d (:id e)))
-       (doseq [d voice/directions]
-         (voice/set-default-engine! d nil)))]
+            (voice/unregister-engine! d (:id e)))
+          (doseq [d voice/directions]
+            (voice/set-default-engine! d nil)))]
 
     (clear!)
-    (try (doseq
-           [d
-            voice/directions
+    (try (doseq [d
+                 voice/directions
 
-            e
-            (get by-direction d)]
+                 e
+                 (get by-direction d)]
 
            (voice/register-engine! d e))
          (f)
          (finally (clear!)
-                  (doseq
-                    [d
-                     voice/directions
+                  (doseq [d
+                          voice/directions
 
-                     e
-                     (get before d)]
+                          e
+                          (get before d)]
 
                     (voice/register-engine! d e))))))
 
@@ -137,9 +133,8 @@
                                  (voice/transcribe! {:audio-path "/tmp/a.wav"
                                                      :engine-id :parakeet-local}))))
                         (testing "a typo names the engines that DO exist"
-                          (let
-                            [e (try (voice/resolve-engine :transcribe :wisper)
-                                    (catch clojure.lang.ExceptionInfo e e))]
+                          (let [e (try (voice/resolve-engine :transcribe :wisper)
+                                       (catch clojure.lang.ExceptionInfo e e))]
                             (is (= :vis/voice-engine-unavailable (:type (ex-data e))))
                             (is (= [:parakeet-local :whisper-server] (:available (ex-data e))))))
                         (testing "unregistering the pinned engine falls back instead of dangling"
@@ -234,28 +229,25 @@
     (is (= {:state :ready} (voice/readiness (echo-engine :remote "hi"))))
     (is (true? (voice/ready? (echo-engine :remote "hi")))))
   (testing "an engine that downloads a model reports its own progress"
-    (let
-      [engine (assoc (echo-engine :local "hi")
-                :model-state (constantly {:state :downloading :progress 42}))]
+    (let [engine (assoc (echo-engine :local "hi")
+                   :model-state (constantly {:state :downloading :progress 42}))]
       (is (= {:state :downloading :progress 42} (voice/readiness engine)))
       (is (false? (voice/ready? engine)))))
   (testing "a readiness call that throws is a FAILED engine, never a broken gateway"
-    (let
-      [engine (assoc (echo-engine :local "hi")
-                :model-state (fn []
-                               (throw (ex-info "disk is gone" {}))))]
+    (let [engine (assoc (echo-engine :local "hi")
+                   :model-state (fn []
+                                  (throw (ex-info "disk is gone" {}))))]
       (is (= :failed (:state (voice/readiness engine))))
       (is (= "disk is gone" (:error (voice/readiness engine))))))
   (testing "prepare! is the engine's own hook and answers with readiness"
-    (let
-      [started
-       (atom 0)
+    (let [started
+          (atom 0)
 
-       engine
-       (assoc (echo-engine :local "hi")
-         :start-download (fn []
-                           (swap! started inc)
-                           {:state :downloading :progress 0}))]
+          engine
+          (assoc (echo-engine :local "hi")
+            :start-download (fn []
+                              (swap! started inc)
+                              {:state :downloading :progress 0}))]
 
       (is (= {:state :downloading :progress 0} (voice/prepare! engine)))
       (is (= 1 @started))
@@ -297,24 +289,23 @@
                                 {:phase :transcribing :progress 90}])]}
     (fn []
       (voice/reset-jobs!)
-      (let
-        [seen
-         (atom [])
+      (let [seen
+            (atom [])
 
-         engine
-         (assoc (voice/engine :transcribe :fake)
-           :transcribe (fn [{:keys [on-progress job-id]}]
-                         (on-progress {:phase :preparing :progress 50})
-                         (swap! seen conj (select-keys (voice/job job-id) [:phase :progress]))
-                         (on-progress {:phase :transcribing :progress 10})
-                         (swap! seen conj (select-keys (voice/job job-id) [:phase :progress]))
-                         "hello world"))
+            engine
+            (assoc (voice/engine :transcribe :fake)
+              :transcribe (fn [{:keys [on-progress job-id]}]
+                            (on-progress {:phase :preparing :progress 50})
+                            (swap! seen conj (select-keys (voice/job job-id) [:phase :progress]))
+                            (on-progress {:phase :transcribing :progress 10})
+                            (swap! seen conj (select-keys (voice/job job-id) [:phase :progress]))
+                            "hello world"))
 
-         _
-         (voice/register-engine! :transcribe engine)
+            _
+            (voice/register-engine! :transcribe engine)
 
-         done
-         (voice/submit-sync! :transcribe {:audio-path "/tmp/a.wav"})]
+            done
+            (voice/submit-sync! :transcribe {:audio-path "/tmp/a.wav"})]
 
         (testing "the engine's own progress is READABLE while it runs"
           (is (= [{:phase "preparing" :progress 50} {:phase "transcribing" :progress 10}] @seen)))
@@ -416,25 +407,25 @@
       (is (= "100" (:text (voice/submit-sync! :transcribe {:audio-path "/tmp/a.wav"})))))))
 
 (deftest a-failing-engine-fails-the-job-with-a-readable-line
-  (with-only-engines!
-    {:transcribe [{:id :broken
-                   :transcribe (fn [_]
-                                 (throw (ex-info "model file is corrupt" {})))}]}
-    (fn []
-      (voice/reset-jobs!)
-      (let
-        [collected
-         (atom nil)
+  (with-only-engines! {:transcribe [{:id :broken
+                                     :transcribe (fn [_]
+                                                   (throw (ex-info "model file is corrupt" {})))}]}
+                      (fn []
+                        (voice/reset-jobs!)
+                        (let [collected
+                              (atom nil)
 
-         job
-         (voice/submit-sync! :transcribe {:audio-path "/tmp/a.wav" :on-done #(reset! collected %)})]
+                              job
+                              (voice/submit-sync! :transcribe
+                                                  {:audio-path "/tmp/a.wav"
+                                                   :on-done #(reset! collected %)})]
 
-        (is (= "failed" (:phase job)))
-        (is (true? (:is-done job)))
-        (is (= "model file is corrupt" (:error job)))
-        (is (nil? (:text job)))
-        (testing "on-done still runs, so a temp recording is always deleted"
-          (is (= (:id job) (:id @collected)))))))
+                          (is (= "failed" (:phase job)))
+                          (is (true? (:is-done job)))
+                          (is (= "model file is corrupt" (:error job)))
+                          (is (nil? (:text job)))
+                          (testing "on-done still runs, so a temp recording is always deleted"
+                            (is (= (:id job) (:id @collected)))))))
   (testing "an unknown engine is refused BEFORE a job exists"
     (with-only-engines! {:transcribe [(echo-engine :fake "hi")]}
                         (fn []
@@ -466,32 +457,35 @@
                             (is (= "eventually" (:text (voice/job (:id queued))))))))))
 
 (deftest a-finished-job-is-swept-when-its-ttl-runs-out
-  (let
-    [ttl
-     (long @#'voice/job-ttl-ms)
+  (let [ttl
+        (long @#'voice/job-ttl-ms)
 
-     t
-     (System/currentTimeMillis)
+        t
+        (System/currentTimeMillis)
 
-     stale
-     (- t ttl 60000)
+        stale
+        (- t ttl 60000)
 
-     kept
-     (#'voice/sweep
-      {"spoken" {:id "spoken"
-                 :direction :synthesize
-                 :phase :done
-                 :progress 100
-                 :created-at stale
-                 :updated-at stale}
-       "heard"
-       {:id "heard" :direction :transcribe :phase :done :progress 100 :created-at t :updated-at t}
-       "running" {:id "running"
-                  :direction :transcribe
-                  :phase :transcribing
-                  :progress 10
-                  :created-at stale
-                  :updated-at stale}})]
+        kept
+        (#'voice/sweep
+         {"spoken" {:id "spoken"
+                    :direction :synthesize
+                    :phase :done
+                    :progress 100
+                    :created-at stale
+                    :updated-at stale}
+          "heard" {:id "heard"
+                   :direction :transcribe
+                   :phase :done
+                   :progress 100
+                   :created-at t
+                   :updated-at t}
+          "running" {:id "running"
+                     :direction :transcribe
+                     :phase :transcribing
+                     :progress 10
+                     :created-at stale
+                     :updated-at stale}})]
 
     (testing "a job nobody collected is dropped once its TTL passed - in both directions"
       (is (= #{"heard" "running"} (set (keys kept)))))
@@ -518,12 +512,11 @@
   ;; The percentage is only worth showing while the work is happening, so a
   ;; surface must never have to ASK for it: the gateway's SSE body is one of
   ;; these watchers, and it writes a frame the instant the engine reports.
-  (let
-    [armed
-     (promise)
+  (let [armed
+        (promise)
 
-     seen
-     (atom [])]
+        seen
+        (atom [])]
 
     (with-only-engines!
       {:transcribe [{:id :steps
@@ -535,14 +528,13 @@
                                    "the words")}]}
       (fn []
         (voice/reset-jobs!)
-        (let
-          [job
-           (voice/submit! :transcribe {:audio-path "/tmp/a.wav"})
+        (let [job
+              (voice/submit! :transcribe {:audio-path "/tmp/a.wav"})
 
-           unwatch
-           (voice/watch! (:id job)
-                         (fn [j]
-                           (swap! seen conj [(:phase j) (:progress j)])))]
+              unwatch
+              (voice/watch! (:id job)
+                            (fn [j]
+                              (swap! seen conj [(:phase j) (:progress j)])))]
 
           (deliver armed :go)
           (let [final (wait-done! (:id job))]
@@ -559,12 +551,11 @@
               (is (= "the words" (:text final))))))))))
 
 (deftest a-spoken-job-streams-its-own-phase-too
-  (let
-    [armed
-     (promise)
+  (let [armed
+        (promise)
 
-     seen
-     (atom [])]
+        seen
+        (atom [])]
 
     (with-only-engines!
       {:synthesize [{:id :streamer
@@ -578,14 +569,13 @@
                                      (str f)))}]}
       (fn []
         (voice/reset-jobs!)
-        (let
-          [job
-           (voice/submit! :synthesize {:text "spoken aloud"})
+        (let [job
+              (voice/submit! :synthesize {:text "spoken aloud"})
 
-           unwatch
-           (voice/watch! (:id job)
-                         (fn [j]
-                           (swap! seen conj [(:phase j) (:progress j)])))]
+              unwatch
+              (voice/watch! (:id job)
+                            (fn [j]
+                              (swap! seen conj [(:phase j) (:progress j)])))]
 
           (deliver armed :go)
           (let [final (wait-done! (:id job))]
@@ -601,12 +591,11 @@
                 (.delete f)))))))))
 
 (deftest a-watcher-that-let-go-is-never-called-again
-  (let
-    [gate
-     (promise)
+  (let [gate
+        (promise)
 
-     heard
-     (atom [])]
+        heard
+        (atom [])]
 
     (with-only-engines! {:transcribe [{:id :gated
                                        :transcribe (fn [_]
@@ -614,14 +603,13 @@
                                                      "late")}]}
                         (fn []
                           (voice/reset-jobs!)
-                          (let
-                            [job
-                             (voice/submit! :transcribe {:audio-path "/tmp/a.wav"})
+                          (let [job
+                                (voice/submit! :transcribe {:audio-path "/tmp/a.wav"})
 
-                             unwatch
-                             (voice/watch! (:id job)
-                                           (fn [j]
-                                             (swap! heard conj (:phase j))))]
+                                unwatch
+                                (voice/watch! (:id job)
+                                              (fn [j]
+                                                (swap! heard conj (:phase j))))]
 
                             (unwatch)
                             (deliver gate :go)
@@ -654,13 +642,12 @@
     :voices (fn []
               (vec (vals @store)))
     :import-voice (fn [{:keys [path voice-name language text]}]
-                    (let
-                      [voice {:id (.replace (.toLowerCase (str voice-name)) " " "-")
-                              :label voice-name
-                              :language language
-                              :clip path
-                              :clip-text text
-                              :is-imported true}]
+                    (let [voice {:id (.replace (.toLowerCase (str voice-name)) " " "-")
+                                 :label voice-name
+                                 :language language
+                                 :clip path
+                                 :clip-text text
+                                 :is-imported true}]
                       (swap! store assoc (:id voice) voice)
                       voice))
     :forget-voice (fn [id]
@@ -711,18 +698,17 @@
 ;; any `register!` ran, so a transient failure - a native library still downloading, a model
 ;; directory half written - was permanent for the life of the process.
 (deftest a-builtin-that-failed-to-load-is-tried-again
-  (let
-    [remembered
-     @#'voice/builtins*
+  (let [remembered
+        @#'voice/builtins*
 
-     before
-     @remembered
+        before
+        @remembered
 
-     tries
-     (atom 0)
+        tries
+        (atom 0)
 
-     outcome
-     (atom {:error "the voice runtime is still downloading"})]
+        outcome
+        (atom {:error "the voice runtime is still downloading"})]
 
     (try (reset! remembered {})
          (with-redefs-fn {#'voice/builtin-engine-nses ["com.example.late-engine"]
@@ -749,12 +735,11 @@
   ;; "None is registered" is a fact about the process; "the library could not be linked" is
   ;; something a human can act on. A build that CARRIES an engine which failed to load is not
   ;; the same machine as one that carries none, and the refusal has to tell them apart.
-  (let
-    [remembered
-     @#'voice/builtins*
+  (let [remembered
+        @#'voice/builtins*
 
-     before
-     @remembered]
+        before
+        @remembered]
 
     (try (with-only-engines!
            {}
@@ -763,10 +748,9 @@
                (fn []
                  (reset! remembered {"com.blockether.vis.ext.foundation-voice.engine"
                                      {:error "libsherpa-onnx-jni.dylib is not on this machine"}})
-                 (let
-                   [thrown (try (voice/resolve-engine :transcribe nil)
-                                nil
-                                (catch clojure.lang.ExceptionInfo e e))]
+                 (let [thrown (try (voice/resolve-engine :transcribe nil)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e))]
                    (is (some? thrown))
                    (is (str/includes? (ex-message thrown)
                                       "libsherpa-onnx-jni.dylib is not on this machine"))
@@ -774,10 +758,9 @@
                            "libsherpa-onnx-jni.dylib is not on this machine"}
                           (:failures (ex-data thrown)))))
                  (reset! remembered {})
-                 (let
-                   [thrown (try (voice/resolve-engine :transcribe nil)
-                                nil
-                                (catch clojure.lang.ExceptionInfo e e))]
+                 (let [thrown (try (voice/resolve-engine :transcribe nil)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e))]
                    (is (= "No voice transcription engine is registered" (ex-message thrown))
                        "and a build that simply has none says only that"))))))
          (finally (reset! remembered before)))))

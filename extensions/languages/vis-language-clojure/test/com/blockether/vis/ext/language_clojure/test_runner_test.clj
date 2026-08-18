@@ -23,9 +23,8 @@
 
 (defdescribe run-via-repl-connect-failure-test
              (it "returns a structured 'server down' result when the probe reports down"
-                 (with-redefs
-                   [nc/probe! (fn [_]
-                                {:status :down})]
+                 (with-redefs [nc/probe! (fn [_]
+                                           {:status :down})]
                    (let [r (run-via-repl "." ["some.ns-test"] {} 54749)]
                      (expect (= "repl" (get r "mode")))
                      (expect (= 54749 (get r "port")))
@@ -34,13 +33,12 @@
              (it "converts a mid-run connect failure (probe passed, eval! then failed) into data"
                  ;; The TOCTOU window: probe answered :up, but the server crashed / was reaped /
                  ;; killed before the eval landed. Must NOT bubble a raw :clj/nrepl-connect-failed.
-                 (with-redefs
-                   [nc/probe!
-                    (fn [_]
-                      {:status :up})
+                 (with-redefs [nc/probe!
+                               (fn [_]
+                                 {:status :up})
 
-                    nc/eval!
-                    connect-failed-throw]
+                               nc/eval!
+                               connect-failed-throw]
 
                    (let [r (run-via-repl "." ["some.ns-test"] {} 54749)]
                      (expect (map? r))
@@ -50,53 +48,49 @@
                      (expect (re-find #"repl" (get r "error")))
                      (expect (true? (get r "repl_unusable"))))))
              (it "still propagates an unrelated ExceptionInfo instead of swallowing it"
-                 (with-redefs
-                   [nc/probe!
-                    (fn [_]
-                      {:status :up})
+                 (with-redefs [nc/probe!
+                               (fn [_]
+                                 {:status :up})
 
-                    nc/eval!
-                    (fn [_]
-                      (throw (ex-info "boom" {:type :something-else})))]
+                               nc/eval!
+                               (fn [_]
+                                 (throw (ex-info "boom" {:type :something-else})))]
 
                    ;; lazytest has no `thrown?` macro — assert the throw with try/catch.
-                   (let
-                     [thrown? (try (run-via-repl "." ["some.ns-test"] {} 54749)
-                                   false
-                                   (catch clojure.lang.ExceptionInfo e
-                                     (= :something-else (:type (ex-data e)))))]
+                   (let [thrown? (try (run-via-repl "." ["some.ns-test"] {} 54749)
+                                      false
+                                      (catch clojure.lang.ExceptionInfo e
+                                        (= :something-else (:type (ex-data e)))))]
                      (expect (true? thrown?))))))
 
 (def ^:private recover-if-unusable
   @#'com.blockether.vis.ext.language-clojure.test-runner/recover-if-unusable)
 
-(defdescribe recover-if-unusable-test
-             ;; Recovery never SPAWNS: an unusable REPL means the clean-JVM CLI runs the suite
-             ;; THIS turn, and bringing a REPL back is the caller's own `repl_start` call.
-             (it "runs the CLI suite in a clean JVM when the reused server was unusable"
-                 (with-redefs
-                   [com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
+(defdescribe
+  recover-if-unusable-test
+  ;; Recovery never SPAWNS: an unusable REPL means the clean-JVM CLI runs the suite
+  ;; THIS turn, and bringing a REPL back is the caller's own `repl_start` call.
+  (it "runs the CLI suite in a clean JVM when the reused server was unusable"
+      (with-redefs [com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
                     (fn [_root _norm]
                       {"mode" "cli" "is_pass" true "note" "7 cases"})]
-                   (let [r (recover-if-unusable "/proj" {} {"repl_unusable" true "error" "down"})]
-                     (expect (= "cli" (get r "mode")))
-                     (expect (true? (get r "recovered")))
-                     (expect (re-find #"clean JVM" (get r "note")))
-                     (expect (re-find #"7 cases" (get r "note"))))))
-             (it "keeps the timeout error for a wedged eval and shells no CLI"
-                 (let [cli-called (atom false)]
-                   (with-redefs
-                     [com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
+        (let [r (recover-if-unusable "/proj" {} {"repl_unusable" true "error" "down"})]
+          (expect (= "cli" (get r "mode")))
+          (expect (true? (get r "recovered")))
+          (expect (re-find #"clean JVM" (get r "note")))
+          (expect (re-find #"7 cases" (get r "note"))))))
+  (it "keeps the timeout error for a wedged eval and shells no CLI"
+      (let [cli-called (atom false)]
+        (with-redefs [com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
                       (fn [_root _norm]
                         (reset! cli-called true)
                         {})]
-                     (let
-                       [r (recover-if-unusable "/proj" {} {"repl_wedged" true "error" "timed out"})]
-                       (expect (false? @cli-called))
-                       (expect (re-find #"clean JVM" (get r "error")))))))
-             (it "passes a healthy result through untouched (no CLI, nothing spawned)"
-                 (let [orig {"mode" "repl" "pass" 5}]
-                   (expect (= orig (recover-if-unusable "/proj" {} orig))))))
+          (let [r (recover-if-unusable "/proj" {} {"repl_wedged" true "error" "timed out"})]
+            (expect (false? @cli-called))
+            (expect (re-find #"clean JVM" (get r "error")))))))
+  (it "passes a healthy result through untouched (no CLI, nothing spawned)"
+      (let [orig {"mode" "repl" "pass" 5}]
+        (expect (= orig (recover-if-unusable "/proj" {} orig))))))
 
 (defdescribe
   group-faults-by-cwd-test
@@ -105,21 +99,20 @@
    once, basename inner, edge files handled. An erroring test is not split into a
    parallel bucket: it rides `failures` carrying `\"type\" \"error\"`."
   (it "nests faults by directory then basename, writing each dir prefix once"
-      (let
-        [f1
-         {"ns" "a.core" "test" "adds" "type" "fail" "file" "src/a/core.clj" "line" 12}
+      (let [f1
+            {"ns" "a.core" "test" "adds" "type" "fail" "file" "src/a/core.clj" "line" 12}
 
-         f2
-         {"ns" "a.core" "test" "subs" "type" "fail" "file" "src/a/core.clj" "line" 20}
+            f2
+            {"ns" "a.core" "test" "subs" "type" "fail" "file" "src/a/core.clj" "line" 20}
 
-         f3
-         {"ns" "a.util" "test" "trim" "type" "fail" "file" "src/a/util.clj" "line" 3}
+            f3
+            {"ns" "a.util" "test" "trim" "type" "fail" "file" "src/a/util.clj" "line" 3}
 
-         e1
-         {"ns" "a.core" "test" "boom" "type" "error" "file" "src/a/core.clj" "line" 99}
+            e1
+            {"ns" "a.core" "test" "boom" "type" "error" "file" "src/a/core.clj" "line" 99}
 
-         grouped
-         (tr/group-faults-by-cwd [f1 f2 f3 e1])]
+            grouped
+            (tr/group-faults-by-cwd [f1 f2 f3 e1])]
 
         (expect (= #{"src/a"} (set (keys grouped))))
         (expect (= #{"core.clj" "util.clj"} (set (keys (get grouped "src/a")))))
@@ -128,30 +121,27 @@
         ;; ONE fault kind per file — the erroring test is typed, not re-listed
         (expect (= #{"failures"} (set (keys (get-in grouped ["src/a" "core.clj"])))))))
   (it "buckets a bare JVM frame (no parent dir) under \".\" by its basename"
-      (let
-        [e
-         {"ns" "a.core" "type" "error" "file" "Numbers.java" "line" 7}
+      (let [e
+            {"ns" "a.core" "type" "error" "file" "Numbers.java" "line" 7}
 
-         grouped
-         (tr/group-faults-by-cwd [e])]
+            grouped
+            (tr/group-faults-by-cwd [e])]
 
         (expect (= [e] (get-in grouped ["." "Numbers.java" "failures"])))))
   (it "buckets a fileless fault under \".\"/\"<unknown>\""
-      (let
-        [f
-         {"ns" "a.core" "test" "nofile"}
+      (let [f
+            {"ns" "a.core" "test" "nofile"}
 
-         grouped
-         (tr/group-faults-by-cwd [f])]
+            grouped
+            (tr/group-faults-by-cwd [f])]
 
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "treats a blank file string as fileless"
-      (let
-        [f
-         {"ns" "a.core" "file" "   "}
+      (let [f
+            {"ns" "a.core" "file" "   "}
 
-         grouped
-         (tr/group-faults-by-cwd [f])]
+            grouped
+            (tr/group-faults-by-cwd [f])]
 
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "returns an empty map when there is nothing to group"
@@ -170,29 +160,28 @@
    fault stays inside the `:test-fn` contract (`\"line\"` is a NON-NEGATIVE count)
    and no digest prints a `(Unknown:-1)` that points nowhere."
   (it "drops unresolved file/line sentinels and keeps the result conformant"
-      (let
-        [parsed
-         {"mode" "repl"
-          "language" "clojure"
-          "framework" "lazytest"
-          "total" 26
-          "pass" 25
-          "fail" 1
-          "failures" [{"ns" "a.core-test"
-                       "test" "boom"
-                       "type" "fail"
-                       "message" "KeyError: 0"
-                       "file" "Unknown"
-                       "line" -1}
-                      {"ns" "a.core-test"
-                       "test" "bang"
-                       "type" "error"
-                       "message" "nope"
-                       "file" "NO_SOURCE_PATH"
-                       "line" -2}]}
+      (let [parsed
+            {"mode" "repl"
+             "language" "clojure"
+             "framework" "lazytest"
+             "total" 26
+             "pass" 25
+             "fail" 1
+             "failures" [{"ns" "a.core-test"
+                          "test" "boom"
+                          "type" "fail"
+                          "message" "KeyError: 0"
+                          "file" "Unknown"
+                          "line" -1}
+                         {"ns" "a.core-test"
+                          "test" "bang"
+                          "type" "error"
+                          "message" "nope"
+                          "file" "NO_SOURCE_PATH"
+                          "line" -2}]}
 
-         normalized
-         (normalize-faults "." parsed)]
+            normalized
+            (normalize-faults "." parsed)]
 
         (expect (nil? (get-in normalized ["failures" 0 "file"])))
         (expect (nil? (get-in normalized ["failures" 0 "line"])))
@@ -202,14 +191,13 @@
         (expect (= "KeyError: 0" (get-in normalized ["failures" 0 "message"])))
         (expect (contract/valid? :test-fn normalized))))
   (it "leaves a real file and line alone"
-      (let
-        [parsed
-         {"mode" "repl"
-          "language" "clojure"
-          "failures" [{"ns" "a.core-test" "file" "test/a/core_test.clj" "line" 12}]}
+      (let [parsed
+            {"mode" "repl"
+             "language" "clojure"
+             "failures" [{"ns" "a.core-test" "file" "test/a/core_test.clj" "line" 12}]}
 
-         normalized
-         (normalize-faults "." parsed)]
+            normalized
+            (normalize-faults "." parsed)]
 
         (expect (= "test/a/core_test.clj" (get-in normalized ["failures" 0 "file"])))
         (expect (= 12 (get-in normalized ["failures" 0 "line"])))
@@ -221,10 +209,9 @@
    one: selection is resolved against the workspace, so nothing can be chosen
    without files on disk to walk."
   [files f]
-  (let
-    [root (.toFile (java.nio.file.Files/createTempDirectory
-                     "vis-clj-test"
-                     (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                        "vis-clj-test"
+                        (make-array java.nio.file.attribute.FileAttribute 0)))]
     (try (doseq [[rel content] files]
            (let [^java.io.File file (io/file root rel)]
              (.mkdirs (.getParentFile file))
@@ -240,14 +227,13 @@
    case is about."
   [ws arg]
   (let [seen (atom {})]
-    (with-redefs
-      [repl-manager/live-repl-for-dir (fn [_sid root]
-                                        (swap! seen assoc :root root)
-                                        {:port 12345})
-       com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
-       (fn [_root nses sel _port]
-         (swap! seen assoc :nses nses :sel sel)
-         {"mode" "repl" "ns" (first nses)})]
+    (with-redefs [repl-manager/live-repl-for-dir (fn [_sid root]
+                                                   (swap! seen assoc :root root)
+                                                   {:port 12345})
+                  com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
+                  (fn [_root nses sel _port]
+                    (swap! seen assoc :nses nses :sel sel)
+                    {"mode" "repl" "ns" (first nses)})]
 
       (tr/clj-test-fn {:workspace/root ws :session-id "sid"} arg)
       @seen)))
@@ -304,8 +290,8 @@
       (with-project
         (assoc thing-test-file "src/com/example/lonely.clj" "(ns com.example.lonely)\n")
         (fn [root]
-          (let
-            [e (try (run-capturing root {"paths" ["src"]}) (catch clojure.lang.ExceptionInfo e e))]
+          (let [e (try (run-capturing root {"paths" ["src"]})
+                       (catch clojure.lang.ExceptionInfo e e))]
             (expect (= :clj/bad-args (:type (ex-data e))))
             (expect (re-find
                       #"no test namespaces \(\*_test\.clj / \*_test\.cljc / \*_test\.cljs\) under"
@@ -319,12 +305,11 @@
       (with-project
         thing-test-file
         (fn [root]
-          (let
-            [typo
-             (str root "/repositories/nope/test/com/example/thing_test.clj")
+          (let [typo
+                (str root "/repositories/nope/test/com/example/thing_test.clj")
 
-             e
-             (try (run-capturing root {"paths" [typo]}) (catch clojure.lang.ExceptionInfo e e))]
+                e
+                (try (run-capturing root {"paths" [typo]}) (catch clojure.lang.ExceptionInfo e e))]
 
             (expect (= :clj/bad-args (:type (ex-data e))))
             (expect (= [typo] (:missing (ex-data e))))
@@ -334,9 +319,8 @@
   (it "reads a MISSING path handed to a namespace key as a missing path too"
       (with-project thing-test-file
                     (fn [root]
-                      (let
-                        [e (try (run-capturing root {"ns" "test/com/example/nope_test.clj"})
-                                (catch clojure.lang.ExceptionInfo e e))]
+                      (let [e (try (run-capturing root {"ns" "test/com/example/nope_test.clj"})
+                                   (catch clojure.lang.ExceptionInfo e e))]
                         (expect (str/includes? (ex-message e) "no such path"))))))
   ;; Regression, user report (paraphrased: a `.cljc` test file was invisible to
   ;; selection — naming the file, or the directory holding it, reported no tests
@@ -428,10 +412,9 @@
       (with-project
         (assoc thing-test-file "test/com/example/other_test.clj" "(ns com.example.other-test)\n")
         (fn [root]
-          (let
-            [seen (run-capturing root
-                                 {"paths" ["test/com/example/thing_test.clj::adds-test"
-                                           "test/com/example/other_test.clj::subs-test"]})]
+          (let [seen (run-capturing root
+                                    {"paths" ["test/com/example/thing_test.clj::adds-test"
+                                              "test/com/example/other_test.clj::subs-test"]})]
             (expect (= ["com.example.other-test" "com.example.thing-test"] (:nses seen)))
             (expect (= [{:ns "com.example.thing-test" :name "adds-test"}
                         {:ns "com.example.other-test" :name "subs-test"}]
@@ -459,12 +442,11 @@
    result map. Every var-granularity case needs the same fixture, so it is built
    once here instead of re-interned per test."
   [ns-sym var-names sel]
-  (let
-    [n
-     (create-ns ns-sym)
+  (let [n
+        (create-ns ns-sym)
 
-     run-form
-     @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
+        run-form
+        @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
 
     (try (doseq [nm var-names]
            (alter-meta! (intern n
@@ -480,14 +462,13 @@
 (defdescribe
   var-miss-output-test
   (it "reports a bounded selector miss without dumping namespaces or vars"
-      (let
-        [result
-         (run-form-selecting 'vis.test-runner-var-miss-fixture
-                             '[first-test second-test]
-                             {:vars [{:ns nil :name "missing-test"}]})
+      (let [result
+            (run-form-selecting 'vis.test-runner-var-miss-fixture
+                                '[first-test second-test]
+                                {:vars [{:ns nil :name "missing-test"}]})
 
-         error
-         (get result "error")]
+            error
+            (get result "error")]
 
         (expect
           (= "no test var matched [\"::missing-test\"] (searched 2 test vars across 1 namespace)"
@@ -499,41 +480,37 @@
 ;; SOURCE var would be a hard miss.
 (defdescribe node-id-var-name-test
              (it "selects the *-test var when the id named the SOURCE var it covers"
-                 (let
-                   [result (run-form-selecting 'vis.test-runner-node-id-fixture
-                                               '[adds-test subtracts-test]
-                                               {:vars [{:ns nil :name "adds"}]})]
+                 (let [result (run-form-selecting 'vis.test-runner-node-id-fixture
+                                                  '[adds-test subtracts-test]
+                                                  {:vars [{:ns nil :name "adds"}]})]
                    (expect (nil? (get result "error")))
                    (expect (= 1 (get result "selected")))
                    (expect (= 1 (get result "skipped")))))
              (it "selects the test var when the id named it outright"
-                 (let
-                   [result (run-form-selecting 'vis.test-runner-node-id-fixture
-                                               '[adds-test subtracts-test]
-                                               {:vars [{:ns nil :name "adds-test"}]})]
+                 (let [result (run-form-selecting 'vis.test-runner-node-id-fixture
+                                                  '[adds-test subtracts-test]
+                                                  {:vars [{:ns nil :name "adds-test"}]})]
                    (expect (= 1 (get result "selected")))))
              (it "scopes the name to the namespace its path resolved to"
                  ;; A node id that named a FILE must not select the same var name in some
                  ;; other namespace — that is the cross-product `only` used to do.
-                 (let
-                   [result (run-form-selecting 'vis.test-runner-node-id-fixture
-                                               '[adds-test]
-                                               {:vars [{:ns "com.example.elsewhere-test"
-                                                        :name "adds-test"}]})]
+                 (let [result (run-form-selecting 'vis.test-runner-node-id-fixture
+                                                  '[adds-test]
+                                                  {:vars [{:ns "com.example.elsewhere-test"
+                                                           :name "adds-test"}]})]
                    (expect (re-find #"no test var matched" (get result "error"))))))
 (def ^:private run-via-cli @#'com.blockether.vis.ext.language-clojure.test-runner/run-via-cli)
 
 (defn- with-cli-run
   "Run the cli fallback against a canned shell result, with no project on disk."
   [{:keys [exit out]}]
-  (with-redefs
-    [com.blockether.vis.ext.language-clojure.test-runner/cli-command-for
-     (fn [_root _sel]
-       {:tool :clj :cmd ["clojure" "-M:test"]})
+  (with-redefs [com.blockether.vis.ext.language-clojure.test-runner/cli-command-for
+                (fn [_root _sel]
+                  {:tool :clj :cmd ["clojure" "-M:test"]})
 
-     shell/sh
-     (fn [& _]
-       {:exit exit :out out :err ""})]
+                shell/sh
+                (fn [& _]
+                  {:exit exit :out out :err ""})]
 
     (run-via-cli "/proj" {})))
 
@@ -543,9 +520,8 @@
   ;; failures") and leave total / fail / errored nil, so one run read as counts
   ;; on the repl path and as prose on the cli path.
   (it "reads the shelled runner's summary line into total / fail / errored"
-      (let
-        [r (with-cli-run {:exit 1
-                          :out "Ran 12 test cases in 0.4 seconds.\n1 failures, 2 errors.\n"})]
+      (let [r (with-cli-run {:exit 1
+                             :out "Ran 12 test cases in 0.4 seconds.\n1 failures, 2 errors.\n"})]
         (expect (= 12 (get r "total")))
         ;; fail is every test that did not pass ...
         (expect (= 3 (get r "fail")))
@@ -554,9 +530,8 @@
         (expect (nil? (get r "note")))
         (expect (false? (get r "is_pass")))))
   (it "reports a green cli run as ZERO failures, never unknown"
-      (let
-        [r (with-cli-run {:exit 0
-                          :out "Ran 12 test cases in 0.4 seconds.\n0 failures, 0 errors.\n"})]
+      (let [r (with-cli-run {:exit 0
+                             :out "Ran 12 test cases in 0.4 seconds.\n0 failures, 0 errors.\n"})]
         (expect (= 12 (get r "total")))
         (expect (= 0 (get r "fail")))
         (expect (= 0 (get r "errored")))
@@ -564,15 +539,14 @@
 
 (defdescribe repl-errored-count-test
              (it "counts a test that THREW into errored as well as fail"
-                 (let
-                   [fixture-ns
-                    'vis.test-runner-errored-fixture
+                 (let [fixture-ns
+                       'vis.test-runner-errored-fixture
 
-                    n
-                    (create-ns fixture-ns)
+                       n
+                       (create-ns fixture-ns)
 
-                    run-form
-                    @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
+                       run-form
+                       @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
 
                    (try (alter-meta! (intern n
                                              'throws-test
@@ -598,10 +572,9 @@
   "Write `files` ({relative-path body}) under a fresh temp root and answer the
    root as a File."
   [files]
-  (let
-    [root (.toFile (java.nio.file.Files/createTempDirectory
-                     "vis-ns-of-file"
-                     (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                        "vis-ns-of-file"
+                        (make-array java.nio.file.attribute.FileAttribute 0)))]
     (doseq [[rel body] files]
       (let [f (io/file root rel)]
         (io/make-parents f)
@@ -629,27 +602,27 @@
         (expect (= "vis.fixture.core-test"
                    (ns-of-file (io/file root "test/vis/fixture/core_test.clj"))))))
   (it "reads the name through a metadata KEYWORD on the ns symbol"
-      (let
-        [root (temp-project! {"test/vis/fixture/plain_test.clj"
-                              "(ns ^:no-doc vis.fixture.plain-test)\n"})]
+      (let [root (temp-project! {"test/vis/fixture/plain_test.clj"
+                                 "(ns ^:no-doc vis.fixture.plain-test)\n"})]
         (expect (= "vis.fixture.plain-test"
                    (ns-of-file (io/file root "test/vis/fixture/plain_test.clj"))))))
   (it "answers nil for a file that declares no namespace"
       (let [root (temp-project! {"test/vis/fixture/none_test.clj" ";; no ns here\n(def x 1)\n"})]
         (expect (nil? (ns-of-file (io/file root "test/vis/fixture/none_test.clj"))))))
-  (it
-    "SELECTS the namespace when its own test file is named"
-    (let
-      [root
-       (temp-project! {"test/vis/fixture/core_test.clj" metadata-test-source})
+  (it "SELECTS the namespace when its own test file is named"
+      (let [root
+            (temp-project! {"test/vis/fixture/core_test.clj" metadata-test-source})
 
-       selected
-       (resolve-selection (.getPath root) [{:path "test/vis/fixture/core_test.clj" :var nil}] [])]
+            selected
+            (resolve-selection (.getPath root)
+                               [{:path "test/vis/fixture/core_test.clj" :var nil}]
+                               [])]
 
-      (expect (= {:nses ["vis.fixture.core-test"] :vars [] :files []} (dissoc selected :ns-files)))
-      ;; The FILE behind each namespace is what routes the run to its runtime.
-      (expect (= "core_test.clj"
-                 (.getName ^java.io.File (get (:ns-files selected) "vis.fixture.core-test"))))))
+        (expect (= {:nses ["vis.fixture.core-test"] :vars [] :files []}
+                   (dissoc selected :ns-files)))
+        ;; The FILE behind each namespace is what routes the run to its runtime.
+        (expect (= "core_test.clj"
+                   (.getName ^java.io.File (get (:ns-files selected) "vis.fixture.core-test"))))))
   (it
     "SELECTS it from the SOURCE file it covers, metadata on both"
     (let
@@ -663,9 +636,9 @@
                                            [{:path "src/vis/fixture/core.clj" :var nil}]
                                            []))))))
   (it "finds a namespace declared after a leading form"
-      (let
-        [root (temp-project! {"test/vis/fixture/late_test.clj"
-                              "(comment \"a note before the ns\")\n(ns vis.fixture.late-test)\n"})]
+      (let [root (temp-project!
+                   {"test/vis/fixture/late_test.clj"
+                    "(comment \"a note before the ns\")\n(ns vis.fixture.late-test)\n"})]
         (expect (= "vis.fixture.late-test"
                    (ns-of-file (io/file root "test/vis/fixture/late_test.clj")))))))
 
@@ -693,17 +666,16 @@
    a case that took the WRONG runtime is caught by which key appeared."
   [ws arg]
   (let [seen (atom {})]
-    (with-redefs
-      [repl-manager/live-repl-for-dir (fn [_sid _root]
-                                        nil)
-       com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
-       (fn [root norm]
-         (swap! seen assoc :cli-root root :cli-nses (:nses norm))
-         {"mode" "cli" "ns" (first (:nses norm))})
-       com.blockether.vis.ext.language-clojure.test-runner/run-via-shadow
-       (fn [root nses norm]
-         (swap! seen assoc :root root :nses nses :build (:build norm))
-         {"mode" "cli" "tool" "shadow-cljs" "ns" (first nses)})]
+    (with-redefs [repl-manager/live-repl-for-dir (fn [_sid _root]
+                                                   nil)
+                  com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
+                  (fn [root norm]
+                    (swap! seen assoc :cli-root root :cli-nses (:nses norm))
+                    {"mode" "cli" "ns" (first (:nses norm))})
+                  com.blockether.vis.ext.language-clojure.test-runner/run-via-shadow
+                  (fn [root nses norm]
+                    (swap! seen assoc :root root :nses nses :build (:build norm))
+                    {"mode" "cli" "tool" "shadow-cljs" "ns" (first nses)})]
 
       (tr/clj-test-fn {:workspace/root ws :session-id "sid"} arg)
       @seen)))
@@ -760,10 +732,9 @@
                                  [(str "repositories/app/" rel) body]))
                           cljs-project)
                     (fn [root]
-                      (let
-                        [seen (run-capturing-cljs root
-                                                  {"paths"
-                                                   ["repositories/app/test/repro/core_test.cljs"]})]
+                      (let [seen (run-capturing-cljs
+                                   root
+                                   {"paths" ["repositories/app/test/repro/core_test.cljs"]})]
                         (expect (= (str root "/repositories/app") (:root seen))))))))
 
 (def ^:private run-via-shadow @#'com.blockether.vis.ext.language-clojure.test-runner/run-via-shadow)
@@ -784,9 +755,10 @@
    all is reported as not passing rather than as a green suite."
   (it "reports the counts of a clean run"
       (let [calls (atom [])]
-        (with-redefs
-          [shell/sh
-           (sh-answering calls 0 "Ran 3 tests containing 5 assertions.\n0 failures, 0 errors.\n")]
+        (with-redefs [shell/sh (sh-answering
+                                 calls
+                                 0
+                                 "Ran 3 tests containing 5 assertions.\n0 failures, 0 errors.\n")]
           (with-project cljs-project
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -798,9 +770,10 @@
                             (expect (= 1 (count @calls)))))))))
   (it "FAILS a run whose tests failed, even though shadow-cljs exited 0"
       (let [calls (atom [])]
-        (with-redefs
-          [shell/sh
-           (sh-answering calls 0 "Ran 3 tests containing 5 assertions.\n2 failures, 1 errors.\n")]
+        (with-redefs [shell/sh (sh-answering
+                                 calls
+                                 0
+                                 "Ran 3 tests containing 5 assertions.\n2 failures, 1 errors.\n")]
           (with-project cljs-project
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -818,9 +791,10 @@
                             (expect (str/includes? (get r "error") "nothing ran"))))))))
   (it "names the build when the selected namespaces compiled but ran nothing"
       (let [calls (atom [])]
-        (with-redefs
-          [shell/sh
-           (sh-answering calls 0 "Ran 0 tests containing 0 assertions.\n0 failures, 0 errors.\n")]
+        (with-redefs [shell/sh (sh-answering
+                                 calls
+                                 0
+                                 "Ran 0 tests containing 0 assertions.\n0 failures, 0 errors.\n")]
           (with-project cljs-project
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -843,12 +817,11 @@
   (it "autoruns the node-test build through the npm binary, focused on the selected namespaces"
       (with-project cljs-project
                     (fn [root]
-                      (let
-                        [{:keys [steps build target kind]}
-                         (shadow/run-steps root {:nses ["repro.core-test"]})
+                      (let [{:keys [steps build target kind]}
+                            (shadow/run-steps root {:nses ["repro.core-test"]})
 
-                         argv
-                         (vec (:argv (first steps)))]
+                            argv
+                            (vec (:argv (first steps)))]
 
                         (expect (= ["test" :node-test :npm] [build target kind]))
                         (expect (= 1 (count steps)))

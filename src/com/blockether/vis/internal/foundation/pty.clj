@@ -62,12 +62,11 @@
   ;; default lookup on every platform. openpty/forkpty live there on macOS
   ;; (libSystem) but in libutil on Linux, so fall back to a `util` library
   ;; lookup when the default misses.
-  (let
-    [^SymbolLookup std
-     (.defaultLookup linker)
+  (let [^SymbolLookup std
+        (.defaultLookup linker)
 
-     ^SymbolLookup util
-     (try (SymbolLookup/libraryLookup "util" (Arena/global)) (catch Throwable _ nil))]
+        ^SymbolLookup util
+        (try (SymbolLookup/libraryLookup "util" (Arena/global)) (catch Throwable _ nil))]
 
     (reify
       SymbolLookup
@@ -155,15 +154,14 @@
 (defn- build-strv
   "Allocate a NULL-terminated C `char*[]` from a seq of strings in `arena`."
   ^MemorySegment [^Arena arena strs]
-  (let
-    [strs
-     (vec strs)
+  (let [strs
+        (vec strs)
 
-     n
-     (count strs)
+        n
+        (count strs)
 
-     ^MemorySegment seg
-     (.allocate arena (long (* 8 (inc n))))]
+        ^MemorySegment seg
+        (.allocate arena (long (* 8 (inc n))))]
 
     (dotimes [i n]
       (.setAtIndex seg ADDR i (.allocateFrom arena ^String (nth strs i))))
@@ -205,9 +203,8 @@
   (when-not mac?
     (if-let [h @h-fa-closefrom]
       (invoke h fa (int 3))
-      (doseq
-        [fd (open-fd-numbers)
-         :when (and (<= 3 (long fd)) (not (contains? keep (int fd))))]
+      (doseq [fd (open-fd-numbers)
+              :when (and (<= 3 (long fd)) (not (contains? keep (int fd))))]
 
         (try (invoke @h-fa-close fa (int fd)) (catch Throwable _ nil))))))
 
@@ -267,21 +264,20 @@
    what it always meant: the last writer is gone."
   [master slave ^PipedOutputStream pout listeners exit master-open? slave-open?]
   (try (with-open [arena (Arena/ofConfined)]
-         (let
-           [buf (.allocate arena (long 8192))
-            ^MemorySegment pfd (.allocate arena (long 8))
-            ;; ONE read of whatever the terminal holds, into the pipe and the
-            ;; listeners. Answers whether the stream is still open: a zero or
-            ;; negative `read` is its end.
-            drain-once! (fn []
-                          (let [n (long (invoke @h-read (int master) buf (long 8192)))]
-                            (when (pos? n)
-                              (let [ba (.toArray (.asSlice buf 0 n) ValueLayout/JAVA_BYTE)]
-                                (.write pout ba)
-                                (.flush pout)
-                                (doseq [l @listeners]
-                                  (try (l ba) (catch Throwable _ nil)))))
-                            (pos? n)))]
+         (let [buf (.allocate arena (long 8192))
+               ^MemorySegment pfd (.allocate arena (long 8))
+               ;; ONE read of whatever the terminal holds, into the pipe and the
+               ;; listeners. Answers whether the stream is still open: a zero or
+               ;; negative `read` is its end.
+               drain-once! (fn []
+                             (let [n (long (invoke @h-read (int master) buf (long 8192)))]
+                               (when (pos? n)
+                                 (let [ba (.toArray (.asSlice buf 0 n) ValueLayout/JAVA_BYTE)]
+                                   (.write pout ba)
+                                   (.flush pout)
+                                   (doseq [l @listeners]
+                                     (try (l ba) (catch Throwable _ nil)))))
+                               (pos? n)))]
 
            (.setAtIndex pfd I 0 (int master))
            (.setAtIndex pfd S 2 (short POLLIN))
@@ -310,124 +306,120 @@
    Options: :dir (working dir string), :env (Map string->string), :cols, :rows.
    Returns the handle map documented on the namespace."
   [{:keys [command dir env cols rows] :or {cols 120 rows 40}}]
-  (let
-    [spawned
-     (with-open [arena (Arena/ofConfined)]
-       (let
-         [^MemorySegment amaster (.allocate arena (long 4))
-          ^MemorySegment aslave (.allocate arena (long 4))
-          ^MemorySegment pidp (.allocate arena (long 4))
-          fa (.allocate arena (long 256)) ;; opaque; big enough for glibc's struct
-          at (.allocate arena (long 512))
-          ws (winsize arena rows cols)
-          argv (build-strv arena command)
-          envp (build-strv arena
-                           (map (fn [[k v]]
-                                  (str k "=" v))
-                                env))
-          path (.allocateFrom arena ^String (first command))]
+  (let [spawned
+        (with-open [arena (Arena/ofConfined)]
+          (let [^MemorySegment amaster (.allocate arena (long 4))
+                ^MemorySegment aslave (.allocate arena (long 4))
+                ^MemorySegment pidp (.allocate arena (long 4))
+                fa (.allocate arena (long 256)) ;; opaque; big enough for glibc's struct
+                at (.allocate arena (long 512))
+                ws (winsize arena rows cols)
+                argv (build-strv arena command)
+                envp (build-strv arena
+                                 (map (fn [[k v]]
+                                        (str k "=" v))
+                                      env))
+                path (.allocateFrom arena ^String (first command))]
 
-         (when-not (zero?
-                     (int
+            (when-not
+              (zero? (int
                        (invoke @h-openpty amaster aslave MemorySegment/NULL MemorySegment/NULL ws)))
-           (throw (ex-info "openpty failed" {:type ::openpty-failed})))
-         (let
-           [master (int (.getAtIndex amaster I 0))
-            slave (int (.getAtIndex aslave I 0))]
+              (throw (ex-info "openpty failed" {:type ::openpty-failed})))
+            (let [master (int (.getAtIndex amaster I 0))
+                  slave (int (.getAtIndex aslave I 0))]
 
-           (invoke @h-fa-init fa)
-           (invoke @h-fa-dup2 fa slave (int 0))
-           (invoke @h-fa-dup2 fa slave (int 1))
-           (invoke @h-fa-dup2 fa slave (int 2))
-           (invoke @h-fa-close fa master)
-           (invoke @h-fa-close fa slave)
-           ;; AFTER the dup2s (which still need `slave`) and after the two closes
-           ;; above, which is why both are in the keep set.
-           (close-inherited! fa #{master slave})
-           (invoke @h-at-init at)
-           (invoke @h-at-flags at spawn-flags)
-           (when dir
-             (when-let [h @h-fa-chdir]
-               (try (invoke h fa (.allocateFrom arena ^String dir)) (catch Throwable _ nil))))
-           (let [rc (int (invoke @h-spawn pidp path fa at argv envp))]
-             (invoke @h-fa-destr fa)
-             (invoke @h-at-destr at)
-             ;; The parent KEEPS its slave descriptor: the child's exit must not be
-             ;; the last close of this terminal ([[reader-loop!]] owns dropping it,
-             ;; once nothing of the child's is queued in the tty any more).
-             (when-not (zero? rc)
-               (invoke @h-close slave)
-               (invoke @h-close master)
-               (throw (ex-info (str "posix_spawn failed (errno " rc ")")
-                               {:type ::spawn-failed :errno rc})))
-             [master slave (long (.getAtIndex pidp I 0))]))))
+              (invoke @h-fa-init fa)
+              (invoke @h-fa-dup2 fa slave (int 0))
+              (invoke @h-fa-dup2 fa slave (int 1))
+              (invoke @h-fa-dup2 fa slave (int 2))
+              (invoke @h-fa-close fa master)
+              (invoke @h-fa-close fa slave)
+              ;; AFTER the dup2s (which still need `slave`) and after the two closes
+              ;; above, which is why both are in the keep set.
+              (close-inherited! fa #{master slave})
+              (invoke @h-at-init at)
+              (invoke @h-at-flags at spawn-flags)
+              (when dir
+                (when-let [h @h-fa-chdir]
+                  (try (invoke h fa (.allocateFrom arena ^String dir)) (catch Throwable _ nil))))
+              (let [rc (int (invoke @h-spawn pidp path fa at argv envp))]
+                (invoke @h-fa-destr fa)
+                (invoke @h-at-destr at)
+                ;; The parent KEEPS its slave descriptor: the child's exit must not be
+                ;; the last close of this terminal ([[reader-loop!]] owns dropping it,
+                ;; once nothing of the child's is queued in the tty any more).
+                (when-not (zero? rc)
+                  (invoke @h-close slave)
+                  (invoke @h-close master)
+                  (throw (ex-info (str "posix_spawn failed (errno " rc ")")
+                                  {:type ::spawn-failed :errno rc})))
+                [master slave (long (.getAtIndex pidp I 0))]))))
 
-     [master-fd slave-fd pid]
-     spawned
+        [master-fd slave-fd pid]
+        spawned
 
-     master-fd
-     (int master-fd)
+        master-fd
+        (int master-fd)
 
-     slave-fd
-     (int slave-fd)
+        slave-fd
+        (int slave-fd)
 
-     pid
-     (long pid)
+        pid
+        (long pid)
 
-     pin
-     (PipedInputStream. (* 64 1024))
+        pin
+        (PipedInputStream. (* 64 1024))
 
-     pout
-     (PipedOutputStream. pin)
+        pout
+        (PipedOutputStream. pin)
 
-     listeners
-     (atom [])
+        listeners
+        (atom [])
 
-     exit
-     (atom nil)
+        exit
+        (atom nil)
 
-     ;; Each descriptor is closed exactly once, by whichever side finishes last.
-     master-open?
-     (atom true)
+        ;; Each descriptor is closed exactly once, by whichever side finishes last.
+        master-open?
+        (atom true)
 
-     slave-open?
-     (atom true)
+        slave-open?
+        (atom true)
 
-     _rthread
-     (doto (Thread.
-             ^Runnable
-             (fn []
-               (reader-loop! master-fd slave-fd pout listeners exit master-open? slave-open?))
-             (str "vis-pty-read-" pid))
-       (.setDaemon true)
-       (.start))
+        _rthread
+        (doto (Thread.
+                ^Runnable
+                (fn []
+                  (reader-loop! master-fd slave-fd pout listeners exit master-open? slave-open?))
+                (str "vis-pty-read-" pid))
+          (.setDaemon true)
+          (.start))
 
-     wait-fn
-     (fn []
-       (or @exit
-           (locking exit
-             (or @exit
-                 (with-open [arena (Arena/ofConfined)]
-                   (let [^MemorySegment status (.allocate arena (long 4))]
-                     (invoke @h-waitpid (int pid) status (int 0))
-                     (let [code (decode-status (long (.getAtIndex status I 0)))]
-                       (reset! exit code)
-                       code)))))))
+        wait-fn
+        (fn []
+          (or @exit
+              (locking exit
+                (or @exit
+                    (with-open [arena (Arena/ofConfined)]
+                      (let [^MemorySegment status (.allocate arena (long 4))]
+                        (invoke @h-waitpid (int pid) status (int 0))
+                        (let [code (decode-status (long (.getAtIndex status I 0)))]
+                          (reset! exit code)
+                          code)))))))
 
-     ;; The reader can no longer learn that the child is gone from an EOF the
-     ;; terminal will not send while the parent holds a slave, so ONE thread reaps
-     ;; the child the moment it exits; every other caller of `:wait` reads the code
-     ;; it published straight out of `exit`.
-     _reaper
-     (doto (Thread. ^Runnable wait-fn (str "vis-pty-reap-" pid)) (.setDaemon true) (.start))]
+        ;; The reader can no longer learn that the child is gone from an EOF the
+        ;; terminal will not send while the parent holds a slave, so ONE thread reaps
+        ;; the child the moment it exits; every other caller of `:wait` reads the code
+        ;; it published straight out of `exit`.
+        _reaper
+        (doto (Thread. ^Runnable wait-fn (str "vis-pty-reap-" pid)) (.setDaemon true) (.start))]
 
     {:pid pid
      :in pin
      :send (fn [^bytes b]
              (with-open [arena (Arena/ofConfined)]
-               (let
-                 [n (alength b)
-                  buf (.allocate arena (long (max 1 n)))]
+               (let [n (alength b)
+                     buf (.allocate arena (long (max 1 n)))]
 
                  (MemorySegment/copy b 0 buf ValueLayout/JAVA_BYTE (long 0) n)
                  (invoke @h-write master-fd buf (long n)))))

@@ -39,12 +39,11 @@
   "Call `f` with an atom collecting `[sid event]` for every session event
    appended while it runs."
   [f]
-  (let
-    [seen
-     (atom [])
+  (let [seen
+        (atom [])
 
-     k
-     (keyword "human-input-test" (str (System/nanoTime)))]
+        k
+        (keyword "human-input-test" (str (System/nanoTime)))]
 
     (state/add-event-tap! k
                           (fn [sid event]
@@ -75,12 +74,11 @@
 
 (deftest app-sees-and-answers-a-blocked-run-test
   (gw-hi/install!)
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     rid
-     (str "req-" (random-uuid))]
+        rid
+        (str "req-" (random-uuid))]
 
     (with-events
       (fn [seen]
@@ -113,19 +111,18 @@
 
 (deftest rejected-answer-keeps-the-request-open-test
   (gw-hi/install!)
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     rid
-     (str "req-" (random-uuid))
+        rid
+        (str "req-" (random-uuid))
 
-     answer
-     (future (hi/request! {:title "Key?"
-                           :id rid
-                           :session-id sid
-                           :timeout-ms 4000
-                           :fields [{:id "key" :type "plaintext" :is-required true}]}))]
+        answer
+        (future (hi/request! {:title "Key?"
+                              :id rid
+                              :session-id sid
+                              :timeout-ms 4000
+                              :fields [{:id "key" :type "plaintext" :is-required true}]}))]
 
     (try (is (await-true #(some? (gw-hi/request-of sid rid))))
          (testing "validation is the engine's, so app and TUI accept the same answers"
@@ -159,46 +156,43 @@
   ;; The describer stays installed for every case below: a session title is
   ;; minted from whatever opened the session, so it must never reach the alert.
   (let [prev @@#'push/describe-session]
-    (try
-      (push/set-session-describer! (fn [_sid _tid]
-                                     {:title "Ship the parser"}))
-      (testing "the title demands action and then asks the question; the body is the detail"
-        (let
-          [n (#'push/human-input-notification
-              "sid-9"
-              {"type" "human_input.request"
-               "request"
-               {"id" "req-1" "title" "Approve the deploy" "description" "v1.2.3 to production"}})]
-          (is (= "Action needed — Approve the deploy" (:title n)))
-          (is (= "v1.2.3 to production" (:body n)))
-          (is (= "sid-9" (:thread-id n)))
-          (is (= "sid-9:human-input" (:collapse-id n)))
-          (is (= "human_input.request" (get-in n [:data :type])))
-          (is (= "req-1" (get-in n [:data :request_id])))
-          (is (= "sid-9" (get-in n [:data :session_id])))))
-      (testing "a question with no detail under it is never repeated in the body"
-        (let
-          [n (#'push/human-input-notification
-              "sid-9"
-              {"type" "human_input.request" "request" {"id" "req-2" "title" "Approve the deploy"}})]
-          (is (= "Action needed — Approve the deploy" (:title n)))
-          (is (= "Vis is waiting on your answer." (:body n)))))
-      (testing "a request carrying only a description still says what it wants"
-        (let
-          [n (#'push/human-input-notification
-              "sid-9"
-              {"type" "human_input.request"
-               "request" {"id" "req-3" "description" "Approve the deploy"}})]
-          (is (= "Action needed" (:title n)))
-          (is (= "Approve the deploy" (:body n)))))
-      (testing "an unlabelled request is still a demand, never blank"
-        (let
-          [n (#'push/human-input-notification
-              "sid-9"
-              {"type" "human_input.request" "request" {"id" "req-4"}})]
-          (is (= "Action needed" (:title n)))
-          (is (= "Vis is waiting on your answer." (:body n)))))
-      (finally (push/set-session-describer! prev)))))
+    (try (push/set-session-describer! (fn [_sid _tid]
+                                        {:title "Ship the parser"}))
+         (testing "the title demands action and then asks the question; the body is the detail"
+           (let [n (#'push/human-input-notification
+                    "sid-9"
+                    {"type" "human_input.request"
+                     "request" {"id" "req-1"
+                                "title" "Approve the deploy"
+                                "description" "v1.2.3 to production"}})]
+             (is (= "Action needed — Approve the deploy" (:title n)))
+             (is (= "v1.2.3 to production" (:body n)))
+             (is (= "sid-9" (:thread-id n)))
+             (is (= "sid-9:human-input" (:collapse-id n)))
+             (is (= "human_input.request" (get-in n [:data :type])))
+             (is (= "req-1" (get-in n [:data :request_id])))
+             (is (= "sid-9" (get-in n [:data :session_id])))))
+         (testing "a question with no detail under it is never repeated in the body"
+           (let [n (#'push/human-input-notification
+                    "sid-9"
+                    {"type" "human_input.request"
+                     "request" {"id" "req-2" "title" "Approve the deploy"}})]
+             (is (= "Action needed — Approve the deploy" (:title n)))
+             (is (= "Vis is waiting on your answer." (:body n)))))
+         (testing "a request carrying only a description still says what it wants"
+           (let [n (#'push/human-input-notification
+                    "sid-9"
+                    {"type" "human_input.request"
+                     "request" {"id" "req-3" "description" "Approve the deploy"}})]
+             (is (= "Action needed" (:title n)))
+             (is (= "Approve the deploy" (:body n)))))
+         (testing "an unlabelled request is still a demand, never blank"
+           (let [n (#'push/human-input-notification
+                    "sid-9"
+                    {"type" "human_input.request" "request" {"id" "req-4"}})]
+             (is (= "Action needed" (:title n)))
+             (is (= "Vis is waiting on your answer." (:body n)))))
+         (finally (push/set-session-describer! prev)))))
 
 ;; The endpoints the phone actually calls
 ;;
@@ -219,27 +213,25 @@
 
 (deftest the-app-answers-a-parked-run-over-http-test
   (gw-hi/install!)
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     rid
-     (str "req-" (random-uuid))
+        rid
+        (str "req-" (random-uuid))
 
-     answer
-     (future (hi/request! (spec :id rid
-                                :session-id sid
-                                :fields
-                                [{:id "note" :type "plaintext" :label "Note" :is-required true}])))]
+        answer
+        (future (hi/request!
+                  (spec :id rid
+                        :session-id sid
+                        :fields [{:id "note" :type "plaintext" :label "Note" :is-required true}])))]
 
     (try (is (await-true #(some? (gw-hi/request-of sid rid))))
          (testing "a phone that starts cold still finds the open form, snake_case"
-           (let
-             [response
-              ((rv 'list-human-input-handler) {:path-params {:sid sid}})
+           (let [response
+                 ((rv 'list-human-input-handler) {:path-params {:sid sid}})
 
-              request
-              (first (get (json-body response) "requests"))]
+                 request
+                 (first (get (json-body response) "requests"))]
 
              (is (= 200 (:status response)))
              (is (= "application/json" (get-in response [:headers "Content-Type"])))
@@ -249,10 +241,9 @@
              (is (= ["note"] (mapv #(get % "id") (get request "fields"))))
              (is (true? (get-in request ["fields" 0 "is_required"])))))
          (testing "the engine's validation answers the app, and the run stays parked"
-           (let
-             [body (json-body ((rv 'submit-human-input-handler)
-                                {:path-params {:sid sid :request-id rid}
-                                 :body (body-stream {:values {"note" "   "}})}))]
+           (let [body (json-body ((rv 'submit-human-input-handler)
+                                   {:path-params {:sid sid :request-id rid}
+                                    :body (body-stream {:values {"note" "   "}})}))]
              (is (false? (get body "is_accepted")))
              (is (= rid (get body "request_id")))
              (is (contains? (get body "errors") "note"))
@@ -263,10 +254,9 @@
                              {:path-params {:sid (str (random-uuid)) :request-id rid}
                               :body (body-stream {:values {"note" "ship"}})})))))
          (testing "an accepted answer releases the blocked extension"
-           (let
-             [body (json-body ((rv 'submit-human-input-handler)
-                                {:path-params {:sid sid :request-id rid}
-                                 :body (body-stream {:values {"note" "ship it"}})}))]
+           (let [body (json-body ((rv 'submit-human-input-handler)
+                                   {:path-params {:sid sid :request-id rid}
+                                    :body (body-stream {:values {"note" "ship it"}})}))]
              (is (true? (get body "is_accepted")))
              (is (= "ship it" (get-in (deref answer 2000 ::timeout) [:values "note"])))))
          (testing "a settled request is gone from the snapshot and answerable no more"
@@ -279,20 +269,18 @@
 
 (deftest the-app-cancels-a-parked-run-over-http-test
   (gw-hi/install!)
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     rid
-     (str "req-" (random-uuid))
+        rid
+        (str "req-" (random-uuid))
 
-     answer
-     (future (hi/request! (spec :id rid :session-id sid)))]
+        answer
+        (future (hi/request! (spec :id rid :session-id sid)))]
 
     (try (is (await-true #(some? (gw-hi/request-of sid rid))))
-         (let
-           [body (json-body ((rv 'cancel-human-input-handler)
-                              {:path-params {:sid sid :request-id rid}}))]
+         (let [body (json-body ((rv 'cancel-human-input-handler)
+                                 {:path-params {:sid sid :request-id rid}}))]
            (is (true? (get body "is_cancelled")))
            (is (= rid (get body "request_id")))
            (is (false? (:is-submitted (deref answer 2000 ::timeout))))
@@ -395,26 +383,25 @@
 
 (deftest the-companion-urls-route-to-the-human-input-handlers-test
   (testing "the URLs `gateway.ts` builds are the URLs this router serves"
-    (let
-      [match-by-path
-       (requiring-resolve 'reitit.core/match-by-path)
+    (let [match-by-path
+          (requiring-resolve 'reitit.core/match-by-path)
 
-       router
-       ((rv 'router) "token" [])
+          router
+          ((rv 'router) "token" [])
 
-       sid
-       (str (random-uuid))
+          sid
+          (str (random-uuid))
 
-       rid
-       "req 1"
+          rid
+          "req 1"
 
-       ;; `encodeURIComponent`, exactly as the companion client escapes an id.
-       encoded
-       "req%201"
+          ;; `encodeURIComponent`, exactly as the companion client escapes an id.
+          encoded
+          "req%201"
 
-       match
-       (fn [path]
-         (match-by-path router path))]
+          match
+          (fn [path]
+            (match-by-path router path))]
 
       (is (= @(rv 'list-human-input-handler)
              (get-in (match (str "/v1/sessions/" sid "/human-input")) [:data :get :handler])))
@@ -431,19 +418,18 @@
 
 (deftest a-hostile-body-cannot-park-or-settle-a-run-test
   (gw-hi/install!)
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     ;; An extension may name its own request, including characters the app has
-     ;; to `encodeURIComponent` before it can even build the URL.
-     rid
-     "req/one two"
+        ;; An extension may name its own request, including characters the app has
+        ;; to `encodeURIComponent` before it can even build the URL.
+        rid
+        "req/one two"
 
-     answer
-     (future (hi/request! (spec :id rid
-                                :session-id sid
-                                :fields [{:id "note" :type "plaintext" :label "Note"}])))]
+        answer
+        (future (hi/request! (spec :id rid
+                                   :session-id sid
+                                   :fields [{:id "note" :type "plaintext" :label "Note"}])))]
 
     (try
       (is (await-true #(some? (gw-hi/request-of sid rid))))
@@ -461,18 +447,16 @@
                            :body (java.io.ByteArrayInputStream. (.getBytes "not json" "UTF-8"))}))))
         (is (some? (gw-hi/request-of sid rid))))
       (testing "a structured value is rejected, not stringified into the answer"
-        (let
-          [body (json-body ((rv 'submit-human-input-handler)
-                             {:path-params {:sid sid :request-id rid}
-                              :body (body-stream {:values {"note" {"a" 1}}})}))]
+        (let [body (json-body ((rv 'submit-human-input-handler)
+                                {:path-params {:sid sid :request-id rid}
+                                 :body (body-stream {:values {"note" {"a" 1}}})}))]
           (is (false? (get body "is_accepted")))
           (is (= "must be text" (get-in body ["errors" "note"])))
           (is (some? (gw-hi/request-of sid rid)))))
       (testing "the escaped id still routes, and the same handler answers it"
-        (let
-          [match ((requiring-resolve 'reitit.core/match-by-path)
-                   ((rv 'router) "token" [])
-                   (str "/v1/sessions/" sid "/human-input/req%2Fone%20two/actions/submit"))]
+        (let [match ((requiring-resolve 'reitit.core/match-by-path)
+                      ((rv 'router) "token" [])
+                      (str "/v1/sessions/" sid "/human-input/req%2Fone%20two/actions/submit"))]
           (is (= rid (get-in match [:path-params :request-id])))
           (is (= @(rv 'submit-human-input-handler) (get-in match [:data :post :handler])))
           (is (true? (get (json-body ((rv 'submit-human-input-handler)
@@ -487,47 +471,47 @@
   (gw-hi/install!)
   (with-events
     (fn [seen]
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         rid
-         (str "storm-" (random-uuid))
+            rid
+            (str "storm-" (random-uuid))
 
-         answer
-         (future (hi/request! (spec :id rid
-                                    :session-id sid
-                                    :timeout-ms 10000
-                                    :fields [{:id "note" :type "plaintext" :is-required true}])))
+            answer
+            (future (hi/request! (spec :id rid
+                                       :session-id sid
+                                       :timeout-ms 10000
+                                       :fields [{:id "note" :type "plaintext" :is-required true}])))
 
-         _
-         (is (await-true #(some? (gw-hi/request-of sid rid))))
+            _
+            (is (await-true #(some? (gw-hi/request-of sid rid))))
 
-         ;; Every surface fires at once: valid answers, blank ones, cancels.
-         gate
-         (java.util.concurrent.CountDownLatch. 1)
+            ;; Every surface fires at once: valid answers, blank ones, cancels.
+            gate
+            (java.util.concurrent.CountDownLatch. 1)
 
-         racers
-         (doall (concat (for [i (range 6)]
-                          (future (.await gate) [:submit (gw-hi/submit! rid {"note" (str "v" i)})]))
-                        (for [_ (range 3)]
-                          (future (.await gate) [:blank (gw-hi/submit! rid {"note" "   "})]))
-                        (for [_ (range 3)]
-                          (future (.await gate) [:cancel (gw-hi/cancel! rid)]))))
+            racers
+            (doall (concat (for [i (range 6)]
+                             (future (.await gate)
+                                     [:submit (gw-hi/submit! rid {"note" (str "v" i)})]))
+                           (for [_ (range 3)]
+                             (future (.await gate) [:blank (gw-hi/submit! rid {"note" "   "})]))
+                           (for [_ (range 3)]
+                             (future (.await gate) [:cancel (gw-hi/cancel! rid)]))))
 
-         _
-         (.countDown gate)
+            _
+            (.countDown gate)
 
-         results
-         (mapv deref racers)
+            results
+            (mapv deref racers)
 
-         winners
-         (filterv (fn [[kind outcome]]
-                    (if (= :cancel kind) (true? outcome) (true? (:is-accepted outcome))))
-           results)
+            winners
+            (filterv (fn [[kind outcome]]
+                       (if (= :cancel kind) (true? outcome) (true? (:is-accepted outcome))))
+              results)
 
-         final
-         (deref answer 5000 ::stuck)]
+            final
+            (deref answer 5000 ::stuck)]
 
         (testing "exactly one answer wins and the extension is released once"
           (is (= 1 (count winners)))
@@ -546,23 +530,22 @@
 
 (deftest a-request-that-refuses-cancellation-refuses-the-app-too-test
   (gw-hi/install!)
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     rid
-     (str "must-answer-" (random-uuid))
+        rid
+        (str "must-answer-" (random-uuid))
 
-     answer
-     (future (hi/request! (spec :id rid
-                                :session-id sid
-                                :is-cancellable false
-                                :fields [{:id "note" :type "plaintext" :is-required true}])))]
+        answer
+        (future (hi/request! (spec :id rid
+                                   :session-id sid
+                                   :is-cancellable false
+                                   :fields [{:id "note" :type "plaintext" :is-required true}])))]
 
     (try (is (await-true #(some? (gw-hi/request-of sid rid))))
          (testing "the app is refused the escape hatch the TUI dialog also denies"
-           (let
-             [response ((rv 'cancel-human-input-handler) {:path-params {:sid sid :request-id rid}})]
+           (let [response ((rv 'cancel-human-input-handler)
+                            {:path-params {:sid sid :request-id rid}})]
              (is (= 409 (:status response)))
              (is (= "human-input-not-cancellable" (get-in (json-body response) ["error" "type"])))
              (is (false? (:is-cancellable (gw-hi/request-of sid rid))))
@@ -618,19 +601,18 @@
     (fn []
       (with-events
         (fn [seen]
-          (let
-            [sid
-             (str (random-uuid))
+          (let [sid
+                (str (random-uuid))
 
-             view
-             (hi/open-live! {:title "CI"
-                             :description "Blockether/vis · 42"
-                             :session-id sid
-                             :nodes [{:id "now" :type "status" :text "Polling…" :tone "running"}
-                                     {:id "tail" :type "log"}]})
+                view
+                (hi/open-live! {:title "CI"
+                                :description "Blockether/vis · 42"
+                                :session-id sid
+                                :nodes [{:id "now" :type "status" :text "Polling…" :tone "running"}
+                                        {:id "tail" :type "log"}]})
 
-             view-id
-             (:id view)]
+                view-id
+                (:id view)]
 
             (try (testing "the open crosses as an ordinary session event, in snake_case"
                    (is (await-true #(seq (live-events-of seen gw-hi/live-open-event view-id))))
@@ -645,12 +627,11 @@
                  (testing "patches ride ONE coalesced frame that says which of them it carries"
                    (gw-hi/flush-live-patches!)
                    (is (await-true #(seq (live-events-of seen gw-hi/live-patch-event view-id))))
-                   (let
-                     [frames
-                      (live-events-of seen gw-hi/live-patch-event view-id)
+                   (let [frames
+                         (live-events-of seen gw-hi/live-patch-event view-id)
 
-                      [_ event]
-                      (first frames)]
+                         [_ event]
+                         (first frames)]
 
                      (is (= 1 (count frames)))
                      (is (= 1 (get event "first_seq")))
@@ -683,15 +664,14 @@
         (fn []
           (with-events
             (fn [seen]
-              (let
-                [sid
-                 (str (random-uuid))
+              (let [sid
+                    (str (random-uuid))
 
-                 view
-                 (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
+                    view
+                    (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
 
-                 view-id
-                 (:id view)]
+                    view-id
+                    (:id view)]
 
                 (try (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one"]}])
                      (testing "a patch waits for the tick, and the tick is nowhere near due"
@@ -701,12 +681,11 @@
                        ;; listener is also serving every sibling test's view.
                        (gw-hi/uninstall!)
                        (gw-hi/install!)
-                       (let
-                         [frames
-                          (live-events-of seen gw-hi/live-patch-event view-id)
+                       (let [frames
+                             (live-events-of seen gw-hi/live-patch-event view-id)
 
-                          [[_ event]]
-                          frames]
+                             [[_ event]]
+                             frames]
 
                          (is (= 1 (count frames)))
                          (is (= ["one"] (get-in event ["patch" "ops" 0 "lines"])))))
@@ -715,26 +694,24 @@
   (gw-hi/install!)
   (recorded
     (fn []
-      (let
-        [sid
-         (str (random-uuid))
+      (let [sid
+            (str (random-uuid))
 
-         view
-         (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
+            view
+            (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
 
-         view-id
-         (:id view)]
+            view-id
+            (:id view)]
 
         (try (hi/patch-live!
                view-id
                [{:op "append" :node-id "tail" :lines (mapv #(str "line " %) (range 1 21))}])
              (testing "a phone that starts cold reads the CURRENT picture, not a stream it missed"
-               (let
-                 [response
-                  ((rv 'list-live-views-handler) {:path-params {:sid sid}})
+               (let [response
+                     ((rv 'list-live-views-handler) {:path-params {:sid sid}})
 
-                  answered
-                  (first (get (json-body response) "views"))]
+                     answered
+                     (first (get (json-body response) "views"))]
 
                  (is (= 200 (:status response)))
                  (is (= "application/json" (get-in response [:headers "Content-Type"])))
@@ -742,10 +719,9 @@
                  (is (= sid (get answered "session_id")))
                  (is (= ["tail"] (mapv #(get % "id") (get answered "nodes"))))))
              (testing "and scrolls back through output whose patches it never received"
-               (let
-                 [body (json-body ((rv 'live-view-log-handler)
-                                    {:path-params {:sid sid :view-id view-id :node-id "tail"}
-                                     :query-params {"from" "5" "limit" "3"}}))]
+               (let [body (json-body ((rv 'live-view-log-handler)
+                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}
+                                        :query-params {"from" "5" "limit" "3"}}))]
                  (is (= "tail" (get body "node_id")))
                  (is (= 5 (get body "from")))
                  (is (= 20 (get body "total")))
@@ -755,10 +731,9 @@
                       (:status ((rv 'interrupt-live-view-handler)
                                  {:path-params {:sid (str (random-uuid)) :view-id view-id}})))))
              (testing "the app's one button stops it, carrying the words typed with the stop"
-               (let
-                 [body (json-body ((rv 'interrupt-live-view-handler)
-                                    {:path-params {:sid sid :view-id view-id}
-                                     :body (body-stream {:note "wrong subnet"})}))]
+               (let [body (json-body ((rv 'interrupt-live-view-handler)
+                                       {:path-params {:sid sid :view-id view-id}
+                                        :body (body-stream {:note "wrong subnet"})}))]
                  (is (true? (get body "is_interrupted")))
                  (is (= view-id (get body "view_id")))
                  (is (nil? (gw-hi/live-view-of sid view-id)))
@@ -768,9 +743,8 @@
                       (:status ((rv 'interrupt-live-view-handler)
                                  {:path-params {:sid sid :view-id view-id}})))))
              (testing "and its record still answers, which is what makes a finished log readable"
-               (let
-                 [body (json-body ((rv 'live-view-log-handler)
-                                    {:path-params {:sid sid :view-id view-id :node-id "tail"}}))]
+               (let [body (json-body ((rv 'live-view-log-handler)
+                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}}))]
                  (is (= 20 (get body "total")))
                  (is (= 20 (count (get body "lines"))))))
              (finally (hi/close-live! view-id)))))))
@@ -781,25 +755,23 @@
     (fn []
       (with-events
         (fn [seen]
-          (let
-            [sid
-             (str (random-uuid))
+          (let [sid
+                (str (random-uuid))
 
-             view
-             (hi/open-live! {:title "Migration"
-                             :session-id sid
-                             :nodes
-                             [{:id "now" :type "status" :text "Writing rows" :tone "running"}]})
+                view
+                (hi/open-live! {:title "Migration"
+                                :session-id sid
+                                :nodes
+                                [{:id "now" :type "status" :text "Writing rows" :tone "running"}]})
 
-             view-id
-             (:id view)]
+                view-id
+                (:id view)]
 
             (try (testing "no view refuses the stop: it asks nothing, so nothing is left unanswered"
-                   (let
-                     [body (json-body ((rv 'interrupt-live-view-handler)
-                                        {:path-params {:sid sid :view-id view-id}
-                                         :body (body-stream {:note
-                                                             "wrong subnet — I will re-run it"})}))]
+                   (let [body (json-body ((rv 'interrupt-live-view-handler)
+                                           {:path-params {:sid sid :view-id view-id}
+                                            :body (body-stream
+                                                    {:note "wrong subnet — I will re-run it"})}))]
                      (is (true? (get body "is_interrupted")))
                      (is (nil? (gw-hi/live-view-of sid view-id)))))
                  (testing "and the run reads WHO stopped it, and why, before it reads the picture"
@@ -811,14 +783,13 @@
                      (is (= ["now"]
                             (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))))
                  (finally (hi/close-live! view-id))))
-          (let
-            [sid
-             (str (random-uuid))
+          (let [sid
+                (str (random-uuid))
 
-             bare
-             (:id (hi/open-live! {:title "Sweep"
-                                  :session-id sid
-                                  :nodes [{:id "now" :type "status" :text "Sweeping"}]}))]
+                bare
+                (:id (hi/open-live! {:title "Sweep"
+                                     :session-id sid
+                                     :nodes [{:id "now" :type "status" :text "Sweeping"}]}))]
 
             (try (testing
                    "a stop sent with no body at all still lands, and still says a person sent it"
@@ -833,22 +804,21 @@
 
 (deftest the-companion-live-urls-route-to-the-live-handlers-test
   (testing "the URLs a client builds for a live view are the URLs this router serves"
-    (let
-      [match-by-path
-       (requiring-resolve 'reitit.core/match-by-path)
+    (let [match-by-path
+          (requiring-resolve 'reitit.core/match-by-path)
 
-       router
-       ((rv 'router) "token" [])
+          router
+          ((rv 'router) "token" [])
 
-       sid
-       (str (random-uuid))
+          sid
+          (str (random-uuid))
 
-       view-id
-       (str (random-uuid))
+          view-id
+          (str (random-uuid))
 
-       match
-       (fn [path]
-         (match-by-path router path))]
+          match
+          (fn [path]
+            (match-by-path router path))]
 
       (is (= @(rv 'list-live-views-handler)
              (get-in (match (str "/v1/sessions/" sid "/human-input/live")) [:data :get :handler])))
@@ -938,17 +908,16 @@
   (dissoc m "id" "created_at"))
 
 (deftest the-app-live-fixture-is-the-engines-own-projection-test
-  (let
-    [view
-     (live/materialize (hi/normalize-live-view live-fixture-spec))
+  (let [view
+        (live/materialize (hi/normalize-live-view live-fixture-spec))
 
-     file
-     (live-fixture-file)
+        file
+        (live-fixture-file)
 
-     fixture
-     (some-> file
-             slurp
-             wire/parse-json)]
+        fixture
+        (some-> file
+                slurp
+                wire/parse-json)]
 
     (is (some? file))
     (when fixture

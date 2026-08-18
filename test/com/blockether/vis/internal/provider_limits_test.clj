@@ -19,13 +19,11 @@
 
 (deftest concurrent-limits-reads-share-one-upstream-call
   (let [calls (atom 0)]
-    (with-redefs
-      [registry/provider-by-id (fn [_]
-                                 (counting-provider calls))]
+    (with-redefs [registry/provider-by-id (fn [_]
+                                            (counting-provider calls))]
       (provider-limits/flush-limits-cache!)
-      (let
-        [readers (doall
-                   (repeatedly 8 #(future (provider-limits/provider-limits :limits-cache-test))))]
+      (let [readers
+            (doall (repeatedly 8 #(future (provider-limits/provider-limits :limits-cache-test))))]
         (run! deref readers)
         (testing "eight simultaneous readers stampede into a single fetch" (is (= 1 @calls)))
         (testing "a later read inside the TTL is served from cache"
@@ -36,9 +34,8 @@
 
 (deftest flushing-the-cache-forces-the-next-read-upstream
   (let [calls (atom 0)]
-    (with-redefs
-      [registry/provider-by-id (fn [_]
-                                 (counting-provider calls))]
+    (with-redefs [registry/provider-by-id (fn [_]
+                                            (counting-provider calls))]
       (provider-limits/flush-limits-cache!)
       (provider-limits/provider-limits :limits-cache-test)
       (is (= 1 @calls))

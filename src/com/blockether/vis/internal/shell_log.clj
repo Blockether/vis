@@ -71,9 +71,8 @@
   "Eight hex chars of SHA-1 over the RAW id — enough to separate two ids that
    sanitize or truncate to the same segment."
   [s]
-  (let
-    [d (.digest (java.security.MessageDigest/getInstance "SHA-1")
-                (.getBytes (str s) java.nio.charset.StandardCharsets/UTF_8))]
+  (let [d (.digest (java.security.MessageDigest/getInstance "SHA-1")
+                   (.getBytes (str s) java.nio.charset.StandardCharsets/UTF_8))]
     (apply str (map #(format "%02x" %) (take 4 d)))))
 
 (defn- safe-name
@@ -87,18 +86,17 @@
    the segment is not the id verbatim, a digest of the RAW id is appended, so a
    distinct id always names a distinct file."
   [s]
-  (let
-    [raw
-     (str s)
+  (let [raw
+        (str s)
 
-     cleaned
-     (str/replace raw #"[^A-Za-z0-9._-]" "_")
+        cleaned
+        (str/replace raw #"[^A-Za-z0-9._-]" "_")
 
-     cleaned
-     (if (str/blank? cleaned) "_" cleaned)
+        cleaned
+        (if (str/blank? cleaned) "_" cleaned)
 
-     cleaned
-     (subs cleaned 0 (min 100 (count cleaned)))]
+        cleaned
+        (subs cleaned 0 (min 100 (count cleaned)))]
 
     (if (= raw cleaned) cleaned (str cleaned "-" (id-digest raw)))))
 
@@ -135,16 +133,14 @@
            (when-not (neg? c) (try (.write out c) (.flush out) (catch Throwable _ nil)))
            c))
         ([b]
-         (let
-           [^bytes b b
-            n (.read in b 0 (alength b))]
+         (let [^bytes b b
+               n (.read in b 0 (alength b))]
 
            (when (pos? n) (try (.write out b 0 n) (.flush out) (catch Throwable _ nil)))
            n))
         ([b off len]
-         (let
-           [^bytes b b
-            n (.read in b (int off) (int len))]
+         (let [^bytes b b
+               n (.read in b (int off) (int len))]
 
            (when (pos? n) (try (.write out b (int off) n) (.flush out) (catch Throwable _ nil)))
            n))))))
@@ -232,28 +228,26 @@
    request for the whole log, never an error. A trailing newline ENDS the last
    line rather than beginning an empty one, so `-1` on `a\\nb\\n` is `b`."
   ^long [^File f ^long len ^long lim ^long n]
-  (let
-    [win
-     (long (min len lim))
+  (let [win
+        (long (min len lim))
 
-     base
-     (- len win)
+        base
+        (- len win)
 
-     ^bytes buf
-     (if (pos? win) (read-bytes f base win) (byte-array 0))
+        ^bytes buf
+        (if (pos? win) (read-bytes f base win) (byte-array 0))
 
-     got
-     (long (alength buf))
+        got
+        (long (alength buf))
 
-     end
-     (long (if (and (pos? got) (= 10 (bit-and (aget buf (dec got)) 0xFF))) (dec got) got))]
+        end
+        (long (if (and (pos? got) (= 10 (bit-and (aget buf (dec got)) 0xFF))) (dec got) got))]
 
-    (loop
-      [i
-       (dec end)
+    (loop [i
+           (dec end)
 
-       seen
-       0]
+           seen
+           0]
 
       (cond (neg? i) base
             (= 10 (bit-and (aget buf i) 0xFF))
@@ -276,45 +270,44 @@
    is worth an exception."
   ([id file] (read-chunk id file nil))
   ([id ^File file {:keys [offset limit]}]
-   (let
-     [len
-      (long (if (.isFile file) (.length file) 0))
+   (let [len
+         (long (if (.isFile file) (.length file) 0))
 
-      lim
-      (-> (long (or limit default-chunk-bytes))
-          (max 1)
-          (min (long max-chunk-bytes)))
+         lim
+         (-> (long (or limit default-chunk-bytes))
+             (max 1)
+             (min (long max-chunk-bytes)))
 
-      off
-      (long (cond
-              ;; No offset: the tail bytes, what a watcher of a live command wants.
-              (nil? offset) (max 0 (- len lim))
-              ;; NEGATIVE: the last `n` LINES, the same reading `cat(path, -50)` has.
-              ;; A line count is the unit a caller actually holds; a byte offset for
-              ;; it is only knowable after reading the file, which is the read they
-              ;; were trying to make.
-              (neg? (long offset)) (tail-line-offset file len lim (- (long offset)))
-              :else (-> (long offset)
-                        (max 0)
-                        (min len))))
+         off
+         (long (cond
+                 ;; No offset: the tail bytes, what a watcher of a live command wants.
+                 (nil? offset) (max 0 (- len lim))
+                 ;; NEGATIVE: the last `n` LINES, the same reading `cat(path, -50)` has.
+                 ;; A line count is the unit a caller actually holds; a byte offset for
+                 ;; it is only knowable after reading the file, which is the read they
+                 ;; were trying to make.
+                 (neg? (long offset)) (tail-line-offset file len lim (- (long offset)))
+                 :else (-> (long offset)
+                           (max 0)
+                           (min len))))
 
-      want
-      (long (min (- len off) lim))
+         want
+         (long (min (- len off) lim))
 
-      ^bytes buf
-      (if (pos? want) (read-bytes file off want) (byte-array 0))
+         ^bytes buf
+         (if (pos? want) (read-bytes file off want) (byte-array 0))
 
-      got
-      (long (alength buf))
+         got
+         (long (alength buf))
 
-      head
-      (long (partial-head buf got))
+         head
+         (long (partial-head buf got))
 
-      tail
-      (long (if (< (+ off got) len) (partial-tail buf got) 0))
+         tail
+         (long (if (< (+ off got) len) (partial-tail buf got) 0))
 
-      keep-n
-      (long (max 0 (- got head tail)))]
+         keep-n
+         (long (max 0 (- got head tail)))]
 
      {:id (str id)
       :offset (+ off head)

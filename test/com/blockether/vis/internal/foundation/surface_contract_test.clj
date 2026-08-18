@@ -64,10 +64,9 @@
       (expect (not (contract/valid? :lint-fn (assoc lint-ok "findings" [{"file" "a.clj"}]))))
       (expect (not (contract/valid? :lint-fn (dissoc lint-ok "findings")))))
   (it "check throws a tagged contract-violation ex-info on a bad result"
-      (let
-        [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
-                 nil
-                 (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (let [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (expect (= :surface/contract-violation (:type ed)))
         (expect (= :lint-fn (:capability ed)))
         (expect (some? (:explain-data ed)))))
@@ -113,22 +112,22 @@
                                     (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
       (expect (not (contract/valid? :test-fn
                                     (assoc test-ok "failures" [{"message" "boom" "ns" 7}])))))
-  (it "accepts a test result carrying the shared by-cwd grouping"
-      (let
-        [fail
-         {"ns" "my.core-test" "file" "src/com/blockether/vis/core.clj" "line" 12 "message" "boom"}
+  (it
+    "accepts a test result carrying the shared by-cwd grouping"
+    (let [fail
+          {"ns" "my.core-test" "file" "src/com/blockether/vis/core.clj" "line" 12 "message" "boom"}
 
-         err
-         {"message" "kaboom"}
+          err
+          {"message" "kaboom"}
 
-         by-cwd
-         {"src/com/blockether/vis" {"core.clj" {"failures" [fail]}}
-          "." {"<unknown>" {"failures" [err]}}}]
+          by-cwd
+          {"src/com/blockether/vis" {"core.clj" {"failures" [fail]}}
+           "." {"<unknown>" {"failures" [err]}}}]
 
-        (expect (contract/valid? :test-fn
-                                 (assoc test-ok
-                                   "fail" 1
-                                   "by-cwd" by-cwd)))))
+      (expect (contract/valid? :test-fn
+                               (assoc test-ok
+                                 "fail" 1
+                                 "by-cwd" by-cwd)))))
   (it "rejects a test result whose by-cwd is not a nested dir->file->map"
       (expect (not (contract/valid? :test-fn (assoc test-ok "by-cwd" ["oops"]))))
       (expect (not (contract/valid? :test-fn (assoc test-ok "by-cwd" {"." ["flat"]})))))
@@ -140,10 +139,9 @@
   (it "completes an error-branch test result onto the TOTAL key set"
       ;; The reported crash: a run that errored out returned NO "failures" key, so
       ;; `r["failures"][:3]` in ordinary model Python blew up on None.
-      (let
-        [r (contract/complete-test-result
-             "clojure"
-             {"mode" "repl" "ns" "my.app.core-test" "port" 7888 "error" "nREPL is down"})]
+      (let [r (contract/complete-test-result
+                "clojure"
+                {"mode" "repl" "ns" "my.app.core-test" "port" 7888 "error" "nREPL is down"})]
         (expect (every? #(contains? r %) (keys contract/test-result-base)))
         (expect (= [] (get r "failures")))
         (expect (= {} (get r "by-cwd")))
@@ -159,16 +157,15 @@
         (expect (true? (get r "is_pass")))
         (expect (contract/valid? :test-fn r))))
   (it "completes a pack that speaks the contract's own words, translating nothing"
-      (let
-        [r (contract/complete-test-result "python"
-                                          {"mode" "cli"
-                                           "runner" "project"
-                                           "command" "pytest tests"
-                                           "exit" 1
-                                           "pass" 7
-                                           "fail" 3
-                                           "errored" 1
-                                           "skipped" 3})]
+      (let [r (contract/complete-test-result "python"
+                                             {"mode" "cli"
+                                              "runner" "project"
+                                              "command" "pytest tests"
+                                              "exit" 1
+                                              "pass" 7
+                                              "fail" 3
+                                              "errored" 1
+                                              "skipped" 3})]
         (expect (= 7 (get r "pass")))
         (expect (= 3 (get r "fail")))
         (expect (= 1 (get r "errored"))) ; the erroring SUBSET of fail
@@ -181,10 +178,9 @@
       ;; folded onto the canonical names HERE, so the same fact reached a result
       ;; under two spellings and each pack's arithmetic was guessed at from
       ;; outside. Every pack now emits `pass`/`fail`/`errored`/`command` itself.
-      (let
-        [r (contract/complete-test-result
-             "python"
-             {"mode" "cli" "passed" 7 "failed" 2 "ok" true "cmd" ["pytest" "tests"]})]
+      (let [r (contract/complete-test-result
+                "python"
+                {"mode" "cli" "passed" 7 "failed" 2 "ok" true "cmd" ["pytest" "tests"]})]
         (expect (nil? (get r "pass")))
         (expect (nil? (get r "fail")))
         (expect (nil? (get r "total")))
@@ -193,20 +189,18 @@
   (it "keeps errored as the erroring SUBSET of fail — never a count to add on top"
       ;; Reported by the pack: fail already contains it, so total stays
       ;; pass + fail + skipped and errored is never added a second time.
-      (let
-        [r (contract/complete-test-result
-             "clojure"
-             {"mode" "repl" "pass" 7 "fail" 3 "errored" 2 "skipped" 1})]
+      (let [r (contract/complete-test-result
+                "clojure"
+                {"mode" "repl" "pass" 7 "fail" 3 "errored" 2 "skipped" 1})]
         (expect (= 3 (get r "fail")))
         (expect (= 2 (get r "errored")))
         (expect (= 11 (get r "total"))))
       ;; NOT reported, but every failure is in the typed fault list — counted.
-      (let
-        [r (contract/complete-test-result "clojure"
-                                          {"mode" "repl"
-                                           "fail" 2
-                                           "failures" [{"test" "threw" "type" "error"}
-                                                       {"test" "asserted" "type" "fail"}]})]
+      (let [r (contract/complete-test-result "clojure"
+                                             {"mode" "repl"
+                                              "fail" 2
+                                              "failures" [{"test" "threw" "type" "error"}
+                                                          {"test" "asserted" "type" "fail"}]})]
         (expect (= 1 (get r "errored"))))
       ;; Counts with no per-test detail (pytest's summary line): UNKNOWN, not 0.
       (let [r (contract/complete-test-result "python" {"mode" "cli" "fail" 3})]

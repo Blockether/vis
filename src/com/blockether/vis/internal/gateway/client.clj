@@ -200,6 +200,7 @@
                         ;; mid-flight counted as a client until the daemon died.
                         (some? @client-id)
                         (assoc "X-Vis-Client-Id" (str @client-id))
+
                         ;; One secret, both carriers: `Authorization` is what a token-gated
                         ;; (non-loopback) gateway checks, `X-Vis-Gateway-Secret` is what
                         ;; `/healthz` echoes back as `secret_match`. Blank means the target
@@ -645,11 +646,8 @@
   [db pid]
   (when (and pid (discovery/pid-alive? pid))
     (when-let [handle (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
-      (let [registry-ms
-            (.lastModified ^java.io.File (discovery/registry-file db))
-
-            started
-            (.orElse (.startInstant (.info ^java.lang.ProcessHandle handle)) nil)]
+      (let [registry-ms (.lastModified ^java.io.File (discovery/registry-file db))
+            started (.orElse (.startInstant (.info ^java.lang.ProcessHandle handle)) nil)]
 
         (when (or (nil? started)
                   (not (pos? registry-ms))
@@ -695,7 +693,9 @@
         (discovery/read-registry db)
 
         forget!
-        (fn [] (reset! cached-entry nil) (reset! client-id nil))
+        (fn []
+          (reset! cached-entry nil)
+          (reset! client-id nil))
 
         escalate!
         (fn []
@@ -709,17 +709,14 @@
                :port (:port entry)
                :pid (:pid entry)
                :recovery (str "It answered neither /v1/admin/stop nor a signal. Inspect it with "
-                              "`lsof -nP -iTCP:"
-                              (:port entry)
+                              "`lsof -nP -iTCP:" (:port entry)
                               " -sTCP:LISTEN`, stop that process, then retry "
                               "`vis-agent gateway stop`.")})))]
 
     (if (discovery/registry-fresh? entry probe-entry?)
       (let [res (try (send-json-with-entry! entry "POST" "/v1/admin/stop")
                      (catch Throwable _ ::unreachable))]
-        (if (= ::unreachable res)
-          (escalate!)
-          (do (forget!) res)))
+        (if (= ::unreachable res) (escalate!) (do (forget!) res)))
       (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
         (escalate!)
         {:status "stopped" :stopping false}))))
@@ -970,13 +967,13 @@
                (do (reset! cached-entry entry)
                    (reset! entry-fresh-until-ns (+ (System/nanoTime)
                                                    (* (long entry-probe-ttl-ms) 1000000)))
-                    ;; Staleness BEFORE compatibility: a daemon too old to speak this
-                    ;; build's wire protocol is exactly the one worth replacing, and
-                    ;; the mismatch screen is for the daemon somebody is still using.
-                    (if (:bounced? (bounce-stale-daemon! entry))
-                      ;; The old image released the port; start this build in its place.
-                      (ensure-gateway! opts)
-                      (assert-compatible! entry)))
+                   ;; Staleness BEFORE compatibility: a daemon too old to speak this
+                   ;; build's wire protocol is exactly the one worth replacing, and
+                   ;; the mismatch screen is for the daemon somebody is still using.
+                   (if (:bounced? (bounce-stale-daemon! entry))
+                     ;; The old image released the port; start this build in its place.
+                     (ensure-gateway! opts)
+                     (assert-compatible! entry)))
                (throw (ex-info "gateway daemon did not become ready"
                                (assoc result :type :gateway/start-timeout)))))))))))
 
@@ -1743,21 +1740,20 @@
          entry
 
          :absent
-          (let [{:keys [reason clients running-turns]}
-                (daemon-idle? (status) {:tolerate-clients 1 :user-owned-ok? true})]
-
-            ;; Refuse on USE, never on ownership: this heal replaces a daemon whose
-            ;; classpath lacks the route whoever started it, but it must never abort
-            ;; another client's session or an in-flight turn to do so.
-            (when (contains? #{:clients :running-turns} reason)
-              (throw (ex-info (str "gateway daemon does not serve " path
-                                   " but is in use (" clients
-                                   " client(s), " running-turns
-                                   " running turn(s)); refusing" " to force-restart a shared daemon")
-                              {:type :gateway/route-missing-busy
-                               :path path
-                               :clients clients
-                               :running-turns running-turns})))
+         (let [{:keys [reason clients running-turns]}
+               (daemon-idle? (status) {:tolerate-clients 1 :user-owned-ok? true})]
+           ;; Refuse on USE, never on ownership: this heal replaces a daemon whose
+           ;; classpath lacks the route whoever started it, but it must never abort
+           ;; another client's session or an in-flight turn to do so.
+           (when (contains? #{:clients :running-turns} reason)
+             (throw (ex-info (str "gateway daemon does not serve " path
+                                  " but is in use (" clients
+                                  " client(s), " running-turns
+                                  " running turn(s)); refusing" " to force-restart a shared daemon")
+                             {:type :gateway/route-missing-busy
+                              :path path
+                              :clients clients
+                              :running-turns running-turns})))
            (stop-daemon!)
            (await-daemon-down! (db-target) (:host entry) (:port entry))
            (let [entry (ensure-gateway! opts)]

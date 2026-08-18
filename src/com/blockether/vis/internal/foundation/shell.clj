@@ -144,34 +144,33 @@
    whole point: a run that outstays its wait is no longer killed, so the bytes it
    had already printed must be answerable before its stream ends."
   [^long head-limit ^long tail-limit]
-  (let
-    [sb
-     (StringBuilder.)
+  (let [sb
+        (StringBuilder.)
 
-     cap
-     (+ head-limit tail-limit)
+        cap
+        (+ head-limit tail-limit)
 
-     total
-     (atom 0)
+        total
+        (atom 0)
 
-     trunc
-     (atom false)
+        trunc
+        (atom false)
 
-     append!
-     ;; The ONE place text enters this capture — a pumped Reader and a `wait`
-     ;; accumulating log windows are the same problem, so they share the same
-     ;; bounded buffer instead of one of them growing without a cap.
-     (fn [^String s]
-       (when (pos? (.length s))
-         (locking sb
-           (swap! total (fn [t]
-                          (+ (long t) (.length s))))
-           (.append sb s)
-           (when (> (.length sb) cap)
-             (reset! trunc true)
-             ;; keep the first `head-limit` chars + the last `tail-limit`;
-             ;; excise the run between them so memory stays at ~cap.
-             (.delete sb (int head-limit) (int (- (.length sb) tail-limit)))))))]
+        append!
+        ;; The ONE place text enters this capture — a pumped Reader and a `wait`
+        ;; accumulating log windows are the same problem, so they share the same
+        ;; bounded buffer instead of one of them growing without a cap.
+        (fn [^String s]
+          (when (pos? (.length s))
+            (locking sb
+              (swap! total (fn [t]
+                             (+ (long t) (.length s))))
+              (.append sb s)
+              (when (> (.length sb) cap)
+                (reset! trunc true)
+                ;; keep the first `head-limit` chars + the last `tail-limit`;
+                ;; excise the run between them so memory stays at ~cap.
+                (.delete sb (int head-limit) (int (- (.length sb) tail-limit)))))))]
 
     {:append! append!
      :drain! (fn [^java.io.Reader r]
@@ -183,12 +182,11 @@
                       (catch Throwable _ nil))))
      :snapshot (fn []
                  (locking sb
-                   (let
-                     [s
-                      (.toString sb)
+                   (let [s
+                         (.toString sb)
 
-                      omitted
-                      (if @trunc (- (long @total) cap) 0)]
+                         omitted
+                         (if @trunc (- (long @total) cap) 0)]
 
                      {:text (if @trunc
                               (str (subs s 0 head-limit)
@@ -255,10 +253,9 @@
 (defn- one-line
   "Collapse a command to a single display line capped at `limit` chars."
   [s ^long limit]
-  (let
-    [s (-> (str s)
-           (str/replace #"\s+" " ")
-           str/trim)]
+  (let [s (-> (str s)
+              (str/replace #"\s+" " ")
+              str/trim)]
     (if (> (count s) limit) (str (subs s 0 limit) "…") s)))
 
 (defn- resolve-dir
@@ -268,58 +265,56 @@
    `../svar` is therefore valid when that canonical sibling is an allowed root;
    arbitrary traversal remains denied. Absolute paths follow the same rule."
   ^File [opts]
-  (let
-    [env
-     (::environment opts)
+  (let [env
+        (::environment opts)
 
-     root
-     (.getCanonicalFile (workspace/cwd))
+        root
+        (.getCanonicalFile (workspace/cwd))
 
-     env-roots
-     (workspace/env-filesystem-roots env)
+        env-roots
+        (workspace/env-filesystem-roots env)
 
-     roots
-     (->> (concat [{:trunk (.getPath root) :clone (.getPath root)}]
-                  env-roots
-                  workspace/*filesystem-roots*)
-          ;; A root the draft policy withholds is not a working directory:
-          ;; `shell` must not offer what `safe-path` refuses.
-          (remove :denied?)
-          (mapcat (juxt :trunk :clone))
-          (keep #(some-> %
-                         io/file
-                         .getCanonicalFile))
-          distinct
-          vec)
+        roots
+        (->> (concat [{:trunk (.getPath root) :clone (.getPath root)}]
+                     env-roots
+                     workspace/*filesystem-roots*)
+             ;; A root the draft policy withholds is not a working directory:
+             ;; `shell` must not offer what `safe-path` refuses.
+             (remove :denied?)
+             (mapcat (juxt :trunk :clone))
+             (keep #(some-> %
+                            io/file
+                            .getCanonicalFile))
+             distinct
+             vec)
 
-     dir-value
-     ;; `cwd` is THE name for a working directory across the tool surface
-     ;; (repl_start, repl_eval, run_tests, the language packs, and Python's own
-     ;; `os.getcwd`). There is no other spelling: `dir` is gone, not aliased.
-     (get opts "cwd")
+        dir-value
+        ;; `cwd` is THE name for a working directory across the tool surface
+        ;; (repl_start, repl_eval, run_tests, the language packs, and Python's own
+        ;; `os.getcwd`). There is no other spelling: `dir` is gone, not aliased.
+        (get opts "cwd")
 
-     requested
-     (when-not (str/blank? (str (or dir-value ""))) (str dir-value))]
+        requested
+        (when-not (str/blank? (str (or dir-value ""))) (str dir-value))]
 
     (if-not requested
       root
-      (let
-        [requested-file
-         (io/file (paths/expand-home requested))
+      (let [requested-file
+            (io/file (paths/expand-home requested))
 
-         dir
-         (.getCanonicalFile
-           (if (.isAbsolute requested-file) requested-file (io/file root requested)))
+            dir
+            (.getCanonicalFile
+              (if (.isAbsolute requested-file) requested-file (io/file root requested)))
 
-         allowed?
-         (some (fn [^File allowed-root]
-                 ;; Path#startsWith is component-aware and handles a filesystem root
-                 ;; correctly (`/` is not naively joined with another `/`).
-                 (or (= dir allowed-root) (.startsWith (.toPath dir) (.toPath allowed-root))))
-               roots)
+            allowed?
+            (some (fn [^File allowed-root]
+                    ;; Path#startsWith is component-aware and handles a filesystem root
+                    ;; correctly (`/` is not naively joined with another `/`).
+                    (or (= dir allowed-root) (.startsWith (.toPath dir) (.toPath allowed-root))))
+                  roots)
 
-         root-paths
-         (mapv #(.getPath ^File %) roots)]
+            root-paths
+            (mapv #(.getPath ^File %) roots)]
 
         (cond (not allowed?) (throw (ex-info (str
                                                "shell cwd '"
@@ -426,9 +421,8 @@
    pre-exec hijack, a source that produced nothing) denies that command by name
    instead of running it without the variable it asked for."
   [env opts]
-  (process-jail/with-call-env
-    (jail-policy env)
-    (process-jail/call-env-values (or (get opts "env") (get opts :env)))))
+  (process-jail/with-call-env (jail-policy env)
+                              (process-jail/call-env-values (or (get opts "env") (get opts :env)))))
 
 (defn- command-note
   "The single advisory line a command result carries. Truncation wins — it changes
@@ -518,21 +512,20 @@
 (defn- spawn!
   ^Process [cmd ^File dir policy]
   (try
-    (let
-      [^java.util.List args
-       ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
-       ;; shell at all — nothing to quote, nothing to interpret — which is how an argv run
-       ;; rides this same spawn/jail/capture machinery.
-       ;; The detach prefix (when the platform has one) goes OUTSIDE the jail wrapper:
-       ;; it only setpgid()s and execs, so everything that actually RUNS is still jailed.
-       (process-jail/detached-argv (process-jail/wrap-argv (if (sequential? cmd)
-                                                             (mapv str cmd)
-                                                             [(bash-command) "--noprofile" "--norc"
-                                                              "-lc" (str cmd)])
-                                                           policy))
+    (let [^java.util.List args
+          ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
+          ;; shell at all — nothing to quote, nothing to interpret — which is how an argv run
+          ;; rides this same spawn/jail/capture machinery.
+          ;; The detach prefix (when the platform has one) goes OUTSIDE the jail wrapper:
+          ;; it only setpgid()s and execs, so everything that actually RUNS is still jailed.
+          (process-jail/detached-argv (process-jail/wrap-argv (if (sequential? cmd)
+                                                                (mapv str cmd)
+                                                                [(bash-command) "--noprofile"
+                                                                 "--norc" "-lc" (str cmd)])
+                                                              policy))
 
-       pb
-       (ProcessBuilder. args)]
+          pb
+          (ProcessBuilder. args)]
 
       (.directory pb dir)
       ;; Route the child's HTTP clients at the loopback egress proxy when the jail
@@ -550,7 +543,8 @@
       ;; variables land: the confined branch never built it, but the inherited
       ;; one still carries the parent's.
       (let [^java.util.Map e (.environment pb)]
-        (doseq [k (:env-removals policy)] (.remove e ^String k)))
+        (doseq [k (:env-removals policy)]
+          (.remove e ^String k)))
       ;; AFTER the policy branch on purpose: the confined one REPLACED the map.
       (.putAll (.environment pb) ^java.util.Map child-env)
       ;; ONE stream, exactly like the pty path every model-facing run takes: a
@@ -608,28 +602,28 @@
   [cmd ^File dir policy]
   (try (assoc (spawn-retrying-fds
                 (fn []
-                  (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile"
-                                                                 "--norc" "-lc" (str cmd)]
-                                                                policy)
-                               :dir (.getPath ^File dir)
-                               :env (let
-                                      [^HashMap e
-                                       (if-let [full (process-jail/jailed-child-env policy)]
-                                         ;; Confined child: allowlisted env + declared
-                                         ;; `environment:` values (secrets dropped).
-                                         (HashMap. ^java.util.Map full)
-                                         (doto (HashMap. ^java.util.Map (System/getenv))
-                                           (.putAll ^java.util.Map
-                                                    (process-jail/child-env-additions policy))))]
-
-                                      ;; Unset what this call asked to unset, then let the pty's
-                                      ;; own variables land on top: `TERM` and the pagers are what
-                                      ;; make a pty a pty, so they stay Vis's to set.
-                                      (doseq [k (:env-removals policy)] (.remove e ^String k))
-                                      (.putAll e ^java.util.Map pty-child-env)
-                                      e)
-                               :cols 120
-                               :rows 40})))
+                  (pty/spawn!
+                    {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
+                                                       (str cmd)]
+                                                      policy)
+                     :dir (.getPath ^File dir)
+                     :env (let [^HashMap e (if-let [full (process-jail/jailed-child-env policy)]
+                                             ;; Confined child: allowlisted env + declared
+                                             ;; `environment:` values (secrets dropped).
+                                             (HashMap. ^java.util.Map full)
+                                             (doto (HashMap. ^java.util.Map (System/getenv))
+                                               (.putAll ^java.util.Map
+                                                        (process-jail/child-env-additions
+                                                          policy))))]
+                            ;; Unset what this call asked to unset, then let the pty's
+                            ;; own variables land on top: `TERM` and the pagers are what
+                            ;; make a pty a pty, so they stay Vis's to set.
+                            (doseq [k (:env-removals policy)]
+                              (.remove e ^String k))
+                            (.putAll e ^java.util.Map pty-child-env)
+                            e)
+                     :cols 120
+                     :rows 40})))
          ::cleanup (::cleanup policy))
        (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
@@ -643,27 +637,26 @@
    escapes this reach — the registry still drops cleanly and the pump is unblocked
    by closing the stream in the stop-fn, but the orphan keeps running."
   [p]
-  (try (let
-         [pid
-          (if (map? p) (:pid p) (.pid ^Process p))
+  (try (let [pid
+             (if (map? p) (:pid p) (.pid ^Process p))
 
-          destroy
-          (if (map? p)
-            (:destroy p)
-            (fn [force?]
-              (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
+             destroy
+             (if (map? p)
+               (:destroy p)
+               (fn [force?]
+                 (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
 
-          ^ProcessHandle ph
-          (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
+             ^ProcessHandle ph
+             (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
 
-          descendants
-          (fn []
-            (if ph
-              (-> ph
-                  .descendants
-                  .iterator
-                  iterator-seq)
-              []))]
+             descendants
+             (fn []
+               (if ph
+                 (-> ph
+                     .descendants
+                     .iterator
+                     iterator-seq)
+                 []))]
 
          (run! (fn [^ProcessHandle d]
                  (try (.destroy d) (catch Throwable _ nil)))
@@ -803,64 +796,62 @@
   ([env cmd] (shell-run-impl env cmd nil nil))
   ([env cmd opts] (shell-run-impl env cmd opts nil))
   ([env cmd opts {:keys [sink on-spawn]}]
-   (let
-     [argv
-      (when (sequential? cmd) (mapv str cmd))
+   (let [argv
+         (when (sequential? cmd) (mapv str cmd))
 
-      ;; An argv is echoed as the bash LINE that would run it — quoted token by
-      ;; token, so the `command` a caller reads back is copy-pasteable and can be
-      ;; split into exactly the tokens it named.
-      cmd
-      (if argv (str/join " " (map shell-quote argv)) (str cmd))]
+         ;; An argv is echoed as the bash LINE that would run it — quoted token by
+         ;; token, so the `command` a caller reads back is copy-pasteable and can be
+         ;; split into exactly the tokens it named.
+         cmd
+         (if argv (str/join " " (map shell-quote argv)) (str cmd))]
 
      (when (str/blank? cmd)
        (throw (ex-info (str "shell needs a non-blank command — pass it as `command`,"
                             " the first argument.")
                        {:type ::blank-command})))
-     (let
-       [timeout-secs
-        (clamp-timeout-secs (get opts "timeout_secs"))
+     (let [timeout-secs
+           (clamp-timeout-secs (get opts "timeout_secs"))
 
-        policy
-        (call-jail-policy env opts)
+           policy
+           (call-jail-policy env opts)
 
-        dir
-        (resolve-dir-for-policy opts env policy)
+           dir
+           (resolve-dir-for-policy opts env policy)
 
-        t0
-        (now-ms)
+           t0
+           (now-ms)
 
-        p
-        (spawn! (or argv cmd) dir policy)
+           p
+           (spawn! (or argv cmd) dir policy)
 
-        _
-        (when on-spawn (on-spawn p))
+           _
+           (when on-spawn (on-spawn p))
 
-        ;; ONE reader future on the ONE merged stream — avoids the classic
-        ;; full-pipe deadlock on chatty commands. `capped-capture` bounds memory
-        ;; to the head+tail budget at READ time (dropping only the MIDDLE of a
-        ;; huge stream, not its start), so a megabyte-then-killed command can't
-        ;; balloon the heap yet the opening context survives — and it can be
-        ;; snapshotted while the process is still printing.
-        out-cap
-        (capped-capture max-sync-head-chars max-sync-tail-chars)
+           ;; ONE reader future on the ONE merged stream — avoids the classic
+           ;; full-pipe deadlock on chatty commands. `capped-capture` bounds memory
+           ;; to the head+tail budget at READ time (dropping only the MIDDLE of a
+           ;; huge stream, not its start), so a megabyte-then-killed command can't
+           ;; balloon the heap yet the opening context survives — and it can be
+           ;; snapshotted while the process is still printing.
+           out-cap
+           (capped-capture max-sync-head-chars max-sync-tail-chars)
 
-        ;; Every captured byte is written through to the log file, so the handle's
-        ;; log holds what the call returned AND everything printed after it.
-        reader-of
-        (fn [^java.io.InputStream s]
-          (io/reader (if sink (shell-log/tee s sink) s)))
+           ;; Every captured byte is written through to the log file, so the handle's
+           ;; log holds what the call returned AND everything printed after it.
+           reader-of
+           (fn [^java.io.InputStream s]
+             (io/reader (if sink (shell-log/tee s sink) s)))
 
-        out-f
-        (future ((:drain! out-cap) (reader-of (.getInputStream p))))
+           out-f
+           (future ((:drain! out-cap) (reader-of (.getInputStream p))))
 
-        finished?
-        (try (.waitFor p timeout-secs TimeUnit/SECONDS)
-             (catch InterruptedException ie
-               ;; Turn cancellation: kill the spawned tree before
-               ;; the interrupt propagates to the loop.
-               (kill-tree! p)
-               (throw ie)))]
+           finished?
+           (try (.waitFor p timeout-secs TimeUnit/SECONDS)
+                (catch InterruptedException ie
+                  ;; Turn cancellation: kill the spawned tree before
+                  ;; the interrupt propagates to the loop.
+                  (kill-tree! p)
+                  (throw ie)))]
 
        (when (and (not finished?) (nil? sink))
          (kill-tree! p)
@@ -870,15 +861,14 @@
        ;; A handled run that timed out is STILL PRINTING: waiting on its drains
        ;; would be waiting on the very command whose wait already expired.
        (when (or finished? (nil? sink)) (deref out-f 5000 nil))
-       (let
-         [out
-          ((:snapshot out-cap))
+       (let [out
+             ((:snapshot out-cap))
 
-          exit
-          (when finished? (.exitValue p))
+             exit
+             (when finished? (.exitValue p))
 
-          t1
-          (now-ms)]
+             t1
+             (now-ms)]
 
          (with-meta (shell-result "run"
                                   ;; TOTAL shape ([[shell-result-base]]). The old "lean" map dropped a
@@ -1011,9 +1001,8 @@
    better."
   [env session id]
   (when-let [e (bg-entry session (str id))]
-    (let
-      [want (env-origin env)
-       have (str (or (:origin e) want))]
+    (let [want (env-origin env)
+          have (str (or (:origin e) want))]
 
       (when-not (= want have)
         (throw (ex-info (str "Shell '" id
@@ -1033,10 +1022,9 @@
 
 (defn- canonical-dir
   [d]
-  (when-let
-    [d (some-> d
-               str
-               not-empty)]
+  (when-let [d (some-> d
+                       str
+                       not-empty)]
     (try (.getCanonicalPath (io/file d)) (catch Throwable _ d))))
 
 (defn- reissue-live-entry
@@ -1050,16 +1038,15 @@
   [env session id command cwd]
   (when-let [e (live-bg-entry session id)]
     (authorize-origin! env session id)
-    (let
-      [want-cmd (some-> command
-                        str
-                        not-empty)
-       want-dir (canonical-dir cwd)
-       have-dir (canonical-dir (:dir e))
-       mismatch (cond (and want-cmd (not= want-cmd (str (:command e))))
-                      (str "it is running a different command (" (one-line (:command e) 60) ")")
-                      (and want-dir have-dir (not= want-dir have-dir))
-                      (str "it is running in a different directory (" have-dir ")"))]
+    (let [want-cmd (some-> command
+                           str
+                           not-empty)
+          want-dir (canonical-dir cwd)
+          have-dir (canonical-dir (:dir e))
+          mismatch (cond (and want-cmd (not= want-cmd (str (:command e))))
+                         (str "it is running a different command (" (one-line (:command e) 60) ")")
+                         (and want-dir have-dir (not= want-dir have-dir))
+                         (str "it is running in a different directory (" have-dir ")"))]
 
       (when mismatch
         (throw (ex-info (str "Shell '" id
@@ -1087,12 +1074,11 @@
 
 (defn- drop-bg-entry!
   [session id]
-  (let
-    [sk
-     (str session)
+  (let [sk
+        (str session)
 
-     id
-     (str id)]
+        id
+        (str id)]
 
     (swap! bg-procs (fn [m]
                       (prune-bg-session (update m sk dissoc id) sk)))
@@ -1106,12 +1092,11 @@
    that took the id over nor push every later auto id one suffix along for the
    rest of the session."
   [session id]
-  (let
-    [sk
-     (str session)
+  (let [sk
+        (str session)
 
-     id
-     (str id)]
+        id
+        (str id)]
 
     (swap! bg-procs (fn [m]
                       (if (:claim (get-in m [sk id]))
@@ -1130,26 +1115,25 @@
    Setup prefixes (`cd …`, `export …`, `VAR=1 …`) are skipped so the id names what
    is actually being watched, and a pathed binary keeps only its basename."
   [command]
-  (let
-    [program
-     (->> (str/split (str command) #"&&|\|\||;|\n")
-          (map str/trim)
-          (remove str/blank?)
-          (keep (fn [segment]
-                  (->> (str/split segment #"\s+")
-                       (remove str/blank?)
-                       (remove #(str/includes? % "="))
-                       first)))
-          (remove #{"cd" "export" "source" "." "env" "sudo" "exec" "set" "nohup"})
-          first)
+  (let [program
+        (->> (str/split (str command) #"&&|\|\||;|\n")
+             (map str/trim)
+             (remove str/blank?)
+             (keep (fn [segment]
+                     (->> (str/split segment #"\s+")
+                          (remove str/blank?)
+                          (remove #(str/includes? % "="))
+                          first)))
+             (remove #{"cd" "export" "source" "." "env" "sudo" "exec" "set" "nohup"})
+             first)
 
-     slug
-     (-> (str (or program "shell"))
-         (str/replace #"^.*/" "")
-         str/lower-case
-         (str/replace #"[^a-z0-9]+" "-")
-         (str/replace #"^-+" "")
-         (str/replace #"-+$" ""))]
+        slug
+        (-> (str (or program "shell"))
+            (str/replace #"^.*/" "")
+            str/lower-case
+            (str/replace #"[^a-z0-9]+" "-")
+            (str/replace #"^-+" "")
+            (str/replace #"-+$" ""))]
 
     (if (str/blank? slug) "shell" (subs slug 0 (min 24 (count slug))))))
 
@@ -1176,48 +1160,45 @@
    claim token because an earlier attempt may have picked a different candidate.
    `release-bg-claim!` hands the id back if the start never spawns."
   [env session command]
-  (let
-    [origin
-     (env-origin env)
+  (let [origin
+        (env-origin env)
 
-     wanted
-     (str command)
+        wanted
+        (str command)
 
-     sk
-     (str session)
+        sk
+        (str session)
 
-     ;; Only a shell THIS origin started can be resolved to; a live shell of
-     ;; another origin is skipped by the suffix loop like any other taken id.
-     running-same
-     (->> (get @bg-procs sk)
-          (filter (fn [[_ entry]]
-                    (and (= wanted (:command entry))
-                         (= origin (str (or (:origin entry) origin)))
-                         (live-entry? entry))))
-          ffirst)
+        ;; Only a shell THIS origin started can be resolved to; a live shell of
+        ;; another origin is skipped by the suffix loop like any other taken id.
+        running-same
+        (->> (get @bg-procs sk)
+             (filter (fn [[_ entry]]
+                       (and (= wanted (:command entry))
+                            (= origin (str (or (:origin entry) origin)))
+                            (live-entry? entry))))
+             ffirst)
 
-     base
-     (command->bg-id-slug wanted)
+        base
+        (command->bg-id-slug wanted)
 
-     token
-     (str (java.util.UUID/randomUUID))]
+        token
+        (str (java.util.UUID/randomUUID))]
 
     (or running-same
-        (let
-          [[_ committed] (swap-vals!
-                           bg-procs
-                           (fn [m]
-                             (let
-                               [ids (get m sk)
-                                id (loop [n 1]
-                                     (let [candidate (if (= 1 n) base (str base "-" n))]
-                                       (cond (not (bg-id-taken? (get ids candidate))) candidate
-                                             (< n 100) (recur (inc n))
-                                             :else (str base "-" (System/nanoTime)))))]
+        (let [[_ committed]
+              (swap-vals! bg-procs
+                          (fn [m]
+                            (let [ids (get m sk)
+                                  id (loop [n 1]
+                                       (let [candidate (if (= 1 n) base (str base "-" n))]
+                                         (cond (not (bg-id-taken? (get ids candidate))) candidate
+                                               (< n 100) (recur (inc n))
+                                               :else (str base "-" (System/nanoTime)))))]
 
-                               (assoc-in m
-                                 [sk id]
-                                 {:claim token :command wanted :script wanted :origin origin}))))]
+                              (assoc-in m
+                                [sk id]
+                                {:claim token :command wanted :script wanted :origin origin}))))]
           (some (fn [[id entry]]
                   (when (= token (:claim entry)) id))
                 (get committed sk))))))
@@ -1227,13 +1208,11 @@
   [buffer line]
   ;; A char-pump split on `\n` leaves the `\r` of a CRLF line behind; strip it
   ;; so a CRLF-emitted line reads identically to a POSIX one.
-  (let
-    [line
-     (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]
+  (let [line
+        (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]
     (swap! buffer (fn [{:keys [lines next-seq dropped]}]
-                    (let
-                      [lines (conj lines [next-seq line])
-                       over (- (count lines) (long max-bg-lines))]
+                    (let [lines (conj lines [next-seq line])
+                          over (- (count lines) (long max-bg-lines))]
 
                       {:lines (if (< 0 over) (subvec lines over) lines)
                        :next-seq (inc (long next-seq))
@@ -1323,11 +1302,10 @@
    reports single-digit milliseconds, which is exactly how \"is it working or is it
    stuck\" is answered."
   [handles]
-  (let
-    [ms (keep (fn [^ProcessHandle h]
-                (some-> ^java.time.Duration (.orElse (.totalCpuDuration (.info h)) nil)
-                        (.toMillis)))
-              handles)]
+  (let [ms (keep (fn [^ProcessHandle h]
+                   (some-> ^java.time.Duration (.orElse (.totalCpuDuration (.info h)) nil)
+                           (.toMillis)))
+                 handles)]
     (when (seq ms) (reduce + ms))))
 
 (defn- cpu-time->ms
@@ -1336,18 +1314,17 @@
    for a process this JVM did not measure — so the parse lives here rather than
    the number being dropped."
   [^String cell]
-  (try (let
-         [[days rest]
-          (if (str/includes? cell "-") (str/split cell #"-" 2) [nil cell])
+  (try (let [[days rest]
+             (if (str/includes? cell "-") (str/split cell #"-" 2) [nil cell])
 
-          parts
-          (mapv #(Double/parseDouble %) (str/split rest #":"))
+             parts
+             (mapv #(Double/parseDouble %) (str/split rest #":"))
 
-          secs
-          (reduce (fn [acc p]
-                    (+ (* 60.0 (double acc)) (double p)))
-                  0.0
-                  parts)]
+             secs
+             (reduce (fn [acc p]
+                       (+ (* 60.0 (double acc)) (double p)))
+                     0.0
+                     parts)]
 
          (long (* 1000.0 (+ (double secs) (* 86400.0 (double (if days (Long/parseLong days) 0)))))))
        (catch Exception _ nil)))
@@ -1360,28 +1337,27 @@
    without `ps` answers nil rather than failing the stage that asked."
   [pids]
   (when (seq pids)
-    (try (let
-           [p
-            (.start (doto (ProcessBuilder.
-                            ^java.util.List
-                            (vector "ps" "-o" "rss=,pcpu=,time=" "-p" (str/join "," pids)))
-                      (.redirectErrorStream true)))
+    (try (let [p
+               (.start (doto (ProcessBuilder.
+                               ^java.util.List
+                               (vector "ps" "-o" "rss=,pcpu=,time=" "-p" (str/join "," pids)))
+                         (.redirectErrorStream true)))
 
-            out
-            (with-open [r (io/reader (.getInputStream p))]
-              (slurp r))
+               out
+               (with-open [r (io/reader (.getInputStream p))]
+                 (slurp r))
 
-            _
-            (.waitFor p 2 TimeUnit/SECONDS)
+               _
+               (.waitFor p 2 TimeUnit/SECONDS)
 
-            rows
-            (keep (fn [line]
-                    (let [cells (str/split (str/trim line) #"\s+")]
-                      (when (= 3 (count cells))
-                        (try [(Long/parseLong (first cells)) (Double/parseDouble (second cells))
-                              (cpu-time->ms (nth cells 2))]
-                             (catch Exception _ nil)))))
-                  (str/split-lines out))]
+               rows
+               (keep (fn [line]
+                       (let [cells (str/split (str/trim line) #"\s+")]
+                         (when (= 3 (count cells))
+                           (try [(Long/parseLong (first cells)) (Double/parseDouble (second cells))
+                                 (cpu-time->ms (nth cells 2))]
+                                (catch Exception _ nil)))))
+                     (str/split-lines out))]
 
            (when (seq rows)
              {"rss_bytes" (* 1024 (long (reduce + (map first rows))))
@@ -1424,13 +1400,12 @@
    so a lifecycle stage says what the shell it acts on is running and the result
    never echoes it under a second name."
   [op id entry]
-  (let
-    [exit
-     (some-> (:exit entry)
-             deref)
+  (let [exit
+        (some-> (:exit entry)
+                deref)
 
-     bridge
-     (:bridge entry)]
+        bridge
+        (:bridge entry)]
 
     (shell-result
       op
@@ -1452,14 +1427,13 @@
          ;; LIFETIME, not the age of this read: it stops at the ending an
          ;; earlier stage stamped, so a job that ran 3s never reports the ten
          ;; minutes that passed before someone came back to read its logs.
-         "uptime_ms" (let
-                       [t0
-                        (long (or (:started-at entry) (now-ms)))
+         "uptime_ms" (let [t0
+                           (long (or (:started-at entry) (now-ms)))
 
-                        t1
-                        (long (or (some-> (:exited-at entry)
-                                          deref)
-                                  (now-ms)))]
+                           t1
+                           (long (or (some-> (:exited-at entry)
+                                             deref)
+                                     (now-ms)))]
 
                        (max 0 (- t1 t0)))
          ;; The clock, in epoch ms: when it started, and when it ended — nil
@@ -1477,17 +1451,16 @@
    the id (`shell-bg-impl` owns that check); an exited-but-unread entry under
    the same id is replaced, discarding its retained logs by intent."
   [env id command opts]
-  (let
-    [session
-     (:session-id env)
+  (let [session
+        (:session-id env)
 
-     id
-     (str id)
+        id
+        (str id)
 
-     ;; ONE command, so the script the pty is fed and the line the entry keeps are
-     ;; the same string — there is no group to join.
-     script
-     (str command)]
+        ;; ONE command, so the script the pty is fed and the line the entry keeps are
+        ;; the same string — there is no group to join.
+        script
+        (str command)]
 
     (when (str/blank? id)
       (throw (ex-info "The shell background op needs a non-blank resource id ({\"id\": …})."
@@ -1497,9 +1470,8 @@
                       {:type ::blank-command})))
     ;; A CLAIM is this start's own reservation of the id and has no process to
     ;; retire; only a previous generation's entry does.
-    (when-let
-      [stale (let [e (bg-entry session id)]
-               (when (:proc e) e))]
+    (when-let [stale (let [e (bg-entry session id)]
+                       (when (:proc e) e))]
       ;; The caller established that this generation has exited. Retire its
       ;; async pump/bridge under the lifecycle lock before reusing the socket path.
       ;; The pump re-checks this flag + process identity under the same lock, so it
@@ -1510,77 +1482,76 @@
         (try ((:stop bridge)) (catch Throwable _ nil)))
       (resources/unregister! session id)
       (drop-bg-entry! session id))
-    (let
-      [policy
-        (call-jail-policy env opts)
+    (let [policy
+          (call-jail-policy env opts)
 
-       dir
-       (resolve-dir-for-policy opts env policy)
+          dir
+          (resolve-dir-for-policy opts env policy)
 
-       p
-       (pty-spawn! script dir policy)
+          p
+          (pty-spawn! script dir policy)
 
-       ;; The log is a FILE, opened BEFORE the pump so not one byte of a fast
-       ;; command's output can be printed before there is somewhere to keep it.
-       sink
-       (shell-log/open! session id)
+          ;; The log is a FILE, opened BEFORE the pump so not one byte of a fast
+          ;; command's output can be printed before there is somewhere to keep it.
+          sink
+          (shell-log/open! session id)
 
-       buffer
-       (atom {:lines [] :next-seq 1 :dropped 0})
+          buffer
+          (atom {:lines [] :next-seq 1 :dropped 0})
 
-       exit-atom
-       (atom nil)
+          exit-atom
+          (atom nil)
 
-       ;; Stamped ONCE, by whichever stage first observes the child is gone: an
-       ;; uptime is a lifetime, so it must stop growing the moment the process ends
-       ;; instead of measuring how long ago it was started.
-       exited-at
-       (atom nil)
+          ;; Stamped ONCE, by whichever stage first observes the child is gone: an
+          ;; uptime is a lifetime, so it must stop growing the moment the process ends
+          ;; instead of measuring how long ago it was started.
+          exited-at
+          (atom nil)
 
-       stopped?
-       (atom false)
+          stopped?
+          (atom false)
 
-       bridge-atom
-       (atom nil)
+          bridge-atom
+          (atom nil)
 
-       t0
-       (now-ms)
+          t0
+          (now-ms)
 
-       ;; One sidecar row per log, so "what did that build print" is answerable a
-       ;; turn later with no handle in hand. Written at spawn, and again by the
-       ;; pump once the child is gone.
-       index-fn
-       (fn [m]
-         (shell-log/index! (:db-info env)
-                           session
-                           id
-                           (merge {:command script
-                                   :script script
-                                   :dir (.getPath dir)
-                                   :log-path (:path sink)
-                                   :started-at t0
-                                   :ended-at nil
-                                   :exit nil}
-                                  m)))
+          ;; One sidecar row per log, so "what did that build print" is answerable a
+          ;; turn later with no handle in hand. Written at spawn, and again by the
+          ;; pump once the child is gone.
+          index-fn
+          (fn [m]
+            (shell-log/index! (:db-info env)
+                              session
+                              id
+                              (merge {:command script
+                                      :script script
+                                      :dir (.getPath dir)
+                                      :log-path (:path sink)
+                                      :started-at t0
+                                      :ended-at nil
+                                      :exit nil}
+                                     m)))
 
-       pump
-       (start-pump! session id p buffer exit-atom exited-at stopped? bridge-atom sink index-fn)
+          pump
+          (start-pump! session id p buffer exit-atom exited-at stopped? bridge-atom sink index-fn)
 
-       ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
-       ;; so a HUMAN can `vis-agent extension shell attach <id>` into the live terminal
-       ;; (browser OAuth, a prompt only a person can answer) and detach again,
-       ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
-       ;; runs, just without human attach.
-       bridge
-       (try (pty-bridge/serve! {:pty p
-                                :path (pty-bridge/socket-path session id)
-                                :replay-fn (fn []
-                                             (let [ls (:lines @buffer)]
-                                               (when (seq ls)
-                                                 (.getBytes
-                                                   (str (str/join "\n" (map second ls)) "\n")
-                                                   java.nio.charset.StandardCharsets/UTF_8))))})
-            (catch Throwable _ nil))]
+          ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
+          ;; so a HUMAN can `vis-agent extension shell attach <id>` into the live terminal
+          ;; (browser OAuth, a prompt only a person can answer) and detach again,
+          ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
+          ;; runs, just without human attach.
+          bridge
+          (try (pty-bridge/serve! {:pty p
+                                   :path (pty-bridge/socket-path session id)
+                                   :replay-fn (fn []
+                                                (let [ls (:lines @buffer)]
+                                                  (when (seq ls)
+                                                    (.getBytes
+                                                      (str (str/join "\n" (map second ls)) "\n")
+                                                      java.nio.charset.StandardCharsets/UTF_8))))})
+               (catch Throwable _ nil))]
 
       (reset! bridge-atom bridge)
       (index-fn nil)
@@ -1669,12 +1640,11 @@
    answered by \"it IS started, here is how to watch it\". No second process is
    spawned; a genuinely fresh one needs a `stop` op first."
   [env id command opts]
-  (let
-    [session
-     (:session-id env)
+  (let [session
+        (:session-id env)
 
-     id
-     (str id)]
+        id
+        (str id)]
 
     ;; Starting a PTY and registering its lifecycle are side effects, so atomically
     ;; updating `bg-procs` alone cannot make the preceding live check safe. Keep the
@@ -1697,10 +1667,9 @@
                         :started-at-ms (:started-at live)
                         :finished-at-ms (now-ms)
                         :duration-ms 0}})
-          (if-let
-            [command (some-> command
-                             str
-                             not-empty)]
+          (if-let [command (some-> command
+                                   str
+                                   not-empty)]
             (shell-bg-spawn! env id command opts)
             (throw (ex-info (str "No background shell '"
                                  id
@@ -1858,89 +1827,88 @@
    registry entry — there is no live process to account for — while its log file
    stays readable by id for as long as the session does."
   [env command opts]
-  (let
-    [session
-     (:session-id env)
+  (let [session
+        (:session-id env)
 
-     command
-     (one-command command)
+        command
+        (one-command command)
 
-     ;; The handle is named after the program, exactly as a `wait=0` start is,
-     ;; and never hijacks an id a live shell already holds.
-     id
-     (or (some-> (or (get opts "id") (get opts :id))
-                 str
-                 not-empty)
-         (auto-bg-id env session command))
+        ;; The handle is named after the program, exactly as a `wait=0` start is,
+        ;; and never hijacks an id a live shell already holds.
+        id
+        (or (some-> (or (get opts "id") (get opts :id))
+                    str
+                    not-empty)
+            (auto-bg-id env session command))
 
-     ;; The log is a FILE, opened BEFORE the spawn so not one byte of a fast
-     ;; command's output can be printed before there is somewhere to keep it.
-     sink
-     (shell-log/open! session id)
+        ;; The log is a FILE, opened BEFORE the spawn so not one byte of a fast
+        ;; command's output can be printed before there is somewhere to keep it.
+        sink
+        (shell-log/open! session id)
 
-     t0
-     (now-ms)
+        t0
+        (now-ms)
 
-     ;; The wait is how long the CALLER waits, and the only knob there is.
-     wait-secs
-     (clamp-timeout-secs (get opts "timeout_secs"))
+        ;; The wait is how long the CALLER waits, and the only knob there is.
+        wait-secs
+        (clamp-timeout-secs (get opts "timeout_secs"))
 
-     exit-atom
-     (atom nil)
+        exit-atom
+        (atom nil)
 
-     exited-at
-     (atom nil)
+        exited-at
+        (atom nil)
 
-     stopped?
-     (atom false)
+        stopped?
+        (atom false)
 
-     index-fn
-     (fn [m]
-       (shell-log/index! (:db-info env)
-                         session
-                         id
-                         (merge {:command command
-                                 :script command
-                                 :dir nil
-                                 :log-path (:path sink)
-                                 :started-at t0
-                                 :ended-at nil
-                                 :exit nil}
-                                m)))
+        index-fn
+        (fn [m]
+          (shell-log/index! (:db-info env)
+                            session
+                            id
+                            (merge {:command command
+                                    :script command
+                                    :dir nil
+                                    :log-path (:path sink)
+                                    :started-at t0
+                                    :ended-at nil
+                                    :exit nil}
+                                   m)))
 
-     on-spawn
-     (fn [p]
-       (swap! bg-procs assoc-in [(str session) id :proc] (process-handle p)))
+        on-spawn
+        (fn [p]
+          (swap! bg-procs assoc-in [(str session) id :proc] (process-handle p)))
 
-     _
-     (swap! bg-procs assoc-in
-       [(str session) id]
-       {:proc nil
-        :buffer (atom {:lines [] :next-seq 1 :dropped 0})
-        :exit exit-atom
-        :exited-at exited-at
-        :stopped? stopped?
-        :command command
-        :script command
-        :dir nil
-        :origin (env-origin env)
-        :started-at t0})
+        _
+        (swap! bg-procs assoc-in
+          [(str session) id]
+          {:proc nil
+           :buffer (atom {:lines [] :next-seq 1 :dropped 0})
+           :exit exit-atom
+           :exited-at exited-at
+           :stopped? stopped?
+           :command command
+           :script command
+           :dir nil
+           :origin (env-origin env)
+           :started-at t0})
 
-     r
-     ;; A start that dies before it spawns must not keep the id. The entry above is
-     ;; what holds the handle against a concurrent auto id, so leaving it behind
-     ;; would push every later run of this program one suffix along for good.
-     (try (shell-run-impl env
-                          command
-                          (assoc opts "timeout_secs" wait-secs)
-                          {:sink sink :on-spawn on-spawn})
-          (catch Throwable t (drop-bg-entry! session id) (throw t)))
+        r
+        ;; A start that dies before it spawns must not keep the id. The entry above is
+        ;; what holds the handle against a concurrent auto id, so leaving it behind
+        ;; would push every later run of this program one suffix along for good.
+        (try (shell-run-impl env
+                             command
+                             (assoc opts "timeout_secs" wait-secs)
+                             {:sink sink :on-spawn on-spawn})
+             (catch Throwable t (drop-bg-entry! session id) (throw t)))
 
-     cwd
-     (:dir (meta r))
+        cwd
+        (:dir (meta r))
 
-     timed-out
-     (when (get r "timed_out") (meta r))]
+        timed-out
+        (when (get r "timed_out") (meta r))]
 
     (if timed-out
       (adopt-run! {:session session
@@ -1989,17 +1957,16 @@
    where the command lines, the cwd, the lifetime and the exit come from, so \"what
    did that build print\" is answerable a turn later with nothing but the id."
   [env session id]
-  (let
-    [row
-     (->> (shell-log/session-logs (:db-info env) session)
-          (filter #(= id (get % "id")))
-          first)
+  (let [row
+        (->> (shell-log/session-logs (:db-info env) session)
+             (filter #(= id (get % "id")))
+             first)
 
-     started
-     (get row "started_at")
+        started
+        (get row "started_at")
 
-     ended
-     (get row "ended_at")]
+        ended
+        (get row "ended_at")]
 
     (assoc (shell-result
              "logs"
@@ -2033,18 +2000,17 @@
    file is what answers once the registry entry is gone."
   ([env id] (shell-logs-impl env id nil))
   ([env id {:keys [offset limit]}]
-   (let
-     [session
-      (:session-id env)
+   (let [session
+         (:session-id env)
 
-      id
-      (str id)
+         id
+         (str id)
 
-      entry
-      (bg-entry session id)
+         entry
+         (bg-entry session id)
 
-      ^java.io.File file
-      (shell-log/log-file session id)]
+         ^java.io.File file
+         (shell-log/log-file session id)]
 
      (authorize-origin! env session id)
      (when-not (or entry (.isFile file))
@@ -2052,12 +2018,11 @@
                             "' in this session — every run and every background start"
                             " answers with its own id; live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
-     (let
-       [chunk
-        (shell-log/read-chunk id file {:offset offset :limit limit})
+     (let [chunk
+           (shell-log/read-chunk id file {:offset offset :limit limit})
 
-        t
-        (now-ms)]
+           t
+           (now-ms)]
 
        (extension/success
          ;; Sharing `bg-core`'s identity keys with every other stage: `exit` None
@@ -2131,78 +2096,75 @@
    long `sh.wait` is the one host wait a turn is most likely to be cancelled
    inside of."
   [env id {:keys [seconds offset]}]
-  (let
-    [t0
-     (now-ms)
+  (let [t0
+        (now-ms)
 
-     secs
-     (clamp-timeout-secs seconds "seconds")
+        secs
+        (clamp-timeout-secs seconds "seconds")
 
-     deadline
-     (+ t0 (* 1000 secs))
+        deadline
+        (+ t0 (* 1000 secs))
 
-     start
-     (long (or (->pos-long offset "offset") 0))
+        start
+        (long (or (->pos-long offset "offset") 0))
 
-     ;; A wait accumulates as much as a foreground run captured, and no more: a
-     ;; command that never stops printing (`yes`) produced a megabyte a second on
-     ;; this machine, so an unbounded accumulator turns a 600 s wait into a heap
-     ;; problem. Same head+tail capture, same inline omitted-count marker.
-     acc
-     (capped-capture max-sync-head-chars max-sync-tail-chars)
+        ;; A wait accumulates as much as a foreground run captured, and no more: a
+        ;; command that never stops printing (`yes`) produced a megabyte a second on
+        ;; this machine, so an unbounded accumulator turns a 600 s wait into a heap
+        ;; problem. Same head+tail capture, same inline omitted-count marker.
+        acc
+        (capped-capture max-sync-head-chars max-sync-tail-chars)
 
-     finish
-     (fn [res nxt]
-       (let [snap ((:snapshot acc))]
-         (extension/success
-           {:result (assoc res
-                      "stage" "wait"
-                      "offset" start
-                      "next_offset" nxt
-                      "stdout" (:text snap)
-                      "stdout_omitted_chars" (long (or (:omitted snap) 0))
-                      ;; The WAIT expired, not the process: a still-running child means
-                      ;; the deadline ended this call and the shell keeps its id.
-                      "timed_out" (= "running" (get res "status"))
-                      "timeout_secs" secs
-                      "duration_ms" (- (now-ms) t0))
-            :op :_shell-wait
-            :metadata
-            {:id id :started-at-ms t0 :finished-at-ms (now-ms) :duration-ms (- (now-ms) t0)}})))]
+        finish
+        (fn [res nxt]
+          (let [snap ((:snapshot acc))]
+            (extension/success
+              {:result (assoc res
+                         "stage" "wait"
+                         "offset" start
+                         "next_offset" nxt
+                         "stdout" (:text snap)
+                         "stdout_omitted_chars" (long (or (:omitted snap) 0))
+                         ;; The WAIT expired, not the process: a still-running child means
+                         ;; the deadline ended this call and the shell keeps its id.
+                         "timed_out" (= "running" (get res "status"))
+                         "timeout_secs" secs
+                         "duration_ms" (- (now-ms) t0))
+               :op :_shell-wait
+               :metadata
+               {:id id :started-at-ms t0 :finished-at-ms (now-ms) :duration-ms (- (now-ms) t0)}})))]
 
-    (loop
-      [off
-       start
+    (loop [off
+           start
 
-       ;; Consecutive reads that brought no bytes — the poll cadence backs off
-       ;; along this counter, so a fast command is noticed in single-digit ms.
-       idle
-       0
+           ;; Consecutive reads that brought no bytes — the poll cadence backs off
+           ;; along this counter, so a fast command is noticed in single-digit ms.
+           idle
+           0
 
-       quiet
-       0
+           quiet
+           0
 
-       ;; Whether THIS wait has captured anything at all. Having seen bytes, the
-       ;; pump is demonstrably handing them over; having seen none, an empty read
-       ;; cannot yet tell a silent command from a pump still on its first chunk.
-       seen
-       false]
+           ;; Whether THIS wait has captured anything at all. Having seen bytes, the
+           ;; pump is demonstrably handing them over; having seen none, an empty read
+           ;; cannot yet tell a silent command from a pump still on its first chunk.
+           seen
+           false]
 
-      (let
-        [res
-         (:result (shell-logs-impl env id {:offset off :limit wait-chunk-limit}))
+      (let [res
+            (:result (shell-logs-impl env id {:offset off :limit wait-chunk-limit}))
 
-         text
-         (or (get res "stdout") "")
+            text
+            (or (get res "stdout") "")
 
-         nxt
-         (long (or (get res "next_offset") off))
+            nxt
+            (long (or (get res "next_offset") off))
 
-         idle
-         (if (= "" text) idle 0)
+            idle
+            (if (= "" text) idle 0)
 
-         seen
-         (or seen (not= "" text))]
+            seen
+            (or seen (not= "" text))]
 
         ;; Cancellable in HOST code: an interrupt lands HERE, at guest-code
         ;; speed, instead of at this wait's own deadline.
@@ -2263,19 +2225,18 @@
    response with `sh.logs()`. Returns the total shell result."
   ([env id text] (shell-send-impl env id text nil))
   ([env id text opts]
-   (let
-     [session
-      (:session-id env)
+   (let [session
+         (:session-id env)
 
-      id
-      (str id)
+         id
+         (str id)
 
-      entry
-      (bg-entry session id)
+         entry
+         (bg-entry session id)
 
-      enter?
-      (let [e (first (remove nil? (map #(get opts %) ["is_enter" :is_enter "enter" :enter])))]
-        (if (nil? e) true (boolean e)))]
+         enter?
+         (let [e (first (remove nil? (map #(get opts %) ["is_enter" :is_enter "enter" :enter])))]
+           (if (nil? e) true (boolean e)))]
 
      (authorize-origin! env session id)
      (when-not entry
@@ -2294,9 +2255,8 @@
        (when (nil? send-fn)
          (throw (ex-info (str "Background shell '" id "' has no writable stdin.")
                          {:type ::no-stdin :id id})))
-       (let
-         [payload (str text (when enter? "\n"))
-          t (now-ms)]
+       (let [payload (str text (when enter? "\n"))
+             t (now-ms)]
 
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
          (extension/success {:result (assoc (bg-core "send" id entry) "keys" (keys-label payload))
@@ -2329,23 +2289,22 @@
    so the process tree dies, the retained logs are dropped, and the registry
    entry disappears exactly once."
   [env id]
-  (let
-    [session
-     (:session-id env)
+  (let [session
+        (:session-id env)
 
-     id
-     (str id)
+        id
+        (str id)
 
-     t
-     (now-ms)
+        t
+        (now-ms)
 
-     ;; Make a native stop linearizable against native starts of the same id.
-     ;; The stop callback re-enters this monitor (JVM monitors are reentrant).
-     [entry r]
-     #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-     (locking (bg-lifecycle-lock session id)
-       (authorize-origin! env session id)
-       [(bg-entry session id) (resources/stop! session id)])]
+        ;; Make a native stop linearizable against native starts of the same id.
+        ;; The stop callback re-enters this monitor (JVM monitors are reentrant).
+        [entry r]
+        #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+        (locking (bg-lifecycle-lock session id)
+          (authorize-origin! env session id)
+          [(bg-entry session id) (resources/stop! session id)])]
 
     (when (= :unknown (:result r))
       (throw (ex-info (str "No background shell '" id
@@ -2374,81 +2333,81 @@
   (when-not (opts-arg? opts)
     (throw (ex-info "shell takes one options map, e.g. shell({\"command\": \"ls\"})."
                     {:type ::bad-options})))
-  (let
-    [raw-opts
-     (into {}
-           (remove (fn [[_ v]]
-                     (or (nil? v) (and (string? v) (str/blank? v)) (and (coll? v) (empty? v)))))
-           opts)
+  (let [raw-opts
+        (into {}
+              (remove (fn [[_ v]]
+                        (or (nil? v) (and (string? v) (str/blank? v)) (and (coll? v) (empty? v)))))
+              opts)
 
-     text
-     (opt raw-opts :text)
+        text
+        (opt raw-opts :text)
 
-     _
-     (when (some? (opt raw-opts :cmd))
-       (throw (ex-info "shell has no `cmd` option — put the bash line in {\"command\": \"…\"}."
-                       {:type ::legacy-command-carrier})))
+        _
+        (when (some? (opt raw-opts :cmd))
+          (throw (ex-info "shell has no `cmd` option — put the bash line in {\"command\": \"…\"}."
+                          {:type ::legacy-command-carrier})))
 
-     id
-     (some-> (opt raw-opts :id)
-             str
-             str/trim
-             not-empty)
+        id
+        (some-> (opt raw-opts :id)
+                str
+                str/trim
+                not-empty)
 
-     op
-     (or (some-> (opt raw-opts :op)
-                 str
-                 str/trim
-                 str/lower-case
-                 not-empty)
-         ;; `run` is the only default there is now: a caller that names an `id` is
-         ;; naming its handle, not selecting a second lifecycle.
-         "run")
+        op
+        (or (some-> (opt raw-opts :op)
+                    str
+                    str/trim
+                    str/lower-case
+                    not-empty)
+            ;; `run` is the only default there is now: a caller that names an `id` is
+            ;; naming its handle, not selecting a second lifecycle.
+            "run")
 
-     ;; Lifecycle stages operate on an existing background shell.  A caller that
-     ;; mechanically reuses the start shape may still carry `command`; it is not
-     ;; relevant to these stages and must not make an otherwise valid call fail.
-     opts
-     (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "command" :command) raw-opts)
+        ;; Lifecycle stages operate on an existing background shell.  A caller that
+        ;; mechanically reuses the start shape may still carry `command`; it is not
+        ;; relevant to these stages and must not make an otherwise valid call fail.
+        opts
+        (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "command" :command) raw-opts)
 
-     command
-     (opt opts :command)
+        command
+        (opt opts :command)
 
-     valid-command
-     (when (some? command) (one-command command))
+        valid-command
+        (when (some? command) (one-command command))
 
-     need-command
-     (fn []
-       (or valid-command
-           (throw (ex-info
-                    (str "shell op \"" op "\" needs {\"command\": \"…\"} in its options map.")
-                    {:type ::missing-command :op op}))))
+        need-command
+        (fn []
+          (or valid-command
+              (throw (ex-info
+                       (str "shell op \"" op "\" needs {\"command\": \"…\"} in its options map.")
+                       {:type ::missing-command :op op}))))
 
-     need-id
-     (fn []
-       (or id
-           (throw (ex-info (str "shell op \""
-                                op
-                                "\" needs {\"id\": \"…\"}; live ids are listed in resources.")
-                           {:type ::missing-id :op op}))))
+        need-id
+        (fn []
+          (or id
+              (throw (ex-info (str "shell op \""
+                                   op
+                                   "\" needs {\"id\": \"…\"}; live ids are listed in resources.")
+                              {:type ::missing-id :op op}))))
 
-     reject-command
-     (fn []
-       (when (some? command)
-         (throw (ex-info (str "shell op \"" op "\" takes no command — it acts on {\"id\": \"…\"}.")
-                         {:type ::unexpected-command :op op}))))
+        reject-command
+        (fn []
+          (when (some? command)
+            (throw (ex-info
+                     (str "shell op \"" op "\" takes no command — it acts on {\"id\": \"…\"}.")
+                     {:type ::unexpected-command :op op}))))
 
-     reject-text
-     (fn []
-       (when (some? text)
-         (throw (ex-info (str "shell op \"" op "\" takes no text payload.")
-                         {:type ::unexpected-text :op op}))))
+        reject-text
+        (fn []
+          (when (some? text)
+            (throw (ex-info (str "shell op \"" op "\" takes no text payload.")
+                            {:type ::unexpected-text :op op}))))
 
-     need-text
-     (fn []
-       (cond (nil? text) ""
-             (string? text) text
-             :else (throw (ex-info "shell `text` must be a string." {:type ::bad-text}))))]
+        need-text
+        (fn []
+          (cond (nil? text) ""
+                (string? text) text
+                :else (throw (ex-info "shell `text` must be a string." {:type ::bad-text}))))]
 
     (case op
       "run"
@@ -2459,15 +2418,14 @@
       ;; leaves behind is the FEATURE: "what did that build print" stays answerable
       ;; by id for as long as the session lives.
       (do (reject-text)
-          (let
-            [cmd
-             (need-command)
+          (let [cmd
+                (need-command)
 
-             session
-             (:session-id env)
+                session
+                (:session-id env)
 
-             run-id
-             (or id (auto-bg-id env session cmd))]
+                run-id
+                (or id (auto-bg-id env session cmd))]
 
             (releasing-claim
               session
@@ -2483,10 +2441,9 @@
       ;; the command rather than fail a well-formed start over a missing name. Every
       ;; other stage (no command) still names the shell it acts on.
       (do (reject-text)
-          (let
-            [bg-id (if (and (nil? id) valid-command)
-                     (auto-bg-id env (:session-id env) valid-command)
-                     (need-id))]
+          (let [bg-id (if (and (nil? id) valid-command)
+                        (auto-bg-id env (:session-id env) valid-command)
+                        (need-id))]
             (releasing-claim (:session-id env)
                              bg-id
                              (fn [bg-id]
@@ -2554,78 +2511,75 @@
    called at the spawn boundary: invalid current config throws, and no session or
    last-good snapshot is consulted."
   [env]
-  (let
-    [base-dir
-     (or (workspace/workspace-root env) (str (workspace/cwd)))
+  (let [base-dir
+        (or (workspace/workspace-root env) (str (workspace/cwd)))
 
-     security
-     (security-policy/snapshot (or (config/load-config-raw) {}) {:base-dir base-dir})
+        security
+        (security-policy/snapshot (or (config/load-config-raw) {}) {:base-dir base-dir})
 
-     configured-roots
-     (security-policy/read-write-roots security)
+        configured-roots
+        (security-policy/read-write-roots security)
 
-     active-workspace
-     (or (:workspace env) {:root base-dir})
+        active-workspace
+        (or (:workspace env) {:root base-dir})
 
-     latest-env
-     (assoc (or env {})
-       :security-policy security
-       :workspace active-workspace
-       :security/filesystem-roots configured-roots)
+        latest-env
+        (assoc (or env {})
+          :security-policy security
+          :workspace active-workspace
+          :security/filesystem-roots configured-roots)
 
-     jail-config
-     (:process-jail security)]
+        jail-config
+        (:process-jail security)]
 
     (if (or (false? (:jail-enabled security)) (:disabled? jail-config))
       {:disabled? true :env-values (config/child-environment-values) ::environment latest-env}
-      (let
-        [entries
-         (workspace/env-filesystem-roots latest-env)
+      (let [entries
+            (workspace/env-filesystem-roots latest-env)
 
-         clones
-         (into []
-               (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %)))) (map :clone))
-               entries)
+            clones
+            (into []
+                  (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %)))) (map :clone))
+                  entries)
 
-         withheld
-         (into #{}
-               (comp (filter #(or (:denied? %) (and (:clone %) (not= (:clone %) (:trunk %)))))
-                     (map :trunk))
-               entries)
+            withheld
+            (into #{}
+                  (comp (filter #(or (:denied? %) (and (:clone %) (not= (:clone %) (:trunk %)))))
+                        (map :trunk))
+                  entries)
 
-         roots-fn
-         (fn []
-           (vec (distinct (concat (when-let [root (:root active-workspace)]
-                                    [(str root)])
-                                  clones
-                                  (remove #(contains? withheld (workspace/normalize-root %))
-                                    configured-roots)))))
+            roots-fn
+            (fn []
+              (vec (distinct (concat (when-let [root (:root active-workspace)]
+                                       [(str root)])
+                                     clones
+                                     (remove #(contains? withheld (workspace/normalize-root %))
+                                       configured-roots)))))
 
-         network
-         (:network security)
+            network
+            (:network security)
 
-         compiled-network-policy
-         (some-> (egress/compile-policy network)
-                 (assoc :mitm? (boolean (seq (:rules network)))))
+            compiled-network-policy
+            (some-> (egress/compile-policy network)
+                    (assoc :mitm? (boolean (seq (:rules network)))))
 
-         token
-         (str (java.util.UUID/randomUUID))
+            token
+            (str (java.util.UUID/randomUUID))
 
-         cleaned?
-         (atom false)
+            cleaned?
+            (atom false)
 
-         cleanup
-         (fn []
-           (when (compare-and-set! cleaned? false true)
-             (gateway-sandbox/unregister-session! token)))]
+            cleanup
+            (fn []
+              (when (compare-and-set! cleaned? false true)
+                (gateway-sandbox/unregister-session! token)))]
 
         (gateway-sandbox/register-session! token (constantly compiled-network-policy))
-        (try (let
-               [proxy-port
-                (gateway-sandbox/ensure-proxy!)
+        (try (let [proxy-port
+                   (gateway-sandbox/ensure-proxy!)
 
-                ca-file
-                (gateway-sandbox/ensure-ca!)]
+                   ca-file
+                   (gateway-sandbox/ensure-ca!)]
 
                (merge jail-config
                       {:roots-fn roots-fn
@@ -2671,12 +2625,11 @@
    throwable split so turn cancellation renders as a clean interruption."
   [op]
   (fn [err _env _f _args]
-    (let
-      [interrupted?
-       (instance? InterruptedException err)
+    (let [interrupted?
+          (instance? InterruptedException err)
 
-       t
-       (now-ms)]
+          t
+          (now-ms)]
 
       {:result (extension/failure
                  {:result nil
@@ -2702,15 +2655,14 @@
    all-kwargs call collapses into a single map — normalize all three shapes here so
    no tool has to."
   [ks args]
-  (let
-    [[pos more]
-     (split-with (complement opts-arg?) args)
+  (let [[pos more]
+        (split-with (complement opts-arg?) args)
 
-     named
-     (into {}
-           (remove (fn [[_ v]]
-                     (nil? v)))
-           (zipmap ks pos))]
+        named
+        (into {}
+              (remove (fn [[_ v]]
+                        (nil? v)))
+              (zipmap ks pos))]
 
     (reduce (fn [m o]
               (merge m (into {} o)))
@@ -2790,12 +2742,11 @@
   "Clip a single-line preview with an ellipsis so shell commands cannot blow out
    collapsed cards."
   [s n]
-  (let
-    [s
-     (str s)
+  (let [s
+        (str s)
 
-     n
-     (long n)]
+        n
+        (long n)]
 
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
@@ -2813,18 +2764,17 @@
    capture (up to [[max-sync-head-chars]]+[[max-sync-tail-chars]]) so
    `json.loads(r[\"stdout\"])` works; only the card is clipped."
   [s]
-  (let
-    [head
-     (long card-head-chars)
+  (let [head
+        (long card-head-chars)
 
-     tail
-     (long card-tail-chars)
+        tail
+        (long card-tail-chars)
 
-     cap
-     (+ head tail)
+        cap
+        (+ head tail)
 
-     n
-     (long (count (str s)))]
+        n
+        (long (count (str s)))]
 
     (if-not (and (string? s) (> n cap))
       s
@@ -2878,38 +2828,35 @@
    indentation, and a blank line between two of its paragraphs survives as one
    blank row (see [[squeeze-blank-lines]])."
   [s]
-  (let
-    [s
-     (str s)
+  (let [s
+        (str s)
 
-     n
-     (long (count s))
+        n
+        (long (count s))
 
-     sb
-     (StringBuilder.)]
+        sb
+        (StringBuilder.)]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       sq
-       false
+           sq
+           false
 
-       dq
-       false
+           dq
+           false
 
-       depth
-       0]
+           depth
+           0]
 
       (if (>= i n)
         (let [out (str/join "\n" (squeeze-blank-lines (str/split-lines (str sb))))]
           (if (str/blank? out) (str/trim s) out))
-        (let
-          [c
-           (.charAt s i)
+        (let [c
+              (.charAt s i)
 
-           nxt
-           (when (< (inc i) n) (.charAt s (inc i)))]
+              nxt
+              (when (< (inc i) n) (.charAt s (inc i)))]
 
           (cond
             ;; backslash escape (not inside single quotes): copy the pair verbatim
@@ -2978,43 +2925,42 @@
    always present so shell cards are collapsible even when the command produced no
    output; the full command and metadata stay available behind the disclosure."
   [r]
-  (let
-    [{:keys [label failed?]}
-     (shell-run-status r)
+  (let [{:keys [label failed?]}
+        (shell-run-status r)
 
-     command
-     (or (shell-one-line (get r "command")) "shell")
+        command
+        (or (shell-one-line (get r "command")) "shell")
 
-     duration
-     (duration-label (get r "duration_ms"))
+        duration
+        (duration-label (get r "duration_ms"))
 
-     summary
-     (str "$ "
-          (clip-chip command shell-chip-max)
-          " ("
-          (if failed? "failure" "success")
-          ")"
-          (when failed? (str " · " label))
-          (when duration (str " · " duration)))
+        summary
+        (str "$ "
+             (clip-chip command shell-chip-max)
+             " ("
+             (if failed? "failure" "success")
+             ")"
+             (when failed? (str " · " label))
+             (when duration (str " · " duration)))
 
-     status
-     (kv-lines [["status" label] ["duration" duration] ["cwd" (get r "cwd")]
-                ;; The timeout budget is TOTAL in the result but only worth a row
-                ;; when it was actually hit.
-                ["timeout" (when (get r "timed_out") (str (get r "timeout_secs") "s"))]
-                ;; Truncation is REAL data loss, but `*_omitted_chars` is 0 unless the
-                ;; middle-excision actually dropped something — the count IS the flag,
-                ;; so name the stream and the exact number of characters lost.
-                ["stdout"
-                 (let [n (get r "stdout_omitted_chars")]
-                   (when (and n (pos? (long n))) (str "truncated · " n " chars omitted")))]])
+        status
+        (kv-lines [["status" label] ["duration" duration] ["cwd" (get r "cwd")]
+                   ;; The timeout budget is TOTAL in the result but only worth a row
+                   ;; when it was actually hit.
+                   ["timeout" (when (get r "timed_out") (str (get r "timeout_secs") "s"))]
+                   ;; Truncation is REAL data loss, but `*_omitted_chars` is 0 unless the
+                   ;; middle-excision actually dropped something — the count IS the flag,
+                   ;; so name the stream and the exact number of characters lost.
+                   ["stdout"
+                    (let [n (get r "stdout_omitted_chars")]
+                      (when (and n (pos? (long n))) (str "truncated · " n " chars omitted")))]])
 
-     body
-     (->> [(shell-section "COMMAND" (format-shell-command (get r "command")) "bash")
-           (shell-section "STATUS" status)
-           (shell-section "STDOUT" (clip-stream (get r "stdout")) "bash")]
-          (remove nil?)
-          (str/join "\n\n"))]
+        body
+        (->> [(shell-section "COMMAND" (format-shell-command (get r "command")) "bash")
+              (shell-section "STATUS" status)
+              (shell-section "STDOUT" (clip-stream (get r "stdout")) "bash")]
+             (remove nil?)
+             (str/join "\n\n"))]
 
     {:summary summary :body (when (seq body) body)}))
 
@@ -3053,63 +2999,62 @@
    tells the reader as much as a private token and misleads less."
   [op]
   (fn [_env args]
-    (let
-      [input
-       (shell-call-opts (case op
-                          "run"
-                          ["command"]
+    (let [input
+          (shell-call-opts (case op
+                             "run"
+                             ["command"]
 
-                          "wait"
-                          ["id" "seconds"]
+                             "wait"
+                             ["id" "seconds"]
 
-                          "send"
-                          ["id" "text"]
+                             "send"
+                             ["id" "text"]
 
-                          ["id"])
-                        args)
+                             ["id"])
+                           args)
 
-       id
-       (some-> (opt input :id)
-               str
-               str/trim
-               not-empty)
+          id
+          (some-> (opt input :id)
+                  str
+                  str/trim
+                  not-empty)
 
-       secs
-       (or (some-> (opt input :seconds)
-                   str
-                   str/trim
-                   not-empty)
-           (str rt/DEFAULT_SHELL_TIMEOUT_SECS))
+          secs
+          (or (some-> (opt input :seconds)
+                      str
+                      str/trim
+                      not-empty)
+              (str rt/DEFAULT_SHELL_TIMEOUT_SECS))
 
-       ;; The spawn KNOWS its command — it is right there in the call — while a
-       ;; lifecycle stage has to look up the shell it acts on.
-       script
-       (or (some-> (try (command-line (opt input :command)) (catch Throwable _ nil))
-                   shell-one-line
-                   not-empty)
-           (some-> (live-bg-script id)
-                   shell-one-line))
+          ;; The spawn KNOWS its command — it is right there in the call — while a
+          ;; lifecycle stage has to look up the shell it acts on.
+          script
+          (or (some-> (try (command-line (opt input :command)) (catch Throwable _ nil))
+                      shell-one-line
+                      not-empty)
+              (some-> (live-bg-script id)
+                      shell-one-line))
 
-       ;; Every verb ends on the preposition, so the nameless case is the same
-       ;; sentence with the generic noun: `stopping the shell`.
-       verb
-       (case op
-         "run"
-         "running"
+          ;; Every verb ends on the preposition, so the nameless case is the same
+          ;; sentence with the generic noun: `stopping the shell`.
+          verb
+          (case op
+            "run"
+            "running"
 
-         "wait"
-         (str "waiting up to " secs "s for")
+            "wait"
+            (str "waiting up to " secs "s for")
 
-         "logs"
-         "reading the log of"
+            "logs"
+            "reading the log of"
 
-         "send"
-         "typing into"
+            "send"
+            "typing into"
 
-         "stop"
-         "stopping"
+            "stop"
+            "stopping"
 
-         op)]
+            op)]
 
       (if (seq script) (str verb ": " (clip-chip script shell-chip-max)) (str verb " the shell")))))
 
@@ -3131,22 +3076,23 @@
           "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
           "methods below. A fresh run has no `exit`; nonzero exit is data.")
      :description
-     (str "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
-          "real pty and return its HANDLE NOW; every run is a background run. Chain with `&&`; "
-          "run independent work as separate calls. Drive "
-          "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
-          "expired, not the process), `sh.logs(-50)` (the last 50 LINES; `offset=…` bytes), "
-          "`sh.type(text)`, `sh.stop()` — never "
-          "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "
-          "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
-          "twice. NEVER trim inside the command: `| head`, "
-          "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
-          "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
-           "then slice on the handle or filter `log_path` in Python. "
-           "`env` carries THIS run's variables over the project's — a literal for a switch, a "
-           "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}, since a "
-           "literal stays in the transcript for good), null to unset. "
-           "`print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"stdout\"])`.")
+     (str
+       "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
+       "real pty and return its HANDLE NOW; every run is a background run. Chain with `&&`; "
+       "run independent work as separate calls. Drive "
+       "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
+       "expired, not the process), `sh.logs(-50)` (the last 50 LINES; `offset=…` bytes), "
+       "`sh.type(text)`, `sh.stop()` — never "
+       "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "
+       "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
+       "twice. NEVER trim inside the command: `| head`, "
+       "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
+       "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
+       "then slice on the handle or filter `log_path` in Python. "
+       "`env` carries THIS run's variables over the project's — a literal for a switch, a "
+       "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}, since a "
+       "literal stays in the transcript for good), null to unset. "
+       "`print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"stdout\"])`.")
      :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
               {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}]
      :ticker-fn (shell-ticker "run")
@@ -3236,18 +3182,17 @@
    `--socket PATH` targets an explicit socket; otherwise the newest shell whose
    id matches. Returns the attach exit code."
   [_parsed residual]
-  (let
-    [args
-     (vec residual)
+  (let [args
+        (vec residual)
 
-     socket
-     (loop [xs args]
-       (cond (empty? xs) nil
-             (= (first xs) "--socket") (second xs)
-             :else (recur (rest xs))))
+        socket
+        (loop [xs args]
+          (cond (empty? xs) nil
+                (= (first xs) "--socket") (second xs)
+                :else (recur (rest xs))))
 
-     id
-     (first (remove #(str/starts-with? % "--") args))]
+        id
+        (first (remove #(str/starts-with? % "--") args))]
 
     (pty-bridge/attach! {:id id :socket socket})))
 

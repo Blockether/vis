@@ -31,15 +31,14 @@
              (it "frees a listening port the parent closed while the child still runs"
                  ;; The gateway's bug, reduced: bind a port, spawn a pty child, drop the
                  ;; parent's socket. The port is free only if the child never got a copy.
-                 (let
-                   [^ServerSocket listener
-                    (doto (ServerSocket.) (.bind (InetSocketAddress. 0)))
+                 (let [^ServerSocket listener
+                       (doto (ServerSocket.) (.bind (InetSocketAddress. 0)))
 
-                    port
-                    (.getLocalPort listener)
+                       port
+                       (.getLocalPort listener)
 
-                    child
-                    (pty/spawn! {:command [(sleep-binary) "30"] :env {"PATH" "/usr/bin:/bin"}})]
+                       child
+                       (pty/spawn! {:command [(sleep-binary) "30"] :env {"PATH" "/usr/bin:/bin"}})]
 
                    (try (expect (false? (bindable? port)) "the parent still holds it")
                         (.close listener)
@@ -62,27 +61,26 @@
 ;; printed nothing.
 (defdescribe pty-exit-output-test
              (it "keeps output the child wrote while nothing was reading the terminal"
-                 (let
-                   [;; Parks the reader thread INSIDE the first chunk's fan-out, so the tail the
-                    ;; child prints next is still sitting in the terminal when the child exits.
-                    release
-                    (promise)
+                 (let [;; Parks the reader thread INSIDE the first chunk's fan-out, so the tail the
+                       ;; child prints next is still sitting in the terminal when the child exits.
+                       release
+                       (promise)
 
-                    chunks
-                    (atom 0)
+                       chunks
+                       (atom 0)
 
-                    child
-                    (pty/spawn! {:command [(sh-binary) "-c"
-                                           "printf head-chunk; sleep 1; printf tail-chunk"]
-                                 :env {"PATH" "/usr/bin:/bin"}})
+                       child
+                       (pty/spawn! {:command [(sh-binary) "-c"
+                                              "printf head-chunk; sleep 1; printf tail-chunk"]
+                                    :env {"PATH" "/usr/bin:/bin"}})
 
-                    unsubscribe
-                    ((:add-listener child)
-                      (fn [_]
-                        (when (= 1 (swap! chunks inc)) (deref release 20000 nil))))
+                       unsubscribe
+                       ((:add-listener child)
+                         (fn [_]
+                           (when (= 1 (swap! chunks inc)) (deref release 20000 nil))))
 
-                    output
-                    (future (slurp (:in child)))]
+                       output
+                       (future (slurp (:in child)))]
 
                    (try (Thread/sleep 2500)
                         (deliver release true)

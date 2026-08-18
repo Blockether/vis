@@ -26,52 +26,50 @@
       (let [{:keys [meta]} (d/parse-frontmatter agent-md)]
         (expect (re-find #"static analysis and security scanning" (:description meta)))))
   (it "drops a YAML block-scalar indicator instead of rendering it"
-      (let
-        [{:keys [meta]} (d/parse-frontmatter
-                          (str "---\n"
-                               "name: ponytail\n" "description: >\n"
-                               "  Forces the laziest solution that actually works,\n"
-                               "  simplest and shortest.\n"
-                               "---\n\n" "body\n"))]
+      (let [{:keys [meta]} (d/parse-frontmatter
+                             (str "---\n"
+                                  "name: ponytail\n" "description: >\n"
+                                  "  Forces the laziest solution that actually works,\n"
+                                  "  simplest and shortest.\n"
+                                  "---\n\n" "body\n"))]
         (expect (= "Forces the laziest solution that actually works, simplest and shortest."
                    (:description meta)))))
   (it "unwraps a quoted scalar after the fold is joined"
-      (let
-        [{:keys [meta]} (d/parse-frontmatter (str "---\n" "name: triage\n"
-                                                  "description: \"Triage issues ONE AT A TIME,\n"
-                                                  "  reproduction-first.\"\n"
-                                                  "---\n\n" "body\n"))]
+      (let [{:keys [meta]} (d/parse-frontmatter (str "---\n" "name: triage\n"
+                                                     "description: \"Triage issues ONE AT A TIME,\n"
+                                                     "  reproduction-first.\"\n"
+                                                     "---\n\n" "body\n"))]
         (expect (= "Triage issues ONE AT A TIME, reproduction-first." (:description meta)))))
   (it "no frontmatter → empty meta, whole content is the body"
       (let [{:keys [meta body]} (d/parse-frontmatter "# Just a doc\nhello")]
         (expect (= {} meta))
         (expect (= "# Just a doc\nhello" body)))))
 
-(defdescribe
-  parse-agent-test
-  (it "builds an agent entry from frontmatter + body"
-      (let [a (d/parse-agent agent-md {:name-default "fallback" :tool :claude :path "/x.md"})]
-        (expect (= "code-reviewer" (:name a)))
-        (expect (= "opus" (:model a)))
-        (expect (re-find #"Elite reviewer" (:description a)))
-        (expect (re-find #"elite code review expert" (:body a)))
-        (expect (= :claude (:tool a)))
-        (expect (= "/x.md" (:path a)))))
-  (it "falls back to the filename stem when frontmatter has no name"
-      (let [a (d/parse-agent "no frontmatter here" {:name-default "my-agent"})]
-        (expect (= "my-agent" (:name a)))
-        (expect (= "" (:description a)))
-        (expect (nil? (:model a)))))
-  (it "nil when there is no usable name at all"
-      (expect (nil? (d/parse-agent "body only" {:name-default "  "})))))
+(defdescribe parse-agent-test
+             (it "builds an agent entry from frontmatter + body"
+                 (let [a (d/parse-agent agent-md
+                                        {:name-default "fallback" :tool :claude :path "/x.md"})]
+                   (expect (= "code-reviewer" (:name a)))
+                   (expect (= "opus" (:model a)))
+                   (expect (re-find #"Elite reviewer" (:description a)))
+                   (expect (re-find #"elite code review expert" (:body a)))
+                   (expect (= :claude (:tool a)))
+                   (expect (= "/x.md" (:path a)))))
+             (it "falls back to the filename stem when frontmatter has no name"
+                 (let [a (d/parse-agent "no frontmatter here" {:name-default "my-agent"})]
+                   (expect (= "my-agent" (:name a)))
+                   (expect (= "" (:description a)))
+                   (expect (nil? (:model a)))))
+             (it "nil when there is no usable name at all"
+                 (expect (nil? (d/parse-agent "body only" {:name-default "  "})))))
 
 (defdescribe
   parse-skill-meta-test
   (it "builds a skill entry (no resources yet) from SKILL.md"
-      (let
-        [s (d/parse-skill-meta
-             "---\nname: setup-pre-commit\ndescription: Set up hooks.\n---\n# Setup\nsteps"
-             {:name-default "dir-name" :tool :claude :dir "/skills/x" :path "/skills/x/SKILL.md"})]
+      (let [s
+            (d/parse-skill-meta
+              "---\nname: setup-pre-commit\ndescription: Set up hooks.\n---\n# Setup\nsteps"
+              {:name-default "dir-name" :tool :claude :dir "/skills/x" :path "/skills/x/SKILL.md"})]
         (expect (= "setup-pre-commit" (:name s)))
         (expect (= "Set up hooks." (:description s)))
         (expect (re-find #"# Setup" (:body s)))
@@ -81,8 +79,8 @@
 
 (defdescribe dedup-by-name-test
              (it "keeps the FIRST occurrence of each name (precedence = order)"
-                 (let
-                   [out (d/dedup-by-name [{:name "a" :tool :p} {:name "b"} {:name "a" :tool :u}])]
+                 (let [out (d/dedup-by-name [{:name "a" :tool :p} {:name "b"}
+                                             {:name "a" :tool :u}])]
                    (expect (= ["a" "b"] (mapv :name out)))
                    (expect (= :p (:tool (first out)))))))
 
@@ -138,8 +136,8 @@
   ;; Rust engine every other traversal uses, and an ignore-aware walk would drop
   ;; exactly the files a nested project's (routinely gitignored) skill ships.
   (it "walks hidden and repository-ignored bundled files too"
-      (let
-        [root (.toFile (Files/createTempDirectory "vis-skill-hidden" (make-array FileAttribute 0)))]
+      (let [root (.toFile (Files/createTempDirectory "vis-skill-hidden"
+                                                     (make-array FileAttribute 0)))]
         (try (spit (io/file root "SKILL.md") "---\nname: demo\ndescription: d\n---\nbody")
              (spit (io/file root ".gitignore") "ignored/\n")
              (io/make-parents (io/file root "ignored" "asset.txt"))
@@ -153,12 +151,11 @@
 (defdescribe
   opencode-spel-layout-discovery-test
   (it "discovers SPEL skills from .opencode/skills/<name>/SKILL.md"
-      (let
-        [root
-         (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
 
-         skill-md
-         (io/file root ".opencode" "skills" "spel" "SKILL.md")]
+            skill-md
+            (io/file root ".opencode" "skills" "spel" "SKILL.md")]
 
         (try (io/make-parents skill-md)
              (spit skill-md "---\nname: spel\ndescription: Browser automation\n---\nBODY")
@@ -166,12 +163,11 @@
                                                  root)
                               #'d/skill-sources [[:opencode :rel ".opencode" "skills"]]}
                (fn []
-                 (let
-                   [skills
-                    (d/discover-skills)
+                 (let [skills
+                       (d/discover-skills)
 
-                    spel
-                    (first (filter #(= "spel" (:name %)) skills))]
+                       spel
+                       (first (filter #(= "spel" (:name %)) skills))]
 
                    (expect (= "spel" (:name spel)))
                    (expect (= :opencode (:tool spel)))
@@ -185,12 +181,11 @@
     (expect (= #{:claude :pi :agents :opencode} (set (map first d/command-sources)))))
   (it
     "discovers a claude command from .claude/commands/<name>.md with its $ARGUMENTS body preserved"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-cmd" (make-array FileAttribute 0)))
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-cmd" (make-array FileAttribute 0)))
 
-       cmd-md
-       (io/file root ".claude" "commands" "review.md")]
+          cmd-md
+          (io/file root ".claude" "commands" "review.md")]
 
       (try (io/make-parents cmd-md)
            (spit cmd-md "---\ndescription: Review a PR\n---\nReview the diff for $ARGUMENTS.")
@@ -224,21 +219,20 @@
   ;; skills, and gitignored harness directories were incorrectly assumed undiscoverable.
   (it
     "walks explicit project sources to the nearest git root, nearest first, regardless of gitignore"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-nested-project" (make-array FileAttribute 0)))
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-nested-project" (make-array FileAttribute 0)))
 
-       app
-       (io/file root "apps" "companion")
+          app
+          (io/file root "apps" "companion")
 
-       root-skill
-       (io/file root ".agents" "skills" "inherited" "SKILL.md")
+          root-skill
+          (io/file root ".agents" "skills" "inherited" "SKILL.md")
 
-       root-shadow
-       (io/file root ".agents" "skills" "layered" "SKILL.md")
+          root-shadow
+          (io/file root ".agents" "skills" "layered" "SKILL.md")
 
-       app-shadow
-       (io/file app ".agents" "skills" "layered" "SKILL.md")]
+          app-shadow
+          (io/file app ".agents" "skills" "layered" "SKILL.md")]
 
       (try (.mkdirs (io/file root ".git"))
            (spit (io/file root ".gitignore") ".agents/\n")
@@ -249,9 +243,8 @@
            (spit app-shadow "---\nname: layered\ndescription: app\n---\nAPP-SHADOW")
            (binding [workspace/*workspace-root* (.getCanonicalPath app)]
              (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
-               (let
-                 [skills (d/discover-skills)
-                  by-name (into {} (map (juxt :name identity)) skills)]
+               (let [skills (d/discover-skills)
+                     by-name (into {} (map (juxt :name identity)) skills)]
 
                  (expect (= #{"inherited" "layered"} (set (keys by-name))))
                  (expect (= "app" (:description (by-name "layered"))))
@@ -265,15 +258,15 @@
   ;; and moving the skill to the repository root made its relative instructions run there.
   (it
     "discovers gitignored descendant-project skills from the repository root and records their owner"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-root-skill-discovery" (make-array FileAttribute 0)))
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-root-skill-discovery"
+                                              (make-array FileAttribute 0)))
 
-       app
-       (io/file root "apps" "companion")
+          app
+          (io/file root "apps" "companion")
 
-       skill-md
-       (io/file app ".agents" "skills" "app-design" "SKILL.md")]
+          skill-md
+          (io/file app ".agents" "skills" "app-design" "SKILL.md")]
 
       (try (.mkdirs (io/file root ".git"))
            (io/make-parents skill-md)
@@ -288,15 +281,14 @@
                             (.getCanonicalPath (io/file (:path skill))))))))
            (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
   (it "treats skill resources as opaque and ignores implementation-specific command metadata"
-      (let
-        [root
-         (.toFile (Files/createTempDirectory "vis-skill-resources" (make-array FileAttribute 0)))
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-skill-resources" (make-array FileAttribute 0)))
 
-         skill-md
-         (io/file root ".agents" "skills" "demo" "SKILL.md")
+            skill-md
+            (io/file root ".agents" "skills" "demo" "SKILL.md")
 
-         metadata
-         (io/file root ".agents" "skills" "demo" "scripts" "command-metadata.json")]
+            metadata
+            (io/file root ".agents" "skills" "demo" "scripts" "command-metadata.json")]
 
         (try (.mkdirs (io/file root ".git"))
              (io/make-parents skill-md)
@@ -316,24 +308,23 @@
 (defdescribe
   skills-cache-revalidates-test
   (it "sees a SKILL.md that appeared after the cache was warm, with no explicit reload"
-      (let
-        [root
-         (.toFile (Files/createTempDirectory "vis-skill-midsession" (make-array FileAttribute 0)))
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-skill-midsession"
+                                                (make-array FileAttribute 0)))
 
-         early
-         (io/file root ".agents" "skills" "already-here" "SKILL.md")
+            early
+            (io/file root ".agents" "skills" "already-here" "SKILL.md")
 
-         late
-         (io/file root ".agents" "skills" "arrived-later" "SKILL.md")]
+            late
+            (io/file root ".agents" "skills" "arrived-later" "SKILL.md")]
 
         (try (.mkdirs (io/file root ".git"))
              (io/make-parents early)
              (spit early "---\nname: already-here\ndescription: First\n---\nFIRST")
              (binding [workspace/*workspace-root* (.getCanonicalPath root)]
                (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
-                 (let
-                   [warm (set (map :name (d/skills)))
-                    generation (d/generation)]
+                 (let [warm (set (map :name (d/skills)))
+                       generation (d/generation)]
 
                    (expect (= #{"already-here"} warm))
                    (io/make-parents late)

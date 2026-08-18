@@ -124,22 +124,21 @@
    nothing downstream carries the modifier."
   [^TextCharacter tc]
   (if tc
-    (let
-      [mods
-       (.getModifiers tc)
+    (let [mods
+          (.getModifiers tc)
 
-       shown
-       (fn [^TextColor c fallback]
-         (rgb (if (or (nil? c) (= TextColor$ANSI/DEFAULT c)) fallback c)))
+          shown
+          (fn [^TextColor c fallback]
+            (rgb (if (or (nil? c) (= TextColor$ANSI/DEFAULT c)) fallback c)))
 
-       fg
-       (shown (.getForegroundColor tc) tui-theme/text-fg)
+          fg
+          (shown (.getForegroundColor tc) tui-theme/text-fg)
 
-       bg
-       (shown (.getBackgroundColor tc) tui-theme/terminal-bg)
+          bg
+          (shown (.getBackgroundColor tc) tui-theme/terminal-bg)
 
-       reversed?
-       (.contains mods SGR/REVERSE)]
+          reversed?
+          (.contains mods SGR/REVERSE)]
 
       {:ch (or (.getCharacterString tc) " ")
        :fg (if reversed? bg fg)
@@ -187,338 +186,330 @@
    length scales with the session's content. `scroll/follow` carries no `:pos`,
    so each captured frame SNAPS to its target — deterministic, no stray ease."
   [session-id opts]
-  (let
-    [{:keys [cols rows fps type-cps type-min-cpf max-type-frames post-user-ms work-ms jump-hold-ms
-             scroll-rows-per-frame max-scroll-frames post-assist-ms end-hold-ms max-frames
-             trace-hold-ms max-reveal-steps pop-hold-ms]}
-     (merge defaults opts)
+  (let [{:keys [cols rows fps type-cps type-min-cpf max-type-frames post-user-ms work-ms
+                jump-hold-ms scroll-rows-per-frame max-scroll-frames post-assist-ms end-hold-ms
+                max-frames trace-hold-ms max-reveal-steps pop-hold-ms]}
+        (merge defaults opts)
 
-     history
-     (vec ((rebuild-history-fn) session-id))
+        history
+        (vec ((rebuild-history-fn) session-id))
 
-     n
-     (count history)
+        n
+        (count history)
 
-     render!
-     (render-frame-fn)
+        render!
+        (render-frame-fn)
 
-     md->ir
-     (markdown->ast-fn)
+        md->ir
+        (markdown->ast-fn)
 
-     empty-ir
-     (empty-ast-fn)
+        empty-ir
+        (empty-ast-fn)
 
-     vt
-     (DefaultVirtualTerminal. (TerminalSize. (int cols) (int rows)))
+        vt
+        (DefaultVirtualTerminal. (TerminalSize. (int cols) (int rows)))
 
-     scr
-     (doto (TerminalScreen. vt) (.startScreen))
+        scr
+        (doto (TerminalScreen. vt) (.startScreen))
 
-     base
-     (do (state/init!) @state/app-db)
+        base
+        (do (state/init!) @state/app-db)
 
-     ;; Session title + pinned workspace so the header tab shows the REAL
-     ;; title (not the "Untitled session" placeholder) and the footer shows
-     ;; the session's git context — matching a live open of this session
-     ;; rather than a bare replay. Both resolve lazily and tolerate a
-     ;; missing soul/workspace (nil → header/footer fall back gracefully).
-     soul
-     (try ((gateway-soul-fn) session-id) (catch Throwable _ nil))
+        ;; Session title + pinned workspace so the header tab shows the REAL
+        ;; title (not the "Untitled session" placeholder) and the footer shows
+        ;; the session's git context — matching a live open of this session
+        ;; rather than a bare replay. Both resolve lazily and tolerate a
+        ;; missing soul/workspace (nil → header/footer fall back gracefully).
+        soul
+        (try ((gateway-soul-fn) session-id) (catch Throwable _ nil))
 
-     session-title
-     (some-> soul
-             :title
-             str
-             not-empty)
+        session-title
+        (some-> soul
+                :title
+                str
+                not-empty)
 
-     session-ws
-     (try ((session-workspace-fn) session-id) (catch Throwable _ nil))
+        session-ws
+        (try ((session-workspace-fn) session-id) (catch Throwable _ nil))
 
-     db0
-     (assoc base
-       :session {:id session-id}
-       :title session-title
-       :workspace session-ws
-       :workspace/root (:root session-ws)
-       ;; Headless replay: no live provider-limits polling, so tell the
-       ;; footer to keep the "limits:" row clean.
-       :cinema? true
-       ;; Collapsed resting view — disclosures closed, exactly like a
-       ;; fresh live session rather than a full expanded dump.
-       :detail-expansions {:vis.channel-tui/baseline :collapse})
+        db0
+        (assoc base
+          :session {:id session-id}
+          :title session-title
+          :workspace session-ws
+          :workspace/root (:root session-ws)
+          ;; Headless replay: no live provider-limits polling, so tell the
+          ;; footer to keep the "limits:" row clean.
+          :cinema? true
+          ;; Collapsed resting view — disclosures closed, exactly like a
+          ;; fresh live session rather than a full expanded dump.
+          :detail-expansions {:vis.channel-tui/baseline :collapse})
 
-     frame-dt
-     (max 1 (long (/ 1000 (long fps))))
+        frame-dt
+        (max 1 (long (/ 1000 (long fps))))
 
-     ms->frames
-     (fn [ms]
-       (max 1 (long (Math/ceil (/ (double ms) (double frame-dt))))))
+        ms->frames
+        (fn [ms]
+          (max 1 (long (Math/ceil (/ (double ms) (double frame-dt))))))
 
-     ;; Render a message vector at a scroll intent, with optional db `extra`
-     ;; overrides (e.g. the live-progress "working" bubble) and an explicit
-     ;; `now-ms` that drives the spinner glyph + elapsed clock. Optionally
-     ;; feeds a stable layout so parked offsets aren't re-clamped. → {:grid :ly}.
-     render-state
-     (fn [msgs scroll layout extra now-ms]
-       (let
-         [db
-          (cond->
-            (merge (assoc db0
-                     :messages (vec msgs)
-                     :scroll scroll)
-                   extra)
-            layout
-            (assoc :layout layout))
+        ;; Render a message vector at a scroll intent, with optional db `extra`
+        ;; overrides (e.g. the live-progress "working" bubble) and an explicit
+        ;; `now-ms` that drives the spinner glyph + elapsed clock. Optionally
+        ;; feeds a stable layout so parked offsets aren't re-clamped. → {:grid :ly}.
+        render-state
+        (fn [msgs scroll layout extra now-ms]
+          (let [db
+                (cond-> (merge (assoc db0
+                                 :messages (vec msgs)
+                                 :scroll scroll)
+                               extra)
+                  layout
+                  (assoc :layout layout))
 
-          ly
-          (render! scr cols rows db (long now-ms))]
+                ly
+                (render! scr cols rows db (long now-ms))]
 
-         (.refresh scr)
-         {:grid (capture-grid scr cols rows) :ly ly}))
+            (.refresh scr)
+            {:grid (capture-grid scr cols rows) :ly ly}))
 
-     ;; A user-typed prefix as a live message: truncated raw text + IR
-     ;; re-derived so the bubble grows exactly as typed.
-     typed-msg
-     (fn [msg s]
-       (assoc msg
-         :text s
-         :ir (md->ir s {:soft-break :hard})))
+        ;; A user-typed prefix as a live message: truncated raw text + IR
+        ;; re-derived so the bubble grows exactly as typed.
+        typed-msg
+        (fn [msg s]
+          (assoc msg
+            :text s
+            :ir (md->ir s {:soft-break :hard})))
 
-     ;; A placeholder assistant bubble so `loading?` renders the live
-     ;; "Vis is calling the provider…" spinner in its place.
-     placeholder-assistant
-     {:role :assistant :text "" :ir nil}
+        ;; A placeholder assistant bubble so `loading?` renders the live
+        ;; "Vis is calling the provider…" spinner in its place.
+        placeholder-assistant
+        {:role :assistant :text "" :ir nil}
 
-     ;; Append `grid` `k` times to the transient frame accumulator.
-     add
-     (fn [acc grid k]
-       (loop
-         [a
-          acc
+        ;; Append `grid` `k` times to the transient frame accumulator.
+        add
+        (fn [acc grid k]
+          (loop [a
+                 acc
 
-          k
-          (long k)]
+                 k
+                 (long k)]
 
-         (if (pos? k) (recur (conj! a {:grid grid :delay-ms frame-dt}) (dec k)) a)))
+            (if (pos? k) (recur (conj! a {:grid grid :delay-ms frame-dt}) (dec k)) a)))
 
-     frames0
-     (loop
-       [i
-        0
+        frames0
+        (loop [i
+               0
 
-        acc
-        (transient [])]
+               acc
+               (transient [])]
 
-       (if (< i n)
-         (let
-           [msg
-            (nth history i)
+          (if (< i n)
+            (let [msg
+                  (nth history i)
 
-            prior
-            (subvec history 0 i)
+                  prior
+                  (subvec history 0 i)
 
-            full
-            (subvec history 0 (inc i))
+                  full
+                  (subvec history 0 (inc i))
 
-            role
-            (:role msg)]
+                  role
+                  (:role msg)]
 
-           (cond
-             (= :user role)
-             (let
-               [text
-                (or (:text msg) "")
+              (cond
+                (= :user role)
+                (let [text
+                      (or (:text msg) "")
 
-                len
-                (count text)
+                      len
+                      (count text)
 
-                ;; Chars revealed per frame — widened so a huge paste
-                ;; still fits inside `max-type-frames`.
-                cpf
-                (max (long type-min-cpf)
-                     (long (Math/round (/ (double type-cps) (double fps))))
-                     (long (Math/ceil (/ (double len) (double max-type-frames)))))
+                      ;; Chars revealed per frame — widened so a huge paste
+                      ;; still fits inside `max-type-frames`.
+                      cpf
+                      (max (long type-min-cpf)
+                           (long (Math/round (/ (double type-cps) (double fps))))
+                           (long (Math/ceil (/ (double len) (double max-type-frames)))))
 
-                steps
-                (if (pos? len) (concat (range cpf len cpf) [len]) [0])
+                      steps
+                      (if (pos? len) (concat (range cpf len cpf) [len]) [0])
 
-                acc*
-                (reduce (fn [a l]
-                          (let
-                            [{g :grid} (render-state
-                                         (conj prior
-                                               (typed-msg msg (subs text 0 (min len (long l)))))
-                                         scroll/follow
-                                         nil
-                                         nil
-                                         0)]
-                            (add a g 1)))
-                        acc
-                        steps)
+                      acc*
+                      (reduce (fn [a l]
+                                (let [{g :grid}
+                                      (render-state
+                                        (conj prior
+                                              (typed-msg msg (subs text 0 (min len (long l)))))
+                                        scroll/follow
+                                        nil
+                                        nil
+                                        0)]
+                                  (add a g 1)))
+                              acc
+                              steps)
 
-                {gf :grid}
-                (render-state full scroll/follow nil nil 0)]
+                      {gf :grid}
+                      (render-state full scroll/follow nil nil 0)]
 
-               (recur (inc i) (add acc* gf (ms->frames post-user-ms))))
-             (= :assistant role)
-             (let
-               [;; WORK beat: the user bubble + a live "calling the
-                ;; provider" spinner in the assistant's place, elapsed
-                ;; clock ticking (synthetic now-ms advances per frame).
-                work-frames
-                (ms->frames work-ms)
+                  (recur (inc i) (add acc* gf (ms->frames post-user-ms))))
+                (= :assistant role)
+                (let [;; WORK beat: the user bubble + a live "calling the
+                      ;; provider" spinner in the assistant's place, elapsed
+                      ;; clock ticking (synthetic now-ms advances per frame).
+                      work-frames
+                      (ms->frames work-ms)
 
-                acc1
-                (reduce (fn [a k]
-                          (let
-                            [{g :grid} (render-state (conj prior placeholder-assistant)
-                                                     scroll/follow
-                                                     nil
-                                                     {:loading? true
-                                                      :turn-start-ms 0
-                                                      :progress {:iterations []}}
-                                                     (* (long k) frame-dt))]
-                            (add a g 1)))
-                        acc
-                        (range work-frames))
+                      acc1
+                      (reduce (fn [a k]
+                                (let [{g :grid} (render-state (conj prior placeholder-assistant)
+                                                              scroll/follow
+                                                              nil
+                                                              {:loading? true
+                                                               :turn-start-ms 0
+                                                               :progress {:iterations []}}
+                                                              (* (long k) frame-dt))]
+                                  (add a g 1)))
+                              acc
+                              (range work-frames))
 
-                ;; ── Progressive reveal ─────────────────────────────
-                ;; Rather than dumping the whole answer and flying the
-                ;; viewport past every tool block at once, the trace
-                ;; blocks stream IN a few at a time (answer elided) —
-                ;; each new chunk pops in below and the view scrolls
-                ;; down to follow, exactly like a live session where
-                ;; tool results arrive one after another — then the
-                ;; finished answer text reveals last.
-                traces
-                (vec (:traces msg))
+                      ;; ── Progressive reveal ─────────────────────────────
+                      ;; Rather than dumping the whole answer and flying the
+                      ;; viewport past every tool block at once, the trace
+                      ;; blocks stream IN a few at a time (answer elided) —
+                      ;; each new chunk pops in below and the view scrolls
+                      ;; down to follow, exactly like a live session where
+                      ;; tool results arrive one after another — then the
+                      ;; finished answer text reveals last.
+                      traces
+                      (vec (:traces msg))
 
-                tcount
-                (count traces)
+                      tcount
+                      (count traces)
 
-                chunk
-                (max 1
-                     (long (Math/ceil (/ (double tcount)
-                                         (double (max 1 (long max-reveal-steps)))))))
+                      chunk
+                      (max 1
+                           (long (Math/ceil (/ (double tcount)
+                                               (double (max 1 (long max-reveal-steps)))))))
 
-                ;; Trace counts revealed at each stage: chunk, 2·chunk … all.
-                stage-counts
-                (if (pos? tcount) (distinct (conj (vec (range chunk tcount chunk)) tcount)) [])
+                      ;; Trace counts revealed at each stage: chunk, 2·chunk … all.
+                      stage-counts
+                      (if (pos? tcount)
+                        (distinct (conj (vec (range chunk tcount chunk)) tcount))
+                        [])
 
-                ;; Park at `cur` (the previous bottom), let the new
-                ;; content pop in, hold a beat, then slow-scroll down to
-                ;; this stage's settled bottom. → [acc' new-bottom].
-                reveal
-                (fn [a msgs cur pop-frames hold-frames]
-                  (let
-                    [{gf :grid ly :ly}
-                     (render-state msgs scroll/follow nil nil 0)
+                      ;; Park at `cur` (the previous bottom), let the new
+                      ;; content pop in, hold a beat, then slow-scroll down to
+                      ;; this stage's settled bottom. → [acc' new-bottom].
+                      reveal
+                      (fn [a msgs cur pop-frames hold-frames]
+                        (let [{gf :grid ly :ly}
+                              (render-state msgs scroll/follow nil nil 0)
 
-                     total-h
-                     (long (or (:total-h ly) 0))
+                              total-h
+                              (long (or (:total-h ly) 0))
 
-                     inner-h
-                     (long (or (:inner-h ly) 0))
+                              inner-h
+                              (long (or (:inner-h ly) 0))
 
-                     max-s
-                     (max 0 (- total-h inner-h))
+                              max-s
+                              (max 0 (- total-h inner-h))
 
-                     start
-                     (long (max 0 (min max-s (long cur))))]
+                              start
+                              (long (max 0 (min max-s (long cur))))]
 
-                    (if (<= max-s start)
-                      [(add a gf hold-frames) max-s]
-                      (let
-                        [{gp :grid}
-                         (render-state msgs (scroll/parked start) ly nil 0)
+                          (if (<= max-s start)
+                            [(add a gf hold-frames) max-s]
+                            (let [{gp :grid}
+                                  (render-state msgs (scroll/parked start) ly nil 0)
 
-                         a1
-                         (add a gp pop-frames)
+                                  a1
+                                  (add a gp pop-frames)
 
-                         dist
-                         (- max-s start)
+                                  dist
+                                  (- max-s start)
 
-                         nsteps
-                         (max 1
-                              (min (long max-scroll-frames)
-                                   (long (Math/ceil (/ (double dist)
-                                                       (double scroll-rows-per-frame))))))
+                                  nsteps
+                                  (max 1
+                                       (min (long max-scroll-frames)
+                                            (long (Math/ceil (/ (double dist)
+                                                                (double scroll-rows-per-frame))))))
 
-                         a2
-                         (reduce (fn [aa k]
-                                   (let
-                                     [frac
-                                      (/ (double k) (double nsteps))
+                                  a2
+                                  (reduce (fn [aa k]
+                                            (let [frac
+                                                  (/ (double k) (double nsteps))
 
-                                      st
-                                      (long (max 0
-                                                 (min max-s
-                                                      (Math/round (+ (double start)
-                                                                     (* frac (double dist)))))))
+                                                  st
+                                                  (long (max 0
+                                                             (min max-s
+                                                                  (Math/round
+                                                                    (+ (double start)
+                                                                       (* frac (double dist)))))))
 
-                                      {g :grid}
-                                      (render-state msgs (scroll/parked st) ly nil 0)]
+                                                  {g :grid}
+                                                  (render-state msgs (scroll/parked st) ly nil 0)]
 
-                                     (add aa g 1)))
-                                 a1
-                                 (range 1 (inc nsteps)))]
+                                              (add aa g 1)))
+                                          a1
+                                          (range 1 (inc nsteps)))]
 
-                        [(add a2 gf hold-frames) max-s]))))
+                              [(add a2 gf hold-frames) max-s]))))
 
-                ;; Initial scroll position: the spinner view's bottom,
-                ;; so the first chunk continues smoothly from there.
-                {sly :ly}
-                (render-state (conj prior placeholder-assistant) scroll/follow nil nil 0)
+                      ;; Initial scroll position: the spinner view's bottom,
+                      ;; so the first chunk continues smoothly from there.
+                      {sly :ly}
+                      (render-state (conj prior placeholder-assistant) scroll/follow nil nil 0)
 
-                cur0
-                (max 0 (- (long (or (:total-h sly) 0)) (long (or (:inner-h sly) 0))))
+                      cur0
+                      (max 0 (- (long (or (:total-h sly) 0)) (long (or (:inner-h sly) 0))))
 
-                ;; Stream the trace chunks in (answer elided) …
-                [acc2 cur1]
-                (reduce (fn [[a cur] c]
-                          (reveal a
-                                  (conj prior
-                                        (assoc msg
-                                          :ir empty-ir
-                                          :traces (subvec traces 0 c)))
-                                  cur
-                                  (ms->frames pop-hold-ms)
-                                  (ms->frames trace-hold-ms)))
-                        [acc1 cur0]
-                        stage-counts)
+                      ;; Stream the trace chunks in (answer elided) …
+                      [acc2 cur1]
+                      (reduce (fn [[a cur] c]
+                                (reveal a
+                                        (conj prior
+                                              (assoc msg
+                                                :ir empty-ir
+                                                :traces (subvec traces 0 c)))
+                                        cur
+                                        (ms->frames pop-hold-ms)
+                                        (ms->frames trace-hold-ms)))
+                              [acc1 cur0]
+                              stage-counts)
 
-                ;; … then the finished answer text lands and settles.
-                [acc3 _]
-                (reveal acc2
-                        full
-                        cur1
-                        (ms->frames jump-hold-ms)
-                        (+ (long (ms->frames jump-hold-ms)) (long (ms->frames post-assist-ms))))]
+                      ;; … then the finished answer text lands and settles.
+                      [acc3 _]
+                      (reveal acc2
+                              full
+                              cur1
+                              (ms->frames jump-hold-ms)
+                              (+ (long (ms->frames jump-hold-ms))
+                                 (long (ms->frames post-assist-ms))))]
 
-               (recur (inc i) acc3))
-             :else (let [{g :grid} (render-state full scroll/follow nil nil 0)]
-                     (recur (inc i) (add acc g (ms->frames post-user-ms))))))
-         (persistent! acc)))
+                  (recur (inc i) acc3))
+                :else (let [{g :grid} (render-state full scroll/follow nil nil 0)]
+                        (recur (inc i) (add acc g (ms->frames post-user-ms))))))
+            (persistent! acc)))
 
-     ;; Empty session: a single blank frame so the encoder still emits a clip.
-     frames0
-     (if (seq frames0)
-       frames0
-       [(assoc (render-state [] scroll/follow nil nil 0) :delay-ms frame-dt)])
+        ;; Empty session: a single blank frame so the encoder still emits a clip.
+        frames0
+        (if (seq frames0)
+          frames0
+          [(assoc (render-state [] scroll/follow nil nil 0) :delay-ms frame-dt)])
 
-     ;; Tail hold so the ending doesn't cut abruptly.
-     held
-     (into (vec frames0) (repeat (dec (long (ms->frames end-hold-ms))) (peek frames0)))
+        ;; Tail hold so the ending doesn't cut abruptly.
+        held
+        (into (vec frames0) (repeat (dec (long (ms->frames end-hold-ms))) (peek frames0)))
 
-     ;; Hard frame cap — downsample preserving even spacing.
-     frames
-     (if (> (count held) (long max-frames))
-       (let [step (/ (double (count held)) (double max-frames))]
-         (mapv #(nth held (min (dec (count held)) (long (* (long %) step)))) (range max-frames)))
-       held)
+        ;; Hard frame cap — downsample preserving even spacing.
+        frames
+        (if (> (count held) (long max-frames))
+          (let [step (/ (double (count held)) (double max-frames))]
+            (mapv #(nth held (min (dec (count held)) (long (* (long %) step)))) (range max-frames)))
+          held)
 
-     video-ms
-     (* (count frames) frame-dt)]
+        video-ms
+        (* (count frames) frame-dt)]
 
     (.stopScreen scr)
     {:cols cols :rows rows :frames frames :video-ms video-ms}))
@@ -546,15 +537,14 @@
    the integer cell width: with it, every glyph of a merged text run lands
    exactly on its column, so a 120-column line cannot drift."
   [^long size]
-  (let
-    [m
-     (img/text-measure {:text "M" :size size :family mono-family})
+  (let [m
+        (img/text-measure {:text "M" :size size :family mono-family})
 
-     adv
-     (double (:width m))
+        adv
+        (double (:width m))
 
-     cw
-     (max 1 (Math/round adv))]
+        cw
+        (max 1 (Math/round adv))]
 
     {:cw cw
      :ch (max 1 (Math/round (double (:height m))))
@@ -576,23 +566,20 @@
   "Split one captured row into `{:x :style :text}` runs of consecutive cells that
    share `run-style` — one draw op instead of one per column."
   [row]
-  (loop
-    [cells
-     (map-indexed vector row)
+  (loop [cells
+         (map-indexed vector row)
 
-     out
-     []]
+         out
+         []]
 
     (if-let [[i c] (first cells)]
-      (let
-        [ch (or (:ch c) " ")
-         style (run-style c)]
+      (let [ch (or (:ch c) " ")
+            style (run-style c)]
 
         (if (narrow? ch)
-          (let
-            [run (take-while (fn [[_ d]]
-                               (and (narrow? (or (:ch d) " ")) (= style (run-style d))))
-                             (rest cells))]
+          (let [run (take-while (fn [[_ d]]
+                                  (and (narrow? (or (:ch d) " ")) (= style (run-style d))))
+                                (rest cells))]
             (recur (drop (inc (count run)) cells)
                    (conj out
                          {:x i
@@ -658,15 +645,14 @@
    for anything that is not a box glyph."
   [c px py cell-w cell-h]
   (if-let [[l r u d] (box-arms (:ch c))]
-    (let
-      [w (long cell-w)
-       h (long cell-h)
-       t (max 1 (long (Math/round (/ (double h) 12.0))))
-       x0 (long px)
-       y0 (long py)
-       cx (+ x0 (quot w 2))
-       cy (+ y0 (quot h 2))
-       fill (hex-color (:fg c))]
+    (let [w (long cell-w)
+          h (long cell-h)
+          t (max 1 (long (Math/round (/ (double h) 12.0))))
+          x0 (long px)
+          y0 (long py)
+          cx (+ x0 (quot w 2))
+          cy (+ y0 (quot h 2))
+          fill (hex-color (:fg c))]
 
       (cond-> []
         (pos? (long l))
@@ -699,15 +685,14 @@
    with the type size so it holds at every `:font-size`."
   [{:keys [x style text]} py cw ascent size letter-spacing]
   (let [[fg bold] style]
-    (cond->
-      {:op :text
-       :text text
-       :x (* (long x) (long cw))
-       :y (+ (long py) (long ascent))
-       :fill (hex-color fg)
-       :size size
-       :family mono-family
-       :letter-spacing letter-spacing}
+    (cond-> {:op :text
+             :text text
+             :x (* (long x) (long cw))
+             :y (+ (long py) (long ascent))
+             :fill (hex-color fg)
+             :size size
+             :family mono-family
+             :letter-spacing letter-spacing}
       bold
       (assoc :stroke
         (hex-color fg) :stroke-width
@@ -718,12 +703,11 @@
    own ink, spanning its cells — the TERMINAL's underline, not a font feature, so
    a run of underlined blanks is a line too."
   [{:keys [x style text]} py cw ch ascent]
-  (let
-    [fg
-     (first style)
+  (let [fg
+        (first style)
 
-     t
-     (max 1 (long (Math/round (/ (double ch) 14.0))))]
+        t
+        (max 1 (long (Math/round (/ (double ch) 14.0))))]
 
     {:op :rect
      :x (* (long x) (long cw))
@@ -742,57 +726,53 @@
   [grid cw ch ascent size letter-spacing]
   (reduce
     (fn [acc [y row]]
-      (let
-        [py
-         (* (long y) (long ch))
+      (let [py
+            (* (long y) (long ch))
 
-         backgrounds
-         (for
-           [g
-            (partition-by (comp :bg second) (map-indexed vector row))
+            backgrounds
+            (for [g
+                  (partition-by (comp :bg second) (map-indexed vector row))
 
-            :let [x
-                  (ffirst g)]]
+                  :let [x
+                        (ffirst g)]]
 
-           {:op :rect
-            :x (* (long x) (long cw))
-            :y py
-            :w (* (count g) (long cw))
-            :h ch
-            :fill (hex-color (:bg (second (first g))))})
+              {:op :rect
+               :x (* (long x) (long cw))
+               :y py
+               :w (* (count g) (long cw))
+               :h ch
+               :fill (hex-color (:bg (second (first g))))})
 
-         bars
-         (mapcat (fn [[x c]]
-                   (box-ops c (* (long x) (long cw)) py cw ch))
-                 (map-indexed vector row))
+            bars
+            (mapcat (fn [[x c]]
+                      (box-ops c (* (long x) (long cw)) py cw ch))
+                    (map-indexed vector row))
 
-         ;; box cells are already drawn as bars — blank them out so their
-         ;; glyph cannot be painted on top
-         runs
-         (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
-
-         rules
-         (for
-           [{:keys [style] :as run}
+            ;; box cells are already drawn as bars — blank them out so their
+            ;; glyph cannot be painted on top
             runs
+            (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
 
-            :when (nth style 3)]
+            rules
+            (for [{:keys [style] :as run}
+                  runs
 
-           (underline-op run py cw ch ascent))
+                  :when (nth style 3)]
 
-         glyphs
-         (for
-           [{:keys [style text] :as run}
-            runs
+              (underline-op run py cw ch ascent))
 
-            :when (pos? (count (str/trim text)))]
+            glyphs
+            (for [{:keys [style text] :as run}
+                  runs
 
-           [(nth style 2) (glyph-op run py cw ascent size letter-spacing)])
+                  :when (pos? (count (str/trim text)))]
 
-         italic
-         (keep (fn [[italic? op]]
-                 (when italic? op))
-               glyphs)]
+              [(nth style 2) (glyph-op run py cw ascent size letter-spacing)])
+
+            italic
+            (keep (fn [[italic? op]]
+                    (when italic? op))
+                  glyphs)]
 
         (-> acc
             (update :base
@@ -823,18 +803,17 @@
   (let [{:keys [base italic italic-rows]} (grid->ops grid cw ch ascent size letter-spacing)]
     (img/draw! im base)
     (when (seq italic)
-      (let
-        [w (img/width im)
-         h (img/height im)]
+      (let [w (img/width im)
+            h (img/height im)]
 
         (with-open [layer (img/blank w h "#00000000")]
           (img/draw! layer italic)
-          (doseq
-            [y (sort italic-rows)
-             dy (range (long ch))
-             :let [py (+ (* (long y) (long ch)) (long dy))
-                   dx (Math/round (* (double italic-shear) (double (- (long ascent) (long dy)))))]
-             :when (< py (long h))]
+          (doseq [y (sort italic-rows)
+                  dy (range (long ch))
+                  :let [py (+ (* (long y) (long ch)) (long dy))
+                        dx (Math/round (* (double italic-shear)
+                                          (double (- (long ascent) (long dy)))))]
+                  :when (< py (long h))]
 
             (with-open [strip (img/crop layer 0 py w 1)]
               (img/paste! im strip (int dx) (int py)))))))))
@@ -846,17 +825,15 @@
    in process, through the SAME ops the MP4 emitter encodes, in the theme's own
    colours. Test helper `capture/shot!` wraps this into a one-call screenshot."
   ^File [grid out {:keys [font-size] :or {font-size 18}}]
-  (let
-    [{:keys [cw ch ascent letter-spacing]}
-     (cell-metrics font-size)
+  (let [{:keys [cw ch ascent letter-spacing]}
+        (cell-metrics font-size)
 
-     out-file
-     (io-file out)]
+        out-file
+        (io-file out)]
 
-    (with-open
-      [im (img/blank (* (long (reduce max 0 (map count grid))) (long cw))
-                     (* (count grid) (long ch))
-                     (hex-color (rgb tui-theme/terminal-bg)))]
+    (with-open [im (img/blank (* (long (reduce max 0 (map count grid))) (long cw))
+                              (* (count grid) (long ch))
+                              (hex-color (rgb tui-theme/terminal-bg)))]
       (paint-grid! im grid cw ch ascent font-size (double letter-spacing))
       (img/save! im out-file))
     out-file))
@@ -866,31 +843,28 @@
    rasterisation, then the straight RGBA rows are packed into jcodec's
    interleaved, -128-biased RGB plane. No `BufferedImage` anywhere."
   ^Picture [grid cols rows cw ch ascent size letter-spacing]
-  (let
-    [w
-     (even2 (* (long cols) (long cw)))
+  (let [w
+        (even2 (* (long cols) (long cw)))
 
-     h
-     (even2 (* (long rows) (long ch)))
+        h
+        (even2 (* (long rows) (long ch)))
 
-     pic
-     (Picture/create (int w) (int h) ColorSpace/RGB)
+        pic
+        (Picture/create (int w) (int h) ColorSpace/RGB)
 
-     dst
-     ^bytes (aget ^"[[B" (.getData pic) 0)]
+        dst
+        ^bytes (aget ^"[[B" (.getData pic) 0)]
 
     (with-open [im (img/blank w h "black")]
       (paint-grid! im grid cw ch ascent size letter-spacing)
-      (let
-        [src ^bytes (img/pixels im)
-         n (* (long w) (long h))]
+      (let [src ^bytes (img/pixels im)
+            n (* (long w) (long h))]
 
         ;; RGBA8 -> jcodec's interleaved RGB plane, whose samples are biased by
         ;; -128; on bytes that bias is exactly a flip of the sign bit.
-        (loop
-          [i 0
-           s 0
-           d 0]
+        (loop [i 0
+               s 0
+               d 0]
 
           (when (< i n)
             (aset dst d (unchecked-byte (bit-xor (aget src s) 0x80)))
@@ -908,15 +882,14 @@
    pure-Java H.264 `SequenceEncoder`, fed RGB `Picture`s rendered by imaging.
    Returns the output File."
   [{:keys [cols rows frames]} out {:keys [font-size fps] :or {font-size 18 fps 8}}]
-  (let
-    [out-file
-     (io-file out)
+  (let [out-file
+        (io-file out)
 
-     {:keys [cw ch ascent letter-spacing]}
-     (cell-metrics font-size)
+        {:keys [cw ch ascent letter-spacing]}
+        (cell-metrics font-size)
 
-     enc
-     (SequenceEncoder/createSequenceEncoder out-file (int fps))]
+        enc
+        (SequenceEncoder/createSequenceEncoder out-file (int fps))]
 
     (try (doseq [f frames]
            (.encodeNativeFrame
@@ -948,18 +921,16 @@
 
    Returns `{:path :format :frames :video-ms :cols :rows}`."
   [session-id opts]
-  (let
-    [{:keys [out theme] :or {theme "vis-light"} :as opts}
-     opts
+  (let [{:keys [out theme] :or {theme "vis-light"} :as opts}
+        opts
 
-     out
-     (or out (str session-id ".mp4"))]
+        out
+        (or out (str session-id ".mp4"))]
 
     (with-theme theme
                 (fn []
-                  (let
-                    [{:keys [frames video-ms cols rows] :as cap}
-                     (session->frames session-id (dissoc opts :format :out))]
+                  (let [{:keys [frames video-ms cols rows] :as cap}
+                        (session->frames session-id (dissoc opts :format :out))]
                     (frames->mp4! cap out opts)
                     {:path (str (.getAbsolutePath (io-file out)))
                      :format :mp4

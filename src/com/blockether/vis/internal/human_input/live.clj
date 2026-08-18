@@ -138,11 +138,10 @@
    appended to the order. One index pass, so a full table costs the same
    whether one item changed or two hundred did."
   [existing incoming]
-  (let
-    [start (into {}
-                 (map-indexed (fn [i item]
-                                [(:id item) i]))
-                 existing)]
+  (let [start (into {}
+                    (map-indexed (fn [i item]
+                                   [(:id item) i]))
+                    existing)]
     (first (reduce (fn [[acc idx] item]
                      (if-let [pos (get idx (:id item))]
                        [(assoc acc pos item) idx]
@@ -195,15 +194,14 @@
   "A node with its own state replaced. Keys foreign to the node's type are
    refused BY NAME rather than merged into a shape no surface can paint."
   [node op]
-  (let
-    [allowed
-     (conj (get settable-keys (:type node) #{}) :label)
+  (let [allowed
+        (conj (get settable-keys (:type node) #{}) :label)
 
-     given
-     (disj (set (keys op)) :op :node-id)
+        given
+        (disj (set (keys op)) :op :node-id)
 
-     foreign
-     (sort (map name (remove allowed given)))]
+        foreign
+        (sort (map name (remove allowed given)))]
 
     (when (seq foreign)
       (invalid-patch! (:id node)
@@ -219,15 +217,14 @@
   "A node with items added. A `log` grows its window and its record; a keyed
    node upserts by id and is bounded by refusal."
   [node op]
-  (let
-    [k
-     (get appendable-key (:type node))
+  (let [k
+        (get appendable-key (:type node))
 
-     given
-     (disj (set (keys op)) :op :node-id)
+        given
+        (disj (set (keys op)) :op :node-id)
 
-     wrong
-     (sort (map name (disj given k)))]
+        wrong
+        (sort (map name (disj given k)))]
 
     (when (nil? k)
       (invalid-patch! (:id node) (str "a " (name (:type node)) " node has nothing to append to")))
@@ -247,10 +244,9 @@
                                (count items)
                                "; split it"))))
       (if (= :log (:type node))
-        (let
-          [window (long (:window-lines node))
-           all (into (:lines node) items)
-           overflow (max 0 (- (count all) window))]
+        (let [window (long (:window-lines node))
+              all (into (:lines node) items)
+              overflow (max 0 (- (count all) window))]
 
           (assoc node
             :lines (if (pos? overflow) (subvec all overflow) all)
@@ -297,18 +293,17 @@
    a node added after one inside a layout group joins that group; a group added
    this way lands with everything inside it."
   [view {:keys [node-spec after]}]
-  (let
-    [node
-     (stamped (checked-node node-spec))
+  (let [node
+        (stamped (checked-node node-spec))
 
-     max-nodes
-     (long (:max-nodes spec/view-defaults))
+        max-nodes
+        (long (:max-nodes spec/view-defaults))
 
-     taken
-     (set (node-ids view))
+        taken
+        (set (node-ids view))
 
-     minted
-     (mapv :id (node-tree [node]))]
+        minted
+        (mapv :id (node-tree [node]))]
 
     (doseq [id minted]
       (when (taken id)
@@ -318,12 +313,11 @@
                       (str "a view holds at most "
                            max-nodes
                            " nodes; 200 devices are 200 ROWS in one table, not 200 panes")))
-    (if-let
-      [path (when after
-              (or (node-path view after)
-                  (invalid-patch!
-                    (:id node)
-                    (str "cannot place it after " after ": the view has no such node"))))]
+    (if-let [path (when after
+                    (or (node-path view after)
+                        (invalid-patch!
+                          (:id node)
+                          (str "cannot place it after " after ": the view has no such node"))))]
       (update-in view (pop path) insert-after (peek path) node)
       (update view :nodes conj node))))
 
@@ -347,29 +341,28 @@
     :remove-node
     (apply-remove-node view op)
 
-    (let
-      [path
-       (or (node-path view (:node-id op))
-           (invalid-patch! (:node-id op)
-                           (str "the view has no such node; it has "
-                                (str/join ", " (node-ids view)))))
+    (let [path
+          (or (node-path view (:node-id op))
+              (invalid-patch! (:node-id op)
+                              (str "the view has no such node; it has "
+                                   (str/join ", " (node-ids view)))))
 
-       node
-       (get-in view path)
+          node
+          (get-in view path)
 
-       patched
-       (case (:op op)
-         :set
-         (apply-set node op)
+          patched
+          (case (:op op)
+            :set
+            (apply-set node op)
 
-         :append
-         (apply-append node op)
+            :append
+            (apply-append node op)
 
-         :remove
-         (apply-remove node op)
+            :remove
+            (apply-remove node op)
 
-         :clear
-         (apply-clear node))]
+            :clear
+            (apply-clear node))]
 
       (assoc-in view path patched))))
 
@@ -472,10 +465,9 @@
 (defn- cell-at
   "The cell this row carries for a declared column id."
   [columns row column-id]
-  (let
-    [pos (first (keep-indexed (fn [i c]
-                                (when (= column-id (:id c)) i))
-                              columns))]
+  (let [pos (first (keep-indexed (fn [i c]
+                                   (when (= column-id (:id c)) i))
+                                 columns))]
     (if pos (get (:cells row) (long pos) "") "")))
 
 (defn- numeric-column?
@@ -490,25 +482,23 @@
   "Rows in a declared `{:by … :dir …}` order: blanks last, ties keeping
    insertion order, so the same script paints identically everywhere."
   [columns rows {:keys [by dir]}]
-  (let
-    [numeric?
-     (numeric-column? (mapv #(cell-at columns % by) rows))
+  (let [numeric?
+        (numeric-column? (mapv #(cell-at columns % by) rows))
 
-     key-of
-     (fn [row]
-       (let [text (cell-at columns row by)]
-         (when-not (str/blank? text) (if numeric? (parse-double text) (str/lower-case text)))))
+        key-of
+        (fn [row]
+          (let [text (cell-at columns row by)]
+            (when-not (str/blank? text) (if numeric? (parse-double text) (str/lower-case text)))))
 
-     descending?
-     (= :desc dir)]
+        descending?
+        (= :desc dir)]
 
     (vec (sort (fn [a b]
-                 (let
-                   [ka
-                    (key-of a)
+                 (let [ka
+                       (key-of a)
 
-                    kb
-                    (key-of b)]
+                       kb
+                       (key-of b)]
 
                    (cond (and (nil? ka) (nil? kb)) 0
                          (nil? ka) 1
@@ -529,16 +519,15 @@
 (defn- fenced
   "`lines` in a code fence long enough to survive whatever backticks they carry."
   [lines]
-  (let
-    [longest
-     (reduce max
-             2
-             (map (fn [line]
-                    (reduce max 0 (map count (re-seq #"`+" (str line)))))
-                  lines))
+  (let [longest
+        (reduce max
+                2
+                (map (fn [line]
+                       (reduce max 0 (map count (re-seq #"`+" (str line)))))
+                     lines))
 
-     fence
-     (apply str (repeat (inc (long longest)) "`"))]
+        fence
+        (apply str (repeat (inc (long longest)) "`"))]
 
     (concat [fence] (map str lines) [fence])))
 
@@ -555,14 +544,13 @@
 
 (defmethod node->markdown :progress
   [{:keys [done total] :as node} _]
-  (let
-    [head
-     (if-let [f (fraction node)]
-       (str "**" (percent f) "%**")
-       indeterminate-line)
+  (let [head
+        (if-let [f (fraction node)]
+          (str "**" (percent f) "%**")
+          indeterminate-line)
 
-     counted
-     (when done (str done (when total (str "/" total)) " done"))]
+        counted
+        (when done (str done (when total (str "/" total)) " done"))]
 
     [(str/join " · " (remove nil? [head counted]))]))
 
@@ -591,15 +579,14 @@
 (defmethod node->markdown :log
   [{:keys [lines total-lines]} {:keys [log-tail-lines]}]
   (if (seq lines)
-    (let
-      [tail
-       (long log-tail-lines)
+    (let [tail
+          (long log-tail-lines)
 
-       shown
-       (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
+          shown
+          (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
 
-       behind
-       (- (long (or total-lines (count lines))) (count shown))]
+          behind
+          (- (long (or total-lines (count lines))) (count shown))]
 
       (cond-> (vec (fenced shown))
         (pos? behind)
@@ -608,38 +595,37 @@
 
 (defmethod node->markdown :table
   [{:keys [columns] :as node} {:keys [table-rows]}]
-  (let
-    [rows
-     (ordered-rows node)
+  (let [rows
+        (ordered-rows node)
 
-     limit
-     (long table-rows)
+        limit
+        (long table-rows)
 
-     shown
-     (if (> (count rows) limit) (subvec rows 0 limit) rows)
+        shown
+        (if (> (count rows) limit) (subvec rows 0 limit) rows)
 
-     toned?
-     (boolean (some :tone rows))
+        toned?
+        (boolean (some :tone rows))
 
-     header
-     (cond->> (mapv :label columns)
-       toned?
-       (into ["!"]))
+        header
+        (cond->> (mapv :label columns)
+          toned?
+          (into ["!"]))
 
-     rule
-     (cond->> (mapv #(if (= :right (:align %)) "---:" "---") columns)
-       toned?
-       (into ["---"]))
+        rule
+        (cond->> (mapv #(if (= :right (:align %)) "---:" "---") columns)
+          toned?
+          (into ["---"]))
 
-     row->cells
-     (fn [row]
-       (cond->> (mapv #(cell-text (cell-at columns row (:id %))) columns)
-         toned?
-         (into [(if (:tone row) (name (:tone row)) "")])))
+        row->cells
+        (fn [row]
+          (cond->> (mapv #(cell-text (cell-at columns row (:id %))) columns)
+            toned?
+            (into [(if (:tone row) (name (:tone row)) "")])))
 
-     line
-     (fn [cells]
-       (str "| " (str/join " | " cells) " |"))]
+        line
+        (fn [cells]
+          (str "| " (str/join " | " cells) " |"))]
 
     (cond-> (into [(line header) (line rule)] (map (comp line row->cells)) shown)
       (empty? rows)
@@ -688,48 +674,44 @@
    `opts` may widen the budget with `:log-tail-lines` and `:table-rows`."
   ([view] (picture view nil))
   ([view opts]
-   (let
-     [{:keys [log-tail-lines table-rows]}
-      (merge model-budget (select-keys opts [:log-tail-lines :table-rows]))
+   (let [{:keys [log-tail-lines table-rows]}
+         (merge model-budget (select-keys opts [:log-tail-lines :table-rows]))
 
-      budgeted
-      (mapv
-        (fn [node]
-          (case (:type node)
-            :log
-            (let
-              [lines
-               (:lines node)
+         budgeted
+         (mapv (fn [node]
+                 (case (:type node)
+                   :log
+                   (let [lines
+                         (:lines node)
 
-               tail
-               (long log-tail-lines)
+                         tail
+                         (long log-tail-lines)
 
-               shown
-               (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
+                         shown
+                         (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
 
-               behind
-               (- (long (or (:total-lines node) (count lines))) (count shown))]
+                         behind
+                         (- (long (or (:total-lines node) (count lines))) (count shown))]
 
-              (with-meta (assoc node :lines shown) {:elided (max 0 behind)}))
+                     (with-meta (assoc node :lines shown) {:elided (max 0 behind)}))
 
-            :table
-            (let
-              [rows
-               (ordered-rows node)
+                   :table
+                   (let [rows
+                         (ordered-rows node)
 
-               limit
-               (long table-rows)
+                         limit
+                         (long table-rows)
 
-               shown
-               (if (> (count rows) limit) (subvec rows 0 limit) rows)]
+                         shown
+                         (if (> (count rows) limit) (subvec rows 0 limit) rows)]
 
-              (with-meta (assoc node
-                           :rows shown
-                           :order :insertion)
-                {:elided (- (count rows) (count shown))}))
+                     (with-meta (assoc node
+                                  :rows shown
+                                  :order :insertion)
+                       {:elided (- (count rows) (count shown))}))
 
-            node))
-        (leaf-nodes (:nodes view)))]
+                   node))
+               (leaf-nodes (:nodes view)))]
 
      {:view (cond-> {:title (:title view) :nodes budgeted}
               (:description view)
@@ -767,25 +749,24 @@
    in declaration order and a document read back is a flat view."
   ([view] (->markdown view nil))
   ([view {:keys [result] :as opts}]
-   (let
-     [budget
-      (merge model-budget (select-keys opts [:log-tail-lines :table-rows]))
+   (let [budget
+         (merge model-budget (select-keys opts [:log-tail-lines :table-rows]))
 
-      head
-      (cond-> [(str "# " (:title view))]
-        (:description view)
-        (conj (str "_" (:description view) "_"))
+         head
+         (cond-> [(str "# " (:title view))]
+           (:description view)
+           (conj (str "_" (:description view) "_"))
 
-        result
-        (into ["" (str "> " (verdict-line result))]))
+           result
+           (into ["" (str "> " (verdict-line result))]))
 
-      body
-      (mapcat (fn [node]
-                (into (if-let [label (:label node)]
-                        ["" (str "### " label)]
-                        [""])
-                      (node->markdown node budget)))
-              (leaf-nodes (:nodes view)))]
+         body
+         (mapcat (fn [node]
+                   (into (if-let [label (:label node)]
+                           ["" (str "### " label)]
+                           [""])
+                         (node->markdown node budget)))
+                 (leaf-nodes (:nodes view)))]
 
      (str/join "\n" (into head body)))))
 
@@ -820,11 +801,10 @@
    run of anything else, nil when nothing legible is left. What [[addressed]] gives
    a picture's items, and what a settled view is filed under."
   [text]
-  (let
-    [id (-> (str text)
-            str/lower-case
-            (str/replace #"[^\p{L}\p{N}]+" "-")
-            (str/replace #"^-+|-+$" ""))]
+  (let [id (-> (str text)
+               str/lower-case
+               (str/replace #"[^\p{L}\p{N}]+" "-")
+               (str/replace #"^-+|-+$" ""))]
     (when-not (str/blank? id) id)))
 
 (defn- addressed
@@ -834,14 +814,13 @@
    addresses and a patch written against a parsed view still lands."
   [prefix text-of items]
   (first (reduce (fn [[acc taken] item]
-                   (let
-                     [base
-                      (or (slug (text-of item)) (str prefix "-" (inc (count acc))))
+                   (let [base
+                         (or (slug (text-of item)) (str prefix "-" (inc (count acc))))
 
-                      id
-                      (loop [n 1]
-                        (let [candidate (if (= 1 n) base (str base "-" n))]
-                          (if (contains? taken candidate) (recur (inc n)) candidate)))]
+                         id
+                         (loop [n 1]
+                           (let [candidate (if (= 1 n) base (str base "-" n))]
+                             (if (contains? taken candidate) (recur (inc n)) candidate)))]
 
                      [(conj acc (assoc item :id id)) (conj taken id)]))
                  [[] #{}]
@@ -881,27 +860,27 @@
    out: one group per blank line, a fence keeping its own blank lines. Each
    group carries the line it starts on, so a refusal can point at it."
   [numbered]
-  (let
-    [{:keys [acc at cur]} (reduce (fn [{:keys [acc at cur fence] :as state} [n line]]
-                                    (cond (and fence (= line fence)) (assoc state
-                                                                       :cur (conj cur line)
-                                                                       :fence nil)
-                                          fence (assoc state :cur (conj cur line))
-                                          (re-matches #"`{3,}" line) (assoc state
-                                                                       :cur (conj (or cur []) line)
-                                                                       :at (or at n)
-                                                                       :fence line)
-                                          (str/blank? line) (if (seq cur)
-                                                              (assoc state
-                                                                :acc (conj acc {:at at :lines cur})
-                                                                :at nil
-                                                                :cur nil)
-                                                              state)
-                                          :else (assoc state
-                                                  :cur (conj (or cur []) line)
-                                                  :at (or at n))))
-                                  {:acc [] :at nil :cur nil :fence nil}
-                                  numbered)]
+  (let [{:keys [acc at cur]} (reduce
+                               (fn [{:keys [acc at cur fence] :as state} [n line]]
+                                 (cond (and fence (= line fence)) (assoc state
+                                                                    :cur (conj cur line)
+                                                                    :fence nil)
+                                       fence (assoc state :cur (conj cur line))
+                                       (re-matches #"`{3,}" line) (assoc state
+                                                                    :cur (conj (or cur []) line)
+                                                                    :at (or at n)
+                                                                    :fence line)
+                                       (str/blank? line) (if (seq cur)
+                                                           (assoc state
+                                                             :acc (conj acc {:at at :lines cur})
+                                                             :at nil
+                                                             :cur nil)
+                                                           state)
+                                       :else (assoc state
+                                               :cur (conj (or cur []) line)
+                                               :at (or at n))))
+                               {:acc [] :at nil :cur nil :fence nil}
+                               numbered)]
     (cond-> acc
       (seq cur)
       (conj {:at at :lines cur}))))
@@ -919,12 +898,11 @@
    percent is progress, a line that is nothing but bold is a status, bold with a
    value after it is a stat, and each empty state names its own type."
   [{:keys [at lines]}]
-  (let
-    [head
-     (first lines)
+  (let [head
+        (first lines)
 
-     [text _]
-     (untoned head)]
+        [text _]
+        (untoned head)]
 
     (cond (contains? type-painting-nothing head) (type-painting-nothing head)
           (re-matches #"`{3,}" head) :log
@@ -951,37 +929,34 @@
   [_ {:keys [at lines]}]
   (when (> (count lines) 2)
     (invalid-markdown! at "a status paints its text and at most one italic detail"))
-  (let
-    [[text tone]
-     (untoned (first lines))
+  (let [[text tone]
+        (untoned (first lines))
 
-     detail
-     (italicized (second lines))]
+        detail
+        (italicized (second lines))]
 
     (when (and (second lines) (nil? detail))
       (invalid-markdown! at "a status' second line is its detail, written `_like this_`"))
-    (cond->
-      {:type :status
-       :text (or (second (re-matches #"\*\*(.+)\*\*" text))
-                 (invalid-markdown! at "a status paints its text in bold"))
-       :tone (or tone :idle)}
+    (cond-> {:type :status
+             :text (or (second (re-matches #"\*\*(.+)\*\*" text))
+                       (invalid-markdown! at "a status paints its text in bold"))
+             :tone (or tone :idle)}
       detail
       (assoc :detail detail))))
 
 (defmethod markdown->node :progress
   [_ {:keys [at lines]}]
   (when (> (count lines) 1) (invalid-markdown! at "a progress paints one line"))
-  (let
-    [[head counted]
-     (str/split (first lines) #" · " 2)
+  (let [[head counted]
+        (str/split (first lines) #" · " 2)
 
-     value
-     (when-let [percent-text (second (re-matches #"\*\*(\d+)%\*\*" head))]
-       (/ (long (parse-long percent-text)) 100.0))
+        value
+        (when-let [percent-text (second (re-matches #"\*\*(\d+)%\*\*" head))]
+          (/ (long (parse-long percent-text)) 100.0))
 
-     [_ done total]
-     (some->> counted
-              (re-matches #"(\d+)(?:/(\d+))? done"))]
+        [_ done total]
+        (some->> counted
+                 (re-matches #"(\d+)(?:/(\d+))? done"))]
 
     (when-not (or value (= indeterminate-line head))
       (invalid-markdown! at "a progress paints `**N%**` or `_working_`"))
@@ -1006,9 +981,8 @@
        :stats (addressed "stat"
                          :label
                          (mapv (fn [[_ label value]]
-                                 (let
-                                   [[_ text named] (re-matches #"(.*?) ?\[([a-z-]+)\]" value)
-                                    tone (when named (keyword named))]
+                                 (let [[_ text named] (re-matches #"(.*?) ?\[([a-z-]+)\]" value)
+                                       tone (when named (keyword named))]
 
                                    (cond-> {:label label :value-text (if (tone? tone) text value)}
                                      (tone? tone)
@@ -1023,18 +997,17 @@
      :steps (addressed "step"
                        :label
                        (mapv (fn [line]
-                               (let
-                                 [[body tone]
-                                  (untoned (bullet at line))
+                               (let [[body tone]
+                                     (untoned (bullet at line))
 
-                                  [_ measured percent-text]
-                                  (re-matches #"(.*) · (\d+)%" body)
+                                     [_ measured percent-text]
+                                     (re-matches #"(.*) · (\d+)%" body)
 
-                                  text
-                                  (or measured body)
+                                     text
+                                     (or measured body)
 
-                                  [_ label detail]
-                                  (re-matches #"(.*?) — (.*)" text)]
+                                     [_ label detail]
+                                     (re-matches #"(.*?) — (.*)" text)]
 
                                  (cond-> {:label (or label text) :tone (or tone :idle)}
                                    detail
@@ -1048,24 +1021,23 @@
   [_ {:keys [at lines]}]
   (if (= (empty-line :log) (first lines))
     {:type :log :lines [] :window-lines (long (:window-lines spec/log-defaults)) :total-lines 0}
-    (let
-      [fence
-       (first lines)
+    (let [fence
+          (first lines)
 
-       body
-       (vec (rest lines))
+          body
+          (vec (rest lines))
 
-       closing
-       (or (first (keep-indexed (fn [i line]
-                                  (when (= fence line) i))
-                                body))
-           (invalid-markdown! at "a log's code fence is never closed"))
+          closing
+          (or (first (keep-indexed (fn [i line]
+                                     (when (= fence line) i))
+                                   body))
+              (invalid-markdown! at "a log's code fence is never closed"))
 
-       window
-       (subvec body 0 (long closing))
+          window
+          (subvec body 0 (long closing))
 
-       behind
-       (long (or (counted-behind #"… (\d+) earlier lines.*" (get body (inc (long closing)))) 0))]
+          behind
+          (long (or (counted-behind #"… (\d+) earlier lines.*" (get body (inc (long closing)))) 0))]
 
       (with-meta {:type :log
                   :lines window
@@ -1077,15 +1049,14 @@
   "One painted row, back into cells: split on the pipes that were not escaped,
    drop the rail on either side, and give an escaped pipe its meaning back."
   [line]
-  (let
-    [parts
-     (vec (str/split line #"(?<!\\)\|" -1))
+  (let [parts
+        (vec (str/split line #"(?<!\\)\|" -1))
 
-     from
-     (if (str/starts-with? (str/triml line) "|") 1 0)
+        from
+        (if (str/starts-with? (str/triml line) "|") 1 0)
 
-     to
-     (if (str/ends-with? (str/trimr line) "|") (dec (count parts)) (count parts))]
+        to
+        (if (str/ends-with? (str/trimr line) "|") (dec (count parts)) (count parts))]
 
     (mapv (fn [cell]
             (str/replace (str/trim cell) "\\|" "|"))
@@ -1093,71 +1064,69 @@
 
 (defmethod markdown->node :table
   [_ {:keys [at lines]}]
-  (let
-    [noted
-     (italicized (last lines))
+  (let [noted
+        (italicized (last lines))
 
-     behind
-     (long (or (some->> noted
-                        (re-matches #"… (\d+) more rows.*")
-                        second
-                        parse-long)
-               0))
+        behind
+        (long (or (some->> noted
+                           (re-matches #"… (\d+) more rows.*")
+                           second
+                           parse-long)
+                  0))
 
-     painted
-     (mapv table-cells
-           (cond-> lines
-             noted
-             (subvec 0 (dec (count lines)))))
+        painted
+        (mapv table-cells
+              (cond-> lines
+                noted
+                (subvec 0 (dec (count lines)))))
 
-     [header rule]
-     painted
+        [header rule]
+        painted
 
-     _
-     (when (or (nil? rule) (not= (count header) (count rule)))
-       (invalid-markdown! at "a table paints a header row and a rule of the same width"))
+        _
+        (when (or (nil? rule) (not= (count header) (count rule)))
+          (invalid-markdown! at "a table paints a header row and a rule of the same width"))
 
-     toned?
-     (and (= "!" (first header)) (= "---" (first rule)))
+        toned?
+        (and (= "!" (first header)) (= "---" (first rule)))
 
-     columns
-     (addressed "column"
-                :label
-                (mapv (fn [label align]
-                        (cond-> {:label label}
-                          (str/ends-with? align ":")
-                          (assoc :align :right)))
-                      (cond-> header
-                        toned?
-                        (subvec 1))
-                      (cond-> rule
-                        toned?
-                        (subvec 1))))
+        columns
+        (addressed "column"
+                   :label
+                   (mapv (fn [label align]
+                           (cond-> {:label label}
+                             (str/ends-with? align ":")
+                             (assoc :align :right)))
+                         (cond-> header
+                           toned?
+                           (subvec 1))
+                         (cond-> rule
+                           toned?
+                           (subvec 1))))
 
-     rows
-     (addressed "row"
-                (fn [row]
-                  (first (:cells row)))
-                (mapv
-                  (fn [cells]
-                    (let
-                      [tone
-                       (when (and toned? (not (str/blank? (first cells)))) (keyword (first cells)))
+        rows
+        (addressed
+          "row"
+          (fn [row]
+            (first (:cells row)))
+          (mapv (fn [cells]
+                  (let [tone
+                        (when (and toned? (not (str/blank? (first cells)))) (keyword (first cells)))
 
-                       painted-cells
-                       (cond-> cells
-                         toned?
-                         (subvec 1))]
+                        painted-cells
+                        (cond-> cells
+                          toned?
+                          (subvec 1))]
 
-                      (when (> (count painted-cells) (count columns))
-                        (invalid-markdown! at
-                                           (str "a row paints more cells than the table declares: "
-                                                (count painted-cells)
-                                                " against " (count columns))))
-                      (cond-> {:cells painted-cells}
-                        (tone? tone)
-                        (assoc :tone tone))))
-                  (drop 2 painted)))]
+                    (when (> (count painted-cells) (count columns))
+                      (invalid-markdown! at
+                                         (str "a row paints more cells than the table declares: "
+                                              (count painted-cells)
+                                              " against " (count columns))))
+                    (cond-> {:cells painted-cells}
+                      (tone? tone)
+                      (assoc :tone tone))))
+                (drop 2 painted)))]
 
     (with-meta {:type :table
                 :columns columns
@@ -1171,33 +1140,32 @@
   (if (= (empty-line :link) (first lines))
     {:type :link :links []}
     {:type :link
-     :links (addressed "link"
-                       :label
-                       (mapv (fn [line]
-                               (let
-                                 [[body tone]
-                                  (untoned (bullet at line))
+     :links (addressed
+              "link"
+              :label
+              (mapv (fn [line]
+                      (let [[body tone]
+                            (untoned (bullet at line))
 
-                                  [kind label target]
-                                  (or (some->> (re-matches #"\[(.+)\]\((.+)\)" body)
-                                               rest
-                                               (cons :url))
-                                      (some->> (re-matches #"(.+) — attachment `(.+)`" body)
-                                               rest
-                                               (cons :attachment))
-                                      (some->> (re-matches #"(.+) — `(.+)`" body)
-                                               rest
-                                               (cons :path))
-                                      (invalid-markdown!
-                                        at
-                                        (str
-                                          "a link is `[label](url)`, a path or an attachment, not "
-                                          (pr-str body))))]
+                            [kind label target]
+                            (or (some->> (re-matches #"\[(.+)\]\((.+)\)" body)
+                                         rest
+                                         (cons :url))
+                                (some->> (re-matches #"(.+) — attachment `(.+)`" body)
+                                         rest
+                                         (cons :attachment))
+                                (some->> (re-matches #"(.+) — `(.+)`" body)
+                                         rest
+                                         (cons :path))
+                                (invalid-markdown!
+                                  at
+                                  (str "a link is `[label](url)`, a path or an attachment, not "
+                                       (pr-str body))))]
 
-                                 (cond-> {:label label :target-kind kind :target target}
-                                   tone
-                                   (assoc :tone tone))))
-                             lines))}))
+                        (cond-> {:label label :target-kind kind :target target}
+                          tone
+                          (assoc :tone tone))))
+                    lines))}))
 
 (defn- verdict
   "The ending a `>` block states, as much of [[spec/live-result]] as a picture can
@@ -1205,31 +1173,30 @@
    the engine's and a picture holds none of them."
   [{:keys [at lines]}]
   (when (> (count lines) 1) (invalid-markdown! at "a verdict is one line"))
-  (let
-    [[_ named tail]
-     (or (re-matches #"> \*\*([a-z-]+)\*\*(.*)" (first lines))
-         (invalid-markdown! at "a verdict opens with `> **<ending>**`"))
+  (let [[_ named tail]
+        (or (re-matches #"> \*\*([a-z-]+)\*\*(.*)" (first lines))
+            (invalid-markdown! at "a verdict opens with `> **<ending>**`"))
 
-     ending
-     (keyword named)
+        ending
+        (keyword named)
 
-     _
-     (when-not (reason? ending)
-       (invalid-markdown! at
-                          (str "no view ends " (pr-str named)
-                               " — " (str/join ", " (sort (map name reason?))))))
+        _
+        (when-not (reason? ending)
+          (invalid-markdown! at
+                             (str "no view ends " (pr-str named)
+                                  " — " (str/join ", " (sort (map name reason?))))))
 
-     stated
-     (str/replace tail #"^ — this view did not finish" "")
+        stated
+        (str/replace tail #"^ — this view did not finish" "")
 
-     marker
-     " · error: "
+        marker
+        " · error: "
 
-     at-error
-     (str/index-of stated marker)
+        at-error
+        (str/index-of stated marker)
 
-     said
-     (if at-error (subs stated 0 (long at-error)) stated)]
+        said
+        (if at-error (subs stated 0 (long at-error)) stated)]
 
     (cond-> {:is-completed (= :completed ending) :reason ending}
       (str/starts-with? said " · ")
@@ -1260,50 +1227,49 @@
    Every node is checked against `spec/live-node` before it is answered, so what
    this returns is a view the engine will run, or a refusal naming the line."
   [markdown]
-  (let
-    [numbered
-     (map-indexed (fn [i line]
-                    [(inc (long i)) line])
-                  (str/split-lines (str markdown)))
+  (let [numbered
+        (map-indexed (fn [i line]
+                       [(inc (long i)) line])
+                     (str/split-lines (str markdown)))
 
-     title
-     (or (second (re-matches #"# (.+)" (str (second (first numbered)))))
-         (invalid-markdown! 1 "a view opens with `# <title>`"))
+        title
+        (or (second (re-matches #"# (.+)" (str (second (first numbered)))))
+            (invalid-markdown! 1 "a view opens with `# <title>`"))
 
-     described
-     (italicized (second (second numbered)))
+        described
+        (italicized (second (second numbered)))
 
-     groups
-     (blocks (drop (if described 2 1) numbered))
+        groups
+        (blocks (drop (if described 2 1) numbered))
 
-     ends?
-     (str/starts-with? (str (first (:lines (first groups)))) "> ")
+        ends?
+        (str/starts-with? (str (first (:lines (first groups)))) "> ")
 
-     result
-     (when ends? (verdict (first groups)))
+        result
+        (when ends? (verdict (first groups)))
 
-     painted
-     (cond-> groups
-       ends?
-       rest)
+        painted
+        (cond-> groups
+          ends?
+          rest)
 
-     nodes
-     (addressed "node"
-                :label
-                (mapv (fn [{:keys [at lines] :as group}]
-                        (let
-                          [label
-                           (second (re-matches #"### (.+)" (first lines)))
+        nodes
+        (addressed "node"
+                   :label
+                   (mapv (fn [{:keys [at lines] :as group}]
+                           (let [label
+                                 (second (re-matches #"### (.+)" (first lines)))
 
-                           block
-                           (if label {:at (inc (long at)) :lines (vec (rest lines))} group)]
+                                 block
+                                 (if label {:at (inc (long at)) :lines (vec (rest lines))} group)]
 
-                          (when (empty? (:lines block))
-                            (invalid-markdown! at "a heading with nothing under it paints no node"))
-                          (cond-> (markdown->node (block-type block) block)
-                            label
-                            (assoc :label label))))
-                      painted))]
+                             (when (empty? (:lines block))
+                               (invalid-markdown! at
+                                                  "a heading with nothing under it paints no node"))
+                             (cond-> (markdown->node (block-type block) block)
+                               label
+                               (assoc :label label))))
+                         painted))]
 
     (when (empty? nodes) (invalid-markdown! 1 "a view paints at least one node"))
     (doseq [[node group] (map vector nodes painted)]

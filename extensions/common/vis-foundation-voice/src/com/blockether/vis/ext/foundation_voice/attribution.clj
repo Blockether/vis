@@ -38,22 +38,21 @@
 (defn- source-line
   "One source, in the order `assets/sources` tries them."
   [source]
-  (let
-    [files
-     (:files source)
+  (let [files
+        (:files source)
 
-     host
-     (get host-labels (:host source) (name (:host source)))
+        host
+        (get host-labels (:host source) (name (:host source)))
 
-     size
-     (source-bytes source)
+        size
+        (source-bytes source)
 
-     ;; A file source downloads several files out of one repository: name the
-     ;; repository, not the first file that happens to be listed.
-     url
-     (or (:url source)
-         (some-> (some :url files)
-                 (str/replace #"/resolve/.*$" "")))]
+        ;; A file source downloads several files out of one repository: name the
+        ;; repository, not the first file that happens to be listed.
+        url
+        (or (:url source)
+            (some-> (some :url files)
+                    (str/replace #"/resolve/.*$" "")))]
 
     (str "  - "
          host

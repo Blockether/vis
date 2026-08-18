@@ -120,16 +120,15 @@
                      (let [r (raster markup)]
                        (expect (= [w h] [(:original-width r) (:original-height r)]) label))))
                (it "survives the .svgz gzip container unchanged"
-                   (let
-                     [markup
-                      (doc "width=\"400\" height=\"100\" viewBox=\"0 0 400 100\""
-                           "<rect width=\"400\" height=\"100\" fill=\"#ff0000\"/>")
+                   (let [markup
+                         (doc "width=\"400\" height=\"100\" viewBox=\"0 0 400 100\""
+                              "<rect width=\"400\" height=\"100\" fill=\"#ff0000\"/>")
 
-                      plain
-                      (raster markup)
+                         plain
+                         (raster markup)
 
-                      zipped
-                      (image-convert/rasterize-svg (gzip (svg-bytes markup)) nil)]
+                         zipped
+                         (image-convert/rasterize-svg (gzip (svg-bytes markup)) nil)]
 
                      (expect (= [400 100] [(:width zipped) (:height zipped)]))
                      (expect (= (seq (:bytes plain)) (seq (:bytes zipped))))))))
@@ -149,9 +148,9 @@
   (describe
     "a document that declares no size at all"
     (it "is framed by the shapes it paints, not by a fixed default canvas"
-        (let
-          [[w h] (size
-                   (doc "" "<rect x=\"50\" y=\"20\" width=\"900\" height=\"300\" fill=\"blue\"/>"))]
+        (let [[w h] (size
+                      (doc ""
+                           "<rect x=\"50\" y=\"20\" width=\"900\" height=\"300\" fill=\"blue\"/>"))]
           (expect (about 904 w))
           (expect (about 304 h))))
     (it "keeps the aspect ratio of those shapes"
@@ -165,29 +164,29 @@
           (expect (= 512 w))
           (expect (= 512 h))))
     (it "finds shapes drawn at negative coordinates"
-        (let
-          [[w h]
-           (size (doc ""
+        (let [[w h]
+              (size (doc
+                      ""
                       "<rect x=\"-800\" y=\"-400\" width=\"800\" height=\"400\" fill=\"green\"/>"))]
           (expect (about 804 w))
           (expect (about 404 h))))
     (it "finds shapes drawn far off the origin"
-        (let
-          [[w h]
-           (size
-             (doc "" "<rect x=\"-3000\" y=\"9000\" width=\"600\" height=\"300\" fill=\"black\"/>"))]
+        (let [[w h]
+              (size
+                (doc ""
+                     "<rect x=\"-3000\" y=\"9000\" width=\"600\" height=\"300\" fill=\"black\"/>"))]
           (expect (about 604 w))
           (expect (about 304 h))))
     (it "still obeys the ceiling for a figure larger than it"
-        (let
-          [[w h]
-           (size (doc "" "<rect x=\"0\" y=\"0\" width=\"20000\" height=\"5000\" fill=\"black\"/>"))]
+        (let [[w h]
+              (size (doc ""
+                         "<rect x=\"0\" y=\"0\" width=\"20000\" height=\"5000\" fill=\"black\"/>"))]
           (expect (= image-convert/svg-max-raster-dimension w))
           (expect (< 3.9 (ratio [w h]) 4.1))))
     (it "actually PAINTS those shapes -- the frame is not an empty crop"
-        (let
-          [img (rendered
-                 (doc ""
+        (let [img (rendered
+                    (doc
+                      ""
                       "<rect x=\"120\" y=\"60\" width=\"400\" height=\"200\" fill=\"#ff0000\"/>"))]
           (expect (= red (px img 200 100)))
           (expect (= white (px img 1 1)))))
@@ -227,55 +226,51 @@
   (describe
     "rendered content"
     (it "maps left/right without mirroring or stretching"
-        (let
-          [img (rendered (doc "width=\"400\" height=\"100\" viewBox=\"0 0 400 100\""
+        (let [img (rendered (doc
+                              "width=\"400\" height=\"100\" viewBox=\"0 0 400 100\""
                               "<rect width=\"200\" height=\"100\" fill=\"#ff0000\"/>"
                               "<rect x=\"200\" width=\"200\" height=\"100\" fill=\"#0000ff\"/>"))]
           (expect (= red (px img 50 50)))
           (expect (= blue (px img 350 50)))))
     (it "maps top/bottom the same way"
-        (let
-          [img (rendered (doc "width=\"100\" height=\"400\" viewBox=\"0 0 100 400\""
+        (let [img (rendered (doc
+                              "width=\"100\" height=\"400\" viewBox=\"0 0 100 400\""
                               "<rect width=\"100\" height=\"200\" fill=\"#ff0000\"/>"
                               "<rect y=\"200\" width=\"100\" height=\"200\" fill=\"#0000ff\"/>"))]
           (expect (= red (px img 50 50)))
           (expect (= blue (px img 50 350)))))
     (it "letterboxes a square viewBox inside a wide viewport instead of stretching it"
-        (let
-          [img (rendered (doc "width=\"400\" height=\"100\" viewBox=\"0 0 100 100\""
-                              "<rect width=\"100\" height=\"100\" fill=\"#008000\"/>"))]
+        (let [img (rendered (doc "width=\"400\" height=\"100\" viewBox=\"0 0 100 100\""
+                                 "<rect width=\"100\" height=\"100\" fill=\"#008000\"/>"))]
           (expect (= [400 100] [(imaging/width img) (imaging/height img)]))
           (expect (= "008000" (px img 200 50)) "centred content")
           (expect (= white (px img 10 50)) "left bar")
           (expect (= white (px img 390 50)) "right bar")))
     (it "keeps the geometry after the ceiling scales the canvas down"
-        (let
-          [img (rendered (doc
-                           "width=\"8000\" height=\"2000\""
-                           "<rect width=\"4000\" height=\"2000\" fill=\"#ff0000\"/>"
-                           "<rect x=\"4000\" width=\"4000\" height=\"2000\" fill=\"#0000ff\"/>"))]
+        (let [img (rendered
+                    (doc "width=\"8000\" height=\"2000\""
+                         "<rect width=\"4000\" height=\"2000\" fill=\"#ff0000\"/>"
+                         "<rect x=\"4000\" width=\"4000\" height=\"2000\" fill=\"#0000ff\"/>"))]
           (expect (= [4096 1024] [(imaging/width img) (imaging/height img)]))
           (expect (= red (px img 100 500)))
           (expect (= blue (px img 4000 500)))))
     (it "resolves a percentage document against the viewBox, drawing at full size"
-        (let
-          [img (rendered (doc "width=\"100%\" height=\"100%\" viewBox=\"0 0 640 480\""
+        (let [img (rendered (doc
+                              "width=\"100%\" height=\"100%\" viewBox=\"0 0 640 480\""
                               "<rect width=\"320\" height=\"480\" fill=\"#ff0000\"/>"
                               "<rect x=\"320\" width=\"320\" height=\"480\" fill=\"#0000ff\"/>"))]
           (expect (= [640 480] [(imaging/width img) (imaging/height img)]))
           (expect (= red (px img 100 240)))
           (expect (= blue (px img 540 240)))))
     (it "flattens transparency onto WHITE, not onto black-on-black"
-        (let
-          [img (rendered (doc "width=\"20\" height=\"20\""
-                              "<circle cx=\"10\" cy=\"10\" r=\"2\" fill=\"#000000\"/>"))]
+        (let [img (rendered (doc "width=\"20\" height=\"20\""
+                                 "<circle cx=\"10\" cy=\"10\" r=\"2\" fill=\"#000000\"/>"))]
           (expect (= white (px img 0 0)))
           (expect (= white (px img 19 19)))
           (expect (= "000000" (px img 10 10)))))
     (it "renders a text document without dying on the font stack"
-        (let
-          [r (raster (doc "width=\"200\" height=\"40\""
-                          "<text x=\"4\" y=\"28\" font-size=\"20\">vis</text>"))]
+        (let [r (raster (doc "width=\"200\" height=\"40\""
+                             "<text x=\"4\" y=\"28\" font-size=\"20\">vis</text>"))]
           (expect (some? r))
           (expect (= [200 40] [(:width r) (:height r)]))))))
 
@@ -295,11 +290,10 @@
         (expect (nil? (:bytes (image-convert/rasterize-svg (byte-array [0x1f 0x8b 0x08 0x00]) nil)))
                 "truncated gzip"))
     (it "refuses a document with an external XML entity outright (XXE)"
-        (let
-          [markup (str "<?xml version=\"1.0\"?>"
-                       "<!DOCTYPE svg [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>"
-                       (doc "width=\"200\" height=\"40\""
-                            "<text x=\"2\" y=\"30\" font-size=\"12\">&xxe;</text>"))]
+        (let [markup (str "<?xml version=\"1.0\"?>"
+                          "<!DOCTYPE svg [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>"
+                          (doc "width=\"200\" height=\"40\""
+                               "<text x=\"2\" y=\"30\" font-size=\"12\">&xxe;</text>"))]
           ;; The renderer never resolves the entity -- it REJECTS the whole
           ;; document, so nothing is rendered and the attachment is skipped.
           ;; Stronger than drawing an empty canvas, and it costs a real figure
@@ -314,9 +308,9 @@
                                                 "<rect width=\"20\" height=\"20\"/>")))))
                   "a plain DOCTYPE is still a good document")))
     (it "does not fetch an external <image href> (SSRF / local file read)"
-        (let
-          [img (rendered
-                 (str "<svg xmlns=\"http://www.w3.org/2000/svg\""
+        (let [img (rendered
+                    (str
+                      "<svg xmlns=\"http://www.w3.org/2000/svg\""
                       " xmlns:xlink=\"http://www.w3.org/1999/xlink\""
                       " width=\"40\" height=\"20\">"
                       "<image xlink:href=\"file:///etc/passwd\" width=\"40\" height=\"20\"/>"
@@ -325,29 +319,28 @@
           (expect (= [40 20] [(imaging/width img) (imaging/height img)]))
           (expect (= white (px img 20 10)))))
     (it "does not expand a billion-laughs entity bomb"
-        (let
-          [entities
-           (str "<!ENTITY lol \"lol\">"
-                (apply str
-                  (for [i (range 1 10)]
-                    (str "<!ENTITY lol"
-                         i
-                         " \""
-                         (apply str (repeat 10 (if (= i 1) "&lol;" (str "&lol" (dec i) ";"))))
-                         "\">"))))
+        (let [entities
+              (str "<!ENTITY lol \"lol\">"
+                   (apply str
+                     (for [i (range 1 10)]
+                       (str "<!ENTITY lol"
+                            i
+                            " \""
+                            (apply str (repeat 10 (if (= i 1) "&lol;" (str "&lol" (dec i) ";"))))
+                            "\">"))))
 
-           markup
-           (str "<?xml version=\"1.0\"?><!DOCTYPE svg [" entities
-                "]>" (doc "width=\"40\" height=\"20\"" "<text>&lol9;</text>"))
+              markup
+              (str "<?xml version=\"1.0\"?><!DOCTYPE svg [" entities
+                   "]>" (doc "width=\"40\" height=\"20\"" "<text>&lol9;</text>"))
 
-           start
-           (System/nanoTime)
+              start
+              (System/nanoTime)
 
-           r
-           (raster markup)
+              r
+              (raster markup)
 
-           elapsed-ms
-           (quot (- (System/nanoTime) start) 1000000)]
+              elapsed-ms
+              (quot (- (System/nanoTime) start) 1000000)]
 
           (expect (or (nil? (:bytes r)) (= [40 20] [(:width r) (:height r)])))
           (expect (< elapsed-ms 5000) "finished promptly instead of expanding 10^9 nodes")))))
@@ -360,9 +353,8 @@
     "a container the wire already accepts"
     (it "comes back byte-IDENTICAL, never re-encoded"
         (doseq [mt ["image/png" "image/jpeg" "image/gif" "image/webp"]]
-          (let
-            [data (raster-bytes "png" 4 4 0xff0000)
-             r (image-convert/to-provider-safe data mt)]
+          (let [data (raster-bytes "png" 4 4 0xff0000)
+                r (image-convert/to-provider-safe data mt)]
 
             (expect (identical? data (:bytes r)) mt)
             (expect (= mt (:media-type r)) mt)
@@ -375,46 +367,44 @@
         ;; wire-legal to every sniff, and a permanent `Could not process
         ;; image` 400 that replays on every later turn of the session.
         ;; Passing the container is not the same as being an image.
-        (let
-          [good
-           (raster-bytes "png" 4 4 0xff0000)
+        (let [good
+              (raster-bytes "png" 4 4 0xff0000)
 
-           corrupt
-           (byte-array (concat (take 33 good) (repeat 24 0)))
+              corrupt
+              (byte-array (concat (take 33 good) (repeat 24 0)))
 
-           r
-           (image-convert/to-provider-safe corrupt "image/png")]
+              r
+              (image-convert/to-provider-safe corrupt "image/png")]
 
           (expect (nil? (:bytes r)))
           (expect (re-find #"could not be decoded" (str (:reason r)))))))
-  (describe
-    "a raster container the wire refuses"
-    (it "becomes PNG at exactly the same dimensions"
-        (let
-          [bmp
-           (raster-bytes "bmp" 37 11 0x00ff00)
+  (describe "a raster container the wire refuses"
+            (it "becomes PNG at exactly the same dimensions"
+                (let [bmp
+                      (raster-bytes "bmp" 37 11 0x00ff00)
 
-           r
-           (image-convert/to-provider-safe bmp "image/bmp")]
+                      r
+                      (image-convert/to-provider-safe bmp "image/bmp")]
 
-          (expect (= "image/png" (:media-type r)))
-          (expect (= [37 11] [(:width r) (:height r)]))
-          (expect (= [37 11] (decoded-size (:bytes r))))
-          (expect (= "00ff00" (px (decode (:bytes r)) 18 5)))))
-    (it "says WHY, in the decoder's words, when nothing can decode it"
-        (let [r (image-convert/to-provider-safe (.getBytes "not an image" "UTF-8") "image/heic")]
-          ;; no pixels -- but the caller can tell the user what happened
-          ;; instead of dropping a perfectly valid attachment in silence.
-          (expect (nil? (:bytes r)))
-          (expect (re-find #"could not be decoded" (str (:reason r)))))))
+                  (expect (= "image/png" (:media-type r)))
+                  (expect (= [37 11] [(:width r) (:height r)]))
+                  (expect (= [37 11] (decoded-size (:bytes r))))
+                  (expect (= "00ff00" (px (decode (:bytes r)) 18 5)))))
+            (it "says WHY, in the decoder's words, when nothing can decode it"
+                (let [r (image-convert/to-provider-safe (.getBytes "not an image" "UTF-8")
+                                                        "image/heic")]
+                  ;; no pixels -- but the caller can tell the user what happened
+                  ;; instead of dropping a perfectly valid attachment in silence.
+                  (expect (nil? (:bytes r)))
+                  (expect (re-find #"could not be decoded" (str (:reason r)))))))
   (describe "an SVG payload"
             (it "is routed through the rasterizer, ratio intact"
                 (doseq [mt image-convert/svg-media-types]
-                  (let
-                    [r (image-convert/to-provider-safe
-                         (svg-bytes (doc "width=\"100%\" height=\"100%\" viewBox=\"0 0 400 100\""
+                  (let [r (image-convert/to-provider-safe
+                            (svg-bytes (doc
+                                         "width=\"100%\" height=\"100%\" viewBox=\"0 0 400 100\""
                                          "<rect width=\"400\" height=\"100\" fill=\"#ff0000\"/>"))
-                         mt)]
+                            mt)]
                     (expect (= "image/png" (:media-type r)) mt)
                     (expect (= [400 100] [(:width r) (:height r)]) mt))))
             (it "recognises its media types, and only those"
@@ -438,22 +428,20 @@
    one request carries many images -- and attachments replay, so every long
    session becomes exactly that request."
   (it "hands back a picture within the ceiling ITSELF, byte for byte"
-      (let
-        [data
-         (raster-bytes "png" 40 20 0xff0000)
+      (let [data
+            (raster-bytes "png" 40 20 0xff0000)
 
-         r
-         (image-convert/fit-dimensions data 1568)]
+            r
+            (image-convert/fit-dimensions data 1568)]
 
         (expect (identical? data (:bytes r)))
         (expect (= [40 20] [(:width r) (:height r)]))))
   (it "downscales an oversized picture, ratio intact"
-      (let
-        [data
-         (raster-bytes "png" 4000 1000 0x00ff00)
+      (let [data
+            (raster-bytes "png" 4000 1000 0x00ff00)
 
-         r
-         (image-convert/fit-dimensions data 500)]
+            r
+            (image-convert/fit-dimensions data 500)]
 
         (expect (nil? (:reason r)))
         (expect (= [500 125] [(:width r) (:height r)]))
@@ -469,23 +457,21 @@
         (let [data (raster-bytes "png" 40 20 0xff0000)]
           (expect (identical? data (:bytes (image-convert/fit-dimensions data 10)))))))
   (it "steps DOWN again when the scaler hands the payload straight back"
-      (let
-        [data
-         (raster-bytes "png" 4000 1000 0x00ff00)
+      (let [data
+            (raster-bytes "png" 4000 1000 0x00ff00)
 
-         real
-         imaging/optimize
+            real
+            imaging/optimize
 
-         targets
-         (atom [])]
+            targets
+            (atom [])]
 
         ;; A container the scaler refuses to re-encode at the first rung: the
         ;; bytes come back UNCHANGED, still 4000px wide. Trusting that output is
         ;; exactly how an oversized picture reaches the wire believing it fits.
-        (with-redefs
-          [imaging/optimize (fn [d opts]
-                              (swap! targets conj (:max-width opts))
-                              (if (= 500 (:max-width opts)) d (real d opts)))]
+        (with-redefs [imaging/optimize (fn [d opts]
+                                         (swap! targets conj (:max-width opts))
+                                         (if (= 500 (:max-width opts)) d (real d opts)))]
           (let [r (image-convert/fit-dimensions data 500)]
             (expect (= [500 250] @targets))
             (expect (nil? (:reason r)))
@@ -537,34 +523,32 @@
    an independent re-derivation of the ink bounds [[image-convert]] measures
    with the renderer."
   [^bytes data]
-  (let
-    [^BufferedImage img
-     (io-image data)
+  (let [^BufferedImage img
+        (io-image data)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     h
-     (.getHeight img)]
+        h
+        (.getHeight img)]
 
-    (loop
-      [x
-       0
+    (loop [x
+           0
 
-       y
-       0
+           y
+           0
 
-       x0
-       Long/MAX_VALUE
+           x0
+           Long/MAX_VALUE
 
-       y0
-       Long/MAX_VALUE
+           y0
+           Long/MAX_VALUE
 
-       x1
-       -1
+           x1
+           -1
 
-       y1
-       -1]
+           y1
+           -1]
 
       (cond (>= y h) [x0 y0 x1 y1]
             (>= x w) (recur 0 (inc y) x0 y0 x1 y1)
@@ -585,57 +569,53 @@
         (doseq [[label markup expected] size-cases]
           (expect (= expected (io-size (:bytes (raster markup)))) label)))
     (it "carries the drawing where our own reader says it is"
-        (let
-          [png (:bytes (raster (doc "width=\"40\" height=\"20\""
-                                    "<rect width=\"40\" height=\"20\" fill=\"#ff0000\"/>")))]
+        (let [png (:bytes (raster (doc "width=\"40\" height=\"20\""
+                                       "<rect width=\"40\" height=\"20\" fill=\"#ff0000\"/>")))]
           (expect (= red (io-px png 20 10)))
           (expect (= (px (decode png) 20 10) (io-px png 20 10)))))
     (it "frames a size-less document where an independent raster scan finds the ink"
         ;; The frame comes from OUR alpha scan of a probe render; these bounds
         ;; come from the JDK's raster of the finished PNG. They must agree, or
         ;; the framing is measuring something other than the picture.
-        (let
-          [r
-           (raster (doc ""
-                        "<rect x=\"120\" y=\"60\" width=\"400\" height=\"200\" fill=\"#ff0000\"/>"))
+        (let [r
+              (raster
+                (doc "" "<rect x=\"120\" y=\"60\" width=\"400\" height=\"200\" fill=\"#ff0000\"/>"))
 
-           [x0 y0 x1 y1]
-           (io-ink-bounds (:bytes r))]
+              [x0 y0 x1 y1]
+              (io-ink-bounds (:bytes r))]
 
           (expect (about 0 x0))
           (expect (about 0 y0))
           (expect (about (dec (long (:width r))) x1))
           (expect (about (dec (long (:height r))) y1)))))
-  (describe
-    "a re-containered raster"
-    (it "decodes independently, at the dimensions vis reported"
-        (let [r (image-convert/to-provider-safe (raster-bytes "bmp" 37 11 0x00ff00) "image/bmp")]
-          (expect (= [37 11] [(:width r) (:height r)]))
-          (expect (= [37 11] (io-size (:bytes r))))
-          (expect (= "00ff00" (io-px (:bytes r) 18 5)))))
-    (it "is decodable independently for every container passed through untouched"
-        ;; PNG and GIF are handed back byte-identical, so the INPUT bytes are
-        ;; what the provider sees; WebP has no JDK reader, which is a gap in the
-        ;; oracle, not in the payload.
-        (doseq [[fmt mt] [["png" "image/png"] ["gif" "image/gif"]]]
-          (let
-            [data (raster-bytes fmt 9 5 0x0000ff)
-             r (image-convert/to-provider-safe data mt)]
+  (describe "a re-containered raster"
+            (it "decodes independently, at the dimensions vis reported"
+                (let [r (image-convert/to-provider-safe (raster-bytes "bmp" 37 11 0x00ff00)
+                                                        "image/bmp")]
+                  (expect (= [37 11] [(:width r) (:height r)]))
+                  (expect (= [37 11] (io-size (:bytes r))))
+                  (expect (= "00ff00" (io-px (:bytes r) 18 5)))))
+            (it "is decodable independently for every container passed through untouched"
+                ;; PNG and GIF are handed back byte-identical, so the INPUT bytes are
+                ;; what the provider sees; WebP has no JDK reader, which is a gap in the
+                ;; oracle, not in the payload.
+                (doseq [[fmt mt] [["png" "image/png"] ["gif" "image/gif"]]]
+                  (let [data (raster-bytes fmt 9 5 0x0000ff)
+                        r (image-convert/to-provider-safe data mt)]
 
-            (expect (identical? data (:bytes r)) mt)
-            (expect (= [9 5] (io-size (:bytes r))) mt)))
-        (expect (= :no-reader (io-size (raster-bytes "webp" 8 8 0x0000ff))))))
+                    (expect (identical? data (:bytes r)) mt)
+                    (expect (= [9 5] (io-size (:bytes r))) mt)))
+                (expect (= :no-reader (io-size (raster-bytes "webp" 8 8 0x0000ff))))))
   (describe "a payload the gate refuses"
             (it "is refused by BOTH decoders -- the refusal is about the bytes, not the vendor"
-                (let
-                  [good
-                   (raster-bytes "png" 4 4 0xff0000)
+                (let [good
+                      (raster-bytes "png" 4 4 0xff0000)
 
-                   corrupt
-                   (byte-array (concat (take 33 good) (repeat 24 0)))
+                      corrupt
+                      (byte-array (concat (take 33 good) (repeat 24 0)))
 
-                   r
-                   (image-convert/to-provider-safe corrupt "image/png")]
+                      r
+                      (image-convert/to-provider-safe corrupt "image/png")]
 
                   (expect (nil? (:bytes r)))
                   (expect (re-find #"could not be decoded" (str (:reason r))))
@@ -672,18 +652,17 @@
     ;; and vis's own answer agree to the pixel below. If they ever disagree, a
     ;; repair has crept back into vis -- or the library stopped repairing.
     (it "falls back to the viewBox for a zero or negative size"
-        (doseq
-          [[markup expected] [[(doc "width=\"0\" height=\"0\" viewBox=\"0 0 30 60\"") [30 60]]
-                              [(doc "width=\"-10\" height=\"-5\" viewBox=\"0 0 20 10\"") [20 10]]]]
+        (doseq [[markup expected] [[(doc "width=\"0\" height=\"0\" viewBox=\"0 0 30 60\"") [30 60]]
+                                   [(doc "width=\"-10\" height=\"-5\" viewBox=\"0 0 20 10\"")
+                                    [20 10]]]]
           (expect (= expected (probe-size markup)))
           (expect (= expected (size markup)))))
     (it "frames a size-less document by the ink it actually paints"
-        (let
-          [off-origin
-           (doc "" "<rect x=\"50\" y=\"20\" width=\"900\" height=\"300\" fill=\"blue\"/>")
+        (let [off-origin
+              (doc "" "<rect x=\"50\" y=\"20\" width=\"900\" height=\"300\" fill=\"blue\"/>")
 
-           negative
-           (doc "" "<rect x=\"-800\" y=\"-400\" width=\"800\" height=\"400\" fill=\"green\"/>")]
+              negative
+              (doc "" "<rect x=\"-800\" y=\"-400\" width=\"800\" height=\"400\" fill=\"green\"/>")]
 
           (expect (= (probe-size off-origin) (size off-origin)))
           (expect (= (probe-size negative) (size negative)))

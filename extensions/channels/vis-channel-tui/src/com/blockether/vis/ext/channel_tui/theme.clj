@@ -246,15 +246,14 @@
    (a PRIMARY/FALLBACK badge, say) stays legible whatever hue the active theme
    gives it — no per-theme label colour to keep in sync."
   [bg]
-  (let
-    [l
-     (relative-luminance bg)
+  (let [l
+        (relative-luminance bg)
 
-     ink-gap
-     (abs (- l (relative-luminance dialog-fg)))
+        ink-gap
+        (abs (- l (relative-luminance dialog-fg)))
 
-     surface-gap
-     (abs (- l (relative-luminance dialog-bg)))]
+        surface-gap
+        (abs (- l (relative-luminance dialog-bg)))]
 
     (if (>= ink-gap surface-gap) dialog-fg dialog-bg)))
 
@@ -431,18 +430,17 @@
    updated Lanterna colors/widths/spacing without requiring channels to ship
    their own theme declaration."
   [theme-id]
-  (let
-    [theme-id
-     (or theme-id theme/default-theme-id)
+  (let [theme-id
+        (or theme-id theme/default-theme-id)
 
-     theme-map
-     (theme/theme theme-id)
+        theme-map
+        (theme/theme theme-id)
 
-     widths
-     (:widths theme-map)
+        widths
+        (:widths theme-map)
 
-     spacing
-     (:spacing theme-map)]
+        spacing
+        (:spacing theme-map)]
 
     (reset! active-theme-id (:name theme-map))
     (alter-var-root #'default-theme (constantly theme-map))

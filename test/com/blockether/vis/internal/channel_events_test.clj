@@ -25,12 +25,11 @@
                    (ce/remove-channel-event-listener! chan ::b)
                    (expect (empty? (ce/channel-event-listeners chan)))))
              (it "replaces a listener re-registered under the same id"
-                 (let
-                   [chan
-                    (fresh-channel)
+                 (let [chan
+                       (fresh-channel)
 
-                    seen
-                    (atom [])]
+                       seen
+                       (atom [])]
 
                    (ce/add-channel-event-listener! chan
                                                    ::only
@@ -59,12 +58,11 @@
 (defdescribe
   publish-channel-event!-test
   (it "delivers the event to every subscriber and counts them"
-      (let
-        [chan
-         (fresh-channel)
+      (let [chan
+            (fresh-channel)
 
-         seen
-         (atom [])]
+            seen
+            (atom [])]
 
         (ce/add-channel-event-listener! chan
                                         ::a
@@ -79,12 +77,11 @@
         (ce/remove-channel-event-listener! chan ::a)
         (ce/remove-channel-event-listener! chan ::b)))
   (it "stamps :channel/id when absent and never overwrites an explicit one"
-      (let
-        [chan
-         (fresh-channel)
+      (let [chan
+            (fresh-channel)
 
-         seen
-         (atom nil)]
+            seen
+            (atom nil)]
 
         (ce/add-channel-event-listener! chan
                                         ::a
@@ -98,15 +95,14 @@
   (it "delivers nothing, and throws nothing, when no one is subscribed"
       (expect (zero? (ce/publish-channel-event! (fresh-channel) {:op :ping}))))
   (it "does not deliver across channels"
-      (let
-        [a
-         (fresh-channel)
+      (let [a
+            (fresh-channel)
 
-         b
-         (fresh-channel)
+            b
+            (fresh-channel)
 
-         seen
-         (atom 0)]
+            seen
+            (atom 0)]
 
         (ce/add-channel-event-listener! a
                                         ::a
@@ -117,12 +113,11 @@
         (ce/remove-channel-event-listener! a ::a)))
   (it "a throwing listener takes down neither the publisher nor its siblings"
       ;; The whole point of the bus: an extension cannot crash a mounted channel.
-      (let
-        [chan
-         (fresh-channel)
+      (let [chan
+            (fresh-channel)
 
-         seen
-         (atom [])]
+            seen
+            (atom [])]
 
         (ce/add-channel-event-listener! chan
                                         ::boom
@@ -137,12 +132,11 @@
         (ce/remove-channel-event-listener! chan ::boom)
         (ce/remove-channel-event-listener! chan ::ok)))
   (it "publishes against a SNAPSHOT, so a listener may unsubscribe mid-dispatch"
-      (let
-        [chan
-         (fresh-channel)
+      (let [chan
+            (fresh-channel)
 
-         seen
-         (atom [])]
+            seen
+            (atom [])]
 
         (ce/add-channel-event-listener! chan
                                         ::self

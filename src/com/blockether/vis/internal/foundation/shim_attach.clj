@@ -61,34 +61,31 @@
   [^String media-type ^String b64]
   (try (let [mt (str/lower-case (str/trim (str media-type)))]
          (cond (attachments/human-only-media-type? mt)
-               (let
-                 [bytes (.decode (java.util.Base64/getDecoder) b64)
-                  ext (if (str/includes? mt "pdf") "pdf" "html")
-                  f (mpl-capture/display-cache-file "doc-" ext bytes)]
+               (let [bytes (.decode (java.util.Base64/getDecoder) b64)
+                     ext (if (str/includes? mt "pdf") "pdf" "html")
+                     f (mpl-capture/display-cache-file "doc-" ext bytes)]
 
                  [(.getAbsolutePath f) 0 0])
                (str/starts-with? mt "image/")
-               (let
-                 [bytes (.decode (java.util.Base64/getDecoder) b64)
-                  info
-                  ;; imaging probes SVG too, but the inline fence is for RASTER bytes a
-                  ;; viewer can paint as-is — an SVG stays a text placeholder.
-                  (let [i (imaging/probe bytes)]
-                    (when-not (= "svg"
-                                 (some-> (:format i)
-                                         name))
-                      i))]
+               (let [bytes (.decode (java.util.Base64/getDecoder) b64)
+                     info
+                     ;; imaging probes SVG too, but the inline fence is for RASTER bytes a
+                     ;; viewer can paint as-is — an SVG stays a text placeholder.
+                     (let [i (imaging/probe bytes)]
+                       (when-not (= "svg"
+                                    (some-> (:format i)
+                                            name))
+                         i))]
 
                  (when info
-                   (let
-                     [w (:width info)
-                      h (:height info)
-                      ext (or (some-> mt
-                                      (str/split #"/")
-                                      second
-                                      (str/replace #"[^a-z0-9]" ""))
-                              "img")
-                      f (mpl-capture/display-cache-file "att-" ext bytes)]
+                   (let [w (:width info)
+                         h (:height info)
+                         ext (or (some-> mt
+                                         (str/split #"/")
+                                         second
+                                         (str/replace #"[^a-z0-9]" ""))
+                                 "img")
+                         f (mpl-capture/display-cache-file "att-" ext bytes)]
 
                      [(.getAbsolutePath f) w h])))))
        (catch Throwable _ nil)))
@@ -133,10 +130,9 @@
   [att]
   (if-not (and (str/starts-with? (str (:media-type att)) "image/")
                (not (str/blank? (str (:base64 att)))))
-    (throw (ex-info (str "show_attachment: no image attachment with id "
-                         (:id att)
-                         " in this session")
-                    {}))
+    (throw (ex-info
+             (str "show_attachment: no image attachment with id " (:id att) " in this session")
+             {}))
     (do (when (= "user" (attachments/attachment-audience att))
           (mpl-capture/queue-reinspection! att))
         [(str (:id att)) (str (:filename att)) (str (:media-type att)) (long (or (:size att) 0))])))
@@ -167,31 +163,29 @@
                                 "python_execution block so the produced artifact can be "
                                 "attached to that iteration")
                            {}))
-           :else
-           (let
-             [info
-              (display-info (str media-type) (str b64))
+           :else (let [info
+                       (display-info (str media-type) (str b64))
 
-              recorded
-              (mpl-capture/record-attachment!
-                (cond-> {:kind (or (not-empty (str kind)) "file")
-                         :media-type (str media-type)
-                         :base64 (str b64)
-                         :size (long (or size 0))
-                         ;; One funnel: a PDF/HTML document is clamped to "user" by
-                         ;; `attachment-audience` itself, so no caller can put a
-                         ;; document on the wire as an image block.
-                         :audience (attachments/attachment-audience
-                                     {:media-type (str media-type) :audience audience})}
-                  (not (str/blank? (str filename)))
-                  (assoc :filename (str filename))
+                       recorded
+                       (mpl-capture/record-attachment!
+                         (cond-> {:kind (or (not-empty (str kind)) "file")
+                                  :media-type (str media-type)
+                                  :base64 (str b64)
+                                  :size (long (or size 0))
+                                  ;; One funnel: a PDF/HTML document is clamped to "user" by
+                                  ;; `attachment-audience` itself, so no caller can put a
+                                  ;; document on the wire as an image block.
+                                  :audience (attachments/attachment-audience
+                                              {:media-type (str media-type) :audience audience})}
+                           (not (str/blank? (str filename)))
+                           (assoc :filename (str filename))
 
-                  (not (str/blank? (str label)))
-                  (assoc :label (str/trim (str label)))))]
+                           (not (str/blank? (str label)))
+                           (assoc :label (str/trim (str label)))))]
 
-             (json/write-json-str (cond-> (dissoc (pending-descriptor 0 recorded) :position)
-                                    (some? info)
-                                    (assoc :display (vec info))))))))
+                   (json/write-json-str (cond-> (dissoc (pending-descriptor 0 recorded) :position)
+                                          (some? info)
+                                          (assoc :display (vec info))))))))
 
 (defn- attach-bridge-bindings
   "Host callables the `attach` shim delegates to. `__vis_record_attachment__`
@@ -226,13 +220,12 @@
           (when-not (or r mpl-capture/*attachment-sink*)
             (throw (ex-info (str "list_attachments: no active attachment reader — call it "
                                  "inside a python_execution block")
-                            {})))
-          (json/write-json-str (into (vec (when r (or ((:list r)) []))) (pending-descriptors))))))
+                            {}))) (json/write-json-str (into (vec (when r (or ((:list r)) [])))
+                                                             (pending-descriptors))))))
    "__vis_read_attachment__"
    (fn [id]
      (attach-envelope
-       #(if-let [pending (pending-by-id id)]
-          (:base64 pending)
+       #(if-let [pending (pending-by-id id)] (:base64 pending)
           (if-let [r mpl-capture/*attachment-reader*]
             (if-let [a ((:read r) (str id))]
               (:base64 a)
@@ -244,8 +237,7 @@
    "__vis_reinspect_attachment__"
    (fn [id]
      (attach-envelope
-       #(if-let [pending (pending-by-id id)]
-          (reinspect-pending pending)
+       #(if-let [pending (pending-by-id id)] (reinspect-pending pending)
           (if-let [r mpl-capture/*attachment-reader*]
             (if-let [a ((:reinspect r) (str id))]
               [(str (:id a)) (str (:filename a)) (str (:media-type a)) (long (or (:size a) 0))]
@@ -268,9 +260,9 @@
           "a transcript table whose rows never reach the model. "
           "SAME DOCUMENT, SAME NAME: a revision goes back under the filename it already had, "
           "as that artifact's next VERSION; a new name is a different document. "
-           "`attach` returns that artifact's descriptor; `list_attachments()`, `get_attachment` "
-           "and `read_attachment` take the same target — the filename, or an id out of a "
-           "descriptor — including an artifact attached in the very same block.")
+          "`attach` returns that artifact's descriptor; `list_attachments()`, `get_attachment` "
+          "and `read_attachment` take the same target — the filename, or an id out of a "
+          "descriptor — including an artifact attached in the very same block.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -295,11 +287,11 @@
             "many images into one sheet per call; `audience='both'|'user'|'model'` routes who "
             "sees it. ONE ADDRESSING RULE on the read side: `get_attachment(target, "
             "version=None)`, `read_attachment` and `show_attachment` take the FILENAME (latest "
-             "cut unless you name a version) or an `id` from a descriptor — `attach` RETURNS "
-             "that descriptor, and an artifact this block just attached is addressable at once. "
-             "`read_attachment` is "
-             "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
-             "the MODEL for the next request. Vis-native; no upstream library.")
+            "cut unless you name a version) or an `id` from a descriptor — `attach` RETURNS "
+            "that descriptor, and an artifact this block just attached is addressable at once. "
+            "`read_attachment` is "
+            "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
+            "the MODEL for the next request. Vis-native; no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

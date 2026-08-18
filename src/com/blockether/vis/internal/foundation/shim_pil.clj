@@ -173,15 +173,14 @@
   "A blank raster for `mode`: transparent for the alpha modes, opaque black
    otherwise -- the same starting state `new BufferedImage(...)` used to give."
   ^Raster [mode w h]
-  (let
-    [w
-     (long w)
+  (let [w
+        (long w)
 
-     h
-     (long h)
+        h
+        (long h)
 
-     a?
-     (alpha-mode? mode)]
+        a?
+        (alpha-mode? mode)]
 
     (Raster. (int-array (* w h) (if a? (int 0) (unchecked-int 0xff000000)))
              w
@@ -234,23 +233,21 @@
    reflect.Array/setByte`, and four reflective stores per pixel cost 65 ms on a
    800x600 canvas versus 1.8 ms for the inlined array store."
   ^bytes [^Raster r]
-  (let
-    [^ints px
-     (.px r)
+  (let [^ints px
+        (.px r)
 
-     amask
-     (.amask r)
+        amask
+        (.amask r)
 
-     n
-     (alength px)
+        n
+        (alength px)
 
-     b
-     (byte-array (* 4 n))]
+        b
+        (byte-array (* 4 n))]
 
     (dotimes [i n]
-      (let
-        [p (bit-or amask (bit-and 0xffffffff (aget px i)))
-         o (* 4 i)]
+      (let [p (bit-or amask (bit-and 0xffffffff (aget px i)))
+            o (* 4 i)]
 
         (aset b o (unchecked-byte (ch p 16)))
         (aset b (+ o 1) (unchecked-byte (ch p 8)))
@@ -269,12 +266,11 @@
    The packing is spelled out rather than delegated to `argb`, whose arguments
    are boxed: this runs once per pixel on every read of a drawn canvas."
   ^Raster [^Raster r ^bytes b]
-  (let
-    [^ints px
-     (.px r)
+  (let [^ints px
+        (.px r)
 
-     n
-     (alength px)]
+        n
+        (alength px)]
 
     (dotimes [i n]
       (let [o (* 4 i)]
@@ -326,12 +322,11 @@
    writes carries an alpha channel and a saved 'RGB' image has to open as 'RGB'
    again. An unreadable header just means not-grayscale."
   [^bytes b img]
-  (let
-    [{:keys [is-grayscale]}
-     (try (im/probe b) (catch Throwable _ nil))
+  (let [{:keys [is-grayscale]}
+        (try (im/probe b) (catch Throwable _ nil))
 
-     alpha?
-     (not (:is-opaque (im/info img)))]
+        alpha?
+        (not (:is-opaque (im/info img)))]
 
     (if is-grayscale (if alpha? "LA" "L") (if alpha? "RGBA" "RGB"))))
 
@@ -343,21 +338,19 @@
 (defn- flatten-rgb
   "Composite onto opaque white -- what the alpha-less codecs (JPEG, BMP) need."
   ^Raster [^Raster src]
-  (let
-    [w
-     (.getWidth src)
+  (let [w
+        (.getWidth src)
 
-     h
-     (.getHeight src)
+        h
+        (.getHeight src)
 
-     out
-     (new-raster "RGB" w h)]
+        out
+        (new-raster "RGB" w h)]
 
     (dotimes [y h]
       (dotimes [x w]
-        (let
-          [p (.getRGB src x y)
-           a (/ (ch p 24) 255.0)]
+        (let [p (.getRGB src x y)
+              a (/ (ch p 24) 255.0)]
 
           (.setRGB out
                    x
@@ -392,15 +385,14 @@
 (defn- guard-decodable!
   "Throw a truthful `image too large` before an oversized decode is attempted."
   [probe]
-  (let
-    [w
-     (long (:width probe 0))
+  (let [w
+        (long (:width probe 0))
 
-     h
-     (long (:height probe 0))
+        h
+        (long (:height probe 0))
 
-     need
-     (* w h 4)]
+        need
+        (* w h 4)]
 
     (when (> need (long max-decode-bytes))
       (throw
@@ -416,51 +408,47 @@
 (defn- frame-raster
   "A decoded GIF frame's full-canvas ARGB pixels as a raster + its Pillow mode."
   [^ints argb ^long w ^long h]
-  (let
-    [opaque? (loop [i 0]
-               (cond (>= i (alength argb)) true
-                     (not= 255 (bit-and 0xff (bit-shift-right (aget argb i) 24))) false
-                     :else (recur (inc i))))]
+  (let [opaque? (loop [i 0]
+                  (cond (>= i (alength argb)) true
+                        (not= 255 (bit-and 0xff (bit-shift-right (aget argb i) 24))) false
+                        :else (recur (inc i))))]
     [(Raster. (aclone argb) w h (if opaque? 0xff000000 0)) (if opaque? "RGB" "RGBA")]))
 
 (defn- open-animation
   "Register a decoded multi-frame GIF: the handle holds frame 0 and the entry
    keeps every frame, so `seek` can swap them in without re-decoding."
   [{:keys [width height loop-count frames]}]
-  (let
-    [[img mode]
-     (frame-raster (:argb (first frames)) (long width) (long height))
+  (let [[img mode]
+        (frame-raster (:argb (first frames)) (long width) (long height))
 
-     h
-     (put-img! img mode)]
+        h
+        (put-img! img mode)]
 
     (res/update! ::images
-      h
-      assoc
-      :frames (mapv #(select-keys % [:argb :delay-ms :disposal]) frames)
-      :frame 0
-      :loop-count loop-count)
+                 h
+                 assoc
+                 :frames (mapv #(select-keys % [:argb :delay-ms :disposal]) frames)
+                 :frame 0
+                 :loop-count loop-count)
     (meta-of h)))
 
 (defn- op-open
   [b64]
-  (let
-    [bytes
-     (.decode (Base64/getDecoder) ^String b64)
+  (let [bytes
+        (.decode (Base64/getDecoder) ^String b64)
 
-     _
-     (guard-decodable! (try (im/probe bytes) (catch Throwable _ nil)))
+        _
+        (guard-decodable! (try (im/probe bytes) (catch Throwable _ nil)))
 
-     anim
-     (when (gif/gif? bytes) (try (gif/decode bytes) (catch Throwable _ nil)))]
+        anim
+        (when (gif/gif? bytes) (try (gif/decode bytes) (catch Throwable _ nil)))]
 
     (if (seq (:frames anim))
       (open-animation anim)
       (let [img (try (im/decode bytes) (catch Throwable _ nil))]
         (when (nil? img) (throw (ex-info "cannot identify image file" {})))
-        (let
-          [mode (img->mode bytes img)
-           h (put-img! (->raster img mode) mode)]
+        (let [mode (img->mode bytes img)
+              h (put-img! (->raster img mode) mode)]
 
           (im/close! img)
           (meta-of h))))))
@@ -475,24 +463,22 @@
 (defn- op-seek
   "Make frame `n` the current one, in place (Pillow's `Image.seek`)."
   [h n]
-  (let
-    [{:keys [frames]}
-     (entry h)
+  (let [{:keys [frames]}
+        (entry h)
 
-     n
-     (long n)]
+        n
+        (long n)]
 
     (when-not (and (seq frames) (<= 0 n) (< n (count frames)))
       (throw (ex-info "attempt to seek beyond the last frame" {:frame n})))
-    (let
-      [{:keys [^ints argb]}
-       (nth frames n)
+    (let [{:keys [^ints argb]}
+          (nth frames n)
 
-       ^Raster cur
-       (:img (entry h))
+          ^Raster cur
+          (:img (entry h))
 
-       [img mode]
-       (frame-raster argb (.getWidth cur) (.getHeight cur))]
+          [img mode]
+          (frame-raster argb (.getWidth cur) (.getHeight cur))]
 
       (res/update! ::images (long h) assoc :img img :mode mode :frame n)
       (meta-of h))))
@@ -500,16 +486,15 @@
 (defn- normalise-format
   "A Pillow format name -> the `imaging` codec key, or a PIL-visible error."
   [fmt]
-  (let
-    [fmt
-     (str/lower-case (or fmt "png"))
+  (let [fmt
+        (str/lower-case (or fmt "png"))
 
-     fmt
-     (case fmt
-       "jpg"
-       "jpeg"
+        fmt
+        (case fmt
+          "jpg"
+          "jpeg"
 
-       fmt)]
+          fmt)]
 
     (when-not (contains? encodable-formats fmt)
       (throw (ex-info (str "no image writer for format " fmt) {})))
@@ -530,48 +515,46 @@
    is Pillow's flag of the same name: a second, LOSSLESS pass through the
    format's real optimiser."
   [h fmt quality optimize]
-  (let
-    [{:keys [^Raster img]}
-     (entry h)
+  (let [{:keys [^Raster img]}
+        (entry h)
 
-     fmt
-     (normalise-format fmt)
+        fmt
+        (normalise-format fmt)
 
-     img
-     (if (and (#{"jpeg" "bmp"} fmt) (has-alpha? img)) (flatten-rgb img) img)
+        img
+        (if (and (#{"jpeg" "bmp"} fmt) (has-alpha? img)) (flatten-rgb img) img)
 
-     q
-     (when (number? quality) (min 100 (max 1 (long quality))))
+        q
+        (when (number? quality) (min 100 (max 1 (long quality))))
 
-     src
-     (->img img)
+        src
+        (->img img)
 
-     ^bytes raw
-     (try (if q (im/encode src (keyword fmt) q) (im/encode src (keyword fmt)))
-          (finally (im/close! src)))]
+        ^bytes raw
+        (try (if q (im/encode src (keyword fmt) q) (im/encode src (keyword fmt)))
+             (finally (im/close! src)))]
 
     (.encodeToString (Base64/getEncoder) (if optimize (optimised raw) raw))))
 
 (defn- op-save-temp
   [h fmt]
-  (let
-    [{:keys [^Raster img]}
-     (entry h)
+  (let [{:keys [^Raster img]}
+        (entry h)
 
-     fmt
-     (str/lower-case (or fmt "png"))
+        fmt
+        (str/lower-case (or fmt "png"))
 
-     norm
-     (normalise-format fmt)
+        norm
+        (normalise-format fmt)
 
-     b64
-     (op-save h fmt nil false)
+        b64
+        (op-save h fmt nil false)
 
-     bytes
-     (.decode (Base64/getDecoder) ^String b64)
+        bytes
+        (.decode (Base64/getDecoder) ^String b64)
 
-     f
-     (mpl-capture/display-cache-file "img-" fmt bytes)]
+        f
+        (mpl-capture/display-cache-file "img-" fmt bytes)]
 
     (mpl-capture/record-attachment! {:kind "image"
                                      :media-type (str "image/" norm)
@@ -583,18 +566,17 @@
 
 (defn- op-copy
   [h]
-  (let
-    [{:keys [^Raster img mode palette indices transparent]}
-     (entry h)
+  (let [{:keys [^Raster img mode palette indices transparent]}
+        (entry h)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)
+        hh
+        (.getHeight img)
 
-     out
-     (new-raster mode w hh)]
+        out
+        (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -620,44 +602,41 @@
 
 (defn- op-resize
   [h w h2 resample]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     src
-     (->img img)
+        src
+        (->img img)
 
-     out
-     (im/resize src (int w) (int h2) (resample->filter resample))]
+        out
+        (im/resize src (int w) (int h2) (resample->filter resample))]
 
     (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
 (defn- op-crop
   [h l t r b]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     w
-     (max 1 (- (int r) (int l)))
+        w
+        (max 1 (- (int r) (int l)))
 
-     hh
-     (max 1 (- (int b) (int t)))
+        hh
+        (max 1 (- (int b) (int t)))
 
-     iw
-     (.getWidth img)
+        iw
+        (.getWidth img)
 
-     ih
-     (.getHeight img)
+        ih
+        (.getHeight img)
 
-     out
-     (new-raster mode w hh)]
+        out
+        (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let
-          [sx (+ x (int l))
-           sy (+ y (int t))]
+        (let [sx (+ x (int l))
+              sy (+ y (int t))]
 
           (when (and (>= sx 0) (< sx iw) (>= sy 0) (< sy ih))
             (.setRGB out x y (.getRGB img sx sy))))))
@@ -665,17 +644,16 @@
 
 (defn- op-rotate
   [h angle expand fillc]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     src
-     (->img img)
+        src
+        (->img img)
 
-     out
-     (im/rotate src
-                (double angle)
-                {:expand (boolean expand) :background (->hex (->argb fillc mode))})]
+        out
+        (im/rotate src
+                   (double angle)
+                   {:expand (boolean expand) :background (->hex (->argb fillc mode))})]
 
     (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
@@ -684,43 +662,42 @@
    `flip`/`rotate` (counter-clockwise, like PIL), and the two diagonal methods
    compose the pair — no pixel loop of ours."
   [h method]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     step
-     (fn [im op]
-       (let [out (if (keyword? op) (im/flip im op) (im/rotate im (double op) {:expand true}))]
-         (im/close! im)
-         out))
+        step
+        (fn [im op]
+          (let [out (if (keyword? op) (im/flip im op) (im/rotate im (double op) {:expand true}))]
+            (im/close! im)
+            out))
 
-     ops
-     (case (int method)
-       0
-       [:horizontal]
+        ops
+        (case (int method)
+          0
+          [:horizontal]
 
-       1
-       [:vertical]
+          1
+          [:vertical]
 
-       2
-       [90]
+          2
+          [90]
 
-       3
-       [180]
+          3
+          [180]
 
-       4
-       [270]
+          4
+          [270]
 
-       5
-       [90 :vertical]
+          5
+          [90 :vertical]
 
-       6
-       [270 :vertical]
+          6
+          [270 :vertical]
 
-       [])
+          [])
 
-     out
-     (reduce step (->img img) ops)]
+        out
+        (reduce step (->img img) ops)]
 
     (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! out)))))
 
@@ -751,28 +728,25 @@
    lossy PNG and GIF paths, so a shim palette and a written GIF cannot drift
    apart. Only the packing into a PIL raster is done here."
   [^Raster src ^long ncolors dither?]
-  (let
-    [w
-     (.getWidth src)
+  (let [w
+        (.getWidth src)
 
-     hh
-     (.getHeight src)
+        hh
+        (.getHeight src)
 
-     img
-     (->img src)]
+        img
+        (->img src)]
 
-    (try (let
-           [{:keys [palette indices transparent ^bytes rgba]}
-            (im/quantize img {:colors ncolors :dither (boolean dither?)})
+    (try (let [{:keys [palette indices transparent ^bytes rgba]}
+               (im/quantize img {:colors ncolors :dither (boolean dither?)})
 
-            out
-            (new-raster "P" w hh)]
+               out
+               (new-raster "P" w hh)]
 
            (dotimes [y hh]
              (dotimes [x w]
-               (let
-                 [o (* 4 (+ (* y w) x))
-                  a (bit-and (aget rgba (+ o 3)) 0xff)]
+               (let [o (* 4 (+ (* y w) x))
+                     a (bit-and (aget rgba (+ o 3)) 0xff)]
 
                  (.setRGB out
                           x
@@ -811,37 +785,35 @@
    switches it to mode P): the pixels become the colours their index selects, so
    a later save or convert shows the new table."
   [h data]
-  (let
-    [{:keys [^Raster img ^bytes indices]}
-     (entry h)
+  (let [{:keys [^Raster img ^bytes indices]}
+        (entry h)
 
-     pal
-     (int-array (map (fn [[r g b]]
-                       (bit-or (bit-shift-left (bit-and (long r) 255) 16)
-                               (bit-shift-left (bit-and (long g) 255) 8)
-                               (bit-and (long b) 255)))
-                     (partition 3 3 [0 0] (map long data))))
+        pal
+        (int-array (map (fn [[r g b]]
+                          (bit-or (bit-shift-left (bit-and (long r) 255) 16)
+                                  (bit-shift-left (bit-and (long g) 255) 8)
+                                  (bit-and (long b) 255)))
+                        (partition 3 3 [0 0] (map long data))))
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)
+        hh
+        (.getHeight img)
 
-     ind
-     (or indices (byte-array (* w hh)))]
+        ind
+        (or indices (byte-array (* w hh)))]
 
     (when (zero? (alength pal)) (throw (ex-info "palette must hold at least one RGB triple" {})))
     (dotimes [y hh]
       (dotimes [x w]
-        (let
-          [i (+ (* y w) x)
-           idx (if indices
-                 (bit-and (aget ind i) 255)
-                 ;; an L / 1 raster indexes the new table by its gray value
-                 (ch (.getRGB img x y) 16))
-           idx (min idx (dec (alength pal)))
-           c (aget pal (int idx))]
+        (let [i (+ (* y w) x)
+              idx (if indices
+                    (bit-and (aget ind i) 255)
+                    ;; an L / 1 raster indexes the new table by its gray value
+                    (ch (.getRGB img x y) 16))
+              idx (min idx (dec (alength pal)))
+              c (aget pal (int idx))]
 
           (aset ind i (unchecked-byte idx))
           (.setRGB img x y (argb 255 (ch c 16) (ch c 8) (ch c 0))))))
@@ -853,57 +825,56 @@
    here, so anything else is a PIL-visible error rather than an animation that
    silently collapses to its first frame."
   [handles fmt duration loop-count optimize]
-  (let
-    [fmt
-     (normalise-format fmt)
+  (let [fmt
+        (normalise-format fmt)
 
-     _
-     (when-not (= fmt "gif")
-       (throw (ex-info (str "save_all/append_images is only supported for GIF here, not "
-                            (str/upper-case fmt))
-                       {})))
+        _
+        (when-not (= fmt "gif")
+          (throw (ex-info (str "save_all/append_images is only supported for GIF here, not "
+                               (str/upper-case fmt))
+                          {})))
 
-     hs
-     (mapv long handles)
+        hs
+        (mapv long handles)
 
-     rasters
-     (mapv (fn [h]
-             (:img (entry h)))
-           hs)
+        rasters
+        (mapv (fn [h]
+                (:img (entry h)))
+              hs)
 
-     ^Raster r0
-     (first rasters)
+        ^Raster r0
+        (first rasters)
 
-     w
-     (.getWidth r0)
+        w
+        (.getWidth r0)
 
-     hh
-     (.getHeight r0)
+        hh
+        (.getHeight r0)
 
-     _
-     (when-not (every? (fn [^Raster r]
-                         (and (= w (.getWidth r)) (= hh (.getHeight r))))
-                       rasters)
-       (throw (ex-info "every frame of an animation must have the same size" {})))
+        _
+        (when-not (every? (fn [^Raster r]
+                            (and (= w (.getWidth r)) (= hh (.getHeight r))))
+                          rasters)
+          (throw (ex-info "every frame of an animation must have the same size" {})))
 
-     delays
-     (if (sequential? duration)
-       (mapv #(long (or % 0)) duration)
-       (repeat (count rasters) (long (or duration 0))))
+        delays
+        (if (sequential? duration)
+          (mapv #(long (or % 0)) duration)
+          (repeat (count rasters) (long (or duration 0))))
 
-     frames
-     (mapv (fn [^Raster r d]
-             ;; the cdylib owns palette quantization, LZW and disposal now, so each
-             ;; frame crosses as a full-canvas straight-RGBA8 buffer + its delay.
-             {:delay-ms d :rgba (raster->rgba r)})
-           rasters
-           delays)
+        frames
+        (mapv (fn [^Raster r d]
+                ;; the cdylib owns palette quantization, LZW and disposal now, so each
+                ;; frame crosses as a full-canvas straight-RGBA8 buffer + its delay.
+                {:delay-ms d :rgba (raster->rgba r)})
+              rasters
+              delays)
 
-     ^bytes raw
-     (gif/encode {:width w
-                  :height hh
-                  :loop-count (when (some? loop-count) (long loop-count))
-                  :frames frames})]
+        ^bytes raw
+        (gif/encode {:width w
+                     :height hh
+                     :loop-count (when (some? loop-count) (long loop-count))
+                     :frames frames})]
 
     (.encodeToString (Base64/getEncoder) (if optimize (optimised raw) raw))))
 
@@ -912,10 +883,9 @@
   (let [{:keys [^Raster img mode]} (entry h)]
     (if (= mode (str target))
       (op-copy h)
-      (let
-        [w (.getWidth img)
-         hh (.getHeight img)
-         target (str target)]
+      (let [w (.getWidth img)
+            hh (.getHeight img)
+            target (str target)]
 
         (case target
           ;; P: an adaptive median-cut palette (Pillow's default here is the web
@@ -944,9 +914,8 @@
           (let [out (new-raster "LA" w hh)]
             (dotimes [y hh]
               (dotimes [x w]
-                (let
-                  [p (.getRGB img x y)
-                   v (lum p)]
+                (let [p (.getRGB img x y)
+                      v (lum p)]
 
                   (.setRGB out x y (unchecked-int (argb (ch p 24) v v v))))))
             (meta-of (put-img! out "LA")))
@@ -960,12 +929,11 @@
 
 (defn- op-getpixel
   [h x y]
-  (let
-    [{:keys [^Raster img mode ^bytes indices]}
-     (entry h)
+  (let [{:keys [^Raster img mode ^bytes indices]}
+        (entry h)
 
-     p
-     (.getRGB img (int x) (int y))]
+        p
+        (.getRGB img (int x) (int y))]
 
     (if (and (= "P" (str mode)) indices)
       ;; a P pixel is its PALETTE INDEX, not the colour that index resolves to.
@@ -981,58 +949,55 @@
 
 (defn- blend-argb
   ^long [pd ps ^double t]
-  (let
-    [mix (fn [sh]
-           (clamp255 (+ (* (- 1.0 t) (ch pd sh)) (* t (ch ps sh)))))]
+  (let [mix (fn [sh]
+              (clamp255 (+ (* (- 1.0 t) (ch pd sh)) (* t (ch ps sh)))))]
     (argb (mix 24) (mix 16) (mix 8) (mix 0))))
 
 (defn- op-paste
   [dst src x y mask]
-  (let
-    [{d :img}
-     (entry dst)
+  (let [{d :img}
+        (entry dst)
 
-     {s :img}
-     (entry src)
+        {s :img}
+        (entry src)
 
-     ^Raster d
-     d
+        ^Raster d
+        d
 
-     ^Raster s
-     s
+        ^Raster s
+        s
 
-     x
-     (int x)
+        x
+        (int x)
 
-     y
-     (int y)
+        y
+        (int y)
 
-     sw
-     (.getWidth s)
+        sw
+        (.getWidth s)
 
-     sh
-     (.getHeight s)
+        sh
+        (.getHeight s)
 
-     dw
-     (.getWidth d)
+        dw
+        (.getWidth d)
 
-     dh
-     (.getHeight d)
+        dh
+        (.getHeight d)
 
-     {mimg :img mmode :mode}
-     (when (and mask (>= (long mask) 0)) (entry mask))
+        {mimg :img mmode :mode}
+        (when (and mask (>= (long mask) 0)) (entry mask))
 
-     band
-     (mask-band mmode)
+        band
+        (mask-band mmode)
 
-     bitmap?
-     (= "1" (str mmode))]
+        bitmap?
+        (= "1" (str mmode))]
 
     (dotimes [j sh]
       (dotimes [i sw]
-        (let
-          [dx (+ x i)
-           dy (+ y j)]
+        (let [dx (+ x i)
+              dy (+ y j)]
 
           (when (and (>= dx 0) (< dx dw) (>= dy 0) (< dy dh))
             (if mimg
@@ -1049,38 +1014,36 @@
 
 (defn- op-getbbox
   [h]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)
+        hh
+        (.getHeight img)
 
-     alpha?
-     (contains? #{"RGBA" "LA"} (str mode))
+        alpha?
+        (contains? #{"RGBA" "LA"} (str mode))
 
-     minx
-     (long-array 1 w)
+        minx
+        (long-array 1 w)
 
-     miny
-     (long-array 1 hh)
+        miny
+        (long-array 1 hh)
 
-     maxx
-     (long-array 1 -1)
+        maxx
+        (long-array 1 -1)
 
-     maxy
-     (long-array 1 -1)]
+        maxy
+        (long-array 1 -1)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let
-          [p (.getRGB img x y)
-           nz (if alpha?
-                (not (zero? (bit-and p (unchecked-int 0xffffffff))))
-                (not (zero? (bit-and p 0xffffff))))]
+        (let [p (.getRGB img x y)
+              nz (if alpha?
+                   (not (zero? (bit-and p (unchecked-int 0xffffffff))))
+                   (not (zero? (bit-and p 0xffffff))))]
 
           (when nz
             (when (< x (aget minx 0)) (aset minx 0 (long x)))
@@ -1093,53 +1056,50 @@
 
 (defn- op-histogram
   [h]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)
+        hh
+        (.getHeight img)
 
-     chans
-     (band-shifts mode)
+        chans
+        (band-shifts mode)
 
-     nch
-     (count chans)
+        nch
+        (count chans)
 
-     bins
-     (int-array (* 256 nch))]
+        bins
+        (int-array (* 256 nch))]
 
     (dotimes [y hh]
       (dotimes [x w]
         (let [p (.getRGB img x y)]
           (dotimes [c nch]
-            (let
-              [v (ch p (long (nth chans c)))
-               idx (+ (* c 256) v)]
+            (let [v (ch p (long (nth chans c)))
+                  idx (+ (* c 256) v)]
 
               (aset bins idx (inc (aget bins idx))))))))
     (vec bins)))
 
 (defn- op-tobytes
   [h]
-  (let
-    [{:keys [^Raster img mode ^bytes indices]}
-     (entry h)
+  (let [{:keys [^Raster img mode ^bytes indices]}
+        (entry h)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)
+        hh
+        (.getHeight img)
 
-     shifts
-     (band-shifts mode)
+        shifts
+        (band-shifts mode)
 
-     bpp
-     (count shifts)]
+        bpp
+        (count shifts)]
 
     (cond
       ;; a P image's bytes ARE its palette indices.
@@ -1147,12 +1107,11 @@
       (.encodeToString (Base64/getEncoder) ^bytes indices)
       ;; PIL packs a BILEVEL image one BIT per pixel, most significant bit first,
       ;; each row padded to a whole byte -- a 2x2 '1' image is TWO bytes, not four.
-      (= "1" (str mode)) (let
-                           [stride
-                            (quot (+ (long w) 7) 8)
+      (= "1" (str mode)) (let [stride
+                               (quot (+ (long w) 7) 8)
 
-                            buf
-                            (byte-array (* stride (long hh)))]
+                               buf
+                               (byte-array (* stride (long hh)))]
 
                            (dotimes [y hh]
                              (dotimes [x w]
@@ -1167,9 +1126,8 @@
       :else (let [buf (byte-array (* w hh bpp))]
               (dotimes [y hh]
                 (dotimes [x w]
-                  (let
-                    [p (.getRGB img x y)
-                     i (* (+ (* y w) x) bpp)]
+                  (let [p (.getRGB img x y)
+                        i (* (+ (* y w) x) bpp)]
 
                     (dotimes [c bpp]
                       (aset buf (+ i c) (unchecked-byte (ch p (long (nth shifts c)))))))))
@@ -1177,18 +1135,17 @@
 
 (defn- op-frombytes
   [mode w h b64]
-  (let
-    [data
-     (.decode (Base64/getDecoder) ^String b64)
+  (let [data
+        (.decode (Base64/getDecoder) ^String b64)
 
-     mode
-     (str mode)
+        mode
+        (str mode)
 
-     bpp
-     (count (band-shifts mode))
+        bpp
+        (count (band-shifts mode))
 
-     out
-     (new-raster mode w h)]
+        out
+        (new-raster mode w h)]
 
     (if (= "1" mode)
       ;; the inverse of the bilevel packing above: a set bit reads back as 255, the
@@ -1206,10 +1163,9 @@
                                       0))))))))
       (dotimes [y h]
         (dotimes [x w]
-          (let
-            [i (* (+ (* y (long w)) x) (long bpp))
-             u (fn [^long k]
-                 (bit-and (aget data (+ i k)) 0xff))]
+          (let [i (* (+ (* y (long w)) x) (long bpp))
+                u (fn [^long k]
+                    (bit-and (aget data (+ i k)) 0xff))]
 
             (.setRGB out
                      x
@@ -1231,21 +1187,20 @@
 
 (defn- op-point
   [h lut]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)
+        hh
+        (.getHeight img)
 
-     L
-     (int-array (map int lut))
+        L
+        (int-array (map int lut))
 
-     out
-     (new-raster mode w hh)]
+        out
+        (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1261,18 +1216,17 @@
   "PIL `ImageFilter.Kernel`: the convolution is `imaging/convolve` — edge
    clamping, `scale`/`offset` arithmetic and the alpha carry all live there."
   [h size kernel scale offset]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     src
-     (->img img)
+        src
+        (->img img)
 
-     out
-     (im/convolve src
-                  (int size)
-                  (mapv double kernel)
-                  {:scale (double scale) :offset (double offset)})]
+        out
+        (im/convolve src
+                     (int size)
+                     (mapv double kernel)
+                     {:scale (double scale) :offset (double offset)})]
 
     (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
@@ -1281,50 +1235,48 @@
    `imaging/rank-filter` sorts every channel over the k x k window and keeps the
    `rank`-th smallest."
   [h size rank]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     n
-     (* (long size) (long size))
+        n
+        (* (long size) (long size))
 
-     r
-     (min (dec n) (max 0 (long rank)))
+        r
+        (min (dec n) (max 0 (long rank)))
 
-     src
-     (->img img)
+        src
+        (->img img)
 
-     out
-     (im/rank-filter src (int size) r)]
+        out
+        (im/rank-filter src (int size) r)]
 
     (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
 (defn- op-blend
   [ha hb t]
-  (let
-    [{a :img ma :mode}
-     (entry ha)
+  (let [{a :img ma :mode}
+        (entry ha)
 
-     {b :img}
-     (entry hb)
+        {b :img}
+        (entry hb)
 
-     ^Raster a
-     a
+        ^Raster a
+        a
 
-     ^Raster b
-     b
+        ^Raster b
+        b
 
-     t
-     (double t)
+        t
+        (double t)
 
-     w
-     (.getWidth a)
+        w
+        (.getWidth a)
 
-     hh
-     (.getHeight a)
+        hh
+        (.getHeight a)
 
-     out
-     (new-raster ma w hh)]
+        out
+        (new-raster ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1333,39 +1285,38 @@
 
 (defn- op-composite
   [ha hb hmask]
-  (let
-    [{a :img ma :mode}
-     (entry ha)
+  (let [{a :img ma :mode}
+        (entry ha)
 
-     {b :img}
-     (entry hb)
+        {b :img}
+        (entry hb)
 
-     {m :img mmode :mode}
-     (entry hmask)
+        {m :img mmode :mode}
+        (entry hmask)
 
-     ^Raster a
-     a
+        ^Raster a
+        a
 
-     ^Raster b
-     b
+        ^Raster b
+        b
 
-     ^Raster m
-     m
+        ^Raster m
+        m
 
-     band
-     (mask-band mmode)
+        band
+        (mask-band mmode)
 
-     bitmap?
-     (= "1" (str mmode))
+        bitmap?
+        (= "1" (str mmode))
 
-     w
-     (.getWidth a)
+        w
+        (.getWidth a)
 
-     hh
-     (.getHeight a)
+        hh
+        (.getHeight a)
 
-     out
-     (new-raster ma w hh)]
+        out
+        (new-raster ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1435,18 +1386,17 @@
 
     "soft_light"
     (fn [^long a ^long b]
-      (let
-        [a'
-         (/ (double a) 255.0)
+      (let [a'
+            (/ (double a) 255.0)
 
-         b'
-         (/ (double b) 255.0)
+            b'
+            (/ (double b) 255.0)
 
-         res
-         (if (<= b' 0.5)
-           (- a' (* (- 1.0 (* 2.0 b')) a' (- 1.0 a')))
-           (let [d (if (<= a' 0.25) (* (+ (* (- (* 16.0 a') 12.0) a') 4.0) a') (Math/sqrt a'))]
-             (+ a' (* (- (* 2.0 b') 1.0) (- d a')))))]
+            res
+            (if (<= b' 0.5)
+              (- a' (* (- 1.0 (* 2.0 b')) a' (- 1.0 a')))
+              (let [d (if (<= a' 0.25) (* (+ (* (- (* 16.0 a') 12.0) a') 4.0) a') (Math/sqrt a'))]
+                (+ a' (* (- (* 2.0 b') 1.0) (- d a')))))]
 
         (clamp255 (* res 255.0))))
 
@@ -1455,36 +1405,34 @@
 
 (defn- op-chop
   [op ha hb]
-  (let
-    [f
-     (chop-fn op)
+  (let [f
+        (chop-fn op)
 
-     {a :img ma :mode}
-     (entry ha)
+        {a :img ma :mode}
+        (entry ha)
 
-     {b :img}
-     (entry hb)
+        {b :img}
+        (entry hb)
 
-     ^Raster a
-     a
+        ^Raster a
+        a
 
-     ^Raster b
-     b
+        ^Raster b
+        b
 
-     w
-     (.getWidth a)
+        w
+        (.getWidth a)
 
-     hh
-     (.getHeight a)
+        hh
+        (.getHeight a)
 
-     out
-     (new-raster ma w hh)]
+        out
+        (new-raster ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let
-          [pa (.getRGB a x y)
-           pb (.getRGB b x y)]
+        (let [pa (.getRGB a x y)
+              pb (.getRGB b x y)]
 
           (.setRGB out
                    x
@@ -1497,15 +1445,14 @@
 
 (defn- op-split
   [h]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)]
+        hh
+        (.getHeight img)]
 
     (mapv (fn [sh]
             (let [out (new-raster "L" w hh)]
@@ -1517,30 +1464,28 @@
 
 (defn- op-merge
   [mode handles]
-  (let
-    [mode
-     (str mode)
+  (let [mode
+        (str mode)
 
-     imgs
-     (mapv #(:img (entry %)) handles)
+        imgs
+        (mapv #(:img (entry %)) handles)
 
-     ^Raster f
-     (first imgs)
+        ^Raster f
+        (first imgs)
 
-     w
-     (.getWidth f)
+        w
+        (.getWidth f)
 
-     hh
-     (.getHeight f)
+        hh
+        (.getHeight f)
 
-     out
-     (new-raster mode w hh)]
+        out
+        (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let
-          [vals (mapv #(ch (.getRGB ^Raster % x y) 0) imgs)
-           [r g b a] vals]
+        (let [vals (mapv #(ch (.getRGB ^Raster % x y) 0) imgs)
+              [r g b a] vals]
 
           (.setRGB out
                    x
@@ -1563,24 +1508,23 @@
 (defn- op-offset
   "Roll `img` by (dx, dy) with wraparound (ImageChops.offset)."
   [h dx dy]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     w
-     (.getWidth img)
+        w
+        (.getWidth img)
 
-     hh
-     (.getHeight img)
+        hh
+        (.getHeight img)
 
-     dx
-     (long dx)
+        dx
+        (long dx)
 
-     dy
-     (long dy)
+        dy
+        (long dy)
 
-     out
-     (new-raster mode w hh)]
+        out
+        (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1590,62 +1534,58 @@
 (defn- op-alpha-composite
   "Porter-Duff `src` OVER `dst` at offset (dx, dy); returns a new RGBA image."
   [hdst hsrc dx dy]
-  (let
-    [{d :img}
-     (entry hdst)
+  (let [{d :img}
+        (entry hdst)
 
-     {s :img}
-     (entry hsrc)
+        {s :img}
+        (entry hsrc)
 
-     ^Raster d
-     d
+        ^Raster d
+        d
 
-     ^Raster s
-     s
+        ^Raster s
+        s
 
-     dx
-     (long dx)
+        dx
+        (long dx)
 
-     dy
-     (long dy)
+        dy
+        (long dy)
 
-     w
-     (.getWidth d)
+        w
+        (.getWidth d)
 
-     hh
-     (.getHeight d)
+        hh
+        (.getHeight d)
 
-     sw
-     (.getWidth s)
+        sw
+        (.getWidth s)
 
-     sh
-     (.getHeight s)
+        sh
+        (.getHeight s)
 
-     out
-     (new-raster "RGBA" w hh)]
+        out
+        (new-raster "RGBA" w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
         (.setRGB out x y (.getRGB d x y))))
     (dotimes [y sh]
       (dotimes [x sw]
-        (let
-          [ox (+ x dx)
-           oy (+ y dy)]
+        (let [ox (+ x dx)
+              oy (+ y dy)]
 
           (when (and (>= ox 0) (< ox w) (>= oy 0) (< oy hh))
-            (let
-              [ps (.getRGB s x y)
-               pd (.getRGB out ox oy)
-               sa (/ (double (ch ps 24)) 255.0)
-               da (/ (double (ch pd 24)) 255.0)
-               oa (+ sa (* da (- 1.0 sa)))]
+            (let [ps (.getRGB s x y)
+                  pd (.getRGB out ox oy)
+                  sa (/ (double (ch ps 24)) 255.0)
+                  da (/ (double (ch pd 24)) 255.0)
+                  oa (+ sa (* da (- 1.0 sa)))]
 
               (if (<= oa 0.0)
                 (.setRGB out ox oy (unchecked-int (argb 0 0 0 0)))
-                (let
-                  [f (fn [^long cs ^long cd]
-                       (clamp255 (/ (+ (* cs sa) (* cd da (- 1.0 sa))) oa)))]
+                (let [f (fn [^long cs ^long cd]
+                          (clamp255 (/ (+ (* cs sa) (* cd da (- 1.0 sa))) oa)))]
                   (.setRGB out
                            ox
                            oy
@@ -1660,42 +1600,42 @@
    coeffs applied. method AFFINE -> (a b c d e f); PERSPECTIVE -> (a b c d e f g h).
    Out-of-bounds samples take `fillc`. Nearest-neighbour (PIL's AFFINE default)."
   [h ow oh method coeffs fillc]
-  (let
-    [{:keys [^Raster img mode]}
-     (entry h)
+  (let [{:keys [^Raster img mode]}
+        (entry h)
 
-     ow
-     (long ow)
+        ow
+        (long ow)
 
-     oh
-     (long oh)
+        oh
+        (long oh)
 
-     sw
-     (.getWidth img)
+        sw
+        (.getWidth img)
 
-     sh
-     (.getHeight img)
+        sh
+        (.getHeight img)
 
-     cf
-     (mapv double coeffs)
+        cf
+        (mapv double coeffs)
 
-     persp?
-     (= (str method) "PERSPECTIVE")
+        persp?
+        (= (str method) "PERSPECTIVE")
 
-     out
-     (new-raster mode ow oh)
+        out
+        (new-raster mode ow oh)
 
-     fill-argb
-     (->argb fillc mode)]
+        fill-argb
+        (->argb fillc mode)]
 
     (dotimes [y oh]
       (dotimes [x ow]
-        (let
-          [xd (double x)
-           yd (double y)
-           den (if persp? (+ (* (double (nth cf 6)) xd) (* (double (nth cf 7)) yd) 1.0) 1.0)
-           sx (/ (+ (* (double (nth cf 0)) xd) (* (double (nth cf 1)) yd) (double (nth cf 2))) den)
-           sy (/ (+ (* (double (nth cf 3)) xd) (* (double (nth cf 4)) yd) (double (nth cf 5))) den)]
+        (let [xd (double x)
+              yd (double y)
+              den (if persp? (+ (* (double (nth cf 6)) xd) (* (double (nth cf 7)) yd) 1.0) 1.0)
+              sx (/ (+ (* (double (nth cf 0)) xd) (* (double (nth cf 1)) yd) (double (nth cf 2)))
+                    den)
+              sy (/ (+ (* (double (nth cf 3)) xd) (* (double (nth cf 4)) yd) (double (nth cf 5)))
+                    den)]
 
           (if (and (>= sx 0.0) (< sx sw) (>= sy 0.0) (< sy sh))
             (.setRGB out x y (.getRGB img (int sx) (int sy)))
@@ -1747,12 +1687,11 @@
   "The database family this name means, tolerating punctuation and a trailing
    weight/style word (`Noto Sans Bold` -> `Noto Sans`)."
   [s]
-  (let
-    [idx
-     @family-index
+  (let [idx
+        @family-index
 
-     k
-     (font-key s)]
+        k
+        (font-key s)]
 
     (or (get idx k)
         (get idx
@@ -1763,23 +1702,22 @@
 
 (defn- resolve-font*
   [^String spec]
-  (let
-    [stem
-     (str/replace (or (peek (str/split spec #"[/\\]")) spec) #"(?i)\.(ttf|otf|ttc)$" "")
+  (let [stem
+        (str/replace (or (peek (str/split spec #"[/\\]")) spec) #"(?i)\.(ttf|otf|ttc)$" "")
 
-     lower
-     (str/lower-case stem)
+        lower
+        (str/lower-case stem)
 
-     weight
-     (some (fn [[w n]]
-             (when (str/includes? lower w) n))
-           font-weight-words)
+        weight
+        (some (fn [[w n]]
+                (when (str/includes? lower w) n))
+              font-weight-words)
 
-     italic
-     (boolean (re-find #"italic|oblique" lower))
+        italic
+        (boolean (re-find #"italic|oblique" lower))
 
-     family
-     (or (first (font-file-families spec)) (font-family-named stem) sans-family)]
+        family
+        (or (first (font-file-families spec)) (font-family-named stem) sans-family)]
 
     (cond-> {:family family}
       weight
@@ -1856,43 +1794,40 @@
    alpha. PIL draws aliased, so a pixel the renderer only half covers is left
    alone. Answers the image to keep drawing into; the caller closes the old one."
   [img op]
-  (let
-    [{:keys [width height]}
-     (im/info img)
+  (let [{:keys [width height]}
+        (im/info img)
 
-     w
-     (long width)
+        w
+        (long width)
 
-     h
-     (long height)
+        h
+        (long height)
 
-     scratch
-     (im/blank (int w) (int h))]
+        scratch
+        (im/blank (int w) (int h))]
 
     (try (im/draw! scratch [(opaque-op op)])
-         (let
-           [^bytes cov
-            (im/pixels scratch)
+         (let [^bytes cov
+               (im/pixels scratch)
 
-            ^bytes dst
-            (im/pixels img)
+               ^bytes dst
+               (im/pixels img)
 
-            alphas
-            (ink-alphas op)
+               alphas
+               (ink-alphas op)
 
-            fallback
-            (long (:default alphas 255))]
+               fallback
+               (long (:default alphas 255))]
 
            (dotimes [i (* w h)]
              (let [o (* 4 i)]
                (when (<= 128 (bit-and (aget cov (+ o 3)) 0xff))
-                 (let
-                   [r (bit-and (aget cov o) 0xff)
-                    g (bit-and (aget cov (+ o 1)) 0xff)
-                    b (bit-and (aget cov (+ o 2)) 0xff)
-                    a (long (get alphas
-                                 (bit-or (bit-shift-left r 16) (bit-shift-left g 8) b)
-                                 fallback))]
+                 (let [r (bit-and (aget cov o) 0xff)
+                       g (bit-and (aget cov (+ o 1)) 0xff)
+                       b (bit-and (aget cov (+ o 2)) 0xff)
+                       a (long (get alphas
+                                    (bit-or (bit-shift-left r 16) (bit-shift-left g 8) b)
+                                    fallback))]
 
                    (aset dst o (unchecked-byte r))
                    (aset dst (+ o 1) (unchecked-byte g))
@@ -1944,46 +1879,45 @@
    [x0 y0 x1 y1]. PIL angles are degrees CLOCKWISE from 3 o'clock, which is what
    screen-space `(cos a, sin a)` already gives with y pointing down."
   [kind x0 y0 x1 y1 start end]
-  (let
-    [start
-     (double start)
+  (let [start
+        (double start)
 
-     cx
-     (/ (+ (double x0) (double x1)) 2.0)
+        cx
+        (/ (+ (double x0) (double x1)) 2.0)
 
-     cy
-     (/ (+ (double y0) (double y1)) 2.0)
+        cy
+        (/ (+ (double y0) (double y1)) 2.0)
 
-     rx
-     (/ (- (double x1) (double x0)) 2.0)
+        rx
+        (/ (- (double x1) (double x0)) 2.0)
 
-     ry
-     (/ (- (double y1) (double y0)) 2.0)
+        ry
+        (/ (- (double y1) (double y0)) 2.0)
 
-     sweep
-     (min 360.0 (max 0.0 (- (double end) (double start))))
+        sweep
+        (min 360.0 (max 0.0 (- (double end) (double start))))
 
-     pt
-     (fn [^double a]
-       [(+ cx (* rx (Math/cos (Math/toRadians a)))) (+ cy (* ry (Math/sin (Math/toRadians a))))])
+        pt
+        (fn [^double a]
+          [(+ cx (* rx (Math/cos (Math/toRadians a)))) (+ cy (* ry (Math/sin (Math/toRadians a))))])
 
-     [sx sy]
-     (pt (double start))
+        [sx sy]
+        (pt (double start))
 
-     ;; A single SVG arc cannot span a full turn: split it in two.
-     [mx my]
-     (pt (+ start (/ sweep 2.0)))
+        ;; A single SVG arc cannot span a full turn: split it in two.
+        [mx my]
+        (pt (+ start (/ sweep 2.0)))
 
-     [ex ey]
-     (pt (+ start sweep))
+        [ex ey]
+        (pt (+ start sweep))
 
-     laf
-     (if (> sweep 180.0) 1 0)
+        laf
+        (if (> sweep 180.0) 1 0)
 
-     body
-     (if (>= sweep 359.999)
-       (format "M %s %s A %s %s 0 1 1 %s %s A %s %s 0 1 1 %s %s" sx sy rx ry mx my rx ry ex ey)
-       (format "M %s %s A %s %s 0 %s 1 %s %s" sx sy rx ry laf ex ey))]
+        body
+        (if (>= sweep 359.999)
+          (format "M %s %s A %s %s 0 1 1 %s %s A %s %s 0 1 1 %s %s" sx sy rx ry mx my rx ry ex ey)
+          (format "M %s %s A %s %s 0 %s 1 %s %s" sx sy rx ry laf ex ey))]
 
     (case kind
       "pieslice"
@@ -1998,13 +1932,12 @@
   "The vector-draw ops ONE PIL draw call expands to. `fc`/`oc` are the resolved
    `#rrggbbaa` fill/outline strings (or nil); `opts` carries the rest."
   [op pts fc oc opts]
-  (let
-    [width
-     (int (or (get opts "width") 1))
+  (let [width
+        (int (or (get opts "width") 1))
 
-     stroke
-     (fn [c]
-       {:stroke c :stroke-width (max 1 width) :cap :butt :join :miter})]
+        stroke
+        (fn [c]
+          {:stroke c :stroke-width (max 1 width) :cap :butt :join :miter})]
 
     (case (str op)
       "point"
@@ -2026,21 +1959,20 @@
                   (stroke fc))]))
 
       "rectangle"
-      (let
-        [[x0 y0 x1 y1]
-         pts
+      (let [[x0 y0 x1 y1]
+            pts
 
-         rx
-         (min (double x0) (double x1))
+            rx
+            (min (double x0) (double x1))
 
-         ry
-         (min (double y0) (double y1))
+            ry
+            (min (double y0) (double y1))
 
-         rw
-         (Math/abs (- (double x1) (double x0)))
+            rw
+            (Math/abs (- (double x1) (double x0)))
 
-         rh
-         (Math/abs (- (double y1) (double y0)))]
+            rh
+            (Math/abs (- (double y1) (double y0)))]
 
         (cond-> []
           fc
@@ -2051,15 +1983,14 @@
                        (stroke oc)))))
 
       "ellipse"
-      (let
-        [[x0 y0 x1 y1]
-         pts
+      (let [[x0 y0 x1 y1]
+            pts
 
-         w
-         (- (double x1) (double x0))
+            w
+            (- (double x1) (double x0))
 
-         hh
-         (- (double y1) (double y0))]
+            hh
+            (- (double y1) (double y0))]
 
         (cond-> []
           fc
@@ -2088,21 +2019,20 @@
           (conj (merge {:op :polygon :points poly :close true} (stroke oc)))))
 
       ("arc" "chord" "pieslice")
-      (let
-        [[x0 y0 x1 y1]
-         pts
+      (let [[x0 y0 x1 y1]
+            pts
 
-         d
-         (arc-path (str op)
-                   x0
-                   y0
-                   x1
-                   y1
-                   (double (or (get opts "start") 0))
-                   (double (or (get opts "end") 0)))
+            d
+            (arc-path (str op)
+                      x0
+                      y0
+                      x1
+                      y1
+                      (double (or (get opts "start") 0))
+                      (double (or (get opts "end") 0)))
 
-         line-c
-         (or oc (when (= (str op) "arc") fc))]
+            line-c
+            (or oc (when (= (str op) "arc") fc))]
 
         (cond-> []
           (and fc (not= (str op) "arc"))
@@ -2112,24 +2042,22 @@
           (conj (merge {:op :path :d d} (stroke line-c)))))
 
       "text"
-      (let
-        [[x y]
-         pts
+      (let [[x y]
+            pts
 
-         size
-         (double (or (get opts "font_size") 12))
+            size
+            (double (or (get opts "font_size") 12))
 
-         {:keys [family weight italic]}
-         (resolve-font (get opts "font"))]
+            {:keys [family weight italic]}
+            (resolve-font (get opts "font"))]
 
-        [(cond->
-           {:op :text
-            :text (str (get opts "text"))
-            :x x
-            :y (+ (double y) (Math/round (* 0.8 size)))
-            :size size
-            :family family
-            :fill (or fc (->hex (->argb [0 0 0] "RGB")))}
+        [(cond-> {:op :text
+                  :text (str (get opts "text"))
+                  :x x
+                  :y (+ (double y) (Math/round (* 0.8 size)))
+                  :size size
+                  :family family
+                  :fill (or fc (->hex (->argb [0 0 0] "RGB")))}
            weight
            (assoc :weight weight)
 
@@ -2142,36 +2070,35 @@
   "Decode ONE op record of a flat draw batch starting at `i`: name, n-coords,
    coords..., n-opts, then key/value pairs. Returns [next-index ops]."
   [b ^long i]
-  (let
-    [nc
-     (long (nth b (inc i)))
+  (let [nc
+        (long (nth b (inc i)))
 
-     c0
-     (+ i 2)
+        c0
+        (+ i 2)
 
-     pts
-     (mapv #(double (nth b %)) (range c0 (+ c0 nc)))
+        pts
+        (mapv #(double (nth b %)) (range c0 (+ c0 nc)))
 
-     ko
-     (+ c0 nc)
+        ko
+        (+ c0 nc)
 
-     nkv
-     (long (nth b ko))
+        nkv
+        (long (nth b ko))
 
-     kv
-     (inc ko)
+        kv
+        (inc ko)
 
-     opts
-     (persistent! (reduce (fn [m p]
-                            (let [o (+ kv (* 2 (long p)))]
-                              (assoc! m (str (nth b o)) (nth b (inc o)))))
-                          (transient {})
-                          (range nkv)))
+        opts
+        (persistent! (reduce (fn [m p]
+                               (let [o (+ kv (* 2 (long p)))]
+                                 (assoc! m (str (nth b o)) (nth b (inc o)))))
+                             (transient {})
+                             (range nkv)))
 
-     hex
-     (fn [k]
-       (when-let [v (get opts k)]
-         (->hex (long v))))]
+        hex
+        (fn [k]
+          (when-let [v (get opts k)]
+            (->hex (long v))))]
 
     [(+ kv (* 2 nkv)) (draw-ops (str (nth b i)) pts (hex "fill") (hex "outline") opts)]))
 
@@ -2182,27 +2109,24 @@
    Layout, per handle: handle, n-ops, then each op as `read-draw-op` reads it,
    with colours pre-packed as 0xAARRGGBB longs."
   [batch]
-  (let
-    [b
-     (vec batch)
+  (let [b
+        (vec batch)
 
-     n
-     (count b)]
+        n
+        (count b)]
 
     (loop [i 0]
       (when (< i n)
-        (let
-          [h (long (nth b i))
-           nops (long (nth b (inc i)))
-           [j ops] (loop
-                     [j (+ i 2)
-                      k 0
-                      acc []]
+        (let [h (long (nth b i))
+              nops (long (nth b (inc i)))
+              [j ops] (loop [j (+ i 2)
+                             k 0
+                             acc []]
 
-                     (if (< k nops)
-                       (let [[j2 more] (read-draw-op b j)]
-                         (recur (long j2) (inc k) (into acc more)))
-                       [j acc]))]
+                        (if (< k nops)
+                          (let [[j2 more] (read-draw-op b j)]
+                            (recur (long j2) (inc k) (into acc more)))
+                          [j acc]))]
 
           (when (seq ops) (draw-into! h ops))
           (recur (long j)))))
@@ -2210,17 +2134,16 @@
 
 (defn- op-textbbox
   [text size font]
-  (let
-    [{:keys [family weight italic]}
-     (resolve-font font)
+  (let [{:keys [family weight italic]}
+        (resolve-font font)
 
-     m
-     (im/text-measure (cond-> {:text (str text) :size (double size) :family family}
-                        weight
-                        (assoc :weight weight)
+        m
+        (im/text-measure (cond-> {:text (str text) :size (double size) :family family}
+                           weight
+                           (assoc :weight weight)
 
-                        italic
-                        (assoc :italic true)))]
+                           italic
+                           (assoc :italic true)))]
 
     [0 0 (long (Math/ceil (double (:width m 0)))) (long (Math/round (* 1.2 (double size))))]))
 
@@ -2248,83 +2171,84 @@
    guest sees as an OSError, so a missed site fails at RUNTIME in Python rather
    than at compile time in Clojure."
   [scope]
-  (let [env (fn [f] (pil-envelope scope f))]
+  (let [env (fn [f]
+              (pil-envelope scope f))]
     {"__vis_pil_new__" (fn [mode w h fill]
-                       (env #(op-new mode (long w) (long h) fill)))
-   "__vis_pil_open__" (fn [b64]
-                        (env #(op-open b64)))
-   "__vis_pil_save__" (fn [h fmt quality optimize]
-                        (env #(op-save h fmt quality (boolean optimize))))
-   "__vis_pil_save_all__" (fn [hs fmt duration loop-count optimize]
-                            (env #(op-save-all hs fmt duration loop-count (boolean optimize))))
-   "__vis_pil_frames__" (fn [h]
-                          (env #(op-frames h)))
-   "__vis_pil_seek__" (fn [h n]
-                        (env #(op-seek h (long n))))
-   "__vis_pil_quantize__" (fn [h colors dither]
-                            (env #(op-quantize h colors dither)))
-   "__vis_pil_getpalette__" (fn [h]
-                              (env #(op-getpalette h)))
-   "__vis_pil_putpalette__" (fn [h data]
-                              (env #(op-putpalette h data)))
-   "__vis_pil_save_temp__" (fn [h fmt]
-                             (env #(op-save-temp h fmt)))
-   "__vis_pil_meta__" (fn [h]
-                        (env #(meta-of h)))
-   "__vis_pil_copy__" (fn [h]
-                        (env #(op-copy h)))
-   "__vis_pil_free__" (fn [h]
-                        (env #(free-img! h)))
-   "__vis_pil_resize__" (fn [h w hh r]
-                          (env #(op-resize h (long w) (long hh) r)))
-   "__vis_pil_crop__" (fn [h l t r b]
-                        (env #(op-crop h (long l) (long t) (long r) (long b))))
-   "__vis_pil_rotate__" (fn [h ang exp fill]
-                          (env #(op-rotate h ang exp fill)))
-   "__vis_pil_transpose__" (fn [h m]
-                             (env #(op-transpose h m)))
-   "__vis_pil_convert__" (fn [h t]
-                           (env #(op-convert h t)))
-   "__vis_pil_getpixel__" (fn [h x y]
-                            (env #(op-getpixel h x y)))
-   "__vis_pil_putpixel__" (fn [h x y c]
-                            (env #(op-putpixel h x y c)))
-   "__vis_pil_paste__" (fn [d s x y m]
-                         (env #(op-paste d s x y m)))
-   "__vis_pil_getbbox__" (fn [h]
-                           (env #(op-getbbox h)))
-   "__vis_pil_histogram__" (fn [h]
-                             (env #(op-histogram h)))
-   "__vis_pil_tobytes__" (fn [h]
-                           (env #(op-tobytes h)))
-   "__vis_pil_frombytes__" (fn [mode w h b64]
-                             (env #(op-frombytes mode (long w) (long h) b64)))
-   "__vis_pil_point__" (fn [h lut]
-                         (env #(op-point h lut)))
-   "__vis_pil_conv__" (fn [h size ker sc off]
-                        (env #(op-conv h (long size) ker sc off)))
-   "__vis_pil_rank__" (fn [h size rank]
-                        (env #(op-rank h (long size) (long rank))))
-   "__vis_pil_blend__" (fn [a b t]
-                         (env #(op-blend a b t)))
-   "__vis_pil_composite__" (fn [a b m]
-                             (env #(op-composite a b m)))
-   "__vis_pil_chop__" (fn [op a b]
-                        (env #(op-chop op a b)))
-   "__vis_pil_split__" (fn [h]
-                         (env #(op-split h)))
-   "__vis_pil_merge__" (fn [mode hs]
-                         (env #(op-merge mode hs)))
-   "__vis_pil_draws__" (fn [batch]
-                         (env #(op-draws batch)))
-   "__vis_pil_textbbox__" (fn [text size font]
-                            (env #(op-textbbox text size font)))
-   "__vis_pil_offset__" (fn [h dx dy]
-                          (env #(op-offset h dx dy)))
-   "__vis_pil_alpha_composite__" (fn [d s dx dy]
-                                   (env #(op-alpha-composite d s dx dy)))
-   "__vis_pil_transform__" (fn [h ow oh method coeffs fill]
-                             (env #(op-transform h (long ow) (long oh) method coeffs fill)))}))
+                         (env #(op-new mode (long w) (long h) fill)))
+     "__vis_pil_open__" (fn [b64]
+                          (env #(op-open b64)))
+     "__vis_pil_save__" (fn [h fmt quality optimize]
+                          (env #(op-save h fmt quality (boolean optimize))))
+     "__vis_pil_save_all__" (fn [hs fmt duration loop-count optimize]
+                              (env #(op-save-all hs fmt duration loop-count (boolean optimize))))
+     "__vis_pil_frames__" (fn [h]
+                            (env #(op-frames h)))
+     "__vis_pil_seek__" (fn [h n]
+                          (env #(op-seek h (long n))))
+     "__vis_pil_quantize__" (fn [h colors dither]
+                              (env #(op-quantize h colors dither)))
+     "__vis_pil_getpalette__" (fn [h]
+                                (env #(op-getpalette h)))
+     "__vis_pil_putpalette__" (fn [h data]
+                                (env #(op-putpalette h data)))
+     "__vis_pil_save_temp__" (fn [h fmt]
+                               (env #(op-save-temp h fmt)))
+     "__vis_pil_meta__" (fn [h]
+                          (env #(meta-of h)))
+     "__vis_pil_copy__" (fn [h]
+                          (env #(op-copy h)))
+     "__vis_pil_free__" (fn [h]
+                          (env #(free-img! h)))
+     "__vis_pil_resize__" (fn [h w hh r]
+                            (env #(op-resize h (long w) (long hh) r)))
+     "__vis_pil_crop__" (fn [h l t r b]
+                          (env #(op-crop h (long l) (long t) (long r) (long b))))
+     "__vis_pil_rotate__" (fn [h ang exp fill]
+                            (env #(op-rotate h ang exp fill)))
+     "__vis_pil_transpose__" (fn [h m]
+                               (env #(op-transpose h m)))
+     "__vis_pil_convert__" (fn [h t]
+                             (env #(op-convert h t)))
+     "__vis_pil_getpixel__" (fn [h x y]
+                              (env #(op-getpixel h x y)))
+     "__vis_pil_putpixel__" (fn [h x y c]
+                              (env #(op-putpixel h x y c)))
+     "__vis_pil_paste__" (fn [d s x y m]
+                           (env #(op-paste d s x y m)))
+     "__vis_pil_getbbox__" (fn [h]
+                             (env #(op-getbbox h)))
+     "__vis_pil_histogram__" (fn [h]
+                               (env #(op-histogram h)))
+     "__vis_pil_tobytes__" (fn [h]
+                             (env #(op-tobytes h)))
+     "__vis_pil_frombytes__" (fn [mode w h b64]
+                               (env #(op-frombytes mode (long w) (long h) b64)))
+     "__vis_pil_point__" (fn [h lut]
+                           (env #(op-point h lut)))
+     "__vis_pil_conv__" (fn [h size ker sc off]
+                          (env #(op-conv h (long size) ker sc off)))
+     "__vis_pil_rank__" (fn [h size rank]
+                          (env #(op-rank h (long size) (long rank))))
+     "__vis_pil_blend__" (fn [a b t]
+                           (env #(op-blend a b t)))
+     "__vis_pil_composite__" (fn [a b m]
+                               (env #(op-composite a b m)))
+     "__vis_pil_chop__" (fn [op a b]
+                          (env #(op-chop op a b)))
+     "__vis_pil_split__" (fn [h]
+                           (env #(op-split h)))
+     "__vis_pil_merge__" (fn [mode hs]
+                           (env #(op-merge mode hs)))
+     "__vis_pil_draws__" (fn [batch]
+                           (env #(op-draws batch)))
+     "__vis_pil_textbbox__" (fn [text size font]
+                              (env #(op-textbbox text size font)))
+     "__vis_pil_offset__" (fn [h dx dy]
+                            (env #(op-offset h dx dy)))
+     "__vis_pil_alpha_composite__" (fn [d s dx dy]
+                                     (env #(op-alpha-composite d s dx dy)))
+     "__vis_pil_transform__" (fn [h ow oh method coeffs fill]
+                               (env #(op-transform h (long ow) (long oh) method coeffs fill)))}))
 
 
 (def vis-extension
@@ -2351,15 +2275,15 @@
          "Rust-backed without java.desktop. Rejects images over 512 MiB RGBA. Not supported: some "
          "color conversions and `Image.transform` methods (`ValueError`).")
        :shim/bindings pil-bridge-bindings
-       :shim/resources
-       {::images {:resource/label "PIL image"
-                  ;; A decoded image is an on-heap int[] of w*h*4 — 48 MB for one
-                  ;; 4000x3000 frame — so this is the most expensive thing a
-                  ;; guest can forget to close.
-                  :resource/release (fn [h _entry]
-                                      (swap! pending-draws dissoc (long h))
-                                      (some-> (take-draw! h) im/close!))
-                  :resource/max 256}}
+       :shim/resources {::images {:resource/label "PIL image"
+                                  ;; A decoded image is an on-heap int[] of w*h*4 — 48 MB for one
+                                  ;; 4000x3000 frame — so this is the most expensive thing a
+                                  ;; guest can forget to close.
+                                  :resource/release (fn [h _entry]
+                                                      (swap! pending-draws dissoc (long h))
+                                                      (some-> (take-draw! h)
+                                                              im/close!))
+                                  :resource/max 256}}
        :shim/source "vis-shims/pil.py"}]}))
 
 (vis/register-extension! vis-extension)

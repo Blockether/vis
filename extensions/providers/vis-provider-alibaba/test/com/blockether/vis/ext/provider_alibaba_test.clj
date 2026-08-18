@@ -7,15 +7,14 @@
   provider-registration-test
   (it "registers both Alibaba plans as separate provider extension entries"
       (require 'com.blockether.vis.ext.provider-alibaba :reload)
-      (let
-        [coding
-         (vis/provider-by-id :alibaba-coding-plan)
+      (let [coding
+            (vis/provider-by-id :alibaba-coding-plan)
 
-         token
-         (vis/provider-by-id :alibaba-token-plan)
+            token
+            (vis/provider-by-id :alibaba-token-plan)
 
-         ext-names
-         (set (map :ext/name (vis/registered-extensions)))]
+            ext-names
+            (set (map :ext/name (vis/registered-extensions)))]
 
         (expect (= :alibaba-coding-plan (:provider/id coding)))
         (expect (= :alibaba-token-plan (:provider/id token)))
@@ -33,12 +32,11 @@
         (expect (ifn? (:provider/auth-prompt-fn token)))))
   (it "presets the models each endpoint actually serves, with a window for the uncatalogued one"
       (require 'com.blockether.vis.ext.provider-alibaba :reload)
-      (let
-        [coding-models
-         (get-in (vis/provider-by-id :alibaba-coding-plan) [:provider/preset :default-models])
+      (let [coding-models
+            (get-in (vis/provider-by-id :alibaba-coding-plan) [:provider/preset :default-models])
 
-         token-models
-         (get-in (vis/provider-by-id :alibaba-token-plan) [:provider/preset :default-models])]
+            token-models
+            (get-in (vis/provider-by-id :alibaba-token-plan) [:provider/preset :default-models])]
 
         (expect (= "qwen3-coder-plus" (first coding-models)))
         (expect (contains? (set coding-models) "glm-5"))
@@ -52,12 +50,11 @@
   auth-prompt-test
   (it "exposes static API-key guidance per plan"
       (require 'com.blockether.vis.ext.provider-alibaba :reload)
-      (let
-        [coding-lines
-         ((:provider/auth-prompt-fn (vis/provider-by-id :alibaba-coding-plan)))
+      (let [coding-lines
+            ((:provider/auth-prompt-fn (vis/provider-by-id :alibaba-coding-plan)))
 
-         token-lines
-         ((:provider/auth-prompt-fn (vis/provider-by-id :alibaba-token-plan)))]
+            token-lines
+            ((:provider/auth-prompt-fn (vis/provider-by-id :alibaba-token-plan)))]
 
         (expect (some #(= "  Alibaba (Coding Plan) requires a static API key." %) coding-lines))
         (expect (some #(= "         export ALIBABA_CODING_PLAN_API_KEY=<your-alibaba-api-key>" %)
@@ -106,10 +103,9 @@
       (require 'com.blockether.vis.ext.provider-alibaba :reload)
       (with-redefs-fn {#'alibaba/detect-key (constantly nil)}
         (fn []
-          (let
-            [thrown (try ((:provider/get-token-fn (vis/provider-by-id :alibaba-coding-plan)))
-                         nil
-                         (catch clojure.lang.ExceptionInfo e e))]
+          (let [thrown (try ((:provider/get-token-fn (vis/provider-by-id :alibaba-coding-plan)))
+                            nil
+                            (catch clojure.lang.ExceptionInfo e e))]
             (expect (some? thrown))
             (expect (= :vis/alibaba-not-authenticated (:type (ex-data thrown))))
             (expect (= :alibaba-coding-plan (:provider-id (ex-data thrown))))

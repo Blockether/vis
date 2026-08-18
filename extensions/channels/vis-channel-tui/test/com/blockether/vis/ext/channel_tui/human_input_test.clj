@@ -61,12 +61,11 @@
   ([] (virtual-screen 30))
   ([rows]
    (Thread/interrupted)
-   (let
-     [terminal
-      (DefaultVirtualTerminal. (TerminalSize. 80 (int rows)))
+   (let [terminal
+         (DefaultVirtualTerminal. (TerminalSize. 80 (int rows)))
 
-      screen
-      (TerminalScreen. terminal)]
+         screen
+         (TerminalScreen. terminal)]
 
      (.startScreen screen)
      {:screen screen :g (.newTextGraphics screen)})))
@@ -117,21 +116,21 @@
         (expect (= 0 (:focus form)))
         (expect (= "req-1" (hi/request-id form)))))
   (it "honors declared defaults, coercing each to its field type"
-      (let
-        [form (hi/init-form {:id "r"
-                             :title "T"
-                             :fields [{:id "a" :type :plaintext :label "A" :default 7}
-                                      {:id "b" :type :checkbox :label "B" :default true}
-                                      {:id "c"
-                                       :type :select
-                                       :label "C"
-                                       :default "y"
-                                       :options [{:value "x" :label "X"} {:value "y" :label "Y"}]}
-                                      {:id "d"
-                                       :type :multiselect
-                                       :label "D"
-                                       :default ["x"]
-                                       :options [{:value "x" :label "X"}]}]})]
+      (let [form (hi/init-form {:id "r"
+                                :title "T"
+                                :fields [{:id "a" :type :plaintext :label "A" :default 7}
+                                         {:id "b" :type :checkbox :label "B" :default true}
+                                         {:id "c"
+                                          :type :select
+                                          :label "C"
+                                          :default "y"
+                                          :options [{:value "x" :label "X"}
+                                                    {:value "y" :label "Y"}]}
+                                         {:id "d"
+                                          :type :multiselect
+                                          :label "D"
+                                          :default ["x"]
+                                          :options [{:value "x" :label "X"}]}]})]
         (expect (= {"a" "7" "b" true "c" "y" "d" ["x"]} (:values form)))))
   (it "walks one stop per text field and one stop per declared option"
       (expect (= [{:kind :text :field-id "user"} {:kind :text :field-id "pass"}
@@ -153,28 +152,26 @@
         (expect (= "a" (get-in (feed typed [{:kind :backspace}]) [:values "user"])))
         (expect (= "a" (get-in (feed typed [{:kind :left} {:kind :delete}]) [:values "user"])))))
   (it "Enter inserts a newline inside a multiline field instead of submitting"
-      (let
-        [form
-         (feed (hi/init-form (request)) [{:kind :end} (ch \x) {:kind :enter} (ch \y)])
+      (let [form
+            (feed (hi/init-form (request)) [{:kind :end} (ch \x) {:kind :enter} (ch \y)])
 
-         multi
-         (assoc form :focus 7)
+            multi
+            (assoc form :focus 7)
 
-         typed
-         (feed multi [(ch \x) {:kind :enter} (ch \y)])]
+            typed
+            (feed multi [(ch \x) {:kind :enter} (ch \y)])]
 
         (expect (= "x\ny" (get-in typed [:values "note"])))
         (expect (nil? (:action (hi/handle-event typed {:kind :enter}))))
         (expect (= :submit (:action (hi/handle-event typed {:kind :submit}))))))
   (it "keeps a password out of the paint plan"
-      (let
-        [form
-         (feed (hi/init-form (assoc (request)
-                               :fields [{:id "pass" :type :password :label "Password"}]))
-               [(ch \h) (ch \i)])
+      (let [form
+            (feed (hi/init-form (assoc (request)
+                                  :fields [{:id "pass" :type :password :label "Password"}]))
+                  [(ch \h) (ch \i)])
 
-         texts
-         (map :text (hi/form-rows form))]
+            texts
+            (map :text (hi/form-rows form))]
 
         (expect (= "hi" (get-in form [:values "pass"])))
         (expect (some #{"••"} texts))
@@ -186,23 +183,21 @@
                    (expect (= 1 (:focus (feed form [{:kind :next}]))))
                    (expect (= 9 (:focus (feed form [{:kind :prev}]))))))
              (it "Space picks exactly one option in a select"
-                 (let
-                   [form (feed (hi/init-form (request))
-                               [{:kind :next} {:kind :next} {:kind :next} (ch \space)])]
+                 (let [form (feed (hi/init-form (request))
+                                  [{:kind :next} {:kind :next} {:kind :next} (ch \space)])]
                    (expect (= "prod" (get-in form [:values "env"])))))
              (it "Space adds and removes multiselect values in declared order"
-                 (let
-                   [base
-                    (assoc (hi/init-form (request)) :focus 5)
+                 (let [base
+                       (assoc (hi/init-form (request)) :focus 5)
 
-                    one
-                    (feed base [(ch \space)])
+                       one
+                       (feed base [(ch \space)])
 
-                    both
-                    (feed one [{:kind :prev} (ch \space)])
+                       both
+                       (feed one [{:kind :prev} (ch \space)])
 
-                    back
-                    (feed both [(ch \space)])]
+                       back
+                       (feed both [(ch \space)])]
 
                    (expect (= ["b"] (get-in one [:values "tags"])))
                    (expect (= ["a" "b"] (get-in both [:values "tags"])))
@@ -214,15 +209,14 @@
 
 (defdescribe submit-and-cancel-test
              (it "Enter asks for submit and hands back values keyed by field id"
-                 (let
-                   [pristine
-                    (hi/init-form (request))
+                 (let [pristine
+                       (hi/init-form (request))
 
-                    form
-                    (feed pristine [(ch \a) {:kind :next} (ch \p)])
+                       form
+                       (feed pristine [(ch \a) {:kind :next} (ch \p)])
 
-                    {:keys [action]}
-                    (hi/handle-event form {:kind :enter})]
+                       {:keys [action]}
+                       (hi/handle-event form {:kind :enter})]
 
                    ;; Even a pristine form with an empty REQUIRED field submits:
                    ;; the band holds no rules, so refusing is the engine's job.
@@ -231,20 +225,18 @@
                    (expect (= {"user" "a" "pass" "p" "env" "dev" "tags" [] "ok" false "note" ""}
                               (hi/submit-values form)))))
              (it "Escape cancels a cancellable request and is inert otherwise"
-                 (let
-                   [form
-                    (hi/init-form (request))
+                 (let [form
+                       (hi/init-form (request))
 
-                    locked
-                    (hi/init-form (assoc (request) :is-cancellable false))]
+                       locked
+                       (hi/init-form (assoc (request) :is-cancellable false))]
 
                    (expect (= :cancel (:action (hi/handle-event form {:kind :cancel}))))
                    (expect (nil? (:action (hi/handle-event locked {:kind :cancel}))))))
              (it "engine rejections attach to their field and move the cursor there"
-                 (let
-                   [form (-> (hi/init-form (request))
-                             (assoc :focus 6)
-                             (hi/set-errors {"pass" "Password is required"}))]
+                 (let [form (-> (hi/init-form (request))
+                                (assoc :focus 6)
+                                (hi/set-errors {"pass" "Password is required"}))]
                    (expect (= 1 (:focus form)))
                    (expect (= {"pass" "Password is required"} (:errors form)))
                    (expect (some #{"Password is required"} (map :text (hi/form-rows form)))))))
@@ -298,24 +290,22 @@
              ;; Regression: an exclusive option said `Space toggle` — the very word an
              ;; inclusive one uses — promising an off state a single choice never has.
              (it "says pick on an exclusive option and toggle on an inclusive one"
-                 (let
-                   [pairs-at (fn [focus]
-                               (hi/hint (assoc (hi/init-form (request)) :focus focus)))]
+                 (let [pairs-at (fn [focus]
+                                  (hi/hint (assoc (hi/init-form (request)) :focus focus)))]
                    (expect (= [["Space" "pick"]] (pairs-at 2)))
                    (expect (= [["Space" "toggle"]] (pairs-at 4)))
                    (expect (= [["Space" "toggle"]] (pairs-at 6))))))
 
 (defdescribe paint-test
              (it "paints the title, the description and every field label"
-                 (let
-                   [{:keys [screen g]}
-                    (virtual-screen)
+                 (let [{:keys [screen g]}
+                       (virtual-screen)
 
-                    _
-                    (hi/paint! g 80 30 (hi/init-form (request)))
+                       _
+                       (hi/paint! g 80 30 (hi/init-form (request)))
 
-                    text
-                    (screen-text screen)]
+                       text
+                       (screen-text screen)]
 
                    (expect (str/includes? text "Deploy"))
                    (expect (str/includes? text "Pick the target"))
@@ -323,18 +313,17 @@
                    (expect (str/includes? text "Password *"))
                    (expect (str/includes? text "Dev"))))
              (it "places the terminal cursor inside the focused text field"
-                 (let
-                   [{:keys [screen g]}
-                    (virtual-screen)
+                 (let [{:keys [screen g]}
+                       (virtual-screen)
 
-                    form
-                    (feed (hi/init-form (request)) [(ch \a) (ch \b)])
+                       form
+                       (feed (hi/init-form (request)) [(ch \a) (ch \b)])
 
-                    pos
-                    (hi/paint! g 80 30 form)
+                       pos
+                       (hi/paint! g 80 30 form)
 
-                    row
-                    (screen-row screen (.getRow pos))]
+                       row
+                       (screen-row screen (.getRow pos))]
 
                    (expect (some? pos))
                    (expect (str/includes? row "ab"))
@@ -343,50 +332,47 @@
                    ;; the trimmed row STOPS at the cursor's own blank column.
                    (expect (= (+ 2 (str/index-of row "ab")) (.getColumn pos)))))
              (it "shows the mask, never the password plaintext"
-                 (let
-                   [{:keys [screen g]}
-                    (virtual-screen)
+                 (let [{:keys [screen g]}
+                       (virtual-screen)
 
-                    form
-                    (feed (assoc (hi/init-form (request)) :focus 1) [(ch \h) (ch \i)])
+                       form
+                       (feed (assoc (hi/init-form (request)) :focus 1) [(ch \h) (ch \i)])
 
-                    _
-                    (hi/paint! g 80 30 form)
+                       _
+                       (hi/paint! g 80 30 form)
 
-                    text
-                    (screen-text screen)]
+                       text
+                       (screen-text screen)]
 
                    (expect (str/includes? text "••"))
                    (expect (not (str/includes? text "hi")))))
              (it "scrolls the body so the focused field stays visible"
-                 (let
-                   [{:keys [screen g]}
-                    (virtual-screen)
+                 (let [{:keys [screen g]}
+                       (virtual-screen)
 
-                    form
-                    (assoc (hi/init-form (request)) :focus 7)
+                       form
+                       (assoc (hi/init-form (request)) :focus 7)
 
-                    _
-                    ;; 20 rows, not 30: the whole form FITS in a 30-row terminal, so
-                    ;; nothing scrolls there and this assertion only ever proved that
-                    ;; the label it looked for was spelled differently.
-                    (hi/paint! g 80 20 form)
+                       _
+                       ;; 20 rows, not 30: the whole form FITS in a 30-row terminal, so
+                       ;; nothing scrolls there and this assertion only ever proved that
+                       ;; the label it looked for was spelled differently.
+                       (hi/paint! g 80 20 form)
 
-                    text
-                    (screen-text screen)]
+                       text
+                       (screen-text screen)]
 
                    (expect (str/includes? text "Note"))
                    (expect (not (str/includes? text "User *")))))
              (it "renders an engine rejection next to its field"
-                 (let
-                   [{:keys [screen g]}
-                    (virtual-screen)
+                 (let [{:keys [screen g]}
+                       (virtual-screen)
 
-                    form
-                    (hi/set-errors (hi/init-form (request)) {"user" "User is required"})
+                       form
+                       (hi/set-errors (hi/init-form (request)) {"user" "User is required"})
 
-                    _
-                    (hi/paint! g 80 30 form)]
+                       _
+                       (hi/paint! g 80 30 form)]
 
                    (expect (str/includes? (screen-text screen) "User is required")))))
 
@@ -429,39 +415,36 @@
       (expect (false? (#'screen/overlay-locked? @state/app-db))))
   (it "submits the typed values and closes once the engine accepts them"
       (let [submitted (atom nil)]
-        (with-redefs
-          [vis/submit-human-input! (fn [id values]
-                                     (reset! submitted [id values])
-                                     {:is-accepted true})]
+        (with-redefs [vis/submit-human-input! (fn [id values]
+                                                (reset! submitted [id values])
+                                                {:is-accepted true})]
           (reset! state/app-db {:render-version 0})
           (state/dispatch [:human-input-open (hi/init-form (request))])
-          (doseq
-            [key [(stroke \b) (stroke \o) (KeyStroke. KeyType/ArrowDown) (stroke \p)
-                  (KeyStroke. KeyType/Enter)]]
+          (doseq [key [(stroke \b) (stroke \o) (KeyStroke. KeyType/ArrowDown) (stroke \p)
+                       (KeyStroke. KeyType/Enter)]]
             (#'screen/human-input-key! @state/app-db key))
           (expect (= "req-1" (first @submitted)))
           (expect (= "bo" (get-in @submitted [1 "user"])))
           (expect (= "p" (get-in @submitted [1 "pass"])))
           (expect (nil? (:human-input @state/app-db))))))
   (it "keeps the dialog open and shows the engine's errors on a rejected answer"
-      (with-redefs
-        [vis/submit-human-input! (fn [_ _]
-                                   {:is-accepted false :errors {"pass" "Password is expired"}})]
+      (with-redefs [vis/submit-human-input! (fn [_ _]
+                                              {:is-accepted false
+                                               :errors {"pass" "Password is expired"}})]
         (reset! state/app-db {:render-version 0})
         (state/dispatch [:human-input-open (hi/init-form (request))])
         ;; Both required fields are filled, so the form's OWN rules pass and the
         ;; answer actually reaches the engine — which is the one refusing it here.
-        (doseq
-          [key [(stroke \b) (KeyStroke. KeyType/ArrowDown) (stroke \p) (KeyStroke. KeyType/Enter)]]
+        (doseq [key [(stroke \b) (KeyStroke. KeyType/ArrowDown) (stroke \p)
+                     (KeyStroke. KeyType/Enter)]]
           (#'screen/human-input-key! @state/app-db key))
         (expect (= "req-1" (get-in @state/app-db [:human-input :request :id])))
         (expect (= {"pass" "Password is expired"} (get-in @state/app-db [:human-input :errors])))))
   (it "cancels the pending request on Escape"
       (let [cancelled (atom nil)]
-        (with-redefs
-          [vis/cancel-human-input! (fn [id]
-                                     (reset! cancelled id)
-                                     true)]
+        (with-redefs [vis/cancel-human-input! (fn [id]
+                                                (reset! cancelled id)
+                                                true)]
           (reset! state/app-db {:render-version 0})
           (state/dispatch [:human-input-open (hi/init-form (request))])
           (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape))
@@ -480,12 +463,11 @@
   "Every painted human-input row containing `needle`, with the dialog frame and
    padding stripped, so a row compares directly against a canonical painter."
   [form needle]
-  (let
-    [{:keys [screen g]}
-     (virtual-screen probe-rows)
+  (let [{:keys [screen g]}
+        (virtual-screen probe-rows)
 
-     _
-     (hi/paint! g 80 probe-rows form)]
+        _
+        (hi/paint! g 80 probe-rows form)]
 
     (into []
           (keep (fn [y]
@@ -528,9 +510,8 @@
   ;; `multiselect` — where several answers are legal — looked exactly like the
   ;; `select` above it and nothing on the screen said "choose any".
   (it "paints multiselect options as INCLUSIVE checkbox boxes, never radio dots"
-      (let
-        [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 4) "Alpha")
-                    (painted-rows (assoc (hi/init-form (request)) :focus 4) "Beta"))]
+      (let [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 4) "Alpha")
+                       (painted-rows (assoc (hi/init-form (request)) :focus 4) "Beta"))]
         (expect (some #{(canonical-row (fn [g]
                                          (dialogs/draw-toggle-row!
                                            g
@@ -563,9 +544,8 @@
                                            false (str (dialogs/choice-mark false false) "Beta"))))}
                       (painted-rows form "Beta")))))
   (it "never lends the inclusive box to an EXCLUSIVE option"
-      (let
-        [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")
-                    (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))]
+      (let [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")
+                       (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))]
         (expect (seq rows))
         (expect (not-any? #(str/includes? % "[") rows))))
   (it "paints text fields with the shared input row painter"
@@ -573,15 +553,14 @@
                                        (dialogs/draw-input-item! g 0 0 40 true "" 0 "who")))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 0) "who"))))
   (it "keeps navigation chords and ASCII button brackets off the screen"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g 80 30 (hi/init-form (request)))
+            _
+            (hi/paint! g 80 30 (hi/init-form (request)))
 
-         text
-         (screen-text screen)]
+            text
+            (screen-text screen)]
 
         ;; `↑/↓ move` was a permanent row of chrome for the one chord every
         ;; terminal operator already knows.
@@ -621,20 +600,19 @@
    focused field and a resting one spell the same value with the same glyphs and
    differ only in surface, ink and weight."
   [form needle]
-  (let
-    [{:keys [screen g]}
-     (virtual-screen probe-rows)
+  (let [{:keys [screen g]}
+        (virtual-screen probe-rows)
 
-     ^TerminalScreen screen
-     screen
+        ^TerminalScreen screen
+        screen
 
-     _
-     (hi/paint! g 80 probe-rows form)
+        _
+        (hi/paint! g 80 probe-rows form)
 
-     y
-     (first (keep (fn [y]
-                    (when (str/includes? (screen-row screen y) needle) y))
-                  (range probe-rows)))]
+        y
+        (first (keep (fn [y]
+                       (when (str/includes? (screen-row screen y) needle) y))
+                     (range probe-rows)))]
 
     (when y
       {:text (screen-row screen y)
@@ -672,15 +650,14 @@
   ;; C-x, a HITL form) hid what was being typed and did not read as a layer at
   ;; all.
   (it "never covers the prompt box, and takes no tint of its own"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g 80 30 (hi/init-form (request)))
+            _
+            (hi/paint! g 80 30 (hi/init-form (request)))
 
-         prompt-top
-         (- 30 (long tr/prompt-rows) 3)]
+            prompt-top
+            (- 30 (long tr/prompt-rows) 3)]
 
         ;; Every row from the prompt's opening rule down belongs to the session.
         (expect (every? #(= "" (screen-row screen %)) (range (inc prompt-top) 30)))
@@ -709,22 +686,21 @@
         (expect (every? #(= "" (screen-row screen %)) (range 12)))
         (expect (str/includes? (screen-text screen) "Deploy"))))
   (it "says its name ON the opening rule, the way a magit transient does"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g
-                    80
-                    30
-                    (hi/init-form (assoc (request)
-                                    :fields [{:id "user" :type :plaintext :label "User"}])))
+            _
+            (hi/paint! g
+                       80
+                       30
+                       (hi/init-form (assoc (request)
+                                       :fields [{:id "user" :type :plaintext :label "User"}])))
 
-         title-y
-         (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))
+            title-y
+            (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))
 
-         title-row
-         (str/trim (screen-row screen (long title-y)))]
+            title-row
+            (str/trim (screen-row screen (long title-y)))]
 
         ;; `┌── Deploy? ──────┐`: chrome and question on ONE row. A title row and
         ;; a rule of its own were two rows of chrome bought with two rows of form.
@@ -737,18 +713,17 @@
   ;; the `Submit` / `Cancel` caps out of sight, so the only visible way to end
   ;; the pause was to guess a key.
   (it "pins the action bar above the fenced footer, however tall the form"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g 80 30 (hi/init-form (request)))
+            _
+            (hi/paint! g 80 30 (hi/init-form (request)))
 
-         close-y
-         (long (:hint-row (tr/band-region 80 30 1)))
+            close-y
+            (long (:hint-row (tr/band-region 80 30 1)))
 
-         bar
-         (screen-row screen (- close-y 3))]
+            bar
+            (screen-row screen (- close-y 3))]
 
         ;; The box closes on the echo row, its hint bar rides one row above it,
         ;; and the rule that fences the footer off sits above that — so the caps
@@ -766,24 +741,23 @@
   ;; chords stencilled ON the caps were a third: a cap is a focus stop ↑/↓ walks
   ;; onto, so it needs no shortcut printed beside it.
   (it "states each action once — on its cap, with no chord and no second row"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g 80 30 (hi/init-form (request)))
+            _
+            (hi/paint! g 80 30 (hi/init-form (request)))
 
-         close-y
-         (long (:hint-row (tr/band-region 80 30 1)))
+            close-y
+            (long (:hint-row (tr/band-region 80 30 1)))
 
-         bar
-         (screen-row screen (- close-y 3))
+            bar
+            (screen-row screen (- close-y 3))
 
-         hints
-         (str/lower-case (screen-row screen (dec close-y)))
+            hints
+            (str/lower-case (screen-row screen (dec close-y)))
 
-         text
-         (screen-text screen)]
+            text
+            (screen-text screen)]
 
         (expect (str/includes? bar " Submit "))
         (expect (str/includes? bar " Cancel"))
@@ -795,18 +769,17 @@
         (expect (not (str/includes? hints "submit")))
         (expect (not (str/includes? hints "cancel")))))
   (it "parks no marker glyph beside a cap — the cap's own colour is the cursor"
-      (let
-        [form
-         (hi/init-form (request))
+      (let [form
+            (hi/init-form (request))
 
-         cancel-idx
-         (dec (count (:stops form)))
+            cancel-idx
+            (dec (count (:stops form)))
 
-         bar-of
-         (fn [f]
-           (let [{:keys [screen g]} (virtual-screen)]
-             (hi/paint! g 80 30 f)
-             (screen-row screen (- (long (:hint-row (tr/band-region 80 30 1))) 3))))]
+            bar-of
+            (fn [f]
+              (let [{:keys [screen g]} (virtual-screen)]
+                (hi/paint! g 80 30 f)
+                (screen-row screen (- (long (:hint-row (tr/band-region 80 30 1))) 3))))]
 
         ;; The `•` cursor glyph a LIST row wears has no business on a pill that
         ;; recolours itself when focus arrives, and the gutter it needed had to be
@@ -817,12 +790,11 @@
             (expect (str/includes? bar " Cancel"))
             (expect (not (str/includes? bar "•")))))))
   (it "marks exactly the focused button and keeps the buttons out of the body"
-      (let
-        [form
-         (hi/init-form (request))
+      (let [form
+            (hi/init-form (request))
 
-         submit-idx
-         (- (count (:stops form)) 2)]
+            submit-idx
+            (- (count (:stops form)) 2)]
 
         (expect (not-any? #(= :action (:kind %)) (hi/form-rows form)))
         (expect (= [:submit :cancel] (mapv :action (:buttons (hi/action-bar form)))))
@@ -845,13 +817,12 @@
                    30
                    (hi/init-form
                      {:id "r" :title "T" :fields [{:id "a" :type :plaintext :label "A"}]}))
-        (let
-          [{:keys [left inner-w]} (tr/band-region 80 30 1)
-           left (long left)
-           right (+ left (long inner-w) 1)
-           top (first (filter #(= "┌" (char-at screen left %)) (range 30)))
-           bottom (long (:hint-row (tr/band-region 80 30 1)))
-           text (screen-text screen)]
+        (let [{:keys [left inner-w]} (tr/band-region 80 30 1)
+              left (long left)
+              right (+ left (long inner-w) 1)
+              top (first (filter #(= "┌" (char-at screen left %)) (range 30)))
+              bottom (long (:hint-row (tr/band-region 80 30 1)))
+              text (screen-text screen)]
 
           (expect (some? top))
           (expect (= "┐" (char-at screen right (long top))))
@@ -867,40 +838,39 @@
   ;; caps grew straight out of whatever field the body ended on.
   (it
     "insets the body off both rails and keeps a blank row above the pinned caps"
-    (let
-      [{:keys [screen g]}
-       (virtual-screen)
+    (let [{:keys [screen g]}
+          (virtual-screen)
 
-       _
-       (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 2))
+          _
+          (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 2))
 
-       {:keys [left inner-w]}
-       (tr/band-region 80 30 1)
+          {:keys [left inner-w]}
+          (tr/band-region 80 30 1)
 
-       left
-       (long left)
+          left
+          (long left)
 
-       right
-       (+ left (long inner-w) 1)
+          right
+          (+ left (long inner-w) 1)
 
-       rows
-       (mapv #(screen-row screen %) (range 30))
+          rows
+          (mapv #(screen-row screen %) (range 30))
 
-       at
-       (fn [pred]
-         (long (first (keep-indexed (fn [y r]
-                                      (when (pred r) y))
-                                    rows))))
+          at
+          (fn [pred]
+            (long (first (keep-indexed (fn [y r]
+                                         (when (pred r) y))
+                                       rows))))
 
-       inner
-       (fn [y]
-         (str/join (map #(char-at screen % y) (range (inc left) right))))
+          inner
+          (fn [y]
+            (str/join (map #(char-at screen % y) (range (inc left) right))))
 
-       ring-y
-       (at #(str/includes? % "▎"))
+          ring-y
+          (at #(str/includes? % "▎"))
 
-       caps-y
-       (at #(str/includes? % " Submit "))]
+          caps-y
+          (at #(str/includes? % " Submit "))]
 
       ;; The rail, then a clear column, and only then the ring a focused row
       ;; wears — the ring is the LAST of the lead, never painted on the box.
@@ -919,27 +889,26 @@
   ;; the border itself carried a moving glyph and the bar had no gutter of its
   ;; own — every other scrollable dialog draws it one column INSIDE the frame.
   (it "draws the scrollbar in the gutter lane inside the right rail, never on it"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g 80 16 (assoc (hi/init-form (request)) :focus 7))
+            _
+            (hi/paint! g 80 16 (assoc (hi/init-form (request)) :focus 7))
 
-         {:keys [left inner-w]}
-         (tr/band-region 80 16 1)
+            {:keys [left inner-w]}
+            (tr/band-region 80 16 1)
 
-         lane
-         (+ (long left) (long inner-w))
+            lane
+            (+ (long left) (long inner-w))
 
-         rail
-         (inc (long lane))
+            rail
+            (inc (long lane))
 
-         ys
-         (range 16)
+            ys
+            (range 16)
 
-         thumb-y
-         (long (first (filter #(= "█" (char-at screen lane %)) ys)))]
+            thumb-y
+            (long (first (filter #(= "█" (char-at screen lane %)) ys)))]
 
         ;; The thumb rides in the lane, one column inside the frame …
         (expect (= "█" (char-at screen lane thumb-y)))
@@ -951,40 +920,38 @@
   ;; Regression: the band's box hung one column OUTSIDE the prompt's rules on
   ;; each side — the rails sat in the terminal's own margin, so the form read as
   ;; nailed to the screen edge instead of standing on the prompt under it.
-  (it
-    "stands its rails on the very columns the prompt's rule ends on"
-    (let
-      [{:keys [screen g]}
-       (virtual-screen)
+  (it "stands its rails on the very columns the prompt's rule ends on"
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-       _
-       (hi/paint! g 80 30 (hi/init-form (request)))
+            _
+            (hi/paint! g 80 30 (hi/init-form (request)))
 
-       ;; The prompt the band sits above, painted by the session's own painter.
-       _
-       (render/draw-input-box! g {:lines [""] :crow 0 :ccol 0} 26 1 80 nil)
+            ;; The prompt the band sits above, painted by the session's own painter.
+            _
+            (render/draw-input-box! g {:lines [""] :crow 0 :ccol 0} 26 1 80 nil)
 
-       {:keys [left inner-w]}
-       (tr/band-region 80 30 1)
+            {:keys [left inner-w]}
+            (tr/band-region 80 30 1)
 
-       left
-       (long left)
+            left
+            (long left)
 
-       right
-       (+ left (long inner-w) 1)
+            right
+            (+ left (long inner-w) 1)
 
-       rule-cols
-       (filterv #(= "─" (char-at screen % 26)) (range 80))
+            rule-cols
+            (filterv #(= "─" (char-at screen % 26)) (range 80))
 
-       top
-       (long (first (filter #(= "┌" (char-at screen left %)) (range 30))))]
+            top
+            (long (first (filter #(= "┌" (char-at screen left %)) (range 30))))]
 
-      (expect (= left (long (first rule-cols))))
-      (expect (= right (long (last rule-cols))))
-      ;; ...and the box really is drawn there, with terminal margin outside it.
-      (expect (= "┐" (char-at screen right top)))
-      (expect (every? #(= " " (char-at screen % top)) (range 0 left)))
-      (expect (every? #(= " " (char-at screen % top)) (range (inc right) 80)))))
+        (expect (= left (long (first rule-cols))))
+        (expect (= right (long (last rule-cols))))
+        ;; ...and the box really is drawn there, with terminal margin outside it.
+        (expect (= "┐" (char-at screen right top)))
+        (expect (every? #(= " " (char-at screen % top)) (range 0 left)))
+        (expect (every? #(= " " (char-at screen % top)) (range (inc right) 80)))))
   (it "anchors the band on the prompt's closing rule at any height"
       ;; PURE: the band sits ABOVE the prompt, so its hint row is
       ;; `rows - prompt-h - 3` — never on top of the input box.
@@ -1024,12 +991,11 @@
   "The background colour the back buffer holds on the first cell of `needle` —
    which FILL a painted cap wears."
   [^TerminalScreen screen needle]
-  (let
-    [y
-     (long (screen-row-of screen needle))
+  (let [y
+        (long (screen-row-of screen needle))
 
-     x
-     (.indexOf ^String (screen-row screen y) ^String needle)]
+        x
+        (.indexOf ^String (screen-row screen y) ^String needle)]
 
     (.getBackgroundColor ^TextCharacter (.getBackCharacter screen (int x) (int y)))))
 
@@ -1052,22 +1018,21 @@
       ;; dialog names them BEFORE the operator hits enter — with the web's own mark.
       ;; Spelling `REQUIRED` out beside every label said the same word down the whole
       ;; form and shoved the labels apart.
-      (let
-        [rows
-         (hi/form-rows (hi/init-form (request)))
+      (let [rows
+            (hi/form-rows (hi/init-form (request)))
 
-         label-of
-         (fn [needle]
-           (some #(when (and (= :label (:kind %)) (str/starts-with? (str (:text %)) needle))
-                    (:text %))
-                 rows))
+            label-of
+            (fn [needle]
+              (some #(when (and (= :label (:kind %)) (str/starts-with? (str (:text %)) needle))
+                       (:text %))
+                    rows))
 
-         checkbox-rows
-         (hi/form-rows (hi/init-form
-                         {:id "r"
-                          :title "T"
-                          :fields
-                          [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]}))]
+            checkbox-rows
+            (hi/form-rows (hi/init-form
+                            {:id "r"
+                             :title "T"
+                             :fields
+                             [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]}))]
 
         (expect (= "User *" (label-of "User")))
         (expect (= "Password *" (label-of "Password")))
@@ -1085,13 +1050,12 @@
         (expect (= t/footer-error-fg (:fg (cell-under form "*"))))
         (expect (not= t/footer-error-fg (:fg (cell-under form "User"))))))
   (it "re-inks a checkbox's own `*` on whatever paper its row already wears"
-      (let
-        [cell (cell-under (hi/init-form
-                            {:id "r"
-                             :title "T"
-                             :fields
-                             [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]})
-                          "*")]
+      (let [cell (cell-under (hi/init-form
+                               {:id "r"
+                                :title "T"
+                                :fields
+                                [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]})
+                             "*")]
         (expect (= t/footer-error-fg (:fg cell)))
         ;; A checkbox is a TOGGLE, so that paper is the band's own: the typed
         ;; field's surface never gets under a row nobody types into.
@@ -1100,12 +1064,11 @@
       ;; The label is the HEADLINE of its own section: whatever it introduces —
       ;; prose, options, or the input itself — starts one row below it, so a form
       ;; reads as labelled blocks instead of one unbroken column of text.
-      (let
-        [rows
-         (hi/form-rows (hi/init-form (request)))
+      (let [rows
+            (hi/form-rows (hi/init-form (request)))
 
-         i
-         (row-index rows #(and (= :label (:kind %)) (= "Note" (:text %))))]
+            i
+            (row-index rows #(and (= :label (:kind %)) (= "Note" (:text %))))]
 
         (expect (some? i))
         (expect (= :blank (:kind (nth rows (inc i)))))
@@ -1120,44 +1083,41 @@
         (expect (= :input (:kind (nth rows (+ (long i) 4)))))
         (expect (= "note" (:field-id (nth rows (+ (long i) 4)))))))
   (it "leaves a field with no description with just its label, the gap, and its input"
-      (let
-        [rows
-         (hi/form-rows (hi/init-form (request)))
+      (let [rows
+            (hi/form-rows (hi/init-form (request)))
 
-         i
-         (row-index rows #(and (= :label (:kind %)) (= "Env" (:text %))))]
+            i
+            (row-index rows #(and (= :label (:kind %)) (= "Env" (:text %))))]
 
         (expect (some? i))
         (expect (= :blank (:kind (nth rows (inc (long i))))))
         (expect (= :option (:kind (nth rows (+ (long i) 2)))))))
   (it "hangs a checkbox description under the box that carries the label"
-      (let
-        [rows (hi/form-rows (hi/init-form {:id "r"
-                                           :title "T"
-                                           :fields [{:id "ok"
-                                                     :type :checkbox
-                                                     :label "Confirm"
-                                                     :description "This cannot be undone"}]}))]
+      (let [rows (hi/form-rows (hi/init-form {:id "r"
+                                              :title "T"
+                                              :fields [{:id "ok"
+                                                        :type :checkbox
+                                                        :label "Confirm"
+                                                        :description "This cannot be undone"}]}))]
         ;; No bold label row: the checkbox row already says "Confirm", and the
         ;; description still explains it right underneath.
         (expect (= [:checkbox :description :blank] (mapv :kind rows)))
         (expect (= "This cannot be undone" (:text (second rows))))))
   (it "paints every description in italic and every label in bold"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         ;; A short form, so both prose rows are inside the dialog viewport.
-         (hi/paint! g
-                    80
-                    30
-                    (hi/init-form
-                      {:id "r"
-                       :title "T"
-                       :description "Pick the target"
-                       :fields
-                       [{:id "note" :type :plaintext :label "Note" :description "Free text"}]}))]
+            _
+            ;; A short form, so both prose rows are inside the dialog viewport.
+            (hi/paint! g
+                       80
+                       30
+                       (hi/init-form
+                         {:id "r"
+                          :title "T"
+                          :description "Pick the target"
+                          :fields
+                          [{:id "note" :type :plaintext :label "Note" :description "Free text"}]}))]
 
         ;; The request's own description and the field's, both italic, never bold.
         (expect (= #{SGR/ITALIC} (modifiers-of screen "Pick the target")))
@@ -1175,38 +1135,36 @@
    not line up."
   (it
     "starts a checkbox and an option in the label's own column"
-    (let
-      [{:keys [screen g]}
-       (virtual-screen)
+    (let [{:keys [screen g]}
+          (virtual-screen)
 
-       _
-       (hi/paint! g
-                  80
-                  30
-                  (hi/init-form {:id "r"
-                                 :title "T"
-                                 :fields
-                                 [{:id "env"
-                                   :type :select
-                                   :label "Environment"
-                                   :options [{:value "stg" :label "Staging"}]}
-                                  {:id "ok" :type :checkbox :label "I have read the diff"}]}))
+          _
+          (hi/paint! g
+                     80
+                     30
+                     (hi/init-form {:id "r"
+                                    :title "T"
+                                    :fields
+                                    [{:id "env"
+                                      :type :select
+                                      :label "Environment"
+                                      :options [{:value "stg" :label "Staging"}]}
+                                     {:id "ok" :type :checkbox :label "I have read the diff"}]}))
 
-       col-of
-       (fn [needle]
-         (some (fn [r]
-                 (let
-                   [line
-                    (screen-row screen r)
+          col-of
+          (fn [needle]
+            (some (fn [r]
+                    (let [line
+                          (screen-row screen r)
 
-                    at
-                    (str/index-of line needle)]
+                          at
+                          (str/index-of line needle)]
 
-                   (when at at)))
-               (range 30)))
+                      (when at at)))
+                  (range 30)))
 
-       label-col
-       (col-of "Environment")]
+          label-col
+          (col-of "Environment")]
 
       (expect (some? label-col))
       ;; The text column is shared: no row is indented for a gutter.
@@ -1231,16 +1189,15 @@
    away exactly the half that explained the ask, so prose wraps onto as many
    rows as it needs — the dialog's own description and every field's."
   (it "wraps the dialog's own description onto as many rows as it needs"
-      (let
-        [rows
-         (hi/form-rows (hi/init-form {:id "r"
-                                      :title "Deploy"
-                                      :description prose
-                                      :fields [{:id "env" :type :plaintext :label "Env"}]})
-                       40)
+      (let [rows
+            (hi/form-rows (hi/init-form {:id "r"
+                                         :title "Deploy"
+                                         :description prose
+                                         :fields [{:id "env" :type :plaintext :label "Env"}]})
+                          40)
 
-         head
-         (vec (take-while #(= :description (:kind %)) rows))]
+            head
+            (vec (take-while #(= :description (:kind %)) rows))]
 
         (expect (< 1 (count head)))
         (expect (every? #(<= (count (str (:text %))) 40) head))
@@ -1250,19 +1207,19 @@
         ;; The blank spacer still separates the dialog prose from the first field.
         (expect (= :blank (:kind (nth rows (count head)))))))
   (it "wraps a field's description, still between its label and its input"
-      (let
-        [rows
-         (hi/form-rows (hi/init-form
-                         {:id "r"
-                          :title "Deploy"
-                          :fields [{:id "env" :type :plaintext :label "Env" :description prose}]})
-                       40)
+      (let [rows
+            (hi/form-rows (hi/init-form
+                            {:id "r"
+                             :title "Deploy"
+                             :fields
+                             [{:id "env" :type :plaintext :label "Env" :description prose}]})
+                          40)
 
-         i
-         (long (row-index rows #(= :label (:kind %))))
+            i
+            (long (row-index rows #(= :label (:kind %))))
 
-         desc
-         (vec (take-while #(= :description (:kind %)) (drop (+ i 2) rows)))]
+            desc
+            (vec (take-while #(= :description (:kind %)) (drop (+ i 2) rows)))]
 
         (expect (= :blank (:kind (nth rows (inc i)))))
         (expect (< 1 (count desc)))
@@ -1272,26 +1229,24 @@
         (expect (= :input (:kind (nth rows (+ i 3 (count desc))))))))
   (it "leaves the plan unwrapped when no width is offered"
       ;; The pure one-arity plan is what a caller measures without a terminal.
-      (let
-        [rows (hi/form-rows (hi/init-form {:id "r"
-                                           :title "Deploy"
-                                           :description prose
-                                           :fields [{:id "env" :type :plaintext}]}))]
+      (let [rows (hi/form-rows (hi/init-form {:id "r"
+                                              :title "Deploy"
+                                              :description prose
+                                              :fields [{:id "env" :type :plaintext}]}))]
         (expect (= {:kind :description :text prose} (first rows)))
         (expect (= :blank (:kind (second rows))))))
   (it "paints the whole description instead of clipping it at the border"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g
-                    80
-                    30
-                    (hi/init-form {:id "r"
-                                   :title "Deploy"
-                                   :description prose
-                                   :fields [{:id "env" :type :plaintext :label "Env"}]}))]
+            _
+            (hi/paint! g
+                       80
+                       30
+                       (hi/init-form {:id "r"
+                                      :title "Deploy"
+                                      :description prose
+                                      :fields [{:id "env" :type :plaintext :label "Env"}]}))]
 
         ;; The tail of the sentence is on screen only because it wrapped.
         (expect (some? (screen-row-of screen "submit.")))
@@ -1317,21 +1272,20 @@
   (it "keeps every character of an unbreakable URL description on screen"
       ;; Wrapping and painting must agree on the width. When they disagree the
       ;; painter clips with `…` and the operator copies a truncated URL.
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g
-                    80
-                    30
-                    (hi/init-form {:id "r"
-                                   :title "Fetch"
-                                   :description url
-                                   :fields [{:id "ok" :type :checkbox :label "Go"}]}))
+            _
+            (hi/paint! g
+                       80
+                       30
+                       (hi/init-form {:id "r"
+                                      :title "Fetch"
+                                      :description url
+                                      :fields [{:id "ok" :type :checkbox :label "Go"}]}))
 
-         painted
-         (screen-text screen)]
+            painted
+            (screen-text screen)]
 
         (expect (not (str/includes? painted "…")))
         (expect (str/includes? (squash painted) url))))
@@ -1351,37 +1305,34 @@
   (it "renders nothing at all for a description that is only whitespace"
       ;; A blank string is not a sentence: it must cost zero rows, not a gap that
       ;; pushes the first field out of view.
-      (let
-        [base
-         {:id "r" :title "T" :fields [{:id "ok" :type :checkbox :label "Go"}]}
+      (let [base
+            {:id "r" :title "T" :fields [{:id "ok" :type :checkbox :label "Go"}]}
 
-         plain
-         (hi/form-rows (hi/init-form base) 40)
+            plain
+            (hi/form-rows (hi/init-form base) 40)
 
-         blank
-         (hi/form-rows (hi/init-form (assoc base :description "   \t  ")) 40)]
+            blank
+            (hi/form-rows (hi/init-form (assoc base :description "   \t  ")) 40)]
 
         (expect (= plain blank))
         (expect (not-any? #(= :description (:kind %)) blank))))
   (it "paints on every terminal size a split pane or phone can produce"
       ;; Below eleven rows the chrome used to ask for a negative box and Lanterna
       ;; threw, so the dialog took the whole TUI down with it.
-      (let
-        [form
-         (assoc (hi/init-form (assoc (request) :description prose)) :focus 5)
+      (let [form
+            (assoc (hi/init-form (assoc (request) :description prose)) :focus 5)
 
-         failures
-         (let [{:keys [g]} (virtual-screen)]
-           (into []
-                 (for
-                   [cols (range 1 81 5)
-                    rows (range 1 31)
-                    :let [failure (try (hi/paint! g cols rows form)
-                                       nil
-                                       (catch Throwable t [cols rows (.getMessage t)]))]
-                    :when failure]
+            failures
+            (let [{:keys [g]} (virtual-screen)]
+              (into []
+                    (for [cols (range 1 81 5)
+                          rows (range 1 31)
+                          :let [failure (try (hi/paint! g cols rows form)
+                                             nil
+                                             (catch Throwable t [cols rows (.getMessage t)]))]
+                          :when failure]
 
-                   failure)))]
+                      failure)))]
 
         (expect (= [] failures)))))
 
@@ -1412,9 +1363,8 @@
         (expect (= 0 (get-in (feed form [{:kind :home}]) [:values "pct"])))
         (expect (= 100 (get-in (feed form [{:kind :end}]) [:values "pct"])))))
   (it "snaps to a whole number only when the bounds are whole"
-      (let
-        [decimal (assoc (hi/init-form (slider-request :min 0 :max 1 :step 0.25 :default 0.5))
-                   :focus 1)]
+      (let [decimal (assoc (hi/init-form (slider-request :min 0 :max 1 :step 0.25 :default 0.5))
+                      :focus 1)]
         (expect (= 0.75 (get-in (feed decimal [{:kind :right}]) [:values "pct"])))))
   (it "draws a track, the value and the bounds, so the number is never a mystery"
       (let [texts (map #(str (:text %)) (hi/form-rows (hi/init-form (slider-request))))]
@@ -1444,14 +1394,13 @@
         (expect (= :cancel (:action (hi/handle-event (assoc form :focus 3) {:kind :enter}))))
         (expect (= :cancel (:action (hi/handle-event (assoc form :focus 3) (ch \space)))))))
   (it "wears the request's own labels and drops Cancel when the request forbids it"
-      (let
-        [custom
-         (hi/init-form (assoc (slider-request)
-                         :submit-label "Ship it"
-                         :cancel-label "Hold"))
+      (let [custom
+            (hi/init-form (assoc (slider-request)
+                            :submit-label "Ship it"
+                            :cancel-label "Hold"))
 
-         locked
-         (hi/init-form (assoc (slider-request) :is-cancellable false))]
+            locked
+            (hi/init-form (assoc (slider-request) :is-cancellable false))]
 
         (expect (= ["Ship it" "Hold"] (mapv :label (:buttons (hi/action-bar custom)))))
         (expect (= ["Submit"] (mapv :label (:buttons (hi/action-bar locked)))))
@@ -1461,21 +1410,20 @@
       ;; Cancel repainted Submit as the quiet action and the form lost its
       ;; default; then focus was spelled as a `•` in a reserved gutter instead of
       ;; being what a button's own colour already says.
-      (let
-        [form
-         (hi/init-form (request))
+      (let [form
+            (hi/init-form (request))
 
-         cancel-idx
-         (dec (count (:stops form)))
+            cancel-idx
+            (dec (count (:stops form)))
 
-         [submit-bg cancel-bg]
-         (cap-bgs form)
+            [submit-bg cancel-bg]
+            (cap-bgs form)
 
-         [focused-submit-bg quiet-cancel-bg]
-         (cap-bgs (assoc form :focus (dec cancel-idx)))
+            [focused-submit-bg quiet-cancel-bg]
+            (cap-bgs (assoc form :focus (dec cancel-idx)))
 
-         [quiet-submit-bg focused-cancel-bg]
-         (cap-bgs (assoc form :focus cancel-idx))]
+            [quiet-submit-bg focused-cancel-bg]
+            (cap-bgs (assoc form :focus cancel-idx))]
 
         ;; Cursor elsewhere: two different fills, both solid.
         (expect (not= submit-bg cancel-bg))
@@ -1528,26 +1476,24 @@
   ;; composer was blanked to make room, so the human could not see what they had
   ;; been typing while the transient asked its question.
   (it "keeps the composer visible UNDER a human-input transient, minus the keyboard"
-      (let
-        [screen (bottom-chrome (assoc (idle-db)
-                                 :human-input (hi/init-form
-                                                {:id "r"
-                                                 :title "Tiny"
-                                                 :fields [{:id "a" :type :checkbox :label "Yes"}]
-                                                 :is-cancellable true})))]
+      (let [screen (bottom-chrome (assoc (idle-db)
+                                    :human-input (hi/init-form
+                                                   {:id "r"
+                                                    :title "Tiny"
+                                                    :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                                    :is-cancellable true})))]
         (expect (rule-row? (screen-row screen 24)))
         (expect (str/includes? (screen-row screen 25) "hello draft"))
         (expect (rule-row? (screen-row screen 26)))
         ;; ...but the form owns the keyboard, so no caret sits in the composer.
         (expect (nil? (.getCursorPosition screen)))))
   (it "keeps the footer alive under the transient"
-      (let
-        [screen (bottom-chrome (assoc (idle-db)
-                                 :human-input (hi/init-form
-                                                {:id "r"
-                                                 :title "Tiny"
-                                                 :fields [{:id "a" :type :checkbox :label "Yes"}]
-                                                 :is-cancellable true})))]
+      (let [screen (bottom-chrome (assoc (idle-db)
+                                    :human-input (hi/init-form
+                                                   {:id "r"
+                                                    :title "Tiny"
+                                                    :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                                    :is-cancellable true})))]
         (expect (not= "" (screen-row screen 28))))))
 
 ;; One-time codes, and errors that arrive ONLY from a confirmation
@@ -1588,15 +1534,14 @@
       (let [cell (cell-under (assoc (hi/init-form (request)) :focus 1) "who")]
         (expect (= (band-resting-bg) (:bg cell)))))
   (it "rings the focused field, and rings exactly one"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g 80 30 (otp-form))
+            _
+            (hi/paint! g 80 30 (otp-form))
 
-         ringed
-         (filterv #(str/includes? % "▎") (map #(screen-row screen %) (range 30)))]
+            ringed
+            (filterv #(str/includes? % "▎") (map #(screen-row screen %) (range 30)))]
 
         (expect (= 1 (count ringed)))
         ;; The ring is on the CODE boxes, the field being filled, not on the
@@ -1604,15 +1549,14 @@
         (expect (str/includes? (first ringed) "[ ]"))
         (expect (= t/header-active-tab-accent (:fg (cell-under (otp-form) "▎"))))))
   (it "keeps every field label bold while focus still controls its ink"
-      (let
-        [form
-         (assoc (hi/init-form (request)) :focus 0)
+      (let [form
+            (assoc (hi/init-form (request)) :focus 0)
 
-         mine
-         (cell-under form "User")
+            mine
+            (cell-under form "User")
 
-         theirs
-         (cell-under form "Password")]
+            theirs
+            (cell-under form "Password")]
 
         (expect (:is-bold mine))
         (expect (= t/dialog-fg (:fg mine)))
@@ -1622,11 +1566,10 @@
   (it "makes the focused field's prose readable and leaves the rest as hints"
       ;; A SHORT form, so both fields' prose is inside the viewport and the
       ;; comparison is about ink rather than about what scrolled away.
-      (let
-        [two {:id "r"
-              :title "T"
-              :fields [{:id "a" :type :plaintext :label "A" :description "Free text"}
-                       {:id "b" :type :plaintext :label "B" :description "Other prose"}]}]
+      (let [two {:id "r"
+                 :title "T"
+                 :fields [{:id "a" :type :plaintext :label "A" :description "Free text"}
+                          {:id "b" :type :plaintext :label "B" :description "Other prose"}]}]
         (expect (= t/dialog-fg (:fg (cell-under (hi/init-form two) "Free text"))))
         (expect (= t/dialog-hint
                    (:fg (cell-under (assoc (hi/init-form two) :focus 1) "Free text"))))))
@@ -1634,15 +1577,14 @@
       (expect (= t/input-field-bg (:bg (cell-under (otp-form) "[ ]"))))
       (expect (= (band-resting-bg) (:bg (cell-under (assoc (otp-form) :focus 0) "[ ]")))))
   (it "parks the terminal cursor inside the box the next digit lands in"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         ^TerminalPosition pos
-         (hi/paint! g 80 30 (feed (otp-form) [(ch \3) (ch \1)]))
+            ^TerminalPosition pos
+            (hi/paint! g 80 30 (feed (otp-form) [(ch \3) (ch \1)]))
 
-         row
-         (screen-row screen (.getRow pos))]
+            row
+            (screen-row screen (.getRow pos))]
 
         (expect (str/includes? row "[•] [•] [ ]"))
         ;; Inside the THIRD box: its own bracket one column to the left.
@@ -1736,12 +1678,11 @@
         (expect (nil? (some #{:error} (map :kind (hi/form-rows form 60)))))
         (expect (= :submit (:action (hi/handle-event form {:kind :submit}))))))
   (it "the engine's refusal is the only thing that reddens a field"
-      (let
-        [errors
-         {"email" "is required" "code" "must be 6 digits"}
+      (let [errors
+            {"email" "is required" "code" "must be 6 digits"}
 
-         form
-         (hi/set-errors (feed (otp-form) (map ch "123")) errors)]
+            form
+            (hi/set-errors (feed (otp-form) (map ch "123")) errors)]
 
         (expect (= errors (:errors form)))
         ;; The cursor jumps back to the email, the earliest thing that is wrong.
@@ -1752,43 +1693,42 @@
         (expect (= {"email" "that address bounced"}
                    (:errors (feed form [{:kind :next} {:kind :prev}]))))))
   (it "the first keystroke clears THAT field's message and no other"
-      (let
-        [form
-         (hi/set-errors (hi/init-form (otp-request))
-                        {"email" "that address bounced" "code" "must be 6 digits"})
+      (let [form
+            (hi/set-errors (hi/init-form (otp-request))
+                           {"email" "that address bounced" "code" "must be 6 digits"})
 
-         typed
-         (feed form [(ch \a)])]
+            typed
+            (feed form [(ch \a)])]
 
         (expect (= {"code" "must be 6 digits"} (:errors typed)))
         (expect (nil? (some #{"that address bounced"} (map :text (hi/form-rows typed 60)))))
         ;; Erasing is a touch as much as typing is.
         (expect (= {"code" "must be 6 digits"} (:errors (feed typed [{:kind :backspace}]))))))
   (it "toggling, picking and nudging are touches too"
-      (let
-        [request
-         (engine/request->view
-           (engine/normalize-request
-             {"title" "Ship"
-              "fields" [{"name" "ok" "type" "checkbox" "label" "Confirm"}
-                        {"name" "env" "type" "select" "label" "Env" "options" ["prod" "stg"]}
-                        {"name" "risk" "type" "range" "label" "Risk" "min" 0 "max" 10 "step" 1}]}))
+      (let [request
+            (engine/request->view
+              (engine/normalize-request
+                {"title" "Ship"
+                 "fields"
+                 [{"name" "ok" "type" "checkbox" "label" "Confirm"}
+                  {"name" "env" "type" "select" "label" "Env" "options" ["prod" "stg"]}
+                  {"name" "risk" "type" "range" "label" "Risk" "min" 0 "max" 10 "step" 1}]}))
 
-         errors
-         {"ok" "must be checked" "env" "is required" "risk" "too much"}
+            errors
+            {"ok" "must be checked" "env" "is required" "risk" "too much"}
 
-         form
-         (hi/set-errors (hi/init-form request) errors)
+            form
+            (hi/set-errors (hi/init-form request) errors)
 
-         stop-at
-         (fn [kind]
-           (first (keep-indexed (fn [i s]
-                                  (when (= kind (:kind s)) i))
-                                (:stops form))))
+            stop-at
+            (fn [kind]
+              (first (keep-indexed (fn [i s]
+                                     (when (= kind (:kind s)) i))
+                                   (:stops form))))
 
-         touch
-         (fn [kind events]
-           (:errors (feed (assoc form :focus (stop-at kind)) events)))]
+            touch
+            (fn [kind events]
+              (:errors (feed (assoc form :focus (stop-at kind)) events)))]
 
         (expect (= errors (:errors form)))
         (expect (= (dissoc errors "ok") (touch :checkbox [(ch \space)])))
@@ -1797,13 +1737,12 @@
   (it "the next confirmation asks the engine all over again"
       ;; The form never decides for itself that the value is fixed now: it drops
       ;; the stale message and sends the whole answer back for a fresh verdict.
-      (let
-        [retyped
-         (feed (hi/set-errors (hi/init-form (otp-request)) {"email" "that address bounced"})
-               (map ch "ops@example.com"))
+      (let [retyped
+            (feed (hi/set-errors (hi/init-form (otp-request)) {"email" "that address bounced"})
+                  (map ch "ops@example.com"))
 
-         {:keys [form action]}
-         (hi/handle-event retyped {:kind :submit})]
+            {:keys [form action]}
+            (hi/handle-event retyped {:kind :submit})]
 
         (expect (= {} (:errors retyped)))
         (expect (= :submit action))
@@ -1835,12 +1774,11 @@
 (defn- caret
   "Where `paint!` parks the terminal caret: `[x y]`."
   [form]
-  (let
-    [{:keys [g]}
-     (virtual-screen)
+  (let [{:keys [g]}
+        (virtual-screen)
 
-     pos
-     (hi/paint! g 80 30 form)]
+        pos
+        (hi/paint! g 80 30 form)]
 
     [(.getColumn ^TerminalPosition pos) (.getRow ^TerminalPosition pos)]))
 
@@ -1858,9 +1796,8 @@
         (expect (some #(str/includes? % "Host") rows))
         (expect (some #(str/includes? % "Port") rows))))
   (it "gives the group its own heading, above the fields it owns"
-      (let
-        [rows (ink (hi/init-form (grouped-request (assoc (server-group "row")
-                                                    "description" "Where to connect"))))]
+      (let [rows (ink (hi/init-form (grouped-request (assoc (server-group "row")
+                                                       "description" "Where to connect"))))]
         (expect (< (long (row-index rows #(= "Server" %)))
                    (long (row-index rows #(str/includes? % "Where to connect")))
                    (long (row-index rows #(str/includes? % "Host")))))))
@@ -1870,56 +1807,52 @@
         (expect (= {"host" "" "port" "" "notes" ""} (:values form)))))
   (it "composes: a `column` group nested inside a `row` group is one of its columns"
       ;; Two directions and no third rule — the tree does the rest.
-      (let
-        [rows (ink (hi/init-form (grouped-request {"type" "group"
-                                                   "direction" "row"
-                                                   "fields" [{"type" "group"
-                                                              "direction" "column"
-                                                              "label" "Left"
-                                                              "fields" [{"name" "a" "label" "A"}
-                                                                        {"name" "b" "label" "B"}]}
-                                                             {"name" "c" "label" "C"}]})))]
+      (let [rows (ink (hi/init-form (grouped-request {"type" "group"
+                                                      "direction" "row"
+                                                      "fields" [{"type" "group"
+                                                                 "direction" "column"
+                                                                 "label" "Left"
+                                                                 "fields" [{"name" "a" "label" "A"}
+                                                                           {"name" "b"
+                                                                            "label" "B"}]}
+                                                                {"name" "c" "label" "C"}]})))]
         ;; The nested column's heading shares its line with the neighbour column,
         ;; and B — the second row of that column — is BELOW A, not beside it.
         (expect (some #(and (str/includes? % "Left") (str/includes? % "C")) rows))
         (expect (< (long (row-index rows #(str/includes? % "A")))
                    (long (row-index rows #(str/includes? % "B")))))))
   (it "moves the caret ACROSS a shared row, not down it"
-      (let
-        [form
-         (hi/init-form (grouped-request (server-group "row")))
+      (let [form
+            (hi/init-form (grouped-request (server-group "row")))
 
-         [x0 y0]
-         (caret (assoc form :focus 0))
+            [x0 y0]
+            (caret (assoc form :focus 0))
 
-         [x1 y1]
-         (caret (assoc form :focus 1))
+            [x1 y1]
+            (caret (assoc form :focus 1))
 
-         [_ y2]
-         (caret (assoc form :focus 2))]
+            [_ y2]
+            (caret (assoc form :focus 2))]
 
         (expect (= y0 y1))
         (expect (< (long x0) (long x1)))
         (expect (< (long y1) (long y2)))))
   (it "types into the focused column only"
-      (let
-        [form (feed (assoc (hi/init-form (grouped-request (server-group "row"))) :focus 1)
-                    (map ch "5433"))]
+      (let [form (feed (assoc (hi/init-form (grouped-request (server-group "row"))) :focus 1)
+                       (map ch "5433"))]
         (expect (= {"host" "" "port" "5433" "notes" ""} (:values form)))
         (expect (some #(str/includes? % "5433") (ink form)))))
   (it "prints a grouped field's error inside its own column"
-      (let
-        [form (hi/set-errors (hi/init-form (grouped-request (server-group "row")))
-                             {"host" "is required"})]
+      (let [form (hi/set-errors (hi/init-form (grouped-request (server-group "row")))
+                                {"host" "is required"})]
         (expect (= {"host" "is required"} (:errors form)))
         (expect (some #(str/includes? % "is required") (ink form)))))
   (it "answers with one flat map of leaves, whatever the layout"
-      (let
-        [view
-         (grouped-request (server-group "row"))
+      (let [view
+            (grouped-request (server-group "row"))
 
-         form
-         (feed (hi/init-form view) (map ch "db1"))]
+            form
+            (feed (hi/init-form view) (map ch "db1"))]
 
         (expect (= {"host" "db1" "port" "" "notes" ""}
                    (:values (:form (hi/handle-event form {:kind :submit})))))
@@ -1928,21 +1861,20 @@
       ;; Every row resolves its stop through the plan's index, so the second
       ;; column's options stay its own: the same ordinal must never light up in
       ;; both columns.
-      (let
-        [form
-         (hi/init-form (grouped-request
-                         {"type" "group"
-                          "direction" "row"
-                          "fields" [{"name" "env" "type" "select" "options" ["dev" "prod"]}
-                                    {"name" "tier" "type" "select" "options" ["free" "paid"]}]}))
+      (let [form
+            (hi/init-form (grouped-request
+                            {"type" "group"
+                             "direction" "row"
+                             "fields" [{"name" "env" "type" "select" "options" ["dev" "prod"]}
+                                       {"name" "tier" "type" "select" "options" ["free" "paid"]}]}))
 
-         focused
-         (fn [focus]
-           (into []
-                 (comp (mapcat #(if (= :columns (:kind %)) (:cells %) [%]))
-                       (filter :is-focused)
-                       (map :text))
-                 (hi/form-rows (assoc form :focus focus) 60)))]
+            focused
+            (fn [focus]
+              (into []
+                    (comp (mapcat #(if (= :columns (:kind %)) (:cells %) [%]))
+                          (filter :is-focused)
+                          (map :text))
+                    (hi/form-rows (assoc form :focus focus) 60)))]
 
         (expect (= ["dev" "prod" "free" "paid"] (into [] (keep :value) (:stops form))))
         (expect (= [["dev"] ["prod"] ["free"] ["paid"]] (mapv focused (range 4)))))))
@@ -1990,14 +1922,14 @@
         (expect (= t/dialog-hint (:fg cell)))
         (expect (= (band-paper) (:bg cell)))))
   (it "wraps a long paragraph instead of clipping it to a single `…` row"
-      (let
-        [rows (hi/form-rows (hi/init-form (engine/request->view
-                                            (engine/normalize-request
-                                              {"title" "T"
-                                               "fields" [{"type" "paragraph"
-                                                          "text" (str/join " " (repeat 30 "words"))}
-                                                         {"name" "a" "label" "A"}]})))
-                            40)]
+      (let [rows (hi/form-rows (hi/init-form (engine/request->view
+                                               (engine/normalize-request
+                                                 {"title" "T"
+                                                  "fields" [{"type" "paragraph"
+                                                             "text" (str/join " "
+                                                                              (repeat 30 "words"))}
+                                                            {"name" "a" "label" "A"}]})))
+                               40)]
         (expect (< 1 (count (filterv #(= :paragraph (:kind %)) rows)))))))
 ;;; ── The focused field's ring rides its own surface ───────────────────────────
 ;; Regression (reported from the TUI, photo of a transient band): the accent ring
@@ -2008,21 +1940,20 @@
 (defdescribe
   focused-field-ring-test
   (it "keeps the ring inside the rails and the typed line under its own label"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+      (let [{:keys [screen g]}
+            (virtual-screen)
 
-         _
-         (hi/paint! g 80 30 (hi/init-form (request)))
+            _
+            (hi/paint! g 80 30 (hi/init-form (request)))
 
-         rows
-         (mapv #(screen-row screen %) (range 30))
+            rows
+            (mapv #(screen-row screen %) (range 30))
 
-         ring-row
-         (first (filter #(str/includes? % "▎") rows))
+            ring-row
+            (first (filter #(str/includes? % "▎") rows))
 
-         label-row
-         (first (filter #(str/includes? % "User") rows))]
+            label-row
+            (first (filter #(str/includes? % "User") rows))]
 
         ;; the ring is the field's own left edge, and the text it fences starts in
         ;; the very column the label above it does

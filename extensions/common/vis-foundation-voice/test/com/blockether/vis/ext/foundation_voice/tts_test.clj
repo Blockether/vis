@@ -31,20 +31,20 @@
   (it "lets an imported clip stand in for one that shipped"
       ;; Somebody who names their own recording after a shipped voice meant their
       ;; own recording - and a catalogue with the same id twice is a picker bug.
-      (with-redefs
-        [tts/pocket-asset
-         (constantly {:id "pocket-tts-int8"
-                      :install-dir "sherpa-onnx-pocket-tts-int8"
-                      :voices [{:id "kristin" :label "Kristin" :clip "voices/kristin.wav"}]})
+      (with-redefs [tts/pocket-asset
+                    (constantly {:id "pocket-tts-int8"
+                                 :install-dir "sherpa-onnx-pocket-tts-int8"
+                                 :voices
+                                 [{:id "kristin" :label "Kristin" :clip "voices/kristin.wav"}]})
 
-         assets/install-dir
-         (constantly "/models/pocket")
+                    assets/install-dir
+                    (constantly "/models/pocket")
 
-         voices/imported
-         (constantly [{:id "kristin"
-                       :label "Mine"
-                       :clip "/home/somebody/.vis/voices/kristin.wav"
-                       :is-imported true}])]
+                    voices/imported
+                    (constantly [{:id "kristin"
+                                  :label "Mine"
+                                  :clip "/home/somebody/.vis/voices/kristin.wav"
+                                  :is-imported true}])]
 
         (expect (= ["kristin"] (mapv :id (tts/pocket-voices))))
         (expect (= "Mine" (:label (first (tts/pocket-voices)))))
@@ -52,33 +52,32 @@
         (expect (= "/home/somebody/.vis/voices/kristin.wav"
                    (:clip (first (tts/pocket-voice-catalogue)))))))
   (it "resolves a shipped clip against the directory the bundle installed into"
-      (with-redefs
-        [tts/pocket-asset
-         (constantly {:id "pocket-tts-int8" :voices [{:id "kristin" :clip "voices/kristin.wav"}]})
+      (with-redefs [tts/pocket-asset
+                    (constantly {:id "pocket-tts-int8"
+                                 :voices [{:id "kristin" :clip "voices/kristin.wav"}]})
 
-         assets/install-dir
-         (constantly "/models/pocket")
+                    assets/install-dir
+                    (constantly "/models/pocket")
 
-         voices/imported
-         (constantly [])]
+                    voices/imported
+                    (constantly [])]
 
         (expect (= (str (io/file "/models/pocket" "voices/kristin.wav"))
                    (:clip (first (tts/pocket-voice-catalogue)))))))
   (it "refuses to speak with pocket-tts while it has no clip to clone"
       ;; An empty catalogue is not an unknown voice: the failure has to name the
       ;; missing clip, or the user goes looking for a voice id that never existed.
-      (with-redefs
-        [sherpa/ensure-native!
-         (constantly nil)
+      (with-redefs [sherpa/ensure-native!
+                    (constantly nil)
 
-         assets/installed?
-         (constantly true)
+                    assets/installed?
+                    (constantly true)
 
-         voices/imported
-         (constantly [])
+                    voices/imported
+                    (constantly [])
 
-         tts/pocket-asset
-         (constantly (assoc (tts/pocket-asset) :voices []))]
+                    tts/pocket-asset
+                    (constantly (assoc (tts/pocket-asset) :voices []))]
 
         (let [data (ex-data-of #(tts/synthesize! :pocket-tts {:text "hello"}))]
           (expect (= :voice-tts/no-reference-clips (:type data)))
@@ -96,12 +95,11 @@
   (it "marks the voice a user has to install deliberately"
       ;; Ryan is in the catalogue and ONLY in the catalogue: CC BY-NC-SA, so a
       ;; picker can show him with his terms while Vis never fetches him.
-      (let
-        [voice
-         (last (tts/piper-voices))
+      (let [voice
+            (last (tts/piper-voices))
 
-         entry
-         (last (tts/piper-assets))]
+            entry
+            (last (tts/piper-assets))]
 
         (expect (= "ryan" (name (:id voice))))
         (expect (true? (:is-opt-in voice)))
@@ -114,9 +112,8 @@
       ;; Two parts of one install: the first finishing must not reset it to 0.
       (expect (= {:state :ready} (#'tts/combined-state [{:state :ready} {:state :ready}])))
       (expect (= :absent (:state (#'tts/combined-state [{:state :ready} {:state :absent}]))))
-      (let
-        [state (#'tts/combined-state
-                [{:state :ready} {:state :downloading :phase :downloading :progress 40}])]
+      (let [state (#'tts/combined-state
+                   [{:state :ready} {:state :downloading :phase :downloading :progress 40}])]
         (expect (= :downloading (:phase state)))
         (expect (= :downloading (:state state)))
         (expect (= 70 (:progress state))))
@@ -130,12 +127,11 @@
       ;; The phoneme tables are a PRECONDITION of this refusal, not its subject:
       ;; a machine without espeak-ng is refused for THAT first, which is how this
       ;; passed on a developer machine and failed on CI.
-      (with-redefs
-        [tts/espeak-data-dir
-         (constantly "/espeak-ng-data")
+      (with-redefs [tts/espeak-data-dir
+                    (constantly "/espeak-ng-data")
 
-         assets/installed?
-         (constantly false)]
+                    assets/installed?
+                    (constantly false)]
 
         (let [state (tts/start-download! :piper "ryan")]
           (expect (= :failed (:state state)))
@@ -149,13 +145,12 @@
         ;; download of a voice starts, and `installed?` answers from what `install!`
         ;; already recorded: the background future settling FIRST would otherwise
         ;; report :absent, which is the race a loaded runner loses.
-        (with-redefs
-          [tts/espeak-data-dir (constantly "/espeak-ng-data")
-           assets/installed? (fn [entry]
-                               (boolean (some #{(:id entry)} @started)))
-           assets/install! (fn [entry & _]
-                             (swap! started conj (:id entry))
-                             (:install-dir entry))]
+        (with-redefs [tts/espeak-data-dir (constantly "/espeak-ng-data")
+                      assets/installed? (fn [entry]
+                                          (boolean (some #{(:id entry)} @started)))
+                      assets/install! (fn [entry & _]
+                                        (swap! started conj (:id entry))
+                                        (:install-dir entry))]
 
           (let [state (tts/start-download! :piper)]
             (expect (contains? #{:downloading :ready} (:state state))))
@@ -173,39 +168,36 @@
                  ;; The CLI download path is the blocking one: it installs what the family
                  ;; needs and reports the directory it wrote for each asset.
                  (let [installed (atom [])]
-                   (with-redefs
-                     [sherpa/ensure-native! (constantly nil)
-                      assets/installed? (constantly false)
-                      assets/install! (fn [entry & _]
-                                        (swap! installed conj (:id entry))
-                                        (:install-dir entry))]
+                   (with-redefs [sherpa/ensure-native! (constantly nil)
+                                 assets/installed? (constantly false)
+                                 assets/install! (fn [entry & _]
+                                                   (swap! installed conj (:id entry))
+                                                   (:install-dir entry))]
 
                      (expect (= ["sherpa-onnx-pocket-tts-int8"] (tts/install-model! :pocket-tts)))
                      (expect (= ["pocket-tts-int8"] @installed)))))
              (it "installs nothing when everything the voice needs is already there"
-                 (with-redefs
-                   [sherpa/ensure-native!
-                    (constantly nil)
+                 (with-redefs [sherpa/ensure-native!
+                               (constantly nil)
 
-                    assets/installed?
-                    (constantly true)
+                               assets/installed?
+                               (constantly true)
 
-                    assets/install!
-                    (fn [& _]
-                      (throw (ex-info "must not download" {})))]
+                               assets/install!
+                               (fn [& _]
+                                 (throw (ex-info "must not download" {})))]
 
                    (expect (= [] (tts/install-model! :piper))))))
 
 (defdescribe synthesize-test
              (it "refuses blank text before it downloads anything"
-                 (with-redefs
-                   [assets/ensure!
-                    (fn [& _]
-                      (throw (ex-info "must not download" {})))
+                 (with-redefs [assets/ensure!
+                               (fn [& _]
+                                 (throw (ex-info "must not download" {})))
 
-                    assets/install!
-                    (fn [& _]
-                      (throw (ex-info "must not download" {})))]
+                               assets/install!
+                               (fn [& _]
+                                 (throw (ex-info "must not download" {})))]
 
                    (let [data (ex-data-of #(tts/synthesize! :piper {:text "   "}))]
                      (expect (= :voice-tts/blank-text (:type data)))
@@ -221,9 +213,9 @@
                           (spit (java.io.File. dir ^String f) "x"))
                         (expect (true? (tts/espeak-data-dir? (str dir))))
                         (expect (false? (tts/espeak-data-dir? nil)))
-                        (with-redefs
-                          [assets/env-value (fn [name]
-                                              (when (= tts/espeak-data-env name) (str dir)))]
+                        (with-redefs [assets/env-value (fn [name]
+                                                         (when (= tts/espeak-data-env name)
+                                                           (str dir)))]
                           (expect (= (str dir) (tts/espeak-data-dir))))
                         (finally (doseq [f (reverse (file-seq dir))]
                                    (.delete ^java.io.File f))))))
@@ -236,10 +228,9 @@
                      (expect (= :failed (:state state)))
                      (expect (str/includes? (:error state) "espeak-ng")))
                    (expect (= :failed (:state (tts/start-download! :piper))))
-                   (with-redefs
-                     [assets/ensure! (fn [& _]
-                                       (throw (ex-info "must not download" {})))
-                      sherpa/ensure-native! (constantly nil)]
+                   (with-redefs [assets/ensure! (fn [& _]
+                                                  (throw (ex-info "must not download" {})))
+                                 sherpa/ensure-native! (constantly nil)]
 
                      (let [data (ex-data-of #(tts/synthesize! :piper {:text "hello"}))]
                        (expect (= :voice-tts/espeak-ng-missing (:type data)))
@@ -264,8 +255,8 @@
       (sherpa/ensure-native!)
       (let [clip (java.io.File/createTempFile "vis-pocket-clip-" ".wav")]
         (try (#'voices/write-wav! clip (short-array 24000) 24000)
-             (let
-               [gen (#'tts/pocket-generation-config (.getAbsolutePath clip) "what the clip says")]
+             (let [gen
+                   (#'tts/pocket-generation-config (.getAbsolutePath clip) "what the clip says")]
                (expect (instance? java.util.LinkedHashMap (.getExtra gen))
                        (str "sherpa walks this map through JNI, so its class must be one the"
                             " metadata can name; got "

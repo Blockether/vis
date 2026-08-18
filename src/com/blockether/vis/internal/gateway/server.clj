@@ -177,11 +177,9 @@
     (let [before (:clients state)
           {:keys [clients dead duplicates expired]}
           (compact-client-leases before (System/currentTimeMillis))
-
           ;; An expired lease IS a dead owner - the pid it would have been judged by
           ;; lives on another machine.
           gone (+ (long dead) (long expired))
-
           removed (+ gone (long duplicates))]
 
       (when (pos? removed)
@@ -335,11 +333,16 @@
    the client count, so [[turns-stalled?]] never mistakes \"the last client just
    left\" for \"this turn stopped moving a minute ago\"."
   []
-  (let [marker (state/running-turn-progress)
-        now (System/currentTimeMillis)]
-    (swap! turn-progress-watch
-           (fn [prev]
-             (if (and prev (= marker (:marker prev))) prev {:marker marker :since now})))))
+  (let [marker
+        (state/running-turn-progress)
+
+        now
+        (System/currentTimeMillis)]
+
+    (swap! turn-progress-watch (fn [prev]
+                                 (if (and prev (= marker (:marker prev)))
+                                   prev
+                                   {:marker marker :since now})))))
 
 (defn- turns-stalled?
   "True when turns are still counted as running but nothing about them has moved
@@ -378,8 +381,7 @@
                  (when-let [reason (idle-shutdown-reason)]
                    (when (= :stalled-turns reason)
                      (tel/log! :warn
-                               ["gateway: no clients and"
-                                (running-turn-count)
+                               ["gateway: no clients and" (running-turn-count)
                                 "stalled turn(s) - stopping"]))
                    (stop!))
                  (catch Throwable t
@@ -394,7 +396,6 @@
                 (try (f)
                      (catch Throwable t
                        (tel/log! :warn ["gateway: idle reap step failed" label (ex-message t)]))))]
-
     (step! "self-register" ensure-self-registered!)
     (step! "client-leases" reap-client-leases!)
     (step! "sse-clients" reap-sse-clients!)
@@ -412,14 +413,14 @@
   []
   (when (compare-and-set! idle-reaper nil ::starting)
     (reset! turn-progress-watch nil)
-    (reset! idle-reaper
-      (future
-        (try (loop []
+    (reset! idle-reaper (future (try (loop []
 
-               (Thread/sleep (long IDLE_REAP_MS))
-               (when @server-state (reap-sweep!) (recur)))
-             (catch Throwable t (tel/log! :warn ["gateway: idle reaper failed" (ex-message t)]))
-             (finally (reset! idle-reaper nil)))))))
+                                       (Thread/sleep (long IDLE_REAP_MS))
+                                       (when @server-state (reap-sweep!) (recur)))
+                                     (catch Throwable t
+                                       (tel/log! :warn
+                                                 ["gateway: idle reaper failed" (ex-message t)]))
+                                     (finally (reset! idle-reaper nil)))))))
 
 ;; Bearer token (§3)
 
@@ -1467,7 +1468,10 @@
         ;; credential-backed provider read as a failure even when it worked:
         ;; those never had a config entry to change. Gone is gone.
         survivor
-        (first (filter #(= provider-id (some-> (:id %) keyword)) (:providers fleet)))]
+        (first (filter #(= provider-id
+                           (some-> (:id %)
+                                   keyword))
+                       (:providers fleet)))]
 
     (json-response (assoc fleet :is-removed (nil? survivor)))))
 
@@ -4065,8 +4069,7 @@
    request never reaches it, so no stranger can keep a lease warm."
   [handler]
   (fn [request]
-    (touch-client-lease! (get-in request [:headers "x-vis-client-id"])
-                         (System/currentTimeMillis))
+    (touch-client-lease! (get-in request [:headers "x-vis-client-id"]) (System/currentTimeMillis))
     (handler request)))
 
 (defn- app

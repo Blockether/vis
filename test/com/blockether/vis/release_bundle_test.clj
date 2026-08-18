@@ -17,30 +17,28 @@
 (defn- run-bash
   "Runs `args` from the repository root with `env-extra` applied; merges stderr."
   [args env-extra]
-  (let
-    [pb
-     (ProcessBuilder. ^java.util.List (vec args))
+  (let [pb
+        (ProcessBuilder. ^java.util.List (vec args))
 
-     env
-     (.environment pb)]
+        env
+        (.environment pb)]
 
     (.redirectErrorStream pb true)
     (doseq [[k v] env-extra]
       (.put env (str k) (str v)))
-    (let
-      [process
-       (.start pb)
+    (let [process
+          (.start pb)
 
-       output
-       (slurp (.getInputStream process))]
+          output
+          (slurp (.getInputStream process))]
 
       {:exit (.waitFor process) :output output})))
 
 (defdescribe
   native-image-language-resources-test
   (it "keeps the language resources beside the image instead of inside it"
-      (let
-        [props (slurp "resources/META-INF/native-image/com.blockether/vis/native-image.properties")]
+      (let [props (slurp
+                    "resources/META-INF/native-image/com.blockether/vis/native-image.properties")]
         ;; Embedding GraalPy's stdlib pushed the builder's live set past what a
         ;; 16 GB runner survives; the sidecar is what makes the release build finish.
         (expect (str/includes? props "-H:-IncludeLanguageResources") props)
@@ -50,27 +48,27 @@
   stage-release-bundle-test
   (it
     "packs the sidecar and refuses a bundle that lost it"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-release-bundle-test-" (make-array FileAttribute 0)))
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-release-bundle-test-"
+                                              (make-array FileAttribute 0)))
 
-       from-dir
-       (doto (io/file root "from") .mkdirs)
+          from-dir
+          (doto (io/file root "from") .mkdirs)
 
-       bundle-dir
-       (io/file root "bundle")
+          bundle-dir
+          (io/file root "bundle")
 
-       asset
-       (io/file root "vis-agent-linux-arm64-community.tar.gz")
+          asset
+          (io/file root "vis-agent-linux-arm64-community.tar.gz")
 
-       stamp
-       "0.1.28 4c1f2a9dabcdef0123456789abcdef01234567 beta 2026-08-17T10:22:31.123Z\n"
+          stamp
+          "0.1.28 4c1f2a9dabcdef0123456789abcdef01234567 beta 2026-08-17T10:22:31.123Z\n"
 
-       stage!
-       (fn []
-         (run-bash ["bash" "bin/stage-release-bundle" "--from-dir" (.getAbsolutePath from-dir)
-                    (.getAbsolutePath asset)]
-                   {"VIS_BUNDLE_DIR" (.getAbsolutePath bundle-dir)}))]
+          stage!
+          (fn []
+            (run-bash ["bash" "bin/stage-release-bundle" "--from-dir" (.getAbsolutePath from-dir)
+                       (.getAbsolutePath asset)]
+                      {"VIS_BUNDLE_DIR" (.getAbsolutePath bundle-dir)}))]
 
       (try (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"]]
              (write-executable! (io/file from-dir entry) "#!/usr/bin/env bash\nexit 0\n"))
@@ -108,23 +106,22 @@
   native-build-stamp-test
   (it
     "dates the installed runtime from its stamp and calls out one older than the pin"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-build-stamp-test-" (make-array FileAttribute 0)))
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-build-stamp-test-" (make-array FileAttribute 0)))
 
-       home
-       (doto (io/file root "home") .mkdirs)
+          home
+          (doto (io/file root "home") .mkdirs)
 
-       bin-dir
-       (doto (io/file root "bin") .mkdirs)
+          bin-dir
+          (doto (io/file root "bin") .mkdirs)
 
-       launcher
-       (io/file bin-dir "vis-agent")
+          launcher
+          (io/file bin-dir "vis-agent")
 
-       runtime!
-       (fn []
-         (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
-                   {"HOME" (.getAbsolutePath home)}))]
+          runtime!
+          (fn []
+            (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
+                      {"HOME" (.getAbsolutePath home)}))]
 
       (try (io/copy (io/file "bin/vis-agent") launcher)
            (.setExecutable ^java.io.File launcher true)
@@ -143,23 +140,22 @@
            ;; The reported situation: source pinned at one commit, native built from
            ;; another. The stamp is read as a file — the binary is never run, because
            ;; the one whose provenance matters is the one that aborts on every call.
-           (let
-             [src
-              (doto (io/file home ".vis" "install" "src") .mkdirs)
+           (let [src
+                 (doto (io/file home ".vis" "install" "src") .mkdirs)
 
-              _
-              (run-bash ["bash" "-c"
-                         (str
-                           "cd "
-                           (.getAbsolutePath src)
-                           " && git init -q"
-                           " && printf '{}' > deps.edn && git add -A"
-                           " && git -c user.email=ci@example.com -c user.name=ci commit -qm init")]
-                        {})
+                 _
+                 (run-bash
+                   ["bash" "-c"
+                    (str "cd "
+                         (.getAbsolutePath src)
+                         " && git init -q"
+                         " && printf '{}' > deps.edn && git add -A"
+                         " && git -c user.email=ci@example.com -c user.name=ci commit -qm init")]
+                   {})
 
-              head-sha
-              (str/trim (:output (run-bash ["git" "-C" (.getAbsolutePath src) "rev-parse" "HEAD"]
-                                           {})))]
+                 head-sha
+                 (str/trim (:output (run-bash ["git" "-C" (.getAbsolutePath src) "rev-parse" "HEAD"]
+                                              {})))]
 
              (spit (io/file home ".vis" "install" "ref") (str head-sha "\n"))
              (let [{:keys [exit output]} (runtime!)]
@@ -173,12 +169,11 @@
                (expect (not (str/includes? output "STALE")) output)))
            (finally (delete-tree! root)))))
   (it "writes that stamp from the build — into the image and beside the binary"
-      (let
-        [build-clj
-         (slurp "build.clj")
+      (let [build-clj
+            (slurp "build.clj")
 
-         stage
-         (slurp "bin/stage-release-bundle")]
+            stage
+            (slurp "bin/stage-release-bundle")]
 
         (expect (str/includes? build-clj "(spit (str native-bin \".build\")") build-clj)
         (expect (str/includes? build-clj "\"-H:IncludeResources=vis/BUILD\"") build-clj)
@@ -190,9 +185,8 @@
   answers `--version`/`info`/`run` without a VM. Lets the host-target and
   emulation rules be exercised for hosts this machine is not."
   [os arch]
-  (let
-    [dir (.toFile (Files/createTempDirectory "vis-release-native-test-"
-                                             (make-array FileAttribute 0)))]
+  (let [dir (.toFile (Files/createTempDirectory "vis-release-native-test-"
+                                                (make-array FileAttribute 0)))]
     (write-executable! (io/file dir "uname")
                        (str "#!/usr/bin/env bash\n"
                             "case \"${1:-}\" in\n"
@@ -218,42 +212,40 @@
   (run-bash (into ["bash" "bin/release-native"] args)
             (merge {"PATH" (str (.getAbsolutePath dir) ":" (System/getenv "PATH"))} env-extra)))
 
-(defdescribe
-  release-native-targets-test
-  (it "builds every asset an Apple-silicon host can reach, and refuses the rest"
-      (let
-        [mac
-         (fake-tools! "Darwin" "arm64")
+(defdescribe release-native-targets-test
+             (it "builds every asset an Apple-silicon host can reach, and refuses the rest"
+                 (let [mac
+                       (fake-tools! "Darwin" "arm64")
 
-         linux-arm
-         (fake-tools! "Linux" "aarch64")]
+                       linux-arm
+                       (fake-tools! "Linux" "aarch64")]
 
-        (try
-          ;; linux-x64 belongs here now: native-image under Rosetta measured 4.8x
-          ;; native (15.8 s vs 1 m 16 s for a hello-world image), still inside the
-          ;; 86-130 min the free x64 runner takes when it does not OOM.
-          (let [{:keys [exit output]} (run-release-native mac ["--list"] {})]
-            (expect (= 0 exit) output)
-            (doseq [target ["macos-arm64" "linux-arm64" "linux-x64"]]
-              (expect (str/includes? output target) output)))
-          ;; A Linux host cannot produce the macOS asset, whatever is installed.
-          (let [{:keys [exit output]} (run-release-native linux-arm ["--targets" "macos-arm64"] {})]
-            (expect (not= 0 exit) output)
-            (expect (str/includes? output "cannot build") output))
-          (finally (delete-tree! mac) (delete-tree! linux-arm))))))
+                   (try
+                     ;; linux-x64 belongs here now: native-image under Rosetta measured 4.8x
+                     ;; native (15.8 s vs 1 m 16 s for a hello-world image), still inside the
+                     ;; 86-130 min the free x64 runner takes when it does not OOM.
+                     (let [{:keys [exit output]} (run-release-native mac ["--list"] {})]
+                       (expect (= 0 exit) output)
+                       (doseq [target ["macos-arm64" "linux-arm64" "linux-x64"]]
+                         (expect (str/includes? output target) output)))
+                     ;; A Linux host cannot produce the macOS asset, whatever is installed.
+                     (let [{:keys [exit output]}
+                           (run-release-native linux-arm ["--targets" "macos-arm64"] {})]
+                       (expect (not= 0 exit) output)
+                       (expect (str/includes? output "cannot build") output))
+                     (finally (delete-tree! mac) (delete-tree! linux-arm))))))
 
 (defdescribe release-native-emulation-guard-test
              (it "refuses a foreign platform that is not Rosetta-fast, before building anything"
                  (let [mac (fake-tools! "Darwin" "arm64")]
-                   (try (let
-                          [{:keys [exit output]}
-                           ;; A budget no measurement can meet stands in for qemu-user: the guard
-                           ;; must fire on the probe, never after an hour of analysis.
-                           (run-release-native mac
-                                               ["--targets" "linux-x64"]
-                                               {"VIS_CONTAINER_CLI" (.getAbsolutePath
-                                                                      (io/file mac "engine"))
-                                                "VIS_EMULATION_MAX_SECONDS" "-1"})]
+                   (try (let [{:keys [exit output]}
+                              ;; A budget no measurement can meet stands in for qemu-user: the guard
+                              ;; must fire on the probe, never after an hour of analysis.
+                              (run-release-native mac
+                                                  ["--targets" "linux-x64"]
+                                                  {"VIS_CONTAINER_CLI" (.getAbsolutePath
+                                                                         (io/file mac "engine"))
+                                                   "VIS_EMULATION_MAX_SECONDS" "-1"})]
                           (expect (not= 0 exit) output)
                           (expect (str/includes? output "qemu-user") output)
                           (expect (str/includes? output "native-release.yml") output)
@@ -262,54 +254,50 @@
 
 (defdescribe
   release-native-builder-machine-test
-  (it
-    "prefers a podman machine big enough for the builder over a small default"
-    (let
-      [mac
-       (fake-tools! "Darwin" "arm64")
+  (it "prefers a podman machine big enough for the builder over a small default"
+      (let [mac
+            (fake-tools! "Darwin" "arm64")
 
-       podman
-       (io/file mac "podman")]
+            podman
+            (io/file mac "podman")]
 
-      ;; Two machines, as on a real workstation: the everyday default with 2
-      ;; GiB (native-image OOMs there) and a dedicated 24 GiB builder.
-      (write-executable!
-        podman
-        (str "#!/usr/bin/env bash\n" "conn=\"\"\n"
-             "if [ \"${1:-}\" = \"--connection\" ]; then conn=\"$2\"; shift 2; fi\n"
-             "case \"${1:-}\" in\n"
-             "  --version) printf 'podman version 6.0.0\\n' ;;\n"
-             "  info)      if [ \"$conn\" = vis-builder ]; then printf '25769803776\\n';"
-             " else printf '2147483648\\n'; fi ;;\n"
-             "  system)    printf 'podman-machine-default\\nvis-builder\\n' ;;\n"
-             "  *)         exit 0 ;;\n" "esac\n"))
-      (try (let
-             [{:keys [exit output]} (run-release-native mac
-                                                        ["--targets" "linux-x64"]
-                                                        {"VIS_CONTAINER_CLI" (.getAbsolutePath
-                                                                               podman)
-                                                         "VIS_EMULATION_MAX_SECONDS" "-1"})]
-             ;; No VIS_CONTAINER_CONNECTION: the builder machine is found and used
-             ;; on its own, and the 2 GiB default never decides the run.
-             (expect (str/includes? output "vis-builder") output)
-             (expect (not (str/includes? output "only has 2 GB")) output)
-             ;; Emulation speed still gates the build itself.
-             (expect (not= 0 exit) output))
-           (finally (delete-tree! mac))))))
+        ;; Two machines, as on a real workstation: the everyday default with 2
+        ;; GiB (native-image OOMs there) and a dedicated 24 GiB builder.
+        (write-executable!
+          podman
+          (str "#!/usr/bin/env bash\n" "conn=\"\"\n"
+               "if [ \"${1:-}\" = \"--connection\" ]; then conn=\"$2\"; shift 2; fi\n"
+               "case \"${1:-}\" in\n"
+               "  --version) printf 'podman version 6.0.0\\n' ;;\n"
+               "  info)      if [ \"$conn\" = vis-builder ]; then printf '25769803776\\n';"
+               " else printf '2147483648\\n'; fi ;;\n"
+               "  system)    printf 'podman-machine-default\\nvis-builder\\n' ;;\n"
+               "  *)         exit 0 ;;\n" "esac\n"))
+        (try (let [{:keys [exit output]} (run-release-native mac
+                                                             ["--targets" "linux-x64"]
+                                                             {"VIS_CONTAINER_CLI" (.getAbsolutePath
+                                                                                    podman)
+                                                              "VIS_EMULATION_MAX_SECONDS" "-1"})]
+               ;; No VIS_CONTAINER_CONNECTION: the builder machine is found and used
+               ;; on its own, and the 2 GiB default never decides the run.
+               (expect (str/includes? output "vis-builder") output)
+               (expect (not (str/includes? output "only has 2 GB")) output)
+               ;; Emulation speed still gates the build itself.
+               (expect (not= 0 exit) output))
+             (finally (delete-tree! mac))))))
 
 (defdescribe
   release-native-podman-export-test
   (it
     "copies the bundle out of a container, because podman-remote rejects --output"
-    (let
-      [mac
-       (fake-tools! "Darwin" "arm64")
+    (let [mac
+          (fake-tools! "Darwin" "arm64")
 
-       log
-       (io/file mac "engine.log")
+          log
+          (io/file mac "engine.log")
 
-       podman
-       (io/file mac "podman")]
+          podman
+          (io/file mac "podman")]
 
       ;; `podman build -o type=local,dest=…` is a LOCAL-only flag: a Mac client
       ;; drives its Linux VM in REMOTE mode and refuses it AFTER the whole build
@@ -323,15 +311,14 @@
              "case \"${1:-}\" in\n" "  --version) printf 'podman version 6.0.0\\n' ;;\n"
              "  info)      printf '34359738368\\n' ;;\n" "  create)    printf 'ctr123\\n' ;;\n"
              "  *)         exit 0 ;;\n" "esac\n"))
-      (try (let
-             [{:keys [exit output]}
-              (run-release-native mac
-                                  ["--targets" "linux-arm64"]
-                                  {"VIS_CONTAINER_CLI" (.getAbsolutePath podman)
-                                   "VIS_NATIVE_EXTRA_ARGS" "-J-Xmx7g"})
+      (try (let [{:keys [exit output]}
+                 (run-release-native mac
+                                     ["--targets" "linux-arm64"]
+                                     {"VIS_CONTAINER_CLI" (.getAbsolutePath podman)
+                                      "VIS_NATIVE_EXTRA_ARGS" "-J-Xmx7g"})
 
-              logged
-              (slurp log)]
+                 logged
+                 (slurp log)]
 
              ;; The fake engine copies nothing, so staging rejects the bundle —
              ;; the run must still have driven the export the documented way.
@@ -340,8 +327,8 @@
              (expect (not (str/includes? logged "type=local")) logged)
              (expect (str/includes? logged "--build-arg VIS_NATIVE_EXTRA_ARGS=-J-Xmx7g") logged)
              (expect (str/includes? logged "create --platform linux/arm64") logged)
-             (doseq
-               [entry ["vis-agent" "vis-agent-native" "install-vis-agent" "vis-agent-resources"]]
+             (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"
+                            "vis-agent-resources"]]
                (expect (str/includes? logged (str "cp ctr123:/" entry " ")) logged)))
            (finally (delete-tree! mac))))))
 
@@ -352,21 +339,20 @@
   version-stamp-test
   (it
     "stamps the repo-root VIS_VERSION into `vis/VERSION`, verbatim"
-    (let
-      [dockerfile
-       (slurp "Dockerfile")
+    (let [dockerfile
+          (slurp "Dockerfile")
 
-       build-clj
-       (slurp "build.clj")
+          build-clj
+          (slurp "build.clj")
 
-       compose
-       (slurp "docker-compose.yml")
+          compose
+          (slurp "docker-compose.yml")
 
-       release-native
-       (slurp "bin/release-native")
+          release-native
+          (slurp "bin/release-native")
 
-       declared
-       (str/trim (slurp "VIS_VERSION"))]
+          declared
+          (str/trim (slurp "VIS_VERSION"))]
 
       (expect (re-matches #"\d+\.\d+\.\d+" declared) declared)
       ;; VIS_VERSION is the ONLY version source: build.clj's `version` IS that
@@ -375,11 +361,10 @@
       (expect (str/includes? build-clj "(spit vfile version)") build-clj)
       ;; no second version source may creep back in through a build arg, an env
       ;; override or a snapshot suffix
-      (doseq
-        [[what source] {"build.clj" build-clj
-                        "Dockerfile" dockerfile
-                        "docker-compose.yml" compose
-                        "bin/release-native" release-native}]
+      (doseq [[what source] {"build.clj" build-clj
+                             "Dockerfile" dockerfile
+                             "docker-compose.yml" compose
+                             "bin/release-native" release-native}]
         (expect (not (str/includes? source "VIS_BUILD_SHA")) what)
         (expect (not (str/includes? source "-SNAPSHOT")) what)
         (expect (not (str/includes? source "rev-parse --short HEAD")) what))
@@ -392,18 +377,17 @@
       (expect (str/includes? dockerfile "COPY --from=native-export") dockerfile)
       (expect (not (str/includes? dockerfile "/opt/vis/src/resources/vis/VERSION")) dockerfile)))
   (it "reports the stamped string verbatim from the classpath resource"
-      (let
-        [dir
-         (.toFile (Files/createTempDirectory "vis-version" (make-array FileAttribute 0)))
+      (let [dir
+            (.toFile (Files/createTempDirectory "vis-version" (make-array FileAttribute 0)))
 
-         stamped
-         (str/trim (slurp "VIS_VERSION"))
+            stamped
+            (str/trim (slurp "VIS_VERSION"))
 
-         thread
-         (Thread/currentThread)
+            thread
+            (Thread/currentThread)
 
-         prior
-         (.getContextClassLoader thread)]
+            prior
+            (.getContextClassLoader thread)]
 
         (spit (doto (io/file dir "vis" "VERSION") io/make-parents) (str stamped "\n"))
         (try (.setContextClassLoader
@@ -431,10 +415,9 @@
                                 "  --version) printf 'podman version 6.0.0\\n' ;;\n"
                                 "  info)      printf '25769803776\\n' ;;\n"
                                 "  *)         exit 0 ;;\n" "esac\n"))
-        (try (let
-               [{:keys [exit output]} (run-release-native mac
-                                                          ["--targets" "linux-x64"]
-                                                          {"VIS_EMULATION_MAX_SECONDS" "-1"})]
+        (try (let [{:keys [exit output]} (run-release-native mac
+                                                             ["--targets" "linux-x64"]
+                                                             {"VIS_EMULATION_MAX_SECONDS" "-1"})]
                (expect (str/includes? output "using podman instead") output)
                ;; It got PAST engine resolution: the run now fails on the
                ;; emulation guard, not on a dead docker daemon.
@@ -450,30 +433,29 @@
   distribution-track-test
   (it
     "remembers the track, and never moves it without being told to"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-track-test-" (make-array FileAttribute 0)))
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-track-test-" (make-array FileAttribute 0)))
 
-       home
-       (doto (io/file root "home") .mkdirs)
+          home
+          (doto (io/file root "home") .mkdirs)
 
-       bin-dir
-       (doto (io/file root "bin") .mkdirs)
+          bin-dir
+          (doto (io/file root "bin") .mkdirs)
 
-       path-dir
-       (doto (io/file root "path") .mkdirs)
+          path-dir
+          (doto (io/file root "path") .mkdirs)
 
-       launcher
-       (io/file bin-dir "vis-agent")
+          launcher
+          (io/file bin-dir "vis-agent")
 
-       track-file
-       (io/file home ".vis" "install" "track")
+          track-file
+          (io/file home ".vis" "install" "track")
 
-       update!
-       (fn [& args]
-         (run-bash (into ["bash" (.getAbsolutePath launcher) "update"] args)
-                   {"HOME" (.getAbsolutePath home)
-                    "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))}))]
+          update!
+          (fn [& args]
+            (run-bash (into ["bash" (.getAbsolutePath launcher) "update"] args)
+                      {"HOME" (.getAbsolutePath home)
+                       "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))}))]
 
       (try
         (io/copy (io/file "bin/vis-agent") launcher)
@@ -520,22 +502,20 @@
         ;; binary was built for a different one.
         (spit (io/file bin-dir "vis-agent-native.build")
               "0.1.28 4c1f2a9dabc beta 2026-08-17T10:22:31.123Z\n")
-        (let
-          [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
-                                           {"HOME" (.getAbsolutePath home)})]
+        (let [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
+                                              {"HOME" (.getAbsolutePath home)})]
           (expect (= 0 exit) output)
           (expect (str/includes? output "Track:        stable") output)
           (expect (str/includes? output "built on the beta track") output))
         ;; A runtime built here is the everyday state of a workstation, not a
         ;; discrepancy with a track it never claimed: `dev` and `dry-run` are
         ;; published by nothing, so name what they are instead.
-        (doseq
-          [[stamp-track phrase] [["dev" "built from source here"] ["dry-run" "never published"]]]
+        (doseq [[stamp-track phrase] [["dev" "built from source here"]
+                                      ["dry-run" "never published"]]]
           (spit (io/file bin-dir "vis-agent-native.build")
                 (str "0.1.28 4c1f2a9dabc " stamp-track " 2026-08-17T10:22:31.123Z\n"))
-          (let
-            [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
-                                             {"HOME" (.getAbsolutePath home)})]
+          (let [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
+                                                {"HOME" (.getAbsolutePath home)})]
             (expect (= 0 exit) output)
             (expect (str/includes? output phrase) output)
             (expect (not (str/includes? output (str "built on the " stamp-track " track")))
@@ -547,25 +527,24 @@
   ;; every later field read one place to the right.
   (it
     "stamps only a track build.clj declares, in the build and in every workflow"
-    (let
-      [build-clj
-       (slurp "build.clj")
+    (let [build-clj
+          (slurp "build.clj")
 
-       tracks
-       (->> (re-find #"(?s)\(def release-tracks.*?#\{([^}]*)\}" build-clj)
-            second
-            (re-seq #"\"([^\"]+)\"")
-            (map second)
-            set)
+          tracks
+          (->> (re-find #"(?s)\(def release-tracks.*?#\{([^}]*)\}" build-clj)
+               second
+               (re-seq #"\"([^\"]+)\"")
+               (map second)
+               set)
 
-       stamped
-       (->> (file-seq (io/file ".github/workflows"))
-            (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
-            (mapcat (fn [f]
-                      (map (fn [v]
-                             [(.getName ^java.io.File f) v])
-                           (map second (re-seq #"VIS_RELEASE_TRACK:\s*(.+)" (slurp f))))))
-            vec)]
+          stamped
+          (->> (file-seq (io/file ".github/workflows"))
+               (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
+               (mapcat (fn [f]
+                         (map (fn [v]
+                                [(.getName ^java.io.File f) v])
+                              (map second (re-seq #"VIS_RELEASE_TRACK:\s*(.+)" (slurp f))))))
+               vec)]
 
       ;; Both ends of the axis, and both marks for a build nobody publishes.
       (expect (= #{"stable" "beta" "dev" "dry-run"} tracks) tracks)
@@ -575,25 +554,23 @@
       (expect (str/includes? build-clj "(contains? release-tracks track)") build-clj)
       (expect (seq stamped) "no workflow stamps a track at all")
       (doseq [[wf value] stamped]
-        (doseq
-          [t (if (str/includes? value "${{")
-               (map second (re-seq #"(?:&&|\|\|)\s*'([^']+)'" value))
-               [(str/trim value)])]
+        (doseq [t (if (str/includes? value "${{")
+                    (map second (re-seq #"(?:&&|\|\|)\s*'([^']+)'" value))
+                    [(str/trim value)])]
           (expect (contains? tracks t) (str wf ": " value))))))
   ;; A hosted Apple-silicon fallback is only useful if it can FINISH: the free
   ;; macOS arm64 class is 3 cores / 7 GiB RAM / 14 GiB disk, so a heap above
   ;; physical RAM has no volume to swap into and native-image exits on the
   ;; first OutOfMemoryError. The fallback shrinks the build, not the promise.
   (it "sizes the hosted macOS fallback to fit the free runner instead of swapping"
-      (let
-        [stable
-         (slurp ".github/workflows/native-release.yml")
+      (let [stable
+            (slurp ".github/workflows/native-release.yml")
 
-         fallback
-         (->> (str/split-lines stable)
-              (drop-while #(not (str/includes? % "-lt 16")))
-              (take 8)
-              (str/join "\n"))]
+            fallback
+            (->> (str/split-lines stable)
+                 (drop-while #(not (str/includes? % "-lt 16")))
+                 (take 8)
+                 (str/join "\n"))]
 
         (expect (str/includes? fallback "--parallelism=2") fallback)
         (expect (str/includes? fallback "-J-Xmx5g") fallback)
@@ -611,21 +588,20 @@
   ;; bought to remove — a job queueing 24 h when the builder is asleep — is
   ;; removed by watching that queue from a free runner instead.
   (it "builds the macOS asset on our own builder, and fails fast when it sleeps"
-      (let
-        [stable
-         (slurp ".github/workflows/native-release.yml")
+      (let [stable
+            (slurp ".github/workflows/native-release.yml")
 
-         macos-job
-         (->> (str/split-lines stable)
-              (drop-while #(not (str/starts-with? % "  macos:")))
-              (take 12)
-              (str/join "\n"))
+            macos-job
+            (->> (str/split-lines stable)
+                 (drop-while #(not (str/starts-with? % "  macos:")))
+                 (take 12)
+                 (str/join "\n"))
 
-         pickup
-         (->> (str/split-lines stable)
-              (drop-while #(not (str/includes? % "macos-pickup:")))
-              (take 25)
-              (str/join "\n"))]
+            pickup
+            (->> (str/split-lines stable)
+                 (drop-while #(not (str/includes? % "macos-pickup:")))
+                 (take 25)
+                 (str/join "\n"))]
 
         (expect (str/includes? macos-job "vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64'")
                 macos-job)
@@ -644,15 +620,13 @@
   ;; The builder belongs to the STABLE macOS asset alone: a build pins every
   ;; core and ~15 GiB, so no other workflow may take the workstation away.
   (it "names the Apple-silicon builder in the native release only"
-      (doseq
-        [workflow (->> (file-seq (io/file ".github/workflows"))
-                       (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
-                       (remove #(= "native-release.yml" (.getName ^java.io.File %))))]
-        (let
-          [directives (->> (str/split-lines (slurp workflow))
-                           (remove #(str/starts-with? (str/triml %) "#"))
-                           (str/join "\n")
-                           str/lower-case)]
+      (doseq [workflow (->> (file-seq (io/file ".github/workflows"))
+                            (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
+                            (remove #(= "native-release.yml" (.getName ^java.io.File %))))]
+        (let [directives (->> (str/split-lines (slurp workflow))
+                              (remove #(str/starts-with? (str/triml %) "#"))
+                              (str/join "\n")
+                              str/lower-case)]
           (expect (not (str/includes? directives "self-hosted")) (.getPath ^java.io.File workflow))
           (expect (not (str/includes? directives "vis-macos-arm64"))
                   (.getPath ^java.io.File workflow)))))
@@ -662,12 +636,11 @@
   ;; One dispatch must be able to try it, on one platform, without spending two
   ;; hours of Linux builds to watch a macOS experiment.
   (it "can measure native-image's own configuration from one dispatch"
-      (let
-        [stable
-         (slurp ".github/workflows/native-release.yml")
+      (let [stable
+            (slurp ".github/workflows/native-release.yml")
 
-         build
-         (slurp "build.clj")]
+            build
+            (slurp "build.clj")]
 
         (doseq [input ["only:" "native_args:" "builder_heap:"]]
           (expect (str/includes? stable input) input))
@@ -687,18 +660,17 @@
         (expect (re-find #"\(not natural-heap\?\)\s+\(conj \(str \"-J-Xmx\"" build) build)))
   (it
     "builds the beta track on free runners only, off a commit CI already passed"
-    (let
-      [beta
-       (slurp ".github/workflows/beta-native.yml")
+    (let [beta
+          (slurp ".github/workflows/beta-native.yml")
 
-       stable
-       (slurp ".github/workflows/native-release.yml")
+          stable
+          (slurp ".github/workflows/native-release.yml")
 
-       directives
-       (->> (str/split-lines beta)
-            (remove #(str/starts-with? (str/triml %) "#"))
-            (str/join "\n")
-            str/lower-case)]
+          directives
+          (->> (str/split-lines beta)
+               (remove #(str/starts-with? (str/triml %) "#"))
+               (str/join "\n")
+               str/lower-case)]
 
       ;; A beta must never take the workstation-class Apple-silicon builder the
       ;; stable macOS asset needs: a build pins every core and ~15 GiB, and one
@@ -733,9 +705,8 @@
               "release.yml")
       (expect (str/includes? stable "VIS_RELEASE_TRACK:") stable)
       ;; One word, one axis: `channel` belongs to the TUI/web/Telegram adapters.
-      (doseq
-        [[what source] {"build.clj" (slurp "build.clj")
-                        "bin/vis-agent" (slurp "bin/vis-agent")
-                        "beta-native.yml" beta
-                        "native-release.yml" stable}]
+      (doseq [[what source] {"build.clj" (slurp "build.clj")
+                             "bin/vis-agent" (slurp "bin/vis-agent")
+                             "beta-native.yml" beta
+                             "native-release.yml" stable}]
         (expect (not (str/includes? source "VIS_CHANNEL")) what)))))

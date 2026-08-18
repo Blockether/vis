@@ -120,10 +120,9 @@
 
 (defdescribe mcp-palette-command-test
              (it "is reachable from the command palette, in any session"
-                 (let
-                   [cmd (->> dlg/palette-commands
-                             (filter #(= :mcp (:id %)))
-                             first)]
+                 (let [cmd (->> dlg/palette-commands
+                                (filter #(= :mcp (:id %)))
+                                first)]
                    (expect (some? cmd))
                    (expect (= "MCP Servers" (:label cmd)))
                    ;; Untagged, so it survives the turnless gating too.
@@ -177,17 +176,16 @@
                                   :timeout-ms ""
                                   :is-enabled true}))))
   (it "round-trips an existing row through the edit form"
-      (let
-        [row
-         (assoc managed-stdio
-           "command" "npx"
-           "args" ["-y" "files"]
-           "cwd" "/srv"
-           "env" {"A" "1"}
-           "timeout_ms" 5000)
+      (let [row
+            (assoc managed-stdio
+              "command" "npx"
+              "args" ["-y" "files"]
+              "cwd" "/srv"
+              "env" {"A" "1"}
+              "timeout_ms" 5000)
 
-         form
-         (mcp/row->form row)]
+            form
+            (mcp/row->form row)]
 
         (expect (= "npx -y files" (:command-line form)))
         (expect (= "A=1" (:env form)))
@@ -249,56 +247,54 @@
   ;; The verbs are a transient, so their questions belong in the SAME band.
   (it
     "asks the transport, every field and the save confirm in the caller's own band"
-    (let
-      [log
-       (atom [])
+    (let [log
+          (atom [])
 
-       saved
-       (atom nil)
+          saved
+          (atom nil)
 
-       dialed
-       (atom nil)]
+          dialed
+          (atom nil)]
 
-      (with-redefs
-        [dlg/host-band-region
-         (fn [_screen region]
-           region)
+      (with-redefs [dlg/host-band-region
+                    (fn [_screen region]
+                      region)
 
-         dlg/band-questions
-         (band-stub {"MCP · add server" "stdio"
-                     "Name:" " files "
-                     "Command:" "npx -y files"
-                     "Working directory (blank for the default):" "/srv"
-                     "Environment, KEY=value, comma separated:" "A=1"
-                     "Timeout in ms (blank for the default):" ""
-                     "Add MCP server `files`?" true}
-                    log)
+                    dlg/band-questions
+                    (band-stub {"MCP · add server" "stdio"
+                                "Name:" " files "
+                                "Command:" "npx -y files"
+                                "Working directory (blank for the default):" "/srv"
+                                "Environment, KEY=value, comma separated:" "A=1"
+                                "Timeout in ms (blank for the default):" ""
+                                "Add MCP server `files`?" true}
+                               log)
 
-         vis/gateway-mcp-test-server!
-         (fn [server spec]
-           (reset! dialed [server spec])
-           {"is_connected" true "tools" 3})
+                    vis/gateway-mcp-test-server!
+                    (fn [server spec]
+                      (reset! dialed [server spec])
+                      {"is_connected" true "tools" 3})
 
-         vis/gateway-mcp-save-server!
-         (fn [server spec]
-           (reset! saved [server spec]))
+                    vis/gateway-mcp-save-server!
+                    (fn [server spec]
+                      (reset! saved [server spec]))
 
-         ;; A verb reached from a transient must never answer with a window.
-         dlg/select-dialog!
-         (fn [& _]
-           (throw (ex-info "the transport opened a dialog" {})))
+                    ;; A verb reached from a transient must never answer with a window.
+                    dlg/select-dialog!
+                    (fn [& _]
+                      (throw (ex-info "the transport opened a dialog" {})))
 
-         dlg/text-input-dialog!
-         (fn [& _]
-           (throw (ex-info "a field opened a dialog" {})))
+                    dlg/text-input-dialog!
+                    (fn [& _]
+                      (throw (ex-info "a field opened a dialog" {})))
 
-         dlg/confirm-dialog!
-         (fn [& _]
-           (throw (ex-info "the save confirm opened a dialog" {})))
+                    dlg/confirm-dialog!
+                    (fn [& _]
+                      (throw (ex-info "the save confirm opened a dialog" {})))
 
-         dlg/text-view-dialog!
-         (fn [& _]
-           (throw (ex-info "the add opened a dialog" {})))]
+                    dlg/text-view-dialog!
+                    (fn [& _]
+                      (throw (ex-info "the add opened a dialog" {})))]
 
         (mcp/save-server! nil nil nil nil)
         (expect (= ["files"
@@ -324,55 +320,51 @@
           (expect (= "Connected · 3 tools" (:cost opts)))
           (expect (= "Yes, add it" (:yes-label opts)))))))
   (it "abandons the whole form when one field is escaped, and saves nothing"
-      (let
-        [log
-         (atom [])
+      (let [log
+            (atom [])
 
-         saved?
-         (atom false)]
+            saved?
+            (atom false)]
 
-        (with-redefs
-          [dlg/host-band-region
-           (fn [_screen region]
-             region)
+        (with-redefs [dlg/host-band-region
+                      (fn [_screen region]
+                        region)
 
-           dlg/band-questions
-           (band-stub {"MCP · add server" "stdio" "Name:" "files"} log)
+                      dlg/band-questions
+                      (band-stub {"MCP · add server" "stdio" "Name:" "files"} log)
 
-           vis/gateway-mcp-test-server!
-           (fn [& _]
-             (throw (ex-info "dialed an abandoned form" {})))
+                      vis/gateway-mcp-test-server!
+                      (fn [& _]
+                        (throw (ex-info "dialed an abandoned form" {})))
 
-           vis/gateway-mcp-save-server!
-           (fn [& _]
-             (reset! saved? true))]
+                      vis/gateway-mcp-save-server!
+                      (fn [& _]
+                        (reset! saved? true))]
 
           (mcp/save-server! nil nil nil nil)
           (expect (= false @saved?))
           (expect (= ["MCP · add server" "Name:" "Command:"] (mapv second @log))))))
   (it "removes a server through the same band, saying what removal costs"
-      (let
-        [log
-         (atom [])
+      (let [log
+            (atom [])
 
-         removed
-         (atom nil)]
+            removed
+            (atom nil)]
 
-        (with-redefs
-          [dlg/host-band-region
-           (fn [_screen region]
-             region)
+        (with-redefs [dlg/host-band-region
+                      (fn [_screen region]
+                        region)
 
-           dlg/band-questions
-           (band-stub {"Remove MCP server `files`?" true} log)
+                      dlg/band-questions
+                      (band-stub {"Remove MCP server `files`?" true} log)
 
-           vis/gateway-mcp-delete-server!
-           (fn [server]
-             (reset! removed server))
+                      vis/gateway-mcp-delete-server!
+                      (fn [server]
+                        (reset! removed server))
 
-           dlg/confirm-dialog!
-           (fn [& _]
-             (throw (ex-info "removal opened a dialog" {})))]
+                      dlg/confirm-dialog!
+                      (fn [& _]
+                        (throw (ex-info "removal opened a dialog" {})))]
 
           (mcp/run-action! nil nil nil managed-stdio :remove)
           (expect (= "files" @removed))
@@ -382,38 +374,35 @@
             (expect (= "Yes, remove" (:yes-label opts)))))))
   (it "keeps the server when the removal confirm is declined"
       (let [removed? (atom false)]
-        (with-redefs
-          [dlg/host-band-region (fn [_screen region]
-                                  region)
-           dlg/band-questions (band-stub {} (atom []))
-           vis/gateway-mcp-delete-server! (fn [& _]
-                                            (reset! removed? true))]
+        (with-redefs [dlg/host-band-region (fn [_screen region]
+                                             region)
+                      dlg/band-questions (band-stub {} (atom []))
+                      vis/gateway-mcp-delete-server! (fn [& _]
+                                                       (reset! removed? true))]
 
           (mcp/run-action! nil nil nil managed-stdio :remove)
           (expect (= false @removed?)))))
   (it "reports a gateway rejection in the SAME band instead of a window"
       (let [log (atom [])]
-        (with-redefs
-          [dlg/host-band-region (fn [_screen region]
-                                  region)
-           dlg/band-questions (band-stub {} log)
-           vis/gateway-mcp-kill-server! (fn [_]
-                                          (throw (ex-info "mcp server is not gateway-managed: 409"
-                                                          {})))
-           dlg/text-view-dialog! (fn [& _]
-                                   (throw (ex-info "a refusal opened a dialog" {})))]
+        (with-redefs [dlg/host-band-region (fn [_screen region]
+                                             region)
+                      dlg/band-questions (band-stub {} log)
+                      vis/gateway-mcp-kill-server!
+                      (fn [_]
+                        (throw (ex-info "mcp server is not gateway-managed: 409" {})))
+                      dlg/text-view-dialog! (fn [& _]
+                                              (throw (ex-info "a refusal opened a dialog" {})))]
 
           (mcp/run-action! nil nil nil handwritten :kill)
           (expect (= :note (ffirst @log)))
           (expect (str/includes? (str @log) "not gateway-managed")))))
   (it "still shows the read-only details as a viewer, not as a menu of keys"
       (let [viewed (atom nil)]
-        (with-redefs
-          [dlg/host-band-region (fn [_screen region]
-                                  region)
-           dlg/band-questions (band-stub {} (atom []))
-           dlg/text-view-dialog! (fn [_screen title lines]
-                                   (reset! viewed [title lines]))]
+        (with-redefs [dlg/host-band-region (fn [_screen region]
+                                             region)
+                      dlg/band-questions (band-stub {} (atom []))
+                      dlg/text-view-dialog! (fn [_screen title lines]
+                                              (reset! viewed [title lines]))]
 
           (mcp/run-action! nil nil nil managed-stdio :details)
           (expect (= "MCP · files" (first @viewed)))

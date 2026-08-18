@@ -103,10 +103,9 @@
   (loop [from 0]
     (if (>= from (.length s))
       ""
-      (let
-        [nl (.indexOf s "\n" from)
-         end (if (neg? nl) (.length s) nl)
-         line (.trim (.substring s from end))]
+      (let [nl (.indexOf s "\n" from)
+            end (if (neg? nl) (.length s) nl)
+            line (.trim (.substring s from end))]
 
         (if (and (.isEmpty line) (not (neg? nl))) (recur (inc end)) line)))))
 
@@ -168,12 +167,11 @@
   ^String [^String s ^long n]
   (if (<= (count s) n)
     s
-    (let
-      [cut
-       (subs s 0 n)
+    (let [cut
+          (subs s 0 n)
 
-       sp
-       (.lastIndexOf cut " ")]
+          sp
+          (.lastIndexOf cut " ")]
 
       (str (if (> sp (long (* 0.6 n))) (subs cut 0 sp) cut) "…"))))
 
@@ -202,12 +200,11 @@
 (defn- line-of
   "The 1-based line `pos` falls on."
   ^long [^String s ^long pos]
-  (loop
-    [from
-     0
+  (loop [from
+         0
 
-     line
-     1]
+         line
+         1]
 
     (let [j (.indexOf s "\n" (int from))]
       (if (or (neg? j) (>= j pos)) line (recur (inc j) (inc line))))))
@@ -218,23 +215,22 @@
    re-shows what the caller already printed. A match is worth more forwards than
    backwards, which is why the two spans differ."
   ^String [^String s pos back fwd floor]
-  (let
-    [p
-     (long pos)
+  (let [p
+        (long pos)
 
-     fl
-     (long floor)
+        fl
+        (long floor)
 
-     n
-     (.length s)
+        n
+        (.length s)
 
-     lo
-     (loop [i (max fl (- p (long back)))]
-       (if (and (> i fl) (Character/isLetterOrDigit (.charAt s (dec i)))) (recur (dec i)) i))
+        lo
+        (loop [i (max fl (- p (long back)))]
+          (if (and (> i fl) (Character/isLetterOrDigit (.charAt s (dec i)))) (recur (dec i)) i))
 
-     hi
-     (loop [i (min n (+ p (long fwd)))]
-       (if (and (< i n) (Character/isLetterOrDigit (.charAt s i))) (recur (inc i)) i))]
+        hi
+        (loop [i (min n (+ p (long fwd)))]
+          (if (and (< i n) (Character/isLetterOrDigit (.charAt s i))) (recur (inc i)) i))]
 
     (collapse (subs s lo hi))))
 
@@ -242,30 +238,28 @@
   "`[rendered-head raw-end]` — the document's first non-blank line, plus the next
    one when the first is only a breadcrumb."
   [^String s ^long start]
-  (let
-    [n
-     (.length s)
+  (let [n
+        (.length s)
 
-     eol
-     (let [j (.indexOf s "\n" (int start))]
-       (if (neg? j) n j))
+        eol
+        (let [j (.indexOf s "\n" (int start))]
+          (if (neg? j) n j))
 
-     head
-     (collapse (subs s start eol))]
+        head
+        (collapse (subs s start eol))]
 
     (if (or (>= (long (count head)) (long preview-short-head)) (>= (long eol) n))
       [head eol]
-      (let
-        [nxt
-         (loop [i (inc eol)]
-           (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
+      (let [nxt
+            (loop [i (inc eol)]
+              (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
 
-         eol2
-         (let [j (.indexOf s "\n" (int nxt))]
-           (if (neg? j) n j))
+            eol2
+            (let [j (.indexOf s "\n" (int nxt))]
+              (if (neg? j) n j))
 
-         more
-         (collapse (subs s nxt eol2))]
+            more
+            (collapse (subs s nxt eol2))]
 
         (if (str/blank? more) [head eol] [(str head " — " more) eol2])))))
 
@@ -288,67 +282,67 @@
    be read from where it answers."
   ([text] (preview text nil))
   ([text terms]
-   (let
-     [s
-      (str text)
+   (let [s
+         (str text)
 
-      n
-      (.length s)
+         n
+         (.length s)
 
-      start
-      (loop [i 0]
-        (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
+         start
+         (loop [i 0]
+           (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
 
-      [raw-head head-end]
-      (opening s start)
+         [raw-head head-end]
+         (opening s start)
 
-      head
-      (clip (str/replace raw-head #"^#+\s*" "") preview-head-len)
+         head
+         (clip (str/replace raw-head #"^#+\s*" "") preview-head-len)
 
-      ;; Where the rendered opening stops in the RAW text: a window may never
-      ;; reach back into it.
-      shown
-      (min (long head-end) (+ (long start) (long (count head))))
+         ;; Where the rendered opening stops in the RAW text: a window may never
+         ;; reach back into it.
+         shown
+         (min (long head-end) (+ (long start) (long (count head))))
 
-      low
-      (str/lower-case s)
+         low
+         (str/lower-case s)
 
-      found
-      (into []
-            (comp (filter #(>= (count (str (:as %))) 3))
-                  (keep (fn [{:keys [as] :as t}]
-                          (let [f (find-term low (str as) 0)]
-                            (when-not (neg? f)
-                              (assoc t
-                                :below (find-term low (str as) shown)
-                                :last (last-term low (str as))))))))
-            (sort-by (comp - :idf) terms))
+         found
+         (into []
+               (comp (filter #(>= (count (str (:as %))) 3))
+                     (keep (fn [{:keys [as] :as t}]
+                             (let [f (find-term low (str as) 0)]
+                               (when-not (neg? f)
+                                 (assoc t
+                                   :below (find-term low (str as) shown)
+                                   :last (last-term low (str as))))))))
+               (sort-by (comp - :idf) terms))
 
-      ;; A term the corpus almost never uses says what the document is; one it
-      ;; uses everywhere ("file", "the") would put the window on noise.
-      strong
-      (if-let [top (when (seq found) (apply max (map :idf found)))]
-        (or (seq (filter #(>= (double (:idf %)) (* 0.5 (double top))) found)) found)
-        [])
+         ;; A term the corpus almost never uses says what the document is; one it
+         ;; uses everywhere ("file", "the") would put the window on noise.
+         strong
+         (if-let [top (when (seq found) (apply max (map :idf found)))]
+           (or (seq (filter #(>= (double (:idf %)) (* 0.5 (double top))) found)) found)
+           [])
 
-      mpos
-      (let [bs (remove neg? (map :below strong))]
-        (when (seq bs) (apply min bs)))
+         mpos
+         (let [bs (remove neg? (map :below strong))]
+           (when (seq bs) (apply min bs)))
 
-      deepest
-      (when mpos (apply max (map :last strong)))
+         deepest
+         (when mpos (apply max (map :last strong)))
 
-      mid
-      (when mpos (clip (word-window s mpos preview-lead-in preview-mid-len shown) preview-mid-len))
+         mid
+         (when mpos
+           (clip (word-window s mpos preview-lead-in preview-mid-len shown) preview-mid-len))
 
-      tail
-      (when (and deepest (> (long deepest) (+ (long mpos) (long preview-tail-gap))))
-        (clip (word-window s
-                           deepest
-                           preview-tail-lead
-                           preview-tail-len
-                           (+ (long mpos) (long preview-mid-len)))
-              preview-tail-len))]
+         tail
+         (when (and deepest (> (long deepest) (+ (long mpos) (long preview-tail-gap))))
+           (clip (word-window s
+                              deepest
+                              preview-tail-lead
+                              preview-tail-len
+                              (+ (long mpos) (long preview-mid-len)))
+                 preview-tail-len))]
 
      {:gist (str/join " … " (remove str/blank? [head mid tail]))
       :at (if mpos (line-of s mpos) 0)
@@ -457,10 +451,10 @@
   []
   (fn [rf]
     (let [seen (volatile! #{})]
-      (fn ([] (rf)) ([acc] (rf acc))
-        ([acc e]
-         (let [k (normalize-name (:name e))]
-           (if (contains? @seen k) acc (do (vswap! seen conj k) (rf acc e)))))))))
+      (fn ([] (rf)) ([acc] (rf acc)) ([acc e] (let [k (normalize-name (:name e))]
+                                                (if (contains? @seen k)
+                                                  acc
+                                                  (do (vswap! seen conj k) (rf acc e)))))))))
 
 (defn entries
   "The whole corpus, in registration order, deduplicated by name (first wins).
@@ -470,39 +464,37 @@
    Memoized on the sources' stamps: while every stamp is unchanged this answers
    the IDENTICAL vector without re-running a single source."
   []
-  (let
-    [ss
-     @sources
+  (let [ss
+        @sources
 
-     stamps
-     (mapv (fn [[id {:keys [stamp]}]]
-             [id (try (stamp) (catch Throwable _ ::unstamped))])
-           ss)
+        stamps
+        (mapv (fn [[id {:keys [stamp]}]]
+                [id (try (stamp) (catch Throwable _ ::unstamped))])
+              ss)
 
-     cached
-     @corpus-cache]
+        cached
+        @corpus-cache]
 
     (if (and cached (= stamps (:stamps cached)))
       (:entries cached)
-      (let
-        [raw
-         (into []
-               (mapcat (fn [[_id {:keys [entries]}]]
-                         (try (entries) (catch Throwable _ nil))))
-               ss)
+      (let [raw
+            (into []
+                  (mapcat (fn [[_id {:keys [entries]}]]
+                            (try (entries) (catch Throwable _ nil))))
+                  ss)
 
-         built
-         (into []
-               (comp (filter #(and (seq (str (:name %))) (some? (:text %))))
-                     (map (fn [e]
-                            (cond-> {:name (str (:name e)) :text (str (:text e))}
-                              (contains? kinds (:kind e))
-                              (assoc :kind (:kind e))
+            built
+            (into []
+                  (comp (filter #(and (seq (str (:name %))) (some? (:text %))))
+                        (map (fn [e]
+                               (cond-> {:name (str (:name e)) :text (str (:text e))}
+                                 (contains? kinds (:kind e))
+                                 (assoc :kind (:kind e))
 
-                              (seq (str (:call e)))
-                              (assoc :call (str (:call e))))))
-                     (dedupe-by-name))
-               raw)]
+                                 (seq (str (:call e)))
+                                 (assoc :call (str (:call e))))))
+                        (dedupe-by-name))
+                  raw)]
 
         (reset! corpus-cache {:stamps stamps :entries built})
         built))))
@@ -579,17 +571,16 @@
    `name \u2014 first line` per row, then the sentence that says where the rest is.
    Never a dump — everything off `curated` is one `apropos(text)` away."
   [es]
-  (let
-    [by-name
-     (into {} (map (juxt :name identity)) es)
+  (let [by-name
+        (into {} (map (juxt :name identity)) es)
 
-     rows
-     (into []
-           (keep (fn [nm]
-                   (when-let [e (get by-name nm)]
-                     (let [g (gist (:text e) index-gist-max-len)]
-                       (if (str/blank? g) nm (str nm " \u2014 " g))))))
-           curated)]
+        rows
+        (into []
+              (keep (fn [nm]
+                      (when-let [e (get by-name nm)]
+                        (let [g (gist (:text e) index-gist-max-len)]
+                          (if (str/blank? g) nm (str nm " \u2014 " g))))))
+              curated)]
 
     (str "# doc()\n\n" (str/join "\n" rows)
          "\n\nEverything else \u2014 " (count es)

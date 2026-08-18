@@ -76,17 +76,16 @@
    frames plus the geometry `paint!` handed back."
   ([panes] (paint-frames panes 96 26))
   ([panes cols rows]
-   (let
-     [geom
-      (atom nil)
+   (let [geom
+         (atom nil)
 
-      cap
-      (cap/capture! {:cols cols
-                     :rows rows
-                     :paint! (fn [{:keys [screen]}]
-                               (let [g (.newTextGraphics ^TerminalScreen screen)]
-                                 (reset! geom (lv/paint! g cols rows panes 1 3))
-                                 (.refresh ^TerminalScreen screen)))})]
+         cap
+         (cap/capture! {:cols cols
+                        :rows rows
+                        :paint! (fn [{:keys [screen]}]
+                                  (let [g (.newTextGraphics ^TerminalScreen screen)]
+                                    (reset! geom (lv/paint! g cols rows panes 1 3))
+                                    (.refresh ^TerminalScreen screen)))})]
 
      (assoc cap :geometry @geom))))
 
@@ -98,12 +97,11 @@
   "The captured cell painting character `idx` of `needle`, on the first row that
    carries it — how a test reads the INK a row was really painted in."
   [frame needle idx]
-  (let
-    [row
-     (first (filter #(str/includes? (apply str (map :ch %)) needle) frame))
+  (let [row
+        (first (filter #(str/includes? (apply str (map :ch %)) needle) frame))
 
-     text
-     (apply str (map :ch row))]
+        text
+        (apply str (map :ch row))]
 
     (nth row (+ (long (str/index-of text needle)) (long idx)))))
 ;;; ── Tests ───────────────────────────────────────────────────────────────────
@@ -122,12 +120,11 @@
   (testing "the view's own description opens the surface"
     (is (= "Blockether/vis · 32062760734" (:text (first (rows-of (pane)))))))
   (testing "an empty table is still a box, and says so between its own rails"
-    (let
-      [p
-       (lv/opened (mounted {} (jobs {} 0)))
+    (let [p
+          (lv/opened (mounted {} (jobs {} 0)))
 
-       plan
-       (rows-of p)]
+          plan
+          (rows-of p)]
 
       (is (= [:prose :node :trule :thead :trule :empty :trule] (mapv :kind plan))
           "top rail, the header, a rail, the sentence, and the box closed under it")
@@ -137,12 +134,11 @@
 
 (deftest live-view-window-test
   (testing "a node paints a window and says how much it is holding back"
-    (let
-      [p
-       (pane :rows 20)
+    (let [p
+          (pane :rows 20)
 
-       more
-       (first (kinds-of p :more))]
+          more
+          (first (kinds-of p :more))]
 
       (is (= lv/node-window (count (kinds-of p :trow))))
       (is (= "+ 8 more rows" (:text more)))
@@ -152,13 +148,13 @@
       (is (= 20 (count (kinds-of p :trow))))
       (is (empty? (kinds-of p :more)))))
   (testing "a log answers its TAIL — the newest lines are why anybody watches"
-    (let
-      [p
-       (lv/opened
-         (mounted {} (hi/log "tail" {:label "Output" :lines (mapv #(str "line " %) (range 40))})))
+    (let [p
+          (lv/opened (mounted {}
+                              (hi/log "tail"
+                                      {:label "Output" :lines (mapv #(str "line " %) (range 40))})))
 
-       lines
-       (mapv :text (filterv #(= :log (:kind %)) (rows-of p)))]
+          lines
+          (mapv :text (filterv #(= :log (:kind %)) (rows-of p)))]
 
       (is (= lv/node-window (count lines)))
       (is (= "line 39" (last lines)))
@@ -168,13 +164,12 @@
 (deftest live-view-follow-test
   (testing "a fresh pane follows the end" (is (:is-following (pane))))
   (testing "scrolling up releases follow; landing back at the bottom re-arms it"
-    (let
-      [p
-       (-> (pane :rows 30)
-           (lv/painted {:offset 40 :total 60 :visible 20}))
+    (let [p
+          (-> (pane :rows 30)
+              (lv/painted {:offset 40 :total 60 :visible 20}))
 
-       up
-       (lv/scrolled p -6)]
+          up
+          (lv/scrolled p -6)]
 
       (is (not (:is-following up)))
       (is (= 34 (:offset up)))
@@ -182,12 +177,11 @@
       (is (:is-following (lv/scrolled up 999)) "the wheel cannot run past the end")
       (is (= 40 (:offset (lv/scrolled up 999))))))
   (testing "a following pane sits at the end of whatever the plan is now"
-    (let
-      [p
-       (pane :rows 30)
+    (let [p
+          (pane :rows 30)
 
-       rows
-       (rows-of p)]
+          rows
+          (rows-of p)]
 
       (is (= (max 0 (- (count rows) 8)) (lv/offset p rows 8))))))
 
@@ -196,29 +190,28 @@
    paint measures, the wheel releases follow-tail, the next paint records the
    anchor under the eye. Answers `[pane offset anchor]`."
   [p visible target]
-  (let
-    [rows
-     (rows-of p)
+  (let [rows
+        (rows-of p)
 
-     n
-     (count rows)
+        n
+        (count rows)
 
-     limit
-     (max 0 (- n (long visible)))
+        limit
+        (max 0 (- n (long visible)))
 
-     up
-     (- (long target) (long limit))
+        up
+        (- (long target) (long limit))
 
-     scrolled
-     (-> p
-         (lv/painted {:offset limit :total n :visible visible})
-         (lv/scrolled up))
+        scrolled
+        (-> p
+            (lv/painted {:offset limit :total n :visible visible})
+            (lv/scrolled up))
 
-     o
-     (lv/offset scrolled rows visible)
+        o
+        (lv/offset scrolled rows visible)
 
-     anchor
-     (lv/anchor-at rows o)]
+        anchor
+        (lv/anchor-at rows o)]
 
     [(lv/painted scrolled {:offset o :anchor anchor :total n :visible visible}) o anchor]))
 
@@ -228,23 +221,22 @@
 
 (deftest live-view-anchor-test
   (testing "rows arriving ABOVE the eye move the scrollbar, not the reading position"
-    (let
-      [p
-       (-> (pane :rows 12 :order :newest-first)
-           (lv/expanded "jobs"))
+    (let [p
+          (-> (pane :rows 12 :order :newest-first)
+              (lv/expanded "jobs"))
 
-       [parked eye anchor]
-       (parked p 6 (trow-index p 4))
+          [parked eye anchor]
+          (parked p 6 (trow-index p 4))
 
-       grown
-       (patched parked
-                {:op :append
-                 :node-id "jobs"
-                 :rows (mapv #(hi/table-row (str "new-" %) [(str "new-" %) "queued" "0s"])
-                             (range 3))})
+          grown
+          (patched parked
+                   {:op :append
+                    :node-id "jobs"
+                    :rows (mapv #(hi/table-row (str "new-" %) [(str "new-" %) "queued" "0s"])
+                                (range 3))})
 
-       grown-rows
-       (rows-of grown)]
+          grown-rows
+          (rows-of grown)]
 
       (is (= "jobs" (first anchor)) "the anchor names the node the eye is inside")
       (is (str/starts-with? (str (second anchor)) "job-")
@@ -255,87 +247,84 @@
       (is (= anchor (lv/anchor-at grown-rows (lv/offset grown grown-rows 6)))
           "and the same row is still the top visible one")))
   (testing "a removed row above the eye pulls the viewport back with it"
-    (let
-      [p
-       (-> (pane :rows 12 :order :newest-first)
-           (lv/expanded "jobs"))
+    (let [p
+          (-> (pane :rows 12 :order :newest-first)
+              (lv/expanded "jobs"))
 
-       [parked eye anchor]
-       (parked p 6 (trow-index p 4))
+          [parked eye anchor]
+          (parked p 6 (trow-index p 4))
 
-       cut
-       (patched parked {:op :remove :node-id "jobs" :item-ids ["job-11" "job-10"]})
+          cut
+          (patched parked {:op :remove :node-id "jobs" :item-ids ["job-11" "job-10"]})
 
-       cut-rows
-       (rows-of cut)]
+          cut-rows
+          (rows-of cut)]
 
       (is (= (- (long eye) 4) (long (lv/offset cut cut-rows 6)))
           "two rows left, and the two rails between them left with them")
       (is (= anchor (lv/anchor-at cut-rows (lv/offset cut cut-rows 6))))))
   (testing "an anchor whose row is gone falls back to the node it belonged to"
-    (let
-      [p
-       (-> (pane :rows 12)
-           (lv/expanded "jobs"))
+    (let [p
+          (-> (pane :rows 12)
+              (lv/expanded "jobs"))
 
-       [parked _ anchor]
-       (parked p 6 (trow-index p 4))
+          [parked _ anchor]
+          (parked p 6 (trow-index p 4))
 
-       cut
-       (patched parked {:op :remove :node-id "jobs" :item-ids [(second anchor)]})
+          cut
+          (patched parked {:op :remove :node-id "jobs" :item-ids [(second anchor)]})
 
-       cut-rows
-       (rows-of cut)]
+          cut-rows
+          (rows-of cut)]
 
       (is (= "jobs" (first (lv/anchor-at cut-rows (lv/offset cut cut-rows 6))))
           "the eye lands inside the same node instead of jumping to the top")))
   (testing "a viewport pinned at the end follows new rows"
-    (let
-      [p
-       (pane :rows 4)
+    (let [p
+          (pane :rows 4)
 
-       rows
-       (rows-of p)
+          rows
+          (rows-of p)
 
-       following
-       (lv/painted p {:offset 0 :total (count rows) :visible 6})
+          following
+          (lv/painted p {:offset 0 :total (count rows) :visible 6})
 
-       grown
-       (patched
-         following
-         {:op :append :node-id "jobs" :rows [(hi/table-row "job-9" ["job-9" "running" "1s"])]})
+          grown
+          (patched
+            following
+            {:op :append :node-id "jobs" :rows [(hi/table-row "job-9" ["job-9" "running" "1s"])]})
 
-       grown-rows
-       (rows-of grown)]
+          grown-rows
+          (rows-of grown)]
 
       (is (:is-following grown))
       (is (= (- (count grown-rows) 6) (long (lv/offset grown grown-rows 6)))))))
 
 (deftest live-view-widths-test
   (testing "a column measured wide stays wide while the view is open"
-    (let
-      [p
-       (-> (pane :rows 3)
-           (lv/expanded "jobs"))
+    (let [p
+          (-> (pane :rows 3)
+              (lv/expanded "jobs"))
 
-       wide
-       (patched p
-                {:op :append
-                 :node-id "jobs"
-                 :rows [(hi/table-row "job-1" ["job-1" "a state nobody expected" "1m0s"])]})
+          wide
+          (patched p
+                   {:op :append
+                    :node-id "jobs"
+                    :rows [(hi/table-row "job-1" ["job-1" "a state nobody expected" "1m0s"])]})
 
-       measured
-       (:widths (meta (rows-of wide)))
+          measured
+          (:widths (meta (rows-of wide)))
 
-       taught
-       (lv/painted wide {:offset 0 :total 9 :visible 9 :widths measured})
+          taught
+          (lv/painted wide {:offset 0 :total 9 :visible 9 :widths measured})
 
-       narrow
-       (patched taught
-                {:op :append :node-id "jobs" :rows [(hi/table-row "job-1" ["job-1" "ok" "1m0s"])]})
+          narrow
+          (patched
+            taught
+            {:op :append :node-id "jobs" :rows [(hi/table-row "job-1" ["job-1" "ok" "1m0s"])]})
 
-       after
-       (:widths (meta (rows-of narrow)))]
+          after
+          (:widths (meta (rows-of narrow)))]
 
       (is (= (get-in measured ["jobs"]) (get-in after ["jobs"]))
           "a shorter value never shuffles the columns the human already read")
@@ -343,17 +332,16 @@
 
 (deftest live-view-fresh-test
   (testing "what the LAST patch touched is what is emphasised, and only until the next one"
-    (let
-      [p
-       (pane :rows 3)
+    (let [p
+          (pane :rows 3)
 
-       one
-       (patched
-         p
-         {:op :append :node-id "jobs" :rows [(hi/table-row "job-9" ["job-9" "running" "1s"])]})
+          one
+          (patched
+            p
+            {:op :append :node-id "jobs" :rows [(hi/table-row "job-9" ["job-9" "running" "1s"])]})
 
-       two
-       (patched one {:op :set :node-id "now" :text "Still polling"})]
+          two
+          (patched one {:op :set :node-id "now" :text "Still polling"})]
 
       (is (some #(and (= "job-9" (:item-id %)) (:is-fresh %)) (rows-of one)))
       (is (not-any? #(and (= "job-9" (:item-id %)) (:is-fresh %)) (rows-of two))
@@ -361,12 +349,11 @@
 
 (deftest live-view-escape-precedence-test
   (testing "Escape hits the NEWEST view that says it may be stopped"
-    (let
-      [a
-       (pane :id "view-a")
+    (let [a
+          (pane :id "view-a")
 
-       b
-       (pane :id "view-b")]
+          b
+          (pane :id "view-b")]
 
       (is (= "view-b" (lv/view-id (lv/interruptible [a b]))))
       (is (nil? (lv/interruptible [])))))
@@ -394,16 +381,15 @@
       (is (nil? (lv/stop-prompt (lv/opened (ci-view)))) "a watched view asks nothing")
       (is (nil? (lv/stopping (lv/disarmed p))) "and `disarmed` is the way back")))
   (testing "the note is typed with the same keyboard a form's fields read"
-    (let
-      [typing
-       (fn [pane text]
-         (reduce (fn [pane c]
-                   (:pane (lv/typed pane {:kind :char :char c})))
-                 pane
-                 text))
+    (let [typing
+          (fn [pane text]
+            (reduce (fn [pane c]
+                      (:pane (lv/typed pane {:kind :char :char c})))
+                    pane
+                    text))
 
-       p
-       (typing (lv/armed (lv/opened (ci-view))) "wrong subnet")]
+          p
+          (typing (lv/armed (lv/opened (ci-view))) "wrong subnet")]
 
       (is (= "wrong subnet" (lv/stopping p)))
       (is (= "wrong subne" (lv/stopping (:pane (lv/typed p {:kind :backspace})))))
@@ -428,29 +414,27 @@
       (is (nil? (:action (lv/typed p {:kind :next})))
           "a key the line has no use for changes nothing")))
   (testing "the line stops growing where the engine cuts it"
-    (let
-      [p (reduce (fn [pane c]
-                   (:pane (lv/typed pane {:kind :char :char c})))
-                 (lv/armed (lv/opened (ci-view)))
-                 (repeat (+ 10 (long hi-spec/note-chars)) \x))]
+    (let [p (reduce (fn [pane c]
+                      (:pane (lv/typed pane {:kind :char :char c})))
+                    (lv/armed (lv/opened (ci-view)))
+                    (repeat (+ 10 (long hi-spec/note-chars)) \x))]
       (is (= (long hi-spec/note-chars) (count (lv/stopping p)))
           "a field that swallowed more than the model will read would lie about the note")))
   (testing "the band gives the armed line a row of its own, above the fence"
-    (let
-      [p
-       (lv/opened (ci-view))
+    (let [p
+          (lv/opened (ci-view))
 
-       watched
-       (painted-text [p])
+          watched
+          (painted-text [p])
 
-       armed
-       (painted-text [(:pane (reduce (fn [{:keys [pane]} c]
-                                       (lv/typed pane {:kind :char :char c}))
-                                     {:pane (lv/armed p)}
-                                     "wrong subnet"))])
+          armed
+          (painted-text [(:pane (reduce (fn [{:keys [pane]} c]
+                                          (lv/typed pane {:kind :char :char c}))
+                                        {:pane (lv/armed p)}
+                                        "wrong subnet"))])
 
-       empty-armed
-       (painted-text [(lv/armed p)])]
+          empty-armed
+          (painted-text [(lv/armed p)])]
 
       (is (not (str/includes? watched "why?")) "a view being watched asks nothing")
       (is (str/includes? armed "why? wrong subnet") "the words are on screen as they are typed")
@@ -461,14 +445,13 @@
       (is (str/includes? armed "Esc / ⏎ interrupt with the note")
           "once there are words the bar says they will travel with the stop")
       (is (str/includes? armed "⌫ erase") "and Backspace is the key that takes them away again")
-      (let
-        [lines
-         (str/split-lines armed)
+      (let [lines
+            (str/split-lines armed)
 
-         at
-         (first (keep-indexed (fn [idx line]
-                                (when (str/includes? line "why?") idx))
-                              lines))]
+            at
+            (first (keep-indexed (fn [idx line]
+                                   (when (str/includes? line "why?") idx))
+                                 lines))]
 
         (is
           (str/includes? (nth lines (dec (long at)) "") "─")
@@ -487,20 +470,20 @@
 
 (deftest live-view-state-test
   (testing "open, patch, close — the three ops the channel carries"
-    (with-db (fn []
-               (let [view (assoc (ci-view) :session-id "s1")]
-                 (state/dispatch [:live-view-open view])
-                 (is (= ["view-1"] (mapv lv/view-id (:live-views @state/app-db))))
-                 (state/dispatch
-                   [:live-view-patch
-                    (engine/normalize-patch view [{:op :set :node-id "now" :text "Done"}])])
-                 (is (= "Done" (:text (first (:nodes (:view (first (:live-views @state/app-db)))))))
-                     "the ENGINE advanced the view; the terminal never interprets a patch itself")
-                 (state/dispatch [:live-view-close "view-1" {:reason :completed}])
-                 (is (lv/settled? (first (:live-views @state/app-db)))
-                     "the close ends the view and leaves the line that reopens it")
-                 (is (lv/dormant? (first (:live-views @state/app-db)))
-                     "collapsed until the human presses it: the band's rows go back to the transcript")))))
+    (with-db
+      (fn []
+        (let [view (assoc (ci-view) :session-id "s1")]
+          (state/dispatch [:live-view-open view])
+          (is (= ["view-1"] (mapv lv/view-id (:live-views @state/app-db))))
+          (state/dispatch [:live-view-patch
+                           (engine/normalize-patch view [{:op :set :node-id "now" :text "Done"}])])
+          (is (= "Done" (:text (first (:nodes (:view (first (:live-views @state/app-db)))))))
+              "the ENGINE advanced the view; the terminal never interprets a patch itself")
+          (state/dispatch [:live-view-close "view-1" {:reason :completed}])
+          (is (lv/settled? (first (:live-views @state/app-db)))
+              "the close ends the view and leaves the line that reopens it")
+          (is (lv/dormant? (first (:live-views @state/app-db)))
+              "collapsed until the human presses it: the band's rows go back to the transcript")))))
   (testing "one view mounted twice keeps the pane the human is scrolling"
     (with-db (fn []
                (let [view (assoc (ci-view :rows 20) :session-id "s1")]
@@ -525,12 +508,11 @@
 
 (deftest live-view-paint-test
   (testing "the band paints the whole view when it fits"
-    (let
-      [{:keys [frames geometry]}
-       (paint-frames [(pane)] 96 60)
+    (let [{:keys [frames geometry]}
+          (paint-frames [(pane)] 96 60)
 
-       text
-       (cap/frame-text (last frames))]
+          text
+          (cap/frame-text (last frames))]
 
       (is (seq frames))
       (is (str/includes? text "CI · fix(loop): move the session pick"))
@@ -545,12 +527,11 @@
       (is (pos? (long (:total geometry))))
       (is (pos? (long (:visible geometry))))))
   (testing "and when it does not fit, the END — the newest work — is what is on screen"
-    (let
-      [p
-       (pane :rows 20)
+    (let [p
+          (pane :rows 20)
 
-       text
-       (painted-text [p] 96 26)]
+          text
+          (painted-text [p] 96 26)]
 
       (is (str/includes? text "+ 8 more rows"))
       (is (str/includes? text "Ran 314 tests"))
@@ -563,40 +544,39 @@
       (is (str/includes? text "▸"))
       (is (str/includes? text "2") "the hint says how many are open")))
   (testing "a real PNG of the band, before and after one patch"
-    (let
-      [before
-       (pane :rows 6)
+    (let [before
+          (pane :rows 6)
 
-       after
-       (patched
-         before
-         {:op :append :node-id "jobs" :rows [(hi/table-row "job-9" ["job-9" "failed" "0m3s"])]})
+          after
+          (patched
+            before
+            {:op :append :node-id "jobs" :rows [(hi/table-row "job-9" ["job-9" "failed" "0m3s"])]})
 
-       shot!
-       (fn [nm panes]
-         (cap/shot! {:cols 96
-                     :rows 26
-                     :font-size 14
-                     :out nm
-                     :paint! (fn [{:keys [screen]}]
-                               (let [g (.newTextGraphics ^TerminalScreen screen)]
-                                 (lv/paint! g 96 26 panes 1 3)
-                                 (.refresh ^TerminalScreen screen)))}))
+          shot!
+          (fn [nm panes]
+            (cap/shot! {:cols 96
+                        :rows 26
+                        :font-size 14
+                        :out nm
+                        :paint! (fn [{:keys [screen]}]
+                                  (let [g (.newTextGraphics ^TerminalScreen screen)]
+                                    (lv/paint! g 96 26 panes 1 3)
+                                    (.refresh ^TerminalScreen screen)))}))
 
-       png-before
-       (shot! "vis-live-view-before" [before])
+          png-before
+          (shot! "vis-live-view-before" [before])
 
-       png-after
-       (shot! "vis-live-view-after" [after])
+          png-after
+          (shot! "vis-live-view-after" [after])
 
-       ;; The stop is a CONVERSATION, so it has to be SEEN: an armed band keeps
-       ;; painting the work while it asks why the human is stopping it.
-       png-stop
-       (shot! "vis-live-view-stop"
-              [(reduce (fn [p ch]
-                         (:pane (lv/typed p {:kind :char :char ch})))
-                       (lv/armed after)
-                       "wrong subnet")])]
+          ;; The stop is a CONVERSATION, so it has to be SEEN: an armed band keeps
+          ;; painting the work while it asks why the human is stopping it.
+          png-stop
+          (shot! "vis-live-view-stop"
+                 [(reduce (fn [p ch]
+                            (:pane (lv/typed p {:kind :char :char ch})))
+                          (lv/armed after)
+                          "wrong subnet")])]
 
       (is (str/ends-with? png-before "vis-live-view-before.png"))
       (is (str/ends-with? png-after "vis-live-view-after.png"))
@@ -613,42 +593,40 @@
 ;; dropping what the human came to read.
 (deftest live-view-ink-test
   (testing "a counter wears its own tone, and the word naming it recedes"
-    (let
-      [p
-       (lv/opened (mounted {}
-                           (hi/stat "score"
-                                    [{:id "failed" :label "Failed" :value-text "1" :tone "error"}
-                                     {:id "seen" :label "Seen" :value-text "18"}])))
+    (let [p
+          (lv/opened (mounted {}
+                              (hi/stat "score"
+                                       [{:id "failed" :label "Failed" :value-text "1" :tone "error"}
+                                        {:id "seen" :label "Seen" :value-text "18"}])))
 
-       frame
-       (last (:frames (paint-frames [p] 80 20)))
+          frame
+          (last (:frames (paint-frames [p] 80 20)))
 
-       label
-       (cell-under frame "Failed 1" 0)
+          label
+          (cell-under frame "Failed 1" 0)
 
-       value
-       (cell-under frame "Failed 1" 7)
+          value
+          (cell-under frame "Failed 1" 7)
 
-       plain
-       (cell-under frame "Seen 18" 5)]
+          plain
+          (cell-under frame "Seen 18" 5)]
 
       (is (= "1" (:ch value)))
       (is (not= (:fg label) (:fg value)) "the tone lands on the number, not on the word naming it")
       (is (not= (:fg value) (:fg plain)) "an untoned counter keeps the body's own ink")))
   (testing "a progress that declared its parts paints the bar it earned"
-    (let
-      [text (painted-text
-              [(lv/opened (mounted {} (hi/progress "done" {:label "Finished" :done 15 :total 18})))]
-              80
-              20)]
+    (let [text (painted-text
+                 [(lv/opened (mounted {}
+                                      (hi/progress "done" {:label "Finished" :done 15 :total 18})))]
+                 80
+                 20)]
       (is (str/includes? text "83%"))
       (is (str/includes? text "15/18 done"))
       (is (str/includes? text "▰") "15 of 18 is a measured fraction, not indeterminate work")
       (is (not (str/includes? text "working")))))
   (testing "a progress nobody can size still says the one true thing"
-    (let
-      [text
-       (painted-text [(lv/opened (mounted {} (hi/progress "done" {:label "Scanning"})))] 80 20)]
+    (let [text
+          (painted-text [(lv/opened (mounted {} (hi/progress "done" {:label "Scanning"})))] 80 20)]
       (is (str/includes? text "working"))
       (is (not (str/includes? text "▰"))))))
 
@@ -662,25 +640,23 @@
 (deftest live-view-table-width-test
   (testing "head, rule and every row end on the column the band ends on"
     (doseq [w [80 60]]
-      (let
-        [lines (->> (lv/plan (pane) w)
-                    (filter #(#{:thead :trule :trow} (:kind %)))
-                    (mapv :text))]
+      (let [lines (->> (lv/plan (pane) w)
+                       (filter #(#{:thead :trule :trow} (:kind %)))
+                       (mapv :text))]
         (is (seq lines))
         (is (= [w] (distinct (mapv count lines))) (str "at " w " columns")))))
   (testing "the slack lands on the column that was already the widest"
-    (let
-      [mid
-       (->> (lv/plan (pane) 80)
-            (filter #(= :trule (:kind %)))
-            (map :text)
-            (filter #(str/includes? % "┼"))
-            first)
+    (let [mid
+          (->> (lv/plan (pane) 80)
+               (filter #(= :trule (:kind %)))
+               (map :text)
+               (filter #(str/includes? % "┼"))
+               first)
 
-       cells
-       (->> (str/split mid #"[├┼┤]")
-            (remove str/blank?)
-            (mapv count))]
+          cells
+          (->> (str/split mid #"[├┼┤]")
+               (remove str/blank?)
+               (mapv count))]
 
       (is (= 3 (count cells)))
       (is
@@ -688,12 +664,11 @@
         "`state` holds the longest word, so `state` is the column that grows — the same judge that shrinks first")
       (is (< (long (first cells)) (long (second cells))))))
   (testing "and the table is a BOX, with a rail between every pair of rows"
-    (let
-      [rows
-       (filterv #(#{:thead :trule :trow} (:kind %)) (lv/plan (pane) 80))
+    (let [rows
+          (filterv #(#{:thead :trule :trow} (:kind %)) (lv/plan (pane) 80))
 
-       texts
-       (mapv :text rows)]
+          texts
+          (mapv :text rows)]
 
       (is (str/starts-with? (first texts) "┌"))
       (is (str/ends-with? (first texts) "┐"))
@@ -709,44 +684,41 @@
 ;; that painted its strings flat would be the ONE surface where `code` is not code.
 (deftest live-view-inline-markdown-test
   (testing "a statement reads as words, and the marks that styled them are gone"
-    (let
-      [row
-       (->> (lv/plan (lv/opened (mounted {}
-                                         (hi/status "now"
-                                                    "Bumped `openssl` on **db-2**"
-                                                    {:label "Now" :tone :ok})))
-                     80)
-            (filter #(= :status (:kind %)))
-            first)
+    (let [row
+          (->> (lv/plan (lv/opened (mounted {}
+                                            (hi/status "now"
+                                                       "Bumped `openssl` on **db-2**"
+                                                       {:label "Now" :tone :ok})))
+                        80)
+               (filter #(= :status (:kind %)))
+               first)
 
-       run-of
-       (fn [text]
-         (first (filter #(= text (:text %)) (:runs row))))]
+          run-of
+          (fn [text]
+            (first (filter #(= text (:text %)) (:runs row))))]
 
       (is (str/includes? (:text row) "Bumped openssl on db-2"))
       (is (not (str/includes? (:text row) "`")) "the syntax is not the sentence")
       (is (contains? (:style (run-of "openssl")) :code))
       (is (contains? (:style (run-of "db-2")) :bold))))
   (testing "and the code span really wears another ink on the terminal"
-    (let
-      [frame (last (:frames (paint-frames [(lv/opened (mounted {}
-                                                               (hi/status "now"
-                                                                          "Bumped `openssl` now"
-                                                                          {:label "Now"})))]
-                                          80
-                                          20)))]
+    (let [frame (last (:frames (paint-frames [(lv/opened (mounted {}
+                                                                  (hi/status "now"
+                                                                             "Bumped `openssl` now"
+                                                                             {:label "Now"})))]
+                                             80
+                                             20)))]
       (is (not= (:fg (cell-under frame "Bumped openssl" 0))
                 (:fg (cell-under frame "Bumped openssl" 7)))
           "the word and the code span beside it are not painted in one flat ink")))
   (testing "a log line is machine output and stays VERBATIM"
-    (let
-      [text (str/join "\n"
-                      (map :text
-                           (lv/plan (lv/opened (mounted {}
-                                                        (hi/log "tail"
-                                                                {:label "Output"
-                                                                 :lines ["cat `x` **y**"]})))
-                                    80)))]
+    (let [text (str/join "\n"
+                         (map :text
+                              (lv/plan (lv/opened (mounted {}
+                                                           (hi/log "tail"
+                                                                   {:label "Output"
+                                                                    :lines ["cat `x` **y**"]})))
+                                       80)))]
       (is (str/includes? text "cat `x` **y**")
           "backticks in a build log are the build's own characters, not styling"))))
 
@@ -785,16 +757,15 @@
                 columns)
           "the table's box and the paragraph explaining it start on ONE row")))
   (testing "the paragraph is JUSTIFIED to its column, so both its edges are straight"
-    (let
-      [cell-w
-       (columns/cell-width 80 2)
+    (let [cell-w
+          (columns/cell-width 80 2)
 
-       texts
-       (->> (lv/plan (reading-pane) 80)
-            (filter #(= :columns (:kind %)))
-            (keep #(second (:cells %)))
-            (filter #(= :status (:kind %)))
-            (mapv :text))]
+          texts
+          (->> (lv/plan (reading-pane) 80)
+               (filter #(= :columns (:kind %)))
+               (keep #(second (:cells %)))
+               (filter #(= :status (:kind %)))
+               (mapv :text))]
 
       (is (= 37 cell-w) "two columns and the gutter between them, out of an 80-column band")
       (is (< 1 (count texts)) "the sentence wrapped")
@@ -806,12 +777,11 @@
       ;; than it has gaps to grow stays ragged. That is the terminal's ONE
       ;; policy (`markdown-layout/justify-line-runs`), not this pane's opinion.
       (is (every? (fn [line]
-                    (let
-                      [slack
-                       (- cell-w (count line))
+                    (let [slack
+                          (- cell-w (count line))
 
-                       gaps
-                       (dec (count (str/split (str/trim line) #"\s+")))]
+                          gaps
+                          (dec (count (str/split (str/trim line) #"\s+")))]
 
                       (or (zero? slack) (>= slack gaps))))
                   (butlast texts))
@@ -823,23 +793,21 @@
       (is (contains? kinds :thead))
       (is (contains? kinds :status) "both nodes are still there, one under the other")))
   (testing "and the terminal really paints them on the same row"
-    (let
-      [line (->> (str/split-lines (painted-text [(reading-pane)]))
-                 (filter #(str/includes? % "Jobs"))
-                 first)]
+    (let [line (->> (str/split-lines (painted-text [(reading-pane)]))
+                    (filter #(str/includes? % "Jobs"))
+                    first)]
       (is (str/includes? (str line) "Reading") "one screen row carries both labels")))
   ;; The proof a person can LOOK at: one band carrying a boxed table that spans
   ;; its column and the paragraph that explains it, marks and all.
   (testing "a real PNG of a table with its paragraph beside it"
-    (let
-      [png (cap/shot! {:cols 96
-                       :rows 24
-                       :font-size 14
-                       :out "vis-live-view-group"
-                       :paint! (fn [{:keys [screen]}]
-                                 (let [g (.newTextGraphics ^TerminalScreen screen)]
-                                   (lv/paint! g 96 24 [(reading-pane)] 1 3)
-                                   (.refresh ^TerminalScreen screen)))})]
+    (let [png (cap/shot! {:cols 96
+                          :rows 24
+                          :font-size 14
+                          :out "vis-live-view-group"
+                          :paint! (fn [{:keys [screen]}]
+                                    (let [g (.newTextGraphics ^TerminalScreen screen)]
+                                      (lv/paint! g 96 24 [(reading-pane)] 1 3)
+                                      (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-group.png"))
       (is (pos? (long (cap/ink png))) "the split band really painted"))))
 
@@ -867,9 +835,12 @@
 ;; finished — and the only way back would have been dumping it into the transcript.
 (deftest live-view-settled-test
   (testing "a finished view collapses to ONE line: how it ended, what it left, how long it took"
-    (let [p (ended (patched (pane) {:op :append :node-id "tail" :lines ["one" "two" "three"]}))
+    (let [p
+          (ended (patched (pane) {:op :append :node-id "tail" :lines ["one" "two" "three"]}))
 
-          text (painted-text [p])]
+          text
+          (painted-text [p])]
+
       (is (str/includes? text "✓") "the tone is said without colour, for a terminal that has none")
       (is (str/includes? text "completed"))
       (is (str/includes? text "5 lines") "the record it left, not the window it painted")
@@ -879,27 +850,38 @@
       (is (zero? (long (:total (:geometry (paint-frames [p])))))
           "a settled view plans no rows at all")))
   (testing "pressing that line reads the record back, and pressing it again puts it away"
-    (let [p (ended (pane))
+    (let [p
+          (ended (pane))
 
-          open (lv/reopened p)]
+          open
+          (lv/reopened p)]
+
       (is (str/includes? (painted-text [open]) "Ran 314 tests") "read-only, but all of it")
       (is (not (str/includes? (painted-text [(lv/reopened open)]) "Ran 314 tests"))
           "the same press closes it")
       (is (lv/settled? open) "reopening does not un-end the view")))
   (testing "the whole line is the control, registered where the mouse is answered"
-    (let [hits (filterv #(= :live-reopen (:kind %)) (regions-of [(ended (pane :id "done-1"))]))
+    (let [hits
+          (filterv #(= :live-reopen (:kind %)) (regions-of [(ended (pane :id "done-1"))]))
 
-          bounds (:bounds (first hits))]
+          bounds
+          (:bounds (first hits))]
+
       (is (= 1 (count hits)))
-      (is (= "done-1" (:view-id (first hits))) "it names the view it reopens, not the pane in front")
+      (is (= "done-1" (:view-id (first hits)))
+          "it names the view it reopens, not the pane in front")
       (is (< 1 (long (:width bounds))) "a one-line control is pressed anywhere on the line")
       (is (= :live-reopen (:kind (cr/lookup (:col bounds) (:row bounds)))))))
   (testing "an open view still paints in front of a settled one, and Escape still hits IT"
-    (let [running (pane :id "running-1")
+    (let [running
+          (pane :id "running-1")
 
-          done (ended (pane :id "done-1"))
+          done
+          (ended (pane :id "done-1"))
 
-          text (painted-text [done running])]
+          text
+          (painted-text [done running])]
+
       (is (str/includes? text "Ran 314 tests") "the open view keeps the body")
       (is (str/includes? text "completed") "the settled one keeps its line above it")
       (is (= "running-1" (lv/view-id (lv/interruptible [done running])))
@@ -910,7 +892,8 @@
     (with-db (fn []
                (let [view (assoc (ci-view) :session-id "s1")]
                  (state/dispatch [:live-view-open view])
-                 (state/dispatch [:live-view-close "view-1" {:reason :interrupted :artifact-id "art-1"}])
+                 (state/dispatch [:live-view-close "view-1"
+                                  {:reason :interrupted :artifact-id "art-1"}])
                  (let [p (first (:live-views @state/app-db))]
                    (is (lv/settled? p))
                    (is (= :interrupted (:reason (:settled p))))
@@ -931,13 +914,15 @@
   ;; The proof a person can LOOK at: a finished run collapsed onto the band, and
   ;; the still-running one painting in full above it.
   (testing "a real PNG of a settled line under an open view"
-    (let [png (cap/shot! {:cols 96
-                          :rows 24
-                          :font-size 14
-                          :out "vis-live-view-settled"
-                          :paint! (fn [{:keys [screen]}]
-                                    (let [g (.newTextGraphics ^TerminalScreen screen)]
-                                      (lv/paint! g 96 24 [(ended (pane :id "done-1")) (pane :id "running-1")] 1 3)
-                                      (.refresh ^TerminalScreen screen)))})]
+    (let [png (cap/shot!
+                {:cols 96
+                 :rows 24
+                 :font-size 14
+                 :out "vis-live-view-settled"
+                 :paint!
+                 (fn [{:keys [screen]}]
+                   (let [g (.newTextGraphics ^TerminalScreen screen)]
+                     (lv/paint! g 96 24 [(ended (pane :id "done-1")) (pane :id "running-1")] 1 3)
+                     (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-settled.png"))
       (is (pos? (long (cap/ink png))) "the collapsed line really painted"))))

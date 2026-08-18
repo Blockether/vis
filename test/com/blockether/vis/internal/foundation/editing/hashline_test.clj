@@ -40,24 +40,22 @@
   ;; a hash, so every pasted anchor was refused, and the refusal handed
   ;; back the identical anchor it had just refused.
   (it "a whole rendered line IS the anchor it renders"
-      (let
-        [rendered (hashline/render-hashline-block
-                    [[2 (nth (hashline/split-content-lines content) 1)]])]
+      (let [rendered (hashline/render-hashline-block
+                       [[2 (nth (hashline/split-content-lines content) 1)]])]
         (expect (= (hashline/parse-anchor (anchor-of 2)) (hashline/parse-anchor rendered)))
         (expect (= 2 (hashline/anchor->line rendered)))
         (expect (hashline/anchor-string? rendered))
         (expect (= {:from-line 2 :to-line 2}
                    (hashline/resolve-anchor-range content rendered nil)))))
   (it "an indented grep row resolves, and its UPPERCASE text is not folded in"
-      (let
-        [text
-         " * Persist SYNCHRONOUSLY before awaiting the plugin"
+      (let [text
+            " * Persist SYNCHRONOUSLY before awaiting the plugin"
 
-         shouty
-         (str "alpha\n" text "\n")
+            shouty
+            (str "alpha\n" text "\n")
 
-         row
-         (hashline/render-hashline-block [[2 text]] "  ")]
+            row
+            (hashline/render-hashline-block [[2 text]] "  ")]
 
         (expect (= {:from-line 2 :to-line 2} (hashline/resolve-anchor-range shouty row nil)))))
   (it "bare-anchor-string? tells a naked address from a rendered line"
@@ -82,23 +80,21 @@
         (expect (= {:from-line 2 :to-line 2}
                    (hashline/resolve-anchor-range dupes (hashline/line-anchor 2 "same") nil)))))
   (it "4. misplaced — the content sits far from the stated line, so REFUSE"
-      (let
-        [far
-         (string/join "\n" (concat ["needle"] (map #(str "filler " %) (range 1 200))))
+      (let [far
+            (string/join "\n" (concat ["needle"] (map #(str "filler " %) (range 1 200))))
 
-         r
-         (hashline/resolve-anchor-range far (str "160:" (hashline/line-hash "needle")) nil)]
+            r
+            (hashline/resolve-anchor-range far (str "160:" (hashline/line-hash "needle")) nil)]
 
         (expect (= :anchor-misplaced (get-in r [:error :reason])))
         ;; It hands back the anchor that IS there, so recovery is one call.
         (expect (= (str "1:" (hashline/line-hash "needle")) (get-in r [:error :current-anchor])))))
   (it "5. not-found — the content is gone, so REFUSE with the current anchor"
-      (let
-        [edited
-         "alpha\nBETA\n\ngamma\ndelta\n"
+      (let [edited
+            "alpha\nBETA\n\ngamma\ndelta\n"
 
-         r
-         (hashline/resolve-anchor-range edited (anchor-of 2) nil)]
+            r
+            (hashline/resolve-anchor-range edited (anchor-of 2) nil)]
 
         (expect (= :anchor-not-found (get-in r [:error :reason])))
         (expect (= (hashline/line-anchor 2 "BETA") (get-in r [:error :current-anchor])))))
@@ -117,12 +113,11 @@
              ;; A READ is non-destructive, so a stale hash must not block the look the way
              ;; it (correctly) blocks a write.
              (it "a stale hash falls back to its line number and says it was stale"
-                 (let
-                   [edited
-                    "alpha\nBETA\n\ngamma\ndelta\n"
+                 (let [edited
+                       "alpha\nBETA\n\ngamma\ndelta\n"
 
-                    r
-                    (hashline/resolve-anchor-range-read edited (anchor-of 2) nil)]
+                       r
+                       (hashline/resolve-anchor-range-read edited (anchor-of 2) nil)]
 
                    (expect (= 2 (:from-line r)))
                    (expect (:stale? r))))
@@ -139,33 +134,30 @@
 (defdescribe
   edit-span-newline-semantics-test
   (it "a replacement need not end in a newline — the terminator is preserved"
-      (let
-        [span
-         (hashline/resolve-anchor-edit-span content (anchor-of 2) nil "BETA")
+      (let [span
+            (hashline/resolve-anchor-edit-span content (anchor-of 2) nil "BETA")
 
-         updated
-         (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
+            updated
+            (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
 
         (expect (= "alpha\nBETA\n\ngamma\ndelta\n" updated))))
   (it "an empty replacement consumes the line, leaving no blank behind"
-      (let
-        [span
-         (hashline/resolve-anchor-edit-span content (anchor-of 2) nil "")
+      (let [span
+            (hashline/resolve-anchor-edit-span content (anchor-of 2) nil "")
 
-         updated
-         (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
+            updated
+            (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
 
         (expect (= "alpha\n\ngamma\ndelta\n" updated))))
   (it "a CRLF file keeps its CRLF on a last-line replace"
-      (let
-        [crlf
-         "one\r\ntwo\r\n"
+      (let [crlf
+            "one\r\ntwo\r\n"
 
-         span
-         (hashline/resolve-anchor-edit-span crlf (hashline/line-anchor 2 "two") nil "TWO")
+            span
+            (hashline/resolve-anchor-edit-span crlf (hashline/line-anchor 2 "two") nil "TWO")
 
-         updated
-         (str (subs crlf 0 (:start span)) (:replacement span) (subs crlf (:end span)))]
+            updated
+            (str (subs crlf 0 (:start span)) (:replacement span) (subs crlf (:end span)))]
 
         (expect (= "one\r\nTWO\r\n" updated))))
   (it "a multi-line span replace reports the lines it resolved"
@@ -176,21 +168,19 @@
   ;; replace — the span's own terminator sits OUTSIDE it, so the check read the
   ;; PREVIOUS line's `\n` and padded the replacement with a newline it must not carry.
   (it "a span ending on a blank line replaces it instead of growing another"
-      (let
-        [span
-         (hashline/resolve-anchor-edit-span content (anchor-of 2) (anchor-of 3) "BETA")
+      (let [span
+            (hashline/resolve-anchor-edit-span content (anchor-of 2) (anchor-of 3) "BETA")
 
-         updated
-         (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
+            updated
+            (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
 
         (expect (= "alpha\nBETA\ngamma\ndelta\n" updated))))
   (it "a span ending on the file's last line keeps the file's final newline"
-      (let
-        [span
-         (hashline/resolve-anchor-edit-span content (anchor-of 4) (anchor-of 5) "TAIL")
+      (let [span
+            (hashline/resolve-anchor-edit-span content (anchor-of 4) (anchor-of 5) "TAIL")
 
-         updated
-         (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
+            updated
+            (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
 
         (expect (= "alpha\nbeta\n\nTAIL\n" updated)))))
 
@@ -198,20 +188,19 @@
 (defdescribe
   render-hashline-block-test
   (it "renders one addressable row per tuple, indent included"
-      (let
-        [lines
-         (hashline/split-content-lines content)
+      (let [lines
+            (hashline/split-content-lines content)
 
-         tuples
-         (map-indexed (fn [i l]
-                        [(inc i) l])
-                      lines)
+            tuples
+            (map-indexed (fn [i l]
+                           [(inc i) l])
+                         lines)
 
-         block
-         (hashline/render-hashline-block tuples)
+            block
+            (hashline/render-hashline-block tuples)
 
-         indented
-         (hashline/render-hashline-block tuples "  ")]
+            indented
+            (hashline/render-hashline-block tuples "  ")]
 
         (expect (= 5 (count (string/split-lines block))))
         (expect (every? #(re-matches #"\d+:[0-9a-f]{3}│ .*" %) (string/split-lines block)))
@@ -224,17 +213,16 @@
 ;; same either way; only the rendering was wrong.
 (defdescribe render-drops-the-carriage-return-test
              (it "a CRLF line renders without its CR, under the same anchor"
-                 (let
-                   [lines
-                    (hashline/split-content-lines "alpha\r\nbeta\r\ngamma\r\n")
+                 (let [lines
+                       (hashline/split-content-lines "alpha\r\nbeta\r\ngamma\r\n")
 
-                    block
-                    (hashline/render-hashline-block (map-indexed (fn [i l]
-                                                                   [(inc i) l])
-                                                                 lines))
+                       block
+                       (hashline/render-hashline-block (map-indexed (fn [i l]
+                                                                      [(inc i) l])
+                                                                    lines))
 
-                    rendered
-                    (string/split-lines block)]
+                       rendered
+                       (string/split-lines block)]
 
                    ;; The content the file really carries still has the CR: the char offsets
                    ;; an edit splices at count it.

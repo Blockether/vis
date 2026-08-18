@@ -99,21 +99,20 @@
 
    Options: `:cols` (120) `:rows` (40) `:keys` (queued before `:paint!` runs)."
   [{:keys [cols rows keys paint!] :or {cols 120 rows 40}}]
-  (let
-    [cols
-     (long cols)
+  (let [cols
+        (long cols)
 
-     rows
-     (long rows)
+        rows
+        (long rows)
 
-     terminal
-     (DefaultVirtualTerminal. (TerminalSize. (int cols) (int rows)))
+        terminal
+        (DefaultVirtualTerminal. (TerminalSize. (int cols) (int rows)))
 
-     ^TerminalScreen screen
-     (doto (TerminalScreen. terminal) (.startScreen))
+        ^TerminalScreen screen
+        (doto (TerminalScreen. terminal) (.startScreen))
 
-     frames
-     (atom [])]
+        frames
+        (atom [])]
 
     (.addVirtualTerminalListener terminal
                                  (reify
@@ -124,13 +123,12 @@
                                      (onResized [_ _terminal _size])))
     (doseq [k keys]
       (.addInput terminal (key-stroke k)))
-    (let
-      [error
-       (atom nil)
+    (let [error
+          (atom nil)
 
-       ret
-       (try (paint! {:terminal terminal :screen screen :g (.newTextGraphics screen)})
-            (catch Throwable t (reset! error t) nil))]
+          ret
+          (try (paint! {:terminal terminal :screen screen :g (.newTextGraphics screen)})
+               (catch Throwable t (reset! error t) nil))]
 
       ;; A paint that never refreshed has left its drawing in the SCREEN's back
       ;; buffer, where the terminal cannot see it -- so flush it here. Without
@@ -176,42 +174,40 @@
    small dialog on a 120×40 terminal is photographed as the dialog and not as a
    stamp in an ocean of paper. A grid with nothing on it is returned untouched."
   [grid]
-  (let
-    [paper
-     (:bg (cinema/cell nil))
+  (let [paper
+        (:bg (cinema/cell nil))
 
-     blank?
-     (partial blank-cell? paper)
+        blank?
+        (partial blank-cell? paper)
 
-     used-rows
-     (keep-indexed (fn [y row]
-                     (when-not (every? blank? row) y))
-                   grid)
+        used-rows
+        (keep-indexed (fn [y row]
+                        (when-not (every? blank? row) y))
+                      grid)
 
-     width
-     (reduce max 0 (map count grid))
+        width
+        (reduce max 0 (map count grid))
 
-     used-cols
-     (remove (fn [x]
-               (every? (fn [row]
-                         (blank? (nth row x nil)))
-                       grid))
-       (range width))]
+        used-cols
+        (remove (fn [x]
+                  (every? (fn [row]
+                            (blank? (nth row x nil)))
+                          grid))
+          (range width))]
 
     (if (or (empty? used-rows) (empty? used-cols))
       grid
-      (let
-        [y0
-         (max 0 (dec (long (first used-rows))))
+      (let [y0
+            (max 0 (dec (long (first used-rows))))
 
-         y1
-         (min (dec (count grid)) (inc (long (last used-rows))))
+            y1
+            (min (dec (count grid)) (inc (long (last used-rows))))
 
-         x0
-         (max 0 (dec (long (first used-cols))))
+            x0
+            (max 0 (dec (long (first used-cols))))
 
-         x1
-         (min (dec (long width)) (inc (long (last used-cols))))]
+            x1
+            (min (dec (long width)) (inc (long (last used-cols))))]
 
         (mapv (fn [row]
                 (subvec (vec row) x0 (min (count row) (inc x1))))
@@ -221,18 +217,17 @@
   "Resolve `:out` to a PNG File. A bare name lands under `<tmp>/vis-tui`, an
    absolute path is taken as given, `.png` is optional, and `i` numbers a frame."
   ^File [out i]
-  (let
-    [base
-     (str/replace (str (or out "shot")) #"\.png$" "")
+  (let [base
+        (str/replace (str (or out "shot")) #"\.png$" "")
 
-     named
-     (str base (when i (str "-" i)) ".png")
+        named
+        (str base (when i (str "-" i)) ".png")
 
-     f
-     (io/file named)
+        f
+        (io/file named)
 
-     f
-     (if (.isAbsolute f) f (io/file (System/getProperty "java.io.tmpdir") "vis-tui" named))]
+        f
+        (if (.isAbsolute f) f (io/file (System/getProperty "java.io.tmpdir") "vis-tui" named))]
 
     (io/make-parents f)
     f))
@@ -261,12 +256,11 @@
   ^String [{:keys [out frame grid] :as opts}]
   (if grid
     (render! grid out nil opts)
-    (let
-      [{:keys [frames error]}
-       (capture! opts)
+    (let [{:keys [frames error]}
+          (capture! opts)
 
-       png
-       (render! (pick-frame frames frame) out nil opts)]
+          png
+          (render! (pick-frame frames frame) out nil opts)]
 
       (when error
         (throw (ex-info (str "capture: :paint! threw — picture written to " png) {:png png} error)))
@@ -277,14 +271,13 @@
    `<out>-<i>.png`. `:frames` picks which flushes to draw (default: all of them);
    every other option is `shot!`'s."
   [{:keys [out frames] :as opts}]
-  (let
-    [{captured :frames :keys [error]}
-     (capture! opts)
+  (let [{captured :frames :keys [error]}
+        (capture! opts)
 
-     pngs
-     (mapv (fn [i]
-             (render! (nth captured i) out i opts))
-           (or frames (range (count captured))))]
+        pngs
+        (mapv (fn [i]
+                (render! (nth captured i) out i opts))
+              (or frames (range (count captured))))]
 
     (when error
       (throw (ex-info (str "capture: :paint! threw — pictures written to " (pr-str pngs))
@@ -322,17 +315,16 @@
    backgrounds and full-height bars."
   ([path-or-rows] (ink path-or-rows nil))
   ([path-or-rows paper]
-   (let
-     [rows
-      (if (sequential? path-or-rows) path-or-rows (png-rows path-or-rows))
+   (let [rows
+         (if (sequential? path-or-rows) path-or-rows (png-rows path-or-rows))
 
-      pixels
-      (apply concat rows)
+         pixels
+         (apply concat rows)
 
-      background
-      (cond (set? paper) paper
-            (some? paper) (set paper)
-            (seq pixels) #{(key (apply max-key val (frequencies pixels)))}
-            :else #{})]
+         background
+         (cond (set? paper) paper
+               (some? paper) (set paper)
+               (seq pixels) #{(key (apply max-key val (frequencies pixels)))}
+               :else #{})]
 
      (count (remove background pixels)))))

@@ -154,12 +154,11 @@
         (expect (< 100 (png-len python-context "plt.barh(['a','b','c'],[10,20,30])")))
         ;; the ASCII backend maps the strings onto an integer axis and prints
         ;; every category name as an x tick label (proves the categorical path)
-        (let
-          [ascii (ev python-context
-                     (str "import matplotlib.pyplot as plt, io\nplt.clf()\n"
-                          "plt.bar(['repo-a','repo-b','repo-c'],[1,2,3])\n"
-                          "b=io.StringIO()\nplt.savefig(b, format='txt', width=60, height=12)\n"
-                          "b.getvalue()"))]
+        (let [ascii (ev python-context
+                        (str "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                             "plt.bar(['repo-a','repo-b','repo-c'],[1,2,3])\n"
+                             "b=io.StringIO()\nplt.savefig(b, format='txt', width=60, height=12)\n"
+                             "b.getvalue()"))]
           (expect (str/includes? ascii "repo-a"))
           (expect (str/includes? ascii "repo-b"))
           (expect (str/includes? ascii "repo-c")))
@@ -218,12 +217,11 @@
       (with-python-context (expect (< 100 (png-len python-context "plt.title('empty')")))))
   (it "honours figure(figsize=...) — bigger canvas => more bytes"
       (with-python-context
-        (let
-          [small
-           (png-len python-context "plt.figure(figsize=(2,2)); plt.plot([0,1,2],[0,1,2])")
+        (let [small
+              (png-len python-context "plt.figure(figsize=(2,2)); plt.plot([0,1,2],[0,1,2])")
 
-           big
-           (png-len python-context "plt.figure(figsize=(10,8)); plt.plot([0,1,2],[0,1,2])")]
+              big
+              (png-len python-context "plt.figure(figsize=(10,8)); plt.plot([0,1,2],[0,1,2])")]
 
           (expect (< 100 small))
           (expect (< small big))))))
@@ -336,12 +334,11 @@
                           "plt.scatter([1,2,3],[1,2,3], c=[1,2,3])\nplt.colorbar()")))))
   (it "axis('off') renders without a frame; axis([...]) sets limits"
       (with-python-context
-        (let
-          [off
-           (png-len python-context "plt.plot([1,2,3],[1,2,3])\nplt.axis('off')")
+        (let [off
+              (png-len python-context "plt.plot([1,2,3],[1,2,3])\nplt.axis('off')")
 
-           on
-           (png-len python-context "plt.plot([1,2,3],[1,2,3])")]
+              on
+              (png-len python-context "plt.plot([1,2,3],[1,2,3])")]
 
           (expect (< 100 off))
           (expect (< off on))
@@ -381,22 +378,21 @@
                                 "and 'image/png' in _v and 'bars' in _v"))))))
   (it "show() writes a real PNG on disk for the fence path (works even IO-NONE)"
       (with-python-context
-        (let
-          [out
-           (ev python-context
-               (str "import matplotlib.pyplot as plt, io, sys\n"
-                    "plt.clf()\n" "plt.plot([0,1,2],[0,1,4]); plt.title('line')\n"
-                    "_o=sys.stdout; sys.stdout=io.StringIO()\nplt.show()\n"
-                    "_v=sys.stdout.getvalue(); sys.stdout=_o\n_v"))
+        (let [out
+              (ev python-context
+                  (str "import matplotlib.pyplot as plt, io, sys\n"
+                       "plt.clf()\n" "plt.plot([0,1,2],[0,1,4]); plt.title('line')\n"
+                       "_o=sys.stdout; sys.stdout=io.StringIO()\nplt.show()\n"
+                       "_v=sys.stdout.getvalue(); sys.stdout=_o\n_v"))
 
-           lines
-           (str/split-lines out)
+              lines
+              (str/split-lines out)
 
-           path
-           (nth lines 2)
+              path
+              (nth lines 2)
 
-           f
-           (java.io.File. ^String path)]
+              f
+              (java.io.File. ^String path)]
 
           (expect (str/starts-with? out "````vis-image"))
           (expect (= "image/png" (nth lines 3)))
@@ -557,19 +553,18 @@
                           " and list(buf.getvalue()[:8]) == [137, 80, 78, 71, 13, 10, 26, 10]"))))))
   (it "a 3-D figure also renders to the ASCII target"
       (with-python-context
-        (expect (let
-                  [s (ev python-context
-                         (str
-                           "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+        (expect
+          (let [s (ev python-context
+                      (str "import matplotlib.pyplot as plt, io\nplt.clf()\n"
                            "Z = [[float(i * j) for j in range(6)] for i in range(6)]\n"
                            "ax = plt.figure().add_subplot(projection='3d')\n"
                            "ax.plot_surface(list(range(6)), list(range(6)), Z, cmap='viridis')\n"
                            "ax.set_title('mesh')\n"
                            "buf = io.StringIO()\nplt.savefig(buf, format='txt')\nbuf.getvalue()"))]
-                  (and (string? s)
-                       (str/includes? s "3-D view")
-                       (str/includes? s "mesh")
-                       (> (count (str/split-lines s)) 10)))))))
+            (and (string? s)
+                 (str/includes? s "3-D view")
+                 (str/includes? s "mesh")
+                 (> (count (str/split-lines s)) 10)))))))
 
 (defdescribe
   matplotlib-figure-artist-test

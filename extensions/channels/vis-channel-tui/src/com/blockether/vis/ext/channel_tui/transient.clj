@@ -144,12 +144,11 @@
    as `(••••••)`, so a credential can be carried by a transient without being
    echoed onto the screen or into a screenshot."
   [{:keys [type arg secret?]} value]
-  (let
-    [raw
-     (when (and value (not (str/blank? (str value)))) (str value))
+  (let [raw
+        (when (and value (not (str/blank? (str value)))) (str value))
 
-     v
-     (when raw (if secret? "••••••" raw))]
+        v
+        (when raw (if secret? "••••••" raw))]
 
     (cond (contains? sp/command-types type) nil
           (and arg (contains? sp/valued-types type)) (str "(" arg v ")")
@@ -282,17 +281,15 @@
   (loop [bs (mapv vec blocks)]
     (if (>= (count bs) n)
       bs
-      (let
-        [i (long (apply max-key #(count (nth bs (long %))) (range (count bs))))
-         b (nth bs i)]
+      (let [i (long (apply max-key #(count (nth bs (long %))) (range (count bs))))
+            b (nth bs i)]
 
         (if (< (count b) (long split-min-rows))
           bs
-          (let
-            [items (subvec b 1)
-             half (long (Math/ceil (/ (double (count items)) 2.0)))
-             head (into [(first b)] (subvec items 0 half))
-             tail (into [{:kind :blank}] (subvec items half))]
+          (let [items (subvec b 1)
+                half (long (Math/ceil (/ (double (count items)) 2.0)))
+                head (into [(first b)] (subvec items 0 half))
+                tail (into [{:kind :blank}] (subvec items half))]
 
             (recur (-> (subvec bs 0 i)
                        (conj head)
@@ -315,38 +312,38 @@
 
    `n` = 1 is exactly [[rows]]: one pane IS the single column."
   [spec ^long n]
-  (let
-    [blocks
-     (mapv group-block (:groups spec))
+  (let [blocks
+        (mapv group-block (:groups spec))
 
-     total
-     (+ (long (reduce + 0 (map count blocks))) (max 0 (dec (count blocks))))
+        total
+        (+ (long (reduce + 0 (map count blocks))) (max 0 (dec (count blocks))))
 
-     target
-     (max 1 (long (Math/ceil (/ (double total) (double (max 1 n))))))
+        target
+        (max 1 (long (Math/ceil (/ (double total) (double (max 1 n))))))
 
-     packed
-     (if (>= n (count blocks))
-       (split-tall blocks n)
-       (reduce (fn [acc block]
-                 (let [cur (peek acc)]
-                   (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
-                     (conj acc (vec block))
-                     (conj (pop acc)
-                           (into (cond-> cur
-                                   (seq cur)
-                                   (conj {:kind :blank}))
-                                 block)))))
-               [[]]
-               blocks))
+        packed
+        (if (>= n (count blocks))
+          (split-tall blocks n)
+          (reduce
+            (fn [acc block]
+              (let [cur (peek acc)]
+                (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
+                  (conj acc (vec block))
+                  (conj (pop acc)
+                        (into (cond-> cur
+                                (seq cur)
+                                (conj {:kind :blank}))
+                              block)))))
+            [[]]
+            blocks))
 
-     padded
-     ;; Every pane breathes the same: the grid is one rectangle, so a blank top
-     ;; row on one column and none on the next would tilt the whole band.
-     (mapv pad-block packed)
+        padded
+        ;; Every pane breathes the same: the grid is one rectangle, so a blank top
+        ;; row on one column and none on the next would tilt the whole band.
+        (mapv pad-block packed)
 
-     h
-     (long (reduce max 0 (map count padded)))]
+        h
+        (long (reduce max 0 (map count padded)))]
 
     (mapv (fn [pane]
             (into pane (repeat (- h (count pane)) {:kind :blank})))
@@ -358,14 +355,14 @@
    [[pane-trail]] it is painted with. Measuring the PANE (not the spec) is what
    lets a band stand a narrow category beside a wide one."
   ^long [pane]
-  (let
-    [{:keys [key-w label-w]}
-     (pane-columns pane)
+  (let [{:keys [key-w label-w]}
+        (pane-columns pane)
 
-     head-w
-     (reduce max
-             0
-             (map #(long (p/display-width (str (:text %)))) (filter #(= :header (:kind %)) pane)))]
+        head-w
+        (reduce max
+                0
+                (map #(long (p/display-width (str (:text %))))
+                     (filter #(= :header (:kind %)) pane)))]
 
     (max (+ (long pane-lead)
             (long item-indent)
@@ -397,15 +394,14 @@
   ^long [spec region]
   (if (or (nil? region) (not (:is-sideless region)))
     1
-    (let
-      [inner-w
-       (long (or (:inner-w region) 0))
+    (let [inner-w
+          (long (or (:inner-w region) 0))
 
-       room
-       (max 1 (quot (+ inner-w (long pane-gap)) (+ (long pane-min-w) (long pane-gap))))
+          room
+          (max 1 (quot (+ inner-w (long pane-gap)) (+ (long pane-min-w) (long pane-gap))))
 
-       want
-       (max (min (long default-panes) room) (count (:groups spec)))]
+          want
+          (max (min (long default-panes) room) (count (:groups spec)))]
 
       (loop [n want]
         (let [ps (panes spec n)]
@@ -427,39 +423,37 @@
    label) the width is split evenly and the labels ellipsize — which for one pane
    IS the whole band."
   [region ps]
-  (let
-    [inner-w
-     (long (or (:inner-w region) 0))
+  (let [inner-w
+        (long (or (:inner-w region) 0))
 
-     n
-     (max 1 (count ps))
+        n
+        (max 1 (count ps))
 
-     nats
-     (mapv pane-natural ps)
+        nats
+        (mapv pane-natural ps)
 
-     avail
-     (- inner-w (* (long pane-gap) (dec n)))
+        avail
+        (- inner-w (* (long pane-gap) (dec n)))
 
-     share
-     (quot avail n)
+        share
+        (quot avail n)
 
-     ;; The equal grid, and the panes a long category pushes wider than it.
-     floors
-     (mapv (fn [^long nat]
-             (max share nat))
-           nats)
+        ;; The equal grid, and the panes a long category pushes wider than it.
+        floors
+        (mapv (fn [^long nat]
+                (max share nat))
+              nats)
 
-     slack
-     (- avail (long (reduce + 0 floors)))]
+        slack
+        (- avail (long (reduce + 0 floors)))]
 
     (if (neg? slack)
       (vec (repeat n (max 1 share)))
-      (let
-        [each
-         (quot slack n)
+      (let [each
+            (quot slack n)
 
-         extra
-         (rem slack n)]
+            extra
+            (rem slack n)]
 
         (into []
               (map-indexed (fn [^long i ^long w]
@@ -509,33 +503,32 @@
    `is-title` true, because there the title IS the question."
   ([region ^long n] (band-geometry region n false))
   ([{:keys [hint-row min-row]} ^long n is-title]
-   (let
-     [top-limit
-      (long (or min-row 0))
+   (let [top-limit
+         (long (or min-row 0))
 
-      ;; The popup is GLUED to the frame's BOTTOM CHROME: the host paints
-      ;; `├───┤` directly above its hint row, and a band that simply overwrote
-      ;; that rule left its last command running into the footer text — which
-      ;; reads as the popup eating the bottom border. The popup repaints it.
-      foot-row
-      (long hint-row)
+         ;; The popup is GLUED to the frame's BOTTOM CHROME: the host paints
+         ;; `├───┤` directly above its hint row, and a band that simply overwrote
+         ;; that rule left its last command running into the footer text — which
+         ;; reads as the popup eating the bottom border. The popup repaints it.
+         foot-row
+         (long hint-row)
 
-      foot-rule-row
-      (dec foot-row)
+         foot-rule-row
+         (dec foot-row)
 
-      ;; Anchor to the bottom of the band: the last body row sits DIRECTLY on
-      ;; the closing rule, with the chrome stacked above it.
-      body-top
-      (max (+ top-limit (if is-title 2 1)) (- foot-rule-row n))
+         ;; Anchor to the bottom of the band: the last body row sits DIRECTLY on
+         ;; the closing rule, with the chrome stacked above it.
+         body-top
+         (max (+ top-limit (if is-title 2 1)) (- foot-rule-row n))
 
-      title-rule-row
-      (max top-limit (dec body-top))
+         title-rule-row
+         (max top-limit (dec body-top))
 
-      title-row
-      (if is-title (max top-limit (dec title-rule-row)) title-rule-row)
+         title-row
+         (if is-title (max top-limit (dec title-rule-row)) title-rule-row)
 
-      sep-row
-      (if is-title (max 0 (dec title-row)) title-row)]
+         sep-row
+         (if is-title (max 0 (dec title-row)) title-row)]
 
      {:top-limit top-limit
       :sep-row sep-row
@@ -596,17 +589,16 @@
    the band the header and the top of the transcript stay on screen."
   ([^long cols ^long rows ^long content-top] (band-region cols rows content-top prompt-rows))
   ([^long cols ^long rows ^long content-top ^long prompt-h]
-   (let
-     [pad
-      (long band-pad)
+   (let [pad
+         (long band-pad)
 
-      min-row
-      (max 0 content-top)
+         min-row
+         (max 0 content-top)
 
-      ;; The two rails live INSIDE the prompt's rule span, so the interior is
-      ;; that span less the two columns the rails themselves take.
-      inner-w
-      (max 4 (- cols (* 2 pad) 2))]
+         ;; The two rails live INSIDE the prompt's rule span, so the interior is
+         ;; that span less the two columns the rails themselves take.
+         inner-w
+         (max 4 (- cols (* 2 pad) 2))]
 
      {:left pad
       :inner-w inner-w
@@ -645,15 +637,14 @@
    wide or how tall the host is, so nothing may wrap."
   ([spec] (layout spec nil))
   ([spec region]
-   (let
-     [n
-      (pane-count spec region)
+   (let [n
+         (pane-count spec region)
 
-      ps
-      (panes spec n)
+         ps
+         (panes spec n)
 
-      pane-h
-      (count (first ps))]
+         pane-h
+         (count (first ps))]
 
      {:rows (rows spec)
       :panes ps
@@ -676,53 +667,52 @@
    A COMMAND (`:action`) always shows a BOLD accented key with its description in
    full `dialog-fg` — a command is never `off`."
   [g left row inner-w {:keys [key-w label-w]} {:keys [type label] :as it} active? value]
-  (let
-    [action?
-     (= :action type)
+  (let [action?
+        (= :action type)
 
-     keytxt
-     (key-glyph it)
+        keytxt
+        (key-glyph it)
 
-     argtxt
-     (item-arg it value)
+        argtxt
+        (item-arg it value)
 
-     ;; The key column steps in past the heading above it, and the description
-     ;; column clears the key by [[key-gap]] — the two are COLUMNS, not a
-     ;; sentence with a letter in front of it.
-     x
-     (+ (long left) (long pane-lead) (long item-indent))
+        ;; The key column steps in past the heading above it, and the description
+        ;; column clears the key by [[key-gap]] — the two are COLUMNS, not a
+        ;; sentence with a letter in front of it.
+        x
+        (+ (long left) (long pane-lead) (long item-indent))
 
-     lx
-     (+ (long x) (long key-w) (long key-gap))
+        lx
+        (+ (long x) (long key-w) (long key-gap))
 
-     right
-     (+ (long left) (long inner-w))
+        right
+        (+ (long left) (long inner-w))
 
-     label-txt
-     (str label)
+        label-txt
+        (str label)
 
-     ;; Argument column: aligned past the widest description when it fits, else
-     ;; trailing the description inline, else dropped (a very narrow buffer).
-     arg-x
-     (when argtxt
-       (let
-         [w
-          (long (p/display-width argtxt))
+        ;; Argument column: aligned past the widest description when it fits, else
+        ;; trailing the description inline, else dropped (a very narrow buffer).
+        arg-x
+        (when argtxt
+          (let [w
+                (long (p/display-width argtxt))
 
-          col
-          (+ (long lx) (long label-w) 2)
+                col
+                (+ (long lx) (long label-w) 2)
 
-          inline
-          (+ (long lx) (long (p/display-width label-txt)) 2)]
+                inline
+                (+ (long lx) (long (p/display-width label-txt)) 2)]
 
-         (cond (<= (+ col w) (- (long right) (long pane-trail))) col
-               (<= (+ inline w) (- (long right) (long pane-trail))) inline)))
+            (cond (<= (+ col w) (- (long right) (long pane-trail))) col
+                  (<= (+ inline w) (- (long right) (long pane-trail))) inline)))
 
-     shown
-     (p/ellipsize label-txt (long (max 0 (- (long (or arg-x right)) (long lx) (long pane-trail)))))
+        shown
+        (p/ellipsize label-txt
+                     (long (max 0 (- (long (or arg-x right)) (long lx) (long pane-trail)))))
 
-     fg
-     (if (or action? active?) t/dialog-fg t/dialog-hint)]
+        fg
+        (if (or action? active?) t/dialog-fg t/dialog-hint)]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -748,12 +738,11 @@
    chrome and neither grows a second copy of it."
   ([g region row] (draw-rule! g region row nil))
   ([g {:keys [left inner-w is-sideless]} row label]
-   (let
-     [left
-      (long left)
+   (let [left
+         (long left)
 
-      inner-w
-      (long inner-w)]
+         inner-w
+         (long inner-w)]
 
      (if is-sideless
        (do (p/set-colors! g t/border-fg t/dialog-bg)
@@ -791,15 +780,14 @@
    owns the rows between its content and the band, and erases them with this
    before running the next page."
   [g {:keys [left inner-w is-sideless cols]} from to]
-  (let
-    [left
-     (long left)
+  (let [left
+        (long left)
 
-     inner-w
-     (long inner-w)
+        inner-w
+        (long inner-w)
 
-     right
-     (+ left inner-w 1)]
+        right
+        (+ left inner-w 1)]
 
     (dotimes [i (max 0 (inc (- (long to) (long from))))]
       (let [row (+ (long from) i)]
@@ -830,21 +818,20 @@
    rather than climbing over the host's header."
   [g {:keys [left inner-w is-sideless]} sep-row rule-at top-limit]
   (when is-sideless
-    (let
-      [left
-       (long left)
+    (let [left
+          (long left)
 
-       right
-       (+ left (long inner-w) 1)
+          right
+          (+ left (long inner-w) 1)
 
-       sep-row
-       (long sep-row)
+          sep-row
+          (long sep-row)
 
-       rule-at
-       (long rule-at)
+          rule-at
+          (long rule-at)
 
-       top-limit
-       (long top-limit)]
+          top-limit
+          (long top-limit)]
 
       (p/set-colors! g t/border-fg t/dialog-bg)
       (when (>= sep-row top-limit)
@@ -884,30 +871,29 @@
    {panes :panes n :row-count pane-ws :pane-ws pane-cols :pane-cols hints :hint-pairs title :title}
    state]
   (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
-    (let
-      [{:keys [sep-row body-top foot-rule-row foot-row wipe-top visible top-limit]}
-       (band-geometry region n)
-       sideless? (boolean (:is-sideless region))
-       ;; A sideless band CLOSES below its footer: the hint bar takes the row the
-       ;; rule used to own and the rule drops onto the host's hint row, so the
-       ;; footer is inside the box. A framed popup keeps the host's own order.
-       hint-at (long (if sideless? foot-rule-row foot-row))
-       rule-at (long (if sideless? foot-row foot-rule-row))
-       ;; The footer is FENCED OFF by its own rule above it. The row it costs is
-       ;; the body's bottom [[band-body-pad]] blank, not a verb.
-       hint-rule-at (long (if sideless? (dec hint-at) hint-at))
-       visible (long (if sideless? (max 1 (dec (long visible))) visible))
-       left (long left)
-       inner-w (long inner-w)
-       ;; Each pane owns its own width, so pane `j` starts where every pane
-       ;; before it ended plus one gap — never at a fixed stride.
-       widths (vec (if (seq pane-ws) pane-ws (repeat (count panes) inner-w)))
-       lefts (vec (reductions (fn [^long x ^long w]
-                                (+ x w (long pane-gap)))
-                              left
-                              widths))
-       clear-row! (fn [row]
-                    (clear-rows! g region row row))]
+    (let [{:keys [sep-row body-top foot-rule-row foot-row wipe-top visible top-limit]}
+          (band-geometry region n)
+          sideless? (boolean (:is-sideless region))
+          ;; A sideless band CLOSES below its footer: the hint bar takes the row the
+          ;; rule used to own and the rule drops onto the host's hint row, so the
+          ;; footer is inside the box. A framed popup keeps the host's own order.
+          hint-at (long (if sideless? foot-rule-row foot-row))
+          rule-at (long (if sideless? foot-row foot-rule-row))
+          ;; The footer is FENCED OFF by its own rule above it. The row it costs is
+          ;; the body's bottom [[band-body-pad]] blank, not a verb.
+          hint-rule-at (long (if sideless? (dec hint-at) hint-at))
+          visible (long (if sideless? (max 1 (dec (long visible))) visible))
+          left (long left)
+          inner-w (long inner-w)
+          ;; Each pane owns its own width, so pane `j` starts where every pane
+          ;; before it ended plus one gap — never at a fixed stride.
+          widths (vec (if (seq pane-ws) pane-ws (repeat (count panes) inner-w)))
+          lefts (vec (reductions (fn [^long x ^long w]
+                                   (+ x w (long pane-gap)))
+                                 left
+                                 widths))
+          clear-row! (fn [row]
+                       (clear-rows! g region row row))]
 
       ;; A taller band before this one covered rows this one does not. They belong
       ;; to the HOST again: blanking them left a hole in the list behind the popup,
@@ -931,10 +917,9 @@
         (let [row (+ (long body-top) (long i))]
           (clear-row! row)
           (dotimes [j (count panes)]
-            (let
-              [pane-left (long (nth lefts j))
-               pane-w (long (nth widths j))
-               r (nth (nth panes j) i)]
+            (let [pane-left (long (nth lefts j))
+                  pane-w (long (nth widths j))
+                  r (nth (nth panes j) i)]
 
               (case (:kind r)
                 :header
@@ -952,12 +937,11 @@
                 nil
 
                 :item
-                (let
-                  [{:keys [type id] :as it} (:item r)
-                   {:keys [is-flag is-valued]} (get sp/item-types type)
-                   active? (boolean (or (and is-valued (contains? (:options state) id))
-                                        (and is-flag (contains? (:switches state) id))))
-                   value (when is-valued (get (:options state) id))]
+                (let [{:keys [type id] :as it} (:item r)
+                      {:keys [is-flag is-valued]} (get sp/item-types type)
+                      active? (boolean (or (and is-valued (contains? (:options state) id))
+                                           (and is-flag (contains? (:switches state) id))))
+                      value (when is-valued (get (:options state) id))]
 
                   (draw-item! g pane-left row pane-w (nth pane-cols j) it active? value)))))))
       (when (and sideless? (>= hint-at (long top-limit))) (clear-row! hint-at))
@@ -1005,12 +989,11 @@
     (invalid! :vis/transient-invalid-region why {:region region}))
   (when-let [why (sp/host-error host)]
     (invalid! :vis/transient-invalid-host why {}))
-  (let
-    [lay
-     (layout spec region)
+  (let [lay
+        (layout spec region)
 
-     read-option
-     (or (:read-option spec) (constantly nil))]
+        read-option
+        (or (:read-option spec) (constantly nil))]
 
     (loop [state {:switches #{} :options {}}]
       (paint-layout! host region lay state)
@@ -1024,9 +1007,8 @@
                         (recur (:state r))
 
                         :option
-                        (let
-                          [{:keys [id] :as it} (:item r)
-                           v (read-option it (get (:options state) id))]
+                        (let [{:keys [id] :as it} (:item r)
+                              v (read-option it (get (:options state) id))]
 
                           (when (some? v)
                             (when-let [why (sp/option-value-error v)]

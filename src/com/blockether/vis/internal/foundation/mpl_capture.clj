@@ -132,13 +132,12 @@
    is deliberately no second way to hand one in."
   [m]
   (when-let [sink *attachment-sink*]
-    (try (let
-           [rec (cond-> m
-                  (str/blank? (str (:id m)))
-                  (assoc :id (str (java.util.UUID/randomUUID)))
+    (try (let [rec (cond-> m
+                     (str/blank? (str (:id m)))
+                     (assoc :id (str (java.util.UUID/randomUUID)))
 
-                  (nil? (:version m))
-                  (assoc :version (next-attachment-version (:filename m))))]
+                     (nil? (:version m))
+                     (assoc :version (next-attachment-version (:filename m))))]
            (swap! sink conj rec)
            rec)
          (catch Throwable _ nil))))
@@ -205,23 +204,22 @@
    re-stamped, because `housekeeping/sweep-stale!` ages this directory out and a
    picture rendered again today is not a month-old one."
   ^java.io.File [^String prefix ^String ext ^bytes bs]
-  (let
-    [dir
-     (doto (if *display-home*
-             (java.io.File. ^String *display-home*)
-             (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
-                                           "cache")
-                            "display"))
-       (.mkdirs))
+  (let [dir
+        (doto (if *display-home*
+                (java.io.File. ^String *display-home*)
+                (java.io.File.
+                  (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis") "cache")
+                  "display"))
+          (.mkdirs))
 
-     digest
-     (->> (.digest (java.security.MessageDigest/getInstance "SHA-256") bs)
-          (take 8)
-          (map #(format "%02x" (bit-and (long %) 0xff)))
-          (apply str))
+        digest
+        (->> (.digest (java.security.MessageDigest/getInstance "SHA-256") bs)
+             (take 8)
+             (map #(format "%02x" (bit-and (long %) 0xff)))
+             (apply str))
 
-     f
-     (java.io.File. dir (str prefix digest "." ext))]
+        f
+        (java.io.File. dir (str prefix digest "." ext))]
 
     (if (.isFile f)
       ;; Reuse. `housekeeping/sweep-stale!` judges a cache file by its mtime, so
@@ -390,40 +388,37 @@
    turn."
   [^Path path]
   (try
-    (let
-      [k
-       (str (.toAbsolutePath path))
+    (let [k
+          (str (.toAbsolutePath path))
 
-       seen
-       *outbox-seen*]
+          seen
+          *outbox-seen*]
 
       (when (and *attachment-sink*
                  (or (nil? seen) (not (contains? @seen k)))
                  (not (contains? noisy-capture-exts (ext-of (str (.getFileName path)))))
                  (not (anonymous-scratch? (str (.getFileName path))))
                  (Files/isRegularFile path (make-array LinkOption 0)))
-        (let
-          [^BasicFileAttributes attrs
-           (Files/readAttributes path
-                                 BasicFileAttributes
-                                 ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
+        (let [^BasicFileAttributes attrs
+              (Files/readAttributes path
+                                    BasicFileAttributes
+                                    ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
 
-           size
-           (.size attrs)]
+              size
+              (.size attrs)]
 
           (when (<= 1 size max-capture-bytes)
-            (let
-              [data
-               (Files/readAllBytes path)
+            (let [data
+                  (Files/readAllBytes path)
 
-               fname
-               (str (.getFileName path))
+                  fname
+                  (str (.getFileName path))
 
-               mt
-               (sniff-media-type data fname)
+                  mt
+                  (sniff-media-type data fname)
 
-               b64
-               (.encodeToString (Base64/getEncoder) data)]
+                  b64
+                  (.encodeToString (Base64/getEncoder) data)]
 
               (when seen (swap! seen conj k))
               (record-attachment! {:kind (if (str/starts-with? mt "image/") "image" "file")

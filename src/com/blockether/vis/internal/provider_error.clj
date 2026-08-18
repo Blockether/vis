@@ -59,10 +59,9 @@
   "True when the svar wrapper message is just a status echo (e.g.
    `Exceptional status code: 400`) that adds nothing beyond the HTTP row."
   [message]
-  (boolean (when-let
-             [t (some-> message
-                        str
-                        str/lower-case)]
+  (boolean (when-let [t (some-> message
+                                str
+                                str/lower-case)]
              (or (str/includes? t "exceptional status code")
                  (str/includes? t "provider error http")
                  ;; the title already says "All providers unavailable" and the
@@ -81,9 +80,8 @@
   "True when a provider rejected a native tool because its input-schema root
    uses a JSON Schema union that provider tool APIs forbid."
   [message]
-  (let
-    [text (some-> message
-                  str/lower-case)]
+  (let [text (some-> message
+                     str/lower-case)]
     (boolean (and text
                   (or (str/includes? text "input_schema") (str/includes? text "input schema"))
                   (str/includes? text "does not support")
@@ -186,28 +184,27 @@
    second — every row is a different provider, so only the rows whose own error
    says the image was the problem count."
   [err]
-  (let
-    [[data _]
-     (error-payload err)
+  (let [[data _]
+        (error-payload err)
 
-     row
-     (fn [provider model scope]
-       (when scope
-         {:provider (cond (keyword? provider) provider
-                          (some? provider) (keyword (str provider))
-                          :else nil)
-          :model (some-> model
-                         str
-                         not-empty)
-          :scope scope}))
+        row
+        (fn [provider model scope]
+          (when scope
+            {:provider (cond (keyword? provider) provider
+                             (some? provider) (keyword (str provider))
+                             :else nil)
+             :model (some-> model
+                            str
+                            not-empty)
+             :scope scope}))
 
-     attempted
-     (into #{}
-           (keep (fn [attempt]
-                   (row (:provider attempt)
-                        (:model attempt)
-                        (image-rejection-scope {:data attempt :message (:error attempt)}))))
-           (:attempts data))]
+        attempted
+        (into #{}
+              (keep (fn [attempt]
+                      (row (:provider attempt)
+                           (:model attempt)
+                           (image-rejection-scope {:data attempt :message (:error attempt)}))))
+              (:attempts data))]
 
     (cond-> attempted
       (:provider-id data)
@@ -219,9 +216,8 @@
    `max_output_tokens: 8` but accepts `16`. Deterministic like a schema defect:
    an unchanged retry fails identically, raising the configured floor fixes it."
   [status message]
-  (let
-    [text (some-> message
-                  str/lower-case)]
+  (let [text (some-> message
+                     str/lower-case)]
     (boolean (and text
                   (= 400 status)
                   (some #(str/includes? text %)
@@ -315,18 +311,17 @@
    what it is instead of blamed on the provider. Dispatches on TEXT because the
    JDK reports EMFILE as a plain IOException, not a typed error."
   [err]
-  (let
-    [data
-     (or (:data err) (ex-data err) err)
+  (let [data
+        (or (:data err) (ex-data err) err)
 
-     text
-     (str (or (ex-message err) (:message err) "")
-          "\n" (some-> (:body data)
-                       str)
-          "\n" (some-> (:cause data)
-                       str)
-          "\n" (some-> (:original-message data)
-                       str))]
+        text
+        (str (or (ex-message err) (:message err) "")
+             "\n" (some-> (:body data)
+                          str)
+             "\n" (some-> (:cause data)
+                          str)
+             "\n" (some-> (:original-message data)
+                          str))]
 
     (boolean (or (re-find #"(?i)too many open files" text)
                  (re-find #"(?i)\berror[=:]\s?24\b" text)))))
@@ -411,23 +406,22 @@
    as the fallback for the provider half) — or nil when it recorded neither.
    svar's own data, never a route reconstructed from message text."
   [err]
-  (let
-    [data
-     (or (:data err) (ex-data err) err)
+  (let [data
+        (or (:data err) (ex-data err) err)
 
-     prefs
-     (:prefs data)
+        prefs
+        (:prefs data)
 
-     provider
-     (or (->route-label (:force-provider prefs))
-         (some->> (:tried data)
-                  (keep ->route-label)
-                  sort
-                  seq
-                  (str/join ", ")))
+        provider
+        (or (->route-label (:force-provider prefs))
+            (some->> (:tried data)
+                     (keep ->route-label)
+                     sort
+                     seq
+                     (str/join ", ")))
 
-     model
-     (->route-label (:force-model prefs))]
+        model
+        (->route-label (:force-model prefs))]
 
     (not-empty (str/join "/" (remove nil? [provider model])))))
 
@@ -517,34 +511,33 @@
    failure, shared by every surface. The actionable step lives in
    `provider-error-next-step` (a separate block), so this is JUST the diagnosis."
   [err]
-  (let
-    [message
-     (or (ex-message err) (:message err) (str err))
+  (let [message
+        (or (ex-message err) (:message err) (str err))
 
-     data
-     (or (:data err) (ex-data err) err)
+        data
+        (or (:data err) (ex-data err) err)
 
-     body-raw
-     (some-> (:body data)
-             str)
+        body-raw
+        (some-> (:body data)
+                str)
 
-     status
-     (:status data)
+        status
+        (:status data)
 
-     provider-message
-     (provider-body-message body-raw)
+        provider-message
+        (provider-body-message body-raw)
 
-     schema-rejection?
-     (tool-schema-rejection-message? (str provider-message "\n" message))
+        schema-rejection?
+        (tool-schema-rejection-message? (str provider-message "\n" message))
 
-     tool-name
-     (:tool-name data)
+        tool-name
+        (:tool-name data)
 
-     schema-field
-     (:tool-schema-field data)
+        schema-field
+        (:tool-schema-field data)
 
-     output-budget-too-small?
-     (output-budget-too-small-error? status (str provider-message "\n" message))]
+        output-budget-too-small?
+        (output-budget-too-small-error? status (str provider-message "\n" message))]
 
     (cond
       (fd-exhaustion-error? err)
@@ -570,31 +563,29 @@
            "config, or every candidate was already out of rotation: dropped earlier in "
            "this turn, or still cooling down after repeated failures.")
       (stream-timeout-error? err)
-      (let
-        [data
-         (or (:data err) (ex-data err))
+      (let [data
+            (or (:data err) (ex-data err))
 
-         budget-ms
-         (or (:semantic-timeout-ms data) (:idle-timeout-ms data))
+            budget-ms
+            (or (:semantic-timeout-ms data) (:idle-timeout-ms data))
 
-         semantic?
-         (= :svar.core/stream-semantic-timeout
-            (or (:type (:data err)) (:type err) (:type (ex-data err))))]
+            semantic?
+            (= :svar.core/stream-semantic-timeout
+               (or (:type (:data err)) (:type err) (:type (ex-data err))))]
 
         (str "WHAT HAPPENED: the stream stalled — "
              (if semantic? "no model progress" "no bytes")
              (when budget-ms (str " for " (long (/ (long budget-ms) 1000)) "s"))
              ". The model was likely still reasoning. Nothing was rejected; your "
              "transcript and tool results are intact."))
-      (refusal-error? err) (let
-                             [details
-                              (refusal-stop-details err)
+      (refusal-error? err) (let [details
+                                 (refusal-stop-details err)
 
-                              category
-                              (get details "category")
+                                 category
+                                 (get details "category")
 
-                              explanation
-                              (get details "explanation")]
+                                 explanation
+                                 (get details "explanation")]
 
                              (str
                                "WHAT HAPPENED: the model's safety classifier DECLINED this request"
@@ -693,12 +684,11 @@
 (defn provider-error-title
   "A SHORT headline for the failure, by kind — the card title on every surface."
   [err]
-  (let
-    [message
-     (or (ex-message err) (:message err) (str err))
+  (let [message
+        (or (ex-message err) (:message err) (str err))
 
-     data
-     (or (:data err) (ex-data err) err)]
+        data
+        (or (:data err) (ex-data err) err)]
 
     (case (provider-error-kind err)
       :context-overflow
@@ -771,12 +761,11 @@
   "The actionable `NEXT STEP:` line — what the user should DO — by kind. Kept
    SEPARATE from the diagnosis so surfaces can make it prominent."
   [err]
-  (let
-    [message
-     (or (ex-message err) (:message err) (str err))
+  (let [message
+        (or (ex-message err) (:message err) (str err))
 
-     data
-     (or (:data err) (ex-data err) err)]
+        data
+        (or (:data err) (ex-data err) err)]
 
     (case (provider-error-kind err)
       :file-descriptors-exhausted
@@ -911,16 +900,15 @@
    Vis only refines failures whose typed payload carries UI-specific detail. It
    never reclassifies provider status codes, prose, or routing outcomes."
   [err]
-  (let
-    [message
-     (or (ex-message err) (:message err) (str err))
+  (let [message
+        (or (ex-message err) (:message err) (str err))
 
-     data
-     (or (:data err) (ex-data err) err)
+        data
+        (or (:data err) (ex-data err) err)
 
-     provider-message
-     (provider-body-message (some-> (:body data)
-                                    str))]
+        provider-message
+        (provider-body-message (some-> (:body data)
+                                       str))]
 
     (cond (fd-exhaustion-error? err) :file-descriptors-exhausted
           (context-overflow-error? err) :context-overflow
@@ -1001,34 +989,33 @@
   "Ordered `[label value]` rows of the bare facts (no prose). Same set the
    IR renders as a `<ul>` and the TUI renders as plain rows."
   [err]
-  (let
-    [message
-     (or (ex-message err) (:message err) (str err))
+  (let [message
+        (or (ex-message err) (:message err) (str err))
 
-     data
-     (:data err)
+        data
+        (:data err)
 
-     status
-     (:status data)
+        status
+        (:status data)
 
-     request-id
-     (or (:request-id data)
-         (:request_id data)
-         ;; A gateway that answers with nothing but a correlation id leaves it in
-         ;; the message; svar already knows how to read it out (issue #69).
-         (:request-id (svar-classification err)))
+        request-id
+        (or (:request-id data)
+            (:request_id data)
+            ;; A gateway that answers with nothing but a correlation id leaves it in
+            ;; the message; svar already knows how to read it out (issue #69).
+            (:request-id (svar-classification err)))
 
-     provider-id
-     (provider-id-of data)
+        provider-id
+        (provider-id-of data)
 
-     tool-name
-     (:tool-name data)
+        tool-name
+        (:tool-name data)
 
-     schema-field
-     (:tool-schema-field data)
+        schema-field
+        (:tool-schema-field data)
 
-     schema-path
-     (:tool-schema-path data)]
+        schema-path
+        (:tool-schema-path data)]
 
     (cond-> []
       (and (seq message)
@@ -1059,13 +1046,12 @@
    message could be extracted (HTML pages, bare 5xx). nil otherwise so the
    readable message isn't echoed twice."
   [err]
-  (let
-    [body-raw
-     (some-> (:body (:data err))
-             str)
+  (let [body-raw
+        (some-> (:body (:data err))
+                str)
 
-     structured-msg
-     (provider-structured-message body-raw)]
+        structured-msg
+        (provider-structured-message body-raw)]
 
     (when (and body-raw (not (str/blank? body-raw)) (not structured-msg))
       (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))))
@@ -1074,29 +1060,28 @@
   "Structured echo of the facts a chat surface can render
    compactly without parsing the IR back out."
   [err]
-  (let
-    [message
-     (or (ex-message err) (:message err) (str err))
+  (let [message
+        (or (ex-message err) (:message err) (str err))
 
-     data
-     ;; Accept BOTH shapes the callers hold: svar's error MAP (`:data`) and a
-     ;; raw Throwable (`ex-data`). Reading only `:data` silently dropped the
-     ;; status/request-id/body of every Throwable-shaped provider failure —
-     ;; the same lookup every other fn in this ns already does.
-     (or (:data err) (ex-data err))
+        data
+        ;; Accept BOTH shapes the callers hold: svar's error MAP (`:data`) and a
+        ;; raw Throwable (`ex-data`). Reading only `:data` silently dropped the
+        ;; status/request-id/body of every Throwable-shaped provider failure —
+        ;; the same lookup every other fn in this ns already does.
+        (or (:data err) (ex-data err))
 
-     body-raw
-     (some-> (:body data)
-             str)
+        body-raw
+        (some-> (:body data)
+                str)
 
-     status
-     (:status data)
+        status
+        (:status data)
 
-     request-id
-     (or (:request-id data) (:request_id data))
+        request-id
+        (or (:request-id data) (:request_id data))
 
-     provider-message
-     (provider-body-message body-raw)]
+        provider-message
+        (provider-body-message body-raw)]
 
     {:kind (provider-error-kind err)
      :title (provider-error-title err)
@@ -1134,23 +1119,22 @@
   "Canonical typed content for a provider failure. The error remains data;
    channels decide how to present it and Markdown is not used as an envelope."
   [err]
-  (let
-    [{:keys [kind title explanation next-step status request-id provider-id attempts body]}
-     (provider-error-info err)
+  (let [{:keys [kind title explanation next-step status request-id provider-id attempts body]}
+        (provider-error-info err)
 
-     retryable?
-     (provider-error-retryable? err)
+        retryable?
+        (provider-error-retryable? err)
 
-     attempts-line
-     ;; The per-provider reasons svar retained. They used to reach NO chat
-     ;; surface: the block's `attempts` field is structured data neither the TUI
-     ;; nor the companion renders, so the bubble showed three sentences of prose
-     ;; while the only concrete facts sat one key away.
-     (when-let [summary (provider-error-attempts-summary err)]
-       (str "PROVIDERS TRIED: " summary))
+        attempts-line
+        ;; The per-provider reasons svar retained. They used to reach NO chat
+        ;; surface: the block's `attempts` field is structured data neither the TUI
+        ;; nor the companion renders, so the bubble showed three sentences of prose
+        ;; while the only concrete facts sat one key away.
+        (when-let [summary (provider-error-attempts-summary err)]
+          (str "PROVIDERS TRIED: " summary))
 
-     message
-     (str/join "\n\n" (remove str/blank? [title explanation next-step attempts-line]))]
+        message
+        (str/join "\n\n" (remove str/blank? [title explanation next-step attempts-line]))]
 
     [(cond-> (content/error (str "provider_" (name (or kind :failure))) message retryable?)
        status

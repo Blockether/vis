@@ -10,18 +10,16 @@
 
 (defdescribe health-fn-test
              (it "advertises can_health and flips status via the health probe on list"
-                 (let
-                   [sid
-                    (fresh-sid)
+                 (let [sid
+                       (fresh-sid)
 
-                    health
-                    (atom :up)]
+                       health
+                       (atom :up)]
 
-                   (try (let
-                          [data (resources/register! sid
-                                                     {:id "r1" :kind :thing :status :up}
-                                                     {:health-fn (fn []
-                                                                   @health)})]
+                   (try (let [data (resources/register! sid
+                                                        {:id "r1" :kind :thing :status :up}
+                                                        {:health-fn (fn []
+                                                                      @health)})]
                           (expect (true? (get data "can_health")))
                           (expect (= "up" (get (resources/get-resource sid "r1") "status")))
                           ;; the resource degrades -> the NEXT list reflects it
@@ -56,10 +54,9 @@
                                              {:health-fn (fn []
                                                            (Thread/sleep 10000)
                                                            :down)})
-                        (let
-                          [t0 (System/currentTimeMillis)
-                           [r] (resources/list-resources sid)
-                           elapsed (- (System/currentTimeMillis) t0)]
+                        (let [t0 (System/currentTimeMillis)
+                              [r] (resources/list-resources sid)
+                              elapsed (- (System/currentTimeMillis) t0)]
 
                           (expect (= "up" (get r "status")))
                           (expect (< elapsed 5000)))
@@ -82,21 +79,20 @@
   lifecycle-race-test
   (it
     "does not unregister a replacement created while the old stop callback is blocked"
-    (let
-      [sid
-       (fresh-sid)
+    (let [sid
+          (fresh-sid)
 
-       entered
-       (promise)
+          entered
+          (promise)
 
-       release
-       (promise)
+          release
+          (promise)
 
-       old-stops
-       (atom 0)
+          old-stops
+          (atom 0)
 
-       replacement-stops
-       (atom 0)]
+          replacement-stops
+          (atom 0)]
 
       (try (resources/register! sid
                                 {:id "same" :kind :process :status :running :label "old"}
@@ -122,21 +118,20 @@
            (finally (deliver release true) (resources/stop-all! sid)))))
   (it
     "does not apply a delayed update to a replacement generation"
-    (let
-      [sid
-       (fresh-sid)
+    (let [sid
+          (fresh-sid)
 
-       normalize-var
-       (ns-resolve 'com.blockether.vis.internal.resources 'normalize-patch)
+          normalize-var
+          (ns-resolve 'com.blockether.vis.internal.resources 'normalize-patch)
 
-       original-normalize
-       (var-get normalize-var)
+          original-normalize
+          (var-get normalize-var)
 
-       entered
-       (promise)
+          entered
+          (promise)
 
-       release
-       (promise)]
+          release
+          (promise)]
 
       (try (resources/register! sid {:id "same" :kind :process :status :running :label "old"})
            (with-redefs-fn {normalize-var (fn [patch]
@@ -157,15 +152,14 @@
                    (expect (= "running" (get survivor "status")))))))
            (finally (deliver release true) (resources/unregister! sid "same")))))
   (it "does not prune a replacement installed while the old liveness probe is blocked"
-      (let
-        [sid
-         (fresh-sid)
+      (let [sid
+            (fresh-sid)
 
-         entered
-         (promise)
+            entered
+            (promise)
 
-         release
-         (promise)]
+            release
+            (promise)]
 
         (try (resources/register! sid
                                   {:id "same" :kind :process :status :running :label "old"}
@@ -183,15 +177,14 @@
                (expect (= "replacement" (get (resources/get-resource sid "same") "label"))))
              (finally (deliver release true) (resources/unregister! sid "same")))))
   (it "does not apply an old delayed health result to a replacement generation"
-      (let
-        [sid
-         (fresh-sid)
+      (let [sid
+            (fresh-sid)
 
-         entered
-         (promise)
+            entered
+            (promise)
 
-         release
-         (promise)]
+            release
+            (promise)]
 
         (try (resources/register! sid
                                   {:id "same" :kind :process :status :running :label "old"}
@@ -212,21 +205,20 @@
              (finally (deliver release true) (resources/unregister! sid "same")))))
   (it
     "stop-all chases a replacement installed while the old callback is blocked"
-    (let
-      [sid
-       (fresh-sid)
+    (let [sid
+          (fresh-sid)
 
-       entered
-       (promise)
+          entered
+          (promise)
 
-       release
-       (promise)
+          release
+          (promise)
 
-       old-stops
-       (atom 0)
+          old-stops
+          (atom 0)
 
-       replacement-stops
-       (atom 0)]
+          replacement-stops
+          (atom 0)]
 
       (try (resources/register! sid
                                 {:id "same" :kind :process :status :running :label "old"}
@@ -249,12 +241,11 @@
                (expect (nil? (resources/get-resource sid "same")))))
            (finally (deliver release true) (resources/stop-all! sid)))))
   (it "restores a failed stop generation so its cleanup can be retried"
-      (let
-        [sid
-         (fresh-sid)
+      (let [sid
+            (fresh-sid)
 
-         calls
-         (atom 0)]
+            calls
+            (atom 0)]
 
         (try (resources/register! sid
                                   {:id "flaky" :kind :process :status :running :label "retryable"}
@@ -270,12 +261,11 @@
              (expect (nil? (resources/get-resource sid "flaky")))
              (finally (resources/stop-all! sid)))))
   (it "never restores a failed old stop over the replacement its callback installed"
-      (let
-        [sid
-         (fresh-sid)
+      (let [sid
+            (fresh-sid)
 
-         replacement-stops
-         (atom 0)]
+            replacement-stops
+            (atom 0)]
 
         (try (resources/register!
                sid
@@ -291,12 +281,11 @@
              (expect (= 0 @replacement-stops))
              (finally (resources/stop-all! sid)))))
   (it "stop-all reports an always-failing generation once instead of hot-looping it"
-      (let
-        [sid
-         (fresh-sid)
+      (let [sid
+            (fresh-sid)
 
-         calls
-         (atom 0)]
+            calls
+            (atom 0)]
 
         (try (resources/register! sid
                                   {:id "broken" :kind :process :status :running}
@@ -310,27 +299,26 @@
              (finally (resources/unregister! sid "broken")))))
   (it
     "tears down a session that first appears while an earlier stop callback is blocked"
-    (let
-      [teardown
-       (var-get (ns-resolve 'com.blockether.vis.internal.resources 'teardown-sessions!))
+    (let [teardown
+          (var-get (ns-resolve 'com.blockether.vis.internal.resources 'teardown-sessions!))
 
-       sid-a
-       (fresh-sid)
+          sid-a
+          (fresh-sid)
 
-       sid-b
-       (fresh-sid)
+          sid-b
+          (fresh-sid)
 
-       entered
-       (promise)
+          entered
+          (promise)
 
-       release
-       (promise)
+          release
+          (promise)
 
-       a-stops
-       (atom 0)
+          a-stops
+          (atom 0)
 
-       b-stops
-       (atom 0)]
+          b-stops
+          (atom 0)]
 
       (try
         (resources/register! sid-a
@@ -358,12 +346,11 @@
   (it "clears non-stoppable and failed resources after process shutdown"
       ;; Regression, issue #gateway-restart-resources: a gateway restart used to
       ;; expose shell/REPL generations left in the registry after teardown.
-      (let
-        [sid
-         (fresh-sid)
+      (let [sid
+            (fresh-sid)
 
-         failed
-         (fresh-sid)]
+            failed
+            (fresh-sid)]
 
         (resources/register! sid {:id "external" :kind :repl :status :running})
         (resources/register! failed

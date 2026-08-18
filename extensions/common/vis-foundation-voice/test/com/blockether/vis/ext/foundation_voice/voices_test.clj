@@ -14,16 +14,15 @@
   "A WAV file of `seconds` at `rate` with `channels` channels, carrying a tone rather
    than silence: a clip store has to move real samples, not merely copy a header."
   [^double seconds ^long rate ^long channels]
-  (let
-    [frames
-     (long (* seconds (double rate)))
+  (let [frames
+        (long (* seconds (double rate)))
 
-     data-bytes
-     (* frames channels 2)
+        data-bytes
+        (* frames channels 2)
 
-     buffer
-     (doto (java.nio.ByteBuffer/allocate (+ 44 data-bytes))
-       (.order java.nio.ByteOrder/LITTLE_ENDIAN))]
+        buffer
+        (doto (java.nio.ByteBuffer/allocate (+ 44 data-bytes))
+          (.order java.nio.ByteOrder/LITTLE_ENDIAN))]
 
     (.put buffer (.getBytes "RIFF" "US-ASCII"))
     (.putInt buffer (+ 36 data-bytes))
@@ -50,10 +49,9 @@
   "Run `f` against a private clip store and then delete it. An import writes real
    files, and a test may never leave a voice in the home directory it ran in."
   [f]
-  (let
-    [dir (str (java.nio.file.Files/createTempDirectory
-                "vis-voices-test"
-                (into-array java.nio.file.attribute.FileAttribute [])))]
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                   "vis-voices-test"
+                   (into-array java.nio.file.attribute.FileAttribute [])))]
     (try (with-redefs [voices/voices-dir (constantly dir)]
            (f dir))
          (finally (doseq [^java.io.File file (reverse (file-seq (io/file dir)))]
@@ -76,11 +74,10 @@
   (it "takes a recording as a voice, hands it back, and forgets it on request"
       (with-voices-dir
         (fn [dir]
-          (let
-            [voice (voices/import! {:path (str (wav! 4 24000 1))
-                                    :voice-name "Studio Take 1"
-                                    :language "en-US"
-                                    :text "what the clip says"})]
+          (let [voice (voices/import! {:path (str (wav! 4 24000 1))
+                                       :voice-name "Studio Take 1"
+                                       :language "en-US"
+                                       :text "what the clip says"})]
             (expect (= "studio-take-1" (:id voice)))
             (expect (= "Studio Take 1" (:label voice)))
             (expect (= "en-US" (:language voice)))
@@ -101,12 +98,11 @@
             (expect (empty? (seq (.list (io/file dir)))))))))
   (it "names the voice after the file when nobody named it"
       (with-voices-dir (fn [_dir]
-                         (let
-                           [file
-                            (wav! 3 24000 1)
+                         (let [file
+                               (wav! 3 24000 1)
 
-                            voice
-                            (voices/import! {:path (str file)})]
+                               voice
+                               (voices/import! {:path (str file)})]
 
                            (expect (= (voices/voice-id (str/replace (.getName file) #"\.wav$" ""))
                                       (:id voice)))
@@ -116,17 +112,16 @@
       ;; it: two channels are mixed down and a long recording is trimmed here, once,
       ;; rather than at every synthesis.
       (with-voices-dir (fn [_dir]
-                         (let
-                           [stereo
-                            (voices/import! {:path (str (wav! 2 16000 2)) :voice-name "Stereo"})
+                         (let [stereo
+                               (voices/import! {:path (str (wav! 2 16000 2)) :voice-name "Stereo"})
 
-                            stored
-                            (voices/decode-wav (io/file (:clip stereo)))
+                               stored
+                               (voices/decode-wav (io/file (:clip stereo)))
 
-                            long-one
-                            (voices/import! {:path (str
-                                                     (wav! (+ voices/max-clip-seconds 10) 8000 1))
-                                             :voice-name "Long"})]
+                               long-one
+                               (voices/import! {:path
+                                                (str (wav! (+ voices/max-clip-seconds 10) 8000 1))
+                                                :voice-name "Long"})]
 
                            (expect (= 1 (:channels stored)))
                            (expect (= 16000 (:sample-rate stored)))
@@ -135,9 +130,8 @@
   (it "refuses a recording it cannot use, and says which one"
       (with-voices-dir
         (fn [_dir]
-          (let
-            [garbage (doto (java.io.File/createTempFile "vis-voice-garbage" ".wav")
-                       (.deleteOnExit))]
+          (let [garbage (doto (java.io.File/createTempFile "vis-voice-garbage" ".wav")
+                          (.deleteOnExit))]
             (spit garbage "this is not a recording")
             (expect (= :voice-tts/clip-missing
                        (:type (ex-data-of #(voices/import! {:path "/nowhere/at/all.wav"})))))

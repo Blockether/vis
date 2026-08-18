@@ -54,18 +54,17 @@
   ([f] (worker-future "vis-worker" f nil))
   ([name f] (worker-future name f nil))
   ([name f {:keys [platform?]}]
-   (let
-     [task
-      (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
-                                        (reify
-                                          java.util.concurrent.Callable
-                                            (call [_] (f))))
+   (let [task
+         (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
+                                           (reify
+                                             java.util.concurrent.Callable
+                                               (call [_] (f))))
 
-      _runner
-      (if (and (not platform?) (virtual-threads-available?))
-        (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
-          (.invoke m nil (object-array [task])))
-        (doto (Thread. ^Runnable task (str name)) (.setDaemon true) (.start)))]
+         _runner
+         (if (and (not platform?) (virtual-threads-available?))
+           (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
+             (.invoke m nil (object-array [task])))
+           (doto (Thread. ^Runnable task (str name)) (.setDaemon true) (.start)))]
 
      (reify
        java.util.concurrent.Future
@@ -148,15 +147,14 @@
    finishes."
   [token thunk]
   (when (and token (fn? thunk))
-    (let
-      [cb-id
-       (Object.)
+    (let [cb-id
+          (Object.)
 
-       callbacks
-       (::callbacks token)
+          callbacks
+          (::callbacks token)
 
-       fire-now?
-       (atom false)]
+          fire-now?
+          (atom false)]
 
       ;; The flag check shares the callback-atom transition. A hook either joins
       ;; cancel!'s drained batch or fires here; it cannot slip between them.
@@ -240,10 +238,9 @@
    cancelled; this thread was never interrupted, and pretending otherwise would
    abort work nobody asked to stop."
   [^Throwable t]
-  (let
-    [interrupted? (loop [x t]
-                    (cond (nil? x) false
-                          (instance? InterruptedException x) true
-                          :else (recur (.getCause x))))]
+  (let [interrupted? (loop [x t]
+                       (cond (nil? x) false
+                             (instance? InterruptedException x) true
+                             :else (recur (.getCause x))))]
     (when interrupted? (.interrupt (Thread/currentThread)))
     interrupted?))

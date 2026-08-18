@@ -57,12 +57,11 @@
              (it "lists every shim_*.clj in builtin-extension-nses"
                  ;; A shim ns that is not listed is dead code: nothing ever requires it, so
                  ;; its extension never registers and `import <mod>` fails in the sandbox.
-                 (let
-                   [listed
-                    (set @builtin-nses)
+                 (let [listed
+                       (set @builtin-nses)
 
-                    unlisted
-                    (remove listed (map shim-ns-sym (shim-ns-files)))]
+                       unlisted
+                       (remove listed (map shim-ns-sym (shim-ns-files)))]
 
                    (expect (empty? unlisted)
                            (str "shim namespaces missing from builtin-extension-nses: "
@@ -84,23 +83,22 @@
                 (str "shims whose source resource is missing: "
                      (pr-str (map :shim/source missing))))))
   (it "keeps shim names and their imports unique"
-      (let
-        [shims
-         (registered-shims)
+      (let [shims
+            (registered-shims)
 
-         dupe-names
-         (->> shims
-              (map :shim/name)
-              frequencies
-              (filter #(< 1 (val %)))
-              (map key))
+            dupe-names
+            (->> shims
+                 (map :shim/name)
+                 frequencies
+                 (filter #(< 1 (val %)))
+                 (map key))
 
-         dupe-imports
-         (->> shims
-              (mapcat :shim/imports)
-              frequencies
-              (filter #(< 1 (val %)))
-              (map key))]
+            dupe-imports
+            (->> shims
+                 (mapcat :shim/imports)
+                 frequencies
+                 (filter #(< 1 (val %)))
+                 (map key))]
 
         (expect (empty? dupe-names) (str "duplicate shim names: " (pr-str dupe-names)))
         (expect (empty? dupe-imports)
@@ -143,18 +141,17 @@
              (it "has a shim declaring every resources/vis-shims/*.py"
                  ;; The reverse direction: an orphan .py is either dead weight in the native
                  ;; image or a shim someone forgot to register.
-                 (let
-                   [declared
-                    (set (map :shim/source (registered-shims)))
+                 (let [declared
+                       (set (map :shim/source (registered-shims)))
 
-                    on-disk
-                    (->> (.listFiles (io/file shim-resource-dir))
-                         (map (fn [^File f]
-                                (str "vis-shims/" (.getName f))))
-                         (remove env-python-installed))
+                       on-disk
+                       (->> (.listFiles (io/file shim-resource-dir))
+                            (map (fn [^File f]
+                                   (str "vis-shims/" (.getName f))))
+                            (remove env-python-installed))
 
-                    orphans
-                    (remove declared on-disk)]
+                       orphans
+                       (remove declared on-disk)]
 
                    (expect (empty? orphans)
                            (str "Python shim sources nobody declares: " (pr-str orphans)))))
@@ -172,28 +169,27 @@
   shim-docs-are-pulled-test
   "The detail a description no longer carries has to be reachable, or cutting it
    was a deletion. `:shim/docs` is what `doc(name)` answers inside the sandbox."
-  (it
-    "answers `doc(name)` with :shim/docs, not the pushed prompt line"
-    (let
-      [shim
-       (->> (registered-shims)
-            (filter :shim/docs)
-            first)
+  (it "answers `doc(name)` with :shim/docs, not the pushed prompt line"
+      (let [shim
+            (->> (registered-shims)
+                 (filter :shim/docs)
+                 first)
 
-       ^Context ctx
-       (:python-context (ep/create-python-context {}))
+            ^Context ctx
+            (:python-context (ep/create-python-context {}))
 
-       name
-       (first (concat (:shim/imports shim) (:shim/globals shim)))
+            name
+            (first (concat (:shim/imports shim) (:shim/globals shim)))
 
-       doc
-       (:stdout (ep/run-python-block ctx (str "print(__vis_docs__[" (pr-str name) "])") "t1/i1"))]
+            doc
+            (:stdout
+              (ep/run-python-block ctx (str "print(__vis_docs__[" (pr-str name) "])") "t1/i1"))]
 
-      (expect (some? shim) "no shim declares :shim/docs — the pull path is untested")
-      (expect (str/includes? doc (subs (:shim/docs shim) 0 60))
-              (str name " doc() does not serve :shim/docs"))
-      (expect (not (str/includes? doc (:shim/description shim)))
-              (str name " doc() still serves the pushed description")))))
+        (expect (some? shim) "no shim declares :shim/docs — the pull path is untested")
+        (expect (str/includes? doc (subs (:shim/docs shim) 0 60))
+                (str name " doc() does not serve :shim/docs"))
+        (expect (not (str/includes? doc (:shim/description shim)))
+                (str name " doc() still serves the pushed description")))))
 
 (defdescribe
   shim-globals-name-their-call-test
@@ -202,26 +198,25 @@
    are ever stated. Every one of them shows its own call form; the two nippy globals were
    pages of prose that named neither an argument nor a result."
   (it "documents every shim global with its own call form"
-      (let
-        [names
-         (->> (registered-shims)
-              (mapcat :shim/globals)
-              (filter string?)
-              distinct
-              vec)
+      (let [names
+            (->> (registered-shims)
+                 (mapcat :shim/globals)
+                 (filter string?)
+                 distinct
+                 vec)
 
-         ^Context ctx
-         (:python-context (ep/create-python-context {}))
+            ^Context ctx
+            (:python-context (ep/create-python-context {}))
 
-         code
-         (str "_names = ["
-              (str/join ", " (map pr-str names))
-              "]\n"
-              "_docs = globals().get('__vis_docs__', {})\n"
-              "print([n for n in _names if (n + '(') not in str(_docs.get(n, ''))])")
+            code
+            (str "_names = ["
+                 (str/join ", " (map pr-str names))
+                 "]\n"
+                 "_docs = globals().get('__vis_docs__', {})\n"
+                 "print([n for n in _names if (n + '(') not in str(_docs.get(n, ''))])")
 
-         undocumented
-         (try (:stdout (ep/run-python-block ctx code "t1/i1")) (finally (.close ctx)))]
+            undocumented
+            (try (:stdout (ep/run-python-block ctx code "t1/i1")) (finally (.close ctx)))]
 
         ;; Guards the guard: an empty name list would make the check vacuous.
         (expect (< 5 (count names)))

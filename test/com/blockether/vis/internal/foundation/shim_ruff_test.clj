@@ -21,9 +21,8 @@
 (defmacro with-fs-context
   "A sandbox Context whose Python filesystem is confined to `dir`."
   [dir & body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context})
-      (:python-context (ep/create-python-context {} (constantly [~dir])))]
+  `(let [~(with-meta 'python-context {:tag `Context})
+         (:python-context (ep/create-python-context {} (constantly [~dir])))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (defdescribe

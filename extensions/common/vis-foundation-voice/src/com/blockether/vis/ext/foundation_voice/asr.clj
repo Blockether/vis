@@ -51,9 +51,8 @@
   ([dir]
    ;; `/`-separated on every OS, so the model address stays identical across
    ;; platforms.
-   (let
-     [p (fn [name]
-          (paths/unixify (io/file dir name)))]
+   (let [p (fn [name]
+             (paths/unixify (io/file dir name)))]
      {:encoder (p "encoder.int8.onnx")
       :decoder (p "decoder.int8.onnx")
       :joiner (p "joiner.int8.onnx")
@@ -136,28 +135,27 @@
 
 (defn- recognizer
   [{:keys [encoder decoder joiner tokens]}]
-  (let
-    [transducer
-     (.. (OfflineTransducerModelConfig/builder)
-         (setEncoder encoder)
-         (setDecoder decoder)
-         (setJoiner joiner)
-         build)
+  (let [transducer
+        (.. (OfflineTransducerModelConfig/builder)
+            (setEncoder encoder)
+            (setDecoder decoder)
+            (setJoiner joiner)
+            build)
 
-     model
-     (.. (OfflineModelConfig/builder)
-         (setTransducer transducer)
-         (setTokens tokens)
-         (setNumThreads (max 1 (.availableProcessors (Runtime/getRuntime))))
-         (setDebug false)
-         (setModelType "nemo_transducer")
-         build)
+        model
+        (.. (OfflineModelConfig/builder)
+            (setTransducer transducer)
+            (setTokens tokens)
+            (setNumThreads (max 1 (.availableProcessors (Runtime/getRuntime))))
+            (setDebug false)
+            (setModelType "nemo_transducer")
+            build)
 
-     config
-     (.. (OfflineRecognizerConfig/builder)
-         (setOfflineModelConfig model)
-         (setDecodingMethod "greedy_search")
-         build)]
+        config
+        (.. (OfflineRecognizerConfig/builder)
+            (setOfflineModelConfig model)
+            (setDecodingMethod "greedy_search")
+            build)]
 
     (OfflineRecognizer. config)))
 
@@ -181,20 +179,20 @@
    only one WaveReader reads). Throws ex-info :voice-asr/invalid-wav.
    Returns audio-path."
   [audio-path]
-  (let
-    [f
-     (io/file audio-path)
+  (let [f
+        (io/file audio-path)
 
-     len
-     (.length f)
+        len
+        (.length f)
 
-     fail!
-     (fn [reason data]
-       (throw (ex-info
-                (str "Voice audio is not a readable WAV file - " reason)
-                (merge
-                  {:type :voice-asr/invalid-wav :path (str audio-path) :reason reason :length len}
-                  data))))]
+        fail!
+        (fn [reason data]
+          (throw (ex-info (str "Voice audio is not a readable WAV file - " reason)
+                          (merge {:type :voice-asr/invalid-wav
+                                  :path (str audio-path)
+                                  :reason reason
+                                  :length len}
+                                 data))))]
 
     (when (< len 44) (fail! "shorter than a WAV header" {}))
     (with-open [in (java.io.DataInputStream. (java.io.BufferedInputStream. (io/input-stream f)))]
@@ -203,36 +201,33 @@
         (when-not (and (= "RIFF" (String. head 0 4 "US-ASCII"))
                        (= "WAVE" (String. head 8 4 "US-ASCII")))
           (fail! "missing RIFF/WAVE magic" {})))
-      (loop
-        [pos 12
-         pcm16? false
-         data? false]
+      (loop [pos 12
+             pcm16? false
+             data? false]
 
         (if (>= pos len)
           (do (when-not pcm16? (fail! "no 16-bit PCM fmt chunk" {}))
               (when-not data? (fail! "no data chunk" {})))
           (do (when (> (+ pos 8) len) (fail! "dangling bytes after the last chunk" {:at pos}))
-              (let
-                [hdr (byte-array 8)
-                 _ (.readFully in hdr)
-                 id (String. hdr 0 4 "US-ASCII")
-                 size (u32le hdr 4)
-                 end (+ pos 8 size)]
+              (let [hdr (byte-array 8)
+                    _ (.readFully in hdr)
+                    id (String. hdr 0 4 "US-ASCII")
+                    size (u32le hdr 4)
+                    end (+ pos 8 size)]
 
                 (when (> end len)
                   (fail! "chunk declares more bytes than the file holds (truncated?)"
                          {:chunk id :declared-size size :at pos}))
-                (let
-                  [fmt-read? (and (= id "fmt ") (>= size 16))
-                   pcm16? (or pcm16?
-                              (and fmt-read?
-                                   (let [fb (byte-array 16)]
-                                     (.readFully in fb)
-                                     (and (= 1 (u16le fb 0)) ; PCM
-                                          (= 16 (u16le fb 14)))))) ; 16-bit
-                   ;; chunks are word-aligned, but a final odd-sized
-                   ;; chunk may legally arrive unpadded
-                   next-pos (long (min len (+ end (rem size 2))))]
+                (let [fmt-read? (and (= id "fmt ") (>= size 16))
+                      pcm16? (or pcm16?
+                                 (and fmt-read?
+                                      (let [fb (byte-array 16)]
+                                        (.readFully in fb)
+                                        (and (= 1 (u16le fb 0)) ; PCM
+                                             (= 16 (u16le fb 14)))))) ; 16-bit
+                      ;; chunks are word-aligned, but a final odd-sized
+                      ;; chunk may legally arrive unpadded
+                      next-pos (long (min len (+ end (rem size 2))))]
 
                   (loop [n (- next-pos (+ pos 8 (long (if fmt-read? 16 0))))]
                     (when (pos? n)
@@ -250,15 +245,14 @@
 
 (defn- audio-stats
   [^WaveReader reader]
-  (let
-    [samples
-     (alength ^floats (.getSamples reader))
+  (let [samples
+        (alength ^floats (.getSamples reader))
 
-     sample-rate
-     (.getSampleRate reader)
+        sample-rate
+        (.getSampleRate reader)
 
-     duration
-     (if (pos? sample-rate) (/ samples (double sample-rate)) 0.0)]
+        duration
+        (if (pos? sample-rate) (/ samples (double sample-rate)) 0.0)]
 
     {:samples samples :sample-rate sample-rate :duration-seconds duration}))
 
@@ -294,13 +288,12 @@
         :else (let [size (max 1 (long (* sample-rate chunk-seconds)))]
                 (if (<= total-samples size)
                   [[0 total-samples]]
-                  (let
-                    [starts (range 0 total-samples size)
-                     ranges (mapv (fn [s]
-                                    [(long s) (long (min total-samples (+ (long s) size)))])
-                                  starts)
-                     tail (peek ranges)
-                     min-samples (long (* (double sample-rate) (double min-audio-seconds)))]
+                  (let [starts (range 0 total-samples size)
+                        ranges (mapv (fn [s]
+                                       [(long s) (long (min total-samples (+ (long s) size)))])
+                                     starts)
+                        tail (peek ranges)
+                        min-samples (long (* (double sample-rate) (double min-audio-seconds)))]
 
                     (if (and (> (count ranges) 1)
                              (< (- (long (tail 1)) (long (tail 0))) min-samples))
@@ -333,25 +326,24 @@
   ([audio-path] (transcribe-file! (model-dir) audio-path nil))
   ([dir audio-path] (transcribe-file! dir audio-path nil))
   ([dir audio-path {:keys [on-progress chunk-seconds]}]
-   (let
-     [report
-      (fn [m]
-        (when on-progress (try (on-progress m) (catch Throwable _ nil))))
+   (let [report
+         (fn [m]
+           (when on-progress (try (on-progress m) (catch Throwable _ nil))))
 
-      _
-      (report {:phase :preparing :progress 0})
+         _
+         (report {:phase :preparing :progress 0})
 
-      _
-      (sherpa/ensure-native!)
+         _
+         (sherpa/ensure-native!)
 
-      dir
-      (ensure-model! dir)
+         dir
+         (ensure-model! dir)
 
-      files
-      (assert-files! (model-files dir))
+         files
+         (assert-files! (model-files dir))
 
-      ^File audio-file
-      (io/file audio-path)]
+         ^File audio-file
+         (io/file audio-path)]
 
      (when-not (.isFile audio-file)
        (throw (ex-info (str "Missing audio file: " audio-path)
@@ -360,30 +352,29 @@
      ;; every interop call below is TYPE-HINTED: reflective calls in a native
      ;; image only work when reflection metadata happens to cover them — the
      ;; hot path must not depend on that.
-     (let
-       [reader
-        (WaveReader. (str audio-file))
+     (let [reader
+           (WaveReader. (str audio-file))
 
-        _
-        (assert-audio-long-enough! audio-path reader)
+           _
+           (assert-audio-long-enough! audio-path reader)
 
-        ^floats samples
-        (.getSamples reader)
+           ^floats samples
+           (.getSamples reader)
 
-        sample-rate
-        (long (.getSampleRate reader))
+           sample-rate
+           (long (.getSampleRate reader))
 
-        total
-        (long (alength samples))
+           total
+           (long (alength samples))
 
-        plan
-        (chunk-plan total sample-rate (double (or chunk-seconds default-chunk-seconds)))
+           plan
+           (chunk-plan total sample-rate (double (or chunk-seconds default-chunk-seconds)))
 
-        _
-        (report {:phase :transcribing :progress 0})
+           _
+           (report {:phase :transcribing :progress 0})
 
-        ^OfflineRecognizer r
-        (recognizer files)]
+           ^OfflineRecognizer r
+           (recognizer files)]
 
        (try (->> plan
                  (map (fn [[start end]]

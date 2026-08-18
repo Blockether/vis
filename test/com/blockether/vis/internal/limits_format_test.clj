@@ -123,33 +123,30 @@
 (defdescribe
   compact-limit-cells-test
   (it "hoists the plan name shared by a window family out of the cells"
-      (let
-        [{:keys [prefix cells]} (lf/compact-limit-cells [{:id :opencode-go-5h
-                                                          :label "OpenCode Go 5h quota (%)"
-                                                          :kind :rate
-                                                          :limit 100.0
-                                                          :remaining 100.0}
-                                                         {:id :opencode-go-30d
-                                                          :label "OpenCode Go 30d quota (%)"
-                                                          :kind :rate
-                                                          :limit 100.0
-                                                          :remaining 99.0}])]
+      (let [{:keys [prefix cells]} (lf/compact-limit-cells [{:id :opencode-go-5h
+                                                             :label "OpenCode Go 5h quota (%)"
+                                                             :kind :rate
+                                                             :limit 100.0
+                                                             :remaining 100.0}
+                                                            {:id :opencode-go-30d
+                                                             :label "OpenCode Go 30d quota (%)"
+                                                             :kind :rate
+                                                             :limit 100.0
+                                                             :remaining 99.0}])]
         (expect (= "OpenCode Go" prefix))
         (expect (= ["5h 100%" "30d 99%"] (mapv :text cells)))))
   (it "keeps every label when the rows do not share a plan name"
-      (let
-        [{:keys [prefix cells]} (lf/compact-limit-cells
-                                  [{:id :codex-5h :remaining 46.7}
-                                   {:id :premium_interactions :used 3 :limit 5 :remaining 2}])]
+      (let [{:keys [prefix cells]} (lf/compact-limit-cells
+                                     [{:id :codex-5h :remaining 46.7}
+                                      {:id :premium_interactions :used 3 :limit 5 :remaining 2}])]
         (expect (nil? prefix))
         (expect (= ["Codex 5h 47%" "Premium 3/5 (2)"] (mapv :text cells)))))
   (it "never hoists a lone row's name and hands the row back with its cell"
-      (let
-        [rows
-         [{:id :codex-5h :remaining 46.7}]
+      (let [rows
+            [{:id :codex-5h :remaining 46.7}]
 
-         {:keys [prefix cells]}
-         (lf/compact-limit-cells rows)]
+            {:keys [prefix cells]}
+            (lf/compact-limit-cells rows)]
 
         (expect (nil? prefix))
         (expect (= ["Codex 5h 47%"] (mapv :text cells)))
@@ -178,9 +175,9 @@
   (it "honours max-rows and defaults to three"
       ;; Three is the widest plan family shipped (5h + 7d + 30d) and the cells
       ;; are short now, so capping at two would hide a whole window for nothing.
-      (let
-        [limits {:dynamic {:limits [{:id :a :remaining 1 :limit 10} {:id :b :remaining 2 :limit 10}
-                                    {:id :c :remaining 3 :limit 10}]}}]
+      (let [limits {:dynamic {:limits [{:id :a :remaining 1 :limit 10}
+                                       {:id :b :remaining 2 :limit 10}
+                                       {:id :c :remaining 3 :limit 10}]}}]
         (expect (= 3 (count (str/split (lf/dynamic-summary limits) #" · "))))
         (expect (= 1 (count (str/split (lf/dynamic-summary limits 1) #" · "))))
         (expect (= 2 (count (str/split (lf/dynamic-summary limits 2) #" · "))))))

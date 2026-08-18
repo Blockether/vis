@@ -99,12 +99,11 @@
 
 (defn- sha256-hex
   ^String [^bytes b]
-  (let
-    [d
-     (.digest (MessageDigest/getInstance "SHA-256") b)
+  (let [d
+        (.digest (MessageDigest/getInstance "SHA-256") b)
 
-     sb
-     (StringBuilder. 64)]
+        sb
+        (StringBuilder. 64)]
 
     (dotimes [i (alength d)]
       (let [v (bit-and (aget d i) 0xff)]
@@ -118,12 +117,11 @@
    `proj/main` and `proj:main` (or two ids sharing a 128-char prefix) must never
    land in the same store and rewind each other's files."
   ^String [id]
-  (let
-    [raw
-     (str id)
+  (let [raw
+        (str id)
 
-     t
-     (str/replace raw #"[^A-Za-z0-9._-]" "_")]
+        t
+        (str/replace raw #"[^A-Za-z0-9._-]" "_")]
 
     (cond (str/blank? raw) "default"
           (and (= t raw) (<= (count t) 128)) t
@@ -147,12 +145,11 @@
   "Store `b` in the pool; return its sha256. Idempotent — identical bytes from
    any turn/session-write collapse onto one object."
   ^String [^File dir ^bytes b]
-  (let
-    [hex
-     (sha256-hex b)
+  (let [hex
+        (sha256-hex b)
 
-     f
-     (blob-file dir hex)]
+        f
+        (blob-file dir hex)]
 
     (when-not (.isFile f)
       (io/make-parents f)
@@ -176,22 +173,20 @@
    vis processes sharing a session cannot interleave a partial line."
   [^File dir entries]
   (when (seq entries)
-    (let
-      [f
-       (journal-file dir)
+    (let [f
+          (journal-file dir)
 
-       ^String payload
-       (str/join (map #(str (json/write-json-str %) "\n") entries))
+          ^String payload
+          (str/join (map #(str (json/write-json-str %) "\n") entries))
 
-       bs
-       (.getBytes payload StandardCharsets/UTF_8)]
+          bs
+          (.getBytes payload StandardCharsets/UTF_8)]
 
       (io/make-parents f)
       (locking journal-lock
         (with-open [raf (RandomAccessFile. f "rw")]
-          (let
-            [ch (.getChannel raf)
-             lk (.lock ch)]
+          (let [ch (.getChannel raf)
+                lk (.lock ch)]
 
             (try (.position ch (.size ch))
                  (let [bb (ByteBuffer/wrap bs)]
@@ -260,20 +255,19 @@
    generic walk instead of a per-tool argument schema, so a new tool or a new
    batch shape is covered the day it lands."
   [x]
-  (let
-    [acc
-     (volatile! (transient []))
+  (let [acc
+        (volatile! (transient []))
 
-     step
-     (fn step [v]
-       (cond (map? v) (doseq [[k val] v]
-                        (when (contains? path-keys (if (keyword? k) (name k) (str k)))
-                          (doseq [s (leaf-strings val)]
-                            (vswap! acc conj! s)))
-                        (step val))
-             (sequential? v) (doseq [i v]
-                               (step i))
-             :else nil))]
+        step
+        (fn step [v]
+          (cond (map? v) (doseq [[k val] v]
+                           (when (contains? path-keys (if (keyword? k) (name k) (str k)))
+                             (doseq [s (leaf-strings val)]
+                               (vswap! acc conj! s)))
+                           (step val))
+                (sequential? v) (doseq [i v]
+                                  (step i))
+                :else nil))]
 
     (step x)
     (into [] (distinct) (persistent! @acc))))
@@ -285,12 +279,11 @@
    `a/b/c/new.txt` also creates `a`, `a/b` and `a/b/c`; restoring only the file
    would leave the directories the turn invented standing."
   [^File f]
-  (loop
-    [p
-     (.getParentFile f)
+  (loop [p
+         (.getParentFile f)
 
-     acc
-     []]
+         acc
+         []]
 
     (if (and p (not (exists? p)) (< (count acc) 64))
       (recur (.getParentFile p) (conj acc (abs-path p)))
@@ -305,19 +298,18 @@
                              ;; Directories the op is about to invent on the way
                              ;; to this path, so a rewind can take them out too.
                              "missing_ancestors" (missing-ancestors f))]
-        (symlink? f) (let
-                       [link
-                        (assoc base
-                          "kind" "pre"
-                          "state" "symlink"
-                          "target" (str (Files/readSymbolicLink (.toPath f))))
+        (symlink? f) (let [link
+                           (assoc base
+                             "kind" "pre"
+                             "state" "symlink"
+                             "target" (str (Files/readSymbolicLink (.toPath f))))
 
-                        ;; Every write tool writes THROUGH a link, so the bytes the op is about
-                        ;; to destroy live in the RESOLVED file, not in the link. Pre-image it
-                        ;; too, or a rewind restores the link and silently loses the content.
-                        ^java.io.File real
-                        (try (.toFile (.toRealPath (.toPath f) (make-array LinkOption 0)))
-                             (catch Throwable _ nil))]
+                           ;; Every write tool writes THROUGH a link, so the bytes the op is about
+                           ;; to destroy live in the RESOLVED file, not in the link. Pre-image it
+                           ;; too, or a rewind restores the link and silently loses the content.
+                           ^java.io.File real
+                           (try (.toFile (.toRealPath (.toPath f) (make-array LinkOption 0)))
+                                (catch Throwable _ nil))]
 
                        (if (and real (.isFile real) (not= (abs-path real) (get base "path")))
                          (into [link] (file-entry dir real (assoc base "path" (abs-path real))))
@@ -393,14 +385,13 @@
 (defn- run-git
   [root args]
   (let [spawned (volatile! nil)]
-    (try (let
-           [pb (doto (ProcessBuilder. ^java.util.List (into ["git" "--no-optional-locks"] args))
-                 (.directory (io/file root))
-                 (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD))
-            pr (.start pb)
-            _ (vreset! spawned pr)
-            out (with-open [is (.getInputStream pr)]
-                  (.readAllBytes is))]
+    (try (let [pb (doto (ProcessBuilder. ^java.util.List (into ["git" "--no-optional-locks"] args))
+                    (.directory (io/file root))
+                    (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD))
+               pr (.start pb)
+               _ (vreset! spawned pr)
+               out (with-open [is (.getInputStream pr)]
+                     (.readAllBytes is))]
 
            (.waitFor pr)
            {:exit (.exitValue pr) :bytes out :out (String. ^bytes out StandardCharsets/UTF_8)})
@@ -429,18 +420,16 @@
   "`git status --porcelain=v1 -z -uall` → {abs-path status-code}. Rename/copy
    records carry a second NUL-separated ORIGIN path; both sides are recorded."
   [repo s]
-  (loop
-    [items
-     (vec (remove str/blank? (str/split (str s) #"\u0000")))
+  (loop [items
+         (vec (remove str/blank? (str/split (str s) #"\u0000")))
 
-     acc
-     {}]
+         acc
+         {}]
 
     (if-let [it (first items)]
-      (let
-        [code (subs it 0 (min 2 (count it)))
-         p (str/triml (subs it (min 3 (count it))))
-         path (abs-path (io/file repo p))]
+      (let [code (subs it 0 (min 2 (count it)))
+            p (str/triml (subs it (min 3 (count it))))
+            path (abs-path (io/file repo p))]
 
         (if (or (str/starts-with? code "R") (str/starts-with? code "C"))
           (recur (vec (drop 2 items))
@@ -463,34 +452,34 @@
   (let [k (turn-key session turn)]
     (or
       (get @baselines k)
-      (let
-        [repo (when *git-baseline?* (git-repo-root root))
-         head (when repo (git-head repo))
-         dirty (when repo (git-dirty repo))
-         base {:repo repo :head head :dirty (or dirty {}) :captured? true}
-         dirty-paths (vec (take (long *max-baseline-files*) (sort (keys (or dirty {})))))
-         entries (into [{"kind" "baseline"
-                         "session" (str session)
-                         "turn" (long (or turn 0))
-                         "turn_id" turn-id
-                         "ts" (System/currentTimeMillis)
-                         "root" root
-                         "repo" repo
-                         "git_head" head
-                         "dirty_count" (count (or dirty {}))
-                         "dirty_truncated" (> (count (or dirty {})) (long *max-baseline-files*))}]
-                       (mapcat (fn [p]
-                                 (file-entry dir
-                                             (io/file p)
-                                             {"session" (str session)
-                                              "turn" (long (or turn 0))
-                                              "turn_id" turn-id
-                                              "ts" (System/currentTimeMillis)
-                                              "op" (some-> op
-                                                           name)
-                                              "origin" "baseline"
-                                              "path" p})))
-                       dirty-paths)]
+      (let [repo (when *git-baseline?* (git-repo-root root))
+            head (when repo (git-head repo))
+            dirty (when repo (git-dirty repo))
+            base {:repo repo :head head :dirty (or dirty {}) :captured? true}
+            dirty-paths (vec (take (long *max-baseline-files*) (sort (keys (or dirty {})))))
+            entries (into [{"kind" "baseline"
+                            "session" (str session)
+                            "turn" (long (or turn 0))
+                            "turn_id" turn-id
+                            "ts" (System/currentTimeMillis)
+                            "root" root
+                            "repo" repo
+                            "git_head" head
+                            "dirty_count" (count (or dirty {}))
+                            "dirty_truncated" (> (count (or dirty {}))
+                                                 (long *max-baseline-files*))}]
+                          (mapcat (fn [p]
+                                    (file-entry dir
+                                                (io/file p)
+                                                {"session" (str session)
+                                                 "turn" (long (or turn 0))
+                                                 "turn_id" turn-id
+                                                 "ts" (System/currentTimeMillis)
+                                                 "op" (some-> op
+                                                              name)
+                                                 "origin" "baseline"
+                                                 "path" p})))
+                          dirty-paths)]
 
         (append-entries! dir entries)
         (swap! covered update k (fnil into #{}) dirty-paths)
@@ -505,39 +494,38 @@
    capture of a path in a turn wins; repeat calls are cheap no-ops. Returns the
    entries actually appended."
   [{:keys [session turn turn-id op user-request]} paths & [{:keys [recurse?]}]]
-  (let
-    [dir
-     (store-dir session)
+  (let [dir
+        (store-dir session)
 
-     k
-     (turn-key session turn)
+        k
+        (turn-key session turn)
 
-     _
-     (forget-other-turns! covered k)
+        _
+        (forget-other-turns! covered k)
 
-     seen
-     (get @covered k #{})
+        seen
+        (get @covered k #{})
 
-     todo
-     (into [] (comp (keep abs-path) (distinct) (remove seen)) paths)
+        todo
+        (into [] (comp (keep abs-path) (distinct) (remove seen)) paths)
 
-     base
-     {"session" (str session)
-      "turn" (long (or turn 0))
-      "turn_id" turn-id
-      "ts" (System/currentTimeMillis)
-      "op" (some-> op
-                   name)
-      "user_request" user-request}
+        base
+        {"session" (str session)
+         "turn" (long (or turn 0))
+         "turn_id" turn-id
+         "ts" (System/currentTimeMillis)
+         "op" (some-> op
+                      name)
+         "user_request" user-request}
 
-     entries
-     (into []
-           (mapcat (fn [p]
-                     (let [f (io/file p)]
-                       (if (and recurse? (real-dir? f))
-                         (tree-entries dir f (assoc base "path" p))
-                         (file-entry dir f (assoc base "path" p))))))
-           todo)]
+        entries
+        (into []
+              (mapcat (fn [p]
+                        (let [f (io/file p)]
+                          (if (and recurse? (real-dir? f))
+                            (tree-entries dir f (assoc base "path" p))
+                            (file-entry dir f (assoc base "path" p))))))
+              todo)]
 
     (when (seq todo) (swap! covered update k (fnil into #{}) todo))
     (when (seq entries) (append-entries! dir entries))
@@ -552,33 +540,31 @@
    from the baseline HEAD blob)."
   [^File dir {:keys [session turn turn-id op]} baseline]
   (when-let [repo (:repo baseline)]
-    (let
-      [before (:dirty baseline)
-       after (or (git-dirty repo) {})
-       k (turn-key session turn)
-       seen (get @covered k #{})
-       fresh (into [] (comp (remove #(contains? before %)) (remove seen)) (sort (keys after)))
-       entries (mapv (fn [p]
-                       (let [untracked? (str/starts-with? (str (get after p)) "?")]
-                         (cond->
-                           {"session" (str session)
-                            "turn" (long (or turn 0))
-                            "turn_id" turn-id
-                            "ts" (System/currentTimeMillis)
-                            "op" (some-> op
-                                         name)
-                            "origin" "git-sweep"
-                            "kind" "pre"
-                            "path" p}
-                           untracked?
-                           (assoc "state" "absent")
+    (let [before (:dirty baseline)
+          after (or (git-dirty repo) {})
+          k (turn-key session turn)
+          seen (get @covered k #{})
+          fresh (into [] (comp (remove #(contains? before %)) (remove seen)) (sort (keys after)))
+          entries (mapv (fn [p]
+                          (let [untracked? (str/starts-with? (str (get after p)) "?")]
+                            (cond-> {"session" (str session)
+                                     "turn" (long (or turn 0))
+                                     "turn_id" turn-id
+                                     "ts" (System/currentTimeMillis)
+                                     "op" (some-> op
+                                                  name)
+                                     "origin" "git-sweep"
+                                     "kind" "pre"
+                                     "path" p}
+                              untracked?
+                              (assoc "state" "absent")
 
-                           (not untracked?)
-                           (assoc "state"
-                             "git" "git_head"
-                             (:head baseline) "repo"
-                             repo))))
-                     fresh)]
+                              (not untracked?)
+                              (assoc "state"
+                                "git" "git_head"
+                                (:head baseline) "repo"
+                                repo))))
+                        fresh)]
 
       (when (seq entries)
         (swap! covered update k (fnil into #{}) fresh)
@@ -591,33 +577,32 @@
   "Rewind targets for a session, newest last: one entry per turn that changed
    files, with the prompt that triggered it."
   [session-id]
-  (let
-    [es
-     (journal session-id)
+  (let [es
+        (journal session-id)
 
-     by-turn
-     (reduce (fn [acc e]
-               (if (#{"pre" "uncovered"} (get e "kind"))
-                 (update acc
-                         (as-long (get e "turn"))
-                         (fn [m]
-                           (-> (or m
-                                   {"turn" (as-long (get e "turn"))
-                                    "turn_id" (get e "turn_id")
-                                    "ts" (get e "ts")
-                                    "user_request" (get e "user_request")
-                                    "files" #{}
-                                    "ops" #{}
-                                    "uncovered" 0})
-                               (update "files" conj (get e "path"))
-                               (update "ops"
-                                       (fn [s]
-                                         (if (get e "op") (conj s (get e "op")) s)))
-                               (update "uncovered" + (if (= "uncovered" (get e "kind")) 1 0))
-                               (update "user_request" #(or % (get e "user_request"))))))
-                 acc))
-             {}
-             es)]
+        by-turn
+        (reduce (fn [acc e]
+                  (if (#{"pre" "uncovered"} (get e "kind"))
+                    (update acc
+                            (as-long (get e "turn"))
+                            (fn [m]
+                              (-> (or m
+                                      {"turn" (as-long (get e "turn"))
+                                       "turn_id" (get e "turn_id")
+                                       "ts" (get e "ts")
+                                       "user_request" (get e "user_request")
+                                       "files" #{}
+                                       "ops" #{}
+                                       "uncovered" 0})
+                                  (update "files" conj (get e "path"))
+                                  (update "ops"
+                                          (fn [s]
+                                            (if (get e "op") (conj s (get e "op")) s)))
+                                  (update "uncovered" + (if (= "uncovered" (get e "kind")) 1 0))
+                                  (update "user_request" #(or % (get e "user_request"))))))
+                    acc))
+                {}
+                es)]
 
     (->> (vals by-turn)
          (map (fn [m]
@@ -632,41 +617,40 @@
    `restore` holds ONE entry per path — the EARLIEST pre-image recorded at or
    after `turn`, which is exactly that path's turn-start state."
   [session-id turn]
-  (let
-    [t
-     (as-long turn)
+  (let [t
+        (as-long turn)
 
-     es
-     (journal session-id)
+        es
+        (journal session-id)
 
-     in-range
-     (filter #(>= (as-long (get % "turn")) t) es)
+        in-range
+        (filter #(>= (as-long (get % "turn")) t) es)
 
-     restore
-     (->> in-range
-          (filter #(= "pre" (get % "kind")))
-          (reduce (fn [acc e]
-                    (if (contains? acc (get e "path")) acc (assoc acc (get e "path") e)))
-                  {})
-          vals
-          (sort-by #(get % "path"))
-          vec)
+        restore
+        (->> in-range
+             (filter #(= "pre" (get % "kind")))
+             (reduce (fn [acc e]
+                       (if (contains? acc (get e "path")) acc (assoc acc (get e "path") e)))
+                     {})
+             vals
+             (sort-by #(get % "path"))
+             vec)
 
-     restored-paths
-     ;; A SET, not a linear `some` over `restore` for every uncovered entry:
-     ;; both lists hold one entry per FILE, so the old scan was
-     ;; O(uncovered x restore) and a `shell` turn that sweeps a big tree fills
-     ;; both at once. Measured on a 1600+1600 journal: 124 ms, quadrupling
-     ;; every time the turn's file count doubled. `map` (not `keep`) so a nil
-     ;; path still matches a nil path exactly as `=` did.
-     (into #{} (map #(get % "path")) restore)
+        restored-paths
+        ;; A SET, not a linear `some` over `restore` for every uncovered entry:
+        ;; both lists hold one entry per FILE, so the old scan was
+        ;; O(uncovered x restore) and a `shell` turn that sweeps a big tree fills
+        ;; both at once. Measured on a 1600+1600 journal: 124 ms, quadrupling
+        ;; every time the turn's file count doubled. `map` (not `keep`) so a nil
+        ;; path still matches a nil path exactly as `=` did.
+        (into #{} (map #(get % "path")) restore)
 
-     unc
-     (->> in-range
-          (filter #(= "uncovered" (get % "kind")))
-          (remove #(contains? restored-paths (get % "path")))
-          (sort-by #(get % "path"))
-          vec)]
+        unc
+        (->> in-range
+             (filter #(= "uncovered" (get % "kind")))
+             (remove #(contains? restored-paths (get % "path")))
+             (sort-by #(get % "path"))
+             vec)]
 
     {"session" (str session-id)
      "turn" t
@@ -699,17 +683,15 @@
    the turn, deepest first, stopping at the first one that is not an EMPTY real
    directory. Never touches a directory that already held something."
   [entry]
-  (loop
-    [ds
-     (filter string? (get entry "missing_ancestors"))
+  (loop [ds
+         (filter string? (get entry "missing_ancestors"))
 
-     acc
-     []]
+         acc
+         []]
 
     (if-let [d (first ds)]
-      (let
-        [df (io/file d)
-         kids (when (real-dir? df) (.list df))]
+      (let [df (io/file d)
+            kids (when (real-dir? df) (.list df))]
 
         (if (and (= (abs-path d) d) kids (zero? (alength ^objects kids)) (.delete df))
           (recur (rest ds) (conj acc d))
@@ -718,15 +700,14 @@
 
 (defn- apply-entry!
   [^File dir entry]
-  (let
-    [p
-     (get entry "path")
+  (let [p
+        (get entry "path")
 
-     f
-     (io/file p)
+        f
+        (io/file p)
 
-     state
-     (get entry "state")]
+        state
+        (get entry "state")]
 
     (try
       (cond
@@ -742,20 +723,19 @@
                 (seq pruned)
                 (assoc "pruned_dirs" pruned))))
         (= "dir" state) (do (when-not (real-dir? f) (delete-tree! f) (.mkdirs f))
-                            (let
-                              [keep-set
-                               (set (get entry "children"))
+                            (let [keep-set
+                                  (set (get entry "children"))
 
-                               pruned
-                               (when (seq keep-set)
-                                 (->> (rest (file-seq f))
-                                      (map abs-path)
-                                      (remove keep-set)
-                                      sort
-                                      reverse
-                                      (mapv (fn [c]
-                                              (io/delete-file (io/file c) true)
-                                              c))))]
+                                  pruned
+                                  (when (seq keep-set)
+                                    (->> (rest (file-seq f))
+                                         (map abs-path)
+                                         (remove keep-set)
+                                         sort
+                                         reverse
+                                         (mapv (fn [c]
+                                                 (io/delete-file (io/file c) true)
+                                                 c))))]
 
                               {"path" p "action" "dir" "pruned" (count (or pruned []))}))
         (= "symlink" state) (do (delete-tree! f)
@@ -770,20 +750,19 @@
                                {"path" p "action" "restored" "bytes" (alength b)})
                            {"path" p "action" "skipped" "error" "blob missing from pool"})
         (= "git" state)
-        (let
-          [repo
-           (get entry "repo")
+        (let [repo
+              (get entry "repo")
 
-           head
-           (get entry "git_head")
+              head
+              (get entry "git_head")
 
-           rel
-           (when repo (str (.relativize (.toPath (io/file repo)) (.toPath f))))
+              rel
+              (when repo (str (.relativize (.toPath (io/file repo)) (.toPath f))))
 
-           {:keys [exit bytes]}
-           (if (and repo head rel)
-             (run-git repo ["show" (str head ":" rel)])
-             {:exit -1 :bytes (byte-array 0)})]
+              {:keys [exit bytes]}
+              (if (and repo head rel)
+                (run-git repo ["show" (str head ":" rel)])
+                {:exit -1 :bytes (byte-array 0)})]
 
           (if (zero? (long exit))
             (do (write-bytes! f bytes nil)
@@ -800,15 +779,14 @@
    aborts the rest (a half-applied restore is still strictly closer to the
    target than not trying)."
   [session-id turn & [{:keys [is-dry-run]}]]
-  (let
-    [pl
-     (plan session-id turn)
+  (let [pl
+        (plan session-id turn)
 
-     dir
-     (store-dir session-id)
+        dir
+        (store-dir session-id)
 
-     applied
-     (if is-dry-run [] (mapv #(apply-entry! dir %) (get pl "restore")))]
+        applied
+        (if is-dry-run [] (mapv #(apply-entry! dir %) (get pl "restore")))]
 
     (assoc pl
       "is_dry_run" (boolean is-dry-run)
@@ -821,9 +799,8 @@
 
 (defn- env->ctx
   [env op]
-  (let
-    [ts (some-> (:turn-state-atom env)
-                deref)]
+  (let [ts (some-> (:turn-state-atom env)
+                   deref)]
     {:session (or (:session-id env) "default")
      :turn (or (:turn-position ts) 0)
      :turn-id (:session-turn-id ts)
@@ -839,19 +816,18 @@
    exists. Best-effort by contract: rewind bookkeeping must NEVER fail the tool
    it wraps."
   [ctx args]
-  (let
-    [dir
-     (store-dir (:session ctx))
+  (let [dir
+        (store-dir (:session ctx))
 
-     baseline
-     (capture-baseline! dir ctx)
+        baseline
+        (capture-baseline! dir ctx)
 
-     ;; Only `fs` can destroy a whole subtree (delete/move), so only `fs` pays
-     ;; for a recursive capture. Everything else treats a directory argument as
-     ;; a container — the files it actually edits are named individually, and
-     ;; the git baseline covers the rest.
-     recurse?
-     (= :fs (:op ctx))]
+        ;; Only `fs` can destroy a whole subtree (delete/move), so only `fs` pays
+        ;; for a recursive capture. Everything else treats a directory argument as
+        ;; a container — the files it actually edits are named individually, and
+        ;; the git baseline covers the rest.
+        recurse?
+        (= :fs (:op ctx))]
 
     (record-pre! ctx (walk-paths args) {:recurse? recurse?})
     baseline))
@@ -863,26 +839,25 @@
   [env op-kw args next-fn]
   (if-not *enabled?*
     (next-fn args)
-    (let
-      [ctx
-       (try (env->ctx env op-kw) (catch Throwable _ nil))
+    (let [ctx
+          (try (env->ctx env op-kw) (catch Throwable _ nil))
 
-       baseline
-       (when ctx
-         (try (capture! ctx args)
-              (catch Throwable t
-                (tel/log!
-                  {:level :warn :id ::capture-failed :data {:op op-kw :error (ex-message t)}})
-                nil)))
+          baseline
+          (when ctx
+            (try (capture! ctx args)
+                 (catch Throwable t
+                   (tel/log!
+                     {:level :warn :id ::capture-failed :data {:op op-kw :error (ex-message t)}})
+                   nil)))
 
-       sweep!
-       (fn []
-         (when (and ctx baseline (contains? sweep-ops op-kw))
-           (try (sweep-git! (store-dir (:session ctx)) ctx baseline)
-                (catch Throwable t
-                  (tel/log!
-                    {:level :warn :id ::sweep-failed :data {:op op-kw :error (ex-message t)}})
-                  nil))))]
+          sweep!
+          (fn []
+            (when (and ctx baseline (contains? sweep-ops op-kw))
+              (try (sweep-git! (store-dir (:session ctx)) ctx baseline)
+                   (catch Throwable t
+                     (tel/log!
+                       {:level :warn :id ::sweep-failed :data {:op op-kw :error (ex-message t)}})
+                     nil))))]
 
       (try (let [r (next-fn args)]
              (sweep!)
@@ -904,25 +879,23 @@
    output is read by a human in a narrow TUI bubble and on a phone, so a
    40-character temp/absolute prefix repeated on every row is noise."
   [roots p]
-  (let
-    [s
-     (str p)
+  (let [s
+        (str p)
 
-     under
-     (some (fn [root]
-             (let
-               [r
-                (str root)
+        under
+        (some (fn [root]
+                (let [r
+                      (str root)
 
-                r
-                (if (str/ends-with? r "/") r (str r "/"))]
+                      r
+                      (if (str/ends-with? r "/") r (str r "/"))]
 
-               (when (and (> (count r) 1) (str/starts-with? s r) (> (count s) (count r)))
-                 (subs s (count r)))))
-           roots)
+                  (when (and (> (count r) 1) (str/starts-with? s r) (> (count s) (count r)))
+                    (subs s (count r)))))
+              roots)
 
-     home
-     (str (System/getProperty "user.home"))]
+        home
+        (str (System/getProperty "user.home"))]
 
     (cond under under
           (and (seq home) (str/starts-with? s (str home "/"))) (str "~" (subs s (count home)))
@@ -932,11 +905,10 @@
   "One-line, pipe-safe Markdown table cell elided to `n` characters. A raw `|`
    or newline from a user prompt would otherwise tear the table apart."
   [v ^long n]
-  (let
-    [s (-> (str v)
-           (str/replace #"\s+" " ")
-           str/trim
-           (str/replace "|" "\\|"))]
+  (let [s (-> (str v)
+              (str/replace #"\s+" " ")
+              str/trim
+              (str/replace "|" "\\|"))]
     (if (> (count s) n) (str (str/trimr (subs s 0 (dec n))) "…") s)))
 
 (defn- fmt-tokens
@@ -947,13 +919,12 @@
    Rounded by hand rather than with `format`: `%.1f` is LOCALE-dependent and
    rendered `12,5k` on a Polish JVM, while `Double/toString` is not."
   [n]
-  (let
-    [v
-     (long (or n 0))
+  (let [v
+        (long (or n 0))
 
-     tenth
-     (fn [^double d]
-       (str (/ (double (Math/round (* d 10.0))) 10.0)))]
+        tenth
+        (fn [^double d]
+          (str (/ (double (Math/round (* d 10.0))) 10.0)))]
 
     (cond (>= v 999950) (str (tenth (/ (double v) 1000000.0)) "M")
           (>= v 1000) (str (tenth (/ (double v) 1000.0)) "k")
@@ -1013,10 +984,9 @@
    previous ones. These turns are exactly what rewind does NOT remove, which is
    the part users assume is undone along with the files."
   [by-turn turn]
-  (let
-    [rows (keep (fn [[pos c]]
-                  (when (>= (long pos) (long turn)) c))
-                by-turn)]
+  (let [rows (keep (fn [[pos c]]
+                     (when (>= (long pos) (long turn)) c))
+                   by-turn)]
     {:turns (count rows)
      :tokens (long (reduce (fn [acc c]
                              (max (long acc) (long (:tokens c))))
@@ -1041,13 +1011,12 @@
    The `Ctx` column appears only when the session store answered, so a rewind
    list is never a table of empty cells."
   [ps]
-  (let
-    [ctx?
-     (boolean (some #(get % "ctx_tokens") ps))
+  (let [ctx?
+        (boolean (some #(get % "ctx_tokens") ps))
 
-     row
-     (fn [cells]
-       (str "| " (str/join " | " cells) " |"))]
+        row
+        (fn [cells]
+          (str "| " (str/join " | " cells) " |"))]
 
     (str/join "\n"
               (concat [(row (conj (cond-> ["Turn" "Files" "Ops"]
@@ -1059,9 +1028,8 @@
                                     (conj "---:"))
                                   "---"))]
                       (map (fn [p]
-                             (row (conj (cond->
-                                          [(cell (get p "turn") 8) (cell (get p "files") 8)
-                                           (cell (str/join ", " (get p "ops")) 28)]
+                             (row (conj (cond-> [(cell (get p "turn") 8) (cell (get p "files") 8)
+                                                 (cell (str/join ", " (get p "ops")) 28)]
                                           ctx?
                                           (conj (if-let [tks (get p "ctx_tokens")]
                                                   (fmt-tokens tks)
@@ -1137,24 +1105,23 @@
    conversation on a restore — and says plainly that rewind moves files only
    and never truncates the conversation."
   [ctx]
-  (let
-    [sid
-     (or (:session/id ctx) (:session-id ctx))
+  (let [sid
+        (or (:session/id ctx) (:session-id ctx))
 
-     roots
-     (keep identity [(:workspace/root ctx) (:root ctx) (System/getProperty "user.dir")])
+        roots
+        (keep identity [(:workspace/root ctx) (:root ctx) (System/getProperty "user.dir")])
 
-     argv
-     (vec (remove str/blank? (map str (:command/argv ctx))))
+        argv
+        (vec (remove str/blank? (map str (:command/argv ctx))))
 
-     dry?
-     (boolean (some #{"--dry-run" "-n"} argv))
+        dry?
+        (boolean (some #{"--dry-run" "-n"} argv))
 
-     target
-     (first (remove #(str/starts-with? % "-") argv))
+        target
+        (first (remove #(str/starts-with? % "-") argv))
 
-     by-turn
-     (turn-context ctx sid)]
+        by-turn
+        (turn-context ctx sid)]
 
     (cond (nil? sid) (err "Send a message first, then /rewind (session not ready yet)")
           (nil? target)
@@ -1178,29 +1145,28 @@
                                              :slash/body
                                              "`/rewind` alone lists every turn you can go back to.")
           :else
-          (let
-            [r
-             (restore! sid (parse-long target) {:is-dry-run dry?})
+          (let [r
+                (restore! sid (parse-long target) {:is-dry-run dry?})
 
-             entries
-             (if dry? (get r "restore") (get r "applied"))
+                entries
+                (if dry? (get r "restore") (get r "applied"))
 
-             failed
-             (get r "failed")
+                failed
+                (get r "failed")
 
-             uncovered
-             (get r "uncovered")
+                uncovered
+                (get r "uncovered")
 
-             n
-             (count entries)
+                n
+                (count entries)
 
-             kept
-             (context-summary by-turn (parse-long target))
+                kept
+                (context-summary by-turn (parse-long target))
 
-             lines
-             (if dry?
-               (render-file-lines roots entries plan-verb)
-               (render-file-lines roots entries applied-verb))]
+                lines
+                (if dry?
+                  (render-file-lines roots entries plan-verb)
+                  (render-file-lines roots entries applied-verb))]
 
             {:slash/status (if (seq failed) :error :ok)
              :slash/title (str (if dry? "Rewind plan for turn " "Rewound to turn ")
@@ -1274,15 +1240,14 @@
 
 (defn- restore-handler
   [request]
-  (let
-    [sid
-     (get-in request [:path-params :sid])
+  (let [sid
+        (get-in request [:path-params :sid])
 
-     body
-     (or (read-json-body request) {})
+        body
+        (or (read-json-body request) {})
 
-     turn
-     (get body "turn")]
+        turn
+        (get body "turn")]
 
     (if-not (number? turn)
       (json-response 400 {"error" "turn (number) required"})

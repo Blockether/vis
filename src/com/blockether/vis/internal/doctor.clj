@@ -38,21 +38,20 @@
 
 (defn- host-system-messages
   [environment]
-  (let
-    [rt
-     (Runtime/getRuntime)
+  (let [rt
+        (Runtime/getRuntime)
 
-     used
-     (- (.totalMemory rt) (.freeMemory rt))
+        used
+        (- (.totalMemory rt) (.freeMemory rt))
 
-     max-mem
-     (.maxMemory rt)
+        max-mem
+        (.maxMemory rt)
 
-     db-path
-     (or (some-> environment
-                 :db-info
-                 :path)
-         "(no DB)")]
+        db-path
+        (or (some-> environment
+                    :db-info
+                    :path)
+            "(no DB)")]
 
     (mapv #(assoc %
              :ext "vis"
@@ -94,20 +93,19 @@
    its `:shim/source` classpath resource (the Python file build.clj embeds via
    `-H:IncludeResources=vis-shims/.*`) and its host bindings. Never throws."
   [shim]
-  (let
-    [nm
-     (or (:shim/name shim) "(unnamed)")
+  (let [nm
+        (or (:shim/name shim) "(unnamed)")
 
-     src
-     (try (let [s (extension/shim-src shim)]
-            (if (string/blank? s)
-              {:error "source resource is empty"}
-              {:bytes (count (.getBytes ^String s "UTF-8"))}))
-          (catch Throwable t {:error (or (ex-message t) (str t))}))
+        src
+        (try (let [s (extension/shim-src shim)]
+               (if (string/blank? s)
+                 {:error "source resource is empty"}
+                 {:bytes (count (.getBytes ^String s "UTF-8"))}))
+             (catch Throwable t {:error (or (ex-message t) (str t))}))
 
-     bindings
-     (try {:count (count (shim-binding-map shim))}
-          (catch Throwable t {:error (or (ex-message t) (str t))}))]
+        bindings
+        (try {:count (count (shim-binding-map shim))}
+             (catch Throwable t {:error (or (ex-message t) (str t))}))]
 
     {:name nm
      :resource (:shim/source shim)
@@ -221,13 +219,12 @@
    `:level` into the allowed set; missing/blank `:message` becomes a
    placeholder so the output never has empty lines."
   [m]
-  (let
-    [level
-     (let [l (:level m)]
-       (if (#{:info :warn :error} l) l :error))
+  (let [level
+        (let [l (:level m)]
+          (if (#{:info :warn :error} l) l :error))
 
-     message
-     (or (:message m) "(no message)")]
+        message
+        (or (:message m) "(no message)")]
 
     (-> m
         (assoc :level level
@@ -239,17 +236,16 @@
    the extension to stamp. Throwables become a single :error message
    describing the throw."
   [ext-ns doctor-fn environment]
-  (try (let
-         [returned
-          (doctor-fn environment)
+  (try (let [returned
+             (doctor-fn environment)
 
-          msgs
-          (cond (nil? returned) []
-                (map? returned) [returned]
-                (sequential? returned) (vec returned)
-                :else [{:level :error
-                        :message (str ":ext/doctor-fn returned non-message value: "
-                                      (pr-str returned))}])]
+             msgs
+             (cond (nil? returned) []
+                   (map? returned) [returned]
+                   (sequential? returned) (vec returned)
+                   :else [{:level :error
+                           :message (str ":ext/doctor-fn returned non-message value: "
+                                         (pr-str returned))}])]
 
          (mapv (fn [m]
                  (-> (coerce-message m)
@@ -319,18 +315,17 @@
    named for it. `fleet` is what a model picker actually renders, so a provider
    missing from it is invisible to the TUI no matter what config says."
   [{:keys [role provider-id model-id fleet registered configured-ids]}]
-  (let
-    [row
-     (first (filter #(= provider-id (provider-id-str (:id %))) fleet))
+  (let [row
+        (first (filter #(= provider-id (provider-id-str (:id %))) fleet))
 
-     models
-     (when row (fleet-model-names row))
+        models
+        (when row (fleet-model-names row))
 
-     reg
-     (get registered provider-id)
+        reg
+        (get registered provider-id)
 
-     base
-     {:ext "vis" :check-id ::providers}]
+        base
+        {:ext "vis" :check-id ::providers}]
 
     (cond (and row model-id (seq models) (not (contains? models model-id)))
           (assoc base
@@ -374,10 +369,9 @@
                                 " provider '" provider-id
                                 "' is unknown: not in providers:, no preset,"
                                 " no extension registered it")
-                  :remediation (let
-                                 [known (sort (into (into (set configured-ids) (keys registered))
-                                                    (keep #(provider-id-str (:id %)))
-                                                    fleet))]
+                  :remediation (let [known (sort (into (into (set configured-ids) (keys registered))
+                                                       (keep #(provider-id-str (:id %)))
+                                                       fleet))]
                                  (str (if (seq known)
                                         (str "Available: " (string/join ", " known) ". ")
                                         "No provider is currently available. ")
@@ -392,30 +386,29 @@
    from `providers/picker-fleet`, so `default_provider` is ignored and the router
    silently falls back to another provider. Doctor now names that gap."
   [environment]
-  (let
-    [config
-     (live-config environment)
+  (let [config
+        (live-config environment)
 
-     cget
-     (fn [k1 k2]
-       (or (get config k1) (get config k2)))]
+        cget
+        (fn [k1 k2]
+          (or (get config k1) (get config k2)))]
 
     (when config
-      (let
-        [fleet
-         (or (safe-call 'com.blockether.vis.internal.providers/picker-fleet nil) [])
+      (let [fleet
+            (or (safe-call 'com.blockether.vis.internal.providers/picker-fleet nil) [])
 
-         registered
-         (into {}
-               (keep (fn [p]
-                       (when-let [id (provider-id-str (:provider/id p))]
-                         [id p])))
-               (or (safe-call 'com.blockether.vis.internal.registry/registered-providers nil) []))
+            registered
+            (into {}
+                  (keep (fn [p]
+                          (when-let [id (provider-id-str (:provider/id p))]
+                            [id p])))
+                  (or (safe-call 'com.blockether.vis.internal.registry/registered-providers nil)
+                      []))
 
-         configured-ids
-         (into #{}
-               (keep #(provider-id-str (or (:id %) (get % "id"))))
-               (cget :providers "providers"))]
+            configured-ids
+            (into #{}
+                  (keep #(provider-id-str (or (:id %) (get % "id"))))
+                  (cget :providers "providers"))]
 
         (into []
               (keep (fn [[role pkey mkey pkey* mkey*]]
@@ -496,48 +489,46 @@
    (optionally) by an indented `-> <remediation>`. `use-ansi?` controls
    whether to wrap level-colored bits."
   [{:keys [level message remediation] :as m} use-ansi?]
-  (let
-    [icon
-     (or (ICONS level) "•")
+  (let [icon
+        (or (ICONS level) "•")
 
-     color
-     (color-for level use-ansi?)
+        color
+        (color-for level use-ansi?)
 
-     reset
-     (if use-ansi? (:reset ANSI) "")
+        reset
+        (if use-ansi? (:reset ANSI) "")
 
-     dim
-     (if use-ansi? (:dim ANSI) "")
+        dim
+        (if use-ansi? (:dim ANSI) "")
 
-     head
-     (str "  " color icon reset " " (message-label m) ": " message)
+        head
+        (str "  " color icon reset " " (message-label m) ": " message)
 
-     tail
-     (when (and remediation (not (string/blank? remediation)))
-       (str "\n      " dim "-> " remediation reset))]
+        tail
+        (when (and remediation (not (string/blank? remediation)))
+          (str "\n      " dim "-> " remediation reset))]
 
     (str head tail)))
 
 (defn- format-extension-section
   [ext-name messages use-ansi?]
-  (let
-    [bold
-     (if use-ansi? (:bold ANSI) "")
+  (let [bold
+        (if use-ansi? (:bold ANSI) "")
 
-     rst
-     (if use-ansi? (:reset ANSI) "")
+        rst
+        (if use-ansi? (:reset ANSI) "")
 
-     ext-str
-     (str ext-name)
+        ext-str
+        (str ext-name)
 
-     head
-     (str "  " bold ext-str rst)
+        head
+        (str "  " bold ext-str rst)
 
-     rule
-     (str "  " (apply str (repeat (count ext-str) "─")))
+        rule
+        (str "  " (apply str (repeat (count ext-str) "─")))
 
-     body
-     (string/join "\n" (mapv #(format-message % use-ansi?) messages))]
+        body
+        (string/join "\n" (mapv #(format-message % use-ansi?) messages))]
 
     (string/join "\n" [head rule body])))
 
@@ -547,35 +538,33 @@
    auto-detected; pass `:use-ansi?` to override."
   ([messages] (format-output messages {:use-ansi? (tty?)}))
   ([messages {:keys [use-ansi?]}]
-   (let
-     [bold
-      (if use-ansi? (:bold ANSI) "")
+   (let [bold
+         (if use-ansi? (:bold ANSI) "")
 
-      rst
-      (if use-ansi? (:reset ANSI) "")]
+         rst
+         (if use-ansi? (:reset ANSI) "")]
 
      (cond (empty? messages) "vis-agent doctor\n\nNo diagnostic checks registered."
-           :else (let
-                   [grouped
-                    (group-by :ext messages)
+           :else (let [grouped
+                       (group-by :ext messages)
 
-                    ext-order
-                    (vec (distinct (mapv :ext messages)))
+                       ext-order
+                       (vec (distinct (mapv :ext messages)))
 
-                    sections
-                    (mapv #(format-extension-section % (get grouped %) use-ansi?) ext-order)
+                       sections
+                       (mapv #(format-extension-section % (get grouped %) use-ansi?) ext-order)
 
-                    totals
-                    (frequencies (mapv :level messages))
+                       totals
+                       (frequencies (mapv :level messages))
 
-                    summary
-                    (str "Summary: "
-                         (or (:error totals) 0)
-                         " errors, "
-                         (or (:warn totals) 0)
-                         " warnings, "
-                         (or (:info totals) 0)
-                         " info")]
+                       summary
+                       (str "Summary: "
+                            (or (:error totals) 0)
+                            " errors, "
+                            (or (:warn totals) 0)
+                            " warnings, "
+                            (or (:info totals) 0)
+                            " info")]
 
                    (str bold
                         "vis-agent doctor" rst
@@ -592,15 +581,14 @@
    command being dispatched IS `vis-agent doctor`)."
   ([] (startup-hint-line {}))
   ([environment]
-   (let
-     [msgs
-      (try (run-checks environment)
-           (catch Throwable t
-             (tel/log! {:level :error :id ::startup-hint-failed :data {:error (ex-message t)}})
-             []))
+   (let [msgs
+         (try (run-checks environment)
+              (catch Throwable t
+                (tel/log! {:level :error :id ::startup-hint-failed :data {:error (ex-message t)}})
+                []))
 
-      issues
-      (count (filter #(#{:warn :error} (:level %)) msgs))]
+         issues
+         (count (filter #(#{:warn :error} (:level %)) msgs))]
 
      (when (pos? issues)
        (str "⚠ vis-agent: "

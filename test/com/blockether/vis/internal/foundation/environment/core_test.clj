@@ -37,9 +37,8 @@
 (defn- symbol-view
   "Call the environment symbol named `sym` and return what Python would hold."
   [sym]
-  (let
-    [{:ext.symbol/keys [fn]} (first (filter #(= sym (:ext.symbol/symbol %))
-                                            env-core/environment-symbols))]
+  (let [{:ext.symbol/keys [fn]} (first (filter #(= sym (:ext.symbol/symbol %))
+                                               env-core/environment-symbols))]
     (env-python/boundary-view (:result (fn)))))
 
 ;; Regression, issue #115: every environment symbol handed Python its RAW
@@ -49,24 +48,22 @@
 (defdescribe environment-symbols-boundary-test
              (it "hands Python string-keyed payloads for every environment symbol"
                  (doseq [sym-map env-core/environment-symbols]
-                   (let
-                     [sym (:ext.symbol/symbol sym-map)
-                      envelope ((:ext.symbol/fn sym-map))
-                      ;; `boundary-view` is the no-context mirror of the real
-                      ;; Clojure->Python boundary: it THROWS on a keyword key or
-                      ;; value at any depth, exactly like `->py` does in GraalPy.
-                      view (env-python/boundary-view (:result envelope))]
+                   (let [sym (:ext.symbol/symbol sym-map)
+                         envelope ((:ext.symbol/fn sym-map))
+                         ;; `boundary-view` is the no-context mirror of the real
+                         ;; Clojure->Python boundary: it THROWS on a keyword key or
+                         ;; value at any depth, exactly like `->py` does in GraalPy.
+                         view (env-python/boundary-view (:result envelope))]
 
                      (expect (:success? envelope) (str sym " envelope must succeed"))
                      (expect (map? view) (str sym " must return a dict"))
                      (expect (every? string? (keys view)) (str sym " top-level keys")))))
              (it "spells its keys the way the docstrings promise"
-                 (let
-                   [languages
-                    (symbol-view 'languages)
+                 (let [languages
+                       (symbol-view 'languages)
 
-                    repositories
-                    (symbol-view 'repositories)]
+                       repositories
+                       (symbol-view 'repositories)]
 
                    (expect (contains? languages "total_files"))
                    (expect (contains? languages "is_truncated"))

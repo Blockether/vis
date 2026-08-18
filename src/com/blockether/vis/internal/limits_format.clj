@@ -65,13 +65,12 @@
     :zai-coding-plan-7d
     "Z.ai coding plan 7d"
 
-    (let
-      [label (or (:label row)
-                 (some-> (:id row)
-                         name
-                         (str/replace #"[_-]" " ")
-                         str/capitalize)
-                 "Limit")]
+    (let [label (or (:label row)
+                    (some-> (:id row)
+                            name
+                            (str/replace #"[_-]" " ")
+                            str/capitalize)
+                    "Limit")]
       (-> label
           (str/replace #"(?i)\s+quota\s*\(%\)" "")
           (str/replace #"(?i)\s+quota$" "")))))
@@ -100,12 +99,11 @@
    so a report that crossed the gateway wire (string values) matches
    the same as an in-process one (keyword values)."
   [{:keys [id kind limit remaining]}]
-  (let
-    [id
-     (->kw id)
+  (let [id
+        (->kw id)
 
-     kind
-     (->kw kind)]
+        kind
+        (->kw kind)]
 
     (and (number? remaining)
          (or (contains? account-plan-window-ids id)
@@ -197,18 +195,16 @@
    only spelling every provider uses), so a report that crossed the gateway
    wire — where a placeholder row may carry nothing but its id — still orders."
   [row]
-  (let
-    [{:keys [unit size]}
-     (:window row)
+  (let [{:keys [unit size]}
+        (:window row)
 
-     unit-ms
-     (get window-unit-ms (->kw unit))]
+        unit-ms
+        (get window-unit-ms (->kw unit))]
 
     (or (when (and unit-ms (number? size)) (long (* (long unit-ms) (long size))))
-        (when-let
-          [[_ n u] (some->> (:id row)
-                            name
-                            (re-find #"-([0-9]+)([hdwm])$"))]
+        (when-let [[_ n u] (some->> (:id row)
+                                    name
+                                    (re-find #"-([0-9]+)([hdwm])$"))]
           (* (long (parse-long n))
              (long (get window-unit-ms
                         (case u
@@ -274,15 +270,14 @@
    window suffix (`5h`, `7d`, `30d`), else `{:label ...}` alone. `:prefix` is
    the plan name a family of windows shares."
   [row]
-  (let
-    [label
-     (short-limit-label row)
+  (let [label
+        (short-limit-label row)
 
-     parts
-     (str/split label #"\s+")
+        parts
+        (str/split label #"\s+")
 
-     window
-     (last parts)]
+        window
+        (last parts)]
 
     (if (and (< 1 (count parts)) (re-matches #"[0-9]+[hdwm]" window))
       {:label label :prefix (str/join " " (butlast parts)) :window window}
@@ -301,25 +296,23 @@
    Channels render the pieces themselves (the TUI footer joins with ` / ` and
    stamps a reset on one cell) but never re-derive them."
   [rows]
-  (let
-    [rows
-     (vec rows)
+  (let [rows
+        (vec rows)
 
-     parts
-     (mapv limit-label-parts rows)
+        parts
+        (mapv limit-label-parts rows)
 
-     prefix
-     (when (and (< 1 (count rows)) (every? :prefix parts) (apply = (map :prefix parts)))
-       (:prefix (first parts)))]
+        prefix
+        (when (and (< 1 (count rows)) (every? :prefix parts) (apply = (map :prefix parts)))
+          (:prefix (first parts)))]
 
     {:prefix prefix
      :cells (mapv (fn [row {:keys [label window]}]
-                    (let
-                      [head
-                       (if prefix window label)
+                    (let [head
+                          (if prefix window label)
 
-                       usage
-                       (compact-limit-usage row)]
+                          usage
+                          (compact-limit-usage row)]
 
                       {:row row :text (if usage (str head " " usage) head)}))
                   rows
@@ -348,18 +341,17 @@
    Returns nil when there's nothing to render."
   ([limits] (dynamic-summary limits 3))
   ([limits max-rows]
-   (let
-     [rows
-      (get-in limits [:dynamic :limits])
+   (let [rows
+         (get-in limits [:dynamic :limits])
 
-      pick
-      (or (seq (filter #(or (generic-limit-has-signal? %) (account-plan-window-row? %)) rows))
-          (seq rows))
+         pick
+         (or (seq (filter #(or (generic-limit-has-signal? %) (account-plan-window-row? %)) rows))
+             (seq rows))
 
-      {:keys [prefix cells]}
-      (compact-limit-cells (take max-rows (prioritize-limit-rows pick)))
+         {:keys [prefix cells]}
+         (compact-limit-cells (take max-rows (prioritize-limit-rows pick)))
 
-      body
-      (str/join " · " (keep :text cells))]
+         body
+         (str/join " · " (keep :text cells))]
 
      (when (seq body) (if prefix (str prefix " " body) body)))))

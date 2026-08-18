@@ -35,12 +35,11 @@
   "Lower-cased extension of `path`'s final segment (no leading dot), or nil when
    the file name has none."
   [^String path]
-  (let
-    [name
-     (str/replace path #"^.*[/\\]" "")
+  (let [name
+        (str/replace path #"^.*[/\\]" "")
 
-     dot
-     (.lastIndexOf name ".")]
+        dot
+        (.lastIndexOf name ".")]
 
     (when (pos? dot) (str/lower-case (subs name (inc dot))))))
 
@@ -106,24 +105,22 @@
    the last bracket (the closest structural fault), rather than blaming the
    first innocent opener at the start of the file."
   [^Node n]
-  (loop
-    [i
-     0
+  (loop [i
+         0
 
-     quote
-     nil
+         quote
+         nil
 
-     bracket
-     nil]
+         bracket
+         nil]
 
     (if (< i (.childCount n))
       (if-let [^Node c (.orElse (.child n (int i)) nil)]
-        (let
-          [kind (.kind c)
-           hit? (and (not (.isNamed c)) (contains? delimiter-kinds kind))
-           data (when hit?
-                  (let [^Point sp (.startPosition c)]
-                    {:line (inc (.row sp)) :byte-col (.column sp) :kind kind}))]
+        (let [kind (.kind c)
+              hit? (and (not (.isNamed c)) (contains? delimiter-kinds kind))
+              data (when hit?
+                     (let [^Point sp (.startPosition c)]
+                       {:line (inc (.row sp)) :byte-col (.column sp) :kind kind}))]
 
           (.close c)
           (recur (inc i)
@@ -136,15 +133,14 @@
   "Convert tree-sitter's 0-based UTF-8 byte column to a user-facing Unicode
    code-point column on `line`. Parser points always fall on UTF-8 boundaries."
   ^long [^String line ^long byte-col]
-  (let
-    [^bytes bs
-     (utf8 line)
+  (let [^bytes bs
+        (utf8 line)
 
-     end
-     (min (max 0 byte-col) (alength bs))
+        end
+        (min (max 0 byte-col) (alength bs))
 
-     ^String prefix
-     (byte-slice bs 0 end)]
+        ^String prefix
+        (byte-slice bs 0 end)]
 
     (.codePointCount prefix 0 (.length prefix))))
 
@@ -172,9 +168,8 @@
    and look through a broad recovery wrapper that contains a more specific ERROR."
   [lang ^String source]
   (if-let [^Tree tree (and lang (parse-tree lang source))]
-    (let
-      [src-bytes (utf8 source)
-       acc (transient [])]
+    (let [src-bytes (utf8 source)
+          acc (transient [])]
 
       (try
         (let [^Node root (.rootNode tree)]
@@ -182,28 +177,26 @@
             (letfn
               [(walk [^Node n]
                  (when (or (.isError n) (.isMissing n))
-                   (let
-                     [^Point sp (.startPosition n)
-                      ^Point ep (.endPosition n)
-                      d (when (.isError n) (fault-delimiter n))
-                      line (long (or (:line d) (inc (.row sp))))
-                      byte-col (long (or (:byte-col d) (.column sp)))
-                      line-text (source-line source line)
-                      col (if line-text (character-column line-text byte-col) byte-col)]
+                   (let [^Point sp (.startPosition n)
+                         ^Point ep (.endPosition n)
+                         d (when (.isError n) (fault-delimiter n))
+                         line (long (or (:line d) (inc (.row sp))))
+                         byte-col (long (or (:byte-col d) (.column sp)))
+                         line-text (source-line source line)
+                         col (if line-text (character-column line-text byte-col) byte-col)]
 
                      (conj! acc
-                            (cond->
-                              {:line line
-                               :col col
-                               :byte-col byte-col
-                               :end-line (inc (.row ep))
-                               :end-col (.column ep)
-                               :start-byte (.startByte n)
-                               :end-byte (.endByte n)
-                               :kind (.kind n)
-                               :missing? (.isMissing n)
-                               :text (or (when d line-text)
-                                         (byte-slice src-bytes (.startByte n) (.endByte n)))}
+                            (cond-> {:line line
+                                     :col col
+                                     :byte-col byte-col
+                                     :end-line (inc (.row ep))
+                                     :end-col (.column ep)
+                                     :start-byte (.startByte n)
+                                     :end-byte (.endByte n)
+                                     :kind (.kind n)
+                                     :missing? (.isMissing n)
+                                     :text (or (when d line-text)
+                                               (byte-slice src-bytes (.startByte n) (.endByte n)))}
                               d
                               (assoc :delimiter
                                 (:kind d) :error-line

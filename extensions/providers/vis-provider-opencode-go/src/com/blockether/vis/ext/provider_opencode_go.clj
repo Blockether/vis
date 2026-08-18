@@ -254,12 +254,11 @@
   "Non-blocking auth flow: the CLI dispatcher captures stdin/stdout, so we persist
    an env-var key when present and otherwise print instructions."
   [printer-fn]
-  (let
-    [print!
-     (or printer-fn (constantly nil))
+  (let [print!
+        (or printer-fn (constantly nil))
 
-     existing
-     (detect-key)]
+        existing
+        (detect-key)]
 
     (cond
       ;; Configured or already on disk -> no-op so re-running auth doesn't

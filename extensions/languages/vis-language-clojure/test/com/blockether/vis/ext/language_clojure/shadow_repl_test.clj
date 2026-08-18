@@ -23,12 +23,11 @@
   "A project dir where a `shadow-cljs watch` has published `content` as its nREPL
    port — the exact file, at the exact path, the real one writes."
   ^String [content]
-  (let
-    [dir
-     (tmp-dir)
+  (let [dir
+        (tmp-dir)
 
-     f
-     (apply io/file dir shadow-repl/port-file-path)]
+        f
+        (apply io/file dir shadow-repl/port-file-path)]
 
     (io/make-parents f)
     (spit f content)
@@ -49,9 +48,8 @@
 (defdescribe
   probe-test
   (it "one read-only eval answers what the server is, which builds it loaded, and the target"
-      (with-redefs
-        [nrepl-client/eval! (fn [_]
-                              {"value" live-probe-value})]
+      (with-redefs [nrepl-client/eval! (fn [_]
+                                         {"value" live-probe-value})]
         (let [r (shadow-repl/probe! {:port 1 :build "app"})]
           (expect (true? (:shadow? r)))
           ;; The ids come back as STRINGS: they cross to the model, and the caller
@@ -61,10 +59,9 @@
           (expect (= :node-script (:target r))))))
   (it "RESOLVES every shadow Var, so the same form is safe on a plain JVM nREPL"
       (let [captured (atom nil)]
-        (with-redefs
-          [nrepl-client/eval! (fn [opts]
-                                (reset! captured (:code opts))
-                                {"value" live-probe-value})]
+        (with-redefs [nrepl-client/eval! (fn [opts]
+                                           (reset! captured (:code opts))
+                                           {"value" live-probe-value})]
           (shadow-repl/probe! {:port 1 :build "app"})
           (expect (str/includes? @captured "(resolve 'shadow.cljs.devtools.api/worker-running?)"))
           ;; Never CALLED by name: an unloaded namespace would throw `No namespace`
@@ -73,17 +70,15 @@
           ;; The build reaches the server as the KEYWORD shadow indexes it by.
           (expect (str/includes? @captured ":app")))))
   (it "a plain JVM nREPL is reported as not-shadow, carrying its own words"
-      (with-redefs
-        [nrepl-client/eval! (fn [_]
-                              {"value" "{:shadow false :builds nil :worker false}"})]
+      (with-redefs [nrepl-client/eval! (fn [_]
+                                         {"value" "{:shadow false :builds nil :worker false}"})]
         (let [r (shadow-repl/probe! {:port 1 :build "app"})]
           (expect (false? (:shadow? r)))
           (expect (= [] (:builds r)))
           (expect (false? (:worker? r))))))
   (it "an unreachable server answers data with :error — the probe never throws"
-      (with-redefs
-        [nrepl-client/eval! (fn [_]
-                              (throw (ex-info "connection refused" {})))]
+      (with-redefs [nrepl-client/eval! (fn [_]
+                                         (throw (ex-info "connection refused" {})))]
         (let [r (shadow-repl/probe! {:port 1 :build "app"})]
           (expect (false? (:shadow? r)))
           (expect (str/includes? (str (:error r)) "connection refused"))))))
@@ -91,12 +86,11 @@
 (defdescribe select-test
              (it "quits whatever build the session holds, then evaluates shadow's OWN nrepl-select"
                  (let [codes (atom [])]
-                   (with-redefs
-                     [nrepl-client/eval! (fn [opts]
-                                           (swap! codes conj (:code opts))
-                                           {"value" "[:selected :app]"})
-                      nrepl-client/session-token (fn [_ _]
-                                                   "tok-1")]
+                   (with-redefs [nrepl-client/eval! (fn [opts]
+                                                      (swap! codes conj (:code opts))
+                                                      {"value" "[:selected :app]"})
+                                 nrepl-client/session-token (fn [_ _]
+                                                              "tok-1")]
 
                      (let [r (shadow-repl/select! {:port 1 :build "app"})]
                        ;; `:cljs/quit` FIRST. Selecting from a session that already sits in
@@ -110,9 +104,8 @@
                        (expect (shadow-repl/selected? {:port 1 :build "app"}))
                        (expect (not (shadow-repl/selected? {:port 1 :build "worker"})))))))
              (it "a refusal keeps the session in Clojure and reports shadow's own reason"
-                 (with-redefs
-                   [nrepl-client/eval! (fn [_]
-                                         {"err" "watch for build not running\n"})]
+                 (with-redefs [nrepl-client/eval! (fn [_]
+                                                    {"err" "watch for build not running\n"})]
                    (let [r (shadow-repl/select! {:port 2 :build "app"})]
                      (expect (false? (:selected? r)))
                      (expect (str/includes? (:message r) "watch for build not running"))
@@ -152,12 +145,11 @@
   eval-selection-test
   (it "stays at ONE round trip while that build is still the selected one"
       (let [codes (atom [])]
-        (with-redefs
-          [nrepl-client/session-token (fn [_ _]
-                                        "tok-1")
-           nrepl-client/eval! (fn [opts]
-                                (swap! codes conj (:code opts))
-                                {"value" "[:selected :app]"})]
+        (with-redefs [nrepl-client/session-token (fn [_ _]
+                                                   "tok-1")
+                      nrepl-client/eval! (fn [opts]
+                                           (swap! codes conj (:code opts))
+                                           {"value" "[:selected :app]"})]
 
           (shadow-repl/select! {:port 10 :build "app"})
           (reset! codes [])
@@ -165,32 +157,29 @@
             (expect (true? (:selected? r)))
             (expect (= ["(greeting)"] @codes))))))
   (it "re-selects when the nREPL session was replaced under it"
-      (let
-        [codes
-         (atom [])
+      (let [codes
+            (atom [])
 
-         answer
-         (fn [opts]
-           (swap! codes conj (:code opts))
-           {"value" "[:selected :app]"})]
+            answer
+            (fn [opts]
+              (swap! codes conj (:code opts))
+              {"value" "[:selected :app]"})]
 
-        (with-redefs
-          [nrepl-client/session-token
-           (fn [_ _]
-             "tok-1")
+        (with-redefs [nrepl-client/session-token
+                      (fn [_ _]
+                        "tok-1")
 
-           nrepl-client/eval!
-           answer]
+                      nrepl-client/eval!
+                      answer]
 
           (shadow-repl/select! {:port 11 :build "app"}))
         (reset! codes [])
-        (with-redefs
-          [nrepl-client/session-token
-           (fn [_ _]
-             "tok-2")
+        (with-redefs [nrepl-client/session-token
+                      (fn [_ _]
+                        "tok-2")
 
-           nrepl-client/eval!
-           answer]
+                      nrepl-client/eval!
+                      answer]
 
           (shadow-repl/eval! {:port 11 :build "app"} {:code "1"})
           ;; A fresh session is CLJ again — the very same code would otherwise
@@ -198,12 +187,11 @@
           (expect (= [":cljs/quit" "(shadow.cljs.devtools.api/nrepl-select :app)" "1"] @codes)))))
   (it "re-selects when a SIBLING build of the same watch took the session over"
       (let [codes (atom [])]
-        (with-redefs
-          [nrepl-client/session-token (fn [_ _]
-                                        "tok-1")
-           nrepl-client/eval! (fn [opts]
-                                (swap! codes conj (:code opts))
-                                {"value" "[:selected :selected]"})]
+        (with-redefs [nrepl-client/session-token (fn [_ _]
+                                                   "tok-1")
+                      nrepl-client/eval! (fn [opts]
+                                           (swap! codes conj (:code opts))
+                                           {"value" "[:selected :selected]"})]
 
           (shadow-repl/select! {:port 12 :build "app"})
           ;; ONE session serves every build of that server: selecting :worker
@@ -219,23 +207,21 @@
                        @codes))))))
   (it "selects on the FIRST eval of an attachment that never selected"
       (let [codes (atom [])]
-        (with-redefs
-          [nrepl-client/session-token (fn [_ _]
-                                        "tok-1")
-           nrepl-client/eval! (fn [opts]
-                                (swap! codes conj (:code opts))
-                                {"value" "[:selected :app]"})]
+        (with-redefs [nrepl-client/session-token (fn [_ _]
+                                                   "tok-1")
+                      nrepl-client/eval! (fn [opts]
+                                           (swap! codes conj (:code opts))
+                                           {"value" "[:selected :app]"})]
 
           (shadow-repl/eval! {:port 13 :build "app"} {:code "1"})
           (expect (= [":cljs/quit" "(shadow.cljs.devtools.api/nrepl-select :app)" "1"] @codes)))))
   (it "evaluates NOTHING when the build can no longer be selected"
       (let [codes (atom [])]
-        (with-redefs
-          [nrepl-client/session-token (fn [_ _]
-                                        "tok-9")
-           nrepl-client/eval! (fn [opts]
-                                (swap! codes conj (:code opts))
-                                {"err" "watch for build not running\n"})]
+        (with-redefs [nrepl-client/session-token (fn [_ _]
+                                                   "tok-9")
+                      nrepl-client/eval! (fn [opts]
+                                           (swap! codes conj (:code opts))
+                                           {"err" "watch for build not running\n"})]
 
           (let [r (shadow-repl/eval! {:port 14 :build "app"} {:code "(greeting)"})]
             (expect (false? (:selected? r)))
@@ -243,19 +229,18 @@
             ;; The user's code must not reach a session that is back in Clojure.
             (expect (not (some #{"(greeting)"} @codes)))))))
   (it "turns shadow's bare no-runtime error into the instruction that starts one"
-      (with-redefs
-        [nrepl-client/session-token
-         (fn [_ _]
-           "tok-1")
+      (with-redefs [nrepl-client/session-token
+                    (fn [_ _]
+                      "tok-1")
 
-         nrepl-client/eval!
-         (fn [opts]
-           (if (str/includes? (str (:code opts)) "nrepl-select")
-             {"value" "[:selected :app]"}
-             {"err" (str shadow-repl/no-runtime-marker ".\nSee https://…")}))]
+                    nrepl-client/eval!
+                    (fn [opts]
+                      (if (str/includes? (str (:code opts)) "nrepl-select")
+                        {"value" "[:selected :app]"}
+                        {"err" (str shadow-repl/no-runtime-marker ".\nSee https://…")}))]
 
-        (let
-          [r (shadow-repl/eval! {:port 15 :build "app" :target :node-script} {:code "(greeting)"})]
+        (let [r (shadow-repl/eval! {:port 15 :build "app" :target :node-script}
+                                   {:code "(greeting)"})]
           ;; The attachment is HEALTHY — it simply has nothing to evaluate in.
           (expect (true? (:selected? r)))
           (expect (str/includes? (:message r) "node"))

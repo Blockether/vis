@@ -45,10 +45,9 @@
     (if-let [[_ fm body] (re-find #"(?s)\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\z" content)]
       {:meta
        (update-vals
-         (loop
-           [lines (str/split-lines fm)
-            k nil
-            acc {}]
+         (loop [lines (str/split-lines fm)
+                k nil
+                acc {}]
 
            (if (empty? lines)
              acc
@@ -65,10 +64,9 @@
 
 (defn- non-blank
   [s]
-  (let
-    [s (some-> s
-               str
-               str/trim)]
+  (let [s (some-> s
+                  str
+                  str/trim)]
     (when-not (str/blank? s) s)))
 
 ;; Pure entry builders (string in, entry out — testable without the fs)
@@ -78,12 +76,11 @@
    filename stem) backs a missing frontmatter `name`. Returns nil when there
    is no usable name. `tool`/`path` are provenance, carried through verbatim."
   [content {:keys [name-default tool path]}]
-  (let
-    [{:keys [meta body]}
-     (parse-frontmatter content)
+  (let [{:keys [meta body]}
+        (parse-frontmatter content)
 
-     nm
-     (or (non-blank (:name meta)) (non-blank name-default))]
+        nm
+        (or (non-blank (:name meta)) (non-blank name-default))]
 
     (when nm
       {:name nm
@@ -99,12 +96,11 @@
    `name-default` is the skill directory name. `dir`/`tool`/`path` are
    provenance. Returns nil when there is no usable name."
   [content {:keys [name-default tool dir path]}]
-  (let
-    [{:keys [meta body]}
-     (parse-frontmatter content)
+  (let [{:keys [meta body]}
+        (parse-frontmatter content)
 
-     nm
-     (or (non-blank (:name meta)) (non-blank name-default))]
+        nm
+        (or (non-blank (:name meta)) (non-blank name-default))]
 
     (when nm
       {:name nm
@@ -156,13 +152,12 @@
   [leaf]
   (let [cache (dir (home) ".claude" "plugins" "cache")]
     (when (existing-dir? cache)
-      (for
-        [plugin (.listFiles ^java.io.File cache)
-         :when (existing-dir? plugin)
-         version (.listFiles ^java.io.File plugin)
-         :when (existing-dir? version)
-         :let [d (io/file version leaf)]
-         :when (existing-dir? d)]
+      (for [plugin (.listFiles ^java.io.File cache)
+            :when (existing-dir? plugin)
+            version (.listFiles ^java.io.File plugin)
+            :when (existing-dir? version)
+            :let [d (io/file version leaf)]
+            :when (existing-dir? d)]
 
         d))))
 
@@ -293,20 +288,19 @@
 (defn discover-agents
   "Parse every agent file across `agent-dirs`, first-name-wins, tagged by tool."
   []
-  (dedup-by-name (for
-                   [[tool ^java.io.File d]
-                    (agent-dirs)
+  (dedup-by-name (for [[tool ^java.io.File d]
+                       (agent-dirs)
 
-                    ^java.io.File f
-                    (md-files d)
+                       ^java.io.File f
+                       (md-files d)
 
-                    :let [e
-                          (try (parse-agent (slurp f)
-                                            {:name-default (name-stem (.getName f))
-                                             :tool tool
-                                             :path (.getPath f)})
-                               (catch Throwable _ nil))]
-                    :when e]
+                       :let [e
+                             (try (parse-agent (slurp f)
+                                               {:name-default (name-stem (.getName f))
+                                                :tool tool
+                                                :path (.getPath f)})
+                                  (catch Throwable _ nil))]
+                       :when e]
 
                    e)))
 
@@ -323,42 +317,40 @@
    configuration directories are reopened. Nested app sessions deliberately do not
    scan siblings."
   []
-  (let
-    [^java.io.File repo
-     (repository-root)
+  (let [^java.io.File repo
+        (repository-root)
 
-     ^java.io.File active-root
-     (project-root)
+        ^java.io.File active-root
+        (project-root)
 
-     ^java.io.File active
-     (.getCanonicalFile active-root)]
+        ^java.io.File active
+        (.getCanonicalFile active-root)]
 
     (when (and repo (= (.getPath repo) (.getPath active)))
-      (let
-        [specs
-         (->> skill-sources
-              (filter #(= :rel-walk (second %)))
-              distinct
-              vec)
+      (let [specs
+            (->> skill-sources
+                 (filter #(= :rel-walk (second %)))
+                 distinct
+                 vec)
 
-         harnesses
-         (map #(nth % 2) specs)
+            harnesses
+            (map #(nth % 2) specs)
 
-         overlay
-         {:unignore-globs (vec (distinct (mapcat (fn [h]
-                                                   [(str h "/**") (str "**/" h "/**")])
-                                                 harnesses)))}]
+            overlay
+            {:unignore-globs (vec (distinct (mapcat (fn [h]
+                                                      [(str h "/**") (str "**/" h "/**")])
+                                                    harnesses)))}]
 
         (fff-index/with-index
           [idx (fff-index/lease repo true overlay)]
           (vec (mapcat (fn [[tool _ & parts]]
                          (let [pattern (str "**/" (str/join "/" parts) "/*/SKILL.md")]
-                           (for
-                             [{:keys [relative-path]}
-                              (sort-by :relative-path
-                                       (:items (fff/glob idx {:pattern pattern :page-size 10000})))
-                              :let [f (io/file repo relative-path)]
-                              :when (.isFile ^java.io.File f)]
+                           (for [{:keys [relative-path]}
+                                 (sort-by :relative-path
+                                          (:items (fff/glob idx
+                                                            {:pattern pattern :page-size 10000})))
+                                 :let [f (io/file repo relative-path)]
+                                 :when (.isFile ^java.io.File f)]
 
                              [tool f])))
                        specs)))))))
@@ -368,23 +360,21 @@
    then descendant projects when the session is at the Git root, then user/plugin
    definitions."
   []
-  (let
-    [project?
-     #(= :rel-walk (second %))
+  (let [project?
+        #(= :rel-walk (second %))
 
-     files-for
-     (fn [specs]
-       (for
-         [spec
-          specs
+        files-for
+        (fn [specs]
+          (for [spec
+                specs
 
-          [tool ^java.io.File d]
-          (resolve-source spec)
+                [tool ^java.io.File d]
+                (resolve-source spec)
 
-          ^java.io.File f
-          (skill-md-files d)]
+                ^java.io.File f
+                (skill-md-files d)]
 
-         [tool f]))]
+            [tool f]))]
 
     (concat (files-for (filter project? skill-sources))
             (nested-skill-files)
@@ -396,22 +386,21 @@
    plugin-cache skills return nil and never re-root a turn."
   [^java.io.File skill-md]
   (when-let [^java.io.File repo (repository-root)]
-    (let
-      [^java.io.File skill-dir (.getParentFile skill-md)
-       ^java.io.File skills-dir (some-> skill-dir
-                                        .getParentFile)
-       ^java.io.File harness-dir (some-> skills-dir
-                                         .getParentFile)
-       ^java.io.File owner (some-> harness-dir
-                                   .getParentFile
-                                   .getCanonicalFile)
-       harness-name (some-> harness-dir
+    (let [^java.io.File skill-dir (.getParentFile skill-md)
+          ^java.io.File skills-dir (some-> skill-dir
+                                           .getParentFile)
+          ^java.io.File harness-dir (some-> skills-dir
+                                            .getParentFile)
+          ^java.io.File owner (some-> harness-dir
+                                      .getParentFile
+                                      .getCanonicalFile)
+          harness-name (some-> harness-dir
+                               .getName)
+          leaf-name (some-> skills-dir
                             .getName)
-       leaf-name (some-> skills-dir
-                         .getName)
-       ^java.nio.file.Path owner-path (some-> owner
-                                              .toPath)
-       ^java.nio.file.Path repo-path (.toPath repo)]
+          ^java.nio.file.Path owner-path (some-> owner
+                                                 .toPath)
+          ^java.nio.file.Path repo-path (.toPath repo)]
 
       (when (and owner-path
                  (contains? #{".vis" ".claude" ".pi" ".agents" ".opencode"} harness-name)
@@ -425,28 +414,27 @@
    makes their slash-expanded turn execute from the project that owns the skill."
   []
   (dedup-by-name
-    (for
-      [[tool ^java.io.File f]
-       (skill-candidates)
+    (for [[tool ^java.io.File f]
+          (skill-candidates)
 
-       :let [sdir
-             (.getParentFile f)
+          :let [sdir
+                (.getParentFile f)
 
-             project-root
-             (skill-project-root f)
+                project-root
+                (skill-project-root f)
 
-             e
-             (try (some-> (parse-skill-meta (slurp f)
-                                            {:name-default (.getName sdir)
-                                             :tool tool
-                                             :dir (.getPath sdir)
-                                             :path (.getPath f)})
-                          (assoc :resources (skill-resources sdir))
-                          (cond->
-                            project-root
-                            (assoc :project-root project-root)))
-                  (catch Throwable _ nil))]
-       :when e]
+                e
+                (try (some-> (parse-skill-meta (slurp f)
+                                               {:name-default (.getName sdir)
+                                                :tool tool
+                                                :dir (.getPath sdir)
+                                                :path (.getPath f)})
+                             (assoc :resources (skill-resources sdir))
+                             (cond->
+                               project-root
+                               (assoc :project-root project-root)))
+                     (catch Throwable _ nil))]
+          :when e]
 
       e)))
 
@@ -455,20 +443,19 @@
    tool. Each entry's `:body` IS the prompt template (`$ARGUMENTS`-aware at expand
    time); `:model`/`:tools` frontmatter is carried through but currently unused."
   []
-  (dedup-by-name (for
-                   [[tool ^java.io.File d]
-                    (command-dirs)
+  (dedup-by-name (for [[tool ^java.io.File d]
+                       (command-dirs)
 
-                    ^java.io.File f
-                    (md-files d)
+                       ^java.io.File f
+                       (md-files d)
 
-                    :let [e
-                          (try (parse-agent (slurp f)
-                                            {:name-default (name-stem (.getName f))
-                                             :tool tool
-                                             :path (.getPath f)})
-                               (catch Throwable _ nil))]
-                    :when e]
+                       :let [e
+                             (try (parse-agent (slurp f)
+                                               {:name-default (name-stem (.getName f))
+                                                :tool tool
+                                                :path (.getPath f)})
+                                  (catch Throwable _ nil))]
+                       :when e]
 
                    e)))
 
@@ -483,45 +470,41 @@
 (defn- source-marker
   []
   {:root (.getPath (project-root))
-   :agents (vec (for
-                  [[tool ^java.io.File d]
-                   (agent-dirs)
+   :agents (vec (for [[tool ^java.io.File d]
+                      (agent-dirs)
 
-                   ^java.io.File f
-                   (md-files d)]
+                      ^java.io.File f
+                      (md-files d)]
 
                   [tool (file-mark f)]))
    :skills (vec (for [[tool ^java.io.File f] (skill-candidates)]
                   [tool (file-mark f)]))
-   :commands (vec (for
-                    [[tool ^java.io.File d]
-                     (command-dirs)
+   :commands (vec (for [[tool ^java.io.File d]
+                        (command-dirs)
 
-                     ^java.io.File f
-                     (md-files d)]
+                        ^java.io.File f
+                        (md-files d)]
 
                     [tool (file-mark f)]))})
 
 (defn- ensure!
   []
-  (let
-    [m
-     (source-marker)
+  (let [m
+        (source-marker)
 
-     root
-     (:root m)
+        root
+        (:root m)
 
-     c
-     (get @cache root)]
+        c
+        (get @cache root)]
 
     (if (and c (= m (:marker c)))
       c
-      (let
-        [fresh {:marker m
-                :generation (inc (long (:generation c 0)))
-                :agents (vec (discover-agents))
-                :skills (vec (discover-skills))
-                :commands (vec (discover-commands))}]
+      (let [fresh {:marker m
+                   :generation (inc (long (:generation c 0)))
+                   :agents (vec (discover-agents))
+                   :skills (vec (discover-skills))
+                   :commands (vec (discover-commands))}]
         (swap! cache assoc root fresh)
         fresh))))
 

@@ -79,49 +79,48 @@
   [^File root-file
    {:keys [max-files max-repos deadline-ms]
     :or {max-files default-max-files max-repos default-max-repos deadline-ms default-deadline-ms}}]
-  (let
-    [^Path start
-     (.toPath root-file)
+  (let [^Path start
+        (.toPath root-file)
 
-     roots
-     (LinkedHashSet.)
+        roots
+        (LinkedHashSet.)
 
-     visited
-     (long-array 1 0)
+        visited
+        (long-array 1 0)
 
-     truncated
-     (boolean-array 1 false)
+        truncated
+        (boolean-array 1 false)
 
-     deadline
-     (+ (System/currentTimeMillis) (long deadline-ms))
+        deadline
+        (+ (System/currentTimeMillis) (long deadline-ms))
 
-     stop?
-     (fn []
-       (or (> (System/currentTimeMillis) deadline)
-           (>= (.size roots) (long max-repos))
-           (>= (aget visited 0) (long max-files))))
+        stop?
+        (fn []
+          (or (> (System/currentTimeMillis) deadline)
+              (>= (.size roots) (long max-repos))
+              (>= (aget visited 0) (long max-files))))
 
-     visitor
-     (proxy [SimpleFileVisitor] []
-       (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
-         (cond (stop?) (do (aset truncated 0 true) FileVisitResult/TERMINATE)
-               (= dir start) (do (when (repo-root? dir) (add-root! roots dir (long max-repos)))
-                                 FileVisitResult/CONTINUE)
-               :else (let [name (str (.getFileName dir))]
-                       (cond (contains? skip-directories name) FileVisitResult/SKIP_SUBTREE
-                             (repo-root? dir) (do (add-root! roots dir (long max-repos))
-                                                  (if (>= (.size roots) (long max-repos))
-                                                    (do (aset truncated 0 true)
-                                                        FileVisitResult/TERMINATE)
-                                                    FileVisitResult/SKIP_SUBTREE))
-                             :else FileVisitResult/CONTINUE))))
-       (visitFile [^Path _file ^BasicFileAttributes _attrs]
-         (let [n (inc (aget visited 0))]
-           (aset visited 0 n)
-           (if (stop?)
-             (do (aset truncated 0 true) FileVisitResult/TERMINATE)
-             FileVisitResult/CONTINUE)))
-       (visitFileFailed [^Path _file ^java.io.IOException _exception] FileVisitResult/CONTINUE))]
+        visitor
+        (proxy [SimpleFileVisitor] []
+          (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
+            (cond (stop?) (do (aset truncated 0 true) FileVisitResult/TERMINATE)
+                  (= dir start) (do (when (repo-root? dir) (add-root! roots dir (long max-repos)))
+                                    FileVisitResult/CONTINUE)
+                  :else (let [name (str (.getFileName dir))]
+                          (cond (contains? skip-directories name) FileVisitResult/SKIP_SUBTREE
+                                (repo-root? dir) (do (add-root! roots dir (long max-repos))
+                                                     (if (>= (.size roots) (long max-repos))
+                                                       (do (aset truncated 0 true)
+                                                           FileVisitResult/TERMINATE)
+                                                       FileVisitResult/SKIP_SUBTREE))
+                                :else FileVisitResult/CONTINUE))))
+          (visitFile [^Path _file ^BasicFileAttributes _attrs]
+            (let [n (inc (aget visited 0))]
+              (aset visited 0 n)
+              (if (stop?)
+                (do (aset truncated 0 true) FileVisitResult/TERMINATE)
+                FileVisitResult/CONTINUE)))
+          (visitFileFailed [^Path _file ^java.io.IOException _exception] FileVisitResult/CONTINUE))]
 
     (try (Files/walkFileTree start visitor) (catch Throwable _ nil))
     [(vec roots) (aget truncated 0)]))
@@ -149,40 +148,38 @@
       :truncated? false}"
   ([root] (inventory root nil))
   ([root opts]
-   (let
-     [root-file
-      (canonical-file (file-of root))
+   (let [root-file
+         (canonical-file (file-of root))
 
-      root-path
-      (canonical-path root-file)
+         root-path
+         (canonical-path root-file)
 
-      scan-opts
-      {:max-files (long (or (:max-files opts) default-max-files))
-       :max-repos (long (or (:max-repos opts) default-inventory-max-repos))
-       :deadline-ms (long (or (:deadline-ms opts) default-deadline-ms))}
+         scan-opts
+         {:max-files (long (or (:max-files opts) default-max-files))
+          :max-repos (long (or (:max-repos opts) default-inventory-max-repos))
+          :deadline-ms (long (or (:deadline-ms opts) default-deadline-ms))}
 
-      cache-key
-      [root-path scan-opts]]
+         cache-key
+         [root-path scan-opts]]
 
      (or (get @inventory-cache cache-key)
-         (let
-           [[roots truncated?]
-            (discover-roots root-file scan-opts)
+         (let [[roots truncated?]
+               (discover-roots root-file scan-opts)
 
-            repositories
-            (->> roots
-                 (map (fn [^Path repo-path]
-                        (let [repo-file (canonical-file (.toFile repo-path))]
-                          {:path (rel-path (.toPath root-file) (.toPath repo-file))
-                           :root (canonical-path repo-file)})))
-                 (sort-by :path)
-                 vec)
+               repositories
+               (->> roots
+                    (map (fn [^Path repo-path]
+                           (let [repo-file (canonical-file (.toFile repo-path))]
+                             {:path (rel-path (.toPath root-file) (.toPath repo-file))
+                              :root (canonical-path repo-file)})))
+                    (sort-by :path)
+                    vec)
 
-            result
-            {:root root-path
-             :count (count repositories)
-             :repositories repositories
-             :truncated? truncated?}]
+               result
+               {:root root-path
+                :count (count repositories)
+                :repositories repositories
+                :truncated? truncated?}]
 
            (swap! inventory-cache assoc cache-key result)
            result)))))
@@ -197,47 +194,45 @@
       :truncated? false}"
   ([root] (snapshot root nil))
   ([root opts]
-   (let
-     [root-file
-      (canonical-file (file-of root))
+   (let [root-file
+         (canonical-file (file-of root))
 
-      root-path
-      (canonical-path root-file)
+         root-path
+         (canonical-path root-file)
 
-      max-repos
-      (long (or (:max-repos opts) default-max-repos))
+         max-repos
+         (long (or (:max-repos opts) default-max-repos))
 
-      root-inventory
-      (inventory root-file
-                 (cond-> {:max-repos (max max-repos (long default-inventory-max-repos))}
-                   (:max-files opts)
-                   (assoc :max-files (:max-files opts))
+         root-inventory
+         (inventory root-file
+                    (cond-> {:max-repos (max max-repos (long default-inventory-max-repos))}
+                      (:max-files opts)
+                      (assoc :max-files (:max-files opts))
 
-                   (:deadline-ms opts)
-                   (assoc :deadline-ms (:deadline-ms opts))))
+                      (:deadline-ms opts)
+                      (assoc :deadline-ms (:deadline-ms opts))))
 
-      repository-rows
-      (vec (take max-repos (:repositories root-inventory)))
+         repository-rows
+         (vec (take max-repos (:repositories root-inventory)))
 
-      truncated?
-      (or (:truncated? root-inventory) (> (long (:count root-inventory 0)) max-repos))
+         truncated?
+         (or (:truncated? root-inventory) (> (long (:count root-inventory 0)) max-repos))
 
-      status-timeout-ms
-      (long (or (:status-timeout-ms opts) default-status-timeout-ms))
+         status-timeout-ms
+         (long (or (:status-timeout-ms opts) default-status-timeout-ms))
 
-      repos
-      (->> repository-rows
-           (mapv (fn [{:keys [path root]}]
-                   (let
-                     [repo-file
-                      (file-of root)
+         repos
+         (->> repository-rows
+              (mapv (fn [{:keys [path root]}]
+                      (let [repo-file
+                            (file-of root)
 
-                      summary
-                      (try (git/snapshot repo-file {:status-timeout-ms status-timeout-ms})
-                           (catch Throwable _ nil))]
+                            summary
+                            (try (git/snapshot repo-file {:status-timeout-ms status-timeout-ms})
+                                 (catch Throwable _ nil))]
 
-                     (cond-> {:path path :root root}
-                       summary
-                       (merge (select-repo-summary summary)))))))]
+                        (cond-> {:path path :root root}
+                          summary
+                          (merge (select-repo-summary summary)))))))]
 
      {:root root-path :count (count repos) :repositories repos :truncated? truncated?})))

@@ -31,13 +31,11 @@
    continue at `next-offset`. Returns the joined text."
   [session id limit]
   (let [file (shell-log/log-file session id)]
-    (loop
-      [off 0
-       acc []]
+    (loop [off 0
+           acc []]
 
-      (let
-        [chunk (shell-log/read-chunk id file {:offset off :limit limit})
-         next-off (long (:next-offset chunk))]
+      (let [chunk (shell-log/read-chunk id file {:offset off :limit limit})
+            next-off (long (:next-offset chunk))]
 
         (if (or (:is-eof chunk) (<= next-off off))
           (str/join (conj acc (:text chunk)))
@@ -50,12 +48,11 @@
   ;; held lost its head before the first poll and NO sequence of reads could get
   ;; it back — the tool answered "dropped: 8000" and the bytes were gone.
   (it "walks a log far bigger than one read with no overlap and no gap"
-      (let
-        [sid
-         (session-id "whole")
+      (let [sid
+            (session-id "whole")
 
-         text
-         (str/join (map #(str "line " % " of the build\n") (range 10000)))]
+            text
+            (str/join (map #(str "line " % " of the build\n") (range 10000)))]
 
         (try (write-log! sid "build" text)
              (expect (< 100000 (count text)))
@@ -77,20 +74,18 @@
                (expect (false? (:is-truncated chunk))))
              (finally (shell-log/delete-session-logs! sid)))))
   (it "reads the TAIL when no offset is named, and the head is one read away"
-      (let
-        [sid
-         (session-id "tail")
+      (let [sid
+            (session-id "tail")
 
-         text
-         (str/join (map #(str "chunk-" % "\n") (range 20000)))]
+            text
+            (str/join (map #(str "chunk-" % "\n") (range 20000)))]
 
         (try (write-log! sid "t" text)
-             (let
-               [tail
-                (shell-log/read-chunk "t" (shell-log/log-file sid "t"))
+             (let [tail
+                   (shell-log/read-chunk "t" (shell-log/log-file sid "t"))
 
-                head
-                (shell-log/read-chunk "t" (shell-log/log-file sid "t") {:offset 0})]
+                   head
+                   (shell-log/read-chunk "t" (shell-log/log-file sid "t") {:offset 0})]
 
                ;; A watcher wants the END of a live command…
                (expect (str/ends-with? (:text tail) "chunk-19999\n"))
@@ -105,16 +100,15 @@
       ;; Regression, handle audit: `sh.logs(-50)` was refused with "offset must not be
       ;; negative", so "the last 50 lines" cost a read of the whole log plus byte
       ;; arithmetic over output the caller had just paid to receive.
-      (let
-        [sid
-         (session-id "neg")
+      (let [sid
+            (session-id "neg")
 
-         text
-         (str/join (map #(str "line-" % "\n") (range 500)))
+            text
+            (str/join (map #(str "line-" % "\n") (range 500)))
 
-         text-at
-         (fn [off]
-           (:text (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset off})))]
+            text-at
+            (fn [off]
+              (:text (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset off})))]
 
         (try (write-log! sid "n" text)
              ;; -1 is the LAST line: the trailing newline ENDS it rather than
@@ -130,21 +124,20 @@
                ;; back as a POSITIVE cursor reads exactly the same bytes.
                (expect (= (:text c) (text-at (:offset c)))))
              ;; A byte cap still caps: a tail bigger than the window clamps into it.
-             (let
-               [c (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset -500 :limit 64})]
+             (let [c
+                   (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset -500 :limit 64})]
                (expect (>= 64 (count (:text c))))
                (expect (true? (:is-eof c))))
              (finally (shell-log/delete-session-logs! sid)))))
   (it "reads a negative tail off a log whose last line is unfinished"
       ;; A live command mid-line is the normal case for a watcher, and it has no
       ;; trailing newline to count from.
-      (let
-        [sid
-         (session-id "neg-partial")
+      (let [sid
+            (session-id "neg-partial")
 
-         text-at
-         (fn [off]
-           (:text (shell-log/read-chunk "p" (shell-log/log-file sid "p") {:offset off})))]
+            text-at
+            (fn [off]
+              (:text (shell-log/read-chunk "p" (shell-log/log-file sid "p") {:offset off})))]
 
         (try (write-log! sid "p" "alpha\nbeta\ngamma")
              (expect (= "gamma" (text-at -1)))
@@ -152,15 +145,14 @@
              (expect (= "alpha\nbeta\ngamma" (text-at -9)))
              (finally (shell-log/delete-session-logs! sid)))))
   (it "never splits a multi-byte character across two reads"
-      (let
-        [sid
-         (session-id "utf8")
+      (let [sid
+            (session-id "utf8")
 
-         ;; Four bytes per emoji plus three per arrow: a byte cap lands mid
-         ;; character constantly, and a chunk that returned half of one would
-         ;; hand the model a replacement glyph it can never repair.
-         text
-         (str/join (map #(str "→ 🚀 " % "\n") (range 4000)))]
+            ;; Four bytes per emoji plus three per arrow: a byte cap lands mid
+            ;; character constantly, and a chunk that returned half of one would
+            ;; hand the model a replacement glyph it can never repair.
+            text
+            (str/join (map #(str "→ 🚀 " % "\n") (range 4000)))]
 
         (try (write-log! sid "u" text)
              (expect (= text (read-all sid "u" 101)))
@@ -169,10 +161,9 @@
              (finally (shell-log/delete-session-logs! sid)))))
   (it "reads a log that is still being written, and says there is more"
       (let [sid (session-id "live")]
-        (try (let
-               [sink (shell-log/open! sid "live")
-                file (shell-log/log-file sid "live")
-                out ^java.io.OutputStream (:out sink)]
+        (try (let [sink (shell-log/open! sid "live")
+                   file (shell-log/log-file sid "live")
+                   out ^java.io.OutputStream (:out sink)]
 
                (.write out (.getBytes "first\n" "UTF-8"))
                (.flush out)
@@ -194,12 +185,11 @@
         (expect (= 0 (:next-offset chunk)))
         (expect (true? (:is-eof chunk)))))
   (it "keeps a hostile id inside the log directory"
-      (let
-        [sid
-         (session-id "escape")
+      (let [sid
+            (session-id "escape")
 
-         file
-         (shell-log/log-file sid "../../etc/passwd")]
+            file
+            (shell-log/log-file sid "../../etc/passwd")]
 
         (expect (= (.getCanonicalPath (shell-log/session-dir sid))
                    (.getCanonicalPath ^File (.getParentFile file)))))))
@@ -208,11 +198,10 @@
   tee-test
   (it "writes through every byte the pump reads"
       (let [sid (session-id "tee")]
-        (try (let
-               [sink (shell-log/open! sid "p")
-                source (java.io.ByteArrayInputStream. (.getBytes "alpha\nbeta\n" "UTF-8"))
-                copy (with-open [r (io/reader (shell-log/tee source sink))]
-                       (slurp r))]
+        (try (let [sink (shell-log/open! sid "p")
+                   source (java.io.ByteArrayInputStream. (.getBytes "alpha\nbeta\n" "UTF-8"))
+                   copy (with-open [r (io/reader (shell-log/tee source sink))]
+                          (slurp r))]
 
                (shell-log/close! sink)
                ;; What the pump saw and what the file holds are the same bytes —
@@ -225,12 +214,11 @@
 
 (defdescribe retention-test
              (it "deletes every log of a session and nothing of another"
-                 (let
-                   [a
-                    (session-id "keep")
+                 (let [a
+                       (session-id "keep")
 
-                    b
-                    (session-id "drop")]
+                       b
+                       (session-id "drop")]
 
                    (try (write-log! a "one" "a\n")
                         (write-log! b "one" "b\n")
@@ -246,33 +234,32 @@
   index-test
   (it "makes a log findable by session, newest first, with its exit"
       (let [s (vis/db-create-connection! :memory)]
-        (try
-          (let
-            [cid (h/store-session! s {:channel :tui :title "Shell log fixture"})
-             base {:command "npm run build" :script "npm run build" :dir "." :log-path "/x.log"}]
+        (try (let [cid (h/store-session! s {:channel :tui :title "Shell log fixture"})
+                   base
+                   {:command "npm run build" :script "npm run build" :dir "." :log-path "/x.log"}]
 
-            (shell-log/index! s cid "build" (assoc base :started-at 100))
-            (shell-log/index! s cid "serve" (assoc base :started-at 200))
-            ;; The same id is one log, updated in place — a shell that exits
-            ;; does not become a second row.
-            (shell-log/index! s
-                              cid
-                              "build"
-                              (assoc base
-                                :started-at 100
-                                :ended-at 900
-                                :exit 0))
-            ;; The row outlives the process, so it is JSON on disk and wears
-            ;; the wire's snake_case string keys.
-            (let [rows (shell-log/session-logs s cid)]
-              (expect (= 2 (count rows)))
-              (expect (= ["serve" "build"] (mapv #(get % "id") rows)))
-              (let [build (first (filter #(= "build" (get % "id")) rows))]
-                (expect (= 0 (get build "exit")))
-                (expect (= 900 (get build "ended_at")))
-                (expect (= "npm run build" (get build "script")))
-                (expect (= (str cid) (get build "session_id"))))))
-          (finally (vis/db-dispose-connection! s)))))
+               (shell-log/index! s cid "build" (assoc base :started-at 100))
+               (shell-log/index! s cid "serve" (assoc base :started-at 200))
+               ;; The same id is one log, updated in place — a shell that exits
+               ;; does not become a second row.
+               (shell-log/index! s
+                                 cid
+                                 "build"
+                                 (assoc base
+                                   :started-at 100
+                                   :ended-at 900
+                                   :exit 0))
+               ;; The row outlives the process, so it is JSON on disk and wears
+               ;; the wire's snake_case string keys.
+               (let [rows (shell-log/session-logs s cid)]
+                 (expect (= 2 (count rows)))
+                 (expect (= ["serve" "build"] (mapv #(get % "id") rows)))
+                 (let [build (first (filter #(= "build" (get % "id")) rows))]
+                   (expect (= 0 (get build "exit")))
+                   (expect (= 900 (get build "ended_at")))
+                   (expect (= "npm run build" (get build "script")))
+                   (expect (= (str cid) (get build "session_id"))))))
+             (finally (vis/db-dispose-connection! s)))))
   (it "is best effort: no database is no index and no throw"
       (expect (nil? (shell-log/index! nil "sid" "id" {:started-at 1})))
       (expect (= [] (shell-log/session-logs nil "sid")))))

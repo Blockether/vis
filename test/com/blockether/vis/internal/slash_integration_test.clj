@@ -27,21 +27,20 @@
   "Build a minimal engine env with one extension carrying `slashes`,
    a workspace, a session, and a fresh ctx-atom + turn-state-atom."
   [store slashes]
-  (let
-    [ext
-     (extension/extension {:ext/name "test.slash-integration"
-                           :ext/description "Slash integration test fixture."
-                           :ext/slash-commands slashes})
+  (let [ext
+        (extension/extension {:ext/name "test.slash-integration"
+                              :ext/description "Slash integration test fixture."
+                              :ext/slash-commands slashes})
 
-     ws
-     (persistance/db-workspace-insert!
-       store
-       {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
+        ws
+        (persistance/db-workspace-insert!
+          store
+          {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
 
-     soul-id
-     (persistance/db-store-session!
-       store
-       {:channel :tui :workspace-id (:id ws) :title "slash-test" :system-prompt ""})]
+        soul-id
+        (persistance/db-store-session!
+          store
+          {:channel :tui :workspace-id (:id ws) :title "slash-test" :system-prompt ""})]
 
     {:extensions (atom [ext])
      :db-info store
@@ -60,98 +59,93 @@
 
 ;; Short-circuit
 
-(defdescribe
-  run-turn-slash-short-circuit-test
-  (it "handled slash skips iteration-loop and persists a :user-slash iter"
-      (with-store
-        (fn [store]
-          (let
-            [env
-             (slash-env store [(slash-spec-ok "ping" "pong")])
+(defdescribe run-turn-slash-short-circuit-test
+             (it "handled slash skips iteration-loop and persists a :user-slash iter"
+                 (with-store
+                   (fn [store]
+                     (let [env
+                           (slash-env store [(slash-spec-ok "ping" "pong")])
 
-             call-count
-             (atom 0)
+                           call-count
+                           (atom 0)
 
-             ;; iteration-loop must NOT run for handled slashes.
-             result
-             (with-redefs
-               [lp/iteration-loop (fn [& _]
-                                    (swap! call-count inc)
-                                    {:status :success})]
-               (lp/run-turn! env "/ping" {}))]
+                           ;; iteration-loop must NOT run for handled slashes.
+                           result
+                           (with-redefs [lp/iteration-loop (fn [& _]
+                                                             (swap! call-count inc)
+                                                             {:status :success})]
+                             (lp/run-turn! env "/ping" {}))]
 
-            (expect (= 0 @call-count))
-            (expect (= :success (:status result)))
-            (expect (= :complete (:prior-outcome result)))
-            (expect (some? (:slash result)))
-            (expect (str/includes? (:answer result) "ran /ping"))
-            (expect (str/includes? (:answer result) "pong"))
-            ;; The synthetic turn was persisted; non-slash text still
-            ;; goes through the normal path.
-            (let [turns (persistance/db-list-session-turns store (:session-id env))]
-              (expect (= 1 (count turns)))
-              (expect (= "/ping"
-                         (-> turns
-                             first
-                             :user-request))))))))
-  (it "non-slash text falls through to iteration-loop"
-      (with-store
-        (fn [store]
-          (let
-            [env
-             (slash-env store [(slash-spec-ok "ping" "pong")])
+                       (expect (= 0 @call-count))
+                       (expect (= :success (:status result)))
+                       (expect (= :complete (:prior-outcome result)))
+                       (expect (some? (:slash result)))
+                       (expect (str/includes? (:answer result) "ran /ping"))
+                       (expect (str/includes? (:answer result) "pong"))
+                       ;; The synthetic turn was persisted; non-slash text still
+                       ;; goes through the normal path.
+                       (let [turns (persistance/db-list-session-turns store (:session-id env))]
+                         (expect (= 1 (count turns)))
+                         (expect (= "/ping"
+                                    (-> turns
+                                        first
+                                        :user-request))))))))
+             (it "non-slash text falls through to iteration-loop"
+                 (with-store (fn [store]
+                               (let [env
+                                     (slash-env store [(slash-spec-ok "ping" "pong")])
 
-             fell-through?
-             (atom false)]
+                                     fell-through?
+                                     (atom false)]
 
-            (with-redefs
-              [lp/iteration-loop (fn [& _]
-                                   (reset! fell-through? true)
-                                   ;; Mimic real iteration-loop happy path:
-                                   ;; no :status (the row column gets
-                                   ;; :success via `or` then normalized
-                                   ;; to "done"; prior_outcome stays NULL).
-                                   {:answer nil :iteration-count 0 :duration-ms 0})]
-              (lp/run-turn! env "hello world" {}))
-            (expect (true? @fell-through?))))))
-  ;; Regression: a root-visible nested skill expanded under the root session and then
-  ;; ran every relative tool call from the repository root instead of its owning app.
-  (it
-    "re-roots a nested template's normal turn while preserving root-session expansion"
-    (with-store
-      (fn [store]
-        (let
-          [env
-           (slash-env store [])
+                                 (with-redefs [lp/iteration-loop
+                                               (fn [& _]
+                                                 (reset! fell-through? true)
+                                                 ;; Mimic real iteration-loop happy path:
+                                                 ;; no :status (the row column gets
+                                                 ;; :success via `or` then normalized
+                                                 ;; to "done"; prior_outcome stays NULL).
+                                                 {:answer nil :iteration-count 0 :duration-ms 0})]
+                                   (lp/run-turn! env "hello world" {}))
+                                 (expect (true? @fell-through?))))))
+             ;; Regression: a root-visible nested skill expanded under the root session and then
+             ;; ran every relative tool call from the repository root instead of its owning app.
+             (it
+               "re-roots a nested template's normal turn while preserving root-session expansion"
+               (with-store
+                 (fn [store]
+                   (let [env
+                         (slash-env store [])
 
-           app-root
-           (workspace/workspace-root "/tmp/apps/companion")
+                         app-root
+                         (workspace/workspace-root "/tmp/apps/companion")
 
-           seen
-           (atom nil)
+                         seen
+                         (atom nil)
 
-           run-root
-           (atom nil)]
+                         run-root
+                         (atom nil)]
 
-          (prompt-templates/register-provider!
-            ::workspace-template
-            (fn []
-              [{:name "scoped-template"
-                :project-root app-root
-                :expand-fn (fn [_ args]
-                             (reset! seen {:root (.getPath (workspace/cwd)) :args args})
-                             "expanded")}]))
-          (try (with-redefs
-                 [lp/iteration-loop (fn [turn-env & _]
-                                      (reset! run-root {:env (:workspace/root turn-env)
-                                                        :cwd (.getPath (workspace/cwd))})
-                                      {:answer "done" :iteration-count 0 :duration-ms 0})]
-                 (lp/run-turn! env "/scoped-template audit apps/companion" {}))
-               (expect (= {:root (workspace/workspace-root "/tmp") :args "audit apps/companion"}
-                          @seen))
-               (expect (= {:env app-root :cwd app-root} @run-root))
-               (finally (prompt-templates/register-provider! ::workspace-template
-                                                             (constantly nil)))))))))
+                     (prompt-templates/register-provider!
+                       ::workspace-template
+                       (fn []
+                         [{:name "scoped-template"
+                           :project-root app-root
+                           :expand-fn (fn [_ args]
+                                        (reset! seen {:root (.getPath (workspace/cwd)) :args args})
+                                        "expanded")}]))
+                     (try (with-redefs [lp/iteration-loop
+                                        (fn [turn-env & _]
+                                          (reset! run-root {:env (:workspace/root turn-env)
+                                                            :cwd (.getPath (workspace/cwd))})
+                                          {:answer "done" :iteration-count 0 :duration-ms 0})]
+                            (lp/run-turn! env "/scoped-template audit apps/companion" {}))
+                          (expect (= {:root (workspace/workspace-root "/tmp")
+                                      :args "audit apps/companion"}
+                                     @seen))
+                          (expect (= {:env app-root :cwd app-root} @run-root))
+                          (finally (prompt-templates/register-provider! ::workspace-template
+                                                                        (constantly nil)))))))))
 
 ;; IR-shaped :slash/body persists as Markdown
 
@@ -159,23 +153,21 @@
              (it "IR :slash/body renders to Markdown for answer_markdown column"
                  (with-store
                    (fn [store]
-                     (let
-                       [ast
-                        [(content/prose "Hello **world**")]
+                     (let [ast
+                           [(content/prose "Hello **world**")]
 
-                        env
-                        (slash-env store
-                                   [{:slash/name "ir-body"
-                                     :slash/run-fn (fn [_]
-                                                     {:slash/status :ok
-                                                      :slash/title "IR body"
-                                                      :slash/body ast})}])
+                           env
+                           (slash-env store
+                                      [{:slash/name "ir-body"
+                                        :slash/run-fn (fn [_]
+                                                        {:slash/status :ok
+                                                         :slash/title "IR body"
+                                                         :slash/body ast})}])
 
-                        result
-                        (with-redefs
-                          [lp/iteration-loop (fn [& _]
-                                               {:status :success})]
-                          (lp/run-turn! env "/ir-body" {}))]
+                           result
+                           (with-redefs [lp/iteration-loop (fn [& _]
+                                                             {:status :success})]
+                             (lp/run-turn! env "/ir-body" {}))]
 
                        (expect (= :success (:status result)))
                        (expect (str/includes? (:answer result) "Hello"))
@@ -186,16 +178,14 @@
 (defdescribe slash-error-envelope-test
              (it "unknown slash persists as :user-slash with error in result"
                  (with-store (fn [store]
-                               (let
-                                 [env
-                                  (slash-env store [(slash-spec-ok "ping" "pong")])
+                               (let [env
+                                     (slash-env store [(slash-spec-ok "ping" "pong")])
 
-                                  result
-                                  (with-redefs
-                                    [lp/iteration-loop (fn [& _]
-                                                         (throw (ex-info "should not be called"
-                                                                         {})))]
-                                    (lp/run-turn! env "/nonexistent" {}))]
+                                     result
+                                     (with-redefs [lp/iteration-loop
+                                                   (fn [& _]
+                                                     (throw (ex-info "should not be called" {})))]
+                                       (lp/run-turn! env "/nonexistent" {}))]
 
                                  (expect (= :success (:status result)))
                                  (expect (= :unknown (get-in result [:slash :reason])))

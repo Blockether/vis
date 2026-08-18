@@ -18,8 +18,7 @@
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
-(def ^:private images-kind
-  :com.blockether.vis.internal.foundation.shim-pil/images)
+(def ^:private images-kind :com.blockether.vis.internal.foundation.shim-pil/images)
 
 (defn- live-raster?
   "Does the host still hold this handle's raster? That table is what the Java
@@ -363,19 +362,18 @@
                                 "len(lo.getvalue()) * 2 < len(hi.getvalue())"))))))
   (it "P-mode quantisation IS com.blockether/imaging's, not an algorithm of ours"
       (with-python-context
-        (let
-          [[png-b64 palette]
-           (ev python-context
-               (str "from PIL import Image\nimport io, base64\n"
-                    "src = Image.new('RGB',(32,24),(0,0,0))\n"
-                    "for x in range(32):\n" "    for y in range(24):\n"
-                    "        src.putpixel((x,y), ((x*7)%256,(y*11)%256,(x*y)%256))\n"
-                    "buf = io.BytesIO(); src.save(buf,'PNG')\n"
-                    "q = src.quantize(colors=8)\n"
-                    "[base64.b64encode(buf.getvalue()).decode(), list(q.getpalette()[:24])]"))
+        (let [[png-b64 palette]
+              (ev python-context
+                  (str "from PIL import Image\nimport io, base64\n"
+                       "src = Image.new('RGB',(32,24),(0,0,0))\n"
+                       "for x in range(32):\n" "    for y in range(24):\n"
+                       "        src.putpixel((x,y), ((x*7)%256,(y*11)%256,(x*y)%256))\n"
+                       "buf = io.BytesIO(); src.save(buf,'PNG')\n"
+                       "q = src.quantize(colors=8)\n"
+                       "[base64.b64encode(buf.getvalue()).decode(), list(q.getpalette()[:24])]"))
 
-           png
-           (.decode (Base64/getDecoder) ^String png-b64)]
+              png
+              (.decode (Base64/getDecoder) ^String png-b64)]
 
           (with-open [img (im/decode png)]
             ;; The shim only packs what the Rust median-cut returns: same bytes in,
@@ -389,36 +387,35 @@
   (it
     "ImageFilter IS com.blockether/imaging's convolve and rank filter"
     (with-python-context
-      (let
-        [[src-b64 blur-b64 med-b64]
-         (ev python-context
-             (str "from PIL import Image, ImageFilter\nimport io, base64\n"
-                  "src = Image.new('RGB',(24,18),(0,0,0))\n"
-                  "for x in range(24):\n" "    for y in range(18):\n"
-                  "        src.putpixel((x,y), ((x*9)%256,(y*13)%256,(x*y)%256))\n" "def enc(im):\n"
-                  "    b = io.BytesIO(); im.save(b,'PNG')\n"
-                  "    return base64.b64encode(b.getvalue()).decode()\n"
-                  "[enc(src), enc(src.filter(ImageFilter.BoxBlur(1))),\n"
-                  " enc(src.filter(ImageFilter.MedianFilter(3)))]"))
+      (let [[src-b64 blur-b64 med-b64]
+            (ev python-context
+                (str "from PIL import Image, ImageFilter\nimport io, base64\n"
+                     "src = Image.new('RGB',(24,18),(0,0,0))\n"
+                     "for x in range(24):\n" "    for y in range(18):\n"
+                     "        src.putpixel((x,y), ((x*9)%256,(y*13)%256,(x*y)%256))\n"
+                     "def enc(im):\n"
+                     "    b = io.BytesIO(); im.save(b,'PNG')\n"
+                     "    return base64.b64encode(b.getvalue()).decode()\n"
+                     "[enc(src), enc(src.filter(ImageFilter.BoxBlur(1))),\n"
+                     " enc(src.filter(ImageFilter.MedianFilter(3)))]"))
 
-         ->img
-         #(im/decode (.decode (Base64/getDecoder) ^String %))]
+            ->img
+            #(im/decode (.decode (Base64/getDecoder) ^String %))]
 
-        (with-open
-          [src
-           (->img src-b64)
+        (with-open [src
+                    (->img src-b64)
 
-           blur
-           (->img blur-b64)
+                    blur
+                    (->img blur-b64)
 
-           med
-           (->img med-b64)
+                    med
+                    (->img med-b64)
 
-           ours-blur
-           (im/convolve src 3 (repeat 9 1.0) {:scale 9.0})
+                    ours-blur
+                    (im/convolve src 3 (repeat 9 1.0) {:scale 9.0})
 
-           ours-med
-           (im/rank-filter src 3 :median)]
+                    ours-med
+                    (im/rank-filter src 3 :median)]
 
           ;; Pixel-for-pixel: the shim hands the kernel over and packs the
           ;; answer back — the neighbourhood maths happens in Rust.
@@ -426,33 +423,31 @@
           (expect (= (seq (im/pixels ours-med)) (seq (im/pixels med))))))))
   (it "save(optimize=True) IS com.blockether/imaging's optimizer, losslessly"
       (with-python-context
-        (let
-          [[plain-b64 opt-b64]
-           (ev python-context
-               (str "from PIL import Image\nimport io, base64\n"
-                    "src = Image.new('RGB',(64,64),(0,0,0))\n" "for x in range(64):\n"
-                    "    for y in range(64):\n"
-                    "        src.putpixel((x,y), ((x*7)%256,(y*5)%256,((x+y)*3)%256))\n"
-                    "def enc(**kw):\n" "    b = io.BytesIO(); src.save(b,'PNG',**kw)\n"
-                    "    return base64.b64encode(b.getvalue()).decode()\n"
-                    "[enc(), enc(optimize=True)]"))
+        (let [[plain-b64 opt-b64]
+              (ev python-context
+                  (str "from PIL import Image\nimport io, base64\n"
+                       "src = Image.new('RGB',(64,64),(0,0,0))\n" "for x in range(64):\n"
+                       "    for y in range(64):\n"
+                       "        src.putpixel((x,y), ((x*7)%256,(y*5)%256,((x+y)*3)%256))\n"
+                       "def enc(**kw):\n" "    b = io.BytesIO(); src.save(b,'PNG',**kw)\n"
+                       "    return base64.b64encode(b.getvalue()).decode()\n"
+                       "[enc(), enc(optimize=True)]"))
 
-           ^bytes plain
-           (.decode (Base64/getDecoder) ^String plain-b64)
+              ^bytes plain
+              (.decode (Base64/getDecoder) ^String plain-b64)
 
-           ^bytes opt
-           (.decode (Base64/getDecoder) ^String opt-b64)]
+              ^bytes opt
+              (.decode (Base64/getDecoder) ^String opt-b64)]
 
           ;; Pillow's flag is honoured, not ignored: smaller bytes, the SAME bytes
           ;; the library's optimizer produces, and the very same picture.
           (expect (< (alength opt) (alength plain)))
           (expect (= (seq opt) (seq (im/optimize plain))))
-          (with-open
-            [a
-             (im/decode plain)
+          (with-open [a
+                      (im/decode plain)
 
-             b
-             (im/decode opt)]
+                      b
+                      (im/decode opt)]
 
             (expect (= (seq (im/pixels a)) (seq (im/pixels b)))))))))
 
@@ -601,42 +596,40 @@
       ;; the renderer per call. Queued as ONE batch, the whole run crosses the boundary
       ;; exactly once in each direction, and THAT is a property of the code.
       (with-python-context
-        (let
-          [draw!
-           im/draw!
+        (let [draw!
+              im/draw!
 
-           from-pixels
-           im/from-pixels
-
-           pixels
-           im/pixels
-
-           crossings
-           (atom {:draw 0 :in 0 :out 0})
-
-           painted
-           (with-redefs
-             [im/draw!
-              (fn [& args]
-                (swap! crossings update :draw inc)
-                (apply draw! args))
-
+              from-pixels
               im/from-pixels
-              (fn [& args]
-                (swap! crossings update :in inc)
-                (apply from-pixels args))
 
+              pixels
               im/pixels
-              (fn [& args]
-                (swap! crossings update :out inc)
-                (apply pixels args))]
 
-             (ev python-context
-                 (str "from PIL import Image, ImageDraw\n"
-                      "im = Image.new('RGB',(800,600),(0,0,0))\n"
-                      "d = ImageDraw.Draw(im)\n" "for i in range(2000):\n"
-                      "    d.point((i % 800, i % 600), fill=(255,255,255))\n"
-                      "list(im.getpixel((200,400)))")))]
+              crossings
+              (atom {:draw 0 :in 0 :out 0})
+
+              painted
+              (with-redefs [im/draw!
+                            (fn [& args]
+                              (swap! crossings update :draw inc)
+                              (apply draw! args))
+
+                            im/from-pixels
+                            (fn [& args]
+                              (swap! crossings update :in inc)
+                              (apply from-pixels args))
+
+                            im/pixels
+                            (fn [& args]
+                              (swap! crossings update :out inc)
+                              (apply pixels args))]
+
+                (ev python-context
+                    (str "from PIL import Image, ImageDraw\n"
+                         "im = Image.new('RGB',(800,600),(0,0,0))\n"
+                         "d = ImageDraw.Draw(im)\n" "for i in range(2000):\n"
+                         "    d.point((i % 800, i % 600), fill=(255,255,255))\n"
+                         "list(im.getpixel((200,400)))")))]
 
           (expect (= [255 255 255] painted))
           (expect (= {:draw 1 :in 1 :out 1} @crossings)
@@ -656,49 +649,46 @@
   ;; reflective or per-pixel store.
   (it
     "converting a drawn canvas does not pay a reflective store per pixel"
-    (let
-      [w
-       800
+    (let [w
+          800
 
-       h
-       600
+          h
+          600
 
-       px
-       (int-array (* w h) (unchecked-int 0xff204060))
+          px
+          (int-array (* w h) (unchecked-int 0xff204060))
 
-       raster
-       (shim-pil/->Raster px w h 0xff000000)
+          raster
+          (shim-pil/->Raster px w h 0xff000000)
 
-       reflective
-       (let
-         [n
-          (alength ^ints px)
+          reflective
+          (let [n
+                (alength ^ints px)
 
-          b
-          (byte-array (* 4 n))]
+                b
+                (byte-array (* 4 n))]
 
-         (dotimes [i n]
-           (let
-             [p (bit-or 0xff000000 (bit-and 0xffffffff (aget ^ints px i)))
-              o (* 4 i)]
+            (dotimes [i n]
+              (let [p (bit-or 0xff000000 (bit-and 0xffffffff (aget ^ints px i)))
+                    o (* 4 i)]
 
-             (aset-byte b o (unchecked-byte (bit-and (bit-shift-right p 16) 0xff)))
-             (aset-byte b (+ o 1) (unchecked-byte (bit-and (bit-shift-right p 8) 0xff)))
-             (aset-byte b (+ o 2) (unchecked-byte (bit-and p 0xff)))
-             (aset-byte b (+ o 3) (unchecked-byte (bit-and (bit-shift-right p 24) 0xff)))))
-         b)
+                (aset-byte b o (unchecked-byte (bit-and (bit-shift-right p 16) 0xff)))
+                (aset-byte b (+ o 1) (unchecked-byte (bit-and (bit-shift-right p 8) 0xff)))
+                (aset-byte b (+ o 2) (unchecked-byte (bit-and p 0xff)))
+                (aset-byte b (+ o 3) (unchecked-byte (bit-and (bit-shift-right p 24) 0xff)))))
+            b)
 
-       names
-       (into #{}
-             (comp (filter symbol?) (map str))
-             (tree-seq coll?
-                       seq
-                       (read-string
-                         (repl/source-fn
-                           'com.blockether.vis.internal.foundation.shim-pil/raster->rgba))))
+          names
+          (into #{}
+                (comp (filter symbol?) (map str))
+                (tree-seq coll?
+                          seq
+                          (read-string
+                            (repl/source-fn
+                              'com.blockether.vis.internal.foundation.shim-pil/raster->rgba))))
 
-       offenders
-       (filterv #(re-find #"^aset-|reflect\.|etRGB" %) names)]
+          offenders
+          (filterv #(re-find #"^aset-|reflect\.|etRGB" %) names)]
 
       (expect (Arrays/equals ^bytes (#'shim-pil/raster->rgba raster) ^bytes reflective))
       (expect (contains? names "aset")
@@ -800,14 +790,13 @@
 (defdescribe
   pil-raster-lifetime-test
   (it "frees the raster of a dropped image once nothing can reach it"
-      (with-python-context (let
-                             [handles (ev python-context
-                                          (str "from PIL import Image\n" "import gc\n"
-                                               "hs = []\n" "for _ in range(8):\n"
-                                               "    im = Image.new('RGB',(64,64))\n"
-                                               "    hs.append(im._handle)\n"
-                                               "    del im\n" "gc.collect()\n"
-                                               "__vis_run_reapers__()\n" "hs"))]
+      (with-python-context (let [handles (ev python-context
+                                             (str "from PIL import Image\n" "import gc\n"
+                                                  "hs = []\n" "for _ in range(8):\n"
+                                                  "    im = Image.new('RGB',(64,64))\n"
+                                                  "    hs.append(im._handle)\n"
+                                                  "    del im\n" "gc.collect()\n"
+                                                  "__vis_run_reapers__()\n" "hs"))]
                              (expect (= 8 (count handles)))
                              (expect (= [] (filterv #(live-raster? %) handles))))))
   (it "sweeps INSIDE a block, so a loop over big images cannot fill the heap"
@@ -815,29 +804,27 @@
       ;; runtime's boundary reaper never gets a turn -- so allocating an
       ;; image is itself what sweeps. 80 dropped 4 MiB rasters are 320 MiB
       ;; the block can never reach again.
-      (with-python-context (let
-                             [before
-                              (live-rasters)
+      (with-python-context (let [before
+                                 (live-rasters)
 
-                              done
-                              (ev python-context
-                                  (str "from PIL import Image\n"
-                                       "for _ in range(80):\n"
-                                       "    im = Image.new('RGB',(1024,1024))\n"
-                                       "    del im\n" "'done'"))
+                                 done
+                                 (ev python-context
+                                     (str "from PIL import Image\n"
+                                          "for _ in range(80):\n"
+                                          "    im = Image.new('RGB',(1024,1024))\n"
+                                          "    del im\n" "'done'"))
 
-                              grown
-                              (- (live-rasters) before)]
+                                 grown
+                                 (- (live-rasters) before)]
 
                              (expect (= "done" done))
                              (expect (> 32 grown)))))
   (it "frees the raster an in-place op replaced, without waiting for a collection"
-      (with-python-context (let
-                             [[before after]
-                              (ev python-context
-                                  (str "from PIL import Image\n"
-                                       "im = Image.new('RGB',(64,64))\n" "before = im._handle\n"
-                                       "im.thumbnail((8,8))\n" "[before, im._handle]"))]
+      (with-python-context (let [[before after]
+                                 (ev python-context
+                                     (str "from PIL import Image\n"
+                                          "im = Image.new('RGB',(64,64))\n" "before = im._handle\n"
+                                          "im.thumbnail((8,8))\n" "[before, im._handle]"))]
                              (expect (not= before after))
                              (expect (not (live-raster? before)))
                              (expect (live-raster? after)))))
@@ -845,13 +832,12 @@
       ;; `ImageOps.exif_transpose(im, in_place=True)` hands one handle to two
       ;; Images: freeing on the first drop would leave the other reading a
       ;; raster that is gone.
-      (with-python-context (let
-                             [shared (ev python-context
-                                         (str "from PIL import Image\n"
-                                              "a = Image.new('RGB',(16,16))\n"
-                                              "b = Image.new('RGB',(16,16))\n"
-                                              "b._set([a._handle, a._w, a._h, a.mode])\n"
-                                              "a.close()\n" "b._handle"))]
+      (with-python-context (let [shared (ev python-context
+                                            (str "from PIL import Image\n"
+                                                 "a = Image.new('RGB',(16,16))\n"
+                                                 "b = Image.new('RGB',(16,16))\n"
+                                                 "b._set([a._handle, a._w, a._h, a.mode])\n"
+                                                 "a.close()\n" "b._handle"))]
                              (expect (live-raster? shared))
                              (expect (= [0 0 0] (ev python-context "list(b.getpixel((0,0)))")))
                              (ev python-context "b.close()")
@@ -859,13 +845,12 @@
                              ;; closing twice is a no-op, never a second free
                              (expect (= "ok" (ev python-context "b.close()\n'ok'"))))))
   (it "names a closed image instead of leaking a Java null-pointer message"
-      (with-python-context (let
-                             [msg (ev python-context
-                                      (str "from PIL import Image\n"
-                                           "im = Image.new('RGB',(4,4))\n" "im.close()\n"
-                                           "try:\n" "    im.getpixel((0,0))\n"
-                                           "    msg = 'NO ERROR'\n" "except OSError as e:\n"
-                                           "    msg = str(e)\n" "msg"))]
+      (with-python-context (let [msg (ev python-context
+                                         (str "from PIL import Image\n"
+                                              "im = Image.new('RGB',(4,4))\n" "im.close()\n"
+                                              "try:\n" "    im.getpixel((0,0))\n"
+                                              "    msg = 'NO ERROR'\n" "except OSError as e:\n"
+                                              "    msg = str(e)\n" "msg"))]
                              (expect (str/includes? msg "is not live"))
                              (expect (not (str/includes? msg "Cannot invoke")))))))
 

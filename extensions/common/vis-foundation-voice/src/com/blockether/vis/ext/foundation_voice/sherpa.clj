@@ -75,28 +75,27 @@
    (platform-token (System/getProperty "os.name" "generic")
                    (System/getProperty "os.arch" "generic")))
   ([os-name os-arch]
-   (let
-     [os
-      (str/lower-case (str os-name))
+   (let [os
+         (str/lower-case (str os-name))
 
-      arch
-      (str/lower-case (str os-arch))
+         arch
+         (str/lower-case (str os-arch))
 
-      o
-      (cond (or (str/includes? os "mac") (str/includes? os "darwin")) "osx"
-            (str/includes? os "win") "win"
-            (str/includes? os "nux") "linux"
-            :else (throw (ex-info "sherpa-onnx has no native library for this operating system"
-                                  {:type :voice/unsupported-platform :os os-name})))
+         o
+         (cond (or (str/includes? os "mac") (str/includes? os "darwin")) "osx"
+               (str/includes? os "win") "win"
+               (str/includes? os "nux") "linux"
+               :else (throw (ex-info "sherpa-onnx has no native library for this operating system"
+                                     {:type :voice/unsupported-platform :os os-name})))
 
-      a
-      (cond (or (str/starts-with? arch "amd64") (str/starts-with? arch "x86_64")) "x64"
-            (str/starts-with? arch "x86") "x86"
-            (or (str/starts-with? arch "aarch64") (str/starts-with? arch "arm64"))
-            (if (= "win" o) "arm64" "aarch64")
-            (str/starts-with? arch "arm") "arm"
-            :else (throw (ex-info "sherpa-onnx has no native library for this CPU architecture"
-                                  {:type :voice/unsupported-platform :arch os-arch})))]
+         a
+         (cond (or (str/starts-with? arch "amd64") (str/starts-with? arch "x86_64")) "x64"
+               (str/starts-with? arch "x86") "x86"
+               (or (str/starts-with? arch "aarch64") (str/starts-with? arch "arm64"))
+               (if (= "win" o) "arm64" "aarch64")
+               (str/starts-with? arch "arm") "arm"
+               :else (throw (ex-info "sherpa-onnx has no native library for this CPU architecture"
+                                     {:type :voice/unsupported-platform :arch os-arch})))]
 
      (str o "-" a))))
 
@@ -163,24 +162,22 @@
    an interrupted download leaves nothing behind rather than a file that passes
    `.isFile` and then aborts the JVM inside `System/load`. Returns dir."
   [token dir]
-  (let
-    [^File archive
-     (File/createTempFile "vis-voice-sherpa-" ".jar")
+  (let [^File archive
+        (File/createTempFile "vis-voice-sherpa-" ".jar")
 
-     staging
-     (io/file (str dir ".staging-" (System/nanoTime)))]
+        staging
+        (io/file (str dir ".staging-" (System/nanoTime)))]
 
     (try (files/download! (jar-url token) (str archive) nil)
          (.mkdirs staging)
          (with-open [zip (ZipFile. archive)]
            (doseq [lib (library-names)]
-             (let
-               [entry-name (str "sherpa-onnx/native/" token "/" lib)
-                entry (or (.getEntry zip entry-name)
-                          (throw (ex-info "sherpa's native jar is missing a library"
-                                          {:type :voice/native-incomplete
-                                           :entry entry-name
-                                           :platform token})))]
+             (let [entry-name (str "sherpa-onnx/native/" token "/" lib)
+                   entry (or (.getEntry zip entry-name)
+                             (throw (ex-info "sherpa's native jar is missing a library"
+                                             {:type :voice/native-incomplete
+                                              :entry entry-name
+                                              :platform token})))]
 
                (with-open [in (.getInputStream zip entry)]
                  (io/copy in (io/file staging lib))))))

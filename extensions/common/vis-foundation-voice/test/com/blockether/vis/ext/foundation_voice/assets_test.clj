@@ -16,15 +16,13 @@
    extractor strips, holding `names` - so the install path runs offline."
   ^File [names]
   (let [archive (File/createTempFile "vis-voice-asset-test-" ".tar.bz2")]
-    (with-open
-      [out (FileOutputStream. archive)
-       bz (BZip2CompressorOutputStream. out)
-       tar (TarArchiveOutputStream. bz)]
+    (with-open [out (FileOutputStream. archive)
+                bz (BZip2CompressorOutputStream. out)
+                tar (TarArchiveOutputStream. bz)]
 
       (doseq [file-name names]
-        (let
-          [payload (.getBytes (str "payload of " file-name) "UTF-8")
-           entry (TarArchiveEntry. (str "release-top-level/" file-name))]
+        (let [payload (.getBytes (str "payload of " file-name) "UTF-8")
+              entry (TarArchiveEntry. (str "release-top-level/" file-name))]
 
           (.setSize entry (alength payload))
           (.putArchiveEntry tar entry)
@@ -40,12 +38,11 @@
   "Every entry beside `path` whose name starts with its own - a leftover
    `.staging-…` directory shows up here."
   [^String path]
-  (let
-    [target
-     (io/file path)
+  (let [target
+        (io/file path)
 
-     parent
-     (.getParentFile target)]
+        parent
+        (.getParentFile target)]
 
     (->> (or (.listFiles parent) (make-array File 0))
          (map #(.getName ^File %))
@@ -98,9 +95,8 @@
       ;; had: a gated source is dropped when there is none and moves to the
       ;; front when there is one.
       (doseq [entry (assets/manifest)]
-        (let
-          [open (assets/sources entry false)
-           with-token (assets/sources entry true)]
+        (let [open (assets/sources entry false)
+              with-token (assets/sources entry true)]
 
           (expect (seq open))
           (expect (not-any? :is-token-required open))
@@ -134,85 +130,80 @@
       ;; the five installs the wrong weights under the right name, and the
       ;; sha256 that would catch it is itself one of the things being edited.
       (doseq [entry (assets/for-engine :piper)]
-        (let
-          [voice (str/replace (:id entry) #"^piper-" "")
-           [lang speaker level] (str/split voice #"-")]
+        (let [voice (str/replace (:id entry) #"^piper-" "")
+              [lang speaker level] (str/split voice #"-")]
 
           (expect (= (str "vits-piper-" voice) (:install-dir entry)))
           (expect (= [(str voice ".onnx") "tokens.txt"] (:requires entry)))
           (expect (str/ends-with? (:source-url entry)
                                   (str/join "/" [(subs lang 0 2) lang speaker level])))
-          (doseq
-            [source (:sources entry)
-             url (if (= :files (:kind source)) (mapv :url (:files source)) [(:url source)])]
+          (doseq [source (:sources entry)
+                  url (if (= :files (:kind source)) (mapv :url (:files source)) [(:url source)])]
 
             (expect (str/includes? url voice)))))))
 
-(defdescribe
-  install-test
-  (it "installs from a source and lands the files the entry requires"
-      (let
-        [archive
-         (archive-of! ["model.onnx" "tokens.txt"])
+(defdescribe install-test
+             (it "installs from a source and lands the files the entry requires"
+                 (let [archive
+                       (archive-of! ["model.onnx" "tokens.txt"])
 
-         dir
-         (temp-dir-path "vis-voice-install-")
+                       dir
+                       (temp-dir-path "vis-voice-install-")
 
-         entry
-         {:id "test-asset"
-          :requires ["model.onnx" "tokens.txt"]
-          :sources [{:host :test :kind :archive :url (str (.toURI archive))}]}
+                       entry
+                       {:id "test-asset"
+                        :requires ["model.onnx" "tokens.txt"]
+                        :sources [{:host :test :kind :archive :url (str (.toURI archive))}]}
 
-         seen
-         (atom [])]
+                       seen
+                       (atom [])]
 
-        (try (expect (= dir (assets/install! entry dir #(swap! seen conj %))))
-             (expect (true? (assets/installed? entry dir)))
-             (expect (seq (filter #(= :downloading (:phase %)) @seen)))
-             (expect (seq (filter #(= :extracting (:phase %)) @seen)))
-             (expect (every? #(<= 0 (long (:progress %)) 99) @seen))
-             (finally (.delete archive) (files/delete-dir! (io/file dir))))))
-  (it "leaves NOTHING behind when every source fails"
-      ;; A half-written model directory is worse than an absent one: the file is
-      ;; present, so a caller that only asks `.isFile` loads a truncated .onnx
-      ;; and the native runtime aborts the JVM.
-      (let
-        [dir
-         (temp-dir-path "vis-voice-failed-install-")
+                   (try (expect (= dir (assets/install! entry dir #(swap! seen conj %))))
+                        (expect (true? (assets/installed? entry dir)))
+                        (expect (seq (filter #(= :downloading (:phase %)) @seen)))
+                        (expect (seq (filter #(= :extracting (:phase %)) @seen)))
+                        (expect (every? #(<= 0 (long (:progress %)) 99) @seen))
+                        (finally (.delete archive) (files/delete-dir! (io/file dir))))))
+             (it "leaves NOTHING behind when every source fails"
+                 ;; A half-written model directory is worse than an absent one: the file is
+                 ;; present, so a caller that only asks `.isFile` loads a truncated .onnx
+                 ;; and the native runtime aborts the JVM.
+                 (let [dir
+                       (temp-dir-path "vis-voice-failed-install-")
 
-         gone
-         (str (.toURI (io/file (temp-dir-path "vis-voice-absent-archive-"))))
+                       gone
+                       (str (.toURI (io/file (temp-dir-path "vis-voice-absent-archive-"))))
 
-         entry
-         {:id "test-asset"
-          :requires ["model.onnx"]
-          :sources [{:host :first :kind :archive :url gone}
-                    {:host :second :kind :archive :url gone}]}
+                       entry
+                       {:id "test-asset"
+                        :requires ["model.onnx"]
+                        :sources [{:host :first :kind :archive :url gone}
+                                  {:host :second :kind :archive :url gone}]}
 
-         data
-         (ex-data-of #(assets/install! entry dir nil))]
+                       data
+                       (ex-data-of #(assets/install! entry dir nil))]
 
-        (expect (= :voice-assets/install-failed (:type data)))
-        (expect (= [:first :second] (:tried data)))
-        (expect (= [:first :second] (mapv :host (:failures data))))
-        (expect (false? (.exists (io/file dir))))
-        (expect (= [] (siblings-of dir)))))
-  (it "refuses a source kind it does not understand instead of installing part of one"
-      (let
-        [dir
-         (temp-dir-path "vis-voice-bad-kind-")
+                   (expect (= :voice-assets/install-failed (:type data)))
+                   (expect (= [:first :second] (:tried data)))
+                   (expect (= [:first :second] (mapv :host (:failures data))))
+                   (expect (false? (.exists (io/file dir))))
+                   (expect (= [] (siblings-of dir)))))
+             (it "refuses a source kind it does not understand instead of installing part of one"
+                 (let [dir
+                       (temp-dir-path "vis-voice-bad-kind-")
 
-         entry
-         {:id "test-asset"
-          :requires ["model.onnx"]
-          :sources [{:host :first :kind :carrier-pigeon :url "https://example.com/x.tar.bz2"}]}
+                       entry
+                       {:id "test-asset"
+                        :requires ["model.onnx"]
+                        :sources
+                        [{:host :first :kind :carrier-pigeon :url "https://example.com/x.tar.bz2"}]}
 
-         data
-         (ex-data-of #(assets/install! entry dir nil))]
+                       data
+                       (ex-data-of #(assets/install! entry dir nil))]
 
-        (expect (= :voice-assets/install-failed (:type data)))
-        (expect (str/includes? (:error (first (:failures data))) "carrier-pigeon"))
-        (expect (false? (.exists (io/file dir)))))))
+                   (expect (= :voice-assets/install-failed (:type data)))
+                   (expect (str/includes? (:error (first (:failures data))) "carrier-pigeon"))
+                   (expect (false? (.exists (io/file dir)))))))
 
 (defdescribe ensure-test
              (it "refuses to accept an opt-in asset's terms on the user's behalf"
@@ -250,12 +241,11 @@
                  ;; A bundle that promises a voice it does not carry is worse than one
                  ;; with no voice at all: the install reports itself ready and the
                  ;; first synthesis is what discovers the clip was never there.
-                 (doseq
-                   [entry
-                    (assets/manifest)
+                 (doseq [entry
+                         (assets/manifest)
 
-                    voice
-                    (:voices entry)]
+                         voice
+                         (:voices entry)]
 
                    (expect (some? (:clip voice)) (:id entry))
                    (expect (str/starts-with? (:clip voice) "voices/") (:id entry))
@@ -297,9 +287,8 @@
           (expect (str/includes? rendered (:source-url entry)) (:id entry))
           (when (:notice entry) (expect (str/includes? rendered (:notice entry)) (:id entry)))
           (when (:is-opt-in entry) (expect (str/includes? rendered "Opt-in") (:id entry)))
-          (doseq
-            [source (:sources entry)
-             :let [url (:url source)]
-             :when url]
+          (doseq [source (:sources entry)
+                  :let [url (:url source)]
+                  :when url]
 
             (expect (str/includes? rendered url) (:id entry)))))))

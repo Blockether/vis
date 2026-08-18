@@ -46,12 +46,11 @@
                  (expect (nil? (paths/abbreviate-home nil "/home/u")))
                  (expect (= "/home/u/a" (paths/abbreviate-home "/home/u/a" nil))))
              (it "round-trips with expand-home for a path under home"
-                 (let
-                   [home
-                    (System/getProperty "user.home")
+                 (let [home
+                       (System/getProperty "user.home")
 
-                    abbreviated
-                    (paths/abbreviate-home (str home "/projects/vis"))]
+                       abbreviated
+                       (paths/abbreviate-home (str home "/projects/vis"))]
 
                    (expect (str/starts-with? abbreviated "~/"))
                    (expect (= (paths/unixify (str home "/projects/vis"))
@@ -78,12 +77,11 @@
 ;; logged after that point — including the SSE stream trace — was unreadable.
 (defdescribe log-file-test
              (it "stamps THIS process's pid into the name, inside ~/.vis/logs"
-                 (let
-                   [f
-                    (paths/unixify (paths/log-file))
+                 (let [f
+                       (paths/unixify (paths/log-file))
 
-                    pid
-                    (paths/process-id)]
+                       pid
+                       (paths/process-id)]
 
                    (expect (str/ends-with? f (str "/.vis/logs/vis-" pid ".log")))
                    (expect (= f (paths/unixify (paths/log-file))))

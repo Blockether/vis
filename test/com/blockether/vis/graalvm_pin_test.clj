@@ -37,9 +37,8 @@
   graalvm-pin-test
   (it "is LOCKED at the maximum version — 25.1.3, nothing higher"
       (expect (.isFile pin-file))
-      (let
-        [{:strs [GRAAL_VERSION GRAAL_MAX_VERSION GRAAL_PIN_LOCKED GRAAL_EDITION]} (parse-pin
-                                                                                    pin-file)]
+      (let [{:strs [GRAAL_VERSION GRAAL_MAX_VERSION GRAAL_PIN_LOCKED GRAAL_EDITION]} (parse-pin
+                                                                                       pin-file)]
         (expect (= "true" GRAAL_PIN_LOCKED))
         (expect (= "25.1.3" GRAAL_MAX_VERSION))
         (expect (= GRAAL_MAX_VERSION GRAAL_VERSION))
@@ -47,22 +46,20 @@
         ;; shipped binary redistributable (audit/README.md §4.1).
         (expect (= "GraalVM CE" GRAAL_EDITION))))
   (it "never names a 25.2.x artefact — that builder OOMs on this tree"
-      (let
-        [{:strs [GRAAL_VERSION GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE
-                 GRAAL_VENDOR_VERSION]}
-         (parse-pin pin-file)]
+      (let [{:strs [GRAAL_VERSION GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE
+                    GRAAL_VENDOR_VERSION]}
+            (parse-pin pin-file)]
         (expect (= "graal-25.1.3" GRAAL_TAG))
         (expect (= "25.1.3-graalce" GRAAL_SDKMAN_CANDIDATE))
         (expect (str/starts-with? GRAAL_VENDOR_VERSION (str "GraalVM CE " GRAAL_VERSION)))
         (doseq [v [GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE GRAAL_VENDOR_VERSION]]
           (expect (not (str/includes? v "25.2"))))))
   (it "agrees with deps.edn's org.graalvm.* jars and .sdkmanrc"
-      (let
-        [{:strs [GRAAL_VERSION GRAAL_SDKMAN_CANDIDATE]}
-         (parse-pin pin-file)
+      (let [{:strs [GRAAL_VERSION GRAAL_SDKMAN_CANDIDATE]}
+            (parse-pin pin-file)
 
-         deps
-         (graalvm-dep-versions)]
+            deps
+            (graalvm-dep-versions)]
 
         (expect (seq deps))
         (doseq [[sym v] deps]
@@ -70,24 +67,22 @@
                   (str sym " pins " v ", .graalvm-version says " GRAAL_VERSION)))
         (let [sdkmanrc (io/file ".sdkmanrc")]
           (when (.isFile sdkmanrc)
-            (let
-              [java-line (some->> (str/split-lines (slurp sdkmanrc))
-                                  (some #(second (re-matches #"\s*java=(.*)" %)))
-                                  str/trim)]
+            (let [java-line (some->> (str/split-lines (slurp sdkmanrc))
+                                     (some #(second (re-matches #"\s*java=(.*)" %)))
+                                     str/trim)]
               (expect (= GRAAL_SDKMAN_CANDIDATE java-line)))))))
   (it
     "keeps every GitHub build job on the locked pin"
-    (let
-      [{:strs [GRAAL_VERSION]}
-       (parse-pin pin-file)
+    (let [{:strs [GRAAL_VERSION]}
+          (parse-pin pin-file)
 
-       action
-       (io/file ".github/actions/setup-graalvm-25/action.yml")
+          action
+          (io/file ".github/actions/setup-graalvm-25/action.yml")
 
-       workflows
-       (->> (.listFiles (io/file ".github/workflows"))
-            (filter #(str/ends-with? (.getName %) ".yml"))
-            sort)]
+          workflows
+          (->> (.listFiles (io/file ".github/workflows"))
+               (filter #(str/ends-with? (.getName %) ".yml"))
+               sort)]
 
       ;; ONE installer for CI, and it reads the same single source of truth this
       ;; test does — including the lock, so a half-bumped pin dies in setup.
@@ -97,12 +92,11 @@
         (expect (str/includes? src "GRAAL_PIN_LOCKED"))
         (expect (str/includes? src "GRAAL_MAX_VERSION")))
       (expect (seq workflows))
-      (doseq
-        [wf
-         workflows
+      (doseq [wf
+              workflows
 
-         :let [src
-               (slurp wf)]]
+              :let [src
+                    (slurp wf)]]
 
         ;; Anything that BUILDS an artefact (uberjar, native image, Clojars jars)
         ;; must run on the pinned JDK. Scan-only jobs (clj-watson, babashka) do

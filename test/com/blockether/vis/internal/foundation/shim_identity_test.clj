@@ -49,13 +49,12 @@
   shim-module-identity-test
   (it "stamps every importable shim module with file, shim id and version"
       (with-python-context
-        (doseq
-          [{:shim/keys [name source imports]}
-           (registered-shims)
+        (doseq [{:shim/keys [name source imports]}
+                (registered-shims)
 
-           :when (seq imports)
-           module
-           imports]
+                :when (seq imports)
+                module
+                imports]
 
           (let [[file marker version] (identity-of python-context module)]
             (expect (= (str "<vis-shim>/" source) file) (str module " has __file__ " (pr-str file)))

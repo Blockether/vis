@@ -227,13 +227,12 @@
    temp dir (`/private/var/folders/<hash>/T`), whose `/private/var`,
    `/private/var/folders`, ... chain is granted nowhere else."
   [p]
-  (loop
-    [cur
-     (when-let [s (not-empty p)]
-       (.getParentFile (java.io.File. ^String s)))
+  (loop [cur
+         (when-let [s (not-empty p)]
+           (.getParentFile (java.io.File. ^String s)))
 
-     acc
-     []]
+         acc
+         []]
 
     (if cur
       (recur (.getParentFile ^java.io.File cur) (conj acc (.getPath ^java.io.File cur)))
@@ -249,36 +248,35 @@
   ^String
   [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port inbound-ports
            mach-services]}]
-  (let
-    [rw
-     (->> rw
-          (keep real-path)
-          distinct
-          vec)
+  (let [rw
+        (->> rw
+             (keep real-path)
+             distinct
+             vec)
 
-     ro
-     (->> ro
-          (keep real-path)
-          distinct
-          vec)
+        ro
+        (->> ro
+             (keep real-path)
+             distinct
+             vec)
 
-     dw
-     (->> deny-write
-          (keep deny-path)
-          distinct
-          vec)
+        dw
+        (->> deny-write
+             (keep deny-path)
+             distinct
+             vec)
 
-     dr
-     (->> deny-read
-          (keep deny-path)
-          distinct
-          vec)
+        dr
+        (->> deny-read
+             (keep deny-path)
+             distinct
+             vec)
 
-     dex
-     (->> deny-exec
-          (keep deny-path)
-          distinct
-          vec)]
+        dex
+        (->> deny-exec
+             (keep deny-path)
+             distinct
+             vec)]
 
     (str
       "(version 1)"
@@ -325,19 +323,18 @@
       ;; to local IP sockets while inbound traffic is restricted, port by port, to
       ;; the preselected nREPL port plus each `:inbound-ports` entry. Binding is
       ;; broad (any local port); ACCEPTING a connection is the gated capability.
-      (let
-        [inbound
-         (->> (cons loopback-port inbound-ports)
-              (remove nil?)
-              distinct)
+      (let [inbound
+            (->> (cons loopback-port inbound-ports)
+                 (remove nil?)
+                 distinct)
 
-         server-rules
-         (when (seq inbound)
-           (str "(allow network-bind (local ip))"
-                (apply str
-                  (map (fn [p]
-                         (str "(allow network-inbound (local ip \"*:" p "\"))"))
-                       inbound))))]
+            server-rules
+            (when (seq inbound)
+              (str "(allow network-bind (local ip))"
+                   (apply str
+                     (map (fn [p]
+                            (str "(allow network-inbound (local ip \"*:" p "\"))"))
+                          inbound))))]
 
         (cond proxy-port (str "(deny network*)"
                               server-rules
@@ -357,37 +354,35 @@
    granting the same path through both legacy allow lists."
   [{:keys [roots-fn net-enabled? allow-read-write allow-write allow-read deny-write deny-read
            deny-exec proxy-port loopback-port inbound-ports mach-services]}]
-  (let
-    [session-roots
-     (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
+  (let [session-roots
+        (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
 
-     tmps
-     [(System/getProperty "java.io.tmpdir") "/tmp"]
+        tmps
+        [(System/getProperty "java.io.tmpdir") "/tmp"]
 
-     rw
-     (->> (concat session-roots tmps allow-read-write allow-write)
-          (keep real-path)
-          distinct
-          vec)
+        rw
+        (->> (concat session-roots tmps allow-read-write allow-write)
+             (keep real-path)
+             distinct
+             vec)
 
-     ro
-     (->> (concat allow-read-write allow-read)
-          (keep real-path)
-          distinct
-          vec)
+        ro
+        (->> (concat allow-read-write allow-read)
+             (keep real-path)
+             distinct
+             vec)
 
-     ;; Extra inbound ports are sanitized to distinct integers in the legal TCP
-     ;; range; anything else (nil, junk, out-of-range) is dropped so a bad config
-     ;; value can never widen the profile or corrupt the emitted SBPL.
-     inbound-ports
-     (->> inbound-ports
-          (keep (fn [p]
-                  (let
-                    [n (cond (integer? p) (long p)
-                             (string? p) (parse-long (str/trim p)))]
-                    (when (and n (<= 1 n 65535)) n))))
-          distinct
-          vec)]
+        ;; Extra inbound ports are sanitized to distinct integers in the legal TCP
+        ;; range; anything else (nil, junk, out-of-range) is dropped so a bad config
+        ;; value can never widen the profile or corrupt the emitted SBPL.
+        inbound-ports
+        (->> inbound-ports
+             (keep (fn [p]
+                     (let [n (cond (integer? p) (long p)
+                                   (string? p) (parse-long (str/trim p)))]
+                       (when (and n (<= 1 n 65535)) n))))
+             distinct
+             vec)]
 
     {:rw rw
      :ro ro
@@ -450,108 +445,107 @@
    shares the host network namespace."
   ^java.util.List
   [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port]}]
-  (let
-    [rw
-     (->> rw
-          (keep real-path)
-          distinct
-          vec)
+  (let [rw
+        (->> rw
+             (keep real-path)
+             distinct
+             vec)
 
-     ro
-     ;; System roots are bound at their LITERAL path (not real-path'd): on merged-usr
-     ;; distros `/lib`,`/lib64`,`/bin`,`/sbin` are symlinks into `/usr`, and the ELF
-     ;; interpreter is hardcoded (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`).
-     ;; Canonicalizing them collapses the loader mount point so EVERY binary fails to
-     ;; exec (ENOENT on its interpreter). `--ro-bind-try` tolerates any absent on a distro.
-     ;; User `:ro` allow-read paths stay canonicalized for dedup/symlink safety.
-     (->> (concat linux-system-read-roots (keep real-path ro))
-          distinct
-          vec)
+        ro
+        ;; System roots are bound at their LITERAL path (not real-path'd): on merged-usr
+        ;; distros `/lib`,`/lib64`,`/bin`,`/sbin` are symlinks into `/usr`, and the ELF
+        ;; interpreter is hardcoded (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`).
+        ;; Canonicalizing them collapses the loader mount point so EVERY binary fails to
+        ;; exec (ENOENT on its interpreter). `--ro-bind-try` tolerates any absent on a distro.
+        ;; User `:ro` allow-read paths stay canonicalized for dedup/symlink safety.
+        (->> (concat linux-system-read-roots (keep real-path ro))
+             distinct
+             vec)
 
-     dw
-     (->> deny-write
-          (keep deny-path)
-          distinct
-          vec)
+        dw
+        (->> deny-write
+             (keep deny-path)
+             distinct
+             vec)
 
-     dex
-     (->> deny-exec
-          (keep deny-path)
-          distinct
-          vec)
+        dex
+        (->> deny-exec
+             (keep deny-path)
+             distinct
+             vec)
 
-     ro-flags
-     (mapcat (fn [p]
-               ["--ro-bind-try" p p])
-             ro)
+        ro-flags
+        (mapcat (fn [p]
+                  ["--ro-bind-try" p p])
+                ro)
 
-     rw-flags
-     (mapcat (fn [p]
-               ["--bind-try" p p])
-             rw)
+        rw-flags
+        (mapcat (fn [p]
+                  ["--bind-try" p p])
+                rw)
 
-     dw-flags
-     (mapcat (fn [p]
-               ["--ro-bind-try" p p])
-             dw)
+        dw-flags
+        (mapcat (fn [p]
+                  ["--ro-bind-try" p p])
+                dw)
 
-     dr-flags
-     (mapcat (fn [p]
-               (let [rp (deny-path p)]
-                 (cond (nil? rp) nil
-                       (.isDirectory (File. ^String rp)) ["--tmpfs" rp]
-                       :else ["--ro-bind-try" "/dev/null" rp])))
-             (distinct deny-read))
+        dr-flags
+        (mapcat (fn [p]
+                  (let [rp (deny-path p)]
+                    (cond (nil? rp) nil
+                          (.isDirectory (File. ^String rp)) ["--tmpfs" rp]
+                          :else ["--ro-bind-try" "/dev/null" rp])))
+                (distinct deny-read))
 
-     ;; Mask each denied binary with /dev/null (a char device): `execve` on it fails
-     ;; (exit 126). Bound AFTER the allow binds so it wins over a binary inside an
-     ;; allowed `:ro` root -- the Linux equivalent of macOS `(deny process-exec*)`.
-     ;; On merged-usr distros the same binary is reachable via BOTH `/usr/bin/<n>` and
-     ;; `/bin/<n>` (distinct bwrap mounts), so masking only the canonical path leaves
-     ;; the PATH alias runnable -- mask every EXISTING bin-dir alias of the basename.
-     ;; `--ro-bind-try` aborts if the destination is absent on a read-only bind, so the
-     ;; alias set is filtered to files that actually exist on the host.
-     dex-flags
-     (mapcat (fn [p]
-               (let [n (.getName (File. ^String p))]
-                 (->> (cons p
-                            (map #(str % "/" n)
-                                 ["/usr/bin" "/bin" "/usr/sbin" "/sbin" "/usr/local/bin"
-                                  "/usr/local/sbin"]))
-                      (filter #(.exists (File. ^String %)))
-                      distinct
-                      (mapcat (fn [t]
-                                ["--ro-bind-try" "/dev/null" t])))))
-             dex)
+        ;; Mask each denied binary with /dev/null (a char device): `execve` on it fails
+        ;; (exit 126). Bound AFTER the allow binds so it wins over a binary inside an
+        ;; allowed `:ro` root -- the Linux equivalent of macOS `(deny process-exec*)`.
+        ;; On merged-usr distros the same binary is reachable via BOTH `/usr/bin/<n>` and
+        ;; `/bin/<n>` (distinct bwrap mounts), so masking only the canonical path leaves
+        ;; the PATH alias runnable -- mask every EXISTING bin-dir alias of the basename.
+        ;; `--ro-bind-try` aborts if the destination is absent on a read-only bind, so the
+        ;; alias set is filtered to files that actually exist on the host.
+        dex-flags
+        (mapcat (fn [p]
+                  (let [n (.getName (File. ^String p))]
+                    (->> (cons p
+                               (map #(str % "/" n)
+                                    ["/usr/bin" "/bin" "/usr/sbin" "/sbin" "/usr/local/bin"
+                                     "/usr/local/sbin"]))
+                         (filter #(.exists (File. ^String %)))
+                         distinct
+                         (mapcat (fn [t]
+                                   ["--ro-bind-try" "/dev/null" t])))))
+                dex)
 
-     ;; Network. proxy-port set = FILTERED egress: when pasta is present it gives
-     ;; the child a private net ns reaching ONLY the host proxy port, and bwrap
-     ;; SHARES that ns (no --unshare-net). Without pasta, filtered egress degrades
-     ;; to a full no-egress wall rather than leaving the child open. net-off and
-     ;; the no-pasta fallback both --unshare-net; an explicitly-open network
-     ;; (net-enabled? with no proxy, e.g. a managed nREPL) shares the host ns.
-     pasta?
-     (boolean (and proxy-port linux-pasta))
+        ;; Network. proxy-port set = FILTERED egress: when pasta is present it gives
+        ;; the child a private net ns reaching ONLY the host proxy port, and bwrap
+        ;; SHARES that ns (no --unshare-net). Without pasta, filtered egress degrades
+        ;; to a full no-egress wall rather than leaving the child open. net-off and
+        ;; the no-pasta fallback both --unshare-net; an explicitly-open network
+        ;; (net-enabled? with no proxy, e.g. a managed nREPL) shares the host ns.
+        pasta?
+        (boolean (and proxy-port linux-pasta))
 
-     net
-     (cond pasta? []
-           proxy-port ["--unshare-net"]
-           net-enabled? []
-           :else ["--unshare-net"])
+        net
+        (cond pasta? []
+              proxy-port ["--unshare-net"]
+              net-enabled? []
+              :else ["--unshare-net"])
 
-     bwrap-args
-     ;; ABSOLUTE enforcer path — the very binary `supported?` validated. A bare name
-     ;; would be resolved by PATH at exec time (and, under the detach prefix, by the
-     ;; CHILD's scrubbed PATH), so a shadowing shim earlier on PATH could replace the
-     ;; jail with an arbitrary program, and a PATH without it would fail the launch.
-     (vec (concat [(or linux-bwrap "bwrap") "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
-                  ro-flags
-                  rw-flags
-                  dw-flags
-                  dr-flags
-                  dex-flags
-                  net
-                  ["--"]))]
+        bwrap-args
+        ;; ABSOLUTE enforcer path — the very binary `supported?` validated. A bare name
+        ;; would be resolved by PATH at exec time (and, under the detach prefix, by the
+        ;; CHILD's scrubbed PATH), so a shadowing shim earlier on PATH could replace the
+        ;; jail with an arbitrary program, and a PATH without it would fail the launch.
+        (vec (concat [(or linux-bwrap "bwrap") "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
+                     ro-flags
+                     rw-flags
+                     dw-flags
+                     dr-flags
+                     dex-flags
+                     net
+                     ["--"]))]
 
     (if pasta?
       ;; pasta wraps bwrap: `-T <port>` forwards the child's loopback proxy port to
@@ -643,11 +637,10 @@
    which would silently replace every command's exit status with a lie. False on
    a platform without `/bin/sh` (Windows), which just leaves the prefix off."
   [prefix]
-  (try (let
-         [p (.start (doto (ProcessBuilder. ^java.util.List
-                                           (into (vec prefix) ["/bin/sh" "-c" "exit 77"]))
-                      (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
-                      (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))]
+  (try (let [p (.start (doto (ProcessBuilder. ^java.util.List
+                                              (into (vec prefix) ["/bin/sh" "-c" "exit 77"]))
+                         (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
+                         (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))]
          (try (and (.waitFor p 5 TimeUnit/SECONDS) (= 77 (.exitValue p)))
               (finally (try (.close (.getOutputStream p)) (catch Throwable _ nil))
                        (when (.isAlive p) (.destroyForcibly p)))))
@@ -717,31 +710,28 @@
   [policy]
   (if (:disabled? policy)
     {}
-    (let
-      [jail-env
-       (if (and policy (or (inherited-jail?) (supported?))) {"VIS_SEATBELT_ACTIVE" "1"} {})]
+    (let [jail-env
+          (if (and policy (or (inherited-jail?) (supported?))) {"VIS_SEATBELT_ACTIVE" "1"} {})]
       (if-let [port (:proxy-port policy)]
-        (let
-          [token (:proxy-token policy)
-           url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
-           ;; SOCKS5 shares the SAME loopback port (multiplexed by first byte).
-           ;; `ALL_PROXY` is the fallback for non-HTTP schemes (ssh/git+ssh/db/raw
-           ;; TCP) — it points at the SOCKS lane, while `http(s)_proxy` keep the
-           ;; HTTP proxy so HTTPS verb/path MITM is preserved for web traffic.
-           socks-url (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port)
-           ca (:ca-file policy)
-           java-opts (java-proxy-options policy)]
+        (let [token (:proxy-token policy)
+              url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
+              ;; SOCKS5 shares the SAME loopback port (multiplexed by first byte).
+              ;; `ALL_PROXY` is the fallback for non-HTTP schemes (ssh/git+ssh/db/raw
+              ;; TCP) — it points at the SOCKS lane, while `http(s)_proxy` keep the
+              ;; HTTP proxy so HTTPS verb/path MITM is preserved for web traffic.
+              socks-url (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port)
+              ca (:ca-file policy)
+              java-opts (java-proxy-options policy)]
 
-          (cond->
-            (merge jail-env
-                   {"http_proxy" url
-                    "https_proxy" url
-                    "all_proxy" socks-url
-                    "HTTP_PROXY" url
-                    "HTTPS_PROXY" url
-                    "ALL_PROXY" socks-url
-                    "no_proxy" ""
-                    "NO_PROXY" ""})
+          (cond-> (merge jail-env
+                         {"http_proxy" url
+                          "https_proxy" url
+                          "all_proxy" socks-url
+                          "HTTP_PROXY" url
+                          "HTTPS_PROXY" url
+                          "ALL_PROXY" socks-url
+                          "no_proxy" ""
+                          "NO_PROXY" ""})
             ca
             (merge {"CURL_CA_BUNDLE" ca
                     "SSL_CERT_FILE" ca
@@ -855,18 +845,20 @@
    platforms/`jail.enabled: false`), so non-confined behavior is unchanged."
   [policy]
   (when (and policy (not (:disabled? policy)) (or (inherited-jail?) (supported?)))
-    (let
-      [inherited (into {}
-                       (if (:inherit-host-env? policy)
-                         (map identity)
-                         (filter (fn [[k _]]
-                                   (env-passthrough? k))))
-                       (System/getenv))
+    (let [inherited
+          (into {}
+                (if (:inherit-host-env? policy)
+                  (map identity)
+                  (filter (fn [[k _]]
+                            (env-passthrough? k))))
+                (System/getenv))
 
-       ;; A name ONE call asked to unset is simply never built into the map —
-       ;; a confined child's environment is assembled here from nothing, so
-       ;; there is nothing to remove later.
-       removals (set (:env-removals policy))]
+          ;; A name ONE call asked to unset is simply never built into the map —
+          ;; a confined child's environment is assembled here from nothing, so
+          ;; there is nothing to remove later.
+          removals
+          (set (:env-removals policy))]
+
       ;; Total: the scrub also covers the declared + proxy additions, so no later
       ;; edit to either can reintroduce a pre-exec hijack name.
       (into {}
@@ -908,8 +900,7 @@
    program that never received it — the opposite of the `environment:` scrub,
    which filters a standing declaration nobody is watching."
   [name reason]
-  (throw (ex-info (str "env " name ": " reason)
-                  {:type ::call-env-refused :name name})))
+  (throw (ex-info (str "env " name ": " reason) {:type ::call-env-refused :name name})))
 
 (defn- call-env-value
   "ONE delta value: nil to unset, a literal as its string, or a source map
@@ -918,19 +909,32 @@
   (cond (nil? v) nil
         (string? v) v
         (or (number? v) (boolean? v)) (str v)
-        (map? v)
-        (let [entry (into {}
-                          (map (fn [[ek ev]] [(if (keyword? ek) (name ek) (str ek)) ev]))
-                          v)
-              source (some (fn [sk] (when (some? (get entry sk)) sk)) call-env-source-keys)]
-          (when-not source
-            (refuse-call-env k (str "a map value must name its source — "
-                                    (str/join ", " (map #(str "{\"" % "\": …}") call-env-source-keys))
-                                    " — got " (pr-str v) ".")))
-          (or (config/inline-environment-value k entry)
-              (refuse-call-env k (str "the " source ": source resolved to no value."))))
-        :else (refuse-call-env k (str "value must be a literal (string, number, boolean), a source"
-                                      " map, or null to unset — got " (pr-str v) "."))))
+        (map? v) (let [entry
+                       (into {}
+                             (map (fn [[ek ev]]
+                                    [(if (keyword? ek) (name ek) (str ek)) ev]))
+                             v)
+
+                       source
+                       (some (fn [sk]
+                               (when (some? (get entry sk)) sk))
+                             call-env-source-keys)]
+
+                   (when-not source
+                     (refuse-call-env
+                       k
+                       (str "a map value must name its source — "
+                            (str/join ", " (map #(str "{\"" % "\": …}") call-env-source-keys))
+                            " — got "
+                            (pr-str v)
+                            ".")))
+                   (or (config/inline-environment-value k entry)
+                       (refuse-call-env k (str "the " source ": source resolved to no value."))))
+        :else (refuse-call-env k
+                               (str "value must be a literal (string, number, boolean), a source"
+                                    " map, or null to unset — got "
+                                    (pr-str v)
+                                    "."))))
 
 (defn call-env-values
   "Resolve ONE call's `env` delta into `{NAME value-or-nil}`, where nil means
@@ -951,26 +955,24 @@
    request for ONE variable that resolved to nothing is an error here, not the
    quiet `:unset` a standing declaration is allowed."
   [env]
-  (cond
-    (nil? env) {}
-
-    (not (map? env))
-    (throw (ex-info (str "env must be a map of NAME → value (a literal, or"
-                         " {\"env\"|\"dotenv\"|\"keychain\"|\"command\": …}), got "
-                         (pr-str env))
-                    {:type ::call-env-refused}))
-
-    :else
-    (into {}
-          (map (fn [[k v]]
-                 (let [k (str/trim (str (if (keyword? k) (name k) k)))]
-                   (when-not (re-matches call-env-name-pattern k)
-                     (refuse-call-env (pr-str k) "not an environment variable name."))
-                   (when (pre-exec-hijack? k)
-                     (refuse-call-env k (str "runs code in the unconfined detacher/enforcer hops,"
-                                             " before the jail exists — no call may set it.")))
-                   [k (call-env-value k v)])))
-          env)))
+  (cond (nil? env) {}
+        (not (map? env)) (throw (ex-info
+                                  (str "env must be a map of NAME → value (a literal, or"
+                                       " {\"env\"|\"dotenv\"|\"keychain\"|\"command\": …}), got "
+                                       (pr-str env))
+                                  {:type ::call-env-refused}))
+        :else (into {}
+                    (map (fn [[k v]]
+                           (let [k (str/trim (str (if (keyword? k) (name k) k)))]
+                             (when-not (re-matches call-env-name-pattern k)
+                               (refuse-call-env (pr-str k) "not an environment variable name."))
+                             (when (pre-exec-hijack? k)
+                               (refuse-call-env
+                                 k
+                                 (str "runs code in the unconfined detacher/enforcer hops,"
+                                      " before the jail exists — no call may set it.")))
+                             [k (call-env-value k v)])))
+                    env)))
 
 (defn with-call-env
   "`policy` with ONE call's resolved delta merged over its project environment.
@@ -984,14 +986,20 @@
   [policy overrides]
   (if (empty? overrides)
     policy
-    (let
-      [policy (or policy {:disabled? true})
+    (let [policy
+          (or policy {:disabled? true})
 
-       base (into {} (map (fn [[k v]] [(str k) v])) (:env-values policy))
+          base
+          (into {}
+                (map (fn [[k v]]
+                       [(str k) v]))
+                (:env-values policy))
 
-       removals (into #{} (comp (filter (comp nil? val)) (map key)) overrides)
+          removals
+          (into #{} (comp (filter (comp nil? val)) (map key)) overrides)
 
-       sets (into {} (remove (comp nil? val)) overrides)]
+          sets
+          (into {} (remove (comp nil? val)) overrides)]
 
       (assoc policy
         :env-values (merge (apply dissoc base removals) sets)
@@ -1009,9 +1017,11 @@
                [(str k)
                 (if (nil? v)
                   "unset"
-                  (str/join (map (fn [b] (format "%02x" b))
-                                 (take 6 (.digest (MessageDigest/getInstance "SHA-256")
-                                                  (.getBytes (str v) "UTF-8"))))))]))
+                  (str/join (map (fn [b]
+                                   (format "%02x" b))
+                                 (take 6
+                                       (.digest (MessageDigest/getInstance "SHA-256")
+                                                (.getBytes (str v) "UTF-8"))))))]))
         values))
 (defn env-difference
   "Variable NAMES whose value differs between the env a live process is running
@@ -1019,7 +1029,8 @@
    compares digests and answers names — the only thing either side may keep."
   [running requested]
   (vec (sort (into #{}
-                   (remove (fn [k] (= (get running k) (get requested k))))
+                   (remove (fn [k]
+                             (= (get running k) (get requested k))))
                    (concat (keys running) (keys requested))))))
 
 (defn env-mismatch-refusal
@@ -1031,8 +1042,9 @@
   [id running requested]
   (when-let [differing (seq (env-difference running requested))]
     {:differing (vec differing)
-     :message (str "repl_start for " id " is already running with a different env ("
-                   (str/join ", " differing) "). There is no restart:"
+     :message (str "repl_start for " id
+                   " is already running with a different env (" (str/join ", " differing)
+                   "). There is no restart:"
                    " repl_stop that REPL, then start it with this env.")}))
 
 ;; ── Standard language-process jail contract ────────────────────────────────
@@ -1120,12 +1132,12 @@
     (when-not policy-fn
       (throw (ex-info "Managed language process denied: session jail is not registered"
                       {:type ::session-jail-missing :session-id session-id})))
-    (let
-      [policy (try (policy-fn)
-                   (catch Throwable t
-                     (throw (ex-info "Managed language process denied: session jail policy failed"
-                                     {:type ::session-jail-failed :session-id session-id}
-                                     t))))]
+    (let [policy (try (policy-fn)
+                      (catch Throwable t
+                        (throw (ex-info
+                                 "Managed language process denied: session jail policy failed"
+                                 {:type ::session-jail-failed :session-id session-id}
+                                 t))))]
       (when-not policy
         (throw (ex-info "Managed language process denied: session jail policy is unavailable"
                         {:type ::session-jail-missing :session-id session-id})))
@@ -1148,25 +1160,21 @@
    it, cancelling every other session's live turn."
   ([session-id argv] (session-process-launch session-id argv nil))
   ([session-id argv {:keys [loopback-port env]}]
-   (let
-     [policy
-      (-> (session-base-policy! session-id)
-          (language-process-policy loopback-port)
-          ;; THIS launch's own `env` delta, on top of the project environment —
-          ;; the argument a `repl_start`/`run_tests` call carried, resolved and
-          ;; scrubbed by the one contract that owns both.
-          (with-call-env (call-env-values env)))
+   (let [policy
+         (-> (session-base-policy! session-id)
+             (language-process-policy loopback-port)
+             ;; THIS launch's own `env` delta, on top of the project environment —
+             ;; the argument a `repl_start`/`run_tests` call carried, resolved and
+             ;; scrubbed by the one contract that owns both.
+             (with-call-env (call-env-values env)))
 
-      full
-      (jailed-child-env policy)]
+         full
+         (jailed-child-env policy)]
 
      ;; Confined child ⇒ FULL scrubbed env replaces the operator's (secrets dropped);
      ;; unenforced platform ⇒ additions merged onto the inherited env (unchanged).
      (if full
-       {:argv (detached-argv (wrap-argv argv policy))
-        :env full
-        :replace-env? true
-        :env-remove []}
+       {:argv (detached-argv (wrap-argv argv policy)) :env full :replace-env? true :env-remove []}
        {:argv (detached-argv (wrap-argv argv policy))
         :env (child-env-additions policy)
         :replace-env? false

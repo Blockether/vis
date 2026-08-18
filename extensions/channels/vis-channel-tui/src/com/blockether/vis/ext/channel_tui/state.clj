@@ -215,10 +215,9 @@
   (or (:workspace db)
       (some-> (active-tab-entry db)
               :workspace)
-      (when-let
-        [root (or (:workspace/root db)
-                  (some-> (active-tab-entry db)
-                          :workspace/root))]
+      (when-let [root (or (:workspace/root db)
+                          (some-> (active-tab-entry db)
+                                  :workspace/root))]
         {:workspace/root root})))
 
 (defn- sync-active-tab
@@ -236,31 +235,29 @@
    group tabs without resuming every session first. The active tab's session
    lives at the db root; every other tab's lives in `:tab-locals`."
   [db]
-  (let
-    [entries
-     (vec (:tabs db))
+  (let [entries
+        (vec (:tabs db))
 
-     active-id
-     (current-tab-id db)
+        active-id
+        (current-tab-id db)
 
-     sid
-     (fn [tab-id]
-       (if (= tab-id active-id)
-         (some-> db
-                 :session
-                 :id
-                 str)
-         (some-> (get-in db [:tab-locals tab-id :session :id])
-                 str)))]
+        sid
+        (fn [tab-id]
+          (if (= tab-id active-id)
+            (some-> db
+                    :session
+                    :id
+                    str)
+            (some-> (get-in db [:tab-locals tab-id :session :id])
+                    str)))]
 
     {:active (sid active-id)
      :sessions (vec (keep (fn [entry]
-                            (when-let
-                              [s (or (sid (:id entry))
-                                     ;; PENDING pre-allocated tab: no locals-bound
-                                     ;; session yet — the id rides on the entry.
-                                     (some-> (:session-id entry)
-                                             str))]
+                            (when-let [s (or (sid (:id entry))
+                                             ;; PENDING pre-allocated tab: no locals-bound
+                                             ;; session yet — the id rides on the entry.
+                                             (some-> (:session-id entry)
+                                                     str))]
                               (if-let [root (vh/tab-group-root entry)]
                                 {:id s :root root}
                                 {:id s})))
@@ -283,19 +280,17 @@
    loop's own wall-clock tick."
   [[id :as event-vec]]
   (if-let [{:keys [type] :as handler} (get @event-registry id)]
-    (let
-      [allow-bump? (not (no-render-bump-events id))
-       force? (contains? always-bump-events id)
-       bumped? (volatile! false)
-       decide-bump (fn [old-db new-db]
-                     (and allow-bump? (or force? (active-view-changed? old-db new-db))))]
+    (let [allow-bump? (not (no-render-bump-events id))
+          force? (contains? always-bump-events id)
+          bumped? (volatile! false)
+          decide-bump (fn [old-db new-db]
+                        (and allow-bump? (or force? (active-view-changed? old-db new-db))))]
 
       (case type
         :db
         (swap! app-db (fn [db]
-                        (let
-                          [db' (finalize-db ((:fn handler) db event-vec))
-                           eff? (decide-bump db db')]
+                        (let [db' (finalize-db ((:fn handler) db event-vec))
+                              eff? (decide-bump db db')]
 
                           (vreset! bumped? eff?)
                           (if eff? (bump-version db') db'))))
@@ -311,9 +306,8 @@
                           (let [{:keys [db fx]} ((:fn handler) old-db event-vec)]
                             (vreset! effects fx)
                             (if db
-                              (let
-                                [db' (finalize-db db)
-                                 eff? (decide-bump old-db db')]
+                              (let [db' (finalize-db db)
+                                    eff? (decide-bump old-db db')]
 
                                 (vreset! bumped? eff?)
                                 (if eff? (bump-version db') db'))
@@ -440,15 +434,14 @@
   (boolean (when (string? text)
              (let [t (str/triml text)]
                (when (re-find #"^/[^\s/]+(?:\s|$)" t)
-                 (let
-                   [root (-> (subs t 1)
-                             (str/split #"\s+")
-                             first)
-                    roots (into #{}
-                                (comp (filter #(empty? (:slash/parent %)))
-                                      (keep #(some-> (:slash/name %)
-                                                     name)))
-                                (vis/registered-slashes))]
+                 (let [root (-> (subs t 1)
+                                (str/split #"\s+")
+                                first)
+                       roots (into #{}
+                                   (comp (filter #(empty? (:slash/parent %)))
+                                         (keep #(some-> (:slash/name %)
+                                                        name)))
+                                   (vis/registered-slashes))]
 
                    (contains? roots root)))))))
 
@@ -605,24 +598,23 @@
    identified completion with no matching placeholder is a duplicate/stale
    callback and leaves the transcript untouched."
   [messages response]
-  (let
-    [messages
-     (vec (or messages []))
+  (let [messages
+        (vec (or messages []))
 
-     client-turn-id
-     (:client-turn-id response)
+        client-turn-id
+        (:client-turn-id response)
 
-     response
-     (dissoc response :pending?)
+        response
+        (dissoc response :pending?)
 
-     idx
-     (pending-assistant-index messages client-turn-id)
+        idx
+        (pending-assistant-index messages client-turn-id)
 
-     carry-slash
-     (fn [old resp]
-       (cond-> resp
-         (and (not (contains? resp :slash?)) (:slash? old))
-         (assoc :slash? true)))]
+        carry-slash
+        (fn [old resp]
+          (cond-> resp
+            (and (not (contains? resp :slash?)) (:slash? old))
+            (assoc :slash? true)))]
 
     (cond idx (assoc messages idx (carry-slash (get messages idx) response))
           client-turn-id messages
@@ -671,29 +663,27 @@
    past the last boundary exceeds `max-chars`, reveal the whole string (escape
    hatch for a long boundary-less thought)."
   [s max-chars]
-  (let
-    [s
-     (str s)
+  (let [s
+        (str s)
 
-     n
-     (count s)]
+        n
+        (count s)]
 
     (if (zero? n)
       s
-      (let
-        [boundary-idx
-         (loop [i (dec n)]
-           (cond (neg? i) -1
-                 (contains? reasoning-sentence-boundary-chars (.charAt s i)) i
-                 :else (recur (dec i))))
+      (let [boundary-idx
+            (loop [i (dec n)]
+              (cond (neg? i) -1
+                    (contains? reasoning-sentence-boundary-chars (.charAt s i)) i
+                    :else (recur (dec i))))
 
-         end
-         (if (neg? (long boundary-idx))
-           0
-           (loop [j (inc (long boundary-idx))]
-             (if (and (< j n) (contains? reasoning-boundary-trailing-chars (.charAt s j)))
-               (recur (inc j))
-               j)))]
+            end
+            (if (neg? (long boundary-idx))
+              0
+              (loop [j (inc (long boundary-idx))]
+                (if (and (< j n) (contains? reasoning-boundary-trailing-chars (.charAt s j)))
+                  (recur (inc j))
+                  j)))]
 
         (if (> (- n (long end)) (long max-chars))
           s ;; long boundary-less tail → reveal everything
@@ -755,27 +745,26 @@
    ;; `:iteration-final` / …) bypass the throttle and paint immediately so
    ;; block boundaries never wait; they also cancel any pending flush (which
    ;; would only repaint the same @latest).
-   (let
-     [latest
-      (atom nil)
+   (let [latest
+         (atom nil)
 
-      ;; freshest timeline — the only thing painted
-      last-by-phase
-      (atom {})
+         ;; freshest timeline — the only thing painted
+         last-by-phase
+         (atom {})
 
-      ;; per-phase last-dispatch clock
-      scheduled-by-phase
-      (atom {})
+         ;; per-phase last-dispatch clock
+         scheduled-by-phase
+         (atom {})
 
-      ;; per-phase pending trailing-flush future
-      schedule!
-      (or schedule-fn
-          (fn default-schedule! [^Runnable f ^long delay-ms]
-            (.schedule progress-trailing-flush-scheduler f delay-ms TimeUnit/MILLISECONDS)))
+         ;; per-phase pending trailing-flush future
+         schedule!
+         (or schedule-fn
+             (fn default-schedule! [^Runnable f ^long delay-ms]
+               (.schedule progress-trailing-flush-scheduler f delay-ms TimeUnit/MILLISECONDS)))
 
-      dispatch!
-      (fn []
-        (dispatch-fn [:set-progress-iterations (clip-live-reasoning @latest)]))]
+         dispatch!
+         (fn []
+           (dispatch-fn [:set-progress-iterations (clip-live-reasoning @latest)]))]
 
      (letfn [(cancel-pending! [phase]
                (when-let [f (get @scheduled-by-phase phase)]
@@ -789,21 +778,20 @@
                (dispatch!))]
        (fn [timeline chunk]
          (reset! latest timeline) ;; the freshest state always wins
-         (let
-           [now
-            (long (or (now-ms-fn) 0))
+         (let [now
+               (long (or (now-ms-fn) 0))
 
-            phase
-            (:phase chunk)
+               phase
+               (:phase chunk)
 
-            throttled?
-            (contains? throttled-streaming-phases phase)
+               throttled?
+               (contains? throttled-streaming-phases phase)
 
-            prev
-            (when throttled? (get @last-by-phase phase))
+               prev
+               (when throttled? (get @last-by-phase phase))
 
-            due?
-            (or (nil? prev) (>= (- now (long prev)) (long live-progress-render-interval-ms)))]
+               due?
+               (or (nil? prev) (>= (- now (long prev)) (long live-progress-render-interval-ms)))]
 
            (cond
              ;; Lifecycle chunk → paint now; cancel pending flushes (they would
@@ -817,16 +805,15 @@
              ;; Throttled, inside the window, no flush queued → queue ONE so a
              ;; stall after the last drop still reaches the screen.
              (nil? (get @scheduled-by-phase phase))
-             (let
-               [delay-ms
-                (max 1 (- (long live-progress-render-interval-ms) (- now (long prev))))
+             (let [delay-ms
+                   (max 1 (- (long live-progress-render-interval-ms) (- now (long prev))))
 
-                ^Runnable task
-                (fn []
-                  (try (flush-phase! phase) (catch Throwable _ nil)))
+                   ^Runnable task
+                   (fn []
+                     (try (flush-phase! phase) (catch Throwable _ nil)))
 
-                f
-                (schedule! task (long delay-ms))]
+                   f
+                   (schedule! task (long delay-ms))]
 
                (swap! scheduled-by-phase assoc phase f))
              ;; Throttled, inside the window, flush already queued → @latest was
@@ -835,10 +822,9 @@
 
 (defn- normalize-theme-name
   [v]
-  (let
-    [s (cond (keyword? v) (name v)
-             (string? v) (str/trim v)
-             :else nil)]
+  (let [s (cond (keyword? v) (name v)
+                (string? v) (str/trim v)
+                :else nil)]
     (keyword (if (str/blank? s) shared-theme/default-theme-id s))))
 
 (defn- normalize-settings
@@ -929,21 +915,20 @@
 (defn- load-persisted-settings
   "Read the string-keyed `tui-settings` YAML block and adapt its fixed fields."
   []
-  (let
-    [raw
-     (try (vis/load-config-raw) (catch Throwable _ nil))
+  (let [raw
+        (try (vis/load-config-raw) (catch Throwable _ nil))
 
-     saved
-     (when (map? raw) (get raw "tui-settings"))
+        saved
+        (when (map? raw) (get raw "tui-settings"))
 
-     runtime-saved
-     (when (map? saved)
-       (cond-> {}
-         (contains? saved "theme-name")
-         (assoc :theme-name (get saved "theme-name"))
+        runtime-saved
+        (when (map? saved)
+          (cond-> {}
+            (contains? saved "theme-name")
+            (assoc :theme-name (get saved "theme-name"))
 
-         (contains? saved "contributors-disabled")
-         (assoc :contributors-disabled (get saved "contributors-disabled"))))]
+            (contains? saved "contributors-disabled")
+            (assoc :contributors-disabled (get saved "contributors-disabled"))))]
 
     (normalize-settings (merge default-settings runtime-saved))))
 
@@ -958,7 +943,8 @@
    outrank the files they came from. `update-machine-config!` reads the machine
    tier alone, under the store's lock."
   [settings]
-  (try (vis/update-machine-config! (fn [raw] (assoc raw "tui-settings" settings)))
+  (try (vis/update-machine-config! (fn [raw]
+                                     (assoc raw "tui-settings" settings)))
        (catch Throwable _ nil)))
 
 (defn- apply-settings-update!
@@ -970,14 +956,13 @@
    the listener installed in `init!` keeps the projection coherent."
   [db new-settings]
   (render/invalidate-cache!)
-  (let
-    [local-merged
-     (normalize-settings (merge default-settings
-                                (select-keys (:settings db) (keys default-settings))
-                                (select-keys new-settings (keys default-settings))))
+  (let [local-merged
+        (normalize-settings (merge default-settings
+                                   (select-keys (:settings db) (keys default-settings))
+                                   (select-keys new-settings (keys default-settings))))
 
-     projected
-     (merge (migrated-toggle-projection) local-merged)]
+        projected
+        (merge (migrated-toggle-projection) local-merged)]
 
     (tui-theme/apply-theme! (:theme-name local-merged))
     ;; Re-emit OSC 11 so the emulator's window padding (the un-themed
@@ -1136,11 +1121,10 @@
 
 (defn- tab-number
   [entry]
-  (when-let
-    [[_ n] (some->> entry
-                    :id
-                    name
-                    (re-matches #"tab-(\d+)"))]
+  (when-let [[_ n] (some->> entry
+                            :id
+                            name
+                            (re-matches #"tab-(\d+)"))]
     (Long/parseLong n)))
 
 (defn- next-tab-number [entries] (inc (long (reduce max 0 (keep tab-number entries)))))
@@ -1153,18 +1137,17 @@
    makes the header strip, the numeric jumps (C-x N) and the cycle order all
    read as project groups — no render-time reordering anywhere."
   [entries entry]
-  (let
-    [entries
-     (vec entries)
+  (let [entries
+        (vec entries)
 
-     root
-     (vh/tab-group-root entry)
+        root
+        (vh/tab-group-root entry)
 
-     last-idx
-     (when root
-       (->> entries
-            (keep-indexed #(when (= root (vh/tab-group-root %2)) %1))
-            last))]
+        last-idx
+        (when root
+          (->> entries
+               (keep-indexed #(when (= root (vh/tab-group-root %2)) %1))
+               last))]
 
     (if last-idx
       (vec (concat (subvec entries 0 (inc (long last-idx)))
@@ -1189,12 +1172,11 @@
 
 (defn- ensure-tabs
   [db]
-  (let
-    [entries
-     (tabs-or-base db)
+  (let [entries
+        (tabs-or-base db)
 
-     active-id
-     (or (current-tab-id (assoc db :tabs entries)) (:id (first entries)))]
+        active-id
+        (or (current-tab-id (assoc db :tabs entries)) (:id (first entries)))]
 
     (assoc db
       :tabs (mapv (fn [entry]
@@ -1219,34 +1201,33 @@
    FOLLOWING still enters at the live tail, including for a live turn that grew
    while hidden. The tab's stale published `:layout` is dropped either way."
   [db workspace-id]
-  (let
-    [entry
-     (some #(when (= (:id %) workspace-id) %) (:tabs db))
+  (let [entry
+        (some #(when (= (:id %) workspace-id) %) (:tabs db))
 
-     ;; Defaults FIRST: `restore-tab` only merges, so any per-tab key absent from
-     ;; the stored snapshot would otherwise keep the value the tab we are LEAVING
-     ;; left at the root (a live turn id, a cancel stamp, a paused queue) and hand
-     ;; it to the incoming tab. Filling from `empty-tab-state` makes the restore
-     ;; total for every key in `tab-state-keys`, even for a partially seeded tab.
-     locals
-     (merge (empty-tab-state) (get-in db [:tab-locals workspace-id]))
+        ;; Defaults FIRST: `restore-tab` only merges, so any per-tab key absent from
+        ;; the stored snapshot would otherwise keep the value the tab we are LEAVING
+        ;; left at the root (a live turn id, a cancel stamp, a paused queue) and hand
+        ;; it to the incoming tab. Filling from `empty-tab-state` makes the restore
+        ;; total for every key in `tab-state-keys`, even for a partially seeded tab.
+        locals
+        (merge (empty-tab-state) (get-in db [:tab-locals workspace-id]))
 
-     db'
-     (-> (merge db locals)
-         ;; A FOLLOWING tab enters at the live tail; a PARKED tab keeps the row
-         ;; its reader left it on, with any in-flight ease dropped so the frame is
-         ;; painted there rather than animated toward it.
-         (update :scroll scroll/resettle)
-         ;; And the incoming tab's published `:layout` goes with it. That map is
-         ;; the geometry of the LAST frame this tab painted, and a tab that was
-         ;; streaming in the background has grown taller since — while the render
-         ;; loop's `:ease-scroll` fires on every tick a turn is loading, off
-         ;; whatever `:layout` it finds. Kept, it pins FOLLOW's `:pos` to that old,
-         ;; shorter bottom, and the next frame's real layout then ANIMATES the
-         ;; whole transcript down to the true bottom — the same self-scroll a
-         ;; resize used to cause. With no layout there is nothing to ease from:
-         ;; the first frame lays the tail out flush and publishes the truth.
-         (dissoc :layout))]
+        db'
+        (-> (merge db locals)
+            ;; A FOLLOWING tab enters at the live tail; a PARKED tab keeps the row
+            ;; its reader left it on, with any in-flight ease dropped so the frame is
+            ;; painted there rather than animated toward it.
+            (update :scroll scroll/resettle)
+            ;; And the incoming tab's published `:layout` goes with it. That map is
+            ;; the geometry of the LAST frame this tab painted, and a tab that was
+            ;; streaming in the background has grown taller since — while the render
+            ;; loop's `:ease-scroll` fires on every tick a turn is loading, off
+            ;; whatever `:layout` it finds. Kept, it pins FOLLOW's `:pos` to that old,
+            ;; shorter bottom, and the next frame's real layout then ANIMATES the
+            ;; whole transcript down to the true bottom — the same self-scroll a
+            ;; resize used to cause. With no layout there is nothing to ease from:
+            ;; the first frame lays the tail out flush and publishes the truth.
+            (dissoc :layout))]
 
     ;; The tab ENTRY carries the workspace root reliably (set at creation). A
     ;; stale/empty tab-locals snapshot — taken before `:set-workspace` landed —
@@ -1353,12 +1334,11 @@
    so the first paint is coherent; ongoing changes flow through the
    listener registered there."
   []
-  (let
-    [local-settings
-     (load-persisted-settings)
+  (let [local-settings
+        (load-persisted-settings)
 
-     settings
-     (merge (migrated-toggle-projection) local-settings)]
+        settings
+        (merge (migrated-toggle-projection) local-settings)]
 
     (tui-theme/apply-theme! (:theme-name settings))
     (reset! app-db
@@ -1464,10 +1444,9 @@
                 ;; restart cleared the process caches. The local-settings
                 ;; path already busts fmt-cache via `apply-settings-update!`;
                 ;; the registry path needs the same on both caches.
-                (let
-                  [render-neutral? (contains? render-neutral-toggle-ids
-                                              (some-> toggle-id
-                                                      name))]
+                (let [render-neutral? (contains? render-neutral-toggle-ids
+                                                 (some-> toggle-id
+                                                         name))]
                   ;; Drop BOTH render caches. A registry toggle changes what a
                   ;; bubble paints, but the projected lines live in
                   ;; `render/fmt-cache` (keyed on message identity, NOT toggle
@@ -1487,9 +1466,8 @@
                                            name)))
                     (render/invalidate-cache!)
                     (virtual/invalidate-heights!))
-                  (let
-                    [settings (merge (migrated-toggle-projection)
-                                     (select-keys (:settings db) (keys default-settings)))]
+                  (let [settings (merge (migrated-toggle-projection)
+                                        (select-keys (:settings db) (keys default-settings)))]
                     ;; The invalidate above dropped EVERY sticky height - the whole
                     ;; transcript is back on estimates. Re-warm in the background
                     ;; (same worker the startup path uses) so total-h re-settles
@@ -1497,12 +1475,11 @@
                     ;; land mid-scroll and jump the scrollbar thumb. Width comes
                     ;; from the last published layout; a nil layout (no frame yet)
                     ;; skips - the startup warm is still in flight then anyway.
-                    (when-let
-                      [cols (and (not (or render-neutral?
-                                          (= "codex_fast_mode"
-                                             (some-> toggle-id
-                                                     name))))
-                                 (:cols (:layout db)))]
+                    (when-let [cols (and (not (or render-neutral?
+                                                  (= "codex_fast_mode"
+                                                     (some-> toggle-id
+                                                             name))))
+                                         (:cols (:layout db)))]
                       (virtual/rewarm! (:messages db)
                                        (max 1 (- (long cols) (long render/MESSAGE_SIDE_PAD)))
                                        settings
@@ -1554,15 +1531,14 @@
               ;; display follows. `db` reflects the current tab, so `(:session db)` is the
               ;; active session.
               (fn [db _]
-                (let
-                  [sid
-                   (get-in db [:session :id])
+                (let [sid
+                      (get-in db [:session :id])
 
-                   config
-                   (or (:config db) (vis/load-config) {:providers []})
+                      config
+                      (or (:config db) (vis/load-config) {:providers []})
 
-                   entries
-                   (model-cycle-entries config)]
+                      entries
+                      (model-cycle-entries config)]
 
                   (cond (nil? sid) {:fx [[:notify "Open a session first to choose its model" :warn
                                           settings-notification-ttl-ms]]}
@@ -1574,28 +1550,27 @@
                         ;; in the footer. A fresh session has no stored pref, and the footer
                         ;; shows the router default; Ctrl+T must advance PAST that default, not
                         ;; "set" the same first entry and appear to do nothing.
-                        (let
-                          [effective
-                           (current-model-info)
+                        (let [effective
+                              (current-model-info)
 
-                           current
-                           (or (vis/gateway-session-model sid)
-                               (when effective
-                                 {:provider (some-> (:provider effective)
-                                                    name)
-                                  :model (:name effective)}))
+                              current
+                              (or (vis/gateway-session-model sid)
+                                  (when effective
+                                    {:provider (some-> (:provider effective)
+                                                       name)
+                                     :model (:name effective)}))
 
-                           idx
-                           (or (entry-index entries (:provider current) (:model current)) -1)
+                              idx
+                              (or (entry-index entries (:provider current) (:model current)) -1)
 
-                           next-e
-                           (nth entries (mod (inc (long idx)) (count entries)))
+                              next-e
+                              (nth entries (mod (inc (long idx)) (count entries)))
 
-                           pid
-                           (name (:provider-id next-e))
+                              pid
+                              (name (:provider-id next-e))
 
-                           pref
-                           {:provider pid :model (:model next-e)}]
+                              pref
+                              {:provider pid :model (:model next-e)}]
 
                           {:db (assoc db :session-model-pref pref)
                            :fx [[:set-session-model sid pid (:model next-e)]
@@ -1672,12 +1647,11 @@
 
 (reg-event-db :toggle-detail
               (fn [db [_ session-id node-id explicit-expand?]]
-                (let
-                  [k
-                   [(str session-id) (str node-id)]
+                (let [k
+                      [(str session-id) (str node-id)]
 
-                   db
-                   (park-scroll-for-toggle db)]
+                      db
+                      (park-scroll-for-toggle db)]
 
                   (if (some? explicit-expand?)
                     ;; Caller knows the row's CURRENT effective state (from the click
@@ -1714,8 +1688,8 @@
               ;; expand them all. One keystroke flips the whole transcript (per-node overrides
               ;; wiped), mirroring org-mode's buffer-wide visibility cycle.
               (fn [db _]
-                (let
-                  [expanded? (= :expand (get-in db [:detail-expansions :vis.channel-tui/baseline]))]
+                (let [expanded? (= :expand
+                                   (get-in db [:detail-expansions :vis.channel-tui/baseline]))]
                   (-> (park-scroll-for-toggle db)
                       (assoc :detail-expansions {:vis.channel-tui/baseline
                                                  (if expanded? :collapse :expand)})))))
@@ -1751,53 +1725,51 @@
 (reg-event-db
   :create-tab
   (fn [db [_ opts]]
-    (let
-      [db
-       (-> db
-           ensure-tabs
-           sync-active-tab)
+    (let [db
+          (-> db
+              ensure-tabs
+              sync-active-tab)
 
-       entries
-       (vec (:tabs db))
+          entries
+          (vec (:tabs db))
 
-       n
-       (next-tab-number entries)
+          n
+          (next-tab-number entries)
 
-       id
-       (keyword (str "tab-" n))
+          id
+          (keyword (str "tab-" n))
 
-       workspace
-       (:workspace opts)
+          workspace
+          (:workspace opts)
 
-       root
-       (or (:workspace/root workspace) (:workspace/root opts))
+          root
+          (or (:workspace/root workspace) (:workspace/root opts))
 
-       label
-       (or (:label opts)
-           (some-> workspace
-                   :label
-                   not-empty)
-           (some-> workspace
-                   :main
-                   :branch
-                   not-empty)
-           untitled-session-label)
+          label
+          (or (:label opts)
+              (some-> workspace
+                      :label
+                      not-empty)
+              (some-> workspace
+                      :main
+                      :branch
+                      not-empty)
+              untitled-session-label)
 
-       entry
-       (cond-> {:id id :label label :active? true}
-         workspace
-         (assoc :workspace workspace)
+          entry
+          (cond-> {:id id :label label :active? true}
+            workspace
+            (assoc :workspace workspace)
 
-         root
-         (assoc :workspace/root root))]
+            root
+            (assoc :workspace/root root))]
 
       (if (>= (count entries) (long max-tabs))
         db
-        (cond->
-          (-> db
-              (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries) entry)
-                     :active-tab-id id)
-              (merge (empty-tab-state)))
+        (cond-> (-> db
+                    (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries) entry)
+                           :active-tab-id id)
+                    (merge (empty-tab-state)))
           workspace
           (assoc :workspace workspace)
 
@@ -1806,32 +1778,31 @@
 
 (reg-event-db :select-tab-index
               (fn [db [_ idx]]
-                (let
-                  [db
-                   (-> db
-                       ensure-tabs
-                       sync-active-tab)
+                (let [db
+                      (-> db
+                          ensure-tabs
+                          sync-active-tab)
 
-                   entries
-                   (vec (:tabs db))
+                      entries
+                      (vec (:tabs db))
 
-                   idx
-                   (if (#{:next :prev} idx)
-                     (when (seq entries)
-                       (let
-                         [active-id
-                          (or (:active-tab-id db)
-                              (:id (some #(when (:active? %) %) entries))
-                              (:id (first entries)))
+                      idx
+                      (if (#{:next :prev} idx)
+                        (when (seq entries)
+                          (let [active-id
+                                (or (:active-tab-id db)
+                                    (:id (some #(when (:active? %) %) entries))
+                                    (:id (first entries)))
 
-                          current
-                          (or (first (keep-indexed #(when (= (:id %2) active-id) %1) entries)) -1)
+                                current
+                                (or (first (keep-indexed #(when (= (:id %2) active-id) %1) entries))
+                                    -1)
 
-                          delta
-                          (if (= :prev idx) -1 1)]
+                                delta
+                                (if (= :prev idx) -1 1)]
 
-                         (mod (+ (long current) delta) (count entries))))
-                     idx)]
+                            (mod (+ (long current) delta) (count entries))))
+                        idx)]
 
                   (if-let [entry (and (integer? idx) (nth entries idx nil))]
                     (activate-tab db (:id entry))
@@ -1839,22 +1810,21 @@
 
 (reg-event-db :select-tab-by-session
               (fn [db [_ session-id]]
-                (let
-                  [target-id
-                   (some-> session-id
-                           str)
+                (let [target-id
+                      (some-> session-id
+                              str)
 
-                   db
-                   (-> db
-                       ensure-tabs
-                       sync-active-tab)
+                      db
+                      (-> db
+                          ensure-tabs
+                          sync-active-tab)
 
-                   entries
-                   (vec (:tabs db))
+                      entries
+                      (vec (:tabs db))
 
-                   entry
-                   (when target-id
-                     (some #(when (= target-id (tab-session-id db (:id %))) %) entries))]
+                      entry
+                      (when target-id
+                        (some #(when (= target-id (tab-session-id db (:id %))) %) entries))]
 
                   (if entry (activate-tab db (:id entry)) db))))
 
@@ -1872,95 +1842,92 @@
   ;; live runtime). A session with a running or queued turn is LEFT alone —
   ;; it stays resumable and keeps streaming; only process exit force-stops.
   (fn [db [_ tab-id keep-project?]]
-    (let
-      [db
-       (-> db
-           ensure-tabs
-           sync-active-tab)
+    (let [db
+          (-> db
+              ensure-tabs
+              sync-active-tab)
 
-       entries
-       (vec (:tabs db))
+          entries
+          (vec (:tabs db))
 
-       active-id
-       (current-tab-id db)
+          active-id
+          (current-tab-id db)
 
-       target-id
-       (or tab-id active-id)
+          target-id
+          (or tab-id active-id)
 
-       idx
-       (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
+          idx
+          (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
 
       (if (or (nil? idx) (<= (count entries) 1))
         {:db db}
-        (let
-          [;; `sync-active-tab` above snapshotted the active tab into
-           ;; `:tab-locals`, so EVERY tab's session + idle state now
-           ;; lives there — read the closing tab's before we drop it.
-           closing-snap
-           (get-in db [:tab-locals target-id])
+        (let [;; `sync-active-tab` above snapshotted the active tab into
+              ;; `:tab-locals`, so EVERY tab's session + idle state now
+              ;; lives there — read the closing tab's before we drop it.
+              closing-snap
+              (get-in db [:tab-locals target-id])
 
-           closing-sid
-           (some-> closing-snap
-                   :session
-                   :id
-                   str)
+              closing-sid
+              (some-> closing-snap
+                      :session
+                      :id
+                      str)
 
-           closing-idle?
-           (and (not (:loading? closing-snap)) (empty? (:pending-sends closing-snap)))
+              closing-idle?
+              (and (not (:loading? closing-snap)) (empty? (:pending-sends closing-snap)))
 
-           ;; AUTHORED submissions that never reached the gateway
-           ;; (no :turn-id — submit failed, or the session was
-           ;; busy/building when the tab closed programmatically,
-           ;; e.g. a project switch). Dropping :tab-locals below
-           ;; destroys their ONLY copy, so hand them to the
-           ;; gateway queue of record instead (:submit-orphan-sends).
-           orphan-entries
-           (into []
-                 (comp (remove :turn-id)
-                       (keep (fn [{:keys [text client-id]}]
-                               (let
-                                 [t (some-> text
-                                            str)]
-                                 (when-not (str/blank? t)
-                                   ;; Carry the correlation id. A row still mid-round-trip
-                                   ;; (`:awaiting-ack?`) has no turn id yet but may ALREADY be
-                                   ;; registered with the gateway, so a bare re-submit would
-                                   ;; queue the text TWICE. Re-submitting under the same
-                                   ;; `idempotency_key` returns that very turn instead.
-                                   {:text t :client-id client-id})))))
-                 (:pending-sends closing-snap))
+              ;; AUTHORED submissions that never reached the gateway
+              ;; (no :turn-id — submit failed, or the session was
+              ;; busy/building when the tab closed programmatically,
+              ;; e.g. a project switch). Dropping :tab-locals below
+              ;; destroys their ONLY copy, so hand them to the
+              ;; gateway queue of record instead (:submit-orphan-sends).
+              orphan-entries
+              (into []
+                    (comp (remove :turn-id)
+                          (keep (fn [{:keys [text client-id]}]
+                                  (let [t (some-> text
+                                                  str)]
+                                    (when-not (str/blank? t)
+                                      ;; Carry the correlation id. A row still mid-round-trip
+                                      ;; (`:awaiting-ack?`) has no turn id yet but may ALREADY be
+                                      ;; registered with the gateway, so a bare re-submit would
+                                      ;; queue the text TWICE. Re-submitting under the same
+                                      ;; `idempotency_key` returns that very turn instead.
+                                      {:text t :client-id client-id})))))
+                    (:pending-sends closing-snap))
 
-           remaining
-           (vec (concat (subvec entries 0 idx) (subvec entries (inc (long idx)))))
+              remaining
+              (vec (concat (subvec entries 0 idx) (subvec entries (inc (long idx)))))
 
-           db
-           (-> db
-               (assoc :tabs remaining)
-               (update :tab-locals dissoc target-id))
+              db
+              (-> db
+                  (assoc :tabs remaining)
+                  (update :tab-locals dissoc target-id))
 
-           open-elsewhere?
-           (boolean (and closing-sid (some #(= closing-sid (tab-session-id db (:id %))) remaining)))
+              open-elsewhere?
+              (boolean (and closing-sid
+                            (some #(= closing-sid (tab-session-id db (:id %))) remaining)))
 
-           db
-           (if (= target-id active-id)
-             (let
-               [next-idx
-                (min (long idx) (dec (count remaining)))
+              db
+              (if (= target-id active-id)
+                (let [next-idx
+                      (min (long idx) (dec (count remaining)))
 
-                next-id
-                (:id (nth remaining next-idx))]
+                      next-id
+                      (:id (nth remaining next-idx))]
 
-               (-> db
-                   (assoc :active-tab-id next-id)
-                   (update :tabs
-                           (fn [es]
-                             (mapv (fn [entry]
-                                     (cond-> (dissoc entry :active?)
-                                       (= (:id entry) next-id)
-                                       (assoc :active? true)))
-                                   es)))
-                   (restore-tab next-id)))
-             db)]
+                  (-> db
+                      (assoc :active-tab-id next-id)
+                      (update :tabs
+                              (fn [es]
+                                (mapv (fn [entry]
+                                        (cond-> (dissoc entry :active?)
+                                          (= (:id entry) next-id)
+                                          (assoc :active? true)))
+                                      es)))
+                      (restore-tab next-id)))
+                db)]
 
           {:db db
            :fx (cond-> []
@@ -1991,10 +1958,9 @@
   :set-provider-limits
   (fn [db [_ provider-id report]]
     (let [entry {:provider-id provider-id :report report :updated-at-ms (System/currentTimeMillis)}]
-      (cond->
-        (assoc db
-          :provider-limits entry
-          :provider-limits-force? false)
+      (cond-> (assoc db
+                :provider-limits entry
+                :provider-limits-force? false)
         ;; Keep the LAST report per provider, not just the active
         ;; slot: cycling the per-session model (C-x c) retargets the
         ;; poller, and without this the footer would blank to
@@ -2082,15 +2048,14 @@
    run (every tool call already executed) was dropped from the transcript instead of
    being kept for the user to read."
   [db]
-  (let
-    [messages
-     (vec (:messages db))
+  (let [messages
+        (vec (:messages db))
 
-     idx
-     (pending-assistant-index messages (:live-turn-client-id db))
+        idx
+        (pending-assistant-index messages (:live-turn-client-id db))
 
-     trace
-     (not-empty (vec (get-in db [:progress :iterations])))]
+        trace
+        (not-empty (vec (get-in db [:progress :iterations])))]
 
     (if (and idx trace (empty? (get-in messages [idx :terminal-pending :trace])))
       (assoc db :messages (assoc-in messages [idx :terminal-pending :trace] trace))
@@ -2171,84 +2136,82 @@
   ;; session + transcript BIND into it in place (keeping its position and
   ;; title), it gains focus, and anything queued while it hydrated drains.
   (fn [db [_ session history workspace]]
-    (let
-      [sid
-       (some-> session
-               :id
-               str)
+    (let [sid
+          (some-> session
+                  :id
+                  str)
 
-       ;; Freeze the current tab (incl. any in-flight turn) into its locals
-       ;; before we change focus, so its streaming worker keeps updating it.
-       db
-       (-> db
-           ensure-tabs
-           sync-active-tab)
+          ;; Freeze the current tab (incl. any in-flight turn) into its locals
+          ;; before we change focus, so its streaming worker keeps updating it.
+          db
+          (-> db
+              ensure-tabs
+              sync-active-tab)
 
-       entries
-       (vec (:tabs db))
+          entries
+          (vec (:tabs db))
 
-       existing
-       (when sid (some #(when (= sid (tab-session-id db (:id %))) %) entries))
+          existing
+          (when sid (some #(when (= sid (tab-session-id db (:id %))) %) entries))
 
-       ;; W3 reopen seed: populate the F2 ctx cache immediately from the full
-       ;; persisted ctx history so live + ARCHIVED tasks render the instant the
-       ;; tab opens — for BOTH a freshly minted tab AND an already-open one.
-       ;; Hoisted out of the `new tab` branch so a restored/restarted session
-       ;; (which hits `existing` → activate-tab) no longer shows an empty F2
-       ;; until its first turn end. Keyed by the raw session UUID (what screen.clj reads via
-       ;; [:session :id]). One DB read; tolerate failure.
-       ;; LATEST ctx only — the old merge-across-ALL-turn-snapshots seed
-       ;; resurrected dropped plan steps into the TASKS section as if live.
-       ;; History now has dedicated surfaces: :archived (GC'd entities,
-       ;; rides the latest snapshot) and :timeline (plan generations from
-       ;; the append-only task ledger, PLAN HISTORY section).
-       ;; F2 panel no longer seeds tasks/facts/archived/timeline — gone.
-       ctx-panel
-       nil
+          ;; W3 reopen seed: populate the F2 ctx cache immediately from the full
+          ;; persisted ctx history so live + ARCHIVED tasks render the instant the
+          ;; tab opens — for BOTH a freshly minted tab AND an already-open one.
+          ;; Hoisted out of the `new tab` branch so a restored/restarted session
+          ;; (which hits `existing` → activate-tab) no longer shows an empty F2
+          ;; until its first turn end. Keyed by the raw session UUID (what screen.clj reads via
+          ;; [:session :id]). One DB read; tolerate failure.
+          ;; LATEST ctx only — the old merge-across-ALL-turn-snapshots seed
+          ;; resurrected dropped plan steps into the TASKS section as if live.
+          ;; History now has dedicated surfaces: :archived (GC'd entities,
+          ;; rides the latest snapshot) and :timeline (plan generations from
+          ;; the append-only task ledger, PLAN HISTORY section).
+          ;; F2 panel no longer seeds tasks/facts/archived/timeline — gone.
+          ctx-panel
+          nil
 
-       seed-ctx
-       (fn [d]
-         (cond-> d
-           ctx-panel
-           (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
+          seed-ctx
+          (fn [d]
+            (cond-> d
+              ctx-panel
+              (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
 
       (cond (and existing (:pending? existing))
-            (let
-              [tab-id
-               (:id existing)
+            (let [tab-id
+                  (:id existing)
 
-               db'
-               (-> db
-                   (update :tabs
-                           (fn [es]
-                             (mapv (fn [e]
-                                     (if (= (:id e) tab-id)
-                                       (cond-> (dissoc e :pending?)
-                                         workspace
-                                         (assoc :workspace workspace)
+                  db'
+                  (-> db
+                      (update :tabs
+                              (fn [es]
+                                (mapv (fn [e]
+                                        (if (= (:id e) tab-id)
+                                          (cond-> (dissoc e :pending?)
+                                            workspace
+                                            (assoc :workspace workspace)
 
-                                         (:root workspace)
-                                         (assoc :workspace/root (:root workspace)))
-                                       e))
-                                   es)))
-                   (update-tab tab-id
-                               (fn [w]
-                                 (clear-active-turn-state (assoc w
-                                                            :session session
-                                                            :workspace workspace
-                                                            :workspace/root (:root workspace)
-                                                            :title nil
-                                                            ;; Same reason as :init-session — a
-                                                            ;; bound tab shows THIS session's model.
-                                                            :session-model-pref nil
-                                                            :messages (or history [])
-                                                            :input-history (history-user-texts
-                                                                             history)))))
-                   (activate-tab tab-id)
-                   seed-ctx)
+                                            (:root workspace)
+                                            (assoc :workspace/root (:root workspace)))
+                                          e))
+                                      es)))
+                      (update-tab tab-id
+                                  (fn [w]
+                                    (clear-active-turn-state (assoc w
+                                                               :session session
+                                                               :workspace workspace
+                                                               :workspace/root (:root workspace)
+                                                               :title nil
+                                                               ;; Same reason as :init-session — a
+                                                               ;; bound tab shows THIS session's model.
+                                                               :session-model-pref nil
+                                                               :messages (or history [])
+                                                               :input-history (history-user-texts
+                                                                                history)))))
+                      (activate-tab tab-id)
+                      seed-ctx)
 
-               tab-view
-               (if (= tab-id (current-tab-id db')) db' (get-in db' [:tab-locals tab-id]))]
+                  tab-view
+                  (if (= tab-id (current-tab-id db')) db' (get-in db' [:tab-locals tab-id]))]
 
               {:db db'
                :fx (cond-> []
@@ -2258,40 +2221,40 @@
             ;; Already open — just focus that tab; its view state
             ;; (messages, scroll, in-flight turn) lives in :tab-locals.
             {:db (seed-ctx (activate-tab db (:id existing)))}
-            :else (let
-                    [n
-                     (next-tab-number entries)
+            :else (let [n
+                        (next-tab-number entries)
 
-                     id
-                     (keyword (str "tab-" n))
+                        id
+                        (keyword (str "tab-" n))
 
-                     label
-                     (or (some-> workspace
-                                 :label
-                                 not-empty)
-                         untitled-session-label)
+                        label
+                        (or (some-> workspace
+                                    :label
+                                    not-empty)
+                            untitled-session-label)
 
-                     entry
-                     (cond-> {:id id :label label :active? true}
-                       workspace
-                       (assoc :workspace workspace)
+                        entry
+                        (cond-> {:id id :label label :active? true}
+                          workspace
+                          (assoc :workspace workspace)
 
-                       (:root workspace)
-                       (assoc :workspace/root (:root workspace)))
+                          (:root workspace)
+                          (assoc :workspace/root (:root workspace)))
 
-                     db'
-                     (-> db
-                         (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries) entry)
-                                :active-tab-id id)
-                         ;; Make the new tab the live root state (a fresh session view);
-                         ;; finalize-db snapshots this back into the tab's locals.
-                         (merge (empty-tab-state))
-                         (assoc :session session
-                                :workspace workspace
-                                :workspace/root (:root workspace)
-                                :title nil
-                                :messages (or history [])
-                                :input-history (history-user-texts history)))]
+                        db'
+                        (-> db
+                            (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries)
+                                                             entry)
+                                   :active-tab-id id)
+                            ;; Make the new tab the live root state (a fresh session view);
+                            ;; finalize-db snapshots this back into the tab's locals.
+                            (merge (empty-tab-state))
+                            (assoc :session session
+                                   :workspace workspace
+                                   :workspace/root (:root workspace)
+                                   :title nil
+                                   :messages (or history [])
+                                   :input-history (history-user-texts history)))]
 
                     {:db (seed-ctx db')})))))
 
@@ -2305,23 +2268,22 @@
               ;; tags the tab entry so the async callback (`:bind-built-session`) can find
               ;; it again across intervening tab churn.
               (fn [db [_ build-id]]
-                (let
-                  [db
-                   (-> db
-                       ensure-tabs
-                       sync-active-tab)
+                (let [db
+                      (-> db
+                          ensure-tabs
+                          sync-active-tab)
 
-                   entries
-                   (vec (:tabs db))
+                      entries
+                      (vec (:tabs db))
 
-                   n
-                   (next-tab-number entries)
+                      n
+                      (next-tab-number entries)
 
-                   id
-                   (keyword (str "tab-" n))
+                      id
+                      (keyword (str "tab-" n))
 
-                   entry
-                   {:id id :label starting-session-label :active? true :build-id build-id}]
+                      entry
+                      {:id id :label starting-session-label :active? true :build-id build-id}]
 
                   (-> db
                       (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
@@ -2340,77 +2302,73 @@
   ;; drain anything the user queued while it built. If the tab was closed in the
   ;; meantime, close the now-orphan session instead of leaking it.
   (fn [db [_ build-id session history workspace]]
-    (let
-      [db
-       (-> db
-           ensure-tabs
-           sync-active-tab)
+    (let [db
+          (-> db
+              ensure-tabs
+              sync-active-tab)
 
-       entries
-       (vec (:tabs db))
+          entries
+          (vec (:tabs db))
 
-       entry
-       (some #(when (= build-id (:build-id %)) %) entries)]
+          entry
+          (some #(when (= build-id (:build-id %)) %) entries)]
 
       (if-not entry
         {:db db :fx [[:gateway-close-session (:id session)]]}
-        (let
-          [tab-id
-           (:id entry)
+        (let [tab-id
+              (:id entry)
 
-           entries'
-           (mapv (fn [e]
-                   (if (= (:id e) tab-id)
-                     (cond->
-                       (-> e
-                           (dissoc :build-id)
-                           (assoc :label (or (some-> workspace
-                                                     :label
-                                                     not-empty)
-                                             (when (not= starting-session-label (:label e))
-                                               (not-empty (:label e)))
-                                             untitled-session-label)))
-                       workspace
-                       (assoc :workspace workspace)
+              entries'
+              (mapv (fn [e]
+                      (if (= (:id e) tab-id)
+                        (cond-> (-> e
+                                    (dissoc :build-id)
+                                    (assoc :label (or (some-> workspace
+                                                              :label
+                                                              not-empty)
+                                                      (when (not= starting-session-label (:label e))
+                                                        (not-empty (:label e)))
+                                                      untitled-session-label)))
+                          workspace
+                          (assoc :workspace workspace)
 
-                       (:root workspace)
-                       (assoc :workspace/root (:root workspace)))
-                     e))
-                 entries)
+                          (:root workspace)
+                          (assoc :workspace/root (:root workspace)))
+                        e))
+                    entries)
 
-           ;; The tab was minted at the END (no workspace known
-           ;; yet). Now that its project root is bound, RELOCATE
-           ;; it next to its group so the strip stays grouped.
-           entries'
-           (let
-             [entry'
-              (some #(when (= (:id %) tab-id) %) entries')
+              ;; The tab was minted at the END (no workspace known
+              ;; yet). Now that its project root is bound, RELOCATE
+              ;; it next to its group so the strip stays grouped.
+              entries'
+              (let [entry'
+                    (some #(when (= (:id %) tab-id) %) entries')
 
-              without
-              (vec (remove #(= (:id %) tab-id) entries'))]
+                    without
+                    (vec (remove #(= (:id %) tab-id) entries'))]
 
-             (insert-tab-grouped without entry'))
+                (insert-tab-grouped without entry'))
 
-           db
-           (assoc db :tabs entries')
+              db
+              (assoc db :tabs entries')
 
-           db
-           (update-tab db
-                       tab-id
-                       (fn [w]
-                         (clear-active-turn-state (assoc w
-                                                    :session session
-                                                    :workspace workspace
-                                                    :workspace/root (:root workspace)
-                                                    :messages (or history [])
-                                                    :input-history (history-user-texts history)
-                                                    :title nil))))
+              db
+              (update-tab db
+                          tab-id
+                          (fn [w]
+                            (clear-active-turn-state (assoc w
+                                                       :session session
+                                                       :workspace workspace
+                                                       :workspace/root (:root workspace)
+                                                       :messages (or history [])
+                                                       :input-history (history-user-texts history)
+                                                       :title nil))))
 
-           tab-view
-           (if (= tab-id (current-tab-id db)) db (get-in db [:tab-locals tab-id]))
+              tab-view
+              (if (= tab-id (current-tab-id db)) db (get-in db [:tab-locals tab-id]))
 
-           pending?
-           (seq (:pending-sends tab-view))]
+              pending?
+              (seq (:pending-sends tab-view))]
 
           {:db db
            :fx (cond-> []
@@ -2434,29 +2392,25 @@
               ;; Locals seed with an empty view so an early switch paints a
               ;; blank transcript instead of ghosting the previous tab.
               (fn [db [_ specs]]
-                (let
-                  [db (-> db
-                          ensure-tabs
-                          sync-active-tab)]
+                (let [db (-> db
+                             ensure-tabs
+                             sync-active-tab)]
                   (reduce
                     (fn [db {:keys [session-id label root]}]
-                      (let
-                        [sid (some-> session-id
-                                     str)
-                         entries (vec (:tabs db))
-                         open? (when sid (some #(= sid (tab-session-id db (:id %))) entries))]
+                      (let [sid (some-> session-id
+                                        str)
+                            entries (vec (:tabs db))
+                            open? (when sid (some #(= sid (tab-session-id db (:id %))) entries))]
 
                         (if (or (nil? sid) open?)
                           db
-                          (let
-                            [id (keyword (str "tab-" (next-tab-number entries)))
-                             entry (cond->
-                                     {:id id
-                                      :label (or (not-empty label) untitled-session-label)
-                                      :session-id sid
-                                      :pending? true}
-                                     root
-                                     (assoc :workspace/root root))]
+                          (let [id (keyword (str "tab-" (next-tab-number entries)))
+                                entry (cond-> {:id id
+                                               :label (or (not-empty label) untitled-session-label)
+                                               :session-id sid
+                                               :pending? true}
+                                        root
+                                        (assoc :workspace/root root))]
 
                             (-> db
                                 (assoc :tabs (insert-tab-grouped entries entry))
@@ -2476,32 +2430,31 @@
               ;; stored order" and the follow-up persist rewrites `project_position`
               ;; to match — rotating the tab order by one on EVERY relaunch.
               (fn [db [_ session-ids]]
-                (let
-                  [entries
-                   (vec (:tabs db))
+                (let [entries
+                      (vec (:tabs db))
 
-                   rank
-                   (into {}
-                         (map-indexed (fn [i sid]
-                                        [(str sid) i]))
-                         (distinct (map str session-ids)))
+                      rank
+                      (into {}
+                            (map-indexed (fn [i sid]
+                                           [(str sid) i]))
+                            (distinct (map str session-ids)))
 
-                   sid-of
-                   (fn [entry]
-                     (some-> (tab-session-id db (:id entry))
-                             str))
+                      sid-of
+                      (fn [entry]
+                        (some-> (tab-session-id db (:id entry))
+                                str))
 
-                   member?
-                   (fn [entry]
-                     (contains? rank (sid-of entry)))
+                      member?
+                      (fn [entry]
+                        (contains? rank (sid-of entry)))
 
-                   slots
-                   (vec (keep-indexed (fn [i entry]
-                                        (when (member? entry) i))
-                                      entries))
+                      slots
+                      (vec (keep-indexed (fn [i entry]
+                                           (when (member? entry) i))
+                                         entries))
 
-                   ordered
-                   (vec (sort-by (comp rank sid-of) (filterv member? entries)))]
+                      ordered
+                      (vec (sort-by (comp rank sid-of) (filterv member? entries)))]
 
                   (if (< (count slots) 2)
                     db
@@ -2581,12 +2534,11 @@
               ;; paint's :ctx-scroll-max]. Callers bump :render-version separately so the
               ;; otherwise-still overlay repaints.
               (fn [db [_ delta]]
-                (let
-                  [maxs
-                   (long (or (:ctx-scroll-max db) 0))
+                (let [maxs
+                      (long (or (:ctx-scroll-max db) 0))
 
-                   cur
-                   (long (or (:ctx-scroll db) 0))]
+                      cur
+                      (long (or (:ctx-scroll db) 0))]
 
                   (assoc db :ctx-scroll (max 0 (min maxs (+ cur (long delta))))))))
 
@@ -2596,12 +2548,11 @@
               ;; (as strings); clicking the glyph flips membership. Callers bump
               ;; :render-version separately so the otherwise-still overlay repaints.
               (fn [db [_ fact-key]]
-                (let
-                  [k
-                   (str fact-key)
+                (let [k
+                      (str fact-key)
 
-                   cur
-                   (set (:expanded-facts db))]
+                      cur
+                      (set (:expanded-facts db))]
 
                   (assoc db :expanded-facts (if (contains? cur k) (disj cur k) (conj cur k))))))
 
@@ -2616,12 +2567,11 @@
               ;; paint's :help-scroll-max]. Mirrors :ctx-scroll-by; callers bump
               ;; :render-version separately so the otherwise-still overlay repaints.
               (fn [db [_ delta]]
-                (let
-                  [maxs
-                   (long (or (:help-scroll-max db) 0))
+                (let [maxs
+                      (long (or (:help-scroll-max db) 0))
 
-                   cur
-                   (long (or (:help-scroll db) 0))]
+                      cur
+                      (long (or (:help-scroll db) 0))]
 
                   (assoc db :help-scroll (max 0 (min maxs (+ cur (long delta))))))))
 
@@ -2641,9 +2591,8 @@
   "Resolve a session-id string to its tab id. The active tab's session lives
    at the db root; background tabs' sessions live in `:tab-locals`."
   [db session-id]
-  (when-let
-    [sid (some-> session-id
-                 str)]
+  (when-let [sid (some-> session-id
+                         str)]
     (let [active-id (current-tab-id db)]
       (or (when (= sid
                    (some-> db
@@ -2660,12 +2609,11 @@
               ;; relabel it directly, so a background session's title updates live without
               ;; the user opening the tab. An unresolvable arg is a no-op.
               (fn [db [_ title arg]]
-                (let
-                  [active-id
-                   (current-tab-id db)
+                (let [active-id
+                      (current-tab-id db)
 
-                   target-id
-                   (if arg (tab-id-for-session db arg) active-id)]
+                      target-id
+                      (if arg (tab-id-for-session db arg) active-id)]
 
                   (cond-> db
                     (= target-id active-id)
@@ -2708,26 +2656,24 @@
 
 (defn- text->input-state
   [text]
-  (let
-    [lines
-     (vec (or (seq (str/split (or text "") #"\n" -1)) [""]))
+  (let [lines
+        (vec (or (seq (str/split (or text "") #"\n" -1)) [""]))
 
-     crow
-     (dec (count lines))
+        crow
+        (dec (count lines))
 
-     ccol
-     (count (nth lines crow))]
+        ccol
+        (count (nth lines crow))]
 
     {:lines lines :crow crow :ccol ccol}))
 
 (defn- append-input-text
   [current text]
-  (let
-    [current-text
-     (input/input->text current)
+  (let [current-text
+        (input/input->text current)
 
-     next-text
-     (or text "")]
+        next-text
+        (or text "")]
 
     (cond (str/blank? current-text) next-text
           (str/blank? next-text) current-text
@@ -2735,22 +2681,21 @@
 
 (defn- apply-external-input
   [workspace op text]
-  (let
-    [current
-     (:input workspace)
+  (let [current
+        (:input workspace)
 
-     next
-     (case op
-       :replace
-       (text->input-state text)
+        next
+        (case op
+          :replace
+          (text->input-state text)
 
-       :append
-       (text->input-state (append-input-text current text))
+          :append
+          (text->input-state (append-input-text current text))
 
-       :insert
-       (input/paste-text current (or text ""))
+          :insert
+          (input/paste-text current (or text ""))
 
-       current)]
+          current)]
 
     (assoc workspace
       :input next
@@ -2761,27 +2706,26 @@
 
 (reg-event-fx :external-input
               (fn [db [_ op text workspace-id source]]
-                (let
-                  [db'
-                   (update-tab db workspace-id #(apply-external-input % op text))
+                (let [db'
+                      (update-tab db workspace-id #(apply-external-input % op text))
 
-                   active-id
-                   (current-tab-id db')
+                      active-id
+                      (current-tab-id db')
 
-                   ;; An ARMED conversation SENDS what it just heard. Making the human reach for
-                   ;; Enter after speaking is exactly the ceremony the mode exists to remove.
-                   ;;
-                   ;; Only the ACTIVE tab auto-submits, so the tab's state IS the db root here:
-                   ;; `:reset-input` clears the root, and submitting a BACKGROUND tab would fire
-                   ;; its text while leaving the words sitting in its editor.
-                   submit?
-                   (boolean (and (= :voice/input source)
-                                 (= active-id (or workspace-id active-id))
-                                 (:voice-conversation? db')
-                                 (:session db')
-                                 ;; Same rule as Enter: a turn being cancelled takes no new intent.
-                                 (not (:cancelling? db'))
-                                 (not (str/blank? (input/input->text (:input db'))))))]
+                      ;; An ARMED conversation SENDS what it just heard. Making the human reach for
+                      ;; Enter after speaking is exactly the ceremony the mode exists to remove.
+                      ;;
+                      ;; Only the ACTIVE tab auto-submits, so the tab's state IS the db root here:
+                      ;; `:reset-input` clears the root, and submitting a BACKGROUND tab would fire
+                      ;; its text while leaving the words sitting in its editor.
+                      submit?
+                      (boolean (and (= :voice/input source)
+                                    (= active-id (or workspace-id active-id))
+                                    (:voice-conversation? db')
+                                    (:session db')
+                                    ;; Same rule as Enter: a turn being cancelled takes no new intent.
+                                    (not (:cancelling? db'))
+                                    (not (str/blank? (input/input->text (:input db'))))))]
 
                   (cond-> {:db db'}
                     submit?
@@ -2813,11 +2757,10 @@
               (fn [db _]
                 (let [armed? (not (:voice-conversation? db))]
                   {:db (sync-voice-conversation-status (assoc db :voice-conversation? armed?))
-                   :fx (cond->
-                         [[:notify
-                           (if armed?
-                             "Voice conversation on - answers are spoken here"
-                             "Voice conversation off") :info settings-notification-ttl-ms]]
+                   :fx (cond-> [[:notify
+                                 (if armed?
+                                   "Voice conversation on - answers are spoken here"
+                                   "Voice conversation off") :info settings-notification-ttl-ms]]
                          ;; Disarming SILENCES: the answer already playing is part of the
                          ;; conversation being ended, not a recording to sit through.
                          (not armed?)
@@ -2838,19 +2781,18 @@
    through `tab-id-for-session`, because a terminal showing a single session has
    no `:tabs` entry to resolve an id to."
   [db sid]
-  (let
-    [sid
-     (some-> sid
-             str
-             str/trim
-             not-empty)
+  (let [sid
+        (some-> sid
+                str
+                str/trim
+                not-empty)
 
-     root-sid
-     (some-> db
-             :session
-             :id
-             str
-             not-empty)]
+        root-sid
+        (some-> db
+                :session
+                :id
+                str
+                not-empty)]
 
     (cond (nil? sid) (current-tab-id db)
           (= sid root-sid) (current-tab-id db)
@@ -2870,12 +2812,11 @@
    daemon). Opening the same form twice would leave a zombie behind the
    answered one."
   [db form]
-  (let
-    [rid
-     (get-in form [:request :id])
+  (let [rid
+        (get-in form [:request :id])
 
-     same?
-     #(and rid (= rid (get-in % [:request :id])))]
+        same?
+        #(and rid (= rid (get-in % [:request :id])))]
 
     (cond (same? (:human-input db)) db
           (some same? (:human-input-queue db)) db
@@ -3039,12 +2980,11 @@
    `:send-message`. Used only when a submitted prompt is cancelled and
    restored to the editor instead of becoming a transcript turn."
   [messages]
-  (let
-    [messages
-     (vec (or messages []))
+  (let [messages
+        (vec (or messages []))
 
-     n
-     (count messages)]
+        n
+        (count messages)]
 
     (cond (and (<= 2 n)
                (= :assistant (:role (peek messages)))
@@ -3057,22 +2997,20 @@
    editor is still pristine. Keystrokes entered while cancellation settles are
    a newer draft and must never be overwritten by the cancellation ACK."
   [db {:keys [text pastes paste-counter]}]
-  (let
-    [visible-text
-     (input/expand-paste-placeholders text pastes)
+  (let [visible-text
+        (input/expand-paste-placeholders text pastes)
 
-     restore-editor?
-     (input/input-empty? (:input db))]
+        restore-editor?
+        (input/input-empty? (:input db))]
 
-    (cond->
-      (-> db
-          clear-active-turn-state
-          (assoc :messages (drop-pending-turn-messages (:messages db)))
-          (update :input-history
-                  (fn [xs]
-                    (let [xs (vec (or xs []))]
-                      (if (= visible-text (peek xs)) (pop xs) xs))))
-          (dissoc :turn-start-ms :submitted-input))
+    (cond-> (-> db
+                clear-active-turn-state
+                (assoc :messages (drop-pending-turn-messages (:messages db)))
+                (update :input-history
+                        (fn [xs]
+                          (let [xs (vec (or xs []))]
+                            (if (= visible-text (peek xs)) (pop xs) xs))))
+                (dissoc :turn-start-ms :submitted-input))
       restore-editor?
       (assoc :input
         (text->input-state text) :input-history-index
@@ -3110,19 +3048,18 @@
    back, a cancel with visible work keeps the bubble and only refills the editor —
    so whichever half arrives first leaves the same frame."
   [db]
-  (let
-    [submitted
-     (:submitted-input db)
+  (let [submitted
+        (:submitted-input db)
 
-     messages
-     (vec (:messages db))
+        messages
+        (vec (:messages db))
 
-     idx
-     (pending-assistant-index messages (:live-turn-client-id db))
+        idx
+        (pending-assistant-index messages (:live-turn-client-id db))
 
-     trace
-     (or (not-empty (vec (get-in db [:progress :iterations])))
-         (when idx (not-empty (vec (get-in messages [idx :terminal-pending :trace])))))]
+        trace
+        (or (not-empty (vec (get-in db [:progress :iterations])))
+            (when idx (not-empty (vec (get-in messages [idx :terminal-pending :trace])))))]
 
     (cond (nil? submitted) (clear-active-turn-state db)
           (empty? trace) (restore-submitted-input db submitted)
@@ -3133,21 +3070,20 @@
 (reg-event-fx
   :history-up
   (fn [db _]
-    (let
-      [history
-       (vec (or (:input-history db) []))
+    (let [history
+          (vec (or (:input-history db) []))
 
-       cur-idx
-       (:input-history-index db)
+          cur-idx
+          (:input-history-index db)
 
-       draft
-       (:input-history-draft db)
+          draft
+          (:input-history-draft db)
 
-       input-text
-       (input/input->text (:input db))
+          input-text
+          (input/input->text (:input db))
 
-       pending
-       (vec (or (:pending-sends db) []))]
+          pending
+          (vec (or (:pending-sends db) []))]
 
       (cond
         ;; Empty box + something queued → pull the most recently
@@ -3155,15 +3091,14 @@
         ;; queue (its paste snapshot rides along). Also drops the real
         ;; gateway queued record so it never auto-drains behind our back.
         (and (nil? cur-idx) (str/blank? input-text) (seq pending))
-        (let
-          [entry
-           (peek pending)
+        (let [entry
+              (peek pending)
 
-           tid
-           (:turn-id entry)
+              tid
+              (:turn-id entry)
 
-           sid
-           (get-in db [:session :id])]
+              sid
+              (get-in db [:session :id])]
 
           {:db (assoc db
                  :input (text->input-state (:text entry))
@@ -3180,12 +3115,11 @@
                  (and sid tid)
                  (conj [:gateway-delete-queued sid tid (current-tab-id db) entry]))})
         (empty? history) {:db db}
-        :else (let
-                [new-idx
-                 (if (nil? cur-idx) (dec (count history)) (max 0 (dec (long cur-idx))))
+        :else (let [new-idx
+                    (if (nil? cur-idx) (dec (count history)) (max 0 (dec (long cur-idx))))
 
-                 draft
-                 (if (nil? cur-idx) input-text draft)]
+                    draft
+                    (if (nil? cur-idx) input-text draft)]
 
                 {:db (assoc db
                        :input-history-index new-idx
@@ -3199,15 +3133,14 @@
 
 (reg-event-db :history-down
               (fn [db _]
-                (let
-                  [history
-                   (vec (or (:input-history db) []))
+                (let [history
+                      (vec (or (:input-history db) []))
 
-                   cur-idx
-                   (:input-history-index db)
+                      cur-idx
+                      (:input-history-index db)
 
-                   draft
-                   (:input-history-draft db)]
+                      draft
+                      (:input-history-draft db)]
 
                   (cond (nil? cur-idx) db
                         (< (long cur-idx) (dec (count history)))
@@ -3301,12 +3234,11 @@
               ;; Search jump / `:scroll-to-message` resolution: snap-park at an exact
               ;; row (already clamped by the painter). No ease - the jump is the point.
               (fn [db [_ offset]]
-                (let
-                  [pre
-                   (scroll-pre! db)
+                (let [pre
+                      (scroll-pre! db)
 
-                   sc
-                   (scroll/parked offset)]
+                      sc
+                      (scroll/parked offset)]
 
                   (log-scroll! :set-scroll pre (scroll-snapshot sc) {:offset offset})
                   (assoc db :scroll sc))))
@@ -3315,12 +3247,11 @@
               ;; Emacs C-l recenter: drop back to FOLLOW (stick to the newest
               ;; content). The repaint is the caller's `:bump-render-version`.
               (fn [db _]
-                (let
-                  [pre
-                   (scroll-pre! db)
+                (let [pre
+                      (scroll-pre! db)
 
-                   sc
-                   scroll/follow]
+                      sc
+                      scroll/follow]
 
                   (log-scroll! :scroll-to-bottom pre (scroll-snapshot sc) {})
                   (assoc db :scroll sc))))
@@ -3334,12 +3265,11 @@
    ONE page. `:history-loading?` (set by the caller) is the in-flight latch, so a
    fast wheel-up cannot queue a dozen identical fetches."
   [db sc ^long max-s ^long inner-h]
-  (let
-    [session
-     (:session db)
+  (let [session
+        (:session db)
 
-     cursor
-     (:history-cursor session)]
+        cursor
+        (:history-cursor session)]
 
     (when (and (:id session)
                (:has-more cursor)
@@ -3354,18 +3284,17 @@
   ;; lazily paged session, still has older turns above it, hence the loader
   ;; kick.
   (fn [db _]
-    (let
-      [pre
-       (scroll-pre! db)
+    (let [pre
+          (scroll-pre! db)
 
-       sc
-       (scroll/parked 0)
+          sc
+          (scroll/parked 0)
 
-       load
-       (older-history-request db sc 0 1)
+          load
+          (older-history-request db sc 0 1)
 
-       db'
-       (assoc db :scroll sc)]
+          db'
+          (assoc db :scroll sc)]
 
       (log-scroll! :scroll-to-top pre (scroll-snapshot sc) {})
       (if load {:db (assoc-in db' [:session :history-loading?] true) :fx [load]} {:db db'}))))
@@ -3426,21 +3355,20 @@
               ;; for free, and a user parked above (mode :at) is never yanked because
               ;; their desired row is fixed.
               (fn [db [_ total-h inner-h]]
-                (let
-                  [max-s
-                   (max 0 (- (long total-h) (long inner-h)))
+                (let [max-s
+                      (max 0 (- (long total-h) (long inner-h)))
 
-                   pre
-                   (scroll-pre! db)
+                      pre
+                      (scroll-pre! db)
 
-                   cur
-                   (:scroll db)
+                      cur
+                      (:scroll db)
 
-                   sc
-                   (scroll/ease cur max-s)
+                      sc
+                      (scroll/ease cur max-s)
 
-                   post
-                   (scroll-snapshot sc)]
+                      post
+                      (scroll-snapshot sc)]
 
                   ;; `:ease-scroll` fires ~per-render-frame; only log when the
                   ;; committed mode/offset actually changed (else it spams
@@ -3489,30 +3417,27 @@
    (what the user actually sees highlighted). `case?` true = case-sensitive;
    default is case-insensitive. Blank query -> no hits."
   [messages query case?]
-  (let
-    [needle
-     (if case? (str query) (clojure.string/lower-case (str query)))
+  (let [needle
+        (if case? (str query) (clojure.string/lower-case (str query)))
 
-     n-len
-     (count needle)]
+        n-len
+        (count needle)]
 
     (if (clojure.string/blank? needle)
       {:hits [] :total 0}
-      (let
-        [counts (keep-indexed (fn [i m]
-                                (let
-                                  [hay (cond-> (str (:text m))
-                                         (not case?)
-                                         clojure.string/lower-case)
-                                   c (loop
-                                       [from 0
-                                        c 0]
+      (let [counts (keep-indexed (fn [i m]
+                                   (let [hay (cond-> (str (:text m))
+                                               (not case?)
+                                               clojure.string/lower-case)
+                                         c (loop [from 0
+                                                  c 0]
 
-                                       (let [pos (.indexOf ^String hay ^String needle (int from))]
-                                         (if (neg? pos) c (recur (+ pos n-len) (inc c)))))]
+                                             (let [pos
+                                                   (.indexOf ^String hay ^String needle (int from))]
+                                               (if (neg? pos) c (recur (+ pos n-len) (inc c)))))]
 
-                                  (when (pos? (long c)) [i c])))
-                              messages)]
+                                     (when (pos? (long c)) [i c])))
+                                 messages)]
         {:hits (mapv first counts) :total (long (reduce + 0 (map second counts)))}))))
 
 (defn- scroll-to-hit
@@ -3520,15 +3445,14 @@
    row, so no max-scroll math is needed here. No-op when there are no hits."
   [db hits index]
   (if (seq hits)
-    (let
-      [msg-idx
-       (nth hits (mod (long index) (count hits)))
+    (let [msg-idx
+          (nth hits (mod (long index) (count hits)))
 
-       offsets
-       (vec (:offsets (:layout db)))
+          offsets
+          (vec (:offsets (:layout db)))
 
-       row
-       (long (or (get offsets msg-idx) 0))]
+          row
+          (long (or (get offsets msg-idx) 0))]
 
       (assoc db :scroll (scroll/parked row)))
     db))
@@ -3547,12 +3471,11 @@
   ;; Incremental: recompute hits for the full new query, reset to the
   ;; first match, and snap to it.
   (fn [db [_ query]]
-    (let
-      [case?
-       (boolean (get-in db [:search :case?]))
+    (let [case?
+          (boolean (get-in db [:search :case?]))
 
-       {:keys [hits total]}
-       (search-hits (:messages db) query case?)]
+          {:keys [hits total]}
+          (search-hits (:messages db) query case?)]
 
       (-> db
           (assoc :search
@@ -3584,15 +3507,14 @@
   ;; Flip case sensitivity (Alt+C / the find-bar Aa chip), recompute
   ;; hits for the current query, and snap back to the first match.
   (fn [db _]
-    (let
-      [{:keys [query case?]}
-       (:search db)
+    (let [{:keys [query case?]}
+          (:search db)
 
-       case?
-       (not case?)
+          case?
+          (not case?)
 
-       {:keys [hits total]}
-       (search-hits (:messages db) query case?)]
+          {:keys [hits total]}
+          (search-hits (:messages db) query case?)]
 
       (-> db
           (assoc :search
@@ -3632,21 +3554,20 @@
   ;; is the ONE gesture that can run out of loaded history, so it also
   ;; drives the older-page fetch.
   (fn [db [_ amount total-h inner-h]]
-    (let
-      [max-s
-       (max 0 (- (long total-h) (long inner-h)))
+    (let [max-s
+          (max 0 (- (long total-h) (long inner-h)))
 
-       pre
-       (scroll-pre! db)
+          pre
+          (scroll-pre! db)
 
-       sc
-       (scroll/up (:scroll db) (long amount) max-s)
+          sc
+          (scroll/up (:scroll db) (long amount) max-s)
 
-       load
-       (older-history-request db sc max-s (long inner-h))
+          load
+          (older-history-request db sc max-s (long inner-h))
 
-       db'
-       (assoc db :scroll sc)]
+          db'
+          (assoc db :scroll sc)]
 
       (log-scroll! :scroll-up pre (scroll-snapshot sc) {:amount amount :max-s max-s})
       (if load {:db (assoc-in db' [:session :history-loading?] true) :fx [load]} {:db db'}))))
@@ -3655,15 +3576,14 @@
               ;; Wheel / arrow / PageDown: ease `amount` rows down; landing within the
               ;; slack band of the bottom re-arms FOLLOW.
               (fn [db [_ amount total-h inner-h]]
-                (let
-                  [max-s
-                   (max 0 (- (long total-h) (long inner-h)))
+                (let [max-s
+                      (max 0 (- (long total-h) (long inner-h)))
 
-                   pre
-                   (scroll-pre! db)
+                      pre
+                      (scroll-pre! db)
 
-                   sc
-                   (scroll/down (:scroll db) (long amount) max-s)]
+                      sc
+                      (scroll/down (:scroll db) (long amount) max-s)]
 
                   (log-scroll! :scroll-down pre (scroll-snapshot sc) {:amount amount :max-s max-s})
                   (assoc db :scroll sc))))
@@ -3677,18 +3597,17 @@
               (fn [db [_ mouse-y bar-top track-h total-h inner-h]]
                 (if (or (<= (long total-h) (long inner-h)) (<= (long track-h) 0))
                   db
-                  (let
-                    [max-s
-                     (max 0 (- (long total-h) (long inner-h)))
+                  (let [max-s
+                        (max 0 (- (long total-h) (long inner-h)))
 
-                     denom
-                     (max 1 (- (long track-h) 1))
+                        denom
+                        (max 1 (- (long track-h) 1))
 
-                     fraction
-                     (max 0.0 (min 1.0 (double (/ (- (long mouse-y) (long bar-top)) denom))))
+                        fraction
+                        (max 0.0 (min 1.0 (double (/ (- (long mouse-y) (long bar-top)) denom))))
 
-                     offset
-                     (long (Math/round (* fraction (double max-s))))]
+                        offset
+                        (long (Math/round (* fraction (double max-s))))]
 
                     (assoc db :scroll (scroll/to-y offset max-s))))))
 
@@ -3785,45 +3704,44 @@
 
 (defn- enqueue-message-result
   [db workspace-id text]
-  (let
-    [workspace-id
-     (or workspace-id (current-tab-id db))
+  (let [workspace-id
+        (or workspace-id (current-tab-id db))
 
-     source-db
-     (db-for-tab db workspace-id)
+        source-db
+        (db-for-tab db workspace-id)
 
-     pastes
-     (:pastes source-db)
+        pastes
+        (:pastes source-db)
 
-     session
-     (:session source-db)
+        session
+        (:session source-db)
 
-     last-row
-     (peek (vec (or (:pending-sends source-db) [])))
+        last-row
+        (peek (vec (or (:pending-sends source-db) [])))
 
-     ;; DOUBLE-SUBMIT GUARD, deliberately NARROW. Enter paints the row into
-     ;; `:pending-sends` BEFORE the gateway round-trip, so all that is left to catch is
-     ;; the MACHINE-fast repeat that once registered the same text as two queued turns
-     ;; 7 ms apart (key repeat, or a terminal delivering CR and LF): identical to the
-     ;; LAST row while that row is still mid-round-trip, or within
-     ;; `duplicate-submit-window-ms` of it.
-     ;;
-     ;; Anything slower is a HUMAN repeating themselves on purpose — "continue",
-     ;; "yes", the same nudge twice — with the first row visible on screen while they
-     ;; do it. The caller clears the editor on Enter unconditionally, so swallowing a
-     ;; deliberate repeat DELETES the user's text with nothing on screen to say so:
-     ;; the same invisibility bug this guard exists to prevent, pointed the other way.
-     dup?
-     (and (= text (:text last-row))
-          (or (boolean (:awaiting-ack? last-row))
-              (let [t (:queued-at-ms last-row)]
-                ;; A NEGATIVE age is not "just now": the row may carry the GATEWAY's clock
-                ;; (a mirrored backlog row does) or the local clock may have stepped back.
-                ;; Reading that as inside the window swallowed every deliberate repeat
-                ;; until the two clocks agreed again.
-                (boolean (and (number? t)
-                              (let [age (- (System/currentTimeMillis) (long t))]
-                                (and (<= 0 age) (< age (long duplicate-submit-window-ms)))))))))]
+        ;; DOUBLE-SUBMIT GUARD, deliberately NARROW. Enter paints the row into
+        ;; `:pending-sends` BEFORE the gateway round-trip, so all that is left to catch is
+        ;; the MACHINE-fast repeat that once registered the same text as two queued turns
+        ;; 7 ms apart (key repeat, or a terminal delivering CR and LF): identical to the
+        ;; LAST row while that row is still mid-round-trip, or within
+        ;; `duplicate-submit-window-ms` of it.
+        ;;
+        ;; Anything slower is a HUMAN repeating themselves on purpose — "continue",
+        ;; "yes", the same nudge twice — with the first row visible on screen while they
+        ;; do it. The caller clears the editor on Enter unconditionally, so swallowing a
+        ;; deliberate repeat DELETES the user's text with nothing on screen to say so:
+        ;; the same invisibility bug this guard exists to prevent, pointed the other way.
+        dup?
+        (and (= text (:text last-row))
+             (or (boolean (:awaiting-ack? last-row))
+                 (let [t (:queued-at-ms last-row)]
+                   ;; A NEGATIVE age is not "just now": the row may carry the GATEWAY's clock
+                   ;; (a mirrored backlog row does) or the local clock may have stepped back.
+                   ;; Reading that as inside the window swallowed every deliberate repeat
+                   ;; until the two clocks agreed again.
+                   (boolean (and (number? t)
+                                 (let [age (- (System/currentTimeMillis) (long t))]
+                                   (and (<= 0 age) (< age (long duplicate-submit-window-ms)))))))))]
 
     (cond
       ;; The user asked to STOP the current turn (`:cancelling?`). A submission in
@@ -3838,46 +3756,44 @@
       ;; the editor, so a silent drop is indistinguishable from a swallowed message.
       dup? {:db db :fx [[:notify "Already queued — duplicate keypress ignored" :info 1200]]}
       :else
-      (let
-        [preview-text
-         (input/collapse-paste-placeholders text pastes)
+      (let [preview-text
+            (input/collapse-paste-placeholders text pastes)
 
-         [agent-text workspace]
-         (if session
-           (let [ws (active-workspace source-db)]
-             [(binding [workspace/*workspace-root* (workspace/workspace-root ws)]
-                (input/expand-file-mentions (input/expand-paste-placeholders text pastes))) ws])
-           [nil nil])
+            [agent-text workspace]
+            (if session
+              (let [ws (active-workspace source-db)]
+                [(binding [workspace/*workspace-root* (workspace/workspace-root ws)]
+                   (input/expand-file-mentions (input/expand-paste-placeholders text pastes))) ws])
+              [nil nil])
 
-         client-id
-         (mint-client-id workspace-id)
+            client-id
+            (mint-client-id workspace-id)
 
-         ;; A submission bound for the gateway needs a session AND expanded text.
-         gateway?
-         (boolean (and session agent-text))
+            ;; A submission bound for the gateway needs a session AND expanded text.
+            gateway?
+            (boolean (and session agent-text))
 
-         entry
-         (cond->
-           {:text text
-            :preview-text preview-text
-            :agent-text agent-text
-            :client-id client-id
-            :mine? true
-            :pastes pastes
-            :paste-counter (:paste-counter source-db)
-            :queued-at-ms (System/currentTimeMillis)}
-           ;; Registered with the gateway but NOT acked yet. The row is on screen from
-           ;; this instant, so `:drain-pending` must not ALSO send it locally: the ack
-           ;; binds the gateway turn id into this very row, a failure flips it to
-           ;; `:unsent?`, and either way the flag is gone once the round-trip ends.
-           gateway?
-           (assoc :awaiting-ack? true))
+            entry
+            (cond-> {:text text
+                     :preview-text preview-text
+                     :agent-text agent-text
+                     :client-id client-id
+                     :mine? true
+                     :pastes pastes
+                     :paste-counter (:paste-counter source-db)
+                     :queued-at-ms (System/currentTimeMillis)}
+              ;; Registered with the gateway but NOT acked yet. The row is on screen from
+              ;; this instant, so `:drain-pending` must not ALSO send it locally: the ack
+              ;; binds the gateway turn id into this very row, a failure flips it to
+              ;; `:unsent?`, and either way the flag is gone once the round-trip ends.
+              gateway?
+              (assoc :awaiting-ack? true))
 
-         gw-fx
-         (when gateway?
-           [[:gateway-enqueue workspace-id session entry
-             (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
-             (turn-extra-body source-db) {} workspace]])]
+            gw-fx
+            (when gateway?
+              [[:gateway-enqueue workspace-id session entry
+                (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
+                (turn-extra-body source-db) {} workspace]])]
 
         {:db (update-tab db
                          workspace-id
@@ -3912,100 +3828,97 @@
   ;;      a short read-now directive for the AGENT; the model picks
   ;;      the right tool (`cat`, `z/symbols`, etc.) itself.
   (fn [db [_ text workspace-id]]
-    (let
-      [workspace-id
-       (or workspace-id (current-tab-id db))
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
 
-       source-db
-       (db-for-tab db workspace-id)
+          source-db
+          (db-for-tab db workspace-id)
 
-       pastes
-       (:pastes source-db)
+          pastes
+          (:pastes source-db)
 
-       full-text
-       (input/expand-paste-placeholders text pastes)
+          full-text
+          (input/expand-paste-placeholders text pastes)
 
-       preview-text
-       (input/collapse-paste-placeholders text pastes)]
+          preview-text
+          (input/collapse-paste-placeholders text pastes)]
 
-      (cond (:loading? source-db) (enqueue-message-result db workspace-id text)
-            (nil? (:session source-db)) {:db db}
-            :else
-            (let
-              [workspace
-               (active-workspace source-db)
+      (cond
+        (:loading? source-db) (enqueue-message-result db workspace-id text)
+        (nil? (:session source-db)) {:db db}
+        :else
+        (let [workspace
+              (active-workspace source-db)
 
-               agent-text
-               (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
-                 (input/expand-file-mentions full-text))
+              agent-text
+              (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
+                (input/expand-file-mentions full-text))
 
-               token
-               (vis/cancellation-token)
+              token
+              (vis/cancellation-token)
 
-               extra-body
-               (turn-extra-body source-db)
+              extra-body
+              (turn-extra-body source-db)
 
-               turn-features
-               {}
+              turn-features
+              {}
 
-               reasoning-level
-               (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
+              reasoning-level
+              (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
 
-               client-turn-id
-               (str (java.util.UUID/randomUUID))]
+              client-turn-id
+              (str (java.util.UUID/randomUUID))]
 
-              {:db (update-tab db
-                               workspace-id
-                               (fn [w]
-                                 (-> w
-                                     (update :messages
-                                             conj
-                                             (assoc (chat/user-message preview-text)
-                                               :client-turn-id client-turn-id))
-                                     (update :messages
-                                             conj
-                                             (assoc (pending-assistant-for text)
-                                               :client-turn-id client-turn-id))
-                                     (remember-input full-text)
-                                     ;; Sending re-pins to the bottom: one atomic FOLLOW
-                                     ;; reset replaces the whole `:scroll` value, so no
-                                     ;; in-flight animation target can dangle and flash the
-                                     ;; view to the top of the freshly-appended message.
-                                     (assoc :scroll scroll/follow
-                                            :loading? true
-                                            :cancel-token token
-                                            :cancelling? false
-                                            ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
-                                            ;; cancel/resubmit must retain the old submit's identity until
-                                            ;; its delayed turn.started either arrives or is proven absent.
-                                            :progress {:iterations []}
-                                            :turn-start-ms (System/currentTimeMillis)
-                                            ;; Identity of the turn this tab launched DIRECTLY: the
-                                            ;; correlation id we sent as the gateway idempotency key. A
-                                            ;; queue event echoing OUR OWN submit back (the gateway was
-                                            ;; still tearing down a just-cancelled turn and parked it) is
-                                            ;; recognised by that id — never by request text — instead of
-                                            ;; being painted as a second "Queued" row.
-                                            :live-turn-client-id client-turn-id
-                                            :submitted-input {:text text
-                                                              :pastes (:pastes source-db)
-                                                              :paste-counter (:paste-counter
-                                                                               source-db)}
-                                            :input-history-index nil
-                                            :input-history-draft nil
-                                            :slash-command-index 0
-                                            :slash-command-hidden? false))))
-               ;; `agent-text` (LLM-facing, with `@path` expanded into a
-               ;; `[Attached File: ...]` directive) drives the model.
-               ;; `preview-text` (un-expanded `@path` token, plus a fenced
-               ;; head+tail peek of each paste) is the user's collapsed line -
-               ;; flowed in as `display-text` so it lands in the persisted
-               ;; `user_request` column. Without the split,
-               ;; reopening a session re-rendered the verbose attachment
-               ;; directive in the user bubble.
-               :fx [[:session-turn workspace-id (:session source-db) agent-text token
-                     reasoning-level extra-body turn-features workspace client-turn-id
-                     preview-text]]})))))
+          {:db (update-tab db
+                           workspace-id
+                           (fn [w]
+                             (-> w
+                                 (update :messages
+                                         conj
+                                         (assoc (chat/user-message preview-text)
+                                           :client-turn-id client-turn-id))
+                                 (update :messages
+                                         conj
+                                         (assoc (pending-assistant-for text)
+                                           :client-turn-id client-turn-id))
+                                 (remember-input full-text)
+                                 ;; Sending re-pins to the bottom: one atomic FOLLOW
+                                 ;; reset replaces the whole `:scroll` value, so no
+                                 ;; in-flight animation target can dangle and flash the
+                                 ;; view to the top of the freshly-appended message.
+                                 (assoc :scroll scroll/follow
+                                        :loading? true
+                                        :cancel-token token
+                                        :cancelling? false
+                                        ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
+                                        ;; cancel/resubmit must retain the old submit's identity until
+                                        ;; its delayed turn.started either arrives or is proven absent.
+                                        :progress {:iterations []}
+                                        :turn-start-ms (System/currentTimeMillis)
+                                        ;; Identity of the turn this tab launched DIRECTLY: the
+                                        ;; correlation id we sent as the gateway idempotency key. A
+                                        ;; queue event echoing OUR OWN submit back (the gateway was
+                                        ;; still tearing down a just-cancelled turn and parked it) is
+                                        ;; recognised by that id — never by request text — instead of
+                                        ;; being painted as a second "Queued" row.
+                                        :live-turn-client-id client-turn-id
+                                        :submitted-input {:text text
+                                                          :pastes (:pastes source-db)
+                                                          :paste-counter (:paste-counter source-db)}
+                                        :input-history-index nil
+                                        :input-history-draft nil
+                                        :slash-command-index 0
+                                        :slash-command-hidden? false))))
+           ;; `agent-text` (LLM-facing, with `@path` expanded into a
+           ;; `[Attached File: ...]` directive) drives the model.
+           ;; `preview-text` (un-expanded `@path` token, plus a fenced
+           ;; head+tail peek of each paste) is the user's collapsed line -
+           ;; flowed in as `display-text` so it lands in the persisted
+           ;; `user_request` column. Without the split,
+           ;; reopening a session re-rendered the verbose attachment
+           ;; directive in the user bubble.
+           :fx [[:session-turn workspace-id (:session source-db) agent-text token reasoning-level
+                 extra-body turn-features workspace client-turn-id preview-text]]})))))
 
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.
@@ -4024,22 +3937,21 @@
               ;; written and removed by the gateway. Appends only when the row is gone
               ;; (cleared meanwhile), because a submission must never vanish silently.
               (fn [db [_ workspace-id entry]]
-                (let
-                  [wid
-                   (or workspace-id (current-tab-id db))
+                (let [wid
+                      (or workspace-id (current-tab-id db))
 
-                   client-id
-                   (:client-id entry)
+                      client-id
+                      (:client-id entry)
 
-                   staged
-                   (-> entry
-                       (assoc :mine? true
-                              :unsent? true)
-                       (dissoc :awaiting-ack?))
+                      staged
+                      (-> entry
+                          (assoc :mine? true
+                                 :unsent? true)
+                          (dissoc :awaiting-ack?))
 
-                   same?
-                   (fn [e]
-                     (boolean (and client-id (= client-id (:client-id e)))))]
+                      same?
+                      (fn [e]
+                        (boolean (and client-id (= client-id (:client-id e)))))]
 
                   (if (submission-retracted? db wid client-id)
                     ;; The user took this submission back while the enqueue POST was still open, and
@@ -4077,65 +3989,64 @@
   ;; after a quick Esc + resend, the old POST can start late while the new POST
   ;; waits behind it. Never bind that old ghost to the new optimistic turn.
   (fn [db [_ workspace-id {:keys [started-at-ms server-at-ms turn-id client-id]}]]
-    (let
-      [workspace-id
-       (or workspace-id (current-tab-id db))
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
 
-       ;; Convert the gateway clock into this process's wall-clock domain using
-       ;; the event's gateway-sampled elapsed value.
-       local-started-at-ms
-       (when (nat-int? started-at-ms)
-         (if (nat-int? server-at-ms)
-           (- (System/currentTimeMillis) (max 0 (- (long server-at-ms) (long started-at-ms))))
-           started-at-ms))]
+          ;; Convert the gateway clock into this process's wall-clock domain using
+          ;; the event's gateway-sampled elapsed value.
+          local-started-at-ms
+          (when (nat-int? started-at-ms)
+            (if (nat-int? server-at-ms)
+              (- (System/currentTimeMillis) (max 0 (- (long server-at-ms) (long started-at-ms))))
+              started-at-ms))]
 
       (if-not workspace-id
         {:db db}
-        (let
-          [target
-           (db-for-tab db workspace-id)
+        (let [target
+              (db-for-tab db workspace-id)
 
-           cancel-client-id
-           (:cancel-awaiting-client-id target)
+              cancel-client-id
+              (:cancel-awaiting-client-id target)
 
-           live-client-id
-           (:live-turn-client-id target)
+              live-client-id
+              (:live-turn-client-id target)
 
-           ;; Older gateways omitted the correlation id. Event order still makes
-           ;; the first start after an armed cancel the old submit, so preserve the
-           ;; pre-upgrade safety fallback for that one case.
-           awaiting-cancel?
-           (boolean
-             (and turn-id cancel-client-id (or (nil? client-id) (= client-id cancel-client-id))))
+              ;; Older gateways omitted the correlation id. Event order still makes
+              ;; the first start after an armed cancel the old submit, so preserve the
+              ;; pre-upgrade safety fallback for that one case.
+              awaiting-cancel?
+              (boolean
+                (and turn-id cancel-client-id (or (nil? client-id) (= client-id cancel-client-id))))
 
-           matching-live-start?
-           (boolean (and (not awaiting-cancel?)
-                         (or (nil? live-client-id)
-                             (= client-id live-client-id)
-                             (and (nil? client-id) (nil? cancel-client-id)))))
+              matching-live-start?
+              (boolean (and (not awaiting-cancel?)
+                            (or (nil? live-client-id)
+                                (= client-id live-client-id)
+                                (and (nil? client-id) (nil? cancel-client-id)))))
 
-           ;; If the new submit starts first, FIFO ordering proves the cancelled
-           ;; POST never reached the gateway; retire its otherwise-stale marker.
-           cancel-resolved?
-           (or awaiting-cancel? (and cancel-client-id live-client-id (= client-id live-client-id)))
+              ;; If the new submit starts first, FIFO ordering proves the cancelled
+              ;; POST never reached the gateway; retire its otherwise-stale marker.
+              cancel-resolved?
+              (or awaiting-cancel?
+                  (and cancel-client-id live-client-id (= client-id live-client-id)))
 
-           sid
-           (get-in target [:session :id])
+              sid
+              (get-in target [:session :id])
 
-           db'
-           (update-tab
-             db
-             workspace-id
-             (fn [w]
-               (cond-> w
-                 cancel-resolved?
-                 (dissoc :cancel-awaiting-client-id)
+              db'
+              (update-tab
+                db
+                workspace-id
+                (fn [w]
+                  (cond-> w
+                    cancel-resolved?
+                    (dissoc :cancel-awaiting-client-id)
 
-                 (and matching-live-start? (:loading? w) (nat-int? local-started-at-ms))
-                 (assoc :turn-start-ms local-started-at-ms)
+                    (and matching-live-start? (:loading? w) (nat-int? local-started-at-ms))
+                    (assoc :turn-start-ms local-started-at-ms)
 
-                 (and matching-live-start? (:loading? w) turn-id (nil? (:gateway-turn-id w)))
-                 (assoc :gateway-turn-id turn-id))))]
+                    (and matching-live-start? (:loading? w) turn-id (nil? (:gateway-turn-id w)))
+                    (assoc :gateway-turn-id turn-id))))]
 
           (cond-> {:db db'}
             (and awaiting-cancel? sid)
@@ -4170,28 +4081,26 @@
       ;; still be the provider `:content-stream` when no local form parsed it.
       ;; Both are answer prose, never reasoning. Painting "Turn completed." over
       ;; either loses the reply the user just watched stream.
-      (let
-        [prose (when (= :completed (terminal-status status))
-                 (->> trace
-                      (keep #(some-> (or (:assistant-prose %)
-                                         (when (empty? (:forms %)) (:content-stream %)))
-                                     str
-                                     str/trim
-                                     not-empty))
-                      last))]
+      (let [prose (when (= :completed (terminal-status status))
+                    (->> trace
+                         (keep #(some-> (or (:assistant-prose %)
+                                            (when (empty? (:forms %)) (:content-stream %)))
+                                        str
+                                        str/trim
+                                        not-empty))
+                         last))]
         (if prose
           [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
             "type" "prose"
             "markdown" prose}]
-          (let
-            [[type code message] (case (terminal-status status)
-                                   :cancelled
-                                   ["notice" "turn_cancelled" "Cancelled by user."]
+          (let [[type code message] (case (terminal-status status)
+                                      :cancelled
+                                      ["notice" "turn_cancelled" "Cancelled by user."]
 
-                                   :failed
-                                   ["error" "turn_failed" "Turn failed."]
+                                      :failed
+                                      ["error" "turn_failed" "Turn failed."]
 
-                                   ["notice" "turn_completed" "Turn completed."])]
+                                      ["notice" "turn_completed" "Turn completed."])]
             [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
               "type" type
               "code" code
@@ -4203,36 +4112,35 @@
               ;; placeholder for a brief grace period so the normal worker can still paint
               ;; the full answer. The delayed reconciliation owns only that generation.
               (fn [db [_ workspace-id chunk]]
-                (let
-                  [workspace-id
-                   (or workspace-id (current-tab-id db))
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
 
-                   target
-                   (when workspace-id (db-for-tab db workspace-id))
+                      target
+                      (when workspace-id (db-for-tab db workspace-id))
 
-                   gateway-turn-id
-                   (:gateway-turn-id target)
+                      gateway-turn-id
+                      (:gateway-turn-id target)
 
-                   live-client-id
-                   (:live-turn-client-id target)
+                      live-client-id
+                      (:live-turn-client-id target)
 
-                   turn-id
-                   (:turn-id chunk)
+                      turn-id
+                      (:turn-id chunk)
 
-                   client-id
-                   (:client-id chunk)
+                      client-id
+                      (:client-id chunk)
 
-                   matching-turn?
-                   (or (and turn-id gateway-turn-id (= (str turn-id) (str gateway-turn-id)))
-                       (and client-id live-client-id (= (str client-id) (str live-client-id))))
+                      matching-turn?
+                      (or (and turn-id gateway-turn-id (= (str turn-id) (str gateway-turn-id)))
+                          (and client-id live-client-id (= (str client-id) (str live-client-id))))
 
-                   idx
-                   (when matching-turn? (pending-assistant-index (:messages target) client-id))
+                      idx
+                      (when matching-turn? (pending-assistant-index (:messages target) client-id))
 
-                   terminal
-                   (assoc chunk
-                     :status (terminal-status (:status chunk))
-                     :trace (vec (or (get-in target [:progress :iterations]) [])))]
+                      terminal
+                      (assoc chunk
+                        :status (terminal-status (:status chunk))
+                        :trace (vec (or (get-in target [:progress :iterations]) [])))]
 
                   (if-not (and workspace-id (:loading? target) matching-turn?)
                     {:db db}
@@ -4249,28 +4157,27 @@
 (reg-event-fx
   :settle-turn-terminal
   (fn [db [_ workspace-id terminal]]
-    (let
-      [workspace-id
-       (or workspace-id (current-tab-id db))
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
 
-       target
-       (when workspace-id (db-for-tab db workspace-id))
+          target
+          (when workspace-id (db-for-tab db workspace-id))
 
-       messages
-       (vec (or (:messages target) []))
+          messages
+          (vec (or (:messages target) []))
 
-       idx
-       (first (keep-indexed (fn [idx message]
-                              (when (and (pending-assistant-message? message)
-                                         (= terminal (:terminal-pending message)))
-                                idx))
-                            messages))
+          idx
+          (first (keep-indexed (fn [idx message]
+                                 (when (and (pending-assistant-message? message)
+                                            (= terminal (:terminal-pending message)))
+                                   idx))
+                               messages))
 
-       options
-       {:client-turn-id (:client-id terminal)
-        :status (terminal-status (:status terminal))
-        :terminal-sync? true
-        :terminal-trace (:trace terminal)}]
+          options
+          {:client-turn-id (:client-id terminal)
+           :status (terminal-status (:status terminal))
+           :terminal-sync? true
+           :terminal-trace (:trace terminal)}]
 
       (cond (nil? idx) {:db db}
             ;; A resend started during the grace period. Settle only the old bubble;
@@ -4347,12 +4254,11 @@
   (let [entries (vec (remove nil? entries))]
     (if (empty? entries)
       w
-      (let
-        [cur-text (input/input->text (:input w))
-         texts (into (if (str/blank? cur-text) [] [cur-text]) (map :text entries))
-         combined (str/join "\n\n" (remove str/blank? texts))
-         merged-pastes (reduce merge (or (:pastes w) {}) (map :pastes entries))
-         merged-counter (apply max 0 (:paste-counter w 0) (map #(:paste-counter % 0) entries))]
+      (let [cur-text (input/input->text (:input w))
+            texts (into (if (str/blank? cur-text) [] [cur-text]) (map :text entries))
+            combined (str/join "\n\n" (remove str/blank? texts))
+            merged-pastes (reduce merge (or (:pastes w) {}) (map :pastes entries))
+            merged-counter (apply max 0 (:paste-counter w 0) (map #(:paste-counter % 0) entries))]
 
         (assoc w
           :input (text->input-state combined)
@@ -4381,116 +4287,114 @@
   ;; user took back mid-flight: the gateway broadcasts `turn.queued` for it too, and that
   ;; broadcast used to append the cancelled message straight back as a "Queued" row whose
   ;; turn then ran. Suppress the row and retract the gateway record instead.
-  (fn
-    [db [_ workspace-id {:keys [op turn-id client-id text preview-text reason] mine-hint? :mine?}]]
+  (fn [db
+       [_ workspace-id {:keys [op turn-id client-id text preview-text reason] mine-hint? :mine?}]]
     (let [workspace-id (or workspace-id (current-tab-id db))]
-      (cond
-        (not (and workspace-id turn-id)) {:db db}
-        (and (contains? #{:add :update} op) (submission-retracted? db workspace-id client-id))
-        {:db (update-tab db
-                         workspace-id
-                         (fn [w]
-                           (update w
-                                   :pending-sends
-                                   (fn [q]
-                                     (vec (remove #(same-submission? % turn-id client-id)
-                                            (vec (or q []))))))))
-         :fx [[:gateway-retract-queued (:id (:session (db-for-tab db workspace-id))) turn-id]]}
-        :else
-        {:db
-         (update-tab
-           db
-           workspace-id
-           (fn [w]
-             (let
-               [;; OURS when the correlation id the gateway echoed back was
-                ;; minted by THIS tab, or when a caller that already knows the
-                ;; provenance says so (the delete reconcile re-writing a row it
-                ;; just removed).
-                mine? (boolean (or mine-hint? (our-submission? workspace-id client-id)))
-                row (cond->
-                      {:text text
-                       :preview-text (or preview-text text)
-                       :turn-id turn-id
-                       :queued-at-ms (System/currentTimeMillis)}
-                      client-id
-                      (assoc :client-id client-id)
+      (cond (not (and workspace-id turn-id)) {:db db}
+            (and (contains? #{:add :update} op) (submission-retracted? db workspace-id client-id))
+            {:db (update-tab db
+                             workspace-id
+                             (fn [w]
+                               (update w
+                                       :pending-sends
+                                       (fn [q]
+                                         (vec (remove #(same-submission? % turn-id client-id)
+                                                (vec (or q []))))))))
+             :fx [[:gateway-retract-queued (:id (:session (db-for-tab db workspace-id))) turn-id]]}
+            :else
+            {:db (update-tab
+                   db
+                   workspace-id
+                   (fn [w]
+                     (let [;; OURS when the correlation id the gateway echoed back was
+                           ;; minted by THIS tab, or when a caller that already knows the
+                           ;; provenance says so (the delete reconcile re-writing a row it
+                           ;; just removed).
+                           mine? (boolean (or mine-hint? (our-submission? workspace-id client-id)))
+                           row (cond-> {:text text
+                                        :preview-text (or preview-text text)
+                                        :turn-id turn-id
+                                        :queued-at-ms (System/currentTimeMillis)}
+                                 client-id
+                                 (assoc :client-id client-id)
 
-                      mine?
-                      (assoc :mine? true))
-                live? (live-turn-mirror? w turn-id client-id)
-                ;; The row Enter already painted for THIS submission, found by the
-                ;; correlation id we sent as the idempotency key — the only handle that
-                ;; exists before the gateway turn id does. Gateway truth is merged INTO
-                ;; it, which is what keeps one submission at exactly one row.
-                mirrored (first (filter #(same-submission? % turn-id client-id) (:pending-sends w)))
-                ;; A USER CANCEL drops the ENTIRE pre-cancel backlog server-side
-                ;; and broadcasts one `turn.queued.deleted` per row carrying
-                ;; `reason "cancelled"` and the row's text (gateway
-                ;; `drop-cancelled-backlog!`). Stop means stop - but the words the
-                ;; user already wrote are theirs, so every dropped row comes back
-                ;; into THIS tab's editor as a draft.
-                ;;
-                ;; Authorship is deliberately NOT consulted: whoever queued the
-                ;; message and whichever channel pressed stop, a mirror that just
-                ;; vanishes is exactly the silent loss this exists to prevent. It
-                ;; lands in the tab that owns the SESSION, not the focused one, so
-                ;; a cancel while looking at another session still restores.
-                ;;
-                ;; A plain `:delete` (user cleared the row) and a `.drained`
-                ;; (gateway started it) carry no reason and restore nothing, and a
-                ;; row already pulled back locally is no longer mirrored - which is
-                ;; what keeps the text from landing twice.
-                restore? (and (= op :delete) (= reason "cancelled") (some? mirrored) (not live?))
-                w' (update w
-                           :pending-sends
-                           (fn [q]
-                             (let
-                               [q (vec (or q []))
-                                same? #(same-submission? % turn-id client-id)
-                                mirrored? (boolean (some same? q))]
+                                 mine?
+                                 (assoc :mine? true))
+                           live? (live-turn-mirror? w turn-id client-id)
+                           ;; The row Enter already painted for THIS submission, found by the
+                           ;; correlation id we sent as the idempotency key — the only handle that
+                           ;; exists before the gateway turn id does. Gateway truth is merged INTO
+                           ;; it, which is what keeps one submission at exactly one row.
+                           mirrored (first (filter #(same-submission? % turn-id client-id)
+                                                   (:pending-sends w)))
+                           ;; A USER CANCEL drops the ENTIRE pre-cancel backlog server-side
+                           ;; and broadcasts one `turn.queued.deleted` per row carrying
+                           ;; `reason "cancelled"` and the row's text (gateway
+                           ;; `drop-cancelled-backlog!`). Stop means stop - but the words the
+                           ;; user already wrote are theirs, so every dropped row comes back
+                           ;; into THIS tab's editor as a draft.
+                           ;;
+                           ;; Authorship is deliberately NOT consulted: whoever queued the
+                           ;; message and whichever channel pressed stop, a mirror that just
+                           ;; vanishes is exactly the silent loss this exists to prevent. It
+                           ;; lands in the tab that owns the SESSION, not the focused one, so
+                           ;; a cancel while looking at another session still restores.
+                           ;;
+                           ;; A plain `:delete` (user cleared the row) and a `.drained`
+                           ;; (gateway started it) carry no reason and restore nothing, and a
+                           ;; row already pulled back locally is no longer mirrored - which is
+                           ;; what keeps the text from landing twice.
+                           restore?
+                           (and (= op :delete) (= reason "cancelled") (some? mirrored) (not live?))
+                           w' (update w
+                                      :pending-sends
+                                      (fn [q]
+                                        (let [q (vec (or q []))
+                                              same? #(same-submission? % turn-id client-id)
+                                              mirrored? (boolean (some same? q))]
 
-                               (if live?
-                                 (vec (remove same? q))
-                                 (case op
-                                   :add
-                                   ;; Bind gateway truth into the row the user has been
-                                   ;; looking at since Enter — never append a second one.
-                                   (if mirrored?
-                                     (mapv (fn [e]
-                                             (if (same? e)
-                                               (-> (merge e
-                                                          (into {}
-                                                                (filter (comp some? val)
-                                                                        (dissoc row
-                                                                          :queued-at-ms))))
-                                                   (dissoc :awaiting-ack? :unsent?))
-                                               e))
-                                           q)
-                                     (conj q row))
+                                          (if live?
+                                            (vec (remove same? q))
+                                            (case op
+                                              :add
+                                              ;; Bind gateway truth into the row the user has been
+                                              ;; looking at since Enter — never append a second one.
+                                              (if mirrored?
+                                                (mapv (fn [e]
+                                                        (if (same? e)
+                                                          (-> (merge e
+                                                                     (into {}
+                                                                           (filter
+                                                                             (comp some? val)
+                                                                             (dissoc row
+                                                                               :queued-at-ms))))
+                                                              (dissoc :awaiting-ack? :unsent?))
+                                                          e))
+                                                      q)
+                                                (conj q row))
 
-                                   :update
-                                   (if mirrored?
-                                     (mapv (fn [e]
-                                             (if (same? e)
-                                               (assoc e
-                                                 :text text
-                                                 :preview-text (or preview-text text)
-                                                 :agent-text text)
-                                               e))
-                                           q)
-                                     (conj q row))
+                                              :update
+                                              (if mirrored?
+                                                (mapv (fn [e]
+                                                        (if (same? e)
+                                                          (assoc e
+                                                            :text text
+                                                            :preview-text (or preview-text text)
+                                                            :agent-text text)
+                                                          e))
+                                                      q)
+                                                (conj q row))
 
-                                   :delete
-                                   (vec (remove same? q))
+                                              :delete
+                                              (vec (remove same? q))
 
-                                   q)))))]
+                                              q)))))]
 
-               (cond-> w'
-                 restore?
-                 (restore-entries-to-input [(cond-> mirrored
-                                              (str/blank? (:text mirrored))
-                                              (assoc :text text))])))))}))))
+                       (cond-> w'
+                         restore?
+                         (restore-entries-to-input [(cond-> mirrored
+                                                      (str/blank? (:text mirrored))
+                                                      (assoc :text text))])))))}))))
 
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
@@ -4498,15 +4402,14 @@
               ;; them; that would reintroduce silent loss. Also removes the matching
               ;; gateway queued records so they never auto-drain server-side.
               (fn [db _]
-                (let
-                  [tab-id
-                   (current-tab-id db)
+                (let [tab-id
+                      (current-tab-id db)
 
-                   sid
-                   (get-in db [:session :id])
+                      sid
+                      (get-in db [:session :id])
 
-                   pending
-                   (vec (:pending-sends (db-for-tab db tab-id)))]
+                      pending
+                      (vec (:pending-sends (db-for-tab db tab-id)))]
 
                   {:db (update-tab db
                                    tab-id
@@ -4525,18 +4428,17 @@
               ;; render its result instead of submitting again. Without a gateway id
               ;; (submit failed) fall back to a fresh local `:send-message`.
               (fn [db [_ workspace-id]]
-                (let
-                  [workspace-id
-                   (or workspace-id (current-tab-id db))
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
 
-                   source-db
-                   (db-for-tab db workspace-id)
+                      source-db
+                      (db-for-tab db workspace-id)
 
-                   q
-                   (vec (or (:pending-sends source-db) []))
+                      q
+                      (vec (or (:pending-sends source-db) []))
 
-                   head
-                   (first q)]
+                      head
+                      (first q)]
 
                   (cond (or (nil? head)
                             ;; The head is still mid-round-trip to the gateway
@@ -4553,18 +4455,17 @@
                             (:loading? source-db))
                         {:db db}
                         (:turn-id head)
-                        (let
-                          [token
-                           (vis/cancellation-token)
+                        (let [token
+                              (vis/cancellation-token)
 
-                           client-turn-id
-                           (str (java.util.UUID/randomUUID))
+                              client-turn-id
+                              (str (java.util.UUID/randomUUID))
 
-                           preview-text
-                           (or (:preview-text head) (:text head))
+                              preview-text
+                              (or (:preview-text head) (:text head))
 
-                           session
-                           (:session source-db)]
+                              session
+                              (:session source-db)]
 
                           {:db (update-tab db
                                            workspace-id
@@ -4601,12 +4502,11 @@
 
 (reg-event-fx :reattach-disconnected-turn
               (fn [db [_ workspace-id session tid token client-turn-id]]
-                (let
-                  [workspace-id
-                   (or workspace-id (current-tab-id db))
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
 
-                   target
-                   (db-for-tab db workspace-id)]
+                      target
+                      (db-for-tab db workspace-id)]
 
                   (if (and workspace-id
                            tid
@@ -4637,58 +4537,57 @@
   ;; Mirrors `:drain-pending`'s busy-time attach: seed the user + pending
   ;; assistant bubbles, arm the turn state, then hand off to `:session-attach`.
   (fn [db [_ workspace-id session]]
-    (let
-      [workspace-id
-       (or workspace-id (current-tab-id db))
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
 
-       sid
-       (:id session)
+          sid
+          (:id session)
 
-       tid
-       (:current-turn-id session)
+          tid
+          (:current-turn-id session)
 
-       ;; FIRST mirror the gateway's queued backlog (queued from
-       ;; ANY channel — chat/resume-session :queued-turns) into
-       ;; this tab's local queue, dedup'd by gateway turn id.
-       ;; Runs even when nothing is running: a cancel leaves the
-       ;; backlog queued server-side, and resume must surface it
-       ;; instead of silently dropping it.
-       db
-       (if-let [qs (and workspace-id (seq (:queued-turns session)))]
-         (update-tab
-           db
-           workspace-id
-           (fn [w]
-             (update w
-                     :pending-sends
-                     (fn [q]
-                       (let [q (vec (or q []))]
-                         (into q
-                               (keep
-                                 (fn [{:keys [turn-id client-id text preview-text queued-at-ms]}]
-                                   (when-not (or (some #(same-submission? % turn-id client-id) q)
-                                                 (live-turn-mirror? w turn-id client-id))
-                                     (cond->
-                                       {:text text
-                                        ;; Gateway-derived row text (image paths already
-                                        ;; chipped); falls back to the raw request.
-                                        :preview-text (or preview-text text)
-                                        :turn-id turn-id
-                                        :queued-at-ms (or queued-at-ms (System/currentTimeMillis))}
-                                       client-id
-                                       (assoc :client-id client-id)
+          ;; FIRST mirror the gateway's queued backlog (queued from
+          ;; ANY channel — chat/resume-session :queued-turns) into
+          ;; this tab's local queue, dedup'd by gateway turn id.
+          ;; Runs even when nothing is running: a cancel leaves the
+          ;; backlog queued server-side, and resume must surface it
+          ;; instead of silently dropping it.
+          db
+          (if-let [qs (and workspace-id (seq (:queued-turns session)))]
+            (update-tab
+              db
+              workspace-id
+              (fn [w]
+                (update w
+                        :pending-sends
+                        (fn [q]
+                          (let [q (vec (or q []))]
+                            (into q
+                                  (keep
+                                    (fn [{:keys [turn-id client-id text preview-text queued-at-ms]}]
+                                      (when-not (or (some #(same-submission? % turn-id client-id) q)
+                                                    (live-turn-mirror? w turn-id client-id))
+                                        (cond-> {:text text
+                                                 ;; Gateway-derived row text (image paths already
+                                                 ;; chipped); falls back to the raw request.
+                                                 :preview-text (or preview-text text)
+                                                 :turn-id turn-id
+                                                 :queued-at-ms (or queued-at-ms
+                                                                   (System/currentTimeMillis))}
+                                          client-id
+                                          (assoc :client-id client-id)
 
-                                       ;; Re-attach (tab reopen / project switch) seeds the
-                                       ;; backlog from the gateway snapshot: ownership comes
-                                       ;; from the SAME echoed id, so a cancel still knows
-                                       ;; which rows may return to this composer.
-                                       (our-submission? workspace-id client-id)
-                                       (assoc :mine? true)))))
-                               qs))))))
-         db)
+                                          ;; Re-attach (tab reopen / project switch) seeds the
+                                          ;; backlog from the gateway snapshot: ownership comes
+                                          ;; from the SAME echoed id, so a cancel still knows
+                                          ;; which rows may return to this composer.
+                                          (our-submission? workspace-id client-id)
+                                          (assoc :mine? true)))))
+                                  qs))))))
+            db)
 
-       target
-       (db-for-tab db workspace-id)]
+          target
+          (db-for-tab db workspace-id)]
 
       (if-not (and workspace-id
                    sid
@@ -4711,15 +4610,14 @@
                  (not (:gateway-turn-id target)))
           {:db db :fx [[:drain-idle-queue sid]]}
           {:db db})
-        (let
-          [token
-           (vis/cancellation-token)
+        (let [token
+              (vis/cancellation-token)
 
-           client-turn-id
-           (str (java.util.UUID/randomUUID))
+              client-turn-id
+              (str (java.util.UUID/randomUUID))
 
-           request-text
-           (or (:running-request session) "")]
+              request-text
+              (or (:running-request session) "")]
 
           {:db (update-tab
                  db
@@ -4765,29 +4663,28 @@
               ;; loading / already attached) make this a no-op for the tab that started
               ;; or drained onto the turn itself.
               (fn [db [_ workspace-id {:keys [turn-id request started-at-ms]}]]
-                (let
-                  [workspace-id
-                   (or workspace-id (current-tab-id db))
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
 
-                   target
-                   (db-for-tab db workspace-id)
+                      target
+                      (db-for-tab db workspace-id)
 
-                   session
-                   (:session target)
+                      session
+                      (:session target)
 
-                   ;; Already OUR live turn — the drain/attach machinery owns it.
-                   ours?
-                   (boolean (and turn-id (= turn-id (:gateway-turn-id target))))
+                      ;; Already OUR live turn — the drain/attach machinery owns it.
+                      ours?
+                      (boolean (and turn-id (= turn-id (:gateway-turn-id target))))
 
-                   ;; BUSY tab: a turn is still streaming here — typically the very turn
-                   ;; whose terminal the gateway used to DRAIN this one. Dropping the start
-                   ;; lost the message outright: `turn.queued.drained` (delivered on the
-                   ;; same subscription, always before our local completion lands) has
-                   ;; already removed the mirrored queue row, so `:drain-pending` finds
-                   ;; nothing and NOTHING paints the new turn. Park it instead and replay
-                   ;; it from `:message-received` the moment the tab settles.
-                   busy?
-                   (boolean (or (:loading? target) (:gateway-turn-id target)))]
+                      ;; BUSY tab: a turn is still streaming here — typically the very turn
+                      ;; whose terminal the gateway used to DRAIN this one. Dropping the start
+                      ;; lost the message outright: `turn.queued.drained` (delivered on the
+                      ;; same subscription, always before our local completion lands) has
+                      ;; already removed the mirrored queue row, so `:drain-pending` finds
+                      ;; nothing and NOTHING paints the new turn. Park it instead and replay
+                      ;; it from `:message-received` the moment the tab settles.
+                      busy?
+                      (boolean (or (:loading? target) (:gateway-turn-id target)))]
 
                   (cond (or (nil? workspace-id) (nil? session) (nil? turn-id) ours?) {:db db}
                         busy? {:db (update-tab db
@@ -4812,37 +4709,36 @@
               ;; appended after whatever the cancelled prompt already restored — and delete
               ;; the matching gateway queued records so nothing drains server-side.
               (fn [db [_ workspace-id]]
-                (let
-                  [workspace-id
-                   (or workspace-id (current-tab-id db))
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
 
-                   source-db
-                   (db-for-tab db workspace-id)
+                      source-db
+                      (db-for-tab db workspace-id)
 
-                   pending
-                   (vec (or (:pending-sends source-db) []))
+                      pending
+                      (vec (or (:pending-sends source-db) []))
 
-                   ;; OWNERSHIP: only rows THIS tab submitted (`:mine?` - stamped when the
-                   ;; gateway echoed back a correlation id this tab minted, or when the
-                   ;; submission never reached the gateway at all) come back to the
-                   ;; editor. Rows queued by a sibling TUI / the web are the sibling's
-                   ;; text, so they are never pulled into OUR composer.
-                   ;;
-                   ;; We no longer have to police the server records: a user cancel
-                   ;; drops the whole pre-cancel backlog server-side in one swap and
-                   ;; broadcasts `turn.queued.deleted` (gateway `drop-cancelled-backlog!`),
-                   ;; which removes every mirror — ours and the sibling's — and settles
-                   ;; any client blocked on such a turn. The per-tid deletes below are
-                   ;; now only a fast local echo, reconciled from gateway truth when the
-                   ;; delete does not land (see the `:gateway-delete-queued` fx).
-                   mine
-                   (vec (filter :mine? pending))
+                      ;; OWNERSHIP: only rows THIS tab submitted (`:mine?` - stamped when the
+                      ;; gateway echoed back a correlation id this tab minted, or when the
+                      ;; submission never reached the gateway at all) come back to the
+                      ;; editor. Rows queued by a sibling TUI / the web are the sibling's
+                      ;; text, so they are never pulled into OUR composer.
+                      ;;
+                      ;; We no longer have to police the server records: a user cancel
+                      ;; drops the whole pre-cancel backlog server-side in one swap and
+                      ;; broadcasts `turn.queued.deleted` (gateway `drop-cancelled-backlog!`),
+                      ;; which removes every mirror — ours and the sibling's — and settles
+                      ;; any client blocked on such a turn. The per-tid deletes below are
+                      ;; now only a fast local echo, reconciled from gateway truth when the
+                      ;; delete does not land (see the `:gateway-delete-queued` fx).
+                      mine
+                      (vec (filter :mine? pending))
 
-                   mirrors
-                   (vec (remove :mine? pending))
+                      mirrors
+                      (vec (remove :mine? pending))
 
-                   sid
-                   (get-in source-db [:session :id])]
+                      sid
+                      (get-in source-db [:session :id])]
 
                   (if (empty? mine)
                     {:db db}
@@ -4875,17 +4771,16 @@
   [sid tid owner-key]
   (when (and sid (or tid owner-key))
     (loop [attempt 1]
-      (let
-        [outcome (try {:response (if tid
-                                   (vis/gateway-cancel-turn! sid tid)
-                                   (vis/gateway-cancel-current-turn! sid owner-key))}
-                      (catch clojure.lang.ExceptionInfo e
-                        (let [data (ex-data e)]
-                          (if (:http-status data)
-                            {:response {:error (keyword (or (get data "error") "gateway-error"))
-                                        :http-status (:http-status data)}}
-                            {:transport-error e})))
-                      (catch Throwable t {:transport-error t}))]
+      (let [outcome (try {:response (if tid
+                                      (vis/gateway-cancel-turn! sid tid)
+                                      (vis/gateway-cancel-current-turn! sid owner-key))}
+                         (catch clojure.lang.ExceptionInfo e
+                           (let [data (ex-data e)]
+                             (if (:http-status data)
+                               {:response {:error (keyword (or (get data "error") "gateway-error"))
+                                           :http-status (:http-status data)}}
+                               {:transport-error e})))
+                         (catch Throwable t {:transport-error t}))]
         (cond (contains? outcome :response) (:response outcome)
               (>= (long attempt) 3) {:error :gateway-unreachable}
               :else (do (Thread/sleep (* 200 (long attempt))) (recur (inc (long attempt)))))))))
@@ -4913,36 +4808,34 @@
         {:db db
          :fx [[:notify "Nothing to cancel — no session is open." :info
                cancel-notification-ttl-ms]]})
-      (let
-        [sid
-         (get-in db [:session :id])
+      (let [sid
+            (get-in db [:session :id])
 
-         tid
-         (:gateway-turn-id db)
+            tid
+            (:gateway-turn-id db)
 
-         cancel-client-id
-         (when-not tid (:live-turn-client-id db))
+            cancel-client-id
+            (when-not tid (:live-turn-client-id db))
 
-         token
-         (:cancel-token db)
+            token
+            (:cancel-token db)
 
-         already-cancelling?
-         (:cancelling? db)
+            already-cancelling?
+            (:cancelling? db)
 
-         cancel-key
-         (when-not already-cancelling? (System/currentTimeMillis))
+            cancel-key
+            (when-not already-cancelling? (System/currentTimeMillis))
 
-         db'
-         (if already-cancelling?
-           (cond-> (clear-active-turn-state (park-live-trace db))
-             cancel-client-id
-             (assoc :cancel-awaiting-client-id cancel-client-id))
-           (cond->
-             (assoc db
-               :cancelling? true
-               :cancelling-at-ms cancel-key)
-             cancel-client-id
-             (assoc :cancel-awaiting-client-id cancel-client-id)))]
+            db'
+            (if already-cancelling?
+              (cond-> (clear-active-turn-state (park-live-trace db))
+                cancel-client-id
+                (assoc :cancel-awaiting-client-id cancel-client-id))
+              (cond-> (assoc db
+                        :cancelling? true
+                        :cancelling-at-ms cancel-key)
+                cancel-client-id
+                (assoc :cancel-awaiting-client-id cancel-client-id)))]
 
         ;; Esc must never wait for gateway discovery, HTTP, or the daemon's durable
         ;; cancel stamp. Commit the visible state first, synchronously fire the LOCAL
@@ -4962,12 +4855,11 @@
               ;; generation-keyed gateway ACK (or an already-terminal response) may
               ;; release the wait; a late result cannot clear a newer turn.
               (fn [db [_ cancel-key result]]
-                (let
-                  [accepted?
-                   (and (map? result) (not (:error result)))
+                (let [accepted?
+                      (and (map? result) (not (:error result)))
 
-                   terminal?
-                   (contains? gateway-terminal-cancel-errors (:error result))]
+                      terminal?
+                      (contains? gateway-terminal-cancel-errors (:error result))]
 
                   (if (and cancel-key
                            (:cancelling? db)
@@ -4975,12 +4867,11 @@
                            (or accepted? terminal?))
                     (let [workspace-id (current-tab-id db)]
                       {:db (settle-cancelled-turn db)
-                       :fx (cond->
-                             [[:notify
-                               (if terminal?
-                                 "Turn is no longer running; cleared local cancelling state."
-                                 "Cancellation accepted. You can send again.") :info
-                               cancel-notification-ttl-ms]]
+                       :fx (cond-> [[:notify
+                                     (if terminal?
+                                       "Turn is no longer running; cleared local cancelling state."
+                                       "Cancellation accepted. You can send again.") :info
+                                     cancel-notification-ttl-ms]]
                              (some :mine? (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})
                     {:db db}))))
@@ -4995,25 +4886,24 @@
               ;; too), and `gateway-cancel-turn-or-current!` falls back to the tid-less
               ;; `cancel-current` when the turn id never bound.
               (fn [db [_ tab-id]]
-                (let
-                  [db
-                   (-> db
-                       ensure-tabs
-                       sync-active-tab)
+                (let [db
+                      (-> db
+                          ensure-tabs
+                          sync-active-tab)
 
-                   target-id
-                   (or tab-id (current-tab-id db))
+                      target-id
+                      (or tab-id (current-tab-id db))
 
-                   snap
-                   (get-in db [:tab-locals target-id])
+                      snap
+                      (get-in db [:tab-locals target-id])
 
-                   sid
-                   (some-> snap
-                           :session
-                           :id)
+                      sid
+                      (some-> snap
+                              :session
+                              :id)
 
-                   tid
-                   (:gateway-turn-id snap)]
+                      tid
+                      (:gateway-turn-id snap)]
 
                   {:db db
                    :fx (cond-> []
@@ -5044,20 +4934,19 @@
                 (let [now (or now-ms (System/currentTimeMillis))]
                   (if-not (cancel-self-heal-due? db now)
                     {:db db}
-                    (let
-                      [workspace-id (current-tab-id db)
-                       token (:cancel-token db)
-                       sid (get-in db [:session :id])
-                       tid (:gateway-turn-id db)]
+                    (let [workspace-id (current-tab-id db)
+                          token (:cancel-token db)
+                          sid (get-in db [:session :id])
+                          tid (:gateway-turn-id db)]
 
                       ;; Release input immediately. Server cancellation is best effort on
                       ;; the dedicated cancel lane; it must not stall this heartbeat.
                       {:db (settle-cancelled-turn db)
-                       :fx (cond->
-                             [[:cancel-local-turn token]
-                              [:gateway-cancel-active sid tid nil (:live-turn-client-id db)]
-                              [:notify "Cancel timed out — cleared locally. You can send again."
-                               :warn cancel-notification-ttl-ms]]
+                       :fx (cond-> [[:cancel-local-turn token]
+                                    [:gateway-cancel-active sid tid nil (:live-turn-client-id db)]
+                                    [:notify
+                                     "Cancel timed out — cleared locally. You can send again." :warn
+                                     cancel-notification-ttl-ms]]
                              (some :mine? (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
 
@@ -5066,10 +4955,9 @@
    loading `:tab-locals` snapshot."
   [db]
   (let [active (current-tab-id db)]
-    (cond->
-      (vec (keep (fn [[tab-id snap]]
-                   (when (and (not= tab-id active) (:loading? snap)) tab-id))
-                 (:tab-locals db)))
+    (cond-> (vec (keep (fn [[tab-id snap]]
+                         (when (and (not= tab-id active) (:loading? snap)) tab-id))
+                       (:tab-locals db)))
       (:loading? db)
       (conj active))))
 
@@ -5099,15 +4987,14 @@
               ;; so settling stays byte-identical (grace period, trace, prose fallback).
               ;; Pure over an injected `now-ms` (tests pass it; the render loop omits it).
               (fn [db [_ now-ms]]
-                (let
-                  [now
-                   (or now-ms (System/currentTimeMillis))
+                (let [now
+                      (or now-ms (System/currentTimeMillis))
 
-                   due
-                   (filterv (fn [tab-id]
-                              (and (turn-liveness-probe-due? (db-for-tab db tab-id) now)
-                                   (some? (get-in (db-for-tab db tab-id) [:session :id]))))
-                     (loading-tab-ids db))]
+                      due
+                      (filterv (fn [tab-id]
+                                 (and (turn-liveness-probe-due? (db-for-tab db tab-id) now)
+                                      (some? (get-in (db-for-tab db tab-id) [:session :id]))))
+                        (loading-tab-ids db))]
 
                   (if (empty? due)
                     {:db db}
@@ -5166,21 +5053,20 @@
   ;; copies of one broadcast (the mux delivers a ready frame per open session
   ;; tab) into a single round.
   (fn [db [_ tab-id chunk now-ms]]
-    (let
-      [now
-       (or now-ms (System/currentTimeMillis))
+    (let [now
+          (or now-ms (System/currentTimeMillis))
 
-       tab-id
-       (or tab-id (current-tab-id db))
+          tab-id
+          (or tab-id (current-tab-id db))
 
-       tab
-       (db-for-tab db tab-id)
+          tab
+          (db-for-tab db tab-id)
 
-       painted
-       (:gateway-turn-id tab)
+          painted
+          (:gateway-turn-id tab)
 
-       agrees?
-       (boolean (and (:is-state-known chunk) painted (= painted (:gateway-turn-id chunk))))]
+          agrees?
+          (boolean (and (:is-state-known chunk) painted (= painted (:gateway-turn-id chunk))))]
 
       (if (or agrees? (not (gateway-resync-probe-due? tab now)) (nil? (get-in tab [:session :id])))
         {:db db}
@@ -5234,209 +5120,205 @@
 (reg-event-fx
   :message-received
   (fn [db [_ a b c :as event]]
-    (let
-      [[event-workspace-id answer
-        {:keys [status utilization client-turn-id terminal-sync? terminal-trace] :as completion}]
-       (if (= 4 (count event)) [a b c] [(current-tab-id db) a b])
+    (let [[event-workspace-id answer
+           {:keys [status utilization client-turn-id terminal-sync? terminal-trace] :as completion}]
+          (if (= 4 (count event)) [a b c] [(current-tab-id db) a b])
 
-       workspace-id
-       (or event-workspace-id (current-tab-id db))
+          workspace-id
+          (or event-workspace-id (current-tab-id db))
 
-       target
-       (db-for-tab db workspace-id)
+          target
+          (db-for-tab db workspace-id)
 
-       matching-pending-index
-       (when client-turn-id (pending-assistant-index (:messages target) client-turn-id))
+          matching-pending-index
+          (when client-turn-id (pending-assistant-index (:messages target) client-turn-id))
 
-       skip-identified-completion?
-       (boolean (and client-turn-id (nil? matching-pending-index)))
+          skip-identified-completion?
+          (boolean (and client-turn-id (nil? matching-pending-index)))
 
-       stale-generation?
-       (boolean (and matching-pending-index
-                     (:live-turn-client-id target)
-                     (not= (str client-turn-id) (str (:live-turn-client-id target)))))
+          stale-generation?
+          (boolean (and matching-pending-index
+                        (:live-turn-client-id target)
+                        (not= (str client-turn-id) (str (:live-turn-client-id target)))))
 
-       drain?
-       (volatile! false)
+          drain?
+          (volatile! false)
 
-       restore-pending?
-       (volatile! false)
+          restore-pending?
+          (volatile! false)
 
-       db'
-       (update-tab
-         db
-         workspace-id
-         (fn [workspace]
-           (cond
-             skip-identified-completion? workspace
-             stale-generation? (assoc workspace
-                                 :messages (replace-pending-assistant
-                                             (:messages workspace)
-                                             ;; A NEWER turn already owns the tab, so this
-                                             ;; generation's `:progress` is gone. Settle it with
-                                             ;; the trace parked on its own placeholder (issue
-                                             ;; #61) — otherwise starting the next turn wipes
-                                             ;; every iteration the user watched on this one.
-                                             (completion-response
-                                               answer
-                                               (or terminal-trace
-                                                   (not-empty (vec (get-in
-                                                                     (vec (:messages workspace))
+          db'
+          (update-tab
+            db
+            workspace-id
+            (fn [workspace]
+              (cond
+                skip-identified-completion? workspace
+                stale-generation? (assoc workspace
+                                    :messages (replace-pending-assistant
+                                                (:messages workspace)
+                                                ;; A NEWER turn already owns the tab, so this
+                                                ;; generation's `:progress` is gone. Settle it with
+                                                ;; the trace parked on its own placeholder (issue
+                                                ;; #61) — otherwise starting the next turn wipes
+                                                ;; every iteration the user watched on this one.
+                                                (completion-response
+                                                  answer
+                                                  (or terminal-trace
+                                                      (not-empty
+                                                        (vec (get-in (vec (:messages workspace))
                                                                      [matching-pending-index
                                                                       :terminal-pending :trace]))))
-                                               nil
-                                               completion))
-                                 :scroll (scroll/settle (:scroll workspace)))
-             :else
-             (let
-               [trace
-                (or terminal-trace
-                    (not-empty (vec (get-in workspace [:progress :iterations])))
-                    ;; The persistent mux settles this turn's active state the
-                    ;; moment the terminal event lands — `:sync-turn-terminal`
-                    ;; clears `:progress` up to `terminal-result-grace-ms` BEFORE
-                    ;; the blocking worker delivers the full answer. The live
-                    ;; trace it snapshotted survives on the placeholder; without
-                    ;; this fallback every iteration the user watched LIVE is
-                    ;; dropped and only the final answer stays on screen.
-                    (let [ms (vec (:messages workspace))]
-                      (not-empty (vec (get-in ms
-                                              [(pending-assistant-index ms client-turn-id)
-                                               :terminal-pending :trace])))))
+                                                  nil
+                                                  completion))
+                                    :scroll (scroll/settle (:scroll workspace)))
+                :else
+                (let [trace
+                      (or terminal-trace
+                          (not-empty (vec (get-in workspace [:progress :iterations])))
+                          ;; The persistent mux settles this turn's active state the
+                          ;; moment the terminal event lands — `:sync-turn-terminal`
+                          ;; clears `:progress` up to `terminal-result-grace-ms` BEFORE
+                          ;; the blocking worker delivers the full answer. The live
+                          ;; trace it snapshotted survives on the placeholder; without
+                          ;; this fallback every iteration the user watched LIVE is
+                          ;; dropped and only the final answer stays on screen.
+                          (let [ms (vec (:messages workspace))]
+                            (not-empty (vec (get-in ms
+                                                    [(pending-assistant-index ms client-turn-id)
+                                                     :terminal-pending :trace])))))
 
-                cancelled?
-                (= :cancelled status)
+                      cancelled?
+                      (= :cancelled status)
 
-                ;; A provider-failure terminal (overloaded/rate-limited, retries
-                ;; exhausted, etc.). The failed turn is never auto-replayed, so
-                ;; the humane recovery is to hand its prompt BACK to the composer
-                ;; — one Enter re-sends it — instead of dropping the text and
-                ;; leaving the user to retype what they just wrote.
-                failed?
-                (= :failed status)
+                      ;; A provider-failure terminal (overloaded/rate-limited, retries
+                      ;; exhausted, etc.). The failed turn is never auto-replayed, so
+                      ;; the humane recovery is to hand its prompt BACK to the composer
+                      ;; — one Enter re-sends it — instead of dropping the text and
+                      ;; leaving the user to retype what they just wrote.
+                      failed?
+                      (= :failed status)
 
-                ;; Cancelling the local attach worker can synthesize this result before
-                ;; the HTTP cancel reaches the daemon. Keep the turn gate armed until the
-                ;; generation-matched :gateway-cancel-result confirms server acceptance;
-                ;; otherwise an immediate resend is queued behind the still-running turn.
-                awaiting-gateway-cancel?
-                (boolean (and (not terminal-sync?)
-                              cancelled?
-                              (:cancelling? workspace)
-                              (:cancelling-at-ms workspace)))
+                      ;; Cancelling the local attach worker can synthesize this result before
+                      ;; the HTTP cancel reaches the daemon. Keep the turn gate armed until the
+                      ;; generation-matched :gateway-cancel-result confirms server acceptance;
+                      ;; otherwise an immediate resend is queued behind the still-running turn.
+                      awaiting-gateway-cancel?
+                      (boolean (and (not terminal-sync?)
+                                    cancelled?
+                                    (:cancelling? workspace)
+                                    (:cancelling-at-ms workspace)))
 
-                ;; A cancellation that captured zero iterations is
-                ;; usually a stray Esc - drop the placeholder pair
-                ;; and restore the editor as before. A cancellation
-                ;; with a non-empty trace means the agent already
-                ;; did visible work (and persisted those iterations
-                ;; to SQLite); KEEP the bubble so the user can read
-                ;; what happened, and only repopulate the editor.
-                no-work?
-                (empty? trace)]
+                      ;; A cancellation that captured zero iterations is
+                      ;; usually a stray Esc - drop the placeholder pair
+                      ;; and restore the editor as before. A cancellation
+                      ;; with a non-empty trace means the agent already
+                      ;; did visible work (and persisted those iterations
+                      ;; to SQLite); KEEP the bubble so the user can read
+                      ;; what happened, and only repopulate the editor.
+                      no-work?
+                      (empty? trace)]
 
-               (if (and cancelled? (:submitted-input workspace) no-work?)
-                 (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
-                   ;; A cancel must NOT auto-send the backlog — pull it back into
-                   ;; the editor instead (see :restore-pending-to-input).
-                   ;; Restore it NOW, together with the prompt: the backlog is the same
-                   ;; editor state, and deferring it to the ACK refilled the composer twice.
-                   (when (some :mine? (:pending-sends ws)) (vreset! restore-pending? true))
-                   ;; `restore-submitted-input` normally clears the completed local turn.
-                   ;; A synthetic local cancellation is not completion of the SERVER turn:
-                   ;; retain the exact cancellation generation until its gateway ACK arrives.
-                   ;; ONLY the gate (see `cancel-gate-state-keys`) — the visible turn is over,
-                   ;; so progress, the elapsed clock and the liveness probe stay cleared.
-                   (if awaiting-gateway-cancel?
-                     (merge ws (select-keys workspace cancel-gate-state-keys))
-                     ws))
-                 (let
-                   [start
-                    (:turn-start-ms workspace)
+                  (if (and cancelled? (:submitted-input workspace) no-work?)
+                    (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
+                      ;; A cancel must NOT auto-send the backlog — pull it back into
+                      ;; the editor instead (see :restore-pending-to-input).
+                      ;; Restore it NOW, together with the prompt: the backlog is the same
+                      ;; editor state, and deferring it to the ACK refilled the composer twice.
+                      (when (some :mine? (:pending-sends ws)) (vreset! restore-pending? true))
+                      ;; `restore-submitted-input` normally clears the completed local turn.
+                      ;; A synthetic local cancellation is not completion of the SERVER turn:
+                      ;; retain the exact cancellation generation until its gateway ACK arrives.
+                      ;; ONLY the gate (see `cancel-gate-state-keys`) — the visible turn is over,
+                      ;; so progress, the elapsed clock and the liveness probe stay cleared.
+                      (if awaiting-gateway-cancel?
+                        (merge ws (select-keys workspace cancel-gate-state-keys))
+                        ws))
+                    (let [start
+                          (:turn-start-ms workspace)
 
-                    wall-ms
-                    (when start (- (System/currentTimeMillis) (long start)))
+                          wall-ms
+                          (when start (- (System/currentTimeMillis) (long start)))
 
-                    content
-                    (vec (or answer []))
+                          content
+                          (vec (or answer []))
 
-                    response
-                    (completion-response content trace wall-ms completion)
+                          response
+                          (completion-response content trace wall-ms completion)
 
-                    messages'
-                    (replace-pending-assistant (:messages workspace) response)
+                          messages'
+                          (replace-pending-assistant (:messages workspace) response)
 
-                    still-pending?
-                    (boolean (some pending-assistant-message? messages'))
+                          still-pending?
+                          (boolean (some pending-assistant-message? messages'))
 
-                    workspace'
-                    (cond->
-                      (assoc workspace
-                        ;; A final result replaces the live placeholder atomically.
-                        ;; Settle the view ON that new height rather than easing
-                        ;; toward it, which ended every turn in a visible reflow.
-                        :messages messages'
-                        :utilization utilization
-                        :scroll (scroll/settle (:scroll workspace))
-                        :loading? (or still-pending? awaiting-gateway-cancel?)
-                        :cancelling? awaiting-gateway-cancel?
-                        :cancelling-at-ms (when awaiting-gateway-cancel?
-                                            (:cancelling-at-ms workspace)))
-                      (and (not still-pending?) (not awaiting-gateway-cancel?))
-                      clear-active-turn-state
+                          workspace'
+                          (cond-> (assoc workspace
+                                    ;; A final result replaces the live placeholder atomically.
+                                    ;; Settle the view ON that new height rather than easing
+                                    ;; toward it, which ended every turn in a visible reflow.
+                                    :messages messages'
+                                    :utilization utilization
+                                    :scroll (scroll/settle (:scroll workspace))
+                                    :loading? (or still-pending? awaiting-gateway-cancel?)
+                                    :cancelling? awaiting-gateway-cancel?
+                                    :cancelling-at-ms (when awaiting-gateway-cancel?
+                                                        (:cancelling-at-ms workspace)))
+                            (and (not still-pending?) (not awaiting-gateway-cancel?))
+                            clear-active-turn-state
 
-                      ;; The cancelled bubble is already painted; only the send gate is
-                      ;; still waiting on the ACK. Stop painting a live turn under it.
-                      (and (not still-pending?) awaiting-gateway-cancel?)
-                      (assoc :progress
-                        nil :turn-start-ms
-                        nil :liveness-probed-at-ms
-                        nil))
+                            ;; The cancelled bubble is already painted; only the send gate is
+                            ;; still waiting on the ACK. Stop painting a live turn under it.
+                            (and (not still-pending?) awaiting-gateway-cancel?)
+                            (assoc :progress
+                              nil :turn-start-ms
+                              nil :liveness-probed-at-ms
+                              nil))
 
-                    ;; Cancelled-with-work: keep the bubble we just
-                    ;; built AND refill the editor from the snapshot so
-                    ;; the user can edit/resubmit the prompt that
-                    ;; produced this trace without retyping.
-                    ws-final
-                    (if (and (:submitted-input workspace)
-                             (or (and cancelled? (not no-work?))
-                                 ;; A FAILURE keeps its error bubble (the provider
-                                 ;; card the user needs to read) AND refills the
-                                 ;; editor from the snapshot, so "overloaded, retry"
-                                 ;; is one Enter away — the failed turn is never
-                                 ;; auto-replayed, so this refill IS the retry.
-                                 failed?))
-                      (restore-editor-only workspace' (:submitted-input workspace))
-                      (cond-> workspace'
-                        (not still-pending?)
-                        (dissoc :submitted-input)))]
+                          ;; Cancelled-with-work: keep the bubble we just
+                          ;; built AND refill the editor from the snapshot so
+                          ;; the user can edit/resubmit the prompt that
+                          ;; produced this trace without retyping.
+                          ws-final
+                          (if (and (:submitted-input workspace)
+                                   (or (and cancelled? (not no-work?))
+                                       ;; A FAILURE keeps its error bubble (the provider
+                                       ;; card the user needs to read) AND refills the
+                                       ;; editor from the snapshot, so "overloaded, retry"
+                                       ;; is one Enter away — the failed turn is never
+                                       ;; auto-replayed, so this refill IS the retry.
+                                       failed?))
+                            (restore-editor-only workspace' (:submitted-input workspace))
+                            (cond-> workspace'
+                              (not still-pending?)
+                              (dissoc :submitted-input)))]
 
-                   (when (and (or (not (:loading? ws-final)) awaiting-gateway-cancel?)
-                              (seq (:pending-sends ws-final)))
-                     ;; Normal completion drains the next queued turn; a cancel
-                     ;; restores the AUTHORED backlog to the editor instead of
-                     ;; firing it. Mirrored sibling entries are never restored
-                     ;; (or deleted) here — see :restore-pending-to-input.
-                     (if cancelled?
-                       (when (some :mine? (:pending-sends ws-final))
-                         (vreset! restore-pending? true))
-                       (vreset! drain? true)))
-                   ws-final))))))
+                      (when (and (or (not (:loading? ws-final)) awaiting-gateway-cancel?)
+                                 (seq (:pending-sends ws-final)))
+                        ;; Normal completion drains the next queued turn; a cancel
+                        ;; restores the AUTHORED backlog to the editor instead of
+                        ;; firing it. Mirrored sibling entries are never restored
+                        ;; (or deleted) here — see :restore-pending-to-input.
+                        (if cancelled?
+                          (when (some :mine? (:pending-sends ws-final))
+                            (vreset! restore-pending? true))
+                          (vreset! drain? true)))
+                      ws-final))))))
 
-       ;; A turn the GATEWAY started for this session while this tab was busy
-       ;; (normally the queued message it drained on THIS turn's terminal),
-       ;; parked by `:sibling-turn-started`. Its mirrored queue row is already
-       ;; gone (`turn.queued.drained`), so without this replay the user's
-       ;; message never appears anywhere. A drain scheduled below wins the race
-       ;; and simply re-parks it for the next terminal.
-       deferred
-       (let [w (db-for-tab db' workspace-id)]
-         (when-not (:loading? w) (:deferred-sibling-start w)))
+          ;; A turn the GATEWAY started for this session while this tab was busy
+          ;; (normally the queued message it drained on THIS turn's terminal),
+          ;; parked by `:sibling-turn-started`. Its mirrored queue row is already
+          ;; gone (`turn.queued.drained`), so without this replay the user's
+          ;; message never appears anywhere. A drain scheduled below wins the race
+          ;; and simply re-parks it for the next terminal.
+          deferred
+          (let [w (db-for-tab db' workspace-id)]
+            (when-not (:loading? w) (:deferred-sibling-start w)))
 
-       db'
-       (cond-> db'
-         deferred
-         (update-tab workspace-id #(dissoc % :deferred-sibling-start)))]
+          db'
+          (cond-> db'
+            deferred
+            (update-tab workspace-id #(dissoc % :deferred-sibling-start)))]
 
       {:db (cond-> db'
              ;; Persistent unread dot: a BACKGROUND tab that just FINISHED a
@@ -5580,261 +5462,259 @@
 
 (reg-fx
   :session-turn
-  (fn
-    [workspace-id session text token reasoning-level extra-body turn-features workspace
-     client-turn-id & [display-text]]
-    (let
-      [fut
-       (vis/worker-future
-         "vis-tui-turn"
-         (fn []
-           (try
-             (let
-               [progress-update! (make-progress-render-updater (fn [[_ timeline]]
-                                                                 (try (dispatch
-                                                                        [:set-progress-iterations
-                                                                         workspace-id timeline])
-                                                                      (catch Throwable _ nil))))
-                {track-chunk :on-chunk} (vis/make-progress-tracker {:on-update progress-update!})
-                ;; LIVE F2 context dialog: every `:iteration-final`
-                ;; chunk carries the working-memory snapshot
-                ;; (`:tasks`/`:facts`) from the loop's live ctx-atom.
-                ;; Push it to `:ctx-by-session` mid-turn so the panel
-                ;; reflects task/fact writes as they happen — not only
-                ;; after the turn ends (the turn-end DB reload still
-                ;; runs in `:message-received` as the durable sync).
-                ;; The `dispatch` bumps `:render-version`, so an open
-                ;; overlay repaints with the fresh snapshot.
-                sid (:id session)
-                on-chunk
-                (fn [chunk]
-                  (case (:phase chunk)
-                    ;; A sibling queued/edited/deleted a message
-                    ;; on this session — mirror it into the local
-                    ;; queue; never a progress chunk.
-                    :queue-sync
-                    (try (dispatch [:sync-queued-turn workspace-id chunk]) (catch Throwable _ nil))
+  (fn [workspace-id session text token reasoning-level extra-body turn-features workspace
+       client-turn-id & [display-text]]
+    (let [fut
+          (vis/worker-future
+            "vis-tui-turn"
+            (fn []
+              (try
+                (let [progress-update! (make-progress-render-updater
+                                         (fn [[_ timeline]]
+                                           (try (dispatch [:set-progress-iterations workspace-id
+                                                           timeline])
+                                                (catch Throwable _ nil))))
+                      {track-chunk :on-chunk} (vis/make-progress-tracker {:on-update
+                                                                          progress-update!})
+                      ;; LIVE F2 context dialog: every `:iteration-final`
+                      ;; chunk carries the working-memory snapshot
+                      ;; (`:tasks`/`:facts`) from the loop's live ctx-atom.
+                      ;; Push it to `:ctx-by-session` mid-turn so the panel
+                      ;; reflects task/fact writes as they happen — not only
+                      ;; after the turn ends (the turn-end DB reload still
+                      ;; runs in `:message-received` as the durable sync).
+                      ;; The `dispatch` bumps `:render-version`, so an open
+                      ;; overlay repaints with the fresh snapshot.
+                      sid (:id session)
+                      on-chunk (fn [chunk]
+                                 (case (:phase chunk)
+                                   ;; A sibling queued/edited/deleted a message
+                                   ;; on this session — mirror it into the local
+                                   ;; queue; never a progress chunk.
+                                   :queue-sync
+                                   (try (dispatch [:sync-queued-turn workspace-id chunk])
+                                        (catch Throwable _ nil))
 
-                    ;; Queue paused/resumed after a provider failure.
-                    :queue-paused
-                    (try (dispatch [:sync-queue-paused workspace-id chunk]) (catch Throwable _ nil))
+                                   ;; Queue paused/resumed after a provider failure.
+                                   :queue-paused
+                                   (try (dispatch [:sync-queue-paused workspace-id chunk])
+                                        (catch Throwable _ nil))
 
-                    ;; The turn actually STARTED running — re-seed
-                    ;; this tab's elapsed clock from the gateway's
-                    ;; canonical started_at; never a progress chunk.
-                    :turn-start
-                    (try (dispatch [:sync-turn-clock workspace-id chunk]) (catch Throwable _ nil))
+                                   ;; The turn actually STARTED running — re-seed
+                                   ;; this tab's elapsed clock from the gateway's
+                                   ;; canonical started_at; never a progress chunk.
+                                   :turn-start
+                                   (try (dispatch [:sync-turn-clock workspace-id chunk])
+                                        (catch Throwable _ nil))
 
-                    (do (when (and sid
-                                   (= :iteration-final (:phase chunk))
-                                   (or (:tasks chunk) (:facts chunk)))
-                          (try (dispatch [:set-ctx-panel sid
-                                          {:tasks (:tasks chunk) :facts (:facts chunk)}])
-                               (catch Throwable _ nil)))
-                        (track-chunk chunk))))
-                result (chat/turn! session
-                                   text
-                                   {:on-chunk on-chunk
-                                    ;; Pass the cancellation TOKEN, not the
-                                    ;; bare atom: the loop registers Python /
-                                    ;; provider workers with the token's
-                                    ;; `on-cancel!` callback registry so
-                                    ;; `vis/cancel!` hard-cancels them all
-                                    ;; at once instead of waiting on each
-                                    ;; one's eval-timeout.
-                                    :cancel-token token
-                                    ;; Correlation id: makes a resubmit idempotent AND
-                                    ;; comes back on any queue event for this turn, so
-                                    ;; the tab recognises its own submit by id.
-                                    :idempotency-key client-turn-id
-                                    :reasoning-default reasoning-level
-                                    :extra-body extra-body
-                                    :turn-features turn-features
-                                    :workspace workspace
-                                    :display-text display-text})]
+                                   (do (when (and sid
+                                                  (= :iteration-final (:phase chunk))
+                                                  (or (:tasks chunk) (:facts chunk)))
+                                         (try (dispatch [:set-ctx-panel sid
+                                                         {:tasks (:tasks chunk)
+                                                          :facts (:facts chunk)}])
+                                              (catch Throwable _ nil)))
+                                       (track-chunk chunk))))
+                      result (chat/turn! session
+                                         text
+                                         {:on-chunk on-chunk
+                                          ;; Pass the cancellation TOKEN, not the
+                                          ;; bare atom: the loop registers Python /
+                                          ;; provider workers with the token's
+                                          ;; `on-cancel!` callback registry so
+                                          ;; `vis/cancel!` hard-cancels them all
+                                          ;; at once instead of waiting on each
+                                          ;; one's eval-timeout.
+                                          :cancel-token token
+                                          ;; Correlation id: makes a resubmit idempotent AND
+                                          ;; comes back on any queue event for this turn, so
+                                          ;; the tab recognises its own submit by id.
+                                          :idempotency-key client-turn-id
+                                          :reasoning-default reasoning-level
+                                          :extra-body extra-body
+                                          :turn-features turn-features
+                                          :workspace workspace
+                                          :display-text display-text})]
 
-               (if (get result "error")
-                 (dispatch [:message-received workspace-id (chat/error-content result)
-                            {:client-turn-id client-turn-id}])
-                 (do (dispatch
-                       [:message-received workspace-id (get result "content")
-                        ;; Field-by-field pick from the canonical string-keyed
-                        ;; gateway result into the TUI's internal message map —
-                        ;; never a blanket re-keying of wire data.
-                        {:model (get result "model")
-                         :provider (get result "provider")
-                         :llm-selected (get result "llm_selected")
-                         :llm-actual (get result "llm_actual")
-                         :llm-fallback? (get result "is_llm_fallback")
-                         :llm-routing-trace (get result "llm_routing_trace")
-                         :iteration-count (get result "iteration_count")
-                         :duration-ms (get result "duration_ms")
-                         :tokens (get result "tokens")
-                         :cost (get result "cost")
-                         :confidence (get result "confidence")
-                         :session-turn-id (get result "session_turn_id")
-                         :status (case (get result "status")
-                                   "needs_input"
-                                   :needs-input
+                  (if (get result "error")
+                    (dispatch [:message-received workspace-id (chat/error-content result)
+                               {:client-turn-id client-turn-id}])
+                    (do (dispatch
+                          [:message-received workspace-id (get result "content")
+                           ;; Field-by-field pick from the canonical string-keyed
+                           ;; gateway result into the TUI's internal message map —
+                           ;; never a blanket re-keying of wire data.
+                           {:model (get result "model")
+                            :provider (get result "provider")
+                            :llm-selected (get result "llm_selected")
+                            :llm-actual (get result "llm_actual")
+                            :llm-fallback? (get result "is_llm_fallback")
+                            :llm-routing-trace (get result "llm_routing_trace")
+                            :iteration-count (get result "iteration_count")
+                            :duration-ms (get result "duration_ms")
+                            :tokens (get result "tokens")
+                            :cost (get result "cost")
+                            :confidence (get result "confidence")
+                            :session-turn-id (get result "session_turn_id")
+                            :status (case (get result "status")
+                                      "needs_input"
+                                      :needs-input
 
-                                   "cancelled"
-                                   :cancelled
+                                      "cancelled"
+                                      :cancelled
 
-                                   nil)
-                         :utilization (get result "utilization")
-                         :slash (get result "slash")
-                         :client-turn-id client-turn-id}])
-                     ;; A turn may have switched the session's workspace
-                     ;; (`/draft new | apply | abandon`, `/cd <path>`).
-                     ;; Re-sync so header/footer reflect it. The gateway ws
-                     ;; fact already carries the server-resolved :git status,
-                     ;; so re-dispatch it — no client-side git walk here.
-                     (try (let
-                            [sid (some-> session
-                                         :id)
-                             ws (when sid (vis/gateway-session-workspace sid))]
+                                      nil)
+                            :utilization (get result "utilization")
+                            :slash (get result "slash")
+                            :client-turn-id client-turn-id}])
+                        ;; A turn may have switched the session's workspace
+                        ;; (`/draft new | apply | abandon`, `/cd <path>`).
+                        ;; Re-sync so header/footer reflect it. The gateway ws
+                        ;; fact already carries the server-resolved :git status,
+                        ;; so re-dispatch it — no client-side git walk here.
+                        (try (let [sid (some-> session
+                                               :id)
+                                   ws (when sid (vis/gateway-session-workspace sid))]
 
-                            (dispatch [:set-workspace ws workspace-id]))
-                          (catch Throwable _ nil))
-                     ;; W3: refresh the F2 context panel's snapshot from the
-                     ;; just-completed turn's ctx (tasks + facts). One DB read
-                     ;; at turn end (NOT per-paint); the overlay renders from
-                     ;; this cache.
-                     (try (when-let [sid (:id session)]
-                            (dispatch [:set-ctx-panel sid {}]))
-                          (catch Throwable _ nil)))))
-             (catch Throwable t
-               (if-let [disconnect (gateway-disconnect-data t)]
-                 (if-let [tid (:turn-id disconnect)]
-                   (dispatch [:reattach-disconnected-turn workspace-id session tid token
-                              client-turn-id])
-                   (let
-                     [message (vis/format-error (or (ex-message t) (str t)))
-                      block {"id" (str (java.util.UUID/randomUUID))
-                             "type" "error"
-                             "code" "turn_failed"
-                             "message" message}]
+                               (dispatch [:set-workspace ws workspace-id]))
+                             (catch Throwable _ nil))
+                        ;; W3: refresh the F2 context panel's snapshot from the
+                        ;; just-completed turn's ctx (tasks + facts). One DB read
+                        ;; at turn end (NOT per-paint); the overlay renders from
+                        ;; this cache.
+                        (try (when-let [sid (:id session)]
+                               (dispatch [:set-ctx-panel sid {}]))
+                             (catch Throwable _ nil)))))
+                (catch Throwable t
+                  (if-let [disconnect (gateway-disconnect-data t)]
+                    (if-let [tid (:turn-id disconnect)]
+                      (dispatch [:reattach-disconnected-turn workspace-id session tid token
+                                 client-turn-id])
+                      (let [message (vis/format-error (or (ex-message t) (str t)))
+                            block {"id" (str (java.util.UUID/randomUUID))
+                                   "type" "error"
+                                   "code" "turn_failed"
+                                   "message" message}]
 
-                     (dispatch [:message-received workspace-id [block]
-                                {:client-turn-id client-turn-id}])))
-                 (let
-                   [cancelled? (vis/cancellation? t)
-                    message (if cancelled?
-                              "Cancelled by user."
-                              (vis/format-error (or (ex-message t) (str t))))
-                    block {"id" (str (java.util.UUID/randomUUID))
-                           "type" (if cancelled? "notice" "error")
-                           "code" (if cancelled? "turn_cancelled" "turn_failed")
-                           "message" message}]
+                        (dispatch [:message-received workspace-id [block]
+                                   {:client-turn-id client-turn-id}])))
+                    (let [cancelled? (vis/cancellation? t)
+                          message (if cancelled?
+                                    "Cancelled by user."
+                                    (vis/format-error (or (ex-message t) (str t))))
+                          block {"id" (str (java.util.UUID/randomUUID))
+                                 "type" (if cancelled? "notice" "error")
+                                 "code" (if cancelled? "turn_cancelled" "turn_failed")
+                                 "message" message}]
 
-                   (dispatch [:message-received workspace-id [block]
-                              (cond-> {:client-turn-id client-turn-id}
-                                cancelled?
-                                (assoc :status :cancelled))])))))))]
+                      (dispatch [:message-received workspace-id [block]
+                                 (cond-> {:client-turn-id client-turn-id}
+                                   cancelled?
+                                   (assoc :status :cancelled))])))))))]
       (vis/cancellation-set-future! token fut))))
 
 (reg-fx
   :session-attach
   (fn [workspace-id session tid token client-turn-id]
-    (let
-      [fut
-       (vis/worker-future
-         "vis-tui-attach"
-         (fn []
-           (try
-             (let
-               [progress-update! (make-progress-render-updater (fn [[_ timeline]]
-                                                                 (try (dispatch
-                                                                        [:set-progress-iterations
-                                                                         workspace-id timeline])
-                                                                      (catch Throwable _ nil))))
-                {track-chunk :on-chunk} (vis/make-progress-tracker {:on-update progress-update!})
-                sid (:id session)
-                on-chunk
-                (fn [chunk]
-                  (case (:phase chunk)
-                    ;; A sibling queued/edited/deleted a message
-                    ;; on this session — mirror it into the local
-                    ;; queue; never a progress chunk.
-                    :queue-sync
-                    (try (dispatch [:sync-queued-turn workspace-id chunk]) (catch Throwable _ nil))
+    (let [fut
+          (vis/worker-future
+            "vis-tui-attach"
+            (fn []
+              (try
+                (let [progress-update! (make-progress-render-updater
+                                         (fn [[_ timeline]]
+                                           (try (dispatch [:set-progress-iterations workspace-id
+                                                           timeline])
+                                                (catch Throwable _ nil))))
+                      {track-chunk :on-chunk} (vis/make-progress-tracker {:on-update
+                                                                          progress-update!})
+                      sid (:id session)
+                      on-chunk (fn [chunk]
+                                 (case (:phase chunk)
+                                   ;; A sibling queued/edited/deleted a message
+                                   ;; on this session — mirror it into the local
+                                   ;; queue; never a progress chunk.
+                                   :queue-sync
+                                   (try (dispatch [:sync-queued-turn workspace-id chunk])
+                                        (catch Throwable _ nil))
 
-                    ;; Queue paused/resumed after a provider failure.
-                    :queue-paused
-                    (try (dispatch [:sync-queue-paused workspace-id chunk]) (catch Throwable _ nil))
+                                   ;; Queue paused/resumed after a provider failure.
+                                   :queue-paused
+                                   (try (dispatch [:sync-queue-paused workspace-id chunk])
+                                        (catch Throwable _ nil))
 
-                    ;; The turn actually STARTED running — re-seed
-                    ;; this tab's elapsed clock from the gateway's
-                    ;; canonical started_at; never a progress chunk.
-                    :turn-start
-                    (try (dispatch [:sync-turn-clock workspace-id chunk]) (catch Throwable _ nil))
+                                   ;; The turn actually STARTED running — re-seed
+                                   ;; this tab's elapsed clock from the gateway's
+                                   ;; canonical started_at; never a progress chunk.
+                                   :turn-start
+                                   (try (dispatch [:sync-turn-clock workspace-id chunk])
+                                        (catch Throwable _ nil))
 
-                    (do (when (and sid
-                                   (= :iteration-final (:phase chunk))
-                                   (or (:tasks chunk) (:facts chunk)))
-                          (try (dispatch [:set-ctx-panel sid
-                                          {:tasks (:tasks chunk) :facts (:facts chunk)}])
-                               (catch Throwable _ nil)))
-                        (track-chunk chunk))))
-                result (chat/attach! session tid {:on-chunk on-chunk})]
+                                   (do (when (and sid
+                                                  (= :iteration-final (:phase chunk))
+                                                  (or (:tasks chunk) (:facts chunk)))
+                                         (try (dispatch [:set-ctx-panel sid
+                                                         {:tasks (:tasks chunk)
+                                                          :facts (:facts chunk)}])
+                                              (catch Throwable _ nil)))
+                                       (track-chunk chunk))))
+                      result (chat/attach! session tid {:on-chunk on-chunk})]
 
-               (if (get result "error")
-                 (dispatch [:message-received workspace-id (chat/error-content result)
-                            {:client-turn-id client-turn-id}])
-                 (do (dispatch
-                       [:message-received workspace-id (get result "content")
-                        ;; Same field-by-field pick as :session-turn (above).
-                        {:model (get result "model")
-                         :provider (get result "provider")
-                         :llm-selected (get result "llm_selected")
-                         :llm-actual (get result "llm_actual")
-                         :llm-fallback? (get result "is_llm_fallback")
-                         :llm-routing-trace (get result "llm_routing_trace")
-                         :iteration-count (get result "iteration_count")
-                         :duration-ms (get result "duration_ms")
-                         :tokens (get result "tokens")
-                         :cost (get result "cost")
-                         :confidence (get result "confidence")
-                         :session-turn-id (get result "session_turn_id")
-                         :status (case (get result "status")
-                                   "needs_input"
-                                   :needs-input
+                  (if (get result "error")
+                    (dispatch [:message-received workspace-id (chat/error-content result)
+                               {:client-turn-id client-turn-id}])
+                    (do (dispatch
+                          [:message-received workspace-id (get result "content")
+                           ;; Same field-by-field pick as :session-turn (above).
+                           {:model (get result "model")
+                            :provider (get result "provider")
+                            :llm-selected (get result "llm_selected")
+                            :llm-actual (get result "llm_actual")
+                            :llm-fallback? (get result "is_llm_fallback")
+                            :llm-routing-trace (get result "llm_routing_trace")
+                            :iteration-count (get result "iteration_count")
+                            :duration-ms (get result "duration_ms")
+                            :tokens (get result "tokens")
+                            :cost (get result "cost")
+                            :confidence (get result "confidence")
+                            :session-turn-id (get result "session_turn_id")
+                            :status (case (get result "status")
+                                      "needs_input"
+                                      :needs-input
 
-                                   "cancelled"
-                                   :cancelled
+                                      "cancelled"
+                                      :cancelled
 
-                                   nil)
-                         :utilization (get result "utilization")
-                         :slash (get result "slash")
-                         :client-turn-id client-turn-id}])
-                     (try (let
-                            [sid (some-> session
-                                         :id)
-                             ws (when sid (vis/gateway-session-workspace sid))]
+                                      nil)
+                            :utilization (get result "utilization")
+                            :slash (get result "slash")
+                            :client-turn-id client-turn-id}])
+                        (try (let [sid (some-> session
+                                               :id)
+                                   ws (when sid (vis/gateway-session-workspace sid))]
 
-                            (dispatch [:set-workspace ws workspace-id]))
-                          (catch Throwable _ nil))
-                     (try (when-let [sid (:id session)]
-                            (dispatch [:set-ctx-panel sid {}]))
-                          (catch Throwable _ nil)))))
-             (catch Throwable t
-               (if (gateway-disconnect-data t)
-                 (dispatch [:reattach-disconnected-turn workspace-id session tid token
-                            client-turn-id])
-                 (let
-                   [cancelled? (vis/cancellation? t)
-                    message (if cancelled?
-                              "Cancelled by user."
-                              (vis/format-error (or (ex-message t) (str t))))
-                    block {"id" (str (java.util.UUID/randomUUID))
-                           "type" (if cancelled? "notice" "error")
-                           "code" (if cancelled? "turn_cancelled" "turn_failed")
-                           "message" message}]
+                               (dispatch [:set-workspace ws workspace-id]))
+                             (catch Throwable _ nil))
+                        (try (when-let [sid (:id session)]
+                               (dispatch [:set-ctx-panel sid {}]))
+                             (catch Throwable _ nil)))))
+                (catch Throwable t
+                  (if (gateway-disconnect-data t)
+                    (dispatch [:reattach-disconnected-turn workspace-id session tid token
+                               client-turn-id])
+                    (let [cancelled? (vis/cancellation? t)
+                          message (if cancelled?
+                                    "Cancelled by user."
+                                    (vis/format-error (or (ex-message t) (str t))))
+                          block {"id" (str (java.util.UUID/randomUUID))
+                                 "type" (if cancelled? "notice" "error")
+                                 "code" (if cancelled? "turn_cancelled" "turn_failed")
+                                 "message" message}]
 
-                   (dispatch [:message-received workspace-id [block]
-                              (cond-> {:client-turn-id client-turn-id}
-                                cancelled?
-                                (assoc :status :cancelled))])))))))]
+                      (dispatch [:message-received workspace-id [block]
+                                 (cond-> {:client-turn-id client-turn-id}
+                                   cancelled?
+                                   (assoc :status :cancelled))])))))))]
       (vis/cancellation-set-future! token fut))))
 
 ;; ── Gateway queue I/O ──────────────────────────────────────────────────────
@@ -5905,9 +5785,8 @@
    Blocking; every caller is already on a gateway IO lane."
   [sid tid]
   (when (and sid tid)
-    (let
-      [deleted? (try (= "deleted" (get (vis/gateway-delete-queued-turn! sid tid) "status"))
-                     (catch Throwable t (= 404 (:http-status (ex-data t)))))]
+    (let [deleted? (try (= "deleted" (get (vis/gateway-delete-queued-turn! sid tid) "status"))
+                        (catch Throwable t (= 404 (:http-status (ex-data t)))))]
       (when-not deleted? (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil))))))
 
 (reg-fx
@@ -5923,46 +5802,45 @@
   ;; Runs on the FIFO queue thread (see above): pressing Enter is never blocked by
   ;; the network.
   (fn [workspace-id session entry reasoning-level extra-body turn-features workspace]
-    (let
-      [sid
-       (:id session)
+    (let [sid
+          (:id session)
 
-       client-id
-       (:client-id entry)
+          client-id
+          (:client-id entry)
 
-       agent-text
-       (:agent-text entry)
+          agent-text
+          (:agent-text entry)
 
-       ;; The COLLAPSED copy: paste/image tokens still folded into their
-       ;; `vis-paste`/`vis-image` fences. Sent so the queued record — and the
-       ;; `turn.started` every channel replays from — carries what the USER
-       ;; wrote, not the expanded agent text whose image path is a raw
-       ;; `/var/folders/…/clipboard-….png`.
-       display-text
-       (let [p (:preview-text entry)]
-         (when (and p (not= p agent-text)) p))
+          ;; The COLLAPSED copy: paste/image tokens still folded into their
+          ;; `vis-paste`/`vis-image` fences. Sent so the queued record — and the
+          ;; `turn.started` every channel replays from — carries what the USER
+          ;; wrote, not the expanded agent text whose image path is a raw
+          ;; `/var/folders/…/clipboard-….png`.
+          display-text
+          (let [p (:preview-text entry)]
+            (when (and p (not= p agent-text)) p))
 
-       ;; RESCUE: the submission never reached the queue of record. Keep the
-       ;; text as a local row (marked `:unsent?`, so the strip says so rather
-       ;; than implying the server has it) and nudge the drain — the turn we
-       ;; queued BEHIND may well have finished while this round-trip was
-       ;; failing, and its terminal (the only other thing that pops the queue)
-       ;; has already passed. `:drain-pending` is a no-op while still busy.
-       stage!
-       (fn []
-         (dispatch [:stage-queued-locally workspace-id entry])
-         (try (dispatch [:drain-pending workspace-id]) (catch Throwable _ nil)))
+          ;; RESCUE: the submission never reached the queue of record. Keep the
+          ;; text as a local row (marked `:unsent?`, so the strip says so rather
+          ;; than implying the server has it) and nudge the drain — the turn we
+          ;; queued BEHIND may well have finished while this round-trip was
+          ;; failing, and its terminal (the only other thing that pops the queue)
+          ;; has already passed. `:drain-pending` is a no-op while still busy.
+          stage!
+          (fn []
+            (dispatch [:stage-queued-locally workspace-id entry])
+            (try (dispatch [:drain-pending workspace-id]) (catch Throwable _ nil)))
 
-       ;; RETRACTION. A submission can be taken back while this POST is still open: a
-       ;; cancel pulls the row into the editor (`:restore-pending-to-input`) and
-       ;; `:clear-pending-sends` drops it. Neither can delete a gateway record whose turn
-       ;; id is still being minted inside this very request, so both RECORD the
-       ;; correlation id (`mark-retracted`). A turn the gateway QUEUED is retracted by the
-       ;; one `:sync-queued-turn` writer, which this ack feeds; only a turn it already
-       ;; STARTED needs this closure, because that path never offers the row to the writer.
-       retracted?
-       (fn []
-         (submission-retracted? @app-db workspace-id client-id))]
+          ;; RETRACTION. A submission can be taken back while this POST is still open: a
+          ;; cancel pulls the row into the editor (`:restore-pending-to-input`) and
+          ;; `:clear-pending-sends` drops it. Neither can delete a gateway record whose turn
+          ;; id is still being minted inside this very request, so both RECORD the
+          ;; correlation id (`mark-retracted`). A turn the gateway QUEUED is retracted by the
+          ;; one `:sync-queued-turn` writer, which this ack feeds; only a turn it already
+          ;; STARTED needs this closure, because that path never offers the row to the writer.
+          retracted?
+          (fn []
+            (submission-retracted? @app-db workspace-id client-id))]
 
       (if-not sid
         ;; Nowhere to register it. NEVER leave the row `:awaiting-ack?`: that head
@@ -5972,38 +5850,36 @@
         (gateway-queue-io!
           (fn []
             (try
-              (let
-                [res
-                 (submit-queued-turn! sid
-                                      (cond->
-                                        {:request agent-text
-                                         ;; The gateway echoes this back on
-                                         ;; turn.queued and every wire view of the
-                                         ;; turn: the ONE key that tells us the row
-                                         ;; it broadcasts is our own submission —
-                                         ;; and the key that makes the retry above
-                                         ;; idempotent.
-                                         :idempotency-key client-id}
-                                        reasoning-level
-                                        (assoc :reasoning-default reasoning-level)
+              (let [res
+                    (submit-queued-turn! sid
+                                         (cond-> {:request agent-text
+                                                  ;; The gateway echoes this back on
+                                                  ;; turn.queued and every wire view of the
+                                                  ;; turn: the ONE key that tells us the row
+                                                  ;; it broadcasts is our own submission —
+                                                  ;; and the key that makes the retry above
+                                                  ;; idempotent.
+                                                  :idempotency-key client-id}
+                                           reasoning-level
+                                           (assoc :reasoning-default reasoning-level)
 
-                                        extra-body
-                                        (assoc :extra-body extra-body)
+                                           extra-body
+                                           (assoc :extra-body extra-body)
 
-                                        (seq turn-features)
-                                        (assoc :turn-features turn-features)
+                                           (seq turn-features)
+                                           (assoc :turn-features turn-features)
 
-                                        display-text
-                                        (assoc :display-request display-text)
+                                           display-text
+                                           (assoc :display-request display-text)
 
-                                        (seq workspace)
-                                        (assoc :workspace workspace)))
+                                           (seq workspace)
+                                           (assoc :workspace workspace)))
 
-                 turn
-                 (:turn res)
+                    turn
+                    (:turn res)
 
-                 tid
-                 (get turn "turn_id")]
+                    tid
+                    (get turn "turn_id")]
 
                 (cond (and tid (= "queued" (get turn "status")))
                       ;; Straight through the ONE writer, retracted or not: that writer
@@ -6053,11 +5929,10 @@
           (when (and sid tid)
             (gateway-queue-io!
               (fn []
-                (let
-                  [failed? (try (not= "deleted"
-                                      (get (vis/gateway-delete-queued-turn! sid tid) "status"))
-                                (catch Throwable t
-                                  (not (contains? #{404 409} (:http-status (ex-data t))))))]
+                (let [failed? (try (not= "deleted"
+                                         (get (vis/gateway-delete-queued-turn! sid tid) "status"))
+                                   (catch Throwable t
+                                     (not (contains? #{404 409} (:http-status (ex-data t))))))]
                   (when (and failed? workspace-id)
                     (dispatch [:sync-queued-turn workspace-id
                                {:op :add
@@ -6132,14 +6007,13 @@
             (gateway-queue-io!
               (fn []
                 (when-let [turns (try (vis/gateway-list-turns sid) (catch Throwable _ nil))]
-                  (when-let
-                    [row (some (fn [t]
-                                 (when (or (= (str tid) (str (get t "turn_id")))
-                                           (and client-id
-                                                (= (str client-id)
-                                                   (str (get t "idempotency_key")))))
-                                   t))
-                               turns)]
+                  (when-let [row (some (fn [t]
+                                         (when (or (= (str tid) (str (get t "turn_id")))
+                                                   (and client-id
+                                                        (= (str client-id)
+                                                           (str (get t "idempotency_key")))))
+                                           t))
+                                       turns)]
                     (let [status (str (get row "status"))]
                       (when (contains? terminal-turn-statuses status)
                         (dispatch [:sync-turn-terminal workspace-id
@@ -6180,22 +6054,21 @@
     (when sid
       (gateway-cancel-io!
         (fn []
-          (let
-            [turns
-             (try (vis/gateway-list-turns sid) (catch Throwable _ ::unreachable))
+          (let [turns
+                (try (vis/gateway-list-turns sid) (catch Throwable _ ::unreachable))
 
-             live
-             (when-not (= ::unreachable turns)
-               (some (fn [turn]
-                       (when (contains? running-turn-statuses (str (get turn "status"))) turn))
-                     turns))
+                live
+                (when-not (= ::unreachable turns)
+                  (some (fn [turn]
+                          (when (contains? running-turn-statuses (str (get turn "status"))) turn))
+                        turns))
 
-             [text level]
-             (cond (= ::unreachable turns)
-                   ["Cancel could not reach the gateway - nothing was stopped." :warn]
-                   live (do (gateway-cancel-turn-or-current! sid (str (get live "turn_id")) nil)
-                            ["Cancelling the turn this session is running..." :info])
-                   :else ["Nothing is running to cancel." :info])]
+                [text level]
+                (cond (= ::unreachable turns)
+                      ["Cancel could not reach the gateway - nothing was stopped." :warn]
+                      live (do (gateway-cancel-turn-or-current! sid (str (get live "turn_id")) nil)
+                               ["Cancelling the turn this session is running..." :info])
+                      :else ["Nothing is running to cancel." :info])]
 
             (try (vis/notify! text :level level :ttl-ms cancel-notification-ttl-ms)
                  (catch Throwable _ nil))))))))

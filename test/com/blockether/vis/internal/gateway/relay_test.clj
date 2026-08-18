@@ -24,12 +24,11 @@
 (defmacro with-push-home
   "Run `body` against a throwaway push home with an empty device registry."
   [binding & body]
-  `(let
-     [~(first binding)
-      (temp-home)
+  `(let [~(first binding)
+         (temp-home)
 
-      prev#
-      (System/getProperty "vis.push.home")]
+         prev#
+         (System/getProperty "vis.push.home")]
 
      (try (System/setProperty "vis.push.home" (.getAbsolutePath ~(first binding)))
           (push/reload-devices!)
@@ -44,12 +43,11 @@
    request map and returns `{:status int :body str}`. Returns
    `{:url :requests :stop!}`."
   [respond]
-  (let
-    [requests
-     (atom [])
+  (let [requests
+        (atom [])
 
-     server
-     (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+        server
+        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
 
     (.createContext server
                     "/v1/push"
@@ -58,28 +56,27 @@
                         ;; NOTE: hinting the PARAMETER makes the compiler refuse the
                         ;; void `handle`; hint a local instead.
                         (handle [_ e]
-                          (let
-                            [^HttpExchange exchange
-                             e
+                          (let [^HttpExchange exchange
+                                e
 
-                             body
-                             (slurp (.getRequestBody exchange))
+                                body
+                                (slurp (.getRequestBody exchange))
 
-                             request
-                             {:method (.getRequestMethod exchange)
-                              :path (.getPath (.getRequestURI exchange))
-                              :authorization (.getFirst (.getRequestHeaders exchange)
-                                                        "Authorization")
-                              :body (wire/parse-json body)}
+                                request
+                                {:method (.getRequestMethod exchange)
+                                 :path (.getPath (.getRequestURI exchange))
+                                 :authorization (.getFirst (.getRequestHeaders exchange)
+                                                           "Authorization")
+                                 :body (wire/parse-json body)}
 
-                             _
-                             (swap! requests conj request)
+                                _
+                                (swap! requests conj request)
 
-                             {:keys [status body]}
-                             (respond request)
+                                {:keys [status body]}
+                                (respond request)
 
-                             bytes
-                             (.getBytes (str body) StandardCharsets/UTF_8)]
+                                bytes
+                                (.getBytes (str body) StandardCharsets/UTF_8)]
 
                             (.sendResponseHeaders exchange (int status) (alength bytes))
                             (with-open [out (.getResponseBody exchange)]
@@ -118,9 +115,9 @@
 
 (deftest send-posts-the-grant-as-a-bearer-capability-test
   (with-push-home [home]
-                  (let
-                    [relay-server (start-relay! (fn [_]
-                                                  {:status 200 :body "{\"is_delivered\":true}"}))]
+                  (let [relay-server (start-relay! (fn [_]
+                                                     {:status 200
+                                                      :body "{\"is_delivered\":true}"}))]
                     (try (configure-relay! home (:url relay-server))
                          (let [result (relay/send! (:url relay-server) "GRANT-abcdef123456" ALERT)]
                            (testing "the relay's verdict is the gateway's verdict"
@@ -147,9 +144,8 @@
 (deftest relay-is-preferred-over-local-credentials-test
   (with-push-home
     [home]
-    (let
-      [relay-server (start-relay! (fn [_]
-                                    {:status 200 :body "{\"is_delivered\":true}"}))]
+    (let [relay-server (start-relay! (fn [_]
+                                       {:status 200 :body "{\"is_delivered\":true}"}))]
       (try (configure-relay! home (:url relay-server))
            (testing "a gateway with NO Apple key still delivers, which is the whole point"
              (is (false? (push/configured?)))
@@ -172,12 +168,11 @@
 (deftest revoked-grant-forgets-the-device-test
   (with-push-home
     [home]
-    (let
-      [relay-server
-       (start-relay!
-         (fn [_]
-           {:status 410
-            :body "{\"is_delivered\":false,\"reason\":\"Unregistered\",\"is_revoked\":true}"}))]
+    (let [relay-server
+          (start-relay!
+            (fn [_]
+              {:status 410
+               :body "{\"is_delivered\":false,\"reason\":\"Unregistered\",\"is_revoked\":true}"}))]
       (try (configure-relay! home (:url relay-server))
            (let [device (push/register-device! {:grant "GRANT-abcdef123456" :platform "ios"})]
              (testing "410 means the grant is gone for good"
@@ -214,9 +209,8 @@
 (deftest a-grant-device-without-a-relay-uses-the-gateways-own-test
   (with-push-home
     [home]
-    (let
-      [relay-server (start-relay! (fn [_]
-                                    {:status 200 :body "{\"is_delivered\":true}"}))]
+    (let [relay-server (start-relay! (fn [_]
+                                       {:status 200 :body "{\"is_delivered\":true}"}))]
       (try (configure-relay! home (:url relay-server))
            (let [device (push/register-device! {:grant "GRANT-abcdef123456" :platform "ios"})]
              (is (some? device))
@@ -239,15 +233,14 @@
   (testing "a 503 costs one retry, and the second answer is the verdict"
     (with-push-home
       [home]
-      (let
-        [attempts
-         (atom 0)
+      (let [attempts
+            (atom 0)
 
-         relay-server
-         (start-relay! (fn [_]
-                         (if (= 1 (swap! attempts inc))
-                           {:status 503 :body "{\"reason\":\"upstream\"}"}
-                           {:status 200 :body "{\"is_delivered\":true}"})))]
+            relay-server
+            (start-relay! (fn [_]
+                            (if (= 1 (swap! attempts inc))
+                              {:status 503 :body "{\"reason\":\"upstream\"}"}
+                              {:status 200 :body "{\"is_delivered\":true}"})))]
 
         (try (configure-relay! home (:url relay-server))
              (is (= 200 (:status (relay/send! (:url relay-server) "GRANT-abcdef123456" ALERT))))
@@ -256,10 +249,9 @@
   (testing "a verdict the relay already reached is never asked again"
     (with-push-home
       [home]
-      (let
-        [relay-server (start-relay! (fn [_]
-                                      {:status 404
-                                       :body "{\"error\":{\"code\":\"unknown_grant\"}}"}))]
+      (let [relay-server (start-relay! (fn [_]
+                                         {:status 404
+                                          :body "{\"error\":{\"code\":\"unknown_grant\"}}"}))]
         (try (configure-relay! home (:url relay-server))
              (is (= 404 (:status (relay/send! (:url relay-server) "GRANT-abcdef123456" ALERT))))
              (is (= 1 (count @(:requests relay-server))))
@@ -298,17 +290,15 @@
 (deftest a-device-names-the-relay-that-sealed-its-grant-test
   (with-push-home
     [_home]
-    (let
-      [relay-server (start-relay! (fn [_]
-                                    {:status 200 :body "{\"is_delivered\":true}"}))]
+    (let [relay-server (start-relay! (fn [_]
+                                       {:status 200 :body "{\"is_delivered\":true}"}))]
       (try (testing "this gateway is configured with nothing, so it names the publisher's relay"
              (is (true? (relay/configured?)))
              (is (= relay/DEFAULT-URL (:url (relay/config))))
              (is (= "default" (:source (relay/config)))))
-           (let
-             [device (push/register-device! {:grant "GRANT-abcdef123456"
-                                             :platform "ios"
-                                             :relay-url (:url relay-server)})]
+           (let [device (push/register-device! {:grant "GRANT-abcdef123456"
+                                                :platform "ios"
+                                                :relay-url (:url relay-server)})]
              (testing "push is nevertheless available — a device brought an address"
                (is (true? (push/any-configured?)))
                (is (true? (:is-available (push/status)))))
@@ -326,21 +316,20 @@
 
 (deftest a-device-may-not-name-a-cleartext-relay-test
   (testing "an address a device supplies is still TLS or nothing"
-    (with-push-home [home]
-                    (let
-                      [relay-server (start-relay! (fn [_]
-                                                    {:status 200 :body "{\"is_delivered\":true}"}))]
-                      (try (configure-relay! home (:url relay-server))
-                           (let
-                             [device (push/register-device! {:grant "GRANT-abcdef123456"
-                                                             :platform "ios"
-                                                             :relay-url "http://push.example.com"})]
-                             (is (some? device))
-                             (is (nil? (:relay-url device)))
-                             (testing "and the alert goes to the relay this gateway names instead"
-                               (is (true? (:is-delivered (push/send-to-device! device ALERT))))
-                               (is (= 1 (count @(:requests relay-server))))))
-                           (finally ((:stop! relay-server))))))))
+    (with-push-home
+      [home]
+      (let [relay-server (start-relay! (fn [_]
+                                         {:status 200 :body "{\"is_delivered\":true}"}))]
+        (try (configure-relay! home (:url relay-server))
+             (let [device (push/register-device! {:grant "GRANT-abcdef123456"
+                                                  :platform "ios"
+                                                  :relay-url "http://push.example.com"})]
+               (is (some? device))
+               (is (nil? (:relay-url device)))
+               (testing "and the alert goes to the relay this gateway names instead"
+                 (is (true? (:is-delivered (push/send-to-device! device ALERT))))
+                 (is (= 1 (count @(:requests relay-server))))))
+             (finally ((:stop! relay-server))))))))
 
 ;; One constant in two languages. The gateway must name the relay the APP mints
 ;; at: a grant is gibberish to every relay but the one that sealed it, so drift
@@ -348,12 +337,11 @@
 ;; than remember it.
 
 (deftest the-app-and-the-gateway-name-the-same-relay-test
-  (let
-    [src
-     (slurp (io/file "apps/vis-companion/src/lib/relay.ts"))
+  (let [src
+        (slurp (io/file "apps/vis-companion/src/lib/relay.ts"))
 
-     named
-     (second (re-find #"PUBLISHER_RELAY_URL\s*=\s*\n?\s*\"([^\"]+)\"" src))]
+        named
+        (second (re-find #"PUBLISHER_RELAY_URL\s*=\s*\n?\s*\"([^\"]+)\"" src))]
 
     (is (some? named))
     (is (= relay/DEFAULT-URL named))))

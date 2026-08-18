@@ -22,9 +22,8 @@
   render-block-test
   (it "reports live trunk as non-isolated and keeps isolation separate from VCS"
       (let [base (temp-dir "vis-wctx-id")]
-        (try (let
-               [block (wctx/render-block {:workspace
-                                          {:id "ws-1" :root base :workspace-backend :live}})]
+        (try (let [block (wctx/render-block {:workspace
+                                             {:id "ws-1" :root base :workspace-backend :live}})]
                (expect (= base (get block "root")))
                (expect (false? (get block "isolated")))
                ;; temp dir is not a git repo → "none"; isolation is on "isolated"
@@ -34,9 +33,8 @@
              (finally (delete-tree! base)))))
   (it "reports backend workspaces as isolated"
       (let [base (temp-dir "vis-wctx-isolated")]
-        (try (let
-               [block (wctx/render-block {:workspace
-                                          {:id "ws-iso" :root base :workspace-backend :rift}})]
+        (try (let [block (wctx/render-block {:workspace
+                                             {:id "ws-iso" :root base :workspace-backend :rift}})]
                (expect (true? (get block "isolated"))))
              (finally (delete-tree! base)))))
   (it "treats pre-migration fork rows without backend ids as isolated"
@@ -78,15 +76,15 @@
              (finally (delete-tree! base)))))
   (it "session-state hydration adds session_* identity + fork lineage"
       (let [base (temp-dir "vis-wctx-session")]
-        (try
-          (let
-            [ws {:id "ws-4" :root base}
-             ss
-             {:id "ss-1" :session-soul-id "soul-1" :title "Auth refactor" :parent-state-id "ss-0"}
-             block (wctx/render-block {:workspace ws :session-state ss})]
+        (try (let [ws {:id "ws-4" :root base}
+                   ss {:id "ss-1"
+                       :session-soul-id "soul-1"
+                       :title "Auth refactor"
+                       :parent-state-id "ss-0"}
+                   block (wctx/render-block {:workspace ws :session-state ss})]
 
-            (expect (= "ss-1" (get block "session_state_id")))
-            (expect (= "soul-1" (get block "session_id")))
-            (expect (= "Auth refactor" (get block "session_title")))
-            (expect (= {"soul" "soul-1" "parent_state" "ss-0"} (get block "session_fork_of"))))
-          (finally (delete-tree! base))))))
+               (expect (= "ss-1" (get block "session_state_id")))
+               (expect (= "soul-1" (get block "session_id")))
+               (expect (= "Auth refactor" (get block "session_title")))
+               (expect (= {"soul" "soul-1" "parent_state" "ss-0"} (get block "session_fork_of"))))
+             (finally (delete-tree! base))))))

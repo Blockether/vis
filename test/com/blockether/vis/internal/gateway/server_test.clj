@@ -52,12 +52,11 @@
           :else (do (Thread/sleep 10) (recur (dec remaining))))))
 
 (deftest orphan-health-probe-does-not-repair-the-registry
-  (let
-    [repairs
-     (atom 0)
+  (let [repairs
+        (atom 0)
 
-     health-handler
-     (rv 'health-handler)]
+        health-handler
+        (rv 'health-handler)]
 
     (with-redefs-fn {(rv 'ensure-self-registered!) #(swap! repairs inc)}
       (fn []
@@ -70,18 +69,17 @@
   (testing "static project actions do not conflict with the dynamic project-id route"
     (is (some? ((rv 'router) "test-token" [])))))
 (deftest mcp-management-handlers-are-sanitized-and-route-mutations-test
-  (let
-    [body
-     {"name" "filesystem" "enabled" true "server" {"transport" "stdio" "command" "npx"}}
+  (let [body
+        {"name" "filesystem" "enabled" true "server" {"transport" "stdio" "command" "npx"}}
 
-     saved
-     (atom nil)
+        saved
+        (atom nil)
 
-     enabled
-     (atom nil)
+        enabled
+        (atom nil)
 
-     deleted
-     (atom nil)]
+        deleted
+        (atom nil)]
 
     (with-redefs-fn {(rv 'body-json) (constantly body)
                      #'mcp-core/gateway-servers (constantly {"servers" [{"name" "filesystem"
@@ -119,10 +117,9 @@
 
 (deftest mcp-management-refuses-hand-written-servers-test
   (testing "a server declared in a user config file answers 409, never a silent success"
-    (let
-      [refuse (fn [name]
-                (throw (ex-info "declared in a hand-written config file"
-                                {:type :mcp/not-managed :server name})))]
+    (let [refuse (fn [name]
+                   (throw (ex-info "declared in a hand-written config file"
+                                   {:type :mcp/not-managed :server name})))]
       (with-redefs-fn {(rv 'body-json) (constantly {"enabled" false})
                        #'mcp-core/set-gateway-server-enabled! (fn [name _enabled]
                                                                 (refuse name))
@@ -131,24 +128,22 @@
                        #'mcp-core/save-gateway-server! (fn [name _spec]
                                                          (refuse name))}
         (fn []
-          (doseq
-            [handler ['set-mcp-server-enabled-handler 'delete-mcp-server-handler
-                      'save-mcp-server-handler]]
+          (doseq [handler ['set-mcp-server-enabled-handler 'delete-mcp-server-handler
+                           'save-mcp-server-handler]]
             (let [response ((rv handler) {:path-params {:name "team"}})]
               (is (= 409 (:status response)))
               (is (= "not-managed"
                      (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))))
 
 (deftest list-turns-status-filter-routes-to-queued-overlay
-  (let
-    [sid
-     (random-uuid)
+  (let [sid
+        (random-uuid)
 
-     calls
-     (atom [])
+        calls
+        (atom [])
 
-     request
-     {:path-params {:sid (str sid)}}]
+        request
+        {:path-params {:sid (str sid)}}]
 
     (with-redefs-fn {#'state/soul (fn [actual]
                                     (= sid actual))
@@ -167,15 +162,14 @@
            (is (= [[:all sid]] @calls))))))
 
 (deftest soul-handler-optionally-includes-queued-turns
-  (let
-    [sid
-     (random-uuid)
+  (let [sid
+        (random-uuid)
 
-     calls
-     (atom [])
+        calls
+        (atom [])
 
-     request
-     {:path-params {:sid (str sid)}}]
+        request
+        {:path-params {:sid (str sid)}}]
 
     (with-redefs-fn {#'state/soul (fn [actual]
                                     (when (= sid actual) {:id sid}))
@@ -189,29 +183,27 @@
              (is (re-find #"\"turn_id\":\"queued-1\"" (:body response))))
            (is (= [sid] @calls))
            (reset! calls [])
-           (doseq
-             [plain-request [request (assoc request :query-params {"include" "anything-else"})]]
+           (doseq [plain-request [request
+                                  (assoc request :query-params {"include" "anything-else"})]]
              (let [response ((rv 'soul-handler) plain-request)]
                (is (= 200 (:status response)))
                (is (not (re-find #"\"queued_turns\"" (:body response))))))
            (is (empty? @calls))
-           (let
-             [response ((rv 'soul-handler)
-                         {:path-params {:sid (str (random-uuid))}
-                          :query-params {"include" "queued"}})]
+           (let [response ((rv 'soul-handler)
+                            {:path-params {:sid (str (random-uuid))}
+                             :query-params {"include" "queued"}})]
              (is (= 404 (:status response))))
            (is (empty? @calls))))))
 
 (deftest draft-management-client-builds-canonical-routes
-  (let
-    [sent
-     (atom [])
+  (let [sent
+        (atom [])
 
-     sid
-     (str (random-uuid))
+        sid
+        (str (random-uuid))
 
-     wid
-     (str (random-uuid))]
+        wid
+        (str (random-uuid))]
 
     (with-redefs-fn {#'client/send-json! (fn [method path body]
                                            (swap! sent conj [method path body])
@@ -280,12 +272,11 @@
 
 (deftest killed-client-sse-stream-does-not-pin-managed-daemon
   (testing "an SSE stream whose owner process is gone is closed and stops counting"
-    (let
-      [stops
-       (atom 0)
+    (let [stops
+          (atom 0)
 
-       closed
-       (atom 0)]
+          closed
+          (atom 0)]
 
       (with-stop-stub! stops
                        {#'discovery/pid-alive-cached? (constantly false)}
@@ -305,12 +296,11 @@
 
 (deftest remote-sse-client-without-a-pid-is-never-reaped
   (testing "a phone/browser stream carries no local pid, so liveness is not guessed"
-    (let
-      [stops
-       (atom 0)
+    (let [stops
+          (atom 0)
 
-       closed
-       (atom 0)]
+          closed
+          (atom 0)]
 
       (with-stop-stub! stops
                        {#'discovery/pid-alive-cached? (fn [_]
@@ -333,7 +323,6 @@
 (defn- wait-until-slow
   [pred]
   (loop [remaining 60]
-
     (cond (pred) true
           (zero? remaining) false
           :else (do (Thread/sleep 50) (recur (dec remaining))))))
@@ -350,48 +339,49 @@
                        {#'state/running-turn-count (constantly 1)
                         #'state/running-turn-progress (constantly {:turns 1 :seq 7})}
                        (fn []
-                         (with-server-state! {:managed? true
-                                              :saw-client? true
-                                              :started-at-ms (System/currentTimeMillis)
-                                              :clients {}
-                                              :sse-clients {}}
-                                             (fn []
-                                               ((rv 'note-turn-progress!))
-                                               ;; Age the sample past the stall window instead of
-                                               ;; sleeping through it.
-                                               (swap! @(rv 'turn-progress-watch)
-                                                      update
-                                                      :since
-                                                      - 120000)
-                                               ((rv 'maybe-stop-when-idle!))
-                                               (is (wait-until #(= 1 @stops))))))))))
+                         (with-server-state!
+                           {:managed? true
+                            :saw-client? true
+                            :started-at-ms (System/currentTimeMillis)
+                            :clients {}
+                            :sse-clients {}}
+                           (fn []
+                             ((rv 'note-turn-progress!))
+                             ;; Age the sample past the stall window instead of
+                             ;; sleeping through it.
+                             (swap! @(rv 'turn-progress-watch) update :since - 120000)
+                             ((rv 'maybe-stop-when-idle!))
+                             (is (wait-until #(= 1 @stops))))))))))
 
 (deftest a-turn-still-producing-events-keeps-the-daemon-alive
   (testing "zero clients plus live work is \"I closed the TUI, finish in the background\""
-    (let [stops (atom 0)
-          progress (atom {:turns 1 :seq 1})]
+    (let [stops
+          (atom 0)
+
+          progress
+          (atom {:turns 1 :seq 1})]
+
       (with-stop-stub! stops
                        {#'state/running-turn-count (constantly 1)
-                        #'state/running-turn-progress (fn [] @progress)}
+                        #'state/running-turn-progress (fn []
+                                                        @progress)}
                        (fn []
-                         (with-server-state! {:managed? true
-                                              :saw-client? true
-                                              :started-at-ms (System/currentTimeMillis)
-                                              :clients {}
-                                              :sse-clients {}}
-                                             (fn []
-                                               ((rv 'note-turn-progress!))
-                                               (swap! @(rv 'turn-progress-watch)
-                                                      update
-                                                      :since
-                                                      - 120000)
-                                               ;; One new event is all it takes: the stall clock
-                                               ;; restarts, because the turn is demonstrably alive.
-                                               (reset! progress {:turns 1 :seq 2})
-                                               ((rv 'note-turn-progress!))
-                                               ((rv 'maybe-stop-when-idle!))
-                                               (Thread/sleep 80)
-                                               (is (zero? @stops)))))))))
+                         (with-server-state!
+                           {:managed? true
+                            :saw-client? true
+                            :started-at-ms (System/currentTimeMillis)
+                            :clients {}
+                            :sse-clients {}}
+                           (fn []
+                             ((rv 'note-turn-progress!))
+                             (swap! @(rv 'turn-progress-watch) update :since - 120000)
+                             ;; One new event is all it takes: the stall clock
+                             ;; restarts, because the turn is demonstrably alive.
+                             (reset! progress {:turns 1 :seq 2})
+                             ((rv 'note-turn-progress!))
+                             ((rv 'maybe-stop-when-idle!))
+                             (Thread/sleep 80)
+                             (is (zero? @stops)))))))))
 
 ;; Regression (reported: a gateway with no clients that never goes away): the reap
 ;; loop caught throws OUTSIDE the loop and cleared its own handle in `finally`, and
@@ -400,8 +390,12 @@
 ;; longer stop itself at all.
 (deftest a-throwing-reap-sweep-does-not-make-the-daemon-immortal
   (testing "one bad sweep loses that sweep, never the lifecycle"
-    (let [stops (atom 0)
-          sweeps (atom 0)]
+    (let [stops
+          (atom 0)
+
+          sweeps
+          (atom 0)]
+
       (reset! @(rv 'idle-reaper) nil)
       (with-stop-stub! stops
                        {(rv 'ensure-self-registered!) (constantly nil)
@@ -422,28 +416,27 @@
                                                (is (pos? @sweeps)))))))))
 (deftest closing-an-sse-stream-unblocks-a-pump-parked-on-the-heartbeat
   (testing "the writer must exit at once, not at the next 15s keepalive"
-    (let
-      [out
-       (java.io.ByteArrayOutputStream.)
+    (let [out
+          (java.io.ByteArrayOutputStream.)
 
-       queue
-       (java.util.concurrent.ArrayBlockingQueue. 8)
+          queue
+          (java.util.concurrent.ArrayBlockingQueue. 8)
 
-       dead?
-       (volatile! false)
+          dead?
+          (volatile! false)
 
-       unsubscribed
-       (atom 0)
+          unsubscribed
+          (atom 0)
 
-       close!
-       ((rv 'sse-closer) out queue dead? #(swap! unsubscribed inc))
+          close!
+          ((rv 'sse-closer) out queue dead? #(swap! unsubscribed inc))
 
-       pump
-       (future ((rv 'pump-sse!)
-                 out
-                 queue
-                 dead?
-                 (fn [_])))]
+          pump
+          (future ((rv 'pump-sse!)
+                    out
+                    queue
+                    dead?
+                    (fn [_])))]
 
       (Thread/sleep 50)
       (close!)
@@ -460,12 +453,11 @@
 
 (deftest gateway-requests-carry-the-client-pid-header
   (testing "the daemon can only reap a dead owner if every request names its process"
-    (let
-      [sent
-       (atom nil)
+    (let [sent
+          (atom nil)
 
-       gw-send!
-       (ns-resolve 'com.blockether.vis.internal.gateway.client 'gw-send!)]
+          gw-send!
+          (ns-resolve 'com.blockether.vis.internal.gateway.client 'gw-send!)]
 
       (with-redefs-fn {#'http/request (fn [request]
                                         (reset! sent request)
@@ -486,33 +478,32 @@
   (testing "status reads the already-reaped lease map without OS liveness work"
     (with-server-state! {:clients {"c1" {:pid 10} "c2" {:pid 11}} :sse-clients #{"s1"}}
                         (fn []
-                          (with-redefs
-                            [discovery/pid-alive-cached? (fn [_]
-                                                           (throw (ex-info "must not probe" {})))]
+                          (with-redefs [discovery/pid-alive-cached?
+                                        (fn [_]
+                                          (throw (ex-info "must not probe" {})))]
                             (is (= 3 ((rv 'client-count)))))))))
 
 (deftest compact-client-leases-removes-dead-and-duplicate-pids
-  (testing "one sweep probes each pid once, keeps a lease that is still talking, and preserves identity when clean"
-    (let
-      [checks
-       (atom [])
+  (testing
+    "one sweep probes each pid once, keeps a lease that is still talking, and preserves identity when clean"
+    (let [checks
+          (atom [])
 
-       now
-       (System/currentTimeMillis)
+          now
+          (System/currentTimeMillis)
 
-       clients
-       {"live-old" {:pid 10}
-        "live-duplicate" {:pid 10}
-        "dead" {:pid 20}
-        "browser" {:pid nil :last-seen-at now}}
+          clients
+          {"live-old" {:pid 10}
+           "live-duplicate" {:pid 10}
+           "dead" {:pid 20}
+           "browser" {:pid nil :last-seen-at now}}
 
-       compact
-       (rv 'compact-client-leases)]
+          compact
+          (rv 'compact-client-leases)]
 
-      (with-redefs
-        [discovery/pid-alive-cached? (fn [pid]
-                                       (swap! checks conj pid)
-                                       (= 10 pid))]
+      (with-redefs [discovery/pid-alive-cached? (fn [pid]
+                                                  (swap! checks conj pid)
+                                                  (= 10 pid))]
         (let [{after :clients :keys [dead duplicates expired]} (compact clients now)]
           (is (= 1 dead))
           (is (= 1 duplicates))
@@ -520,9 +511,8 @@
           (is (= #{"browser"} (set (filter #(nil? (get-in after [% :pid])) (keys after)))))
           (is (= 2 (count after)))
           (is (= #{10 20} (set @checks))))
-        (let
-          [clean {"live" {:pid 10} "browser" {:pid nil :last-seen-at now}}
-           {after :clients :keys [dead duplicates expired]} (compact clean now)]
+        (let [clean {"live" {:pid 10} "browser" {:pid nil :last-seen-at now}}
+              {after :clients :keys [dead duplicates expired]} (compact clean now)]
 
           (is (identical? clean after))
           (is (zero? dead))
@@ -534,50 +524,59 @@
 ;; for the life of the machine — `daemon-idle?` answered `:clients` forever and no
 ;; update could ever replace that build.
 (deftest a-lease-with-no-pid-is-retired-once-it-stops-talking
-  (let [now (System/currentTimeMillis)
-        ttl (long @(rv 'CLIENT_LEASE_TTL_MS))
-        compact (rv 'compact-client-leases)]
+  (let [now
+        (System/currentTimeMillis)
+
+        ttl
+        (long @(rv 'CLIENT_LEASE_TTL_MS))
+
+        compact
+        (rv 'compact-client-leases)]
 
     (testing "silence past the TTL is the only evidence a remote client leaves behind"
-      (let [clients {"phone-gone" {:pid nil :last-seen-at (- now ttl 1)}
-                     "phone-here" {:pid nil :last-seen-at (- now 1000)}
-                     "local-quiet" {:pid 10 :connected-at (- now ttl ttl)}}
+      (let [clients
+            {"phone-gone" {:pid nil :last-seen-at (- now ttl 1)}
+             "phone-here" {:pid nil :last-seen-at (- now 1000)}
+             "local-quiet" {:pid 10 :connected-at (- now ttl ttl)}}
+
             {after :clients :keys [dead duplicates expired]}
             (with-redefs-fn {#'discovery/pid-alive-cached? (constantly true)}
-              (fn [] (compact clients now)))]
+              (fn []
+                (compact clients now)))]
 
         (is (= 1 expired))
         (is (zero? dead))
         (is (zero? duplicates))
         (is (= #{"phone-here" "local-quiet"} (set (keys after)))
             "a local process proves itself by being alive, not by talking")))
-
     (testing "a lease that never recorded a sighting is judged from when it registered"
-      (let [{after :clients :keys [expired]}
-            (compact {"old" {:pid nil :connected-at (- now ttl 1)}} now)]
-
+      (let [{after :clients :keys [expired]} (compact {"old" {:pid nil :connected-at (- now ttl 1)}}
+                                                      now)]
         (is (= 1 expired))
         (is (empty? after))))))
 
 (deftest a-request-refreshes-the-lease-of-the-client-that-made-it
-  (let [touch (rv 'touch-client-lease!)
-        granularity (long @(rv 'CLIENT_LEASE_TOUCH_MS))
-        now (System/currentTimeMillis)]
+  (let [touch
+        (rv 'touch-client-lease!)
+
+        granularity
+        (long @(rv 'CLIENT_LEASE_TOUCH_MS))
+
+        now
+        (System/currentTimeMillis)]
 
     (testing "the header a client stamps on every request is what keeps its lease alive"
-      (with-server-state! {:clients {"c1" {:pid nil :last-seen-at (- now granularity 1)}}}
-                          (fn []
-                            (let [handler ((rv 'wrap-client-lease) (constantly {:status 200}))]
-                              (handler {:uri "/v1/sessions"
-                                        :headers {"x-vis-client-id" "c1"}})
-                              (is (<= now (long (get-in @(server-state) [:clients "c1" :last-seen-at]))))))))
-
+      (with-server-state!
+        {:clients {"c1" {:pid nil :last-seen-at (- now granularity 1)}}}
+        (fn []
+          (let [handler ((rv 'wrap-client-lease) (constantly {:status 200}))]
+            (handler {:uri "/v1/sessions" :headers {"x-vis-client-id" "c1"}})
+            (is (<= now (long (get-in @(server-state) [:clients "c1" :last-seen-at]))))))))
     (testing "an id this daemon never issued creates nothing"
       (with-server-state! {:clients {}}
                           (fn []
                             (touch "forged" now)
                             (is (empty? (:clients @(server-state)))))))
-
     (testing "a lease seen a moment ago is not written again"
       (let [fresh (- now 1)]
         (with-server-state! {:clients {"c1" {:pid nil :last-seen-at fresh}}}
@@ -588,15 +587,14 @@
 
 (deftest registering-a-pid-upserts-its-single-process-lease
   (testing "re-registration replaces the old opaque id but preserves other processes and browsers"
-    (let
-      [register
-       (rv 'register-client-lease)
+    (let [register
+          (rv 'register-client-lease)
 
-       before
-       {"old" {:pid 10} "other" {:pid 20} "browser" {:pid nil}}
+          before
+          {"old" {:pid 10} "other" {:pid 20} "browser" {:pid nil}}
 
-       {after :clients :keys [replaced]}
-       (register before "new" {:pid 10 :kind "clojure-client"})]
+          {after :clients :keys [replaced]}
+          (register before "new" {:pid 10 :kind "clojure-client"})]
 
       (is (= 1 replaced))
       (is (= #{"new" "other" "browser"} (set (keys after))))
@@ -651,12 +649,11 @@
     (with-only-engine!
       nil
       (fn []
-        (let
-          [response
-           ((rv 'capabilities-handler) {})
+        (let [response
+              ((rv 'capabilities-handler) {})
 
-           body
-           (wire/parse-json (:body response))]
+              body
+              (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
           (is (= 1 (get body "version")))
@@ -683,10 +680,9 @@
                         :transcribe (constantly "hi")
                         :model-state (constantly {:state :ready})}
                        (fn []
-                         (let
-                           [body (-> ((rv 'capabilities-handler) {})
-                                     :body
-                                     wire/parse-json)]
+                         (let [body (-> ((rv 'capabilities-handler) {})
+                                        :body
+                                        wire/parse-json)]
                            (is (true? (get-in body ["features" "voice" "enabled"])))
                            (is (= "audio/wav" (get-in body ["features" "voice" "transport"])))
                            (is (= "ready" (get-in body ["features" "voice" "model" "status"])))
@@ -704,12 +700,11 @@
   ;; POST /voice used to BLOCK until the transcript existed: the client could not
   ;; tell "still uploading" from "transcribing", and a long recording was an
   ;; unexplained spinner over a socket that could time out.
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     release
-     (promise)]
+        release
+        (promise)]
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
@@ -722,18 +717,17 @@
                          @release
                          "the transcript")}
           (fn []
-            (let
-              [accepted
-               ((rv 'voice-handler) {:path-params {:sid sid} :body (wav-body)})
+            (let [accepted
+                  ((rv 'voice-handler) {:path-params {:sid sid} :body (wav-body)})
 
-               job
-               (wire/parse-json (:body accepted))
+                  job
+                  (wire/parse-json (:body accepted))
 
-               poll
-               (fn []
-                 (wire/parse-json (:body ((rv 'voice-job-handler)
-                                           {:request-method :get
-                                            :path-params {:sid sid :job-id (get job "id")}}))))]
+                  poll
+                  (fn []
+                    (wire/parse-json (:body ((rv 'voice-job-handler)
+                                              {:request-method :get
+                                               :path-params {:sid sid :job-id (get job "id")}}))))]
 
               (testing "the upload is answered immediately with a job, not a transcript"
                 (is (= 202 (:status accepted)))
@@ -775,12 +769,11 @@
   ;; Progress used to be POLLED: one request per tick, a percentage that was
   ;; already up to a poll interval stale when it was painted, and a client left
   ;; guessing when to stop asking. The job's own stream answers all three.
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     release
-     (promise)]
+        release
+        (promise)]
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
@@ -793,26 +786,25 @@
                          @release
                          "the transcript")}
           (fn []
-            (let
-              [job-id
-               (get (wire/parse-json (:body ((rv 'voice-handler)
-                                              {:path-params {:sid sid} :body (wav-body)})))
-                    "id")
+            (let [job-id
+                  (get (wire/parse-json (:body ((rv 'voice-handler)
+                                                 {:path-params {:sid sid} :body (wav-body)})))
+                       "id")
 
-               response
-               ((rv 'voice-job-events-handler)
-                 {:request-method :get :path-params {:sid sid :job-id job-id}})
+                  response
+                  ((rv 'voice-job-events-handler)
+                    {:request-method :get :path-params {:sid sid :job-id job-id}})
 
-               out
-               (java.io.ByteArrayOutputStream.)
+                  out
+                  (java.io.ByteArrayOutputStream.)
 
-               written
-               (fn []
-                 (String. (.toByteArray out) "UTF-8"))
+                  written
+                  (fn []
+                    (String. (.toByteArray out) "UTF-8"))
 
-               stream
-               (future (ring-protocols/write-body-to-stream (:body response) response out)
-                       (written))]
+                  stream
+                  (future (ring-protocols/write-body-to-stream (:body response) response out)
+                          (written))]
 
               (testing "it is an event stream, and no intermediary may buffer it"
                 (is (= 200 (:status response)))
@@ -824,16 +816,14 @@
               (let [body (deref stream 5000 :timeout)]
                 (testing "the stream ENDS itself on the terminal frame - nothing to poll"
                   (is (string? body)))
-                (let
-                  [jobs (sse-jobs (str body))
-                   final (last jobs)]
+                (let [jobs (sse-jobs (str body))
+                      final (last jobs)]
 
                   (testing "EVERY frame names itself, and none carries a session cursor"
-                    (let
-                      [frames (->> (str/split (str body) #"\n\n")
-                                   (remove str/blank?)
-                                   ;; `: ping` heartbeats are comments, not frames.
-                                   (remove #(str/starts-with? % ":")))]
+                    (let [frames (->> (str/split (str body) #"\n\n")
+                                      (remove str/blank?)
+                                      ;; `: ping` heartbeats are comments, not frames.
+                                      (remove #(str/starts-with? % ":")))]
                       (is (seq frames))
                       (is (every? #(str/starts-with? % (str "event: " wire/voice-job-event))
                                   frames))
@@ -871,11 +861,10 @@
       ;; a client must never mistake this stream for a resumable one.
       (is (not (str/includes? frame "id:")))))
   (testing "capabilities tell a client the name instead of leaving it to guess"
-    (let
-      [voice (-> ((rv 'capabilities-handler) {})
-                 :body
-                 wire/parse-json
-                 (get-in ["features" "voice"]))]
+    (let [voice (-> ((rv 'capabilities-handler) {})
+                    :body
+                    wire/parse-json
+                    (get-in ["features" "voice"]))]
       (is (= "sse" (get voice "progress")))
       (is (= wire/voice-job-event (get voice "progress_event")))
       (is (true? (get voice "is_async")))))
@@ -914,10 +903,9 @@
                               :transcribe (constantly "hi")
                               :model-state (constantly {:state :downloading :progress 42})}
                              (fn []
-                               (let
-                                 [response ((rv 'voice-handler)
-                                             {:path-params {:sid sid} :body (wav-body)})
-                                  body (wire/parse-json (:body response))]
+                               (let [response ((rv 'voice-handler)
+                                                {:path-params {:sid sid} :body (wav-body)})
+                                     body (wire/parse-json (:body response))]
 
                                  (is (= 425 (:status response)))
                                  (is (= "downloading" (get body "status")))
@@ -928,12 +916,11 @@
    so a test can tell two clips apart and compare what the gateway SERVED with what the
    engine WROTE."
   ^bytes [text]
-  (let
-    [tail
-     (.getBytes (str text) "UTF-8")
+  (let [tail
+        (.getBytes (str text) "UTF-8")
 
-     out
-     (byte-array (+ 64 (alength tail)))]
+        out
+        (byte-array (+ 64 (alength tail)))]
 
     (System/arraycopy (.getBytes "RIFF" "US-ASCII") 0 out 0 4)
     (System/arraycopy (.getBytes "WAVE" "US-ASCII") 0 out 8 4)
@@ -943,12 +930,11 @@
 (defn- body-bytes
   "Everything a Ring body carries, whether the handler answered the bytes or the file."
   ^bytes [body]
-  (with-open
-    [in
-     (io/input-stream body)
+  (with-open [in
+              (io/input-stream body)
 
-     out
-     (java.io.ByteArrayOutputStream.)]
+              out
+              (java.io.ByteArrayOutputStream.)]
 
     (io/copy in out)
     (.toByteArray out)))
@@ -976,11 +962,10 @@
   ;; request a client already makes.
   (with-only-speech-engine! (speaking-engine)
                             (fn []
-                              (let
-                                [speech (-> ((rv 'capabilities-handler) {})
-                                            :body
-                                            wire/parse-json
-                                            (get-in ["features" "speech"]))]
+                              (let [speech (-> ((rv 'capabilities-handler) {})
+                                               :body
+                                               wire/parse-json
+                                               (get-in ["features" "speech"]))]
                                 (is (true? (get speech "is_enabled")))
                                 (is (= "audio/wav" (get speech "transport")))
                                 (is (true? (get speech "is_async")))
@@ -1000,11 +985,10 @@
   (testing "a gateway that cannot speak says so instead of half-advertising it"
     (with-only-speech-engine! nil
                               (fn []
-                                (let
-                                  [speech (-> ((rv 'capabilities-handler) {})
-                                              :body
-                                              wire/parse-json
-                                              (get-in ["features" "speech"]))]
+                                (let [speech (-> ((rv 'capabilities-handler) {})
+                                                 :body
+                                                 wire/parse-json
+                                                 (get-in ["features" "speech"]))]
                                   (is (false? (get speech "is_enabled")))
                                   (is (= "unavailable" (get-in speech ["model" "status"])))
                                   (is (empty? (get speech "engines")))
@@ -1019,14 +1003,13 @@
         (with-only-speech-engine!
           (speaking-engine)
           (fn []
-            (let
-              [line "Ready when you are."
-               response ((rv 'speech-handler)
-                          (merge {:request-method :post :path-params {:sid sid}}
-                                 ;; padded on purpose: a client that appends a newline must not
-                                 ;; make the engine speak the whitespace
-                                 (json-body {:text (str "  " line "\n") :voice "alba"})))
-               spoken (body-bytes (:body response))]
+            (let [line "Ready when you are."
+                  response ((rv 'speech-handler)
+                             (merge {:request-method :post :path-params {:sid sid}}
+                                    ;; padded on purpose: a client that appends a newline must not
+                                    ;; make the engine speak the whitespace
+                                    (json-body {:text (str "  " line "\n") :voice "alba"})))
+                  spoken (body-bytes (:body response))]
 
               (is (= 200 (:status response)))
               (is (= "audio/wav" (get-in response [:headers "Content-Type"])))
@@ -1038,15 +1021,14 @@
 (deftest speech-job-streams-its-progress-and-then-serves-the-audio-it-wrote
   ;; The long path proves the whole loop a client actually walks: accept, watch, fetch,
   ;; forget — with the file the gateway owns disappearing at the end of it.
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     release
-     (promise)
+        release
+        (promise)
 
-     line
-     (str/join " " (repeat 40 "a paragraph worth watching"))]
+        line
+        (str/join " " (repeat 40 "a paragraph worth watching"))]
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
@@ -1054,31 +1036,31 @@
         (with-only-speech-engine!
           (speaking-engine release)
           (fn []
-            (let
-              [accepted
-               ((rv 'speech-handler)
-                 (merge {:request-method :post :path-params {:sid sid}} (json-body {:text line})))
+            (let [accepted
+                  ((rv 'speech-handler)
+                    (merge {:request-method :post :path-params {:sid sid}}
+                           (json-body {:text line})))
 
-               job
-               (wire/parse-json (:body accepted))
+                  job
+                  (wire/parse-json (:body accepted))
 
-               job-id
-               (get job "id")
+                  job-id
+                  (get job "id")
 
-               response
-               ((rv 'speech-job-events-handler)
-                 {:request-method :get :path-params {:sid sid :job-id job-id}})
+                  response
+                  ((rv 'speech-job-events-handler)
+                    {:request-method :get :path-params {:sid sid :job-id job-id}})
 
-               out
-               (java.io.ByteArrayOutputStream.)
+                  out
+                  (java.io.ByteArrayOutputStream.)
 
-               written
-               (fn []
-                 (String. (.toByteArray out) "UTF-8"))
+                  written
+                  (fn []
+                    (String. (.toByteArray out) "UTF-8"))
 
-               stream
-               (future (ring-protocols/write-body-to-stream (:body response) response out)
-                       (written))]
+                  stream
+                  (future (ring-protocols/write-body-to-stream (:body response) response out)
+                          (written))]
 
               (testing "the line is accepted as a job instead of held on the connection"
                 (is (= 202 (:status accepted)))
@@ -1089,17 +1071,16 @@
                 (is (= "text/event-stream" (get-in response [:headers "Content-Type"])))
                 (is (wait-until #(str/includes? (written) "\"synthesizing\""))))
               (deliver release :go)
-              (let
-                [body
-                 (deref stream 5000 :timeout)
+              (let [body
+                    (deref stream 5000 :timeout)
 
-                 frames
-                 (->> (str/split (str body) #"\n\n")
-                      (remove str/blank?)
-                      (remove #(str/starts-with? % ":")))
+                    frames
+                    (->> (str/split (str body) #"\n\n")
+                         (remove str/blank?)
+                         (remove #(str/starts-with? % ":")))
 
-                 final
-                 (last (sse-jobs (str body)))]
+                    final
+                    (last (sse-jobs (str body)))]
 
                 (testing "every frame names the SYNTHESIS stream, never the transcription one"
                   (is (seq frames))
@@ -1114,9 +1095,8 @@
                   (is (pos? (get-in final ["audio" "bytes"])))
                   (is (not (str/includes? (str body) "audio_path"))))
                 (testing "the audio route serves exactly the bytes the engine wrote"
-                  (let
-                    [audio ((rv 'speech-job-audio-handler)
-                             {:request-method :get :path-params {:sid sid :job-id job-id}})]
+                  (let [audio ((rv 'speech-job-audio-handler)
+                                {:request-method :get :path-params {:sid sid :job-id job-id}})]
                     (is (= 200 (:status audio)))
                     (is (= "audio/wav" (get-in audio [:headers "Content-Type"])))
                     (is (java.util.Arrays/equals (body-bytes (:body audio)) (spoken-wav line)))))
@@ -1141,31 +1121,31 @@
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
         (voice/reset-jobs!)
-        (with-only-engine!
-          {:id :fake-engine
-           :label "Fake"
-           :transcribe (constantly "hi")
-           :model-state (constantly {:state :ready})}
-          (fn []
-            (let
-              [job-id (get (wire/parse-json (:body ((rv 'voice-handler)
-                                                     {:path-params {:sid sid} :body (wav-body)})))
-                           "id")
-               speech (fn [handler method]
-                        (:status ((rv handler)
-                                   {:request-method method
-                                    :path-params {:sid sid :job-id job-id}})))]
+        (with-only-engine! {:id :fake-engine
+                            :label "Fake"
+                            :transcribe (constantly "hi")
+                            :model-state (constantly {:state :ready})}
+                           (fn []
+                             (let [job-id (get (wire/parse-json (:body ((rv 'voice-handler)
+                                                                         {:path-params {:sid sid}
+                                                                          :body (wav-body)})))
+                                               "id")
+                                   speech (fn [handler method]
+                                            (:status ((rv handler)
+                                                       {:request-method method
+                                                        :path-params {:sid sid :job-id job-id}})))]
 
-              (is (= 404 (speech 'speech-job-handler :get)))
-              (is (= 404 (speech 'speech-job-events-handler :get)))
-              (is (= 404 (speech 'speech-job-audio-handler :get)))
-              (is (= 404 (speech 'speech-job-handler :delete)))
-              (testing "and the job is still there, on its own route"
-                (is (some? (voice/job job-id)))
-                (is (= 200
-                       (:status ((rv 'voice-job-handler)
-                                  {:request-method :get
-                                   :path-params {:sid sid :job-id job-id}}))))))))))))
+                               (is (= 404 (speech 'speech-job-handler :get)))
+                               (is (= 404 (speech 'speech-job-events-handler :get)))
+                               (is (= 404 (speech 'speech-job-audio-handler :get)))
+                               (is (= 404 (speech 'speech-job-handler :delete)))
+                               (testing "and the job is still there, on its own route"
+                                 (is (some? (voice/job job-id)))
+                                 (is (= 200
+                                        (:status ((rv 'voice-job-handler)
+                                                   {:request-method :get
+                                                    :path-params {:sid sid
+                                                                  :job-id job-id}}))))))))))))
 
 (deftest speech-refusals-name-the-reason-instead-of-failing-late
   (let [sid (str (random-uuid))]
@@ -1175,22 +1155,22 @@
           (with-only-speech-engine!
             nil
             (fn []
-              (let
-                [response ((rv 'speech-handler)
-                            (merge {:request-method :post :path-params {:sid sid}}
-                                   (json-body {:text "hello"})))]
+              (let [response ((rv 'speech-handler)
+                               (merge {:request-method :post :path-params {:sid sid}}
+                                      (json-body {:text "hello"})))]
                 (is (= 501 (:status response)))
                 (is (str/includes? (get (wire/parse-json (:body response)) "error")
                                    "speech synthesis"))))))
         (with-only-speech-engine!
           (speaking-engine)
           (fn []
-            (let
-              [say (fn say ([text] (say text nil))
-                     ([text query]
-                      ((rv 'speech-handler)
-                        (merge {:request-method :post :path-params {:sid sid}}
-                          (when query {:query-params query}) (json-body {:text text})))))]
+            (let [say
+                  (fn say ([text] (say text nil)) ([text query] ((rv 'speech-handler)
+                                                                  (merge {:request-method :post
+                                                                          :path-params {:sid sid}}
+                                                                    (when query {:query-params
+                                                                                 query})
+                                                                    (json-body {:text text})))))]
               (testing "naming an engine nobody registered is the CALLER's 400"
                 (is (= 400 (:status (say "hello" {"engine" "elevenlabs"})))))
               (testing "nothing to say is refused before the engine is ever woken"
@@ -1207,12 +1187,11 @@
                                      :synthesize (constantly "/tmp/vis-never-written.wav")
                                      :model-state (constantly {:state :downloading :progress 42})}
                                     (fn []
-                                      (let
-                                        [response ((rv 'speech-handler)
-                                                    (merge {:request-method :post
-                                                            :path-params {:sid sid}}
-                                                           (json-body {:text "hello"})))
-                                         body (wire/parse-json (:body response))]
+                                      (let [response ((rv 'speech-handler)
+                                                       (merge {:request-method :post
+                                                               :path-params {:sid sid}}
+                                                              (json-body {:text "hello"})))
+                                            body (wire/parse-json (:body response))]
 
                                         (is (= 425 (:status response)))
                                         (is (= "downloading" (get body "status")))
@@ -1220,33 +1199,30 @@
 ;; Regression: the global slash endpoint resolved project skills against the gateway
 ;; process cwd, so nested-project sessions neither saw their own skills nor their children.
 (deftest slashes-handler-uses-the-session-workspace-and-includes-native-commands
-  (let
-    [seen
-     (atom nil)
+  (let [seen
+        (atom nil)
 
-     sid
-     (java.util.UUID/randomUUID)
+        sid
+        (java.util.UUID/randomUUID)
 
-     root
-     "/tmp/vis-companion-project"]
+        root
+        "/tmp/vis-companion-project"]
 
-    (with-redefs
-      [state/session-workspace-info
-       (fn [actual-sid]
-         (is (= sid actual-sid))
-         {"root" root})
+    (with-redefs [state/session-workspace-info
+                  (fn [actual-sid]
+                    (is (= sid actual-sid))
+                    {"root" root})
 
-       slash/slash-palette
-       (fn [channel extra]
-         (reset! seen [channel extra (.getPath (workspace/cwd))])
-         (conj (vec extra) {:name "/rename" :doc "Rename"}))]
+                  slash/slash-palette
+                  (fn [channel extra]
+                    (reset! seen [channel extra (.getPath (workspace/cwd))])
+                    (conj (vec extra) {:name "/rename" :doc "Rename"}))]
 
-      (let
-        [response
-         ((rv 'slashes-handler) {:path-params {:sid (str sid)}})
+      (let [response
+            ((rv 'slashes-handler) {:path-params {:sid (str sid)}})
 
-         body
-         (wire/parse-json (:body response))]
+            body
+            (wire/parse-json (:body response))]
 
         (is (= 200 (:status response)))
         (is (= :web (first @seen)))
@@ -1264,20 +1240,19 @@
     (with-server-state!
       {:require-token? true}
       (fn []
-        (let
-          [wrap-auth
-           (rv 'wrap-auth)
+        (let [wrap-auth
+              (rv 'wrap-auth)
 
-           handler
-           (fn [_req]
-             {:status 200 :body "ok"})
+              handler
+              (fn [_req]
+                {:status 200 :body "ok"})
 
-           app
-           (wrap-auth handler "sekret" [])
+              app
+              (wrap-auth handler "sekret" [])
 
-           req
-           (fn [headers]
-             {:uri "/v1/sessions" :headers headers})]
+              req
+              (fn [headers]
+                {:uri "/v1/sessions" :headers headers})]
 
           (testing "no credential → 401" (is (= 401 (:status (app (req {}))))))
           (testing "Authorization: Bearer with the right token → 200"
@@ -1292,15 +1267,14 @@
   (testing "with auth off (loopback default) every request passes without a token"
     (with-server-state! {:require-token? false}
                         (fn []
-                          (let
-                            [wrap-auth
-                             (rv 'wrap-auth)
+                          (let [wrap-auth
+                                (rv 'wrap-auth)
 
-                             app
-                             (wrap-auth (fn [_req]
-                                          {:status 200})
-                                        "sekret"
-                                        [])]
+                                app
+                                (wrap-auth (fn [_req]
+                                             {:status 200})
+                                           "sekret"
+                                           [])]
 
                             (is (= 200 (:status (app {:uri "/v1/sessions" :headers {}})))))))))
 
@@ -1310,31 +1284,30 @@
     (with-server-state!
       {:require-token? true}
       (fn []
-        (let
-          [app
-           ((rv 'app) "sekret" [])
+        (let [app
+              ((rv 'app) "sekret" [])
 
-           origin
-           "http://100.109.18.77:5273"
+              origin
+              "http://100.109.18.77:5273"
 
-           preflight
-           (app {:request-method :options
-                 :uri "/v1/sessions"
-                 :headers {"origin" origin
-                           "access-control-request-headers" "authorization,content-type"}})
+              preflight
+              (app {:request-method :options
+                    :uri "/v1/sessions"
+                    :headers {"origin" origin
+                              "access-control-request-headers" "authorization,content-type"}})
 
-           noauth
-           (app {:request-method :get
-                 :uri "/v1/sessions"
-                 :headers {"origin" origin
-                           protocol/protocol-header (str protocol/protocol-version)}})
+              noauth
+              (app {:request-method :get
+                    :uri "/v1/sessions"
+                    :headers {"origin" origin
+                              protocol/protocol-header (str protocol/protocol-version)}})
 
-           authed
-           (app {:request-method :get
-                 :uri "/v1/sessions"
-                 :headers {"origin" origin
-                           "authorization" "Bearer sekret"
-                           protocol/protocol-header (str protocol/protocol-version)}})]
+              authed
+              (app {:request-method :get
+                    :uri "/v1/sessions"
+                    :headers {"origin" origin
+                              "authorization" "Bearer sekret"
+                              protocol/protocol-header (str protocol/protocol-version)}})]
 
           (testing "preflight OPTIONS short-circuits auth with 204"
             (is (= 204 (:status preflight)))
@@ -1351,18 +1324,17 @@
 
 (deftest parse-multi-sids-parses-and-filters
   (testing "sid[:cursor] comma list — cursor defaults to 0, unknown/non-UUID sids dropped"
-    (let
-      [sid-a
-       (java.util.UUID/randomUUID)
+    (let [sid-a
+          (java.util.UUID/randomUUID)
 
-       sid-b
-       (java.util.UUID/randomUUID)
+          sid-b
+          (java.util.UUID/randomUUID)
 
-       a
-       (str sid-a)
+          a
+          (str sid-a)
 
-       b
-       (str sid-b)]
+          b
+          (str sid-b)]
 
       (with-redefs-fn {#'state/soul (fn [sid]
                                       (contains? #{sid-a sid-b} sid))}
@@ -1393,30 +1365,26 @@
                              :headers {"last-event-id" ""}}))))))))))
 
 (deftest transcript-window-params-never-degrade-to-the-full-transcript
-  (let
-    [q
-     (fn [qs]
-       (ring-params/assoc-query-params {:path-params {:sid (str (java.util.UUID/randomUUID))}
-                                        :query-string qs}
-                                       "UTF-8"))
+  (let [q
+        (fn [qs]
+          (ring-params/assoc-query-params {:path-params {:sid (str (java.util.UUID/randomUUID))}
+                                           :query-string qs}
+                                          "UTF-8"))
 
-     query-long
-     (rv 'query-long)
+        query-long
+        (rv 'query-long)
 
-     seen
-     (atom nil)
+        seen
+        (atom nil)
 
-     call
-     (fn [qs]
-       (reset! seen ::unset)
-       (with-redefs-fn {#'state/transcript-page (fn [_sid opts]
-                                                  (reset! seen opts)
-                                                  {:turns [] :total 0 :offset 0 :has-more false})}
-         #(let
-            [r
-             ((rv 'transcript-handler) (q qs))]
-
-            [(:status r) @seen])))]
+        call
+        (fn [qs]
+          (reset! seen ::unset)
+          (with-redefs-fn {#'state/transcript-page
+                           (fn [_sid opts]
+                             (reset! seen opts)
+                             {:turns [] :total 0 :offset 0 :has-more false})}
+            #(let [r ((rv 'transcript-handler) (q qs))] [(:status r) @seen])))]
 
     (testing "ring hands back a VECTOR for a repeated param, so parsing must not throw"
       (is (= ["1" "2"] (get-in (q "limit=1&limit=2") [:query-params "limit"])))
@@ -1446,27 +1414,26 @@
         (with-server-state!
           {}
           (fn []
-            (let
-              [multi-sse-body
-               (rv 'multi-sse-body)
+            (let [multi-sse-body
+                  (rv 'multi-sse-body)
 
-               write-body
-               (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+                  write-body
+                  (requiring-resolve 'ring.core.protocols/write-body-to-stream)
 
-               sid-a
-               (str (java.util.UUID/randomUUID))
+                  sid-a
+                  (str (java.util.UUID/randomUUID))
 
-               sid-b
-               (str (java.util.UUID/randomUUID))
+                  sid-b
+                  (str (java.util.UUID/randomUUID))
 
-               baos
-               (java.io.ByteArrayOutputStream.)
+                  baos
+                  (java.io.ByteArrayOutputStream.)
 
-               body
-               (multi-sse-body [[sid-a 0] [sid-b 0]] false nil)
+                  body
+                  (multi-sse-body [[sid-a 0] [sid-b 0]] false nil)
 
-               fut
-               (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+                  fut
+                  (future (try (write-body body {} baos) (catch Throwable _ nil)))]
 
               (is (wait-until #(re-find #"subscription.ready"
                                         (String. (.toByteArray baos) "UTF-8"))))
@@ -1506,21 +1473,20 @@
         (with-server-state!
           {}
           (fn []
-            (let
-              [multi-sse-body
-               (rv 'multi-sse-body)
+            (let [multi-sse-body
+                  (rv 'multi-sse-body)
 
-               write-body
-               (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+                  write-body
+                  (requiring-resolve 'ring.core.protocols/write-body-to-stream)
 
-               sid-live
-               (str (java.util.UUID/randomUUID))
+                  sid-live
+                  (str (java.util.UUID/randomUUID))
 
-               sid-idle
-               (str (java.util.UUID/randomUUID))
+                  sid-idle
+                  (str (java.util.UUID/randomUUID))
 
-               baos
-               (java.io.ByteArrayOutputStream.)]
+                  baos
+                  (java.io.ByteArrayOutputStream.)]
 
               ;; A turn running in a SIBLING process is exactly the case a
               ;; reconnecting client cannot resolve from its own stream; the registry
@@ -1530,33 +1496,31 @@
                 sid-live
                 true
                 {"type" "turn.started" "turn_id" "t-live" "session_id" sid-live})
-              (let
-                [body
-                 (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil)
+              (let [body
+                    (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil)
 
-                 fut
-                 (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+                    fut
+                    (future (try (write-body body {} baos) (catch Throwable _ nil)))]
 
                 (is (wait-until #(= 2
                                     (count (re-seq #"\"type\":\"subscription\.ready\""
                                                    (String. (.toByteArray baos) "UTF-8"))))))
                 (future-cancel fut)
-                (let
-                  [s
-                   (String. (.toByteArray baos) "UTF-8")
+                (let [s
+                      (String. (.toByteArray baos) "UTF-8")
 
-                   ;; Keyed by the session each frame is ABOUT. Matching the whole
-                   ;; body would pass even with the two verdicts swapped, since one
-                   ;; `true` and one `false` are on the wire either way.
-                   ready
-                   (into {}
-                         (keep (fn [line]
-                                 (when (re-find #"subscription\.ready" line)
-                                   (when-let
-                                     [sid (second (re-find #"\"session_id\"\s*:\s*\"([^\"]+)\""
-                                                           line))]
-                                     [sid line]))))
-                         (re-seq #"data:.*" s))]
+                      ;; Keyed by the session each frame is ABOUT. Matching the whole
+                      ;; body would pass even with the two verdicts swapped, since one
+                      ;; `true` and one `false` are on the wire either way.
+                      ready
+                      (into {}
+                            (keep (fn [line]
+                                    (when (re-find #"subscription\.ready" line)
+                                      (when-let [sid (second (re-find
+                                                               #"\"session_id\"\s*:\s*\"([^\"]+)\""
+                                                               line))]
+                                        [sid line]))))
+                            (re-seq #"data:.*" s))]
 
                   (is (= #{sid-live sid-idle} (set (keys ready))))
                   (testing "the live session's frame names the turn the daemon holds"
@@ -1607,15 +1571,14 @@
 
 (deftest resource-handlers-read-rid-from-query-param
   (testing "stop/logs handlers forward the rid QUERY param to the resources ns"
-    (let
-      [seen
-       (atom [])
+    (let [seen
+          (atom [])
 
-       sid
-       (str (random-uuid))
+          sid
+          (str (random-uuid))
 
-       req
-       {:path-params {:sid sid} :query-params {"rid" nrepl-rid}}]
+          req
+          {:path-params {:sid sid} :query-params {"rid" nrepl-rid}}]
 
       (with-redefs-fn {#'resources/stop! (fn [_ rid]
                                            (swap! seen conj [:stop rid])
@@ -1624,12 +1587,11 @@
                                           (swap! seen conj [:logs rid])
                                           ["line-1"])}
         (fn []
-          (let
-            [stop
-             ((rv 'resource-stop-handler) req)
+          (let [stop
+                ((rv 'resource-stop-handler) req)
 
-             logs
-             ((rv 'resource-logs-handler) req)]
+                logs
+                ((rv 'resource-logs-handler) req)]
 
             (testing "each handler answers 200 and threads the exact slash-embedding rid through"
               (is (= 200 (:status stop)))
@@ -1640,12 +1602,11 @@
 
 (deftest resource-handlers-404-on-unknown-session
   (testing "a non-uuid sid is rejected before any resources call — 404, resources ns untouched"
-    (let
-      [touched
-       (atom false)
+    (let [touched
+          (atom false)
 
-       req
-       {:path-params {:sid "not-a-uuid"} :query-params {"rid" nrepl-rid}}]
+          req
+          {:path-params {:sid "not-a-uuid"} :query-params {"rid" nrepl-rid}}]
 
       (with-redefs-fn {#'resources/stop! (fn [& _]
                                            (reset! touched true)
@@ -1661,33 +1622,32 @@
 (deftest resource-rid-survives-router-as-query-param
   (testing
     "the client's encoded url routes to the static handler and decodes rid back verbatim (no 400)"
-    (let
-      [seen
-       (atom nil)
+    (let [seen
+          (atom nil)
 
-       echo
-       (fn [request]
-         (reset! seen {:sid (get-in request [:path-params :sid])
-                       :rid (get-in request [:query-params "rid"])})
-         {:status 200 :body "ok"})
+          echo
+          (fn [request]
+            (reset! seen {:sid (get-in request [:path-params :sid])
+                          :rid (get-in request [:query-params "rid"])})
+            {:status 200 :body "ok"})
 
-       app
-       (-> (rr/ring-handler (rr/router [["/v1/sessions/:sid/resources/stop" {:post echo}]
-                                        ["/v1/sessions/:sid/resources/logs" {:get echo}]]))
-           ring-params/wrap-params)
+          app
+          (-> (rr/ring-handler (rr/router [["/v1/sessions/:sid/resources/stop" {:post echo}]
+                                           ["/v1/sessions/:sid/resources/logs" {:get echo}]]))
+              ring-params/wrap-params)
 
-       sid
-       (str (random-uuid))
+          sid
+          (str (random-uuid))
 
-       ;; exactly the shape the client emits: rid percent-encoded into the query
-       enc
-       (fn [s]
-         (java.net.URLEncoder/encode ^String s "UTF-8"))
+          ;; exactly the shape the client emits: rid percent-encoded into the query
+          enc
+          (fn [s]
+            (java.net.URLEncoder/encode ^String s "UTF-8"))
 
-       resp
-       (app {:request-method :get
-             :uri (str "/v1/sessions/" sid "/resources/logs")
-             :query-string (str "rid=" (enc nrepl-rid))})]
+          resp
+          (app {:request-method :get
+                :uri (str "/v1/sessions/" sid "/resources/logs")
+                :query-string (str "rid=" (enc nrepl-rid))})]
 
       (testing "static logs route matches (a path-segment %2F would 404/400 instead)"
         (is (= 200 (:status resp))))
@@ -1710,12 +1670,11 @@
 
 (deftest get-setting-handler-serves-hidden-rows-test
   (testing "reasoning_level is readable by id even though the settings list hides it"
-    (let
-      [response
-       ((rv 'get-setting-handler) {:path-params {:id "reasoning_level"}})
+    (let [response
+          ((rv 'get-setting-handler) {:path-params {:id "reasoning_level"}})
 
-       row
-       (wire/parse-json (:body response))]
+          row
+          (wire/parse-json (:body response))]
 
       (is (= 200 (:status response)))
       (is (= "reasoning_level" (get row "id")))
@@ -1731,9 +1690,8 @@
   (toggles/set-enabled! "server_test_toggle" false)
   (let [synced (atom 0)]
     (with-redefs [lp/sync-cached-extension-symbols! #(swap! synced inc)]
-      (let
-        [response ((rv 'set-setting-handler)
-                    {:query-params {"id" "server_test_toggle" "action" "toggle"}})]
+      (let [response ((rv 'set-setting-handler)
+                       {:query-params {"id" "server_test_toggle" "action" "toggle"}})]
         (is (= 200 (:status response))))
       (is (= 1 @synced)))
     (toggles/set-enabled! "server_test_toggle" false)))
@@ -1746,41 +1704,38 @@
                                                  {:models ["claude-opus-4-8" "claude-sonnet-5"]
                                                   :hidden-count (if show-all? 0 4)})}
       (fn []
-        (let
-          [resp
-           ((rv 'provider-models-handler) {:path-params {:provider-id "anthropic-coding-plan"}})
+        (let [resp
+              ((rv 'provider-models-handler) {:path-params {:provider-id "anthropic-coding-plan"}})
 
-           body
-           (wire/parse-json (:body resp))]
+              body
+              (wire/parse-json (:body resp))]
 
           (is (= 200 (:status resp)))
           (is (= ["claude-opus-4-8" "claude-sonnet-5"] (get body "models")))
           (is (= 4 (get body "hidden_count"))))
-        (let
-          [resp
-           ((rv 'provider-models-handler)
-             {:path-params {:provider-id "anthropic-coding-plan"}
-              :query-params {"show_all" "true"}})
+        (let [resp
+              ((rv 'provider-models-handler)
+                {:path-params {:provider-id "anthropic-coding-plan"}
+                 :query-params {"show_all" "true"}})
 
-           body
-           (wire/parse-json (:body resp))]
+              body
+              (wire/parse-json (:body resp))]
 
           (is (= 0 (get body "hidden_count"))))))))
 
 (deftest set-session-model-handler-validates-against-the-gateway-fleet
   (testing
     "PATCH /model pins only providers THIS gateway serves; the model name stays free (live catalog)"
-    (let
-      [sid
-       (str (java.util.UUID/randomUUID))
+    (let [sid
+          (str (java.util.UUID/randomUUID))
 
-       wrote
-       (atom nil)
+          wrote
+          (atom nil)
 
-       body
-       (fn [m]
-         {:path-params {:sid sid}
-          :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})]
+          body
+          (fn [m]
+            {:path-params {:sid sid}
+             :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})]
 
       (with-redefs-fn {;; The PICKER fleet is what both clients offer: configured providers
                        ;; PLUS presets that are authenticated but not yet written into
@@ -1796,9 +1751,8 @@
                                                @wrote)}
         (fn []
           (testing "a configured provider is accepted"
-            (let
-              [resp ((rv 'set-session-model-handler)
-                      (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
+            (let [resp ((rv 'set-session-model-handler)
+                         (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
               (is (= 200 (:status resp)))
               (is (= ["zai-coding-plan" "glm-5.2"] @wrote))))
           (testing "a model outside vis.yml is fine — the live catalog offers more"
@@ -1814,9 +1768,8 @@
             (is (= ["openai-codex" "gpt-5.4"] @wrote)))
           (testing "an unknown provider is a 400 and writes NOTHING"
             (reset! wrote :untouched)
-            (let
-              [resp ((rv 'set-session-model-handler)
-                      (body {:provider "not-on-this-gateway" :model "x"}))]
+            (let [resp ((rv 'set-session-model-handler)
+                         (body {:provider "not-on-this-gateway" :model "x"}))]
               (is (= 400 (:status resp)))
               (is (= "unknown-provider" (get-in (wire/parse-json (:body resp)) ["error" "type"])))
               (is (= :untouched @wrote))))
@@ -1844,18 +1797,17 @@
        (constantly
          {:provider-id :anthropic-coding-plan :status :ok :static {} :dynamic {:limits []}})}
       (fn []
-        (let
-          [resp
-           ((rv 'router-handler) {})
+        (let [resp
+              ((rv 'router-handler) {})
 
-           provs
-           (get (wire/parse-json (:body resp)) "providers")
+              provs
+              (get (wire/parse-json (:body resp)) "providers")
 
-           p0
-           (first provs)
+              p0
+              (first provs)
 
-           p1
-           (second provs)]
+              p1
+              (second provs)]
 
           (is (= 200 (:status resp)))
           (is (= "anthropic-coding-plan" (get p0 "id")))
@@ -1883,14 +1835,13 @@
 ;; "Checking provider sign-in…".
 (deftest router-handler-probes-the-fleet-in-parallel
   (testing "GET /v1/router costs the SLOWEST provider probe, not their sum"
-    (let
-      [fleet
-       (mapv (fn [i]
-               {:id (keyword (str "p" i)) :models [{:name "m"}]})
-             (range 6))
+    (let [fleet
+          (mapv (fn [i]
+                  {:id (keyword (str "p" i)) :models [{:name "m"}]})
+                (range 6))
 
-       probe-ms
-       300]
+          probe-ms
+          300]
 
       (with-redefs-fn {#'providers/picker-fleet (constantly fleet)
                        #'providers/default-selection (constantly nil)
@@ -1901,18 +1852,17 @@
                        #'providers/provider-limits-safe
                        (constantly {:status :ok :static {} :dynamic {:limits []}})}
         (fn []
-          (let
-            [t0
-             (System/currentTimeMillis)
+          (let [t0
+                (System/currentTimeMillis)
 
-             resp
-             ((rv 'router-handler) {})
+                resp
+                ((rv 'router-handler) {})
 
-             elapsed
-             (- (System/currentTimeMillis) t0)
+                elapsed
+                (- (System/currentTimeMillis) t0)
 
-             provs
-             (get (wire/parse-json (:body resp)) "providers")]
+                provs
+                (get (wire/parse-json (:body resp)) "providers")]
 
             (is (= 200 (:status resp)))
             ;; every row is present, in fleet order
@@ -1921,57 +1871,54 @@
                 (str "fleet probed serially: " elapsed "ms"))))))))
 
 (deftest router-default-handler-tags-primary-and-fallback
-  (let
-    [saved
-     (atom nil)
+  (let [saved
+        (atom nil)
 
-     cleared
-     (atom 0)
+        cleared
+        (atom 0)
 
-     fleet
-     [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
-      {:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
+        fleet
+        [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
+         {:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
 
-     body
-     (fn [m]
-       {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})
+        body
+        (fn [m]
+          {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})
 
-     patch!
-     (fn [m]
-       ((rv 'router-default-handler) (body m)))]
+        patch!
+        (fn [m]
+          ((rv 'router-default-handler) (body m)))]
 
-    (with-redefs
-      [providers/picker-fleet
-       (constantly fleet)
+    (with-redefs [providers/picker-fleet
+                  (constantly fleet)
 
-       providers/default-selection
-       (constantly {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
+                  providers/default-selection
+                  (constantly {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
 
-       providers/fallback-selection
-       (constantly {:provider-id :zai-coding-plan :model "glm-5.2"})
+                  providers/fallback-selection
+                  (constantly {:provider-id :zai-coding-plan :model "glm-5.2"})
 
-       providers/save-default-selection!
-       (fn [provider model source]
-         (reset! saved [:primary provider model source])
-         {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
+                  providers/save-default-selection!
+                  (fn [provider model source]
+                    (reset! saved [:primary provider model source])
+                    {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
 
-       providers/save-fallback-selection!
-       (fn [provider model source]
-         (reset! saved [:fallback provider model source])
-         {:provider-id :zai-coding-plan :model "glm-5.2"})
+                  providers/save-fallback-selection!
+                  (fn [provider model source]
+                    (reset! saved [:fallback provider model source])
+                    {:provider-id :zai-coding-plan :model "glm-5.2"})
 
-       providers/clear-fallback-selection!
-       (fn [_source]
-         (swap! cleared inc)
-         nil)]
+                  providers/clear-fallback-selection!
+                  (fn [_source]
+                    (swap! cleared inc)
+                    nil)]
 
       (testing "a roleless PATCH still tags the PRIMARY, and the answer carries BOTH tags"
-        (let
-          [resp
-           (patch! {"provider" "anthropic-coding-plan" "model" "claude-fable-5"})
+        (let [resp
+              (patch! {"provider" "anthropic-coding-plan" "model" "claude-fable-5"})
 
-           out
-           (wire/parse-json (:body resp))]
+              out
+              (wire/parse-json (:body resp))]
 
           (is (= 200 (:status resp)))
           (is (= [:primary "anthropic-coding-plan" "claude-fable-5" :gateway] @saved))
@@ -1989,42 +1936,40 @@
         (is (= 400 (:status (patch! {"model" "   "})))))
       (testing "an unknown role is refused before anything is written"
         (reset! saved :untouched)
-        (let
-          [resp
-           (patch! {"provider" "zai-coding-plan" "model" "glm-5.2" "role" "tertiary"})
+        (let [resp
+              (patch! {"provider" "zai-coding-plan" "model" "glm-5.2" "role" "tertiary"})
 
-           err
-           (get (wire/parse-json (:body resp)) "error")]
+              err
+              (get (wire/parse-json (:body resp)) "error")]
 
           (is (= 400 (:status resp)))
           (is (= "invalid-request" (get err "type")))
           (is (= :untouched @saved))))
       (testing "the daemon's refusal — a fallback on the primary's provider — becomes a 400"
-        (with-redefs
-          [providers/save-fallback-selection!
-           (fn [_provider _model _source]
-             (throw (ex-info "the fallback must name a DIFFERENT provider than the primary"
-                             {:type :vis/invalid-fallback-provider})))]
-          (let
-            [resp (patch!
-                    {"provider" "anthropic-coding-plan" "model" "claude-fable-5" "role" "fallback"})
-             err (get (wire/parse-json (:body resp)) "error")]
+        (with-redefs [providers/save-fallback-selection!
+                      (fn [_provider _model _source]
+                        (throw (ex-info
+                                 "the fallback must name a DIFFERENT provider than the primary"
+                                 {:type :vis/invalid-fallback-provider})))]
+          (let [resp (patch! {"provider" "anthropic-coding-plan"
+                              "model" "claude-fable-5"
+                              "role" "fallback"})
+                err (get (wire/parse-json (:body resp)) "error")]
 
             (is (= 400 (:status resp)))
             (is (re-find #"DIFFERENT provider" (get err "message")))))))))
 
 (deftest gateway-prometheus-runtime-metrics-test
-  (let
-    [text ((rv 'prometheus-text)
-            {:tokens-input 12
-             :tokens-output 7
-             :turns-executing 2
-             :turns-waiting 1
-             :env-cache-size 3
-             :env-heap-pressure true
-             :jvm-heap-used-bytes 1024
-             :jvm-gc-count-total 4
-             :jvm-thread-count 9})]
+  (let [text ((rv 'prometheus-text)
+               {:tokens-input 12
+                :tokens-output 7
+                :turns-executing 2
+                :turns-waiting 1
+                :env-cache-size 3
+                :env-heap-pressure true
+                :jvm-heap-used-bytes 1024
+                :jvm-gc-count-total 4
+                :jvm-thread-count 9})]
     (testing "preserves the existing labelled token counter"
       (is (re-find #"vis_turn_tokens_total\{kind=\"input\"\} 12" text))
       (is (re-find #"vis_turn_tokens_total\{kind=\"output\"\} 7" text)))
@@ -2057,13 +2002,12 @@
             so the local TUI attaches to THIS gateway instead of seeing a free port
             and spawning a second one"
     (if-let [host (non-loopback-ipv4)]
-      (let
-        [port (with-open [s (java.net.ServerSocket. 0)]
-                (.getLocalPort s))
-         server
-         (jetty/run-jetty
-           (constantly {:status 200 :headers {} :body "ok"})
-           {:port port :host host :join? false :configurator ((rv 'gateway-configurator) port)})]
+      (let [port (with-open [s (java.net.ServerSocket. 0)]
+                   (.getLocalPort s))
+            server
+            (jetty/run-jetty
+              (constantly {:status 200 :headers {} :body "ok"})
+              {:port port :host host :join? false :configurator ((rv 'gateway-configurator) port)})]
 
         (try (is (= #{host "127.0.0.1"}
                     (set (map (fn [^org.eclipse.jetty.server.ServerConnector c]
@@ -2081,19 +2025,18 @@
             path: it cancels and then DRAINS in-flight turns before the socket goes, so a
             second hook racing it would guillotine exactly the mid-turn work that drain
             exists to save"
-    (let
-      [port
-       (with-open [s (java.net.ServerSocket. 0)]
-         (.getLocalPort s))
+    (let [port
+          (with-open [s (java.net.ServerSocket. 0)]
+            (.getLocalPort s))
 
-       server
-       (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
-                        {:port port
-                         :host "127.0.0.1"
-                         :join? false
-                         ;; nil mirror-port: loopback needs no mirror, and this is
-                         ;; the shape `start!` passes on a default bind.
-                         :configurator ((rv 'gateway-configurator) nil)})]
+          server
+          (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
+                           {:port port
+                            :host "127.0.0.1"
+                            :join? false
+                            ;; nil mirror-port: loopback needs no mirror, and this is
+                            ;; the shape `start!` passes on a default bind.
+                            :configurator ((rv 'gateway-configurator) nil)})]
 
       (try (is (false? (.getStopAtShutdown ^org.eclipse.jetty.server.Server server)))
            (is (= "ok" (slurp (str "http://127.0.0.1:" port "/"))))
@@ -2105,31 +2048,30 @@
             and only returns when the session ends. An adapter that buffered the body
             instead of pushing each flush would hold a whole turn's events back and
             deliver them in one burst at the end — a live stream that is not live"
-    (let
-      [port
-       (with-open [s (java.net.ServerSocket. 0)]
-         (.getLocalPort s))
+    (let [port
+          (with-open [s (java.net.ServerSocket. 0)]
+            (.getLocalPort s))
 
-       release
-       (promise)
+          release
+          (promise)
 
-       server
-       (jetty/run-jetty (constantly {:status 200
-                                     :headers {"Content-Type" "text/event-stream"}
-                                     :body (reify
-                                             ring-protocols/StreamableResponseBody
-                                               (write-body-to-stream [_ _ output-stream]
-                                                 (let [^java.io.OutputStream out output-stream]
-                                                   (.write out
-                                                           (.getBytes "data: first\n\n" "UTF-8"))
-                                                    (.flush out)
-                                                   ;; Park exactly as a live stream parks between events. The
-                                                   ;; timeout only keeps a failing run from hanging the suite.
-                                                   (deref release 5000 :timed-out)
-                                                   (.write out (.getBytes "data: last\n\n" "UTF-8"))
-                                                   (.flush out)
-                                                   (.close out))))})
-                        {:port port :host "127.0.0.1" :join? false})]
+          server
+          (jetty/run-jetty (constantly {:status 200
+                                        :headers {"Content-Type" "text/event-stream"}
+                                        :body
+                                        (reify
+                                          ring-protocols/StreamableResponseBody
+                                            (write-body-to-stream [_ _ output-stream]
+                                              (let [^java.io.OutputStream out output-stream]
+                                                (.write out (.getBytes "data: first\n\n" "UTF-8"))
+                                                (.flush out)
+                                                ;; Park exactly as a live stream parks between events. The
+                                                ;; timeout only keeps a failing run from hanging the suite.
+                                                (deref release 5000 :timed-out)
+                                                (.write out (.getBytes "data: last\n\n" "UTF-8"))
+                                                (.flush out)
+                                                (.close out))))})
+                           {:port port :host "127.0.0.1" :join? false})]
 
       (try (with-open [socket (java.net.Socket. "127.0.0.1" (int port))]
              (.setSoTimeout socket 5000)
@@ -2137,15 +2079,15 @@
                (.write (.getBytes "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
                                   "UTF-8"))
                (.flush))
-             (let
-               [reader (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream socket)
-                                                                            "UTF-8"))
-                ;; Skip status line, headers and any chunk-size lines.
-                read-frame (fn []
-                             (loop [n 0]
-                               (when (< n 64)
-                                 (when-let [line (.readLine reader)]
-                                   (if (str/starts-with? line "data: ") line (recur (inc n)))))))]
+             (let [reader (java.io.BufferedReader.
+                            (java.io.InputStreamReader. (.getInputStream socket) "UTF-8"))
+                   ;; Skip status line, headers and any chunk-size lines.
+                   read-frame
+                   (fn []
+                     (loop [n 0]
+                       (when (< n 64)
+                         (when-let [line (.readLine reader)]
+                           (if (str/starts-with? line "data: ") line (recur (inc n)))))))]
 
                (is (= "data: first" (read-frame))
                    "the first frame must arrive while the body thread is still parked")
@@ -2159,15 +2101,14 @@
   ;; stale cursor verbatim seeds the connection's `seq > last-seq` dedup guard
   ;; above every frame the next turn will ever emit — a connected, heartbeating
   ;; stream that silently delivers NOTHING until the app is killed.
-  (let
-    [resolve-cursor
-     (rv 'resolve-sse-cursor)
+  (let [resolve-cursor
+        (rv 'resolve-sse-cursor)
 
-     registry
-     @(ns-resolve 'com.blockether.vis.internal.gateway.state 'registry)
+        registry
+        @(ns-resolve 'com.blockether.vis.internal.gateway.state 'registry)
 
-     sid
-     (java.util.UUID/randomUUID)]
+        sid
+        (java.util.UUID/randomUUID)]
 
     (swap! registry assoc (str sid) {:next-seq 12})
     (try (testing "a cursor past the high-water resolves to the live tail"
@@ -2179,16 +2120,15 @@
 
 (deftest mcp-kill-start-and-oauth-routes-test
   (testing "runtime kill/start and every headless OAuth leg answer through the ring layer"
-    (let
-      [flow
-       {"flow_id" "f-1"
-        "server" "remote"
-        "kind" "pkce"
-        "url" "https://auth.example.test/authorize"
-        "status" "pending"}
+    (let [flow
+          {"flow_id" "f-1"
+           "server" "remote"
+           "kind" "pkce"
+           "url" "https://auth.example.test/authorize"
+           "status" "pending"}
 
-       calls
-       (atom [])]
+          calls
+          (atom [])]
 
       (with-redefs-fn
         {(rv 'body-json) (constantly {"flow_id" "f-1" "input" "https://cb.example.test/?code=abc"})
@@ -2258,10 +2198,9 @@
                          (with-server-state!
                            {:managed? false :clients {} :sse-clients #{}}
                            (fn []
-                             (let
-                               [res ((rv 'stop-handler)
-                                      {:remote-addr "127.0.0.1"
-                                       :headers {"user-agent" "vis-agent/test"}})]
+                             (let [res ((rv 'stop-handler)
+                                         {:remote-addr "127.0.0.1"
+                                          :headers {"user-agent" "vis-agent/test"}})]
                                (is (= 200 (:status res)))
                                (is (re-find #"stopping" (str (:body res))))
                                (is (loop [n 0]
@@ -2273,15 +2212,14 @@
 (deftest signal-forensics-is-idempotent-and-restorable
   (testing
     "the daemon installs signal handlers once (so an unexplained death names its signal) and can restore the JVM defaults"
-    (let
-      [install
-       (rv 'install-signal-forensics!)
+    (let [install
+          (rv 'install-signal-forensics!)
 
-       restore
-       (rv 'restore-signal-forensics!)
+          restore
+          (rv 'restore-signal-forensics!)
 
-       installed
-       (install)]
+          installed
+          (install)]
 
       (try (is (map? installed))
            (is (contains? installed "TERM"))
@@ -2306,18 +2244,17 @@
           "no controlling terminal => the INT came from someone else's process group")
       (is (= :ignore (disposition {:signal "HUP" :managed? true :interactive? false})))))
   (testing "a REAL SIGINT delivered to a managed daemon is logged and survived"
-    (let
-      [install
-       (rv 'install-signal-forensics!)
+    (let [install
+          (rv 'install-signal-forensics!)
 
-       restore
-       (rv 'restore-signal-forensics!)
+          restore
+          (rv 'restore-signal-forensics!)
 
-       disposition
-       (rv 'signal-disposition)
+          disposition
+          (rv 'signal-disposition)
 
-       installed
-       (install {:managed? true})]
+          installed
+          (install {:managed? true})]
 
       ;; GUARD: fire an actual signal only once the pure policy proves this JVM's
       ;; handler cannot exit — `:managed? true` is what we installed with, so the
@@ -2326,49 +2263,47 @@
       ;; when another test already owns the handlers; then there is nothing to prove.
       (is (= :ignore (disposition {:signal "INT" :managed? true :interactive? true})))
       (is (= :ignore (disposition {:signal "INT" :managed? true :interactive? false})))
-      (try (when (and (seq installed)
-                      (= :ignore (disposition {:signal "INT" :managed? true :interactive? true}))
-                      (= :ignore (disposition {:signal "INT" :managed? true :interactive? false})))
-             (let
-               [pid
+      (try
+        (when (and (seq installed)
+                   (= :ignore (disposition {:signal "INT" :managed? true :interactive? true}))
+                   (= :ignore (disposition {:signal "INT" :managed? true :interactive? false})))
+          (let [pid
                 (.pid (java.lang.ProcessHandle/current))
 
                 p
                 (.start (ProcessBuilder. ^java.util.List ["/bin/sh" "-c" (str "kill -INT " pid)]))]
 
-               (.waitFor p)
-               (Thread/sleep 300)
-               (is (.isAlive (java.lang.ProcessHandle/current))
-                   "a stray SIGINT must leave the daemon serving every other session")
-               ;; Non-vacuous: the SAME `kill` shape against a process with the DEFAULT
-               ;; disposition really does kill it, so surviving above is the handler.
-               (let
-                 [ctl
+            (.waitFor p)
+            (Thread/sleep 300)
+            (is (.isAlive (java.lang.ProcessHandle/current))
+                "a stray SIGINT must leave the daemon serving every other session")
+            ;; Non-vacuous: the SAME `kill` shape against a process with the DEFAULT
+            ;; disposition really does kill it, so surviving above is the handler.
+            (let [ctl
                   (.start (ProcessBuilder. ^java.util.List
                                            ["/bin/sh" "-c" "kill -INT $$; sleep 2; echo survived"]))
 
                   out
                   (slurp (.getInputStream ctl))]
 
-                 (.waitFor ctl)
-                 (is (not (str/includes? out "survived"))
-                     "the control process must die of the very same signal"))))
-           (finally (restore installed))))))
+              (.waitFor ctl)
+              (is (not (str/includes? out "survived"))
+                  "the control process must die of the very same signal"))))
+        (finally (restore installed))))))
 
 (deftest the-shutdown-hook-names-who-called-system-exit
   (let [culprit (rv 'exit-culprit)]
     (testing "the thread parked in System/exit is named; JDK plumbing is dropped"
-      (let
-        [r (culprit {"main" ["java.base/java.lang.Object.wait0(Native Method)"
-                             "java.base/java.lang.Thread.join(Thread.java:1327)"
-                             "java.base/java.lang.Shutdown.runHooks(Shutdown.java:130)"]
-                     "vis-turn-3"
-                     ["java.base/java.lang.Shutdown.exit(Shutdown.java:176)"
-                      "java.base/java.lang.Runtime.exit(Runtime.java:112)"
-                      "java.base/java.lang.System.exit(System.java:1901)"
-                      "java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(x:1)"
-                      "com.blockether.vis.ext.language_clojure.reflection$c.invoke(refl.clj:120)"
-                      "clojure.lang.AFn.run(AFn.java:22)"]})]
+      (let [r (culprit {"main" ["java.base/java.lang.Object.wait0(Native Method)"
+                                "java.base/java.lang.Thread.join(Thread.java:1327)"
+                                "java.base/java.lang.Shutdown.runHooks(Shutdown.java:130)"]
+                        "vis-turn-3"
+                        ["java.base/java.lang.Shutdown.exit(Shutdown.java:176)"
+                         "java.base/java.lang.Runtime.exit(Runtime.java:112)"
+                         "java.base/java.lang.System.exit(System.java:1901)"
+                         "java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(x:1)"
+                         "com.blockether.vis.ext.language_clojure.reflection$c.invoke(refl.clj:120)"
+                         "clojure.lang.AFn.run(AFn.java:22)"]})]
         (is (= "vis-turn-3" (get r "thread"))
             "the thread that called exit, not the one running the hooks")
         (is (= "com.blockether.vis.ext.language_clojure.reflection$c.invoke(refl.clj:120)"
@@ -2406,12 +2341,11 @@
                                                                :default-models
                                                                ["claude-sonnet-5"]}])}
     (fn []
-      (let
-        [presets
-         (get (wire/parse-json (:body ((rv 'provider-presets-handler) {}))) "presets")
+      (let [presets
+            (get (wire/parse-json (:body ((rv 'provider-presets-handler) {}))) "presets")
 
-         [local oauth]
-         presets]
+            [local oauth]
+            presets]
 
         (is (= ["lmstudio" "anthropic-coding-plan"] (mapv #(get % "id") presets)))
         (is (= "LM Studio" (get local "label")))
@@ -2425,13 +2359,12 @@
         (is (false? (get oauth "is_local")))))))
 
 (deftest add-provider-handler-writes-the-preset-into-the-fleet
-  (let
-    [added
-     (atom nil)
+  (let [added
+        (atom nil)
 
-     post!
-     (fn [m]
-       ((rv 'add-provider-handler) (json-body m)))]
+        post!
+        (fn [m]
+          ((rv 'add-provider-handler) (json-body m)))]
 
     (with-redefs-fn {#'config/provider-template (fn [pid]
                                                   (when (= :lmstudio pid)
@@ -2485,9 +2418,8 @@
         (with-stub-fleet!
           [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
           (fn []
-            (let
-              [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "lmstudio"}})
-               payload (wire/parse-json (:body resp))]
+            (let [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "lmstudio"}})
+                  payload (wire/parse-json (:body resp))]
 
               (is (= 200 (:status resp)))
               (is (= [:lmstudio :gateway] @removed))
@@ -2503,25 +2435,26 @@
   ;; client could remove a project together with its sessions. Recursion is
   ;; OPT-IN and answers with the ids, because the caller has to prune local rows,
   ;; snapshots and unsent drafts without racing a re-read.
-  (let
-    [pid
-     (java.util.UUID/randomUUID)
+  (let [pid
+        (java.util.UUID/randomUUID)
 
-     sids
-     [(str (java.util.UUID/randomUUID)) (str (java.util.UUID/randomUUID))]
+        sids
+        [(str (java.util.UUID/randomUUID)) (str (java.util.UUID/randomUUID))]
 
-     calls
-     (atom [])
+        calls
+        (atom [])
 
-     stub
-     (fn
-       ([p] (swap! calls conj [p nil])
-        {:project_id (str p) :deleted_session_ids [] :session_count 0})
-       ([p opts] (swap! calls conj [p opts])
-        {:project_id (str p) :deleted_session_ids sids :session_count (count sids)}))
+        stub
+        (fn ([p] (swap! calls conj [p nil]) {:project_id (str p)
+                                             :deleted_session_ids []
+                                             :session_count 0}) ([p opts] (swap! calls conj [p
+                                                                                             opts])
+                                                                 {:project_id (str p)
+                                                                  :deleted_session_ids sids
+                                                                  :session_count (count sids)}))
 
-     handler
-     (rv 'delete-project-handler)]
+        handler
+        (rv 'delete-project-handler)]
 
     (with-redefs-fn {#'state/delete-project! stub}
       (fn []
@@ -2532,12 +2465,11 @@
             (is (= [[pid nil]] @calls))))
         (reset! calls [])
         (testing "is_recursive=true is 200 and reports every deleted session id"
-          (let
-            [response
-             (handler {:path-params {:pid (str pid)} :query-params {"is_recursive" "true"}})
+          (let [response
+                (handler {:path-params {:pid (str pid)} :query-params {"is_recursive" "true"}})
 
-             body
-             (wire/parse-json (:body response))]
+                body
+                (wire/parse-json (:body response))]
 
             (is (= 200 (:status response)))
             (is (= [[pid {:is-recursive true}]] @calls))
@@ -2546,9 +2478,8 @@
             (is (= (str pid) (get body "project_id")))))
         (reset! calls [])
         (testing "a malformed project id is a 404, never a silent empty recursion"
-          (let
-            [response (handler {:path-params {:pid "not-a-uuid"}
-                                :query-params {"is_recursive" "true"}})]
+          (let [response (handler {:path-params {:pid "not-a-uuid"}
+                                   :query-params {"is_recursive" "true"}})]
             (is (= 404 (:status response)))
             (is (empty? @calls))))))))
 
@@ -2559,38 +2490,36 @@
 ;; sheet fetched the wrong bytes for every tile, and the artifact deliberately
 ;; hidden from the human was handed to it at index 0.
 (deftest attachment-byte-endpoint-indexes-the-list-the-descriptors-number
-  (let
-    [b64
-     #(.encodeToString (java.util.Base64/getEncoder) (.getBytes ^String % "UTF-8"))
+  (let [b64
+        #(.encodeToString (java.util.Base64/getEncoder) (.getBytes ^String % "UTF-8"))
 
-     iid
-     "00000000-0000-0000-0000-0000000000ab"
+        iid
+        "00000000-0000-0000-0000-0000000000ab"
 
-     rows
-     [{:kind "image"
-       :media-type "image/png"
-       :filename "for-the-model.png"
-       :audience "model"
-       :size 10
-       :base64 (b64 "MODEL-ONLY")}
-      {:kind "image"
-       :media-type "image/png"
-       :filename "for-the-human.png"
-       :audience "both"
-       :size 5
-       :base64 (b64 "SHOWN")}]
+        rows
+        [{:kind "image"
+          :media-type "image/png"
+          :filename "for-the-model.png"
+          :audience "model"
+          :size 10
+          :base64 (b64 "MODEL-ONLY")}
+         {:kind "image"
+          :media-type "image/png"
+          :filename "for-the-human.png"
+          :audience "both"
+          :size 5
+          :base64 (b64 "SHOWN")}]
 
-     fetch
-     (fn [idx]
-       ((rv 'attachment-bytes-handler)
-         {:path-params {:sid (str (random-uuid)) :iid iid :idx (str idx)}}))]
+        fetch
+        (fn [idx]
+          ((rv 'attachment-bytes-handler)
+            {:path-params {:sid (str (random-uuid)) :iid iid :idx (str idx)}}))]
 
     (with-redefs-fn {#'state/iteration-attachments (constantly rows)}
       (fn []
-        (let
-          [descriptors ((ns-resolve 'com.blockether.vis.internal.gateway.state
-                                    'live-attachment-descriptors)
-                         iid)]
+        (let [descriptors ((ns-resolve 'com.blockether.vis.internal.gateway.state
+                                       'live-attachment-descriptors)
+                            iid)]
           (testing "the human is offered exactly the artifacts meant for them"
             (is (= [{:index 0 :filename "for-the-human.png"}]
                    (mapv #(select-keys % [:index :filename]) descriptors))))
@@ -2601,11 +2530,10 @@
           (testing "nothing past the last descriptor resolves" (is (= 404 (:status (fetch 1)))))
           (testing "a model-only artifact is never served, at any index"
             (is (= []
-                   (vec (for
-                          [idx (range 4)
-                           :let [response (fetch idx)]
-                           :when (and (= 200 (:status response))
-                                      (= "MODEL-ONLY" (slurp (:body response))))]
+                   (vec (for [idx (range 4)
+                              :let [response (fetch idx)]
+                              :when (and (= 200 (:status response))
+                                         (= "MODEL-ONLY" (slurp (:body response))))]
 
                           idx))))))))))
 
@@ -2613,21 +2541,20 @@
 ;; save this revision" — the URL it posts to was served by no route at all, so a
 ;; human's comments and drawings could never become the next version.
 (deftest the-companions-save-url-routes-to-the-attachment-append-handler
-  (let
-    [match-by-path
-     (requiring-resolve 'reitit.core/match-by-path)
+  (let [match-by-path
+        (requiring-resolve 'reitit.core/match-by-path)
 
-     router
-     ((rv 'router) "token" [])
+        router
+        ((rv 'router) "token" [])
 
-     sid
-     (str (random-uuid))
+        sid
+        (str (random-uuid))
 
-     iid
-     (str (random-uuid))
+        iid
+        (str (random-uuid))
 
-     path
-     (str "/v1/sessions/" sid "/iterations/" iid "/attachments")]
+        path
+        (str "/v1/sessions/" sid "/iterations/" iid "/attachments")]
 
     (testing "POST of a revision reaches the append handler"
       (is (= @(rv 'append-attachment-handler)
@@ -2640,18 +2567,17 @@
 ;; filename, which is what makes the revision the NEXT VERSION of that artifact
 ;; rather than a second file beside it.
 (deftest saving-a-revision-stores-it-under-the-artifacts-own-filename
-  (let
-    [seen
-     (atom nil)
+  (let [seen
+        (atom nil)
 
-     iid
-     (str (random-uuid))
+        iid
+        (str (random-uuid))
 
-     body
-     {"filename" "PLAN.md"
-      "media_type" "text/markdown"
-      "base64" (.encodeToString (java.util.Base64/getEncoder)
-                                (.getBytes "# Release plan\n" "UTF-8"))}]
+        body
+        {"filename" "PLAN.md"
+         "media_type" "text/markdown"
+         "base64" (.encodeToString (java.util.Base64/getEncoder)
+                                   (.getBytes "# Release plan\n" "UTF-8"))}]
 
     (with-redefs-fn {(rv 'body-json) (constantly body)
                      (rv 'path-sid) (constantly (str (random-uuid)))
@@ -2682,36 +2608,34 @@
 
 (defn- fs-temp-root
   ^java.io.File []
-  (let
-    [dir (.toFile (java.nio.file.Files/createTempDirectory
-                    "vis-fs-test"
-                    (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-fs-test"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))]
     (.deleteOnExit dir)
     dir))
 
 (deftest browse-fs-shows-only-folders-and-names-the-repos
-  (let
-    [root
-     (fs-temp-root)
+  (let [root
+        (fs-temp-root)
 
-     _
-     (run! #(.mkdir (fs-child root %)) ["beta" "alpha" ".hidden"])
+        _
+        (run! #(.mkdir (fs-child root %)) ["beta" "alpha" ".hidden"])
 
-     _
-     (spit (fs-child root "readme.txt") "a file is not a folder")
+        _
+        (spit (fs-child root "readme.txt") "a file is not a folder")
 
-     _
-     (.mkdir (fs-child root "alpha" ".git"))
+        _
+        (.mkdir (fs-child root "alpha" ".git"))
 
-     _
-     (spit (fs-child root "alpha" ".git" "HEAD") "ref: refs/heads/main\n")
+        _
+        (spit (fs-child root "alpha" ".git" "HEAD") "ref: refs/heads/main\n")
 
-     listing
-     (wire/parse-json (:body ((rv 'browse-fs-handler)
-                               {:query-params {"path" (.getAbsolutePath root)}})))
+        listing
+        (wire/parse-json (:body ((rv 'browse-fs-handler)
+                                  {:query-params {"path" (.getAbsolutePath root)}})))
 
-     entries
-     (get listing "entries")]
+        entries
+        (get listing "entries")]
 
     (testing
       "a listing is the directories inside the path, alphabetical, dotfolders and files dropped"
@@ -2721,12 +2645,11 @@
       (is (= (System/getProperty "user.home") (get listing "home")))
       (is (false? (get listing "is_truncated"))))
     (testing "a worktree carries its branch, a plain folder carries none"
-      (let
-        [alpha
-         (first entries)
+      (let [alpha
+            (first entries)
 
-         beta
-         (second entries)]
+            beta
+            (second entries)]
 
         (is (true? (get alpha "is_repo")))
         (is (= "main" (get alpha "branch")))
@@ -2740,22 +2663,20 @@
       (is (= (System/getProperty "user.home")
              (get (wire/parse-json (:body ((rv 'browse-fs-handler) {:query-params {}}))) "path"))))
     (testing "a path that is not a directory is refused by name"
-      (let
-        [response ((rv 'browse-fs-handler)
-                    {:query-params {"path" (.getAbsolutePath (fs-child root "readme.txt"))}})]
+      (let [response ((rv 'browse-fs-handler)
+                       {:query-params {"path" (.getAbsolutePath (fs-child root "readme.txt"))}})]
         (is (= 404 (:status response)))
         (is (= "not-a-directory" (get-in (wire/parse-json (:body response)) ["error" "type"])))))))
 
 (deftest mkdir-creates-one-folder-where-the-picker-is-standing
-  (let
-    [root
-     (fs-temp-root)
+  (let [root
+        (fs-temp-root)
 
-     made
-     ((rv 'create-directory-handler) (json-body {:path (.getAbsolutePath root) :name "gamma"}))
+        made
+        ((rv 'create-directory-handler) (json-body {:path (.getAbsolutePath root) :name "gamma"}))
 
-     body
-     (wire/parse-json (:body made))]
+        body
+        (wire/parse-json (:body made))]
 
     (testing "the new folder answers as a listing row, so the picker can select it immediately"
       (is (= 201 (:status made)))
@@ -2769,15 +2690,14 @@
                         (json-body {:path (.getAbsolutePath root) :name "gamma"}))))))
     (testing "a name is ONE segment — a picker that accepts `a/../b` writes outside what it showed"
       (doseq [name ["a/b" ".." "." "  " "x\\y"]]
-        (let
-          [response ((rv 'create-directory-handler)
-                      (json-body {:path (.getAbsolutePath root) :name name}))]
+        (let [response ((rv 'create-directory-handler)
+                         (json-body {:path (.getAbsolutePath root) :name name}))]
           (is (= 400 (:status response)) (str "refuses " (pr-str name)))
           (is (= "invalid-request" (get-in (wire/parse-json (:body response)) ["error" "type"]))))))
     (testing "a parent that does not exist is a 404, not a silent mkdir -p"
-      (let
-        [response ((rv 'create-directory-handler)
-                    (json-body {:path (.getAbsolutePath (fs-child root "nowhere")) :name "delta"}))]
+      (let [response ((rv 'create-directory-handler)
+                       (json-body {:path (.getAbsolutePath (fs-child root "nowhere"))
+                                   :name "delta"}))]
         (is (= 404 (:status response)))
         (is (= "not-a-directory" (get-in (wire/parse-json (:body response)) ["error" "type"])))))))
 
@@ -2787,25 +2707,22 @@
 (deftest sessions-window-narrows-to-one-project
   (testing "GET /v1/sessions?root= hands the project down to the windowing engine"
     (let [seen (atom nil)]
-      (with-redefs
-        [state/list-sessions-page
-         (fn [channel opts]
-           (reset! seen [channel opts])
-           {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
-        (let
-          [response ((rv 'list-sessions-handler)
-                      {:query-params {"limit" "20" "root" "/Users/dev/vis"}})
-           body (wire/parse-json (:body response))]
+      (with-redefs [state/list-sessions-page
+                    (fn [channel opts]
+                      (reset! seen [channel opts])
+                      {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
+        (let [response ((rv 'list-sessions-handler)
+                         {:query-params {"limit" "20" "root" "/Users/dev/vis"}})
+              body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
           (is (= [:all {:limit 20 :after nil :root "/Users/dev/vis"}] @seen))
           (is (= "/Users/dev/vis" (get body "root")))))
       (testing "and a listing with no `root` is still the whole fleet"
-        (with-redefs
-          [state/list-sessions-page
-           (fn [channel opts]
-             (reset! seen [channel opts])
-             {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
+        (with-redefs [state/list-sessions-page
+                      (fn [channel opts]
+                        (reset! seen [channel opts])
+                        {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
           ((rv 'list-sessions-handler) {:query-params {}})
           (is (nil? (:root (second @seen)))))))))
 
@@ -2815,24 +2732,22 @@
 ;; of the page. The parked rows now ride BESIDE the window, which means the validator
 ;; has to cover them: hashing only `sessions` would hide a new demand behind a 304.
 (deftest sessions-window-carries-the-parked-rows-beside-it
-  (let
-    [answer
-     (fn [awaiting]
-       (with-redefs
-         [state/list-sessions-page (fn [_ _]
-                                     {:sessions [{"id" "a" "server_time_ms" 1}]
-                                      :awaiting awaiting
-                                      :total 1
-                                      :limit 20
-                                      :next-cursor nil
-                                      :has-more false})]
-         ((rv 'list-sessions-handler) {:query-params {"limit" "20"}})))
+  (let [answer
+        (fn [awaiting]
+          (with-redefs [state/list-sessions-page (fn [_ _]
+                                                   {:sessions [{"id" "a" "server_time_ms" 1}]
+                                                    :awaiting awaiting
+                                                    :total 1
+                                                    :limit 20
+                                                    :next-cursor nil
+                                                    :has-more false})]
+            ((rv 'list-sessions-handler) {:query-params {"limit" "20"}})))
 
-     quiet
-     (answer [])
+        quiet
+        (answer [])
 
-     parked
-     (answer [{"id" "p" "is_awaiting_input" true "server_time_ms" 2}])]
+        parked
+        (answer [{"id" "p" "is_awaiting_input" true "server_time_ms" 2}])]
 
     (testing "the parked sessions travel outside the window"
       (is (= ["p"] (mapv #(get % "id") (get (wire/parse-json (:body parked)) "awaiting"))))
@@ -2846,19 +2761,17 @@
 ;; the CURSOR of the last row a client holds.
 (deftest sessions-window-is-addressed-by-a-cursor
   (let [seen (atom nil)]
-    (with-redefs
-      [state/list-sessions-page (fn [channel opts]
-                                  (reset! seen [channel opts])
-                                  {:sessions [{"id" "b" "server_time_ms" 1}]
-                                   :awaiting []
-                                   :total 9
-                                   :limit 20
-                                   :next-cursor "3000:b"
-                                   :has-more true})]
+    (with-redefs [state/list-sessions-page (fn [channel opts]
+                                             (reset! seen [channel opts])
+                                             {:sessions [{"id" "b" "server_time_ms" 1}]
+                                              :awaiting []
+                                              :total 9
+                                              :limit 20
+                                              :next-cursor "3000:b"
+                                              :has-more true})]
       (testing "`after` is handed down and the next cursor comes back"
-        (let
-          [response ((rv 'list-sessions-handler) {:query-params {"limit" "20" "after" "4000:a"}})
-           body (wire/parse-json (:body response))]
+        (let [response ((rv 'list-sessions-handler) {:query-params {"limit" "20" "after" "4000:a"}})
+              body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
           (is (= [:all {:limit 20 :after "4000:a" :root nil}] @seen))
@@ -2874,29 +2787,26 @@
           (is (= 400 (:status response)))
           (is (= "invalid-window" (get-in (wire/parse-json (:body response)) ["error" "type"])))))
       (testing "the window a client asked for is part of its validator"
-        (let
-          [etag (fn [after]
-                  (get-in ((rv 'list-sessions-handler)
-                            {:query-params (cond-> {"limit" "20"}
-                                             after
-                                             (assoc "after" after))})
-                          [:headers "ETag"]))]
+        (let [etag (fn [after]
+                     (get-in ((rv 'list-sessions-handler)
+                               {:query-params (cond-> {"limit" "20"}
+                                                after
+                                                (assoc "after" after))})
+                             [:headers "ETag"]))]
           (is (not= (etag nil) (etag "4000:a"))))))))
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
 ;; `engine-error` 500, so a request that failed only because no AI provider was
 ;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a
 ;; 50-frame stack trace instead of opening the provider dialog.
 (deftest no-provider-failure-keeps-its-type-on-the-wire
-  (let
-    [answer (fn [t]
-              (let
-                [handler ((rv 'wrap-errors)
-                           (fn [_]
-                             (throw t)))
-                 {:keys [status body]} (handler {:uri "/v1/sessions" :request-method :post})
-                 error (get (wire/parse-json body) "error")]
+  (let [answer (fn [t]
+                 (let [handler ((rv 'wrap-errors)
+                                 (fn [_]
+                                   (throw t)))
+                       {:keys [status body]} (handler {:uri "/v1/sessions" :request-method :post})
+                       error (get (wire/parse-json body) "error")]
 
-                [status (get error "type") (get error "message")]))]
+                   [status (get error "type") (get error "message")]))]
     (testing "nothing configured — the typed verdict AND the original reason survive"
       (is (= [503 "no-provider" "No AI provider is configured yet."]
              (answer (ex-info "session create failed"
@@ -2921,13 +2831,12 @@
     :voices (fn []
               (vec (vals @store)))
     :import-voice (fn [{:keys [path voice-name language text]}]
-                    (let
-                      [voice {:id (.replace (.toLowerCase (str voice-name)) " " "-")
-                              :label voice-name
-                              :language language
-                              :clip-text text
-                              :heard (slurp path)
-                              :is-imported true}]
+                    (let [voice {:id (.replace (.toLowerCase (str voice-name)) " " "-")
+                                 :label voice-name
+                                 :language language
+                                 :clip-text text
+                                 :heard (slurp path)
+                                 :is-imported true}]
                       (swap! store assoc (:id voice) voice)
                       voice))
     :forget-voice (fn [id]
@@ -2947,23 +2856,21 @@
     (with-only-speech-engine!
       (cloning-speaker store)
       (fn []
-        (let
-          [upload (fn [query clip]
-                    ((rv 'speech-voices-handler)
-                      {:request-method :post
-                       :query-params query
-                       :body (java.io.ByteArrayInputStream. (.getBytes (str clip) "UTF-8"))}))
-           listed (fn []
-                    ((rv 'speech-voices-handler) {:request-method :get}))
-           forget (fn [id]
-                    ((rv 'speech-voice-handler)
-                      {:request-method :delete :path-params {:voice-id id}}))]
+        (let [upload (fn [query clip]
+                       ((rv 'speech-voices-handler)
+                         {:request-method :post
+                          :query-params query
+                          :body (java.io.ByteArrayInputStream. (.getBytes (str clip) "UTF-8"))}))
+              listed (fn []
+                       ((rv 'speech-voices-handler) {:request-method :get}))
+              forget (fn [id]
+                       ((rv 'speech-voice-handler)
+                         {:request-method :delete :path-params {:voice-id id}}))]
 
           (testing "the upload IS the voice: bytes in, catalogue entry out"
-            (let
-              [response (upload {"name" "My Own" "lang" "en-GB" "text" "what the clip says"}
-                                "RIFFclip")
-               body (wire/parse-json (:body response))]
+            (let [response (upload {"name" "My Own" "lang" "en-GB" "text" "what the clip says"}
+                                   "RIFFclip")
+                  body (wire/parse-json (:body response))]
 
               (is (= 201 (:status response)))
               (is (= {"id" "my-own" "label" "My Own" "language" "en-GB" "is_imported" true}
@@ -2986,11 +2893,10 @@
       (with-only-speech-engine!
         (speaking-engine)
         (fn []
-          (let
-            [response ((rv 'speech-voices-handler)
-                        {:request-method :post
-                         :query-params {"name" "My Own"}
-                         :body (java.io.ByteArrayInputStream. (.getBytes "RIFFclip" "UTF-8"))})]
+          (let [response ((rv 'speech-voices-handler)
+                           {:request-method :post
+                            :query-params {"name" "My Own"}
+                            :body (java.io.ByteArrayInputStream. (.getBytes "RIFFclip" "UTF-8"))})]
             (is (= 409 (:status response)))
             (is (str/includes? (get (wire/parse-json (:body response)) "error")
                                "cannot learn a voice"))))))))
@@ -2999,12 +2905,11 @@
   ;; An imported clip is stored on the machine and every session on it speaks with the
   ;; same catalogue, so the one screen that manages voices - settings, which is looking
   ;; at a machine and not at a session - can reach them without inventing a session id.
-  (let
-    [match-by-path
-     (requiring-resolve 'reitit.core/match-by-path)
+  (let [match-by-path
+        (requiring-resolve 'reitit.core/match-by-path)
 
-     router
-     ((rv 'router) "token" [])]
+        router
+        ((rv 'router) "token" [])]
 
     (testing "the machine's own catalogue is listed, added to and pruned"
       (is (= @(rv 'speech-voices-handler)
@@ -3031,20 +2936,20 @@
   ;; still starts, chat still works, and every route in both directions answers the one
   ;; refusal a client can read - 501, "no ... engine is registered". None of it may be a
   ;; 500, and none of it may throw.
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     refusals
-     [['speech-voices-handler {:request-method :get}]
-      ['speech-voices-handler
-       {:request-method :post
-        :query-params {"name" "Mine"}
-        :body (java.io.ByteArrayInputStream. (byte-array 0))}]
-      ['speech-voice-handler {:request-method :delete :path-params {:voice-id "mine"}}]
-      ['speech-model-handler {:request-method :get}] ['voice-model-handler {:request-method :get}]
-      ['speech-handler
-       (merge {:request-method :post :path-params {:sid sid}} (json-body {:text "hello"}))]]]
+        refusals
+        [['speech-voices-handler {:request-method :get}]
+         ['speech-voices-handler
+          {:request-method :post
+           :query-params {"name" "Mine"}
+           :body (java.io.ByteArrayInputStream. (byte-array 0))}]
+         ['speech-voice-handler {:request-method :delete :path-params {:voice-id "mine"}}]
+         ['speech-model-handler {:request-method :get}]
+         ['voice-model-handler {:request-method :get}]
+         ['speech-handler
+          (merge {:request-method :post :path-params {:sid sid}} (json-body {:text "hello"}))]]]
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
@@ -3057,11 +2962,10 @@
               nil
               (fn []
                 (testing "the gateway answers, and says plainly what it cannot do"
-                  (let
-                    [features (-> ((rv 'capabilities-handler) {})
-                                  :body
-                                  wire/parse-json
-                                  (get "features"))]
+                  (let [features (-> ((rv 'capabilities-handler) {})
+                                     :body
+                                     wire/parse-json
+                                     (get "features"))]
                     (is (true? (get-in features ["chat" "enabled"])))
                     (is (false? (get-in features ["voice" "enabled"])))
                     (is (false? (get-in features ["speech" "is_enabled"])))))
@@ -3080,9 +2984,8 @@
                                    (constantly {"com.example.engine"
                                                 "libsherpa-onnx-jni.dylib is not on this machine"})}
                     (fn []
-                      (let
-                        [body (wire/parse-json (:body ((rv 'voice-model-handler)
-                                                        {:request-method :get})))]
+                      (let [body (wire/parse-json (:body ((rv 'voice-model-handler)
+                                                           {:request-method :get})))]
                         (is (= ["libsherpa-onnx-jni.dylib is not on this machine"]
                                (get body "reasons")))
                         (is (str/includes?
@@ -3093,23 +2996,22 @@
 ;; screen showed a session starred while another showed it plain, and no answer from
 ;; the gateway could settle which was true.
 (deftest the-star-is-set-on-the-gateway-never-on-the-device
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     asked
-     (atom [])
+        asked
+        (atom [])
 
-     favorite-setter
-     (fn [rank]
-       (fn [_sid favorite?]
-         (swap! asked conj favorite?)
-         {"id" sid "favorite_rank" (when favorite? rank)}))
+        favorite-setter
+        (fn [rank]
+          (fn [_sid favorite?]
+            (swap! asked conj favorite?)
+            {"id" sid "favorite_rank" (when favorite? rank)}))
 
-     patch-session
-     (fn [body]
-       ((rv 'patch-session-handler)
-         (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
+        patch-session
+        (fn [body]
+          ((rv 'patch-session-handler)
+            (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
 
     (testing "starring answers the soul carrying the rank the gateway allocated"
       (with-redefs-fn {#'state/set-favorite! (favorite-setter 7)}
@@ -3145,11 +3047,22 @@
 ;; silently, and `cycle` on a boolean surfaced as a 500 engine-error.
 (deftest set-setting-value-action-refuses-what-it-cannot-store-test
   (toggles/register-toggle! {:id "server_test_value_bool" :label "Test bool" :default true})
-  (toggles/register-toggle! {:id "server_test_value_enum" :label "Test enum" :type :enum
-                             :choices ["quick" "deep"] :default "quick"})
-  (let [call (rv 'set-setting-handler)
-        body (fn [json] {:body (java.io.StringReader. ^String json)})
-        row (fn [response] (wire/parse-json (:body response)))]
+  (toggles/register-toggle! {:id "server_test_value_enum"
+                             :label "Test enum"
+                             :type :enum
+                             :choices ["quick" "deep"]
+                             :default "quick"})
+  (let [call
+        (rv 'set-setting-handler)
+
+        body
+        (fn [json]
+          {:body (java.io.StringReader. ^String json)})
+
+        row
+        (fn [response]
+          (wire/parse-json (:body response)))]
+
     (testing "a JSON false is a value, not a missing one"
       (let [response (call (body (str "{\"id\":\"server_test_value_bool\","
                                       "\"action\":\"value\",\"value\":false}")))]
@@ -3158,16 +3071,14 @@
         (is (false? (toggles/enabled? "server_test_value_bool")))))
     (testing "the string false means OFF, never its truthy cast"
       (toggles/set-value! "server_test_value_bool" true)
-      (let [response (call {:query-params {"id" "server_test_value_bool"
-                                           "action" "value"
-                                           "value" "false"}})]
+      (let [response (call {:query-params
+                            {"id" "server_test_value_bool" "action" "value" "value" "false"}})]
         (is (= 200 (:status response)))
         (is (false? (toggles/enabled? "server_test_value_bool")))))
     (testing "a token the type cannot name is a 400 that changes nothing"
       (toggles/set-value! "server_test_value_bool" true)
-      (let [response (call {:query-params {"id" "server_test_value_bool"
-                                           "action" "value"
-                                           "value" "maybe"}})]
+      (let [response (call {:query-params
+                            {"id" "server_test_value_bool" "action" "value" "value" "maybe"}})]
         (is (= 400 (:status response)))
         (is (true? (toggles/enabled? "server_test_value_bool")))))
     (testing "the value action without a value is a 400, not a silent success"
@@ -3175,18 +3086,19 @@
         (is (= 400 (:status response)))
         (is (true? (toggles/enabled? "server_test_value_bool")))))
     (testing "an enum takes a registered choice and refuses the rest"
-      (is (= 200 (:status (call {:query-params {"id" "server_test_value_enum"
-                                                "action" "value"
-                                                "value" "DEEP"}}))))
+      (is (= 200
+             (:status (call {:query-params
+                             {"id" "server_test_value_enum" "action" "value" "value" "DEEP"}}))))
       (is (= "deep" (toggles/value-of "server_test_value_enum")))
-      (is (= 400 (:status (call {:query-params {"id" "server_test_value_enum"
-                                                "action" "value"
-                                                "value" "banana"}}))))
+      (is (= 400
+             (:status (call {:query-params
+                             {"id" "server_test_value_enum" "action" "value" "value" "banana"}}))))
       (is (= "deep" (toggles/value-of "server_test_value_enum"))))
     (testing "cycle on a boolean is the client's 400, not the engine's 500"
       (let [response (call {:query-params {"id" "server_test_value_bool" "action" "cycle"}})]
         (is (= 400 (:status response)))))
     (testing "the default flip still flips"
       (toggles/set-value! "server_test_value_bool" true)
-      (is (= 200 (:status (call {:query-params {"id" "server_test_value_bool" "action" "toggle"}}))))
+      (is (= 200
+             (:status (call {:query-params {"id" "server_test_value_bool" "action" "toggle"}}))))
       (is (false? (toggles/enabled? "server_test_value_bool"))))))

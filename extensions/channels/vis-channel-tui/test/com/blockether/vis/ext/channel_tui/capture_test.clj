@@ -29,8 +29,8 @@
 (defdescribe
   capture-test
   (it "records one frame per flush, with the exact chars, colors and bold flag"
-      (let
-        [{:keys [cols rows frames ret]} (cap/capture! {:cols 20 :rows 5 :paint! paint-two-frames!})]
+      (let [{:keys [cols rows frames ret]} (cap/capture!
+                                             {:cols 20 :rows 5 :paint! paint-two-frames!})]
         (expect (= 20 cols))
         (expect (= 5 rows))
         (expect (= :done ret))
@@ -46,37 +46,34 @@
   ;; the paint never touched was captured as #000000 and rasterized as a void --
   ;; a screenshot of the app on black paper, which the app never shows.
   (it "gives an untouched cell the theme's own paper, never black"
-      (let
-        [{:keys [frames]}
-         (cap/capture! {:cols 8
-                        :rows 2
-                        :paint! (fn [{:keys [^TerminalScreen screen]}]
-                                  (.refresh screen))})
+      (let [{:keys [frames]}
+            (cap/capture! {:cols 8
+                           :rows 2
+                           :paint! (fn [{:keys [^TerminalScreen screen]}]
+                                     (.refresh screen))})
 
-         c
-         (get-in (vec (first frames)) [0 0])]
+            c
+            (get-in (vec (first frames)) [0 0])]
 
         (expect (= (cinema/cell nil) c))
         (expect (not= [0 0 0] (:bg c)))))
   (it "feeds queued keys to the painted dialog before it runs"
-      (let
-        [{:keys [ret]} (cap/capture! {:cols 10
-                                      :rows 3
-                                      :keys [\c :esc]
-                                      :paint! (fn
-                                                [{:keys [^DefaultVirtualTerminal terminal
-                                                         ^TerminalScreen screen]}]
-                                                (.refresh screen)
-                                                [(.getCharacter ^KeyStroke (.readInput terminal))
-                                                 (.getKeyType ^KeyStroke (.readInput terminal))])})]
+      (let [{:keys [ret]} (cap/capture! {:cols 10
+                                         :rows 3
+                                         :keys [\c :esc]
+                                         :paint! (fn [{:keys [^DefaultVirtualTerminal terminal
+                                                              ^TerminalScreen screen]}]
+                                                   (.refresh screen)
+                                                   [(.getCharacter ^KeyStroke (.readInput terminal))
+                                                    (.getKeyType ^KeyStroke
+                                                                 (.readInput terminal))])})]
         (expect (= [(Character/valueOf \c) KeyType/Escape] ret))))
   (it "keeps the frames of a throwing paint, and reports the throw"
-      (let
-        [{:keys [frames error]} (cap/capture! {:cols 8
-                                               :rows 2
-                                               :paint! (fn [{:keys [^TerminalScreen screen]}]
-                                                         (.refresh screen)
-                                                         (throw (ex-info "boom" {})))})]
+      (let [{:keys [frames error]} (cap/capture! {:cols 8
+                                                  :rows 2
+                                                  :paint! (fn [{:keys [^TerminalScreen screen]}]
+                                                            (.refresh screen)
+                                                            (throw (ex-info "boom" {})))})]
         (expect (= 1 (count frames)))
         (expect (str/includes? (str error) "boom"))))
   ;; Regression: `capture!` grabbed the VIRTUAL TERMINAL, but a `:paint!` that
@@ -86,26 +83,24 @@
   ;; to byte-identical white PNGs before anybody noticed, because this test only
   ;; counted the frame instead of looking at it.
   (it "always yields a frame CARRYING the paint, even when it never flushed"
-      (let
-        [{:keys [frames]} (cap/capture! {:cols 6
-                                         :rows 2
-                                         :paint! (fn [{:keys [^TextGraphics g]}]
-                                                   (.putString g 0 0 "hi")
-                                                   :no-refresh)})]
+      (let [{:keys [frames]} (cap/capture! {:cols 6
+                                            :rows 2
+                                            :paint! (fn [{:keys [^TextGraphics g]}]
+                                                      (.putString g 0 0 "hi")
+                                                      :no-refresh)})]
         (expect (= 1 (count frames)))
         (expect (= 2 (count (first frames))))
         (expect (str/includes? (cap/frame-text (first frames)) "hi"))))
   (it "hands back the PATH of ONE real PNG of the paint"
-      (let
-        [png
-         (cap/shot!
-           {:cols 20 :rows 5 :font-size 12 :out "vis-capture-test" :paint! paint-two-frames!})
+      (let [png
+            (cap/shot!
+              {:cols 20 :rows 5 :font-size 12 :out "vis-capture-test" :paint! paint-two-frames!})
 
-         header
-         (mapv int (take 4 (java.nio.file.Files/readAllBytes (.toPath (io/file png)))))
+            header
+            (mapv int (take 4 (java.nio.file.Files/readAllBytes (.toPath (io/file png)))))
 
-         rows
-         (cap/png-rows png)]
+            rows
+            (cap/png-rows png)]
 
         (expect (str/ends-with? png "vis-capture-test.png"))
         ;; a bare name lands in the shot directory, never in the working tree
@@ -120,42 +115,39 @@
                                "bye"))
         (.delete (io/file png))))
   (it "trims the blank margins, so the picture is the paint and not an ocean of paper"
-      (let
-        [shot
-         (fn [trim nm]
-           (cap/png-rows
-             (cap/shot!
-               {:cols 40 :rows 12 :font-size 12 :trim trim :out nm :paint! paint-two-frames!})))
+      (let [shot
+            (fn [trim nm]
+              (cap/png-rows
+                (cap/shot!
+                  {:cols 40 :rows 12 :font-size 12 :trim trim :out nm :paint! paint-two-frames!})))
 
-         full
-         (shot false "vis-capture-full")
+            full
+            (shot false "vis-capture-full")
 
-         trimmed
-         (shot true "vis-capture-trim")]
+            trimmed
+            (shot true "vis-capture-trim")]
 
         (expect (< (count trimmed) (count full)))
         (expect (< (count (first trimmed)) (count (first full))))
         ;; the type survived the crop
         (expect (pos? (cap/ink trimmed)))))
   (it "writes one numbered picture per flush"
-      (let
-        [pngs
-         (cap/shots!
-           {:cols 20 :rows 5 :font-size 12 :out "vis-capture-frames" :paint! paint-two-frames!})]
+      (let [pngs
+            (cap/shots!
+              {:cols 20 :rows 5 :font-size 12 :out "vis-capture-frames" :paint! paint-two-frames!})]
         (expect (= 2 (count pngs)))
         (expect (str/ends-with? (first pngs) "vis-capture-frames-0.png"))
         (expect (every? #(.exists (io/file %)) pngs))
         (run! #(.delete (io/file %)) pngs)))
   (it "writes the picture of a paint that threw, then fails loudly"
-      (let
-        [e (try (cap/shot! {:cols 8
-                            :rows 2
-                            :out "vis-capture-boom"
-                            :paint! (fn [{:keys [^TerminalScreen screen]}]
-                                      (.refresh screen)
-                                      (throw (ex-info "boom" {})))})
-                nil
-                (catch clojure.lang.ExceptionInfo t t))]
+      (let [e (try (cap/shot! {:cols 8
+                               :rows 2
+                               :out "vis-capture-boom"
+                               :paint! (fn [{:keys [^TerminalScreen screen]}]
+                                         (.refresh screen)
+                                         (throw (ex-info "boom" {})))})
+                   nil
+                   (catch clojure.lang.ExceptionInfo t t))]
         (expect (some? e))
         (expect (str/includes? (str (ex-cause e)) "boom"))
         (expect (.exists (io/file ^String (:png (ex-data e)))))))

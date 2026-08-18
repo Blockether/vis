@@ -26,8 +26,8 @@
 
 (defmacro ^:private with-fresh-python-context
   [& body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
+                                                                         {}))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (defn- b64 [^bytes raw] (.encodeToString (Base64/getEncoder) raw))
@@ -62,9 +62,8 @@
 
 (defmacro ^:private with-fs-context
   [dir & body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context})
-      (:python-context (ep/create-python-context {} (constantly [~dir])))]
+  `(let [~(with-meta 'python-context {:tag `Context})
+         (:python-context (ep/create-python-context {} (constantly [~dir])))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (defn- py-bytes
@@ -104,24 +103,23 @@
                                  "        getattr(anydoc, name)\n" "    except AttributeError:\n"
                                  "        gone += 1\n" "[public, gone]")))))))
 
-(defdescribe
-  anydoc-convert-test
-  (it "renders a real .docx as GitHub-Flavored Markdown"
-      (with-python-context
-        (let
-          [markdown (ev python-context
-                        (str "import anydoc\n" "anydoc.to_markdown(" (py-bytes @docx-fixture) ")"))]
-          (expect (str/includes? markdown "# **Quarterly Report**"))
-          (expect (str/includes? markdown "Revenue grew.")))))
-  (it "renders signature-less CSV once a name says what it is"
-      (with-python-context (let
-                             [markdown (ev python-context
-                                           (str
-                                             "import anydoc\n"
-                                             "anydoc.to_markdown(b'city,people\\nOslo,700000\\n', "
-                                             "name='cities.csv')"))]
-                             (expect (str/includes? markdown "| city | people |"))
-                             (expect (str/includes? markdown "Oslo"))))))
+(defdescribe anydoc-convert-test
+             (it "renders a real .docx as GitHub-Flavored Markdown"
+                 (with-python-context (let [markdown (ev python-context
+                                                         (str "import anydoc\n"
+                                                              "anydoc.to_markdown("
+                                                              (py-bytes @docx-fixture)
+                                                              ")"))]
+                                        (expect (str/includes? markdown "# **Quarterly Report**"))
+                                        (expect (str/includes? markdown "Revenue grew.")))))
+             (it "renders signature-less CSV once a name says what it is"
+                 (with-python-context
+                   (let [markdown (ev python-context
+                                      (str "import anydoc\n"
+                                           "anydoc.to_markdown(b'city,people\\nOslo,700000\\n', "
+                                           "name='cities.csv')"))]
+                     (expect (str/includes? markdown "| city | people |"))
+                     (expect (str/includes? markdown "Oslo"))))))
 
 (defdescribe anydoc-document-test
              (it "returns a Document carrying the format, its evidence and its assets"
@@ -236,76 +234,74 @@
    page, Helvetica, a correct xref. Handwritten because nothing here WRITES
    PDFs and page provenance can only be proved against a document with pages."
   ^bytes [pages]
-  (let
-    [n
-     (count pages)
+  (let [n
+        (count pages)
 
-     page-ids
-     (mapv #(+ 3 (* 2 (long %))) (range n))
+        page-ids
+        (mapv #(+ 3 (* 2 (long %))) (range n))
 
-     cont-ids
-     (mapv #(+ 4 (* 2 (long %))) (range n))
+        cont-ids
+        (mapv #(+ 4 (* 2 (long %))) (range n))
 
-     font-id
-     (+ 3 (* 2 n))
+        font-id
+        (+ 3 (* 2 n))
 
-     stream
-     (fn [lines]
-       (str "BT /F1 12 Tf 72 720 Td 16 TL\n"
-            (str/join "\n"
-                      (for [l lines]
-                        (str "(" (str/escape l {\\ "\\\\" \( "\\(" \) "\\)"}) ") Tj T*")))
-            "\nET"))
+        stream
+        (fn [lines]
+          (str "BT /F1 12 Tf 72 720 Td 16 TL\n"
+               (str/join "\n"
+                         (for [l lines]
+                           (str "(" (str/escape l {\\ "\\\\" \( "\\(" \) "\\)"}) ") Tj T*")))
+               "\nET"))
 
-     objs
-     (into (sorted-map)
-           (concat [[1 "<< /Type /Catalog /Pages 2 0 R >>"]
-                    [2
-                     (str "<< /Type /Pages /Kids ["
-                          (str/join " " (map #(str % " 0 R") page-ids))
-                          "] /Count "
-                          n
-                          " >>")]
-                    [font-id "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]]
-                   (for [i (range n)]
-                     [(page-ids i)
-                      (str "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents "
-                           (cont-ids i)
-                           " 0 R /Resources << /Font << /F1 "
-                           font-id
-                           " 0 R >> >> >>")])
-                   (for
-                     [i
+        objs
+        (into (sorted-map)
+              (concat
+                [[1 "<< /Type /Catalog /Pages 2 0 R >>"]
+                 [2
+                  (str "<< /Type /Pages /Kids ["
+                       (str/join " " (map #(str % " 0 R") page-ids))
+                       "] /Count "
+                       n
+                       " >>")] [font-id "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]]
+                (for [i (range n)]
+                  [(page-ids i)
+                   (str "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents "
+                        (cont-ids i)
+                        " 0 R /Resources << /Font << /F1 "
+                        font-id
+                        " 0 R >> >> >>")])
+                (for [i
                       (range n)
 
                       :let [s
                             (stream (nth pages i))]]
 
-                     [(cont-ids i) (str "<< /Length " (count s) " >>\nstream\n" s "\nendstream")])))
+                  [(cont-ids i) (str "<< /Length " (count s) " >>\nstream\n" s "\nendstream")])))
 
-     out
-     (java.io.ByteArrayOutputStream.)
+        out
+        (java.io.ByteArrayOutputStream.)
 
-     put!
-     (fn [^String s]
-       (.write out (.getBytes s "ISO-8859-1")))
+        put!
+        (fn [^String s]
+          (.write out (.getBytes s "ISO-8859-1")))
 
-     _
-     (put! "%PDF-1.4\n")
+        _
+        (put! "%PDF-1.4\n")
 
-     offsets
-     (reduce (fn [acc [num body]]
-               (let [at (.size out)]
-                 (put! (str num " 0 obj\n" body "\nendobj\n"))
-                 (assoc acc num at)))
-             {}
-             objs)
+        offsets
+        (reduce (fn [acc [num body]]
+                  (let [at (.size out)]
+                    (put! (str num " 0 obj\n" body "\nendobj\n"))
+                    (assoc acc num at)))
+                {}
+                objs)
 
-     xref-at
-     (.size out)
+        xref-at
+        (.size out)
 
-     size
-     (inc (long (apply max (keys objs))))]
+        size
+        (inc (long (apply max (keys objs))))]
 
     (put! (str "xref\n0 " size "\n0000000000 65535 f \n"))
     (doseq [num (range 1 size)]
@@ -446,11 +442,10 @@
 (defdescribe
   anydoc-corpus-test
   (it "searches a directory, ranks the documents and keeps a broken file out of the way"
-      (let
-        [dir (corpus {"report.docx" @report-docx-bytes
-                      "sales.csv" @march-csv-bytes
-                      "broken.docx" (.getBytes "not a document at all" "UTF-8")
-                      "notes.txt" (.getBytes "March again" "UTF-8")})]
+      (let [dir (corpus {"report.docx" @report-docx-bytes
+                         "sales.csv" @march-csv-bytes
+                         "broken.docx" (.getBytes "not a document at all" "UTF-8")
+                         "notes.txt" (.getBytes "March again" "UTF-8")})]
         (with-fs-context
           dir
           (expect (= [["report.docx" "sales.csv"] ["broken.docx"] true ["csv" "docx"] true 2 true]
@@ -530,23 +525,22 @@
 ;; it past its bound.
 (defdescribe anydoc-host-cache-test
              (it "converts once per key and evicts the least recently used"
-                 (let
-                   [calls
-                    (atom 0)
+                 (let [calls
+                       (atom 0)
 
-                    key-for
-                    (fn [n]
-                      [(str "vis-anydoc-cache-test-" n)])
+                       key-for
+                       (fn [n]
+                         [(str "vis-anydoc-cache-test-" n)])
 
-                    converter
-                    (fn [n]
-                      (fn []
-                        (swap! calls inc)
-                        {"markdown" (str n) "text" ""}))
+                       converter
+                       (fn [n]
+                         (fn []
+                           (swap! calls inc)
+                           {"markdown" (str n) "text" ""}))
 
-                    convert-once
-                    (fn [n]
-                      (@#'shim-anydoc/cached (key-for n) (converter n)))]
+                       convert-once
+                       (fn [n]
+                         (@#'shim-anydoc/cached (key-for n) (converter n)))]
 
                    (expect (= {"markdown" "0" "text" ""} (convert-once 0) (convert-once 0)))
                    (expect (= 1 @calls))
@@ -558,15 +552,14 @@
              ;; budget that weighed only the Markdown let an image-heavy corpus stay
              ;; resident without any bound at all.
              (it "weighs every string in a payload, not just its prose"
-                 (let
-                   [asset-heavy
-                    {"markdown" "tiny"
-                     "text" ""
-                     "blocks" [{"text" (apply str (repeat 100 "b"))}]
-                     "assets" [{"bytes" (apply str (repeat 4000 "A"))}]}
+                 (let [asset-heavy
+                       {"markdown" "tiny"
+                        "text" ""
+                        "blocks" [{"text" (apply str (repeat 100 "b"))}]
+                        "assets" [{"bytes" (apply str (repeat 4000 "A"))}]}
 
-                    key
-                    ["vis-anydoc-asset-weight"]]
+                       key
+                       ["vis-anydoc-asset-weight"]]
 
                    (expect (= 4104 (long (@#'shim-anydoc/entry-chars asset-heavy))))
                    (with-redefs [shim-anydoc/cache-entry-budget 1000]
@@ -577,13 +570,12 @@
              ;; the rest of the day.
              (it "evicts down to the character budget, not just the entry count"
                  (with-redefs [shim-anydoc/cache-total-budget 5000]
-                   (let
-                     [payload (fn [n]
-                                {"markdown" (apply str (repeat 2000 (str n))) "text" ""})
-                      state (reduce (fn [state n]
-                                      (@#'shim-anydoc/cache-put state [n] (payload n)))
-                                    {:entries {} :order [] :chars {}}
-                                    (range 10))]
+                   (let [payload (fn [n]
+                                   {"markdown" (apply str (repeat 2000 (str n))) "text" ""})
+                         state (reduce (fn [state n]
+                                         (@#'shim-anydoc/cache-put state [n] (payload n)))
+                                       {:entries {} :order [] :chars {}}
+                                       (range 10))]
 
                      (expect (= 2 (count (:entries state))))
                      (expect (= [[8] [9]] (:order state)))
@@ -620,11 +612,10 @@
 (defdescribe
   anydoc-sandbox-cache-test
   (it "bounds its own document memo by weight and keeps the most recently used"
-      (let
-        [dir (corpus (into {}
-                           (for [n (range 70)]
-                             [(str "city-" n ".csv")
-                              (.getBytes ^String (str "city,people\nOslo," n "\n"))])))]
+      (let [dir (corpus (into {}
+                              (for [n (range 70)]
+                                [(str "city-" n ".csv")
+                                 (.getBytes ^String (str "city,people\nOslo," n "\n"))])))]
         (with-fs-context
           dir
           (expect
@@ -731,10 +722,9 @@
    page `doc(\"anydoc\")` prints, the module docstring the sandbox hands the model,
    and the docs page. All four are prose nobody runs."
   [^Context python-context]
-  (let
-    [shim (-> shim-anydoc/vis-extension
-              :ext/sandbox-shims
-              first)]
+  (let [shim (-> shim-anydoc/vis-extension
+                 :ext/sandbox-shims
+                 first)]
     {":shim/description" (:shim/description shim)
      ":shim/docs" (:shim/docs shim)
      "anydoc.__doc__" (ev python-context (py "import anydoc" "anydoc.__doc__"))
@@ -772,22 +762,21 @@
    and each line of the module docstring's own query block. An example that is
    printed has to parse and to run."
   [^Context python-context]
-  (let
-    [doc-string
-     (ev python-context (py "import anydoc" "anydoc.__doc__"))
+  (let [doc-string
+        (ev python-context (py "import anydoc" "anydoc.__doc__"))
 
-     table
-     (->> (re-seq #"(?m)^\|([^|]*)\|" @docs-anydoc-section)
-          (mapcat (fn [[_ cell]]
-                    (map second (re-seq #"`([^`]+)`" cell)))))
+        table
+        (->> (re-seq #"(?m)^\|([^|]*)\|" @docs-anydoc-section)
+             (mapcat (fn [[_ cell]]
+                       (map second (re-seq #"`([^`]+)`" cell)))))
 
-     listed
-     (some->> (second (str/split doc-string #"(?s)Query language[^\n]*\n" 2))
-              (#(str/split % #"\n\n"))
-              (filter #(str/starts-with? % "    "))
-              first
-              str/split-lines
-              (map #(first (str/split (str/trim %) #"\s{2,}"))))]
+        listed
+        (some->> (second (str/split doc-string #"(?s)Query language[^\n]*\n" 2))
+                 (#(str/split % #"\n\n"))
+                 (filter #(str/starts-with? % "    "))
+                 first
+                 str/split-lines
+                 (map #(first (str/split (str/trim %) #"\s{2,}"))))]
 
     (into (sorted-set) (concat table listed))))
 
@@ -806,20 +795,19 @@
 (defdescribe
   anydoc-prose-test
   (it "keeps every promise it prints — the prompt, the docstring and the docs"
-      (let
-        [dir (corpus {"report.docx" @report-docx-bytes
-                      "sales.csv" @march-csv-bytes
-                      "broken.pdf" (.getBytes "not a pdf at all" "UTF-8")})]
-        (with-fs-context
-          dir
-          (expect (= {}
-                     (into {}
-                           (keep (fn [[label text]]
-                                   (let
-                                     [unknown
-                                      (unknown-members python-context dir (claimed-members text))]
-                                     (when (seq unknown) [label (vec unknown)]))))
-                           (prose-surfaces python-context)))))))
+      (let [dir (corpus {"report.docx" @report-docx-bytes
+                         "sales.csv" @march-csv-bytes
+                         "broken.pdf" (.getBytes "not a pdf at all" "UTF-8")})]
+        (with-fs-context dir
+                         (expect (= {}
+                                    (into {}
+                                          (keep (fn [[label text]]
+                                                  (let [unknown (unknown-members python-context
+                                                                                 dir
+                                                                                 (claimed-members
+                                                                                   text))]
+                                                    (when (seq unknown) [label (vec unknown)]))))
+                                          (prose-surfaces python-context)))))))
   (it "parses AND runs every query it shows, from both surfaces"
       (let [dir (corpus {"report.docx" @report-docx-bytes "report.pdf" @report-pdf-bytes})]
         (with-fs-context dir
@@ -831,14 +819,13 @@
                                                           (true? ran)))
                                              (query-report python-context dir queries)))))))))
   (it "runs the very example the docs print, against real documents"
-      (let
-        [dir
-         (corpus {"q1.pdf" @report-pdf-bytes "march.docx" @report-docx-bytes})
+      (let [dir
+            (corpus {"q1.pdf" @report-pdf-bytes "march.docx" @report-docx-bytes})
 
-         example
-         (-> (re-find #"(?s)```python\n(.*?)```" @docs-anydoc-section)
-             second
-             (str/replace "\"/data/reports\"" (str "'" dir "'")))]
+            example
+            (-> (re-find #"(?s)```python\n(.*?)```" @docs-anydoc-section)
+                second
+                (str/replace "\"/data/reports\"" (str "'" dir "'")))]
 
         (with-fs-context dir
                          (expect

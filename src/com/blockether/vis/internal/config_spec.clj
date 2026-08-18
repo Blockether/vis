@@ -424,19 +424,18 @@
         ;; configuration shapes. `transport` is optional so a standard config
         ;; can omit it; `http` remains a read-compatible alias for pre-canonical
         ;; Vis state and is normalized to `streamable_http` on a gateway save.
-        (let
-          [transport
-           (case (get % "transport")
-             "http"
-             "streamable_http"
+        (let [transport
+              (case (get % "transport")
+                "http"
+                "streamable_http"
 
-             (get % "transport"))
+                (get % "transport"))
 
-           has-cmd?
-           (non-blank-string? (get % "command"))
+              has-cmd?
+              (non-blank-string? (get % "command"))
 
-           has-url?
-           (non-blank-string? (get % "url"))]
+              has-url?
+              (non-blank-string? (get % "url"))]
 
           (case transport
             "stdio"
@@ -613,12 +612,11 @@
 (defn- edit-distance
   "Levenshtein distance — small inputs only (config key names)."
   [a b]
-  (let
-    [b
-     (vec b)
+  (let [b
+        (vec b)
 
-     n
-     (count b)]
+        n
+        (count b)]
 
     (peek (reduce (fn [prev [i ca]]
                     (reduce (fn [row j]
@@ -634,15 +632,14 @@
 (defn- closest-key
   "The known key a typo most likely meant, or nil when nothing is close enough."
   [k known]
-  (let
-    [k
-     (str/lower-case k)
+  (let [k
+        (str/lower-case k)
 
-     [best distance]
-     (first (sort-by second
-                     (map (fn [c]
-                            [c (edit-distance k (str/lower-case c))])
-                          known)))]
+        [best distance]
+        (first (sort-by second
+                        (map (fn [c]
+                               [c (edit-distance k (str/lower-case c))])
+                             known)))]
 
     (when (and best (pos? (count k)) (<= (long distance) (max 1 (quot (count k) 3)))) best)))
 
@@ -749,11 +746,11 @@
   [config]
   (if (or (not (map? config)) (valid? config))
     [config #{}]
-    (let
-      [dropped
-       (into #{}
-             (comp (map problem-key) (filter derived-machine-keys) (filter #(contains? config %)))
-             (explain-problems config))]
+    (let [dropped (into #{}
+                        (comp (map problem-key)
+                              (filter derived-machine-keys)
+                              (filter #(contains? config %)))
+                        (explain-problems config))]
       [(apply dissoc config dropped) dropped])))
 (defn config-error-panel
   "Caller-facing screen for an invalid config: the offending field lines and
@@ -803,11 +800,7 @@
          #(rooted-path-list? (or (:deny-exec %) []))
          #(s/valid? (get network-schema "inbound_ports") (:inbound-ports %))
          #(string-list? (or (:mach-services %) []))
-         #(let
-            [d
-             (:path-descriptions %)]
-
-            (or (nil? d) (string-map? d)))))
+         #(let [d (:path-descriptions %)] (or (nil? d) (string-map? d)))))
 
 (defn assert-process-jail-config!
   "Validate and return the exact internal policy consumed by process-jail."
@@ -827,9 +820,8 @@
    A bare name is looked up on every PATH directory (all matches denied); an
    absolute/home path is denied verbatim."
   [names]
-  (let
-    [dirs (some-> (System/getenv "PATH")
-                  (str/split (re-pattern java.io.File/pathSeparator)))]
+  (let [dirs (some-> (System/getenv "PATH")
+                     (str/split (re-pattern java.io.File/pathSeparator)))]
     (into []
           (comp (mapcat (fn [n]
                           (let [n (str n)]
@@ -859,10 +851,9 @@
   "The catalog entry's DRAFT isolation policy as a keyword. Absent/unknown →
    `:shared` (write through to the real root), the historical behaviour."
   [entry]
-  (case
-    (some-> (get entry "draft")
-            str
-            str/lower-case)
+  (case (some-> (get entry "draft")
+                str
+                str/lower-case)
     "copy-only"
     :copy-only
 
@@ -908,9 +899,8 @@
 
 (defn- when-os-match?
   [declared os]
-  (let
-    [wanted (cond (string? declared) #{declared}
-                  (coll? declared) (set (map str declared)))]
+  (let [wanted (cond (string? declared) #{declared}
+                     (coll? declared) (set (map str declared)))]
     (or (nil? wanted)
         (contains? wanted os)
         ;; WSL *is* Linux: a `linux` clause covers it, never the other way round.
@@ -927,12 +917,11 @@
                         not a removal: the historical behaviour is preserved)."
   ([entry] (entry-mount-status entry (mount-env)))
   ([entry {:keys [os exists?]}]
-   (let
-     [clause
-      (get entry "when")
+   (let [clause
+         (get entry "when")
 
-      exists?
-      (or exists? path-present?)]
+         exists?
+         (or exists? path-present?)]
 
      (cond (not (when-os-match? (get clause "os") os)) :os-mismatch
            (and (contains? clause "exists") (not (exists? (get clause "exists")))) :when-absent
@@ -964,15 +953,14 @@
      []
      (keep
        (fn [entry]
-         (let
-           [id
-            (get entry "id")
+         (let [id
+               (get entry "id")
 
-            path
-            (get entry "path")
+               path
+               (get entry "path")
 
-            base
-            {:id id :path path}]
+               base
+               {:id id :path path}]
 
            (case (entry-mount-status entry env)
              :os-mismatch
@@ -1097,64 +1085,65 @@
   ([config] (process-jail-config config (mount-env)))
   ([config env]
    (assert-config! config)
-   (let
-     [jail
-      (get config "jail" {})
+   (let [jail
+         (get config "jail" {})
 
-      entries
-      (applicable-entries (get-in config ["workspace" "filesystem"] []) env)
+         entries
+         (applicable-entries (get-in config ["workspace" "filesystem"] []) env)
 
-      by-id
-      (reduce (fn [m e]
-                (assoc m (get e "id") e))
-              {}
-              entries)
+         by-id
+         (reduce (fn [m e]
+                   (assoc m (get e "id") e))
+                 {}
+                 entries)
 
-      allowed
-      ;; The workspace catalog is the single source of roots. When the jail is
-      ;; DISABLED it confines nothing, so the whole catalog is available and must
-      ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
-      ;; stale/renamed id in it can never deny-safe the config. Only a live
-      ;; (enabled) jail narrows to the `allow` subset. An id this host does not
-      ;; mount is skipped; an id no catalog entry ever declared stays a hard
-      ;; config error.
-      (if (true? (get jail "enabled"))
-        (let [declared (into #{} (map #(get % "id")) (get-in config ["workspace" "filesystem"] []))]
-          (into []
-                (keep (fn [id]
-                        (or (get by-id id)
-                            (when-not (contains? declared id)
-                              (throw
-                                (ex-info
-                                  (str "jail.filesystem.allow references unknown workspace id: " id)
-                                  {:type :vis/invalid-config :id id}))))))
-                (get-in jail ["filesystem" "allow"] [])))
-        entries)
+         allowed
+         ;; The workspace catalog is the single source of roots. When the jail is
+         ;; DISABLED it confines nothing, so the whole catalog is available and must
+         ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
+         ;; stale/renamed id in it can never deny-safe the config. Only a live
+         ;; (enabled) jail narrows to the `allow` subset. An id this host does not
+         ;; mount is skipped; an id no catalog entry ever declared stays a hard
+         ;; config error.
+         (if (true? (get jail "enabled"))
+           (let [declared
+                 (into #{} (map #(get % "id")) (get-in config ["workspace" "filesystem"] []))]
+             (into []
+                   (keep (fn [id]
+                           (or (get by-id id)
+                               (when-not (contains? declared id)
+                                 (throw
+                                   (ex-info
+                                     (str "jail.filesystem.allow references unknown workspace id: "
+                                          id)
+                                     {:type :vis/invalid-config :id id}))))))
+                   (get-in jail ["filesystem" "allow"] [])))
+           entries)
 
-      allowed
-      (with-vis-home allowed)
+         allowed
+         (with-vis-home allowed)
 
-      descriptions
-      (into {}
-            (keep (fn [e]
-                    (when-let [d (get e "description")]
-                      [(get e "path") d])))
-            allowed)
+         descriptions
+         (into {}
+               (keep (fn [e]
+                       (when-let [d (get e "description")]
+                         [(get e "path") d])))
+               allowed)
 
-      mach
-      (get jail "mach_services" {})
+         mach
+         (get jail "mach_services" {})
 
-      keychain?
-      (true? (get mach "keychain"))
+         keychain?
+         (true? (get mach "keychain"))
 
-      mach-services
-      (into [] (distinct) (concat (when keychain? keychain-mach-services) (get mach "allow" [])))
+         mach-services
+         (into [] (distinct) (concat (when keychain? keychain-mach-services) (get mach "allow" [])))
 
-      read-only
-      (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
+         read-only
+         (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
 
-      no-search
-      (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)]
+         no-search
+         (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)]
 
      (assert-process-jail-config!
        {:disabled? (not (true? (get jail "enabled")))
@@ -1199,12 +1188,11 @@
    is enforced alongside the filesystem and inbound-port confinement."
   [config]
   (assert-config! config)
-  (let
-    [jail
-     (get config "jail" {})
+  (let [jail
+        (get config "jail" {})
 
-     net
-     (get jail "network" {})]
+        net
+        (get jail "network" {})]
 
     (if-not (true? (get jail "enabled"))
       {}

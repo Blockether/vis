@@ -54,18 +54,17 @@
    wants to transcribe. Cleaning belongs to the ENGINE, so every surface — TUI,
    gateway, app — receives the same finished text."
   [text]
-  (if-let
-    [f (try (requiring-resolve 'com.blockether.vis.ext.foundation-voice.input/clean-transcript)
-            (catch Throwable _ nil))]
+  (if-let [f (try (requiring-resolve
+                    'com.blockether.vis.ext.foundation-voice.input/clean-transcript)
+                  (catch Throwable _ nil))]
     (str (f text))
     (str text)))
 
 (defn transcribe
   "The engine fn: `{:audio-path :on-progress}` -> transcript."
   [{:keys [audio-path on-progress]}]
-  (let
-    [report (fn [m]
-              (when on-progress (try (on-progress m) (catch Throwable _ nil))))]
+  (let [report (fn [m]
+                 (when on-progress (try (on-progress m) (catch Throwable _ nil))))]
     (await-model! report)
     (sherpa/call-native
       #(clean-text (asr/transcribe-file! (asr/model-dir) audio-path {:on-progress on-progress})))))

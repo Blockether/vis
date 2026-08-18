@@ -46,16 +46,15 @@
                    (expect (>= (compare (major-minor pin) minimum-major-minor) 0)
                            (str "deps.edn pins Clojure " pin ", below 1.12"))))
              (it "pins the SAME version in every module that names Clojure"
-                 (let
-                   [root-pin
-                    (clojure-pin "deps.edn")
+                 (let [root-pin
+                       (clojure-pin "deps.edn")
 
-                    pins
-                    (into {}
-                          (keep (fn [path]
-                                  (when-let [v (clojure-pin path)]
-                                    [path v])))
-                          (deps-files))]
+                       pins
+                       (into {}
+                             (keep (fn [path]
+                                     (when-let [v (clojure-pin path)]
+                                       [path v])))
+                             (deps-files))]
 
                    (expect (seq (dissoc pins "deps.edn")))
                    (doseq [[path v] pins]

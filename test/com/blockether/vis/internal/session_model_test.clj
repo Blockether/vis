@@ -8,22 +8,20 @@
   "Run `f` with the debounced DB write stubbed out and the pending queue emptied after,
    so a unit test can drive `set-model!` without a database or a late flush."
   [f]
-  (with-redefs
-    [persistance/db-set-session-model-pref! (fn [& _]
-                                              nil)]
+  (with-redefs [persistance/db-set-session-model-pref! (fn [& _]
+                                                         nil)]
     (try (f) (finally (reset! @#'smodel/pending {})))))
 
 (defn- capturing
   "Register a listener that records `[sid pick]`, run `f`, then deregister it and answer
    what the listener saw."
   [f]
-  (let
-    [seen
-     (atom [])
+  (let [seen
+        (atom [])
 
-     listener
-     (fn [sid pick]
-       (swap! seen conj [sid pick]))]
+        listener
+        (fn [sid pick]
+          (swap! seen conj [sid pick]))]
 
     (try (smodel/add-model-listener! listener)
          (with-quiet-store f)
@@ -54,21 +52,19 @@
       (expect (= [] (capturing #(smodel/set-model! :db nil "openai" "gpt-5")))))
   (it "keeps notifying the others when one listener throws"
       ;; A channel that blows up must not reject the model change for everybody else.
-      (let
-        [boom (fn [& _]
-                (throw (ex-info "listener down" {})))]
+      (let [boom (fn [& _]
+                   (throw (ex-info "listener down" {})))]
         (try (smodel/add-model-listener! boom)
              (expect (= [["sess-1" {:provider "openai" :model "gpt-5" :reason nil}]]
                         (capturing #(smodel/set-model! :db "sess-1" "openai" "gpt-5"))))
              (finally (smodel/remove-model-listener! boom)))))
   (it "stops calling a listener that was removed"
-      (let
-        [seen
-         (atom [])
+      (let [seen
+            (atom [])
 
-         listener
-         (fn [& args]
-           (swap! seen conj (vec args)))]
+            listener
+            (fn [& args]
+              (swap! seen conj (vec args)))]
 
         (smodel/add-model-listener! listener)
         (smodel/remove-model-listener! listener)

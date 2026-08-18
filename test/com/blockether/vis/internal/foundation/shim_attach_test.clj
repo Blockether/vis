@@ -38,18 +38,17 @@
 (defdescribe
   attach-in-memory-capture-test
   (it "records an in-memory artifact and hands back its descriptor"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "d = attach(b'a,b\\n1,2\\n', 'notes.txt')\n"
-                     "print(d['filename'], d['version'], d['kind'], d['media_type'],\n"
-                     "      d['size'], d['is_pending'], d['source'], len(d['id']))\n"))
+            out
+            (block pctx
+                   (str "d = attach(b'a,b\\n1,2\\n', 'notes.txt')\n"
+                        "print(d['filename'], d['version'], d['kind'], d['media_type'],\n"
+                        "      d['size'], d['is_pending'], d['source'], len(d['id']))\n"))
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         ;; The producer is handed the artifact's IDENTITY, not a summary it has to
@@ -67,17 +66,16 @@
         (expect (= "a,b\n1,2\n"
                    (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 att)))))))
   (it "detects an image by magic bytes -> kind image, image/png"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "png = bytes([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]) + b'body'\n"
-                     "attach(png, 'fig.dat')\n"))
+            out
+            (block pctx
+                   (str "png = bytes([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]) + b'body'\n"
+                        "attach(png, 'fig.dat')\n"))
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= "image/png" (:media-type att)))
@@ -111,64 +109,60 @@
       ;; and the bytes are still captured for the vision-replay path
       (expect (= "image/png" (:media-type (first (:attachments out)))))))
   (it "records a non-decodable image (svg) with NO display fence"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx "attach(b'<svg/>', 'a.svg', media_type='image/svg+xml')\n")]
+            out
+            (block pctx "attach(b'<svg/>', 'a.svg', media_type='image/svg+xml')\n")]
 
         (expect (nil? (:error out)))
         (expect (not (re-find #"vis-image" (str (:stdout out)))))
         (expect (= "image/svg+xml" (:media-type (first (:attachments out)))))))
   (it "falls back to text/plain for undecorated utf-8 bytes"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx "attach(b'just words', 'note')\n")
+            out
+            (block pctx "attach(b'just words', 'note')\n")
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (= "text/plain" (:media-type att)))
         (expect (= "file" (:kind att)))))
   (it "honours explicit kind / media_type overrides"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx "attach(b'x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
+            out
+            (block pctx "attach(b'x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (= "image/svg+xml" (:media-type att)))
         (expect (= "image" (:kind att)))))
   (it "collects MANY artifacts from one block, in order"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx (str "attach(b'1', 'a.txt')\n" "attach(b'2', 'b.json')\n"))]
+            out
+            (block pctx (str "attach(b'1', 'a.txt')\n" "attach(b'2', 'b.json')\n"))]
 
         (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out))))))
   (it "renders and captures a matplotlib Figure with a positional filename"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "import matplotlib.pyplot as plt\n" "fig, ax = plt.subplots(figsize=(7, 4))\n"
-                     "ax.plot([0, 1], [0, 1])\n" "ax.set(title='plot', xlabel='x', ylabel='y')\n"
-                     "attach(fig, 'plot.png')\n" "plt.close(fig)\n"))
+            out
+            (block pctx
+                   (str "import matplotlib.pyplot as plt\n"
+                        "fig, ax = plt.subplots(figsize=(7, 4))\n"
+                        "ax.plot([0, 1], [0, 1])\n" "ax.set(title='plot', xlabel='x', ylabel='y')\n"
+                        "attach(fig, 'plot.png')\n" "plt.close(fig)\n"))
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= "plot.png" (:filename att)))
@@ -178,18 +172,17 @@
   ;; and died with "attach: no such file: <PIL.Image.Image ...>", so a picture
   ;; cropped in the sandbox could not be attached without writing it out first.
   (it "encodes and captures a PIL image handed straight to attach"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "from PIL import Image\n"
-                     "img = Image.new('RGBA', (12, 9), (255, 0, 0, 255))\n"
-                     "attach(img, 'crop.png')\n"))
+            out
+            (block pctx
+                   (str "from PIL import Image\n"
+                        "img = Image.new('RGBA', (12, 9), (255, 0, 0, 255))\n"
+                        "attach(img, 'crop.png')\n"))
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= "crop.png" (:filename att)))
@@ -198,18 +191,17 @@
         ;; the pixels really rode along: the fence carries the image's own dims
         (expect (re-find #"12x9" (str (:stdout out))))))
   (it "lets the filename choose the encoder for a PIL image, defaulting to PNG"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "from PIL import Image\n"
-                     "img = Image.new('RGBA', (6, 6), (0, 128, 255, 255))\n"
-                     "attach(img, 'shot.jpg')\n" "attach(img)\n"))
+            out
+            (block pctx
+                   (str "from PIL import Image\n"
+                        "img = Image.new('RGBA', (6, 6), (0, 128, 255, 255))\n"
+                        "attach(img, 'shot.jpg')\n" "attach(img)\n"))
 
-         [jpg png]
-         (:attachments out)]
+            [jpg png]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         ;; a JPEG has no alpha channel, so an RGBA image is converted, not refused
@@ -217,14 +209,13 @@
         (expect (= ["image.png" "image/png"] [(:filename png) (:media-type png)]))))
   (it
     "refuses a source that is neither a path nor a producer, by name"
-    (let
-      [pctx
-       (ctx-with-root (temp-root))
+    (let [pctx
+          (ctx-with-root (temp-root))
 
-       out
-       (block pctx
-              (str "try:\n" "    attach({'rows': 1}, 'data.json')\n"
-                   "except TypeError as e:\n" "    print('RAISED', e)\n"))]
+          out
+          (block pctx
+                 (str "try:\n" "    attach({'rows': 1}, 'data.json')\n"
+                      "except TypeError as e:\n" "    print('RAISED', e)\n"))]
 
       (expect (nil? (:error out)))
       ;; naming the SHAPE that was wrong, never a repr reported as a missing file
@@ -255,46 +246,43 @@
       ;; so a labeled series of shots says which shot is which.
       (expect (re-find #"\[Image: dot\.png 1×1, [^\]]*\] Scoped to studio: 89 matches" so))))
   (it "prints a caption line for a labeled artifact that has no inline fence"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx "attach(b'hello there', 'notes.txt', label='fleet counts')\n")]
+            out
+            (block pctx "attach(b'hello there', 'notes.txt', label='fleet counts')\n")]
 
         (expect (nil? (:error out)))
         (expect (re-find #"\[Attached: notes\.txt\] fleet counts" (str (:stdout out))))))
   (it "attach takes the same label kwarg for a file on disk"
-      (let
-        [root
-         (temp-root)
+      (let [root
+            (temp-root)
 
-         pctx
-         (ctx-with-root root)
+            pctx
+            (ctx-with-root root)
 
-         out
-         (block pctx
-                (str "with open("
-                     (pr-str (str root "/note.txt"))
-                     ", 'w') as f:\n"
-                     "    f.write('hello')\n"
-                     "attach("
-                     (pr-str (str root "/note.txt"))
-                     ", label='the note')\n"))]
+            out
+            (block pctx
+                   (str "with open("
+                        (pr-str (str root "/note.txt"))
+                        ", 'w') as f:\n"
+                        "    f.write('hello')\n"
+                        "attach("
+                        (pr-str (str root "/note.txt"))
+                        ", label='the note')\n"))]
 
         (expect (nil? (:error out)))
         (expect (some #(= "note.txt" (:filename %)) (:attachments out)))
         (expect (re-find #"\[Attached: note\.txt\] the note" (str (:stdout out))))))
   (it "emits a vis-table fence for a CSV artifact so it can be viewed as a table"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx "attach(b'a,b\\n1,2\\nx,3\\n', 'data.csv', label='fleet counts')\n")
+            out
+            (block pctx "attach(b'a,b\\n1,2\\nx,3\\n', 'data.csv', label='fleet counts')\n")
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= "text/csv" (:media-type att)))
@@ -311,61 +299,58 @@
 (defdescribe
   attach-path-test
   (it "reads a confined file from disk and captures it"
-      (let
-        [root
-         (temp-root)
+      (let [root
+            (temp-root)
 
-         pctx
-         (ctx-with-root root)
+            pctx
+            (ctx-with-root root)
 
-         out
-         (block pctx
-                (str "with open('"
-                     root
-                     "/report.json','w') as f:\n"
-                     "    f.write('{}')\n"
-                     "attach('"
-                     root
-                     "/report.json')\n"))
+            out
+            (block pctx
+                   (str "with open('"
+                        root
+                        "/report.json','w') as f:\n"
+                        "    f.write('{}')\n"
+                        "attach('"
+                        root
+                        "/report.json')\n"))
 
-         [att]
-         (:attachments out)]
+            [att]
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (= "report.json" (:filename att)))
         (expect (= "application/json" (:media-type att)))))
   (it "refuses a path outside the filesystem roots"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "try:\n"
-                     "    attach('/etc/hosts')\n" "    print('NO-RAISE')\n"
-                     "except Exception as e:\n" "    print('RAISED', type(e).__name__)\n"))]
+            out
+            (block pctx
+                   (str "try:\n"
+                        "    attach('/etc/hosts')\n" "    print('NO-RAISE')\n"
+                        "except Exception as e:\n" "    print('RAISED', type(e).__name__)\n"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED" (str (:stdout out))))
         (expect (empty? (:attachments out)))))
   (it "takes a pathlib.Path and a `~`-relative path, and names the file plainly when it is missing"
-      (let
-        [root
-         (temp-root)
+      (let [root
+            (temp-root)
 
-         pctx
-         (ctx-with-root root)
+            pctx
+            (ctx-with-root root)
 
-         out
-         (block pctx
-                (str "import os, pathlib\n"
-                     "root = " (pr-str root)
-                     "\n" "with open(root + '/report.json','w') as f:\n"
-                     "    f.write('{}')\n" "os.environ['HOME'] = root\n"
-                     "attach(pathlib.Path(root + '/report.json'), 'pathlib.json')\n"
-                     "attach('~/report.json', 'tilde.json')\n"
-                     "try:\n" "    attach(root + '/nope.json')\n"
-                     "except Exception as e:\n" "    print('RAISED', e)\n"))]
+            out
+            (block pctx
+                   (str "import os, pathlib\n"
+                        "root = " (pr-str root)
+                        "\n" "with open(root + '/report.json','w') as f:\n"
+                        "    f.write('{}')\n" "os.environ['HOME'] = root\n"
+                        "attach(pathlib.Path(root + '/report.json'), 'pathlib.json')\n"
+                        "attach('~/report.json', 'tilde.json')\n"
+                        "try:\n" "    attach(root + '/nope.json')\n"
+                        "except Exception as e:\n" "    print('RAISED', e)\n"))]
 
         (expect (nil? (:error out)))
         (expect (= ["pathlib.json" "tilde.json"]
@@ -385,12 +370,12 @@
         (expect (true? (ev pctx "'callable' in doc('attach')")))
         (expect (true? (ev pctx "'callable' in doc('show_attachment')")))))
   (it "discovers declared capabilities instead of the internal shim identity"
-      (with-redefs
-        [extension/sandbox-shims (constantly [{:shim/name "internal-id"
-                                               :shim/imports ["actual_module"]
-                                               :shim/globals ["actual_global"]
-                                               :shim/description "Synthetic discovery contract."
-                                               :shim/source "vis-shims-test/discovery.py"}])]
+      (with-redefs [extension/sandbox-shims (constantly
+                                              [{:shim/name "internal-id"
+                                                :shim/imports ["actual_module"]
+                                                :shim/globals ["actual_global"]
+                                                :shim/description "Synthetic discovery contract."
+                                                :shim/source "vis-shims-test/discovery.py"}])]
         (let [pctx (ctx-with-root (temp-root))]
           (expect (= ["actual_global" "actual_module"]
                      (vec (ev pctx "sorted(list(apropos('actual'))[:2])"))))
@@ -414,22 +399,21 @@
              ;; nobody asked for. `attach` is the one way an artifact is kept.
              ;; See `mpl-capture/incidental-capture-enabled?` — flip it to re-arm both.
              (it "records NOTHING for a file the sandbox merely writes"
-                 (let
-                   [root
-                    (temp-root)
+                 (let [root
+                       (temp-root)
 
-                    pctx
-                    (ctx-with-root root)
+                       pctx
+                       (ctx-with-root root)
 
-                    ;; `temp-root` sits UNDER the system temp root, which is exactly the
-                    ;; widest case the old tap captured.
-                    out
-                    (block pctx
-                           (str "with open('"
-                                root
-                                "/plain.txt', 'w') as f:\n"
-                                "    f.write('hi')\n"
-                                "print('ok')\n"))]
+                       ;; `temp-root` sits UNDER the system temp root, which is exactly the
+                       ;; widest case the old tap captured.
+                       out
+                       (block pctx
+                              (str "with open('"
+                                   root
+                                   "/plain.txt', 'w') as f:\n"
+                                   "    f.write('hi')\n"
+                                   "print('ok')\n"))]
 
                    (expect (nil? (:error out)))
                    (expect (empty? (:attachments out)))))
@@ -438,20 +422,19 @@
                    (expect (false? (ev pctx "'VIS_OUTBOX' in globals()")))
                    (expect (false? (ev pctx "import os; 'VIS_OUTBOX' in os.environ")))))
              (it "still records what a tool DELIBERATELY attaches in the same block"
-                 (let
-                   [root
-                    (temp-root)
+                 (let [root
+                       (temp-root)
 
-                    pctx
-                    (ctx-with-root root)
+                       pctx
+                       (ctx-with-root root)
 
-                    out
-                    (block pctx
-                           (str "with open('"
-                                root
-                                "/scratch.csv', 'w') as f:\n"
-                                "    f.write('a,b\\n1,2\\n')\n"
-                                "attach(b'a,b\\n1,2\\n', 'kept.csv')\n"))]
+                       out
+                       (block pctx
+                              (str "with open('"
+                                   root
+                                   "/scratch.csv', 'w') as f:\n"
+                                   "    f.write('a,b\\n1,2\\n')\n"
+                                   "attach(b'a,b\\n1,2\\n', 'kept.csv')\n"))]
 
                    (expect (nil? (:error out)))
                    (expect (= 1 (count (:attachments out))))
@@ -466,25 +449,24 @@
    thread yet must still reach the block's `:attachments`."
   [^java.util.concurrent.ExecutorService executor]
   (fn [& thunks]
-    (let
-      [thunks
-       (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-         (vec (first thunks))
-         (vec thunks))
+    (let [thunks
+          (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+            (vec (first thunks))
+            (vec thunks))
 
-       call
-       (fn [t]
-         (cond (instance? Value t) (.execute ^Value t (object-array 0))
-               (ifn? t) (t)
-               :else t))
+          call
+          (fn [t]
+            (cond (instance? Value t) (.execute ^Value t (object-array 0))
+                  (ifn? t) (t)
+                  :else t))
 
-       futs
-       (mapv (fn [t]
-               (.submit executor
-                        ^Callable
-                        (bound-fn* (fn []
-                                     (call t)))))
-             thunks)]
+          futs
+          (mapv (fn [t]
+                  (.submit executor
+                           ^Callable
+                           (bound-fn* (fn []
+                                        (call t)))))
+                thunks)]
 
       (mapv (fn [^Future f]
               (.get f))
@@ -507,22 +489,21 @@
    that thread so `attach` still lands in the block's `:attachments`
    — no silent drop, no nil sink."
   (it "captures every gather-produced artifact into the block's :attachments"
-      (let
-        [ex
-         (Executors/newVirtualThreadPerTaskExecutor)
+      (let [ex
+            (Executors/newVirtualThreadPerTaskExecutor)
 
-         pctx
-         (ctx-with-gather (temp-root) ex)
+            pctx
+            (ctx-with-gather (temp-root) ex)
 
-         out
-         (try (block pctx
-                     (str "async def mk(name):\n" "    return attach(b'payload', name)\n"
-                          "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
-                          "print(len(r))\n"))
-              (finally (.shutdownNow ex)))
+            out
+            (try (block pctx
+                        (str "async def mk(name):\n" "    return attach(b'payload', name)\n"
+                             "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
+                             "print(len(r))\n"))
+                 (finally (.shutdownNow ex)))
 
-         atts
-         (:attachments out)]
+            atts
+            (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (re-find #"^3" (str (:stdout out))))
@@ -556,15 +537,14 @@
               :storage-uri nil}))
    :reinspect (fn [id]
                 (when (= id "a1")
-                  (let
-                    [a {:id "a1"
-                        :base64 (.encodeToString (java.util.Base64/getEncoder)
-                                                 (.getBytes "PNGDATA"))
-                        :media-type "image/png"
-                        :filename "chart.png"
-                        :kind "image"
-                        :size 7
-                        :storage-uri nil}]
+                  (let [a {:id "a1"
+                           :base64 (.encodeToString (java.util.Base64/getEncoder)
+                                                    (.getBytes "PNGDATA"))
+                           :media-type "image/png"
+                           :filename "chart.png"
+                           :kind "image"
+                           :size 7
+                           :storage-uri nil}]
                     (mpl-capture/queue-reinspection! a)
                     a)))})
 
@@ -578,118 +558,110 @@
    the two it is holding. Unbound, they raise a clear RuntimeError instead of
    silently returning nothing."
   (it "lists metadata and reads the bytes back"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (binding [mpl-capture/*attachment-reader* (fake-reader)]
-           (block pctx
-                  (str "a = list_attachments()[0]\n" "d = get_attachment('a1')\n"
+            out
+            (binding [mpl-capture/*attachment-reader* (fake-reader)]
+              (block pctx
+                     (str
+                       "a = list_attachments()[0]\n" "d = get_attachment('a1')\n"
                        "r = read_attachment('a1')\n"
                        "print(a['id'], a['media_type'], a['tool_call_id'], a['iteration_id'],\n"
                        "      a['turn_id'])\n"
                        "print(type(r).__name__, r.decode('utf-8'), d['filename'], d['size'])\n")))
 
-         so
-         (str (:stdout out))]
+            so
+            (str (:stdout out))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"a1 image/png call-1 it1 turn-1" so))
         (expect (re-find #"bytes PNGDATA chart.png 7" so))))
-  (it
-    "addresses one artifact by its filename exactly as by its id"
-    (let
-      [pctx
-       (ctx-with-root (temp-root))
+  (it "addresses one artifact by its filename exactly as by its id"
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-       sink
-       (atom [])
+            sink
+            (atom [])
 
-       out
-       (binding
-         [mpl-capture/*attachment-reader*
-          (fake-reader)
+            out
+            (binding [mpl-capture/*attachment-reader*
+                      (fake-reader)
 
-          mpl-capture/*attachment-reinspection-sink*
-          sink]
+                      mpl-capture/*attachment-reinspection-sink*
+                      sink]
 
-         (block pctx
-                (str "print(read_attachment('chart.png').decode('utf-8'))\n"
-                     "print(get_attachment('chart.png')['id'])\n"
-                     "print(show_attachment('chart.png')['id'])\n"
-                     "try:\n" "    read_attachment('nope.png')\n"
-                     "except LookupError as e:\n"
-                     "    print('RAISED', 'id or filename' in str(e))\n")))
+              (block pctx
+                     (str "print(read_attachment('chart.png').decode('utf-8'))\n"
+                          "print(get_attachment('chart.png')['id'])\n"
+                          "print(show_attachment('chart.png')['id'])\n"
+                          "try:\n" "    read_attachment('nope.png')\n"
+                          "except LookupError as e:\n"
+                          "    print('RAISED', 'id or filename' in str(e))\n")))
 
-       so
-       (str (:stdout out))]
+            so
+            (str (:stdout out))]
 
-      (expect (nil? (:error out)))
-      ;; The name reaches the same bytes the id does — that IS the rule.
-      (expect (re-find #"(?m)^PNGDATA$" so))
-      ;; get_ and show_ resolve the name to the one stored cut, id a1.
-      (expect (= 2 (count (re-seq #"(?m)^a1$" so))))
-      (expect (= ["a1"] (mapv :id @sink)))
-      ;; One vocabulary in the failure too: neither spelling exists.
-      (expect (re-find #"RAISED True" so))))
+        (expect (nil? (:error out)))
+        ;; The name reaches the same bytes the id does — that IS the rule.
+        (expect (re-find #"(?m)^PNGDATA$" so))
+        ;; get_ and show_ resolve the name to the one stored cut, id a1.
+        (expect (= 2 (count (re-seq #"(?m)^a1$" so))))
+        (expect (= ["a1"] (mapv :id @sink)))
+        ;; One vocabulary in the failure too: neither spelling exists.
+        (expect (re-find #"RAISED True" so))))
   (it "shows a persisted image to the model for one request without duplicating it"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         sink
-         (atom [])
+            sink
+            (atom [])
 
-         out
-         (binding
-           [mpl-capture/*attachment-reader*
-            (fake-reader)
+            out
+            (binding [mpl-capture/*attachment-reader*
+                      (fake-reader)
 
-            mpl-capture/*attachment-reinspection-sink*
-            sink]
+                      mpl-capture/*attachment-reinspection-sink*
+                      sink]
 
-           (block pctx "r = show_attachment('a1')\nprint(r['id'], r['media_type'])"))]
+              (block pctx "r = show_attachment('a1')\nprint(r['id'], r['media_type'])"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"a1 image/png" (str (:stdout out))))
         (expect (= ["a1"] (mapv :id @sink)))))
   (it "coalesces repeated reinspection requests by durable attachment id"
-      (let
-        [sink
-         (atom [])
+      (let [sink
+            (atom [])
 
-         att
-         {:id "a1" :media-type "image/png"}]
+            att
+            {:id "a1" :media-type "image/png"}]
 
         (binding [mpl-capture/*attachment-reinspection-sink* sink]
           (mpl-capture/queue-reinspection! att)
           (mpl-capture/queue-reinspection! att))
         (expect (= ["a1"] (mapv :id @sink)))))
   (it "raises on an unknown id"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (binding [mpl-capture/*attachment-reader* (fake-reader)]
-           (block pctx
-                  (str "try:\n"
-                       "    read_attachment('zzz')\n" "    print('NO-RAISE')\n"
-                       "except Exception as e:\n"
-                       "    print('RAISED', 'no attachment' in str(e))\n")))]
+            out
+            (binding [mpl-capture/*attachment-reader* (fake-reader)]
+              (block pctx
+                     (str "try:\n"
+                          "    read_attachment('zzz')\n" "    print('NO-RAISE')\n"
+                          "except Exception as e:\n"
+                          "    print('RAISED', 'no attachment' in str(e))\n")))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out))))))
   (it "answers with the RUNNING block's own artifacts when no reader is bound"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "attach(b'solo', 'solo.txt')\n"
-                     "print([r['filename'] for r in list_attachments()])\n"))]
+            out
+            (block pctx
+                   (str "attach(b'solo', 'solo.txt')\n"
+                        "print([r['filename'] for r in list_attachments()])\n"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"solo\.txt" (str (:stdout out))))))
@@ -719,15 +691,13 @@
         (expect (= "chart.png" (:filename (:row out))))
         (expect (= "both" (:audience (:row out))))))
   (it "stamps audience \"user\" so the send-time gate keeps the bytes off the wire"
-      (let
-        [out (attach-out (str "attach(b'PNGDATA', 'chart.png', media_type='image/png', "
-                              "audience='user')\n"))]
+      (let [out (attach-out (str "attach(b'PNGDATA', 'chart.png', media_type='image/png', "
+                                 "audience='user')\n"))]
         (expect (nil? (:error out)))
         (expect (= "user" (:audience (:row out))))))
   (it "says NOTHING to the human for audience \"model\""
-      (let
-        [out (attach-out (str "attach(b'PNGDATA', 'chart.png', media_type='image/png', "
-                              "audience='model', label='for my own eyes')\n"))]
+      (let [out (attach-out (str "attach(b'PNGDATA', 'chart.png', media_type='image/png', "
+                                 "audience='model', label='for my own eyes')\n"))]
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
         (expect (= "model" (:audience (:row out))))
@@ -735,12 +705,11 @@
         ;; the block naming an artifact the human was never meant to review.
         (expect (not (re-find #"chart\.png" (str (:stdout out)))))))
   (it "refuses an audience outside the closed vocabulary"
-      (let
-        [out (attach-out (str "try:\n"
-                              "    attach(b'PNGDATA', 'c.png', media_type='image/png', "
-                              "audience='everyone')\n"
-                              "except ValueError as e:\n"
-                              "    print('RAISED', 'both' in str(e))\n"))]
+      (let [out (attach-out (str "try:\n"
+                                 "    attach(b'PNGDATA', 'c.png', media_type='image/png', "
+                                 "audience='everyone')\n"
+                                 "except ValueError as e:\n"
+                                 "    print('RAISED', 'both' in str(e))\n"))]
         (expect (empty? (:attachments out)))
         (expect (re-find #"RAISED True" (str (:stdout out)))))))
 
@@ -767,27 +736,27 @@
    attaching a fourth unrelated chart."
   (it
     "walks one artifact's versions, defaults to the latest, and indexes backwards"
-    (let
-      [pctx
-       (ctx-with-root (temp-root))
+    (let [pctx
+          (ctx-with-root (temp-root))
 
-       out
-       (binding [mpl-capture/*attachment-reader* (versioned-reader)]
-         (block pctx
-                (str "vs = list_attachments('chart.png')\n"
-                     "print([v['version'] for v in vs], [v['id'] for v in vs])\n"
-                     "print(get_attachment('chart.png')['id'])\n"
-                     "print(get_attachment('chart.png', 1)['id'])\n"
-                     "print(get_attachment('chart.png', -2)['id'])\n"
-                     "print(get_attachment('v2')['id'])\n" "print(list_attachments('nope.png'))\n"
-                     "try:\n" "    get_attachment('chart.png', 9)\n"
-                     "except LookupError as e:\n"
-                     "    print('RAISED', 'versions: 1, 2, 3' in str(e))\n"
-                     "try:\n" "    get_attachment('nope.png')\n"
-                     "except LookupError:\n" "    print('MISSING')\n")))
+          out
+          (binding [mpl-capture/*attachment-reader* (versioned-reader)]
+            (block pctx
+                   (str "vs = list_attachments('chart.png')\n"
+                        "print([v['version'] for v in vs], [v['id'] for v in vs])\n"
+                        "print(get_attachment('chart.png')['id'])\n"
+                        "print(get_attachment('chart.png', 1)['id'])\n"
+                        "print(get_attachment('chart.png', -2)['id'])\n"
+                        "print(get_attachment('v2')['id'])\n"
+                        "print(list_attachments('nope.png'))\n"
+                        "try:\n" "    get_attachment('chart.png', 9)\n"
+                        "except LookupError as e:\n"
+                        "    print('RAISED', 'versions: 1, 2, 3' in str(e))\n"
+                        "try:\n" "    get_attachment('nope.png')\n"
+                        "except LookupError:\n" "    print('MISSING')\n")))
 
-       so
-       (str (:stdout out))]
+          so
+          (str (:stdout out))]
 
       (expect (nil? (:error out)))
       ;; Oldest-first, and only THIS artifact's cuts — notes.txt is its own thread.
@@ -813,15 +782,14 @@
    — the shim description that rides the prompt, and the sandbox `doc()` plus
    `__doc__` of both attach twins — carries the same rule in the same words."
   (it "tells the write side to keep one document under one name"
-      (let
-        [shim
-         (->> shim-attach/vis-extension
-              :ext/sandbox-shims
-              (filter #(= "attachments" (:shim/name %)))
-              first)
+      (let [shim
+            (->> shim-attach/vis-extension
+                 :ext/sandbox-shims
+                 (filter #(= "attachments" (:shim/name %)))
+                 first)
 
-         descr
-         (str (:shim/description shim))]
+            descr
+            (str (:shim/description shim))]
 
         (expect (re-find #"SAME DOCUMENT, SAME NAME" descr))
         (expect (re-find #"(?i)next VERSION" descr))
@@ -851,81 +819,76 @@
    this block just attached as well as the ones already persisted, because the
    producer cannot wait a turn to look at what it produced."
   (it "addresses a fresh artifact by descriptor, by filename and by id"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "d = attach(b'a,b\\n1,2\\n', 'fresh.csv')\n"
-                     "print(get_attachment(d)['id'] == d['id'],\n"
-                     "      get_attachment('fresh.csv')['id'] == d['id'],\n"
-                     "      get_attachment(d['id'])['id'] == d['id'])\n"
-                     "print(read_attachment(d) == b'a,b\\n1,2\\n',\n"
-                     "      [r['filename'] for r in list_attachments()])\n"))]
+            out
+            (block pctx
+                   (str "d = attach(b'a,b\\n1,2\\n', 'fresh.csv')\n"
+                        "print(get_attachment(d)['id'] == d['id'],\n"
+                        "      get_attachment('fresh.csv')['id'] == d['id'],\n"
+                        "      get_attachment(d['id'])['id'] == d['id'])\n"
+                        "print(read_attachment(d) == b'a,b\\n1,2\\n',\n"
+                        "      [r['filename'] for r in list_attachments()])\n"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"True True True" (str (:stdout out))))
         (expect (re-find #"True \['fresh\.csv'\]" (str (:stdout out))))))
-  (it
-    "chains versions of one name inside a single block"
-    (let
-      [pctx
-       (ctx-with-root (temp-root))
+  (it "chains versions of one name inside a single block"
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-       out
-       (block pctx
+            out
+            (block
+              pctx
               (str
                 "attach(b'one', 'chart.png', media_type='image/png')\n"
                 "d2 = attach(b'two', 'chart.png', media_type='image/png')\n"
                 "print(d2['version'], [r['version'] for r in list_attachments('chart.png')])\n"))]
 
-      (expect (nil? (:error out)))
-      (expect (re-find #"2 \[1, 2\]" (str (:stdout out))))))
+        (expect (nil? (:error out)))
+        (expect (re-find #"2 \[1, 2\]" (str (:stdout out))))))
   (it "show_attachment names a fresh image instead of refusing it"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "d = attach(b'PNGDATA', 'shot.png', media_type='image/png')\n"
-                     "s = show_attachment(d)\n"
-                     "print(s['id'] == d['id'], s['filename'], s['size'])\n"))]
+            out
+            (block pctx
+                   (str "d = attach(b'PNGDATA', 'shot.png', media_type='image/png')\n"
+                        "s = show_attachment(d)\n"
+                        "print(s['id'] == d['id'], s['filename'], s['size'])\n"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"True shot\.png 7" (str (:stdout out))))))
   (it "queues a fresh user-only image for the next request, and never a wire one"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         sink
-         (atom [])
+            sink
+            (atom [])
 
-         out
-         (binding [mpl-capture/*attachment-reinspection-sink* sink]
-           (block pctx
-                  (str "u = attach(b'PNGDATA', 'user.png', media_type='image/png', "
-                       "audience='user')\n"
-                       "b = attach(b'PNGDATA', 'both.png', media_type='image/png')\n"
-                       "show_attachment(u)\n" "show_attachment(b)\n")))]
+            out
+            (binding [mpl-capture/*attachment-reinspection-sink* sink]
+              (block pctx
+                     (str "u = attach(b'PNGDATA', 'user.png', media_type='image/png', "
+                          "audience='user')\n"
+                          "b = attach(b'PNGDATA', 'both.png', media_type='image/png')\n"
+                          "show_attachment(u)\n" "show_attachment(b)\n")))]
 
         (expect (nil? (:error out)))
         ;; The one the human alone was shown is put in front of the model; the
         ;; one already riding this request is not sent twice.
         (expect (= ["user.png"] (mapv :filename @sink)))))
   (it "refuses a wrong keyword BY NAME, naming the one that was meant"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-         out
-         (block pctx
-                (str "try:\n"
-                     "    attach(b'x', name='a.txt', title='t')\n" "except TypeError as e:\n"
-                     "    print('RAISED', \"no keyword 'name'\" in str(e),\n"
-                     "          'filename' in str(e))\n"))]
+            out
+            (block pctx
+                   (str "try:\n"
+                        "    attach(b'x', name='a.txt', title='t')\n" "except TypeError as e:\n"
+                        "    print('RAISED', \"no keyword 'name'\" in str(e),\n"
+                        "          'filename' in str(e))\n"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True True" (str (:stdout out))))

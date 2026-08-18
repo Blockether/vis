@@ -82,9 +82,8 @@
         (expect (seq (ctx-fns)) "at least one extension contributes ctx")))
   (it "hands Python string-keyed payloads for every no-arg observation tool"
       (doseq [[ext e] (readable-symbols)]
-        (let
-          [sym (:ext.symbol/symbol e)
-           [status v] (crossing #(extension/invoke-symbol-wrapper ext e [] (probe-env)))]
+        (let [sym (:ext.symbol/symbol e)
+              [status v] (crossing #(extension/invoke-symbol-wrapper ext e [] (probe-env)))]
 
           (expect (not= :boundary-violation status) (str sym " -> " v))
           (when (and (= :ok status) (map? v))

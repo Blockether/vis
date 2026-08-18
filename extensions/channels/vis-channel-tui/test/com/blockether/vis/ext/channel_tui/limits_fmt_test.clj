@@ -87,46 +87,42 @@
 (defdescribe
   dynamic-summary-test
   (it "renders the Z.ai coding plan 5h + 7d rows compactly"
-      (let
-        [limits
-         {:dynamic {:limits [{:id :zai-coding-plan-5h :remaining 47}
-                             {:id :zai-coding-plan-7d :remaining 80}]}}
+      (let [limits
+            {:dynamic {:limits [{:id :zai-coding-plan-5h :remaining 47}
+                                {:id :zai-coding-plan-7d :remaining 80}]}}
 
-         out
-         (lfmt/dynamic-summary limits)]
+            out
+            (lfmt/dynamic-summary limits)]
 
         ;; The plan name is written ONCE and each window carries only its number.
         (expect (= "Z.ai 5h 47% · 7d 80%" out))))
   (it "caps to `max-rows` (default 3)"
-      (let
-        [limits
-         {:dynamic {:limits [{:id :a :label "a" :remaining 10} {:id :b :label "b" :remaining 20}
-                             {:id :c :label "c" :remaining 30}]}}
+      (let [limits
+            {:dynamic {:limits [{:id :a :label "a" :remaining 10} {:id :b :label "b" :remaining 20}
+                                {:id :c :label "c" :remaining 30}]}}
 
-         out
-         (lfmt/dynamic-summary limits)]
+            out
+            (lfmt/dynamic-summary limits)]
 
         (expect (= 2 (count (re-seq #" · " out))))))
   (it "prefers rows with signal; falls back to all when none have signal"
-      (let
-        [limits
-         {:dynamic {:limits [{:id :a :label "a" :remaining 0} {:id :b :label "b" :remaining 0}]}}
+      (let [limits
+            {:dynamic {:limits [{:id :a :label "a" :remaining 0} {:id :b :label "b" :remaining 0}]}}
 
-         out
-         (lfmt/dynamic-summary limits)]
+            out
+            (lfmt/dynamic-summary limits)]
 
         (expect (some? out))))
   (it "keeps a no-signal account plan window so a companion pair stays visible"
       ;; A provider that omits one window ships a placeholder row with no usage
       ;; signal (Codex 5h here); it must still render beside its data-bearing
       ;; companion instead of collapsing to a lone `7d`.
-      (let
-        [limits
-         {:dynamic {:limits [{:id :codex-5h :precision :unknown}
-                             {:id :codex-7d :remaining 81 :limit 100.0}]}}
+      (let [limits
+            {:dynamic {:limits [{:id :codex-5h :precision :unknown}
+                                {:id :codex-7d :remaining 81 :limit 100.0}]}}
 
-         out
-         (lfmt/dynamic-summary limits)]
+            out
+            (lfmt/dynamic-summary limits)]
 
         ;; The pair still renders whole; the plan name is written once.
         (expect (= "Codex 5h · 7d 81%" out))))
@@ -134,31 +130,30 @@
       (expect (nil? (lfmt/dynamic-summary {:dynamic {:limits []}})))
       (expect (nil? (lfmt/dynamic-summary {})))))
 
-(defdescribe limit-row-pressure-test
-             (it "flags an overspent metered row as exhausted, not a fresh all-zero row"
-                 (expect (lfmt/limit-row-exhausted? {:remaining 0.0 :limit 1500.0 :used 1532.0}))
-                 (expect (not (lfmt/limit-row-exhausted? {:remaining 0 :limit 0 :used 0})))
-                 (expect (not (lfmt/limit-row-exhausted? {:is-unlimited true}))))
-             (it "ranks exhausted before tight before roomy before unlimited"
-                 (let
-                   [rows [{:id :chat :is-unlimited true} {:id :roomy :remaining 90.0 :limit 100.0}
-                          {:id :premium_interactions :remaining 0.0 :limit 1500.0 :used 1532.0}
-                          {:id :tight :remaining 10.0 :limit 100.0}]]
-                   (expect (= [:premium_interactions :tight :roomy :chat]
-                              (mapv :id (lfmt/prioritize-limit-rows rows))))))
-             (it "summary leads with the bucket that is actually blocking requests"
-                 (let
-                   [limits
-                    {:dynamic {:limits [{:id :chat :label "Chat" :is-unlimited true}
-                                        {:id :completions :label "Completions" :is-unlimited true}
-                                        {:id :premium_interactions
-                                         :label "Premium interactions"
-                                         :remaining 0.0
-                                         :limit 1500.0
-                                         :used 1532.0}]}}
+(defdescribe
+  limit-row-pressure-test
+  (it "flags an overspent metered row as exhausted, not a fresh all-zero row"
+      (expect (lfmt/limit-row-exhausted? {:remaining 0.0 :limit 1500.0 :used 1532.0}))
+      (expect (not (lfmt/limit-row-exhausted? {:remaining 0 :limit 0 :used 0})))
+      (expect (not (lfmt/limit-row-exhausted? {:is-unlimited true}))))
+  (it "ranks exhausted before tight before roomy before unlimited"
+      (let [rows [{:id :chat :is-unlimited true} {:id :roomy :remaining 90.0 :limit 100.0}
+                  {:id :premium_interactions :remaining 0.0 :limit 1500.0 :used 1532.0}
+                  {:id :tight :remaining 10.0 :limit 100.0}]]
+        (expect (= [:premium_interactions :tight :roomy :chat]
+                   (mapv :id (lfmt/prioritize-limit-rows rows))))))
+  (it "summary leads with the bucket that is actually blocking requests"
+      (let [limits
+            {:dynamic {:limits [{:id :chat :label "Chat" :is-unlimited true}
+                                {:id :completions :label "Completions" :is-unlimited true}
+                                {:id :premium_interactions
+                                 :label "Premium interactions"
+                                 :remaining 0.0
+                                 :limit 1500.0
+                                 :used 1532.0}]}}
 
-                    out
-                    (lfmt/dynamic-summary limits)]
+            out
+            (lfmt/dynamic-summary limits)]
 
-                   (expect (str/starts-with? out "Premium"))
-                   (expect (str/includes? out "(0)")))))
+        (expect (str/starts-with? out "Premium"))
+        (expect (str/includes? out "(0)")))))

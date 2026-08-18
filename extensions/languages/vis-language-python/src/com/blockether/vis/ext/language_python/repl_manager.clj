@@ -125,18 +125,19 @@ _main()
    failed start reading it AFTERWARDS gets `Stream closed` and loses exactly the
    words that explain the failure. Pumping from the start keeps both safe."
   [^java.io.BufferedReader reader]
-  (let
-    [lines
-     (atom [])
+  (let [lines
+        (atom [])
 
-     done
-     (promise)]
+        done
+        (promise)]
 
     (doto (Thread. ^Runnable
                    (fn []
                      (try (loop []
+
                             (when-let [line (.readLine reader)]
-                              (swap! lines (fn [ls] (vec (take-last stderr-tail-lines (conj ls line)))))
+                              (swap! lines (fn [ls]
+                                             (vec (take-last stderr-tail-lines (conj ls line)))))
                               (recur)))
                           (catch Throwable _ nil)
                           (finally (deliver done true)))))
@@ -151,9 +152,7 @@ _main()
    race."
   [info]
   (let [{:keys [lines done]} (:stderr info)]
-    (when lines
-      (deref done 500 nil)
-      (vec (remove str/blank? @lines)))))
+    (when lines (deref done 500 nil) (vec (remove str/blank? @lines)))))
 
 (defn status
   "STRING-keyed lifecycle view (crosses as a tool `:result`): `result`, `cwd`,
@@ -162,24 +161,20 @@ _main()
    command — which is the shape every language answers. `env` is the delta this
    REPL was STARTED with, by NAME and digest only, and never a value."
   [dir]
-  (let
-    [info
-     (get @processes dir)
+  (let [info
+        (get @processes dir)
 
-     running?
-     (alive? info)]
+        running?
+        (alive? info)]
 
-    (cond->
-      {"result" "status"
-       "cwd" dir
-       "status" (if running? "up" "down")}
-
+    (cond-> {"result" "status" "cwd" dir "status" (if running? "up" "down")}
       running?
       (assoc "running" true)
 
       running?
-      (assoc "pid" (some-> ^Process (:process info)
-                           .pid))
+      (assoc "pid"
+        (some-> ^Process (:process info)
+                .pid))
 
       (and running? (:cmd info))
       (assoc "cmd" (:cmd info))
@@ -196,48 +191,46 @@ _main()
   [dir {:keys [session-id] :as opts} env-fingerprint]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
+  (let [cmd
+        (vec (concat (interp/resolve-command dir) ["-c" server-script]))
 
-  (let
-    [cmd
-     (vec (concat (interp/resolve-command dir) ["-c" server-script]))
+        launch
+        (vis/session-process-launch session-id cmd {:env (get opts "env")})
 
-     launch
-     (vis/session-process-launch session-id cmd {:env (get opts "env")})
+        pb
+        (doto (ProcessBuilder. ^java.util.List (:argv launch))
+          (.directory (io/file dir))
+          (.redirectErrorStream false))
 
-     pb
-     (doto (ProcessBuilder. ^java.util.List (:argv launch))
-       (.directory (io/file dir))
-       (.redirectErrorStream false))
+        _env
+        (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+          (when (:replace-env? launch) (.clear e))
+          (doseq [[k v] (:env launch)]
+            (.put e ^String k ^String v))
+          ;; An inherited environment still carries what this start asked to UNSET.
+          (doseq [k (:env-remove launch)]
+            (.remove e ^String k)))
 
-     _env
-     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-       (when (:replace-env? launch) (.clear e))
-       (doseq [[k v] (:env launch)]
-         (.put e ^String k ^String v))
-       ;; An inherited environment still carries what this start asked to UNSET.
-       (doseq [k (:env-remove launch)]
-         (.remove e ^String k)))
+        p
+        (.start pb)
 
-     p
-     (.start pb)
+        info
+        {:process p
+         :writer (io/writer (.getOutputStream p))
+         :reader (io/reader (.getInputStream p))
+         :stderr (drain-stderr! (io/reader (.getErrorStream p)))
+         ;; The DISPLAYED argv: the inlined driver source is elided here, because
+         ;; this cmd rides into `status`, the resource registry and the footer.
+         :cmd (conj (vec (butlast cmd)) "<vis python driver>")
+         :pid (.pid p)
+         :started-at (System/currentTimeMillis)
+         ;; WHAT THIS REPL RUNS WITH, by name and digest: what the next start is
+         ;; compared against, so a reuse can be refused without a value ever
+         ;; reaching a result, a log or the transcript.
+         :env-fingerprint env-fingerprint}
 
-     info
-     {:process p
-      :writer (io/writer (.getOutputStream p))
-      :reader (io/reader (.getInputStream p))
-       :stderr (drain-stderr! (io/reader (.getErrorStream p)))
-      ;; The DISPLAYED argv: the inlined driver source is elided here, because
-      ;; this cmd rides into `status`, the resource registry and the footer.
-      :cmd (conj (vec (butlast cmd)) "<vis python driver>")
-      :pid (.pid p)
-      :started-at (System/currentTimeMillis)
-      ;; WHAT THIS REPL RUNS WITH, by name and digest: what the next start is
-      ;; compared against, so a reuse can be refused without a value ever
-      ;; reaching a result, a log or the transcript.
-      :env-fingerprint env-fingerprint}
-
-     shown-cmd
-     (:cmd info)]
+        shown-cmd
+        (:cmd info)]
 
     (swap! processes assoc dir info)
     (try (let [ping (request! dir {"op" "ping"} 5000)]
@@ -249,22 +242,19 @@ _main()
            (try (.destroy p) (catch Throwable _ nil))
            (try (.waitFor p) (catch Throwable _ nil))
            (try (when (.isAlive p) (.destroyForcibly p)) (catch Throwable _ nil))
-           (let
-             [exit-code
-              (try (.exitValue p) (catch Throwable _ nil))
+           (let [exit-code
+                 (try (.exitValue p) (catch Throwable _ nil))
 
-              tail
-              (stderr-tail info)]
+                 tail
+                 (stderr-tail info)]
 
              (swap! processes dissoc dir)
-             (cond->
-               {"result" "failed"
-                "status" "failed"
-                "pid" (.pid p)
-                "cmd" shown-cmd
-                "cwd" dir
-                "message" (str "Python REPL failed its startup handshake: " (.getMessage e))}
-
+             (cond-> {"result" "failed"
+                      "status" "failed"
+                      "pid" (.pid p)
+                      "cmd" shown-cmd
+                      "cwd" dir
+                      "message" (str "Python REPL failed its startup handshake: " (.getMessage e))}
                exit-code
                (assoc "exit" exit-code)
 
@@ -286,22 +276,18 @@ _main()
 
    Returns a STRING-keyed lifecycle map."
   [dir opts]
-  (let
-    [id
-     (or (get opts "id") (str "pyrepl:" dir))
+  (let [id
+        (or (get opts "id") (str "pyrepl:" dir))
 
-     env-fingerprint
-     (vis/env-fingerprint (vis/call-env-values (get opts "env")))]
+        env-fingerprint
+        (vis/env-fingerprint (vis/call-env-values (get opts "env")))]
 
     (if (alive? (get @processes dir))
-      (let [refusal (vis/env-mismatch-refusal id
-                                              (:env-fingerprint (get @processes dir))
-                                              env-fingerprint)]
+      (let [refusal
+            (vis/env-mismatch-refusal id (:env-fingerprint (get @processes dir)) env-fingerprint)]
         (when refusal
           (throw (ex-info (:message refusal)
-                          {:type :py/repl-env-mismatch
-                           :id id
-                           :env (:differing refusal)})))
+                          {:type :py/repl-env-mismatch :id id :env (:differing refusal)})))
         (assoc (status dir) "result" "already-running"))
       (spawn! dir opts env-fingerprint))))
 
@@ -312,36 +298,34 @@ _main()
       (throw (ex-info "Python REPL is not running for this dir — repl_start(\"python\") first."
                       {:type :py/no-repl :dir dir})))
     (locking info
-      (let
-        [^BufferedWriter w (:writer info)
-         ^BufferedReader r (:reader info)]
+      (let [^BufferedWriter w (:writer info)
+            ^BufferedReader r (:reader info)]
 
         (.write w (str (json/write-json-str req) "\n"))
         (.flush w)
-        (let
-          [fut (future (.readLine r))
-           line (deref fut timeout-ms ::timeout)]
+        (let [fut (future (.readLine r))
+              line (deref fut timeout-ms ::timeout)]
 
           (if (= line ::timeout)
             (do (future-cancel fut)
                 (throw (ex-info "Python eval timed out" {:type :py/timeout :dir dir})))
             (if (nil? line)
-              (let
-                [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
-                 exit-code (try (.exitValue ^Process (:process info)) (catch Throwable _ nil))]
+              (let [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
+                    exit-code (try (.exitValue ^Process (:process info)) (catch Throwable _ nil))]
 
                 (swap! processes dissoc dir)
-                (throw (ex-info
-                         "Python REPL closed the connection; start it again with repl_start(\"python\")."
-                         {:type :py/closed :dir dir :stderr stderr :exit-code exit-code})))
+                (throw
+                  (ex-info
+                    "Python REPL closed the connection; start it again with repl_start(\"python\")."
+                    {:type :py/closed :dir dir :stderr stderr :exit-code exit-code})))
               (try
                 (json/read-json line)
                 (catch Throwable e
                   (try (.destroyForcibly ^Process (:process info)) (catch Throwable _ nil))
                   (try (.waitFor ^Process (:process info)) (catch Throwable _ nil))
-                  (let
-                    [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
-                     exit-code (try (.exitValue ^Process (:process info)) (catch Throwable _ nil))]
+                  (let [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
+                        exit-code (try (.exitValue ^Process (:process info))
+                                       (catch Throwable _ nil))]
 
                     (swap! processes dissoc dir)
                     (throw

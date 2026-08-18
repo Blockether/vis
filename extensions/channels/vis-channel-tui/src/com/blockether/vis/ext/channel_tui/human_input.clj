@@ -41,10 +41,9 @@
   "`{:lo :hi :st}` for a `:range` field. Named away from `min`/`max` on purpose:
    destructuring those would shadow the two core fns this file rounds with."
   [field]
-  (let
-    [num (fn [k]
-           (let [v (get field k)]
-             (if (number? v) v (get hi-spec/range-defaults k))))]
+  (let [num (fn [k]
+              (let [v (get field k)]
+                (if (number? v) v (get hi-spec/range-defaults k))))]
     {:lo (num :min) :hi (num :max) :st (num :step)}))
 
 (defn- range-integral? [{:keys [lo hi st]}] (every? integer? [lo hi st]))
@@ -66,18 +65,17 @@
    alone never says WHAT is about to be submitted, and a number alone never says
    how much room is left."
   [{:keys [lo hi]} v]
-  (let
-    [span
-     (- (double hi) (double lo))
+  (let [span
+        (- (double hi) (double lo))
 
-     frac
-     (if (pos? span) (/ (- (double v) (double lo)) span) 0.0)
+        frac
+        (if (pos? span) (/ (- (double v) (double lo)) span) 0.0)
 
-     w
-     (long range-track-w)
+        w
+        (long range-track-w)
 
-     knob
-     (max 0 (min (dec w) (long (Math/round (* frac (dec w))))))]
+        knob
+        (max 0 (min (dec w) (long (Math/round (* frac (dec w))))))]
 
     (str (apply str (repeat knob \━))
          "●"
@@ -99,12 +97,11 @@
 (defn- otp-slots
   "`{:lo :hi}` — the fewest and the most digits this `:otp` field accepts."
   [field]
-  (let
-    [hi
-     (max 1 (long (or (:max-length field) otp-slot-default)))
+  (let [hi
+        (max 1 (long (or (:max-length field) otp-slot-default)))
 
-     lo
-     (max 1 (min hi (long (or (:min-length field) otp-slot-default))))]
+        lo
+        (max 1 (min hi (long (or (:min-length field) otp-slot-default))))]
 
     {:lo lo :hi hi}))
 
@@ -165,9 +162,8 @@
    onto the `Submit` cap and Enter presses it. Cancel only exists when the request
    allows it — an uncancellable ask must not offer a button that does nothing."
   [request]
-  (let
-    [labelled (fn [k fallback]
-                (or (not-empty (str/trim (str (get request k)))) fallback))]
+  (let [labelled (fn [k fallback]
+                   (or (not-empty (str/trim (str (get request k)))) fallback))]
     (cond-> [{:kind :action :action :submit :label (labelled :submit-label "Submit")}]
       (get request :is-cancellable true)
       (conj {:kind :action :action :cancel :label (labelled :cancel-label "Cancel")}))))
@@ -182,12 +178,11 @@
   "Build the form model for a request VIEW. Text cursors start at end-of-text
    and focus starts on the first stop."
   [request]
-  (let
-    [answerable
-     (engine/input-fields (:fields request))
+  (let [answerable
+        (engine/input-fields (:fields request))
 
-     values
-     (into {} (map (juxt :id default-value)) answerable)]
+        values
+        (into {} (map (juxt :id default-value)) answerable)]
 
     {:request request
      :values values
@@ -262,30 +257,29 @@
 
 (defn- insert-text
   [form field-id s]
-  (let
-    [field
-     (field-by-id form field-id)
+  (let [field
+        (field-by-id form field-id)
 
-     text
-     (str (get-in form [:values field-id]))
+        text
+        (str (get-in form [:values field-id]))
 
-     cursor
-     (cursor-of form field-id)
+        cursor
+        (cursor-of form field-id)
 
-     max-length
-     (:max-length field)
+        max-length
+        (:max-length field)
 
-     s
-     ;; An `:otp` field takes DIGITS, and that filter IS the paste handler:
-     ;; pasting `123-456`, or a whole SMS line, fills the boxes with the code
-     ;; that was in it instead of refusing the paste.
-     (if (= :otp (:type field)) (str/replace (str s) #"\D" "") (str s))
+        s
+        ;; An `:otp` field takes DIGITS, and that filter IS the paste handler:
+        ;; pasting `123-456`, or a whole SMS line, fills the boxes with the code
+        ;; that was in it instead of refusing the paste.
+        (if (= :otp (:type field)) (str/replace (str s) #"\D" "") (str s))
 
-     room
-     (if max-length (max 0 (- (long max-length) (count text))) (count s))
+        room
+        (if max-length (max 0 (- (long max-length) (count text))) (count s))
 
-     s
-     (subs s 0 (min (count s) (long room)))]
+        s
+        (subs s 0 (min (count s) (long room)))]
 
     (if (zero? (count s))
       form
@@ -296,12 +290,11 @@
 
 (defn- delete-back
   [form field-id]
-  (let
-    [text
-     (str (get-in form [:values field-id]))
+  (let [text
+        (str (get-in form [:values field-id]))
 
-     cursor
-     (cursor-of form field-id)]
+        cursor
+        (cursor-of form field-id)]
 
     (if (zero? cursor)
       form
@@ -309,12 +302,11 @@
 
 (defn- delete-forward
   [form field-id]
-  (let
-    [text
-     (str (get-in form [:values field-id]))
+  (let [text
+        (str (get-in form [:values field-id]))
 
-     cursor
-     (cursor-of form field-id)]
+        cursor
+        (cursor-of form field-id)]
 
     (if (>= cursor (count text))
       form
@@ -332,13 +324,12 @@
    to the bounds instead of wrapping, because a volume knob that jumps from max
    to min is a bug in every UI that ever shipped one."
   [form field-id ^long delta]
-  (let
-    [bounds
-     (range-bounds (field-by-id form field-id))
+  (let [bounds
+        (range-bounds (field-by-id form field-id))
 
-     current
-     (let [v (get-in form [:values field-id])]
-       (if (number? v) v (:lo bounds)))]
+        current
+        (let [v (get-in form [:values field-id])]
+          (if (number? v) v (:lo bounds)))]
 
     (-> form
         (assoc-in [:values field-id]
@@ -361,15 +352,14 @@
         (update :errors dissoc field-id))
 
     :multi-option
-    (let
-      [order
-       (mapv :value (field-options (field-by-id form field-id)))
+    (let [order
+          (mapv :value (field-options (field-by-id form field-id)))
 
-       chosen
-       (set (get-in form [:values field-id]))
+          chosen
+          (set (get-in form [:values field-id]))
 
-       chosen
-       (if (contains? chosen value) (disj chosen value) (conj chosen value))]
+          chosen
+          (if (contains? chosen value) (disj chosen value) (conj chosen value))]
 
       (-> form
           (assoc-in [:values field-id] (filterv chosen order))
@@ -386,12 +376,11 @@
   (when key
     ;; C-g is Esc: Emacs `keyboard-quit` cancels the form, and the chat loop
     ;; feeds this decoder RAW keystrokes, so the rewrite belongs here.
-    (let
-      [^KeyStroke key
-       (input/normalize-abort-key key)
+    (let [^KeyStroke key
+          (input/normalize-abort-key key)
 
-       kt
-       (.getKeyType key)]
+          kt
+          (.getKeyType key)]
 
       (condp = kt
         KeyType/Escape {:kind :cancel}
@@ -420,14 +409,13 @@
   "Park the cursor on the first stop the engine complained about, so a refused
    confirmation lands the operator on what needs fixing."
   [form errors]
-  (let
-    [bad
-     (set (keys errors))
+  (let [bad
+        (set (keys errors))
 
-     idx
-     (first (keep-indexed (fn [i {:keys [field-id]}]
-                            (when (contains? bad field-id) i))
-                          (:stops form)))]
+        idx
+        (first (keep-indexed (fn [i {:keys [field-id]}]
+                               (when (contains? bad field-id) i))
+                             (:stops form)))]
 
     (cond-> form
       idx
@@ -444,47 +432,48 @@
    Returns `{:form form' :action action}` where `action` is nil (stay open),
    `:submit` (ask the engine to accept `submit-values`), or `:cancel`."
   [form {:keys [kind char] :as _event}]
-  (let
-    [stop
-     (focused-stop form)
+  (let [stop
+        (focused-stop form)
 
-     text-stop?
-     (= :text (:kind stop))
+        text-stop?
+        (= :text (:kind stop))
 
-     range-stop?
-     (= :range (:kind stop))
+        range-stop?
+        (= :range (:kind stop))
 
-     button
-     (when (= :action (:kind stop)) (:action stop))
+        button
+        (when (= :action (:kind stop)) (:action stop))
 
-     field-id
-     (:field-id stop)
+        field-id
+        (:field-id stop)
 
-     stay
-     (fn [f]
-       {:form f :action nil})
+        stay
+        (fn [f]
+          {:form f :action nil})
 
-     ;; ←/→ mean three different things depending on what the cursor is on, and
-     ;; all three are the web habit: move the caret in text, slide a track, and
-     ;; nothing at all on a row that has no horizontal axis.
-     horizontal
-     (fn [delta]
-       (stay (cond text-stop? (move-cursor form field-id delta)
-                   range-stop? (nudge-range form field-id delta)
-                   :else form)))
+        ;; ←/→ mean three different things depending on what the cursor is on, and
+        ;; all three are the web habit: move the caret in text, slide a track, and
+        ;; nothing at all on a row that has no horizontal axis.
+        horizontal
+        (fn [delta]
+          (stay (cond text-stop? (move-cursor form field-id delta)
+                      range-stop? (nudge-range form field-id delta)
+                      :else form)))
 
-     submit
-     ;; Confirmation is the ONLY moment anything is validated, and the ENGINE
-     ;; validates: the form never keeps a second copy of the rules to
-     ;; second-guess it with. A rejection comes back through [[set-errors]].
-     (fn []
-       {:form form :action :submit})
+        submit
+        ;; Confirmation is the ONLY moment anything is validated, and the ENGINE
+        ;; validates: the form never keeps a second copy of the rules to
+        ;; second-guess it with. A rejection comes back through [[set-errors]].
+        (fn []
+          {:form form :action :submit})
 
-     press
-     (fn []
-       (if (= :cancel button)
-         (if (get-in form [:request :is-cancellable] true) {:form form :action :cancel} (stay form))
-         (submit)))]
+        press
+        (fn []
+          (if (= :cancel button)
+            (if (get-in form [:request :is-cancellable] true)
+              {:form form :action :cancel}
+              (stay form))
+            (submit)))]
 
     (case kind
       :cancel
@@ -555,12 +544,11 @@
 (defn- cursor-line-col
   "`[line col]` of `cursor` inside `text`."
   [text ^long cursor]
-  (let
-    [before
-     (subs (str text) 0 (clamp cursor 0 (count (str text))))
+  (let [before
+        (subs (str text) 0 (clamp cursor 0 (count (str text))))
 
-     lines
-     (str/split before #"\n" -1)]
+        lines
+        (str/split before #"\n" -1)]
 
     [(dec (count lines)) (count (last lines))]))
 
@@ -595,14 +583,13 @@
    Whitespace is not prose: a blank description is NO rows, never an empty one,
    so `description: \"   \"` cannot open a hole above the first field."
   [text text-w]
-  (let
-    [text
-     (when-not (str/blank? (some-> text
-                                   str))
-       (str text))
+  (let [text
+        (when-not (str/blank? (some-> text
+                                      str))
+          (str text))
 
-     width
-     (long (or text-w 0))]
+        width
+        (long (or text-w 0))]
 
     (when text
       (mapv (fn [line]
@@ -638,12 +625,11 @@
    form quadratic in its field count. Earlier stops win, so a duplicate id keeps
    the first stop ↑/↓ would reach."
   [stops]
-  (loop
-    [i
-     (dec (count stops))
+  (loop [i
+         (dec (count stops))
 
-     acc
-     (transient {})]
+         acc
+         (transient {})]
 
     (if (neg? i)
       (persistent! acc)
@@ -658,19 +644,18 @@
    when the group is a `:column`, side by side when it is a `:row`. A child may
    itself be a group, so the two directions compose without another rule."
   [ctx text-w {:keys [direction fields] :as group}]
-  (let
-    [heading
-     (into (if (:label group) [{:kind :label :text (:label group)}] [])
-           (description-rows (:description group) text-w))
+  (let [heading
+        (into (if (:label group) [{:kind :label :text (:label group)}] [])
+              (description-rows (:description group) text-w))
 
-     n
-     (max 1 (count fields))
+        n
+        (max 1 (count fields))
 
-     body
-     (if (= :row direction)
-       (let [cell-w (columns/cell-width text-w n)]
-         (columns/zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
-       (into [] (mapcat #(field-rows ctx text-w %)) fields))]
+        body
+        (if (= :row direction)
+          (let [cell-w (columns/cell-width text-w n)]
+            (columns/zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
+          (into [] (mapcat #(field-rows ctx text-w %)) fields))]
 
     (into (if (seq heading) (conj (vec heading) {:kind :blank}) []) body)))
 
@@ -684,99 +669,96 @@
     (= :group type) (group-rows ctx text-w field)
     (hi-spec/decoration? field) (decor-rows text-w field)
     :else
-    (let
-      [idx
-       (get index id)
+    (let [idx
+          (get index id)
 
-       value
-       (get-in form [:values id])
+          value
+          (get-in form [:values id])
 
-       ;; The keyboard is in this FIELD when the focused stop belongs to it — its
-       ;; own stop, or, for a choice field, any one of its option stops. The whole
-       ;; SECTION reads off this: its label takes the ink and its prose becomes
-       ;; readable, while every other field recedes. A form that paints all five
-       ;; at full strength has said nothing about which one is being filled.
-       is-active-field
-       (= id (:field-id (focused-stop form)))
+          ;; The keyboard is in this FIELD when the focused stop belongs to it — its
+          ;; own stop, or, for a choice field, any one of its option stops. The whole
+          ;; SECTION reads off this: its label takes the ink and its prose becomes
+          ;; readable, while every other field recedes. A form that paints all five
+          ;; at full strength has said nothing about which one is being filled.
+          is-active-field
+          (= id (:field-id (focused-stop form)))
 
-       description
-       (mapv #(assoc % :is-active-field is-active-field)
-             (description-rows (:description field) text-w))
+          description
+          (mapv #(assoc % :is-active-field is-active-field)
+                (description-rows (:description field) text-w))
 
-       rows
-       (cond (= :otp type) (let [slots (otp-slots field)]
-                             [{:kind :otp
-                               :field-id id
-                               :text (otp-text slots value)
-                               :cursor (min (cursor-of form id) (max 0 (dec (long (:hi slots)))))
-                               :is-focused (= idx focus)
-                               :is-active-field (= idx focus)}])
-             (contains? text-types type)
-             (let
-               [focused?
-                (= idx focus)
-
-                shown
-                (display-text field value)
-
-                cursor
-                (cursor-of form id)]
-
-               (if (= :multiline type)
-                 (let [[line col] (cursor-line-col shown cursor)]
-                   (vec (map-indexed (fn [^long i l]
-                                       {:kind :input
-                                        :field-id id
-                                        :text l
-                                        :cursor (if (= i line) col 0)
-                                        ;; The FIELD is lit whole while the keyboard
-                                        ;; is in it; only the line being typed wears
-                                        ;; the cursor glyph and the terminal caret.
-                                        :is-focused (and focused? (= i line))
-                                        :is-active-field focused?
-                                        :placeholder (when (and (zero? i) (zero? (count shown)))
-                                                       (:placeholder field))})
-                                     (str/split shown #"\n" -1))))
-                 [{:kind :input
-                   :field-id id
-                   :text shown
-                   :cursor cursor
-                   :is-focused focused?
-                   :is-active-field focused?
-                   :placeholder (:placeholder field)}]))
-             (= :range type) (let
-                               [bounds
-                                (range-bounds field)
-
-                                v
-                                (range-snap bounds (if (number? value) value (:lo bounds)))]
-
-                               [{:kind :range
-                                 :field-id id
-                                 :value v
-                                 :text (range-text bounds v)
-                                 :is-focused (= idx focus)}])
-             (= :checkbox type) [{:kind :checkbox
+          rows
+          (cond (= :otp type) (let [slots (otp-slots field)]
+                                [{:kind :otp
                                   :field-id id
-                                  :text (label-text field)
-                                  :is-required (boolean (:is-required field))
-                                  :is-checked (boolean value)
-                                  :is-focused (= idx focus)}]
-             (contains? hi-spec/choice-types type)
-             (let [chosen (if (= :multiselect type) (set value) #{value})]
-               (mapv (fn [{:keys [value label]}]
-                       {:kind :option
-                        :field-id id
-                        ;; EXCLUSIVE (`:select`) or INCLUSIVE (`:multiselect`): the row
-                        ;; carries the ANSWER SHAPE, and the painter answers it with the
-                        ;; radio dot or the checkbox box — so the option itself says
-                        ;; whether picking a second one replaces the first or adds to it.
-                        :is-exclusive (= :select type)
-                        :text (or label (str value))
-                        :is-checked (contains? chosen value)
-                        :is-focused (= (get index [id value]) focus)})
-                     (field-options field)))
-             :else [])]
+                                  :text (otp-text slots value)
+                                  :cursor (min (cursor-of form id) (max 0 (dec (long (:hi slots)))))
+                                  :is-focused (= idx focus)
+                                  :is-active-field (= idx focus)}])
+                (contains? text-types type)
+                (let [focused?
+                      (= idx focus)
+
+                      shown
+                      (display-text field value)
+
+                      cursor
+                      (cursor-of form id)]
+
+                  (if (= :multiline type)
+                    (let [[line col] (cursor-line-col shown cursor)]
+                      (vec (map-indexed (fn [^long i l]
+                                          {:kind :input
+                                           :field-id id
+                                           :text l
+                                           :cursor (if (= i line) col 0)
+                                           ;; The FIELD is lit whole while the keyboard
+                                           ;; is in it; only the line being typed wears
+                                           ;; the cursor glyph and the terminal caret.
+                                           :is-focused (and focused? (= i line))
+                                           :is-active-field focused?
+                                           :placeholder (when (and (zero? i) (zero? (count shown)))
+                                                          (:placeholder field))})
+                                        (str/split shown #"\n" -1))))
+                    [{:kind :input
+                      :field-id id
+                      :text shown
+                      :cursor cursor
+                      :is-focused focused?
+                      :is-active-field focused?
+                      :placeholder (:placeholder field)}]))
+                (= :range type) (let [bounds
+                                      (range-bounds field)
+
+                                      v
+                                      (range-snap bounds (if (number? value) value (:lo bounds)))]
+
+                                  [{:kind :range
+                                    :field-id id
+                                    :value v
+                                    :text (range-text bounds v)
+                                    :is-focused (= idx focus)}])
+                (= :checkbox type) [{:kind :checkbox
+                                     :field-id id
+                                     :text (label-text field)
+                                     :is-required (boolean (:is-required field))
+                                     :is-checked (boolean value)
+                                     :is-focused (= idx focus)}]
+                (contains? hi-spec/choice-types type)
+                (let [chosen (if (= :multiselect type) (set value) #{value})]
+                  (mapv (fn [{:keys [value label]}]
+                          {:kind :option
+                           :field-id id
+                           ;; EXCLUSIVE (`:select`) or INCLUSIVE (`:multiselect`): the row
+                           ;; carries the ANSWER SHAPE, and the painter answers it with the
+                           ;; radio dot or the checkbox box — so the option itself says
+                           ;; whether picking a second one replaces the first or adds to it.
+                           :is-exclusive (= :select type)
+                           :text (or label (str value))
+                           :is-checked (contains? chosen value)
+                           :is-focused (= (get index [id value]) focus)})
+                        (field-options field)))
+                :else [])]
 
       ;; Label, then a BLANK, then description, then the input: the label is the
       ;; headline of its own section, and everything it introduces — the italic
@@ -791,16 +773,15 @@
       ;; The prose is its own block too: when a field has one, another blank
       ;; follows it, so the sentence that explains the field is not butted against
       ;; the box it explains and cannot be read as part of it.
-      (cond->
-        (if (= :checkbox type)
-          (into (vec rows) description)
-          (into (into (into [{:kind :label
-                              :text (label-text field)
-                              :is-required (boolean (:is-required field))
-                              :is-active-field is-active-field} {:kind :blank}]
-                            description)
-                      (when (seq description) [{:kind :blank}]))
-                rows))
+      (cond-> (if (= :checkbox type)
+                (into (vec rows) description)
+                (into (into (into [{:kind :label
+                                    :text (label-text field)
+                                    :is-required (boolean (:is-required field))
+                                    :is-active-field is-active-field} {:kind :blank}]
+                                  description)
+                            (when (seq description) [{:kind :blank}]))
+                      rows))
         (get errors id)
         (conj {:kind :error :text (get errors id)})
 
@@ -826,12 +807,12 @@
    form taller than the band can never push the two controls that END the pause
    off the screen — the same reason the companion pins them in its footer."
   [{:keys [stops focus]}]
-  (let
-    [buttons (into []
-                   (keep-indexed (fn [i {:keys [kind action label]}]
-                                   (when (= :action kind)
-                                     {:action action :label label :is-focused (= i (or focus 0))})))
-                   stops)]
+  (let [buttons (into []
+                      (keep-indexed
+                        (fn [i {:keys [kind action label]}]
+                          (when (= :action kind)
+                            {:action action :label label :is-focused (= i (or focus 0))})))
+                      stops)]
     (when (seq buttons) {:kind :action :buttons buttons})))
 
 (defn form-rows
@@ -844,15 +825,14 @@
    every field's wrap to it. Omit it (or pass nil) for the unwrapped plan."
   ([form] (form-rows form nil))
   ([{:keys [request focus stops] :as form} text-w]
-   (let
-     [head
-      (when-let [rows (seq (description-rows (:description request) text-w))]
-        (conj (vec rows) {:kind :blank}))
+   (let [head
+         (when-let [rows (seq (description-rows (:description request) text-w))]
+           (conj (vec rows) {:kind :blank}))
 
-      ;; ONE context per paint — including the stop index the whole tree shares,
-      ;; so nested groups cost lookups, not rescans.
-      ctx
-      {:form form :errors (:errors form) :focus (or focus 0) :index (stop-index stops)}]
+         ;; ONE context per paint — including the stop index the whole tree shares,
+         ;; so nested groups cost lookups, not rescans.
+         ctx
+         {:form form :errors (:errors form) :focus (or focus 0) :index (stop-index stops)}]
 
      (into (vec head) (mapcat #(field-rows ctx text-w %)) (:fields request)))))
 
@@ -872,21 +852,16 @@
   ^long [rows ^long visible]
   (if (empty? rows)
     0
-    (let
-      [focus-idx
-       (long (focused-row rows))
+    (let [focus-idx
+          (long (focused-row rows))
 
-       label-idx
-       (long (or (first (filter #(let
-                                   [r
-                                    (nth rows %)]
+          label-idx
+          (long (or (first (filter #(let [r (nth rows %)] (or (= :label (:kind r)) (:is-label r)))
+                                   (range focus-idx -1 -1)))
+                    0))
 
-                                   (or (= :label (:kind r)) (:is-label r)))
-                                (range focus-idx -1 -1)))
-                 0))
-
-       start
-       (long (dialogs/visible-window-start focus-idx 0 visible (count rows)))]
+          start
+          (long (dialogs/visible-window-start focus-idx 0 visible (count rows)))]
 
       (min start label-idx))))
 
@@ -907,12 +882,11 @@
    belongs here is the multiline NEWLINE — that is a typing chord, and it is also
    why the submit cap switches to `^S`."
   [form]
-  (let
-    [stop
-     (focused-stop form)
+  (let [stop
+        (focused-stop form)
 
-     otp?
-     (= :otp (:type (field-by-id form (:field-id stop))))]
+        otp?
+        (= :otp (:type (field-by-id form (:field-id stop))))]
 
     (cond-> []
       (contains? #{:checkbox :multi-option} (:kind stop))
@@ -988,15 +962,14 @@
    Pinned rather than scrolled with the fields, because the two controls that
    END the pause are exactly the ones a long form must never push out of view."
   [g left row inner-w buttons]
-  (let
-    [left
-     (long left)
+  (let [left
+        (long left)
 
-     inner-w
-     (long inner-w)
+        inner-w
+        (long inner-w)
 
-     right
-     (+ left inner-w -1)]
+        right
+        (+ left inner-w -1)]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
@@ -1044,21 +1017,20 @@
         nil)
 
     :label
-    (let
-      [fg
-       (if (:is-active-field entry) t/dialog-fg t/dialog-hint)
+    (let [fg
+          (if (:is-active-field entry) t/dialog-fg t/dialog-hint)
 
-       shown
-       (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 3)))
+          shown
+          (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 3)))
 
-       ;; The `*` is the last thing on the row, so it is inked red only when it
-       ;; actually survived the ellipsis — a truncated label must not stain its
-       ;; own tail.
-       mark?
-       (boolean (and (:is-required entry) (str/ends-with? shown required-marker)))
+          ;; The `*` is the last thing on the row, so it is inked red only when it
+          ;; actually survived the ellipsis — a truncated label must not stain its
+          ;; own tail.
+          mark?
+          (boolean (and (:is-required entry) (str/ends-with? shown required-marker)))
 
-       head
-       (if mark? (subs shown 0 (- (count shown) (count required-marker))) shown)]
+          head
+          (if mark? (subs shown 0 (- (count shown) (count required-marker))) shown)]
 
       (p/set-colors! g fg t/dialog-bg)
       (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -1094,15 +1066,14 @@
     ;; character promised typing where only Space toggles. Focus is the ring and
     ;; the bold ink, and the ●/○ or [✓]/[ ] glyph says what the toggle IS.
     :checkbox
-    (let
-      [content
-       (str (dialogs/choice-mark false (:is-checked entry)) (:text entry))
+    (let [content
+          (str (dialogs/choice-mark false (:is-checked entry)) (:text entry))
 
-       shown
-       (dialogs/ellipsize content (dialogs/field-content-w inner-w))
+          shown
+          (dialogs/ellipsize content (dialogs/field-content-w inner-w))
 
-       text-left
-       (dialogs/draw-toggle-row! g left row inner-w (:is-focused entry) content)]
+          text-left
+          (dialogs/draw-toggle-row! g left row inner-w (:is-focused entry) content)]
 
       ;; A checkbox carries its own label, so its `*` is re-inked on the paper the
       ;; box sits on — the dialog's own, in the same red every other label uses.
@@ -1138,9 +1109,8 @@
     ;; active box, so the operator sees where the next digit lands instead of
     ;; guessing.
     :otp
-    (let
-      [text-left
-       (dialogs/draw-field-row! g left row inner-w (:is-active-field entry) (:text entry))]
+    (let [text-left
+          (dialogs/draw-field-row! g left row inner-w (:is-active-field entry) (:text entry))]
       (when (:is-focused entry)
         (p/cursor-pos (min (+ (long left) (long inner-w))
                            (+ (long text-left) 1 (* (long otp-cell-w) (long (:cursor entry 0)))))
@@ -1152,8 +1122,8 @@
     :columns
     (let [cells (:cells entry)]
       (reduce (fn [pos [[x width] cell]]
-                (let
-                  [here (paint-row! g (+ (long left) (long x)) row width (or cell {:kind :blank}))]
+                (let [here
+                      (paint-row! g (+ (long left) (long x)) row width (or cell {:kind :blank}))]
                   (or pos here)))
               nil
               (map vector (columns/slots inner-w (count cells)) cells)))
@@ -1162,22 +1132,21 @@
     (do (paint-actions! g left row inner-w (:buttons entry)) nil)
 
     :input
-    (let
-      [text
-       (str (:text entry))
+    (let [text
+          (str (:text entry))
 
-       cursor
-       (clamp (long (or (:cursor entry) 0)) 0 (count text))
+          cursor
+          (clamp (long (or (:cursor entry) 0)) 0 (count text))
 
-       pos
-       (dialogs/draw-input-item! g
-                                 left
-                                 row
-                                 inner-w
-                                 (:is-active-field entry)
-                                 text
-                                 cursor
-                                 (:placeholder entry))]
+          pos
+          (dialogs/draw-input-item! g
+                                    left
+                                    row
+                                    inner-w
+                                    (:is-active-field entry)
+                                    text
+                                    cursor
+                                    (:placeholder entry))]
 
       (when (:is-focused entry) pos))
 
@@ -1244,51 +1213,49 @@
   ;; NOTE: no primitive hints on these arities — Clojure caps primitive-taking fns
   ;; at four arguments — so the sizes are coerced inside the `let` instead.
   ([g cols rows form content-top prompt-h]
-   (let
-     [{:keys [left inner-w] :as region}
-      (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
+   (let [{:keys [left inner-w] :as region}
+         (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
      ;; A band is not a dialog: it lies on the LIVE transcript and wears the
      ;; TERMINAL's own paper, body and footer alike. Bound ONCE, so every painter
      ;; under it — rules, labels, toggles, field surfaces, hint bar — follows
      ;; without carrying a colour argument of its own.
      (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
-       (let
-         [left (long left)
-          inner-w (long inner-w)
-          ;; The rails own the two edge columns and the body opens one column
-          ;; inside them; the row painters take the next column as the ring's
-          ;; gutter, so nothing the form paints ever touches a rail. The same one
-          ;; clear column answers on the right, so the box breathes equally on
-          ;; both sides and the scrollbar's rail keeps its air.
-          body-left (inc left)
-          body-w (dec inner-w)
-          baz (hint form)
-          actions (action-bar form)
-          ;; The pinned bar costs its own row plus the blank one above it.
-          actions-h (if actions 2 0)
-          plan
-          ;; Sizing pass: how many rows the form wants decides where the band's
-          ;; top rule lands. The pinned action bar asks for its two rows, and the
-          ;; fenced hint bar asks for the rule above it.
-          (form-rows form (prose-width body-w))
-          {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
-          (tr/band-geometry region (+ (count plan) (long actions-h) 1) false)
-          ;; The band CLOSES below its footer, exactly like a sideless transient:
-          ;; the hint bar takes the row the closing rule used to own and the rule
-          ;; drops onto the host's hint row, so the footer is inside the box.
-          hint-at (long foot-rule-row)
-          rule-at (long foot-row)
-          hint-rule-at (dec hint-at)
-          visible (max 1 (dec (long visible)))
-          body-visible (max 0 (- visible (long actions-h)))
-          total (count plan)
-          is-overflowing (> total body-visible)
-          start (long (if (= :action (:kind (focused-stop form)))
-                        ;; Focus is on a pinned button: the fields stay where the operator
-                        ;; left them — at the end — instead of snapping back to row 0.
-                        (max 0 (- total body-visible))
-                        (window-start plan body-visible)))
-          shown (subvec (vec plan) (min start total) (min total (+ start body-visible)))]
+       (let [left (long left)
+             inner-w (long inner-w)
+             ;; The rails own the two edge columns and the body opens one column
+             ;; inside them; the row painters take the next column as the ring's
+             ;; gutter, so nothing the form paints ever touches a rail. The same one
+             ;; clear column answers on the right, so the box breathes equally on
+             ;; both sides and the scrollbar's rail keeps its air.
+             body-left (inc left)
+             body-w (dec inner-w)
+             baz (hint form)
+             actions (action-bar form)
+             ;; The pinned bar costs its own row plus the blank one above it.
+             actions-h (if actions 2 0)
+             plan
+             ;; Sizing pass: how many rows the form wants decides where the band's
+             ;; top rule lands. The pinned action bar asks for its two rows, and the
+             ;; fenced hint bar asks for the rule above it.
+             (form-rows form (prose-width body-w))
+             {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
+             (tr/band-geometry region (+ (count plan) (long actions-h) 1) false)
+             ;; The band CLOSES below its footer, exactly like a sideless transient:
+             ;; the hint bar takes the row the closing rule used to own and the rule
+             ;; drops onto the host's hint row, so the footer is inside the box.
+             hint-at (long foot-rule-row)
+             rule-at (long foot-row)
+             hint-rule-at (dec hint-at)
+             visible (max 1 (dec (long visible)))
+             body-visible (max 0 (- visible (long actions-h)))
+             total (count plan)
+             is-overflowing (> total body-visible)
+             start (long (if (= :action (:kind (focused-stop form)))
+                           ;; Focus is on a pinned button: the fields stay where the operator
+                           ;; left them — at the end — instead of snapping back to row 0.
+                           (max 0 (- total body-visible))
+                           (window-start plan body-visible)))
+             shown (subvec (vec plan) (min start total) (min total (+ start body-visible)))]
 
          (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
          ;; The question is the rule's own label — `── Deploy? ──` — so the first
@@ -1298,12 +1265,12 @@
          (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
          (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
            (tr/draw-rule! g region hint-rule-at))
-         (let
-           [cursor (reduce (fn [acc [i entry]]
-                             (or (paint-row! g body-left (+ (long body-top) (long i)) body-w entry)
-                                 acc))
-                           nil
-                           (map-indexed vector shown))]
+         (let [cursor (reduce (fn [acc [i entry]]
+                                (or
+                                  (paint-row! g body-left (+ (long body-top) (long i)) body-w entry)
+                                  acc))
+                              nil
+                              (map-indexed vector shown))]
            (doseq [i (range (count shown) body-visible)]
              (paint-row! g body-left (+ (long body-top) (long i)) body-w {:kind :blank}))
            (when actions

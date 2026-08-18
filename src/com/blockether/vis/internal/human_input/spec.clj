@@ -492,12 +492,11 @@
    an option that exists, and a checkbox starts on a boolean rather than on the
    string `\"false\"`."
   [{:keys [type default] :as field}]
-  (let
-    [{lo :min hi :max :keys [min-length max-length]}
-     field
+  (let [{lo :min hi :max :keys [min-length max-length]}
+        field
 
-     chosen
-     (option-values field)]
+        chosen
+        (option-values field)]
 
     (cond (nil? default) true
           (contains? text-types type) (string? default)
@@ -1125,12 +1124,11 @@
   "nil when `values` answers EXACTLY the answerable `fields` — no field left out,
    none invented — with every value inside the domain its own field declared."
   [fields values]
-  (let
-    [by-name
-     (into {} (map (juxt :name identity)) (answerable fields))
+  (let [by-name
+        (into {} (map (juxt :name identity)) (answerable fields))
 
-     answered
-     (set (keys values))]
+        answered
+        (set (keys values))]
 
     (or (when-let [extra (seq (sort (remove by-name answered)))]
           (str "answers no such field: " (str/join ", " extra)))

@@ -50,12 +50,11 @@
    The last cell takes the remainder, so a division that does not come out even
    never leaves a column of the row unpainted."
   [inner-w n]
-  (let
-    [n
-     (max 1 (long n))
+  (let [n
+        (max 1 (long n))
 
-     cell-w
-     (max 1 (quot (long inner-w) n))]
+        cell-w
+        (max 1 (quot (long inner-w) n))]
 
     (mapv (fn [i]
             (let [taken (* (long i) cell-w)]

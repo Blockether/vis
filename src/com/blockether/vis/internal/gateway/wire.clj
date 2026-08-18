@@ -24,15 +24,14 @@
    unencodable - which kills the transport, not just the field."
   [k]
   (cond (or (keyword? k) (symbol? k))
-        (let
-          [n
-           (name k)
+        (let [n
+              (name k)
 
-           n
-           (if (str/ends-with? n "?")
-             (let [base (subs n 0 (dec (count n)))]
-               (if (str/starts-with? base "is-") base (str "is-" base)))
-             n)]
+              n
+              (if (str/ends-with? n "?")
+                (let [base (subs n 0 (dec (count n)))]
+                  (if (str/starts-with? base "is-") base (str "is-" base)))
+                n)]
 
           (str/replace n "-" "_"))
         (string? k) k
@@ -129,10 +128,9 @@
   [^String s ^long limit]
   (if (<= (count s) limit)
     s
-    (let
-      [cut (if (and (pos? limit) (Character/isHighSurrogate (.charAt s (dec limit))))
-             (dec limit)
-             limit)]
+    (let [cut (if (and (pos? limit) (Character/isHighSurrogate (.charAt s (dec limit))))
+                (dec limit)
+                limit)]
       (str (subs s 0 (max 0 cut)) " …[truncated]"))))
 
 (defn bounded-pr

@@ -23,31 +23,30 @@
 (defdescribe
   a-failed-download-is-not-a-verdict-test
   (it "buys one more attempt, and the recording goes through"
-      (let
-        [downloads
-         (atom 0)
+      (let [downloads
+            (atom 0)
 
-         phases
-         (atom [])]
+            phases
+            (atom [])]
 
-        (with-redefs
-          [asr/model-state
-           (answers [{:state :failed :error "connection reset"} {:state :ready :progress 100}])
+        (with-redefs [asr/model-state
+                      (answers [{:state :failed :error "connection reset"}
+                                {:state :ready :progress 100}])
 
-           asr/start-download!
-           (fn []
-             (swap! downloads inc)
-             nil)
+                      asr/start-download!
+                      (fn []
+                        (swap! downloads inc)
+                        nil)
 
-           asr/model-dir
-           (constantly "model-dir")
+                      asr/model-dir
+                      (constantly "model-dir")
 
-           asr/transcribe-file!
-           (fn [_dir _audio _opts]
-             "it speaks again")
+                      asr/transcribe-file!
+                      (fn [_dir _audio _opts]
+                        "it speaks again")
 
-           sherpa/ensure-native!
-           (constantly true)]
+                      sherpa/ensure-native!
+                      (constantly true)]
 
           (expect (= "it speaks again"
                      (engine/transcribe {:audio-path "clip.wav"
@@ -56,22 +55,21 @@
           (expect (= 1 @downloads) "the retry is a real new download, not a re-read of the verdict")
           (expect (= [:preparing] (distinct @phases)) "and the human is told it is preparing"))))
   (it "reports the second failure in a row, with the reason the transfer gave"
-      (with-redefs
-        [asr/model-state
-         (constantly {:state :failed :error "connection reset"})
+      (with-redefs [asr/model-state
+                    (constantly {:state :failed :error "connection reset"})
 
-         asr/start-download!
-         (constantly nil)
+                    asr/start-download!
+                    (constantly nil)
 
-         asr/model-dir
-         (constantly "model-dir")
+                    asr/model-dir
+                    (constantly "model-dir")
 
-         asr/transcribe-file!
-         (fn [_dir _audio _opts]
-           "never reached")
+                    asr/transcribe-file!
+                    (fn [_dir _audio _opts]
+                      "never reached")
 
-         sherpa/ensure-native!
-         (constantly true)]
+                    sherpa/ensure-native!
+                    (constantly true)]
 
         (let [thrown (try (engine/transcribe {:audio-path "clip.wav"}) nil (catch Throwable t t))]
           (expect (some? thrown))
@@ -84,19 +82,18 @@
 (defdescribe
   an-unlinkable-runtime-asks-for-the-restart-it-needs-test
   (it "translates the linker failure into advice, and keeps the failure as the cause"
-      (with-redefs
-        [asr/model-state
-         (constantly {:state :ready :progress 100})
+      (with-redefs [asr/model-state
+                    (constantly {:state :ready :progress 100})
 
-         asr/model-dir
-         (constantly "model-dir")
+                    asr/model-dir
+                    (constantly "model-dir")
 
-         asr/transcribe-file!
-         (fn [_dir _audio _opts]
-           (throw (NoClassDefFoundError. "com/k2fsa/sherpa/onnx/OfflineRecognizer")))
+                    asr/transcribe-file!
+                    (fn [_dir _audio _opts]
+                      (throw (NoClassDefFoundError. "com/k2fsa/sherpa/onnx/OfflineRecognizer")))
 
-         sherpa/ensure-native!
-         (constantly true)]
+                    sherpa/ensure-native!
+                    (constantly true)]
 
         (let [thrown (try (engine/transcribe {:audio-path "clip.wav"}) nil (catch Throwable t t))]
           (expect (some? thrown))

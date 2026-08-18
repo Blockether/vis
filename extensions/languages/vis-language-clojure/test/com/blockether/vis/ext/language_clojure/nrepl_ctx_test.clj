@@ -14,9 +14,8 @@
 (defn- no-resource-mirror
   "Stub the resource-mirror IO so contribute never touches the real registry."
   [f]
-  (with-redefs
-    [nx/ensure-resource! (fn [& _]
-                           nil)]
+  (with-redefs [nx/ensure-resource! (fn [& _]
+                                      nil)]
     (f)))
 
 (defdescribe
@@ -24,16 +23,19 @@
   (it "returns no legacy env contribution and sends one probed REPL to the resource mirror"
       (reset-cache!)
       (let [mirrored (atom nil)]
-        (with-redefs
-          [rm/session-repls
-           (fn [_]
-             [{:id "nrepl:/proj" :dir "/proj" :port 7001 :tool :clj :aliases [:dev :test]}])
-           nc/probe! (fn [_]
-                       {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
-           nc/health-check! (fn [_]
-                              {:status :up :ms 3})
-           nx/ensure-resource! (fn [sid statuses repl]
-                                 (reset! mirrored {:sid sid :statuses statuses :repl repl}))]
+        (with-redefs [rm/session-repls (fn [_]
+                                         [{:id "nrepl:/proj"
+                                           :dir "/proj"
+                                           :port 7001
+                                           :tool :clj
+                                           :aliases [:dev :test]}])
+                      nc/probe! (fn [_]
+                                  {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
+                      nc/health-check! (fn [_]
+                                         {:status :up :ms 3})
+                      nx/ensure-resource!
+                      (fn [sid statuses repl]
+                        (reset! mirrored {:sid sid :statuses statuses :repl repl}))]
 
           (expect (= {}
                      (nx/contribute {:workspace/root "/proj"
@@ -44,12 +46,12 @@
           (expect (= :clj (get-in @mirrored [:statuses 7001 :dialect])))
           (expect (= "nrepl:/proj" (get-in @mirrored [:repl :id])))))))
 
-(defdescribe eval-health-block-test
-             (it "passes unresponsive eval diagnostics to the canonical resource mirror"
-                 (reset-cache!)
-                 (let [mirrored (atom nil)]
-                   (with-redefs
-                     [rm/session-repls (fn [_]
+(defdescribe
+  eval-health-block-test
+  (it "passes unresponsive eval diagnostics to the canonical resource mirror"
+      (reset-cache!)
+      (let [mirrored (atom nil)]
+        (with-redefs [rm/session-repls (fn [_]
                                          [{:id "nrepl:/proj" :dir "/proj" :port 7001 :tool :clj}])
                       nc/probe! (fn [_]
                                   {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
@@ -60,26 +62,24 @@
                       nx/ensure-resource! (fn [_ statuses _]
                                             (reset! mirrored (get statuses 7001)))]
 
-                     (nx/contribute {:workspace/root "/proj"
-                                     :session-id "s1"
-                                     :ctx-atom (atom {:session/turn 1})})
-                     (expect (= :unresponsive (:status @mirrored)))
-                     (expect (= "(+ 1 1)" (:form @mirrored)))
-                     (expect (re-find #"(?i)stop it, then start|reprobe" (:hint @mirrored)))
-                     (expect (= :clj (:dialect @mirrored)))))))
+          (nx/contribute
+            {:workspace/root "/proj" :session-id "s1" :ctx-atom (atom {:session/turn 1})})
+          (expect (= :unresponsive (:status @mirrored)))
+          (expect (= "(+ 1 1)" (:form @mirrored)))
+          (expect (re-find #"(?i)stop it, then start|reprobe" (:hint @mirrored)))
+          (expect (= :clj (:dialect @mirrored)))))))
 
 (defdescribe
   resource-mirror-logs-test
   (it "registers nREPL mirrors as log-capable resources when the manager has a log path"
-      (let
-        [sid
-         (str "nrepl-ctx-logs-" (System/nanoTime))
+      (let [sid
+            (str "nrepl-ctx-logs-" (System/nanoTime))
 
-         rid
-         "nrepl:/proj"
+            rid
+            "nrepl:/proj"
 
-         log
-         (java.io.File/createTempFile "vis-nrepl-ctx-" ".log")]
+            log
+            (java.io.File/createTempFile "vis-nrepl-ctx-" ".log")]
 
         (try
           (spit log "starting\nready\n")
@@ -96,15 +96,14 @@
 (defdescribe
   resource-mirror-dir-test
   (it "keeps executable absolute dirs instead of display-only home abbreviations"
-      (let
-        [sid
-         (str "nrepl-ctx-dir-" (System/nanoTime))
+      (let [sid
+            (str "nrepl-ctx-dir-" (System/nanoTime))
 
-         dir
-         (.getCanonicalPath (java.io.File. (System/getProperty "user.home") "vis"))
+            dir
+            (.getCanonicalPath (java.io.File. (System/getProperty "user.home") "vis"))
 
-         rid
-         (rm/id-of dir)]
+            rid
+            (rm/id-of dir)]
 
         (try
           (@#'nx/ensure-resource! sid {7001 {:status :up}} {:id rid :dir dir :port 7001 :tool :clj})
@@ -114,33 +113,30 @@
 (defdescribe
   resource-mirror-health-test
   (it "does not mark a classpath-resolving nREPL healthy before its port answers"
-      (let
-        [sid
-         (str "nrepl-ctx-health-" (System/nanoTime))
+      (let [sid
+            (str "nrepl-ctx-health-" (System/nanoTime))
 
-         rid
-         "nrepl:/proj"]
+            rid
+            "nrepl:/proj"]
 
-        (try (with-redefs
-               [rm/session-repls
-                (fn [_]
-                  [{:id rid :dir "/proj" :port 7001 :tool :clj}])
+        (try (with-redefs [rm/session-repls
+                           (fn [_]
+                             [{:id rid :dir "/proj" :port 7001 :tool :clj}])
 
-                nc/probe!
-                (fn [_]
-                  {:status :starting})]
+                           nc/probe!
+                           (fn [_]
+                             {:status :starting})]
 
                (nx/contribute
                  {:workspace/root "/proj" :session-id sid :ctx-atom (atom {:session/turn 42})})
                (expect (= "starting" (get (vis/get-resource sid rid) "status"))))
              (finally (vis/unregister-resource! sid rid)))))
   (it "refreshes an existing mirror from healthy to failed when liveness changes"
-      (let
-        [sid
-         (str "nrepl-ctx-health-refresh-" (System/nanoTime))
+      (let [sid
+            (str "nrepl-ctx-health-refresh-" (System/nanoTime))
 
-         rid
-         "nrepl:/proj"]
+            rid
+            "nrepl:/proj"]
 
         (try (@#'nx/ensure-resource! sid {7001 {:status :up}} {:id rid :dir "/proj" :port 7001})
              (@#'nx/ensure-resource! sid {7001 {:status :failed}} {:id rid :dir "/proj" :port 7001})
@@ -151,9 +147,8 @@
              (it "returns {} when no workspace root is on env" (expect (= {} (nx/contribute {}))))
              (it "never throws — degrades to {} when session-repls blows up"
                  (reset-cache!)
-                 (with-redefs
-                   [rm/session-repls (fn [_]
-                                       (throw (ex-info "boom" {})))]
+                 (with-redefs [rm/session-repls (fn [_]
+                                                  (throw (ex-info "boom" {})))]
                    (expect (= {}
                               (nx/contribute {:workspace/root "/proj"
                                               :session-id "s1"
@@ -166,16 +161,14 @@
       (no-resource-mirror
         (fn []
           (let [calls (atom 0)]
-            (with-redefs
-              [rm/session-repls (fn [_]
-                                  [{:id "nrepl:/p" :dir "/p" :port 9999 :tool :clj}])
-               nc/probe! (fn [_]
-                           (swap! calls inc)
-                           {:status :up})]
+            (with-redefs [rm/session-repls (fn [_]
+                                             [{:id "nrepl:/p" :dir "/p" :port 9999 :tool :clj}])
+                          nc/probe! (fn [_]
+                                      (swap! calls inc)
+                                      {:status :up})]
 
-              (let
-                [e1 {:workspace/root "/p" :session-id "s1" :ctx-atom (atom {:session/turn 5})}
-                 e2 {:workspace/root "/p" :session-id "s1" :ctx-atom (atom {:session/turn 6})}]
+              (let [e1 {:workspace/root "/p" :session-id "s1" :ctx-atom (atom {:session/turn 5})}
+                    e2 {:workspace/root "/p" :session-id "s1" :ctx-atom (atom {:session/turn 6})}]
 
                 (nx/contribute e1)
                 (nx/contribute e1)

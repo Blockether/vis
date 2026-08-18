@@ -26,9 +26,8 @@
 
 (defn- blank->nil
   [s]
-  (let
-    [s (some-> s
-               str)]
+  (let [s (some-> s
+                  str)]
     (when-not (or (nil? s) (= "" s)) s)))
 
 (defn- canon-path

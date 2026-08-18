@@ -31,17 +31,16 @@
   (let [models (:models svar-provider)]
     (if (every? :context models)
       models
-      (try (let
-             [probe (cond-> svar-provider
-                      (empty? models)
-                      (assoc :models [{:name "probe"}]))
-              router (svar/make-router [probe] (or router-opts {}))
-              by-name (into {}
-                            (keep (fn [m]
-                                    (when-let [nm (or (:id m) (:name m))]
-                                      (when (:context m)
-                                        [nm (select-keys m [:context :tool-call?])]))))
-                            (svar/models! router))]
+      (try (let [probe (cond-> svar-provider
+                         (empty? models)
+                         (assoc :models [{:name "probe"}]))
+                 router (svar/make-router [probe] (or router-opts {}))
+                 by-name (into {}
+                               (keep (fn [m]
+                                       (when-let [nm (or (:id m) (:name m))]
+                                         (when (:context m)
+                                           [nm (select-keys m [:context :tool-call?])]))))
+                               (svar/models! router))]
 
              ;; detection fills gaps; explicit model values still win per key
              (mapv (fn [m]

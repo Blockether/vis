@@ -123,16 +123,15 @@
                    (expect (str/includes? (nth lines 1) "N ▲"))
                    (expect (apply = (map count lines)))))
              (it "a numeric column's label sits over its digits, not at the far left"
-                 (let
-                   [ws
-                    (table/csv-stretch-widths (table/csv-widths grid 60) 60)
+                 (let [ws
+                       (table/csv-stretch-widths (table/csv-widths grid 60) 60)
 
-                    lines
-                    (table/csv-grid-lines grid 60 {:widths ws})
+                       lines
+                       (table/csv-grid-lines grid 60 {:widths ws})
 
-                    ends
-                    (fn [line s]
-                      (+ (long (str/index-of line s)) (count s)))]
+                       ends
+                       (fn [line s]
+                         (+ (long (str/index-of line s)) (count s)))]
 
                    ;; lines: top, header, rule, ada, yak, zed
                    (expect (= (ends (nth lines 1) "qty") (ends (nth lines 5) "120")))
@@ -182,18 +181,17 @@
 
 (defdescribe vis-table-fence-test
              (it "paints the caption and a real grid, and hangs the whole CSV off every row"
-                 (let
-                   [r
-                    (table-render (fence 3))
+                 (let [r
+                       (table-render (fence 3))
 
-                    texts
-                    (mapv plain (:lines r))
+                       texts
+                       (mapv plain (:lines r))
 
-                    joined
-                    (str/join "\n" texts)
+                       joined
+                       (str/join "\n" texts)
 
-                    tbls
-                    (keep :table (:line-meta r))]
+                       tbls
+                       (keep :table (:line-meta r))]
 
                    (expect (str/includes? joined "[Table: fleet.csv 3 rows × 3 cols, 64 B]"))
                    (expect (str/includes? joined "name"))
@@ -217,24 +215,23 @@
              (it "a one-row overflow says row, not rows"
                  (expect (str/includes? (rendered (fence 11)) "1 more row —")))
              (it "the headline titles the card: same chip as the grid, and clickable"
-                 (let
-                   [r
-                    (table-render (fence 3))
+                 (let [r
+                       (table-render (fence 3))
 
-                    texts
-                    (mapv plain (:lines r))
+                       texts
+                       (mapv plain (:lines r))
 
-                    idx-of
-                    (fn [pred]
-                      (first (keep-indexed (fn [i t]
-                                             (when (pred (str/trim t)) i))
-                                           texts)))
+                       idx-of
+                       (fn [pred]
+                         (first (keep-indexed (fn [i t]
+                                                (when (pred (str/trim t)) i))
+                                              texts)))
 
-                    caption
-                    (idx-of #(str/includes? % "[Table:"))
+                       caption
+                       (idx-of #(str/includes? % "[Table:"))
 
-                    top
-                    (idx-of #(str/starts-with? % "┌"))]
+                       top
+                       (idx-of #(str/starts-with? % "┌"))]
 
                    ;; the grid starts on the very next row — one card, not a
                    ;; caption paragraph with a code block loose underneath it
@@ -242,12 +239,11 @@
                    ;; and the headline opens the sheet like any grid row does
                    (expect (some? (:table (nth (:line-meta r) caption))))))
              (it "the grid FILLS the card instead of leaving dead fill on the right"
-                 (let
-                   [texts
-                    (mapv (comp str/trim plain) (:lines (table-render (fence 3))))
+                 (let [texts
+                       (mapv (comp str/trim plain) (:lines (table-render (fence 3))))
 
-                    bottom
-                    (first (filter #(str/starts-with? % "└") texts))]
+                       bottom
+                       (first (filter #(str/starts-with? % "└") texts))]
 
                    ;; natural widths would draw a ~25-column grid inside a card
                    ;; three times that wide; stretched, the border is the widest
@@ -270,24 +266,23 @@
    `(cell col row)` reader over the back buffer — colours included, since the
    whole point of the card's chrome is what a human SEES."
   [body f]
-  (let
-    [vt
-     (term/virtual-screen)
+  (let [vt
+        (term/virtual-screen)
 
-     ^TerminalScreen screen
-     (:screen vt)
+        ^TerminalScreen screen
+        (:screen vt)
 
-     cols
-     (.getColumns (.getTerminalSize screen))
+        cols
+        (.getColumns (.getTerminalSize screen))
 
-     msg
-     (virtual/project-message {:role :assistant
-                               :session-id "s1"
-                               :session-turn-id "t1"
-                               :text (str "````vis-table\n" body "\n````\n")}
-                              (- (long cols) 4)
-                              {}
-                              {:session-id "s1"})]
+        msg
+        (virtual/project-message {:role :assistant
+                                  :session-id "s1"
+                                  :session-turn-id "t1"
+                                  :text (str "````vis-table\n" body "\n````\n")}
+                                 (- (long cols) 4)
+                                 {}
+                                 {:session-id "s1"})]
 
     (try (render/draw-chat-bubble! (.newTextGraphics screen) msg 1 2 (- (long cols) 4))
          (.refresh screen)
@@ -312,11 +307,10 @@
    bars. \"Not the dominant colour\" would count the header's whole coloured band
    as type and drown the difference."
   [nm cells]
-  (let
-    [raster (cap/png-rows (cap/shot! {:grid [cells]
-                                      :out (str (System/getProperty "java.io.tmpdir") "/" nm)
-                                      :font-size 16
-                                      :trim false}))]
+  (let [raster (cap/png-rows (cap/shot! {:grid [cells]
+                                         :out (str (System/getProperty "java.io.tmpdir") "/" nm)
+                                         :font-size 16
+                                         :trim false}))]
     (cap/ink raster (set (first raster)))))
 
 (defdescribe
@@ -333,34 +327,33 @@
     (paint-card
       (fence 12)
       (fn [rows cell]
-        (let
-          [row-of
-           (fn [needle]
-             (first (keep-indexed (fn [i r]
-                                    (when (str/includes? r needle) i))
-                                  rows)))
+        (let [row-of
+              (fn [needle]
+                (first (keep-indexed (fn [i r]
+                                       (when (str/includes? r needle) i))
+                                     rows)))
 
-           y0
-           (row-of "row0")
+              y0
+              (row-of "row0")
 
-           y1
-           (row-of "row1")
+              y1
+              (row-of "row1")
 
-           yh
-           (row-of "name")
+              yh
+              (row-of "name")
 
-           text-col
-           (fn [y needle]
-             (str/index-of (nth rows y) needle))
+              text-col
+              (fn [y needle]
+                (str/index-of (nth rows y) needle))
 
-           c0
-           (cell (text-col y0 "row0") y0)
+              c0
+              (cell (text-col y0 "row0") y0)
 
-           c1
-           (cell (text-col y1 "row1") y1)
+              c1
+              (cell (text-col y1 "row1") y1)
 
-           ch
-           (cell (text-col yh "name") yh)]
+              ch
+              (cell (text-col yh "name") yh)]
 
           (expect (some? y0))
           (expect (some? y1))
@@ -390,31 +383,30 @@
     (paint-card
       (fence 12)
       (fn [rows cell]
-        (let
-          [row-of
-           (fn [needle]
-             (first (keep-indexed (fn [i r]
-                                    (when (str/includes? r needle) i))
-                                  rows)))
+        (let [row-of
+              (fn [needle]
+                (first (keep-indexed (fn [i r]
+                                       (when (str/includes? r needle) i))
+                                     rows)))
 
-           ;; a striped row and its neighbour, which carries the card's own bg
-           y1
-           (row-of "row1")
+              ;; a striped row and its neighbour, which carries the card's own bg
+              y1
+              (row-of "row1")
 
-           y0
-           (row-of "row0")
+              y0
+              (row-of "row0")
 
-           line
-           (nth rows y1)
+              line
+              (nth rows y1)
 
-           left
-           (str/index-of line "│")
+              left
+              (str/index-of line "│")
 
-           right
-           (str/last-index-of line "│")
+              right
+              (str/last-index-of line "│")
 
-           card-bg
-           (:bg (cell left y0))]
+              card-bg
+              (:bg (cell left y0))]
 
           (expect (< (long left) (long right)))
           ;; the frame's own columns are painted like the rest of the card…
@@ -434,26 +426,25 @@
   (it "carries that bold into the PICTURE of the card, not only into the buffer"
       (paint-card (fence 12)
                   (fn [rows cell]
-                    (let
-                      [row-of
-                       (fn [needle]
-                         (first (keep-indexed (fn [i r]
-                                                (when (str/includes? r needle) i))
-                                              rows)))
+                    (let [row-of
+                          (fn [needle]
+                            (first (keep-indexed (fn [i r]
+                                                   (when (str/includes? r needle) i))
+                                                 rows)))
 
-                       cells
-                       (fn [y]
-                         (mapv #(cell % y) (range (count (nth rows y)))))
+                          cells
+                          (fn [y]
+                            (mapv #(cell % y) (range (count (nth rows y)))))
 
-                       unbolded
-                       (fn [cs]
-                         (mapv #(assoc % :bold false) cs))
+                          unbolded
+                          (fn [cs]
+                            (mapv #(assoc % :bold false) cs))
 
-                       head
-                       (cells (row-of "name"))
+                          head
+                          (cells (row-of "name"))
 
-                       body
-                       (cells (row-of "row0"))]
+                          body
+                          (cells (row-of "row0"))]
 
                       (expect (some :bold head))
                       ;; the same header, drawn without its flag, is visibly lighter
@@ -496,12 +487,11 @@
 (defdescribe
   table-modal-component-test
   (it "opens on every row, titled with its shape"
-      (let
-        [c
-         (component)
+      (let [c
+            (component)
 
-         m
-         (measure c (:init c))]
+            m
+            (measure c (:init c))]
 
         (expect (= 3 (:total m)))
         (expect (str/includes? (:title m) "fleet.csv"))
@@ -513,21 +503,20 @@
         (expect (not (str/includes? (:title (measure c (:init c))) "page")))
         (expect (= 1 (:pages (measure c (:init c)))))))
   (it "PgDn turns a WHOLE page: the cursor lands on its first row and the title counts"
-      (let
-        [c
-         (big-component)
+      (let [c
+            (big-component)
 
-         m0
-         (measure c (:init c))
+            m0
+            (measure c (:init c))
 
-         page-size
-         (long (:list-h m0))
+            page-size
+            (long (:list-h m0))
 
-         st
-         (press c (:init c) [(special KeyType/PageDown)])
+            st
+            (press c (:init c) [(special KeyType/PageDown)])
 
-         m
-         (measure c st)]
+            m
+            (measure c st)]
 
         (expect (< page-size 60))
         (expect (str/includes? (:title m0) (str "page 1/" (:pages m0))))
@@ -536,39 +525,36 @@
         (expect (= page-size (:scroll ((:reconcile c) st m))))
         (expect (str/includes? (:title m) (str "page 2/" (:pages m))))))
   (it "PgUp comes back and neither page key walks off the sheet"
-      (let
-        [c
-         (big-component)
+      (let [c
+            (big-component)
 
-         back
-         (press c (:init c) [(special KeyType/PageDown) (special KeyType/PageUp)])
+            back
+            (press c (:init c) [(special KeyType/PageDown) (special KeyType/PageUp)])
 
-         top
-         (press c (:init c) (repeat 9 (special KeyType/PageUp)))
+            top
+            (press c (:init c) (repeat 9 (special KeyType/PageUp)))
 
-         end
-         (press c (:init c) (repeat 9 (special KeyType/PageDown)))]
+            end
+            (press c (:init c) (repeat 9 (special KeyType/PageDown)))]
 
         (expect (zero? (long (:selected back))))
         (expect (zero? (long (:selected top))))
         (expect (= 59 (:selected end)))))
   (it "Home and End jump to the first and last row"
-      (let
-        [c
-         (big-component)
+      (let [c
+            (big-component)
 
-         end
-         (press c (:init c) [(special KeyType/End)])]
+            end
+            (press c (:init c) [(special KeyType/End)])]
 
         (expect (= 59 (:selected end)))
         (expect (zero? (long (:selected (press c end [(special KeyType/Home)])))))))
   (it "↑/↓ move the row cursor and stop at the ends"
-      (let
-        [c
-         (component)
+      (let [c
+            (component)
 
-         down
-         (press c (:init c) [(special KeyType/ArrowDown)])]
+            down
+            (press c (:init c) [(special KeyType/ArrowDown)])]
 
         (expect (= 1 (:selected down)))
         (expect (= 2 (:selected (press c (:init c) (repeat 6 (special KeyType/ArrowDown))))))
@@ -576,26 +562,24 @@
                   (long (:selected
                           (press c down [(special KeyType/ArrowUp) (special KeyType/ArrowUp)])))))))
   (it "←/→ move the column cursor, which the header marks"
-      (let
-        [c
-         (component)
+      (let [c
+            (component)
 
-         st
-         (press c (:init c) [(special KeyType/ArrowRight)])]
+            st
+            (press c (:init c) [(special KeyType/ArrowRight)])]
 
         (expect (= 1 (:col st)))
         (expect (str/includes? (nth (:head-cells (measure c st)) 1) "▸"))
         (expect (zero? (long (:col (press c (:init c) [(special KeyType/ArrowLeft)])))))))
   (it "Enter sorts by the cursor column and pressing it again flips the direction"
-      (let
-        [c
-         (component)
+      (let [c
+            (component)
 
-         asc
-         (press c (:init c) [(special KeyType/Enter)])
+            asc
+            (press c (:init c) [(special KeyType/Enter)])
 
-         desc
-         (press c asc [(special KeyType/Enter)])]
+            desc
+            (press c asc [(special KeyType/Enter)])]
 
         (expect (= 0 (:sort-idx asc)))
         (expect (= :asc (:sort-dir asc)))
@@ -604,46 +588,42 @@
         (expect (= ["zed" "yak" "ada"] (mapv first (:visible (measure c desc)))))
         (expect (str/includes? (nth (:head-cells (measure c desc)) 0) "▼"))))
   (it "sorting a numeric column is numeric — 9, 10, 120"
-      (let
-        [c
-         (component)
+      (let [c
+            (component)
 
-         st
-         (press c (:init c) [(special KeyType/ArrowRight) (special KeyType/Enter)])]
+            st
+            (press c (:init c) [(special KeyType/ArrowRight) (special KeyType/Enter)])]
 
         (expect (= ["9" "10" "120"] (mapv #(nth % 1) (:visible (measure c st)))))))
   (it "Esc closes with nothing"
-      (let
-        [c
-         (component)
+      (let [c
+            (component)
 
-         st
-         (press c (:init c) [(special KeyType/Escape)])]
+            st
+            (press c (:init c) [(special KeyType/Escape)])]
 
         (expect (contains? st ::dlg/done))
         (expect (nil? (::dlg/done st)))))
   (it "Tab returns the selected row"
-      (let
-        [c
-         (component)
+      (let [c
+            (component)
 
-         st
-         (press c (:init c) [(special KeyType/ArrowDown) (special KeyType/Tab)])]
+            st
+            (press c (:init c) [(special KeyType/ArrowDown) (special KeyType/Tab)])]
 
         (expect (= ["yak" "10" "second"] (::dlg/done st)))))
   (it "the window snaps to the page holding the cursor, never mid-page"
-      (let
-        [c
-         (big-component)
+      (let [c
+            (big-component)
 
-         page-size
-         (long (:list-h (measure c (:init c))))
+            page-size
+            (long (:list-h (measure c (:init c))))
 
-         st
-         (press c (:init c) (repeat page-size (special KeyType/ArrowDown)))
+            st
+            (press c (:init c) (repeat page-size (special KeyType/ArrowDown)))
 
-         m
-         (measure c st)]
+            m
+            (measure c st)]
 
         (expect (= page-size (:selected st)))
         (expect (= 1 (:page m)))
@@ -653,36 +633,34 @@
   table-dialog-paint-test
   (it
     "paints the bordered grid, the page keys and the hint bar"
-    (let
-      [vt
-       (term/virtual-screen)
+    (let [vt
+          (term/virtual-screen)
 
-       ^TerminalScreen screen
-       (:screen vt)
+          ^TerminalScreen screen
+          (:screen vt)
 
-       ^DefaultVirtualTerminal terminal
-       (:terminal vt)
+          ^DefaultVirtualTerminal terminal
+          (:terminal vt)
 
-       c
-       (component)
+          c
+          (component)
 
-       m0
-       (measure c (:init c))
+          m0
+          (measure c (:init c))
 
-       st
-       ((:reconcile c) (:init c) m0)
+          st
+          ((:reconcile c) (:init c) m0)
 
-       m
-       (measure c st)]
+          m
+          (measure c st)]
 
       (try ((:paint c) (.newTextGraphics screen) st m)
            (.refresh screen)
-           (let
-             [rows
-              (term/grid terminal)
+           (let [rows
+                 (term/grid terminal)
 
-              txt
-              (str/join "\n" rows)]
+                 txt
+                 (str/join "\n" rows)]
 
              (expect (str/includes? txt "fleet.csv"))
              (expect (str/includes? txt "PgUp/PgDn"))
@@ -709,31 +687,28 @@
 (defdescribe
   vis-table-cross-surface-test
   (it "the printed fence survives the REAL Markdown parse as one vis-table node"
-      (let
-        [codes (filterv #(and (vector? %) (= :code (first %)))
-                 (tree-seq vector? seq (ast/markdown->ast wire-fence)))]
+      (let [codes (filterv #(and (vector? %) (= :code (first %)))
+                    (tree-seq vector? seq (ast/markdown->ast wire-fence)))]
         (expect (= 1 (count codes)))
         (expect (= "vis-table" (:lang (second (first codes)))))))
   (it "a quoted comma stays ONE cell from the fence to the painted grid"
-      (let
-        [r
-         (markdown-render wire-fence)
+      (let [r
+            (markdown-render wire-fence)
 
-         joined
-         (str/join "\n" (map plain (:lines r)))
+            joined
+            (str/join "\n" (map plain (:lines r)))
 
-         csv
-         (:csv (first (keep :table (:line-meta r))))]
+            csv
+            (:csv (first (keep :table (:line-meta r))))]
 
         (expect (str/includes? joined "note, with comma"))
         (expect (= ["machine-0" "7" "note, with comma"] (nth (table/parse-csv csv) 1)))))
   (it "the body the engine hands the human is the fence VERBATIM, and it paints"
-      (let
-        [card
-         (form/result-display {:stdout wire-fence})
+      (let [card
+            (form/result-display {:stdout wire-fence})
 
-         tbls
-         (keep :table (:line-meta (markdown-render (str (:body card)))))]
+            tbls
+            (keep :table (:line-meta (markdown-render (str (:body card)))))]
 
         (expect (= wire-fence (str (:body card))))
         (expect (= "fleet.csv" (:name (first tbls))))
@@ -747,15 +722,14 @@
         ;; and what the model reads is prose, not a clickable grid
         (expect (empty? (keep :table (:line-meta (markdown-render wire)))))))
   (it "clicking the preview opens the dialog on the WHOLE sheet"
-      (let
-        [{:keys [name csv]}
-         (first (keep :table (:line-meta (table-render (fence 15)))))
+      (let [{:keys [name csv]}
+            (first (keep :table (:line-meta (table-render (fence 15)))))
 
-         c
-         (dlg/table-modal-component name (table/parse-csv csv))
+            c
+            (dlg/table-modal-component name (table/parse-csv csv))
 
-         m
-         (measure c (:init c))]
+            m
+            (measure c (:init c))]
 
         ;; the transcript previews 10 rows; the sheet behind it has all 15
         (expect (= "fleet.csv" name))
@@ -764,12 +738,11 @@
   (it "a grid keeps its click meta even when the mid-scroll window asks for one"
       ;; The windowed fast path emits no line meta at all, so a grid painted
       ;; through it would look right and do nothing on click.
-      (let
-        [msg
-         {:role :assistant :text wire-fence}
+      (let [msg
+            {:role :assistant :text wire-fence}
 
-         windowed
-         (virtual/project-message msg 76 {} {:session-id "s1" :window-start 0 :window-num 12})]
+            windowed
+            (virtual/project-message msg 76 {} {:session-id "s1" :window-start 0 :window-num 12})]
 
         (expect (seq (keep :table (:line-meta windowed))))
         (expect (= "fleet.csv" (:name (first (keep :table (:line-meta windowed)))))))))

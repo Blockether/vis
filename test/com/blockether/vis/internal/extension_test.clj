@@ -10,38 +10,36 @@
 
 (defdescribe prompt-normalization-test
              (it "normalizes string and fn extension prompts"
-                 (let
-                   [prompt-text
-                    "\n\n    First line\n\n\n\n      Nested line\n"
+                 (let [prompt-text
+                       "\n\n    First line\n\n\n\n      Nested line\n"
 
-                    string-ext
-                    (extension/extension {:ext/name "test.prompt-string"
-                                          :ext/description "Test prompt string."
-                                          :ext/prompt-fn prompt-text})
+                       string-ext
+                       (extension/extension {:ext/name "test.prompt-string"
+                                             :ext/description "Test prompt string."
+                                             :ext/prompt-fn prompt-text})
 
-                    fn-ext
-                    (extension/extension {:ext/name "test.prompt-fn"
-                                          :ext/description "Test prompt fn."
-                                          :ext/prompt-fn (fn [_]
-                                                           prompt-text)})]
+                       fn-ext
+                       (extension/extension {:ext/name "test.prompt-fn"
+                                             :ext/description "Test prompt fn."
+                                             :ext/prompt-fn (fn [_]
+                                                              prompt-text)})]
 
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn string-ext) {})))
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn fn-ext) {}))))))
 
 (defdescribe ctx-contributions-test
              (it "binds active workspace root while building extension ctx"
-                 (let
-                   [root
-                    (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
+                 (let [root
+                       (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
 
-                    ext
-                    {:ext/name "test.ctx-workspace"
-                     :ext/ctx-fn (fn [_]
-                                   {:project {:ctx-root workspace/*workspace-root*
-                                              :cwd (.getCanonicalPath (workspace/cwd))}})}
+                       ext
+                       {:ext/name "test.ctx-workspace"
+                        :ext/ctx-fn (fn [_]
+                                      {:project {:ctx-root workspace/*workspace-root*
+                                                 :cwd (.getCanonicalPath (workspace/cwd))}})}
 
-                    ctx
-                    (extension/ctx-contributions {:workspace/root root} [ext])]
+                       ctx
+                       (extension/ctx-contributions {:workspace/root root} [ext])]
 
                    (expect (= root (get-in ctx [:project :ctx-root])))
                    (expect (= root (get-in ctx [:project :cwd]))))))
@@ -49,22 +47,20 @@
 (defdescribe
   channel-contributions-test
   (it "extension accepts channel contributions and derives channel kind"
-      (let
-        [ext (extension/extension {:ext/name "test.channel-contribution"
-                                   :ext/description "Test channel contribution."
-                                   :ext/channel-contributions {:tui.slot/commands
-                                                               [{:id :test/command
-                                                                 :fn #'sample-channel-fn}]}})]
+      (let [ext (extension/extension {:ext/name "test.channel-contribution"
+                                      :ext/description "Test channel contribution."
+                                      :ext/channel-contributions {:tui.slot/commands
+                                                                  [{:id :test/command
+                                                                    :fn #'sample-channel-fn}]}})]
         (expect (= "channels" (:ext/kind ext)))
         (expect (= {:tui.slot/commands [{:id :test/command :fn #'sample-channel-fn}]}
                    (:ext/channel-contributions ext)))))
   (it "normalizes slot keys into channel-id and slot fields"
-      (with-redefs
-        [extension/registered-extensions
-         (fn []
-           [{:ext/channel-contributions
-             {:tui.slot/commands [{:id :voice/input :fn #'sample-channel-fn}]
-              :api.slot/preamble [{:id :api/preamble :fn #'sample-channel-fn}]}}])]
+      (with-redefs [extension/registered-extensions
+                    (fn []
+                      [{:ext/channel-contributions
+                        {:tui.slot/commands [{:id :voice/input :fn #'sample-channel-fn}]
+                         :api.slot/preamble [{:id :api/preamble :fn #'sample-channel-fn}]}}])]
         (expect
           (= [{:id :voice/input :fn #'sample-channel-fn :channel-id :tui :slot :tui.slot/commands}]
              (extension/channel-contributions-for :tui :tui.slot/commands)))
@@ -86,16 +82,15 @@
                                                                  :slash/run-fn (fn [_]
                                                                                  {:slash/status
                                                                                   :ok})}]})
-           (let
-             [thrown (try (extension/register-extension!
-                            {:ext/name "test.slash-collide-b"
-                             :ext/description "duplicate owner of /probe"
-                             :ext/slash-commands [{:slash/name "probe"
-                                                   :slash/doc "probe dup"
-                                                   :slash/run-fn (fn [_]
-                                                                   {:slash/status :ok})}]})
-                          nil
-                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+           (let [thrown (try (extension/register-extension!
+                               {:ext/name "test.slash-collide-b"
+                                :ext/description "duplicate owner of /probe"
+                                :ext/slash-commands [{:slash/name "probe"
+                                                      :slash/doc "probe dup"
+                                                      :slash/run-fn (fn [_]
+                                                                      {:slash/status :ok})}]})
+                             nil
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))]
              (expect (= :extension/slash-path-collision (:type thrown)))
              (expect (= ["probe"]
                         (-> thrown
@@ -117,12 +112,11 @@
   op-hook-test
   "Generic cross-cutting operation hooks: any extension may decorate an op it
    does NOT own, wired once at the invoke-symbol-wrapper chokepoint."
-  (let
-    [run-after
-     @#'extension/run-op-after-hooks
+  (let [run-after
+        @#'extension/run-op-after-hooks
 
-     run-before
-     @#'extension/run-op-before-hooks]
+        run-before
+        @#'extension/run-op-before-hooks]
 
     (it "after-hooks compose: the result threads through each registered hook"
         (extension/register-op-hook! {:op :ophtest1
@@ -182,10 +176,9 @@
                                         :owner :a
                                         :fn (fn [_ _ args nxt]
                                               (try (nxt args) (catch Throwable _ (nxt [:fixed]))))})
-          (let
-            [f (fn [a]
-                 (swap! attempts inc)
-                 (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
+          (let [f (fn [a]
+                    (swap! attempts inc)
+                    (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
             (expect (= :ok (extension/invoke-operation :ophtest6 {} f [:bad])))
             (expect (= 2 @attempts)))))
     (it "declarative :ext/op-hooks install on register and tear down on deregister"
@@ -302,43 +295,42 @@
   one-extension-context-test
   (it
     "every extension callback site runs inside the session's own context"
-    (let
-      [seen
-       (atom [])
+    (let [seen
+          (atom [])
 
-       snap
-       (fn [site]
-         (swap! seen conj
-           {:site site
-            :session-id (:session-id extension/*current-environment*)
-            :root workspace/*workspace-root*
-            :ext (extension/current-extension-id)})
-         nil)
+          snap
+          (fn [site]
+            (swap! seen conj
+              {:site site
+               :session-id (:session-id extension/*current-environment*)
+               :root workspace/*workspace-root*
+               :ext (extension/current-extension-id)})
+            nil)
 
-       phase-hook
-       (fn [phase]
-         {:id (keyword "one-context" (name phase))
-          :phase phase
-          :fn (fn [_ctx]
-                (snap phase))})
+          phase-hook
+          (fn [phase]
+            {:id (keyword "one-context" (name phase))
+             :phase phase
+             :fn (fn [_ctx]
+                   (snap phase))})
 
-       ext
-       {:ext/name "one-context-probe"
-        :ext/hooks [(phase-hook :turn.answer/validate) (phase-hook :turn.iteration/start)]
-        :ext/ctx-fn (fn [_env]
-                      (snap :ext/ctx-fn)
-                      {})
-        :ext/prompt-fn (fn [_env]
-                         (snap :ext/prompt-fn))
-        :ext/activation-fn (fn [_env]
-                             (snap :ext/activation-fn)
-                             true)}
+          ext
+          {:ext/name "one-context-probe"
+           :ext/hooks [(phase-hook :turn.answer/validate) (phase-hook :turn.iteration/start)]
+           :ext/ctx-fn (fn [_env]
+                         (snap :ext/ctx-fn)
+                         {})
+           :ext/prompt-fn (fn [_env]
+                            (snap :ext/prompt-fn))
+           :ext/activation-fn (fn [_env]
+                                (snap :ext/activation-fn)
+                                true)}
 
-       root
-       (workspace/normalize-root (System/getProperty "user.dir"))
+          root
+          (workspace/normalize-root (System/getProperty "user.dir"))
 
-       env
-       {:session-id "sid-one-context" :workspace/root root :extensions (atom [ext])}]
+          env
+          {:session-id "sid-one-context" :workspace/root root :extensions (atom [ext])}]
 
       (vis-loop/final-answer-gate-error env 1 [] "an answer" [ext])
       (#'vis-loop/collect-iteration-start-hints env [ext] {:environment env})
@@ -392,18 +384,17 @@
 
 (defdescribe invoke-symbol-wrapper-workspace-root-test
              (it "binds workspace/*workspace-root* from :workspace/root for a plain engine symbol"
-                 (let
-                   [draft-root
-                    (.getCanonicalPath (java.io.File. "target/test-draft-cwd-probe"))
+                 (let [draft-root
+                       (.getCanonicalPath (java.io.File. "target/test-draft-cwd-probe"))
 
-                    sym
-                    (extension/symbol #'draft-cwd-probe {:tag :observation :inject-env? true})
+                       sym
+                       (extension/symbol #'draft-cwd-probe {:tag :observation :inject-env? true})
 
-                    ext
-                    {:ext/name "test.draft-cwd-probe" :ext/engine {:ext.engine/symbols [sym]}}
+                       ext
+                       {:ext/name "test.draft-cwd-probe" :ext/engine {:ext.engine/symbols [sym]}}
 
-                    result
-                    (extension/invoke-symbol-wrapper ext sym [] {:workspace/root draft-root})]
+                       result
+                       (extension/invoke-symbol-wrapper ext sym [] {:workspace/root draft-root})]
 
                    (expect (= draft-root (get result "root")))
                    (expect (= draft-root (get result "env-root"))))))
@@ -417,22 +408,21 @@
                  ;; Reading the docs table loads the built-in extensions, so the walk
                  ;; below sees the same registry a live session does.
                  (extension/sandbox-symbol-docs)
-                 (let
-                   [entries
-                    (into [] (mapcat extension/ext-symbols) (extension/registered-extensions))
+                 (let [entries
+                       (into [] (mapcat extension/ext-symbols) (extension/registered-extensions))
 
-                    dead-keys
-                    (into #{}
-                          (comp (mapcat keys)
-                                (filter (fn [k]
-                                          ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
-                                          ;; positional params for a PYTHON call, and is not a schema.
-                                          (contains? #{:ext.symbol/schema :ext.symbol/native-tool?
-                                                       :ext.symbol/replay
-                                                       :ext.symbol/render-start-call-fn
-                                                       :ext.symbol/render-finish-call-fn}
-                                                     k))))
-                          entries)]
+                       dead-keys
+                       (into #{}
+                             (comp (mapcat keys)
+                                   (filter (fn [k]
+                                             ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
+                                             ;; positional params for a PYTHON call, and is not a schema.
+                                             (contains?
+                                               #{:ext.symbol/schema :ext.symbol/native-tool?
+                                                 :ext.symbol/replay :ext.symbol/render-start-call-fn
+                                                 :ext.symbol/render-finish-call-fn}
+                                               k))))
+                             entries)]
 
                    (expect (< 20 (count entries)))
                    (expect (= #{} dead-keys))))
@@ -443,13 +433,12 @@
                  (doseq [nm '[finish-call-renderers-by-name printed-result-renderers-by-op]]
                    (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension nm)) (str nm))))
              (it "binds every doc-bearing symbol under a bare Python name"
-                 (let
-                   [docs
-                    (extension/sandbox-symbol-docs)
+                 (let [docs
+                       (extension/sandbox-symbol-docs)
 
-                    bound
-                    (set (keys (extension/builtin-sandbox-bindings (fn []
-                                                                     nil))))]
+                       bound
+                       (set (keys (extension/builtin-sandbox-bindings (fn []
+                                                                        nil))))]
 
                    (expect (seq docs))
                    (doseq [sym (keys docs)]
@@ -514,12 +503,11 @@
   ;; declares neither a `:call` shape nor named arglists ships a documented
   ;; handle nobody can call from its own page.
   (it "every documented engine-bound tool declares its parameters"
-      (let
-        [sigs
-         (extension/sandbox-symbol-signatures)
+      (let [sigs
+            (extension/sandbox-symbol-signatures)
 
-         unsigned
-         (vec (sort (remove #(contains? sigs %) (keys (extension/sandbox-symbol-docs)))))]
+            unsigned
+            (vec (sort (remove #(contains? sigs %) (keys (extension/sandbox-symbol-docs)))))]
 
         (expect (= [] unsigned) (str "tools with no declared parameters: " unsigned)))))
 
@@ -581,10 +569,10 @@
                     (str sym " declares no signature — its page cannot show a call"))))))
   (it "keeps the document itself PROSE, opening on no signature and no keys line"
       (doseq [entry (live-tool-entries)]
-        (let
-          [text (str (extension/symbol-doc-text entry))
-           nm (or (:ext.symbol/name entry) (str/replace (str (:ext.symbol/symbol entry)) "-" "_"))
-           first-line (first (str/split-lines text))]
+        (let [text (str (extension/symbol-doc-text entry))
+              nm (or (:ext.symbol/name entry)
+                     (str/replace (str (:ext.symbol/symbol entry)) "-" "_"))
+              first-line (first (str/split-lines text))]
 
           (expect (not (str/starts-with? first-line (str nm "("))) first-line)
           (expect (not (str/starts-with? first-line "Keys:")) first-line))))
@@ -599,9 +587,8 @@
       (let [dict-entries (filter options-dict-entry? (live-tool-entries))]
         (expect (seq dict-entries))
         (doseq [entry dict-entries]
-          (let
-            [sym (:ext.symbol/symbol entry)
-             names (mapv :name (:ext.symbol/params entry))]
+          (let [sym (:ext.symbol/symbol entry)
+                names (mapv :name (:ext.symbol/params entry))]
 
             (expect (seq names) (str sym " declares no :params — its keys are invisible"))
             (expect (= (distinct names) (seq names)) (str sym " repeats a key: " names))
@@ -619,12 +606,11 @@
                                 :description "What it does."
                                 :result "Rows."}))))
   (it "ships the keys line to the sandbox next to the signature, not inside the doc"
-      (let
-        [ks
-         (extension/sandbox-symbol-keys)
+      (let [ks
+            (extension/sandbox-symbol-keys)
 
-         docs
-         (extension/sandbox-symbol-docs)]
+            docs
+            (extension/sandbox-symbol-docs)]
 
         (expect (str/starts-with? (str (get ks 'repl_eval)) "Keys: ") (str (get ks 'repl_eval)))
         (expect (str/includes? (str (get ks 'repl_eval)) "code (REQUIRED)")
@@ -637,26 +623,24 @@
   ;; verification goes through. Every other bound tool already named its own.
   (it "names the keys of a result instead of describing them in nouns"
       (doseq [entry (live-tool-entries)]
-        (let
-          [sym (:ext.symbol/symbol entry)
-           result (str (:ext.symbol/result entry))]
+        (let [sym (:ext.symbol/symbol entry)
+              result (str (:ext.symbol/result entry))]
 
           ;; A contract that answers TEXT says so and has no keys to name.
           (expect (or (re-find #"(?i)plain string" result) (<= 2 (count (named-keys result))))
                   (str sym " names no key of its result: " result)))))
   (it "states the verdict, the counts and the fault rows a test run answers with"
-      (let
-        [result
-         (->> (live-tool-entries)
-              (filter #(= 'run_tests (:ext.symbol/symbol %)))
-              first
-              :ext.symbol/result
-              str)
+      (let [result
+            (->> (live-tool-entries)
+                 (filter #(= 'run_tests (:ext.symbol/symbol %)))
+                 first
+                 :ext.symbol/result
+                 str)
 
-         named
-         (named-keys result)]
+            named
+            (named-keys result)]
 
         ;; Read a red run, do not rerun it louder: the fault rows are already here.
-        (doseq
-          [k ["is_pass" "pass" "fail" "errored" "skipped" "total" "failures" "message" "output"]]
+        (doseq [k ["is_pass" "pass" "fail" "errored" "skipped" "total" "failures" "message"
+                   "output"]]
           (expect (contains? named k) (str "run_tests never names `" k "`: " result))))))

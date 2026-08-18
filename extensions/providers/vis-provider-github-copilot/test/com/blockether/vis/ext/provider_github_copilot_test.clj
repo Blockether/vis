@@ -7,21 +7,20 @@
   provider-registration-test
   (it "registers ONE transparent provider per Copilot account (no per-wire sub-providers)"
       (require 'com.blockether.vis.ext.provider-github-copilot :reload)
-      (let
-        [business
-         (vis/provider-by-id :github-copilot-business)
+      (let [business
+            (vis/provider-by-id :github-copilot-business)
 
-         individual
-         (vis/provider-by-id :github-copilot-individual)
+            individual
+            (vis/provider-by-id :github-copilot-individual)
 
-         enterprise
-         (vis/provider-by-id :github-copilot-enterprise)
+            enterprise
+            (vis/provider-by-id :github-copilot-enterprise)
 
-         ext-nses
-         (set (map :ext/name (vis/registered-extensions)))
+            ext-nses
+            (set (map :ext/name (vis/registered-extensions)))
 
-         models
-         (set (get-in individual [:provider/preset :default-models]))]
+            models
+            (set (get-in individual [:provider/preset :default-models]))]
 
         (expect (= :github-copilot-business (:provider/id business)))
         (expect (= :github-copilot-individual (:provider/id individual)))
@@ -53,9 +52,8 @@
   (describe "active-tier-detect"
             (it "surfaces credentials for ONLY the active Copilot tier (issue #48)"
                 (require 'com.blockether.vis.ext.provider-github-copilot :reload)
-                (let
-                  [detect? (fn [pid]
-                             (boolean ((:provider/detect-fn (vis/provider-by-id pid)))))]
+                (let [detect? (fn [pid]
+                                (boolean ((:provider/detect-fn (vis/provider-by-id pid)))))]
                   ;; The three tiers share ONE OAuth token file. Even with a token present
                   ;; only the tier recorded as active detects — the other two report nil,
                   ;; so the picker/router surfaces exactly one Copilot provider.
@@ -86,12 +84,11 @@
     ;; trusted expires_at and re-served the proxy-rejected token forever (401
     ;; "IDE token expired" storm). cached-token-usable? must now say unusable so
     ;; get-copilot-token! re-mints instead of looping.
-    (let
-      [usable?
-       @#'sut/cached-token-usable?
+    (let [usable?
+          @#'sut/cached-token-usable?
 
-       now
-       (System/currentTimeMillis)]
+          now
+          (System/currentTimeMillis)]
 
       (expect (false? (usable? {:token "t"
                                 :account-type :individual
@@ -146,32 +143,30 @@
       (expect (nil? (#'sut/ensure-api-version nil)))))
 
 (defdescribe copilot-limits-test
-             (it
-               "normalizes Copilot quota snapshots"
-               (with-redefs
-                 [sut/detect-oauth-token
-                  (fn []
-                    {:oauth-token "ghu_test"})
+             (it "normalizes Copilot quota snapshots"
+                 (with-redefs [sut/detect-oauth-token
+                               (fn []
+                                 {:oauth-token "ghu_test"})
 
-                  sut/fetch-user-usage!
-                  (fn [_]
-                    {:copilot_plan "business"
-                     :quota_reset_date "2026-05-30T00:00:00Z"
-                     :quota_snapshots {:premium_interactions
-                                       {:remaining 240 :entitlement 300 :percent_remaining 80}}})]
+                               sut/fetch-user-usage!
+                               (fn [_]
+                                 {:copilot_plan "business"
+                                  :quota_reset_date "2026-05-30T00:00:00Z"
+                                  :quota_snapshots
+                                  {:premium_interactions
+                                   {:remaining 240 :entitlement 300 :percent_remaining 80}}})]
 
-                 (let
-                   [report
-                    (#'sut/dynamic-limits!)
+                   (let [report
+                         (#'sut/dynamic-limits!)
 
-                    row
-                    (first (get-in report [:dynamic :limits]))]
+                         row
+                         (first (get-in report [:dynamic :limits]))]
 
-                   (expect (= :ok (:status report)))
-                   (expect (= :premium_interactions (:id row)))
-                   (expect (= 240.0 (:remaining row)))
-                   (expect (= 300.0 (:limit row)))
-                   (expect (= 60.0 (:used row)))))))
+                     (expect (= :ok (:status report)))
+                     (expect (= :premium_interactions (:id row)))
+                     (expect (= 240.0 (:remaining row)))
+                     (expect (= 300.0 (:limit row)))
+                     (expect (= 60.0 (:used row)))))))
 
 (defdescribe
   copilot-unlimited-and-overspent-quota-test
@@ -181,34 +176,34 @@
       ;; percent_remaining 100.0, while the metered `premium_interactions` bucket
       ;; is overspent (remaining -32 of 1500, has_quota false). Rendering the
       ;; former verbatim told the user "100" on a bucket with no tank at all.
-      (with-redefs
-        [sut/detect-oauth-token
-         (fn []
-           {:oauth-token "ghu_test"})
+      (with-redefs [sut/detect-oauth-token
+                    (fn []
+                      {:oauth-token "ghu_test"})
 
-         sut/fetch-user-usage!
-         (fn [_]
-           {:copilot_plan "individual"
-            :quota_reset_date "2026-08-01"
-            :quota_snapshots
-            {:chat
-             {:unlimited true :entitlement 0 :remaining 0 :has_quota true :percent_remaining 100.0}
-             :premium_interactions {:unlimited false
-                                    :entitlement 1500
-                                    :remaining -32
-                                    :has_quota false
-                                    :overage_permitted false
-                                    :percent_remaining 0.0}}})]
+                    sut/fetch-user-usage!
+                    (fn [_]
+                      {:copilot_plan "individual"
+                       :quota_reset_date "2026-08-01"
+                       :quota_snapshots {:chat {:unlimited true
+                                                :entitlement 0
+                                                :remaining 0
+                                                :has_quota true
+                                                :percent_remaining 100.0}
+                                         :premium_interactions {:unlimited false
+                                                                :entitlement 1500
+                                                                :remaining -32
+                                                                :has_quota false
+                                                                :overage_permitted false
+                                                                :percent_remaining 0.0}}})]
 
-        (let
-          [rows
-           (get-in (#'sut/dynamic-limits!) [:dynamic :limits])
+        (let [rows
+              (get-in (#'sut/dynamic-limits!) [:dynamic :limits])
 
-           chat
-           (first (filter #(= :chat (:id %)) rows))
+              chat
+              (first (filter #(= :chat (:id %)) rows))
 
-           premium
-           (first (filter #(= :premium_interactions (:id %)) rows))]
+              premium
+              (first (filter #(= :premium_interactions (:id %)) rows))]
 
           (expect (true? (:is-unlimited chat)))
           (expect (nil? (:remaining chat)))
@@ -231,32 +226,30 @@
       ;; The mint must refresh a FULL margin BEFORE the soft deadline, never right
       ;; up to it — otherwise clock skew / round-trip lands us past the soft reject
       ;; ("IDE token expired") and the 401 recovery loop storms.
-      (let
-        [now
-         (System/currentTimeMillis)
+      (let [now
+            (System/currentTimeMillis)
 
-         refresh-in-s
-         1500
+            refresh-in-s
+            1500
 
-         margin
-         (* 5 60 1000)
+            margin
+            (* 5 60 1000)
 
-         soft
-         (+ now (* refresh-in-s 1000))]
+            soft
+            (+ now (* refresh-in-s 1000))]
 
-        (with-redefs
-          [sut/get-json
-           (fn [_ _]
-             {:token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"
-              :expires_at (long (/ (+ now 1800000) 1000))
-              :refresh_in refresh-in-s})
+        (with-redefs [sut/get-json
+                      (fn [_ _]
+                        {:token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"
+                         :expires_at (long (/ (+ now 1800000) 1000))
+                         :refresh_in refresh-in-s})
 
-           sut/copilot-llm-base-url
-           (fn [& _]
-             "https://api.individual.githubcopilot.com/v1")]
+                      sut/copilot-llm-base-url
+                      (fn [& _]
+                        "https://api.individual.githubcopilot.com/v1")]
 
-          (let
-            [{:keys [refresh-at-ms expires-at-ms]} (#'sut/exchange-for-copilot-token! "oauth-tok")]
+          (let [{:keys [refresh-at-ms expires-at-ms]} (#'sut/exchange-for-copilot-token!
+                                                       "oauth-tok")]
             ;; refresh-at-ms == (min hard soft) - margin, and soft < hard here
             (expect (< (Math/abs (- (long refresh-at-ms) (- soft margin))) 2000))
             ;; always strictly before the hard expiry too
@@ -278,13 +271,12 @@
                                  #'sut/env-account-type (constantly nil)
                                  #'sut/auth-account-type (constantly :enterprise)}
                   (fn []
-                    (let
-                      [status-of
-                       (fn [pid]
-                         ((:provider/status-fn (vis/provider-by-id pid))))
+                    (let [status-of
+                          (fn [pid]
+                            ((:provider/status-fn (vis/provider-by-id pid))))
 
-                       individual
-                       (status-of :github-copilot-individual)]
+                          individual
+                          (status-of :github-copilot-individual)]
 
                       (expect (true? (:is-authenticated (status-of :github-copilot-enterprise))))
                       (expect (false? (:is-authenticated individual)))
@@ -305,13 +297,12 @@
                                                                               {:remaining 240
                                                                                :entitlement 300}}})}
                   (fn []
-                    (let
-                      [limits-of
-                       (fn [pid]
-                         ((:provider/limits-fn (vis/provider-by-id pid))))
+                    (let [limits-of
+                          (fn [pid]
+                            ((:provider/limits-fn (vis/provider-by-id pid))))
 
-                       individual
-                       (limits-of :github-copilot-individual)]
+                          individual
+                          (limits-of :github-copilot-individual)]
 
                       (expect (= :ok (:status (limits-of :github-copilot-enterprise))))
                       (expect (= :unauthenticated (:status individual)))

@@ -196,10 +196,10 @@
    host doesn't pay the audio stack cost until the user actually
    triggers voice."
   [ctx]
-  (let
-    [toggle (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
-                (throw (ex-info "Voice input namespace did not expose toggle-recording!"
-                                {:type :voice-input/missing-toggle})))]
+  (let [toggle (or (requiring-resolve
+                     'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
+                   (throw (ex-info "Voice input namespace did not expose toggle-recording!"
+                                   {:type :voice-input/missing-toggle})))]
     (toggle ctx)
     {:slash/status :ok :slash/title "Voice recording toggled"}))
 
@@ -263,8 +263,8 @@
    a recording somebody imported rather than one that shipped."
   [_parsed _residual]
   (vis/init-cli!)
-  (doseq
-    [[family voices] [[:piper (tts-call! 'piper-voices)] [:pocket-tts (tts-call! 'pocket-voices)]]]
+  (doseq [[family voices] [[:piper (tts-call! 'piper-voices)]
+                           [:pocket-tts (tts-call! 'pocket-voices)]]]
     (cli-out! (name family))
     (if (seq voices)
       (doseq [voice voices]
@@ -279,12 +279,11 @@
   (vis/init-cli!)
   (let [path (or (get parsed "file") (first residual))]
     (try
-      (let
-        [voice (voices-call! 'import!
-                             {:path path
-                              :voice-name (or (get parsed "name") path)
-                              :language (get parsed "lang")
-                              :text (get parsed "text")})]
+      (let [voice (voices-call! 'import!
+                                {:path path
+                                 :voice-name (or (get parsed "name") path)
+                                 :language (get parsed "lang")
+                                 :text (get parsed "text")})]
         (cli-out!
           (str "imported " (:id voice) " (" (:seconds voice) "s at " (:sample-rate voice) " Hz)"))
         (cli-out! (str "  " (:clip voice)))
@@ -296,12 +295,11 @@
 (defn- voice-forget-command
   [parsed residual]
   (vis/init-cli!)
-  (let
-    [named
-     (or (get parsed "name") (first residual))
+  (let [named
+        (or (get parsed "name") (first residual))
 
-     id
-     (voices-call! 'voice-id named)]
+        id
+        (voices-call! 'voice-id named)]
 
     (if (and id (voices-call! 'forget! id))
       (cli-out! (str "forgot " id))
@@ -323,20 +321,18 @@
    voice and encoder, end to end."
   [parsed residual]
   (vis/init-cli!)
-  (let
-    [text
-     (str/trim (str (or (get parsed "text") (str/join " " residual))))
+  (let [text
+        (str/trim (str (or (get parsed "text") (str/join " " residual))))
 
-     family
-     (if (get parsed "pocket-tts") :pocket-tts :piper)]
+        family
+        (if (get parsed "pocket-tts") :pocket-tts :piper)]
 
-    (try (let
-           [spoken
-            (tts-call! 'synthesize! family {:text text :voice-id (get parsed "voice")})
+    (try (let [spoken
+               (tts-call! 'synthesize! family {:text text :voice-id (get parsed "voice")})
 
-            ^java.io.File out
-            (some-> (get parsed "out")
-                    io/file)]
+               ^java.io.File out
+               (some-> (get parsed "out")
+                       io/file)]
 
            (when out
              (io/copy (io/file (:audio-path spoken)) out)

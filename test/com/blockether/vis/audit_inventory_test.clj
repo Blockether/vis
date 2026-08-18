@@ -42,16 +42,15 @@
   "The <licenses><name> of the locally cached POM, when Maven resolved this
    coordinate; nil when the artifact is not in ~/.m2 (fresh CI checkout)."
   [coord version]
-  (let
-    [[group artifact]
-     (str/split coord #"/")
+  (let [[group artifact]
+        (str/split coord #"/")
 
-     f
-     (apply io/file
-       (System/getProperty "user.home")
-       ".m2"
-       "repository"
-       (concat (str/split group #"\.") [artifact version (str artifact "-" version ".pom")]))]
+        f
+        (apply io/file
+          (System/getProperty "user.home")
+          ".m2"
+          "repository"
+          (concat (str/split group #"\.") [artifact version (str artifact "-" version ".pom")]))]
 
     (when (.isFile ^java.io.File f)
       (some-> (re-find #"(?s)<licenses>.*?<name>(.*?)</name>" (slurp f))
@@ -75,9 +74,8 @@
   (it "states a resolved license and jar size for every in-house coordinate"
       (expect (.isFile audit-file))
       (let [rows (inventory)]
-        (doseq
-          [[coord version] (in-house-coords)
-           :let [row (get rows coord)]]
+        (doseq [[coord version] (in-house-coords)
+                :let [row (get rows coord)]]
 
           (expect (some? row) (str coord " is missing from audit/README.md"))
           (expect (= version (:version row))
@@ -93,10 +91,9 @@
                   (str "the cached POM declares " declared ", not MIT")))))
   (it "agrees with every cached POM, so no in-house row drifts from the artifact"
       (let [rows (inventory)]
-        (doseq
-          [[coord version] (in-house-coords)
-           :let [declared (cached-pom-license coord version)]
-           :when declared]
+        (doseq [[coord version] (in-house-coords)
+                :let [declared (cached-pom-license coord version)]
+                :when declared]
 
           (let [stated (:license (get rows coord))]
             (expect (= (normalize declared) stated)

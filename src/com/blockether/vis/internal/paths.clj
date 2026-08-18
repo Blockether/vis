@@ -21,15 +21,14 @@
    no-op when home is unavailable."
   (^String [path] (expand-home path (System/getProperty "user.home")))
   (^String [path home]
-   (let
-     [^String path
-      (some-> path
-              str)
+   (let [^String path
+         (some-> path
+                 str)
 
-      ^String home
-      (some-> home
-              str
-              not-empty)]
+         ^String home
+         (some-> home
+                 str
+                 not-empty)]
 
      (cond (nil? path) nil
            (nil? home) path
@@ -45,27 +44,25 @@
    descendants always use `/` separators; nil-safe."
   (^String [path] (abbreviate-home path (System/getProperty "user.home")))
   (^String [path home]
-   (let
-     [path
-      (some-> path
-              str)
+   (let [path
+         (some-> path
+                 str)
 
-      home
-      (some-> home
-              str
-              not-empty)]
+         home
+         (some-> home
+                 str
+                 not-empty)]
 
      (if-not (and path home)
        path
-       (try (let
-              [^Path raw-path
-               (Paths/get path (make-array String 0))
+       (try (let [^Path raw-path
+                  (Paths/get path (make-array String 0))
 
-               ^Path normalized-path
-               (.normalize (.toAbsolutePath raw-path))
+                  ^Path normalized-path
+                  (.normalize (.toAbsolutePath raw-path))
 
-               ^Path normalized-home
-               (.normalize (.toAbsolutePath (Paths/get home (make-array String 0))))]
+                  ^Path normalized-home
+                  (.normalize (.toAbsolutePath (Paths/get home (make-array String 0))))]
 
               (cond (not (.isAbsolute raw-path)) path
                     (= normalized-path normalized-home) "~/"

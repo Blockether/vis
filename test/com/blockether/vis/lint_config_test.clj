@@ -44,12 +44,11 @@
 (defdescribe lint-config-test
              (it "tracks every imported clj-kondo config, so CI lints with our rules"
                  (when in-repo?
-                   (let
-                     [tracked
-                      (set (git-lines "ls-files" imports-dir))
+                   (let [tracked
+                         (set (git-lines "ls-files" imports-dir))
 
-                      untracked
-                      (sort (remove tracked (imported-files)))]
+                         untracked
+                         (sort (remove tracked (imported-files)))]
 
                      (expect (seq tracked)
                              (str imports-dir " is not tracked: a fresh checkout lints without it"))

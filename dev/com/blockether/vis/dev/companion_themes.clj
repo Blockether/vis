@@ -115,12 +115,11 @@
 (defn write!
   "Write both generated assets under `:dir` (default `default-dir`)."
   [{:keys [dir] :or {dir default-dir}}]
-  (let
-    [css
-     (io/file dir stylesheet-file-name)
+  (let [css
+        (io/file dir stylesheet-file-name)
 
-     catalog
-     (io/file dir catalog-file-name)]
+        catalog
+        (io/file dir catalog-file-name)]
 
     (io/make-parents css)
     (spit css (stylesheet))

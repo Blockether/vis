@@ -61,33 +61,32 @@
    `+42` for an add, `-17` for a delete. Rendered inside a fenced code block
    by the caller so it stays monospaced and never word-wraps a path."
   [{:keys [status path insertions deletions]}]
-  (let
-    [glyph
-     (case status
-       :add
-       "+ "
+  (let [glyph
+        (case status
+          :add
+          "+ "
 
-       :modify
-       "~ "
+          :modify
+          "~ "
 
-       :delete
-       "- "
+          :delete
+          "- "
 
-       "  ")
+          "  ")
 
-     stat
-     (case status
-       :add
-       (when (pos? (long (or insertions 0))) (str "+" insertions))
+        stat
+        (case status
+          :add
+          (when (pos? (long (or insertions 0))) (str "+" insertions))
 
-       :delete
-       (when (pos? (long (or deletions 0))) (str "-" deletions))
+          :delete
+          (when (pos? (long (or deletions 0))) (str "-" deletions))
 
-       :modify
-       (when (or (pos? (long (or insertions 0))) (pos? (long (or deletions 0))))
-         (str "+" (or insertions 0) " -" (or deletions 0)))
+          :modify
+          (when (or (pos? (long (or insertions 0))) (pos? (long (or deletions 0))))
+            (str "+" (or insertions 0) " -" (or deletions 0)))
 
-       nil)]
+          nil)]
 
     (str glyph path (when stat (str "  " stat)))))
 
@@ -105,23 +104,22 @@
    copy to the COMMITTED HEAD so uncommitted work stays behind in cwd — which only
    means something in a Git-managed project."
   [ctx clean?]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     state-id
-     (ctx-session-state-id ctx)
+        state-id
+        (ctx-session-state-id ctx)
 
-     label
-     (some-> (str/join " " (:command/argv ctx))
-             str/trim
-             not-empty)
+        label
+        (some-> (str/join " " (:command/argv ctx))
+                str/trim
+                not-empty)
 
-     current
-     (session-workspace ctx)
+        current
+        (session-workspace ctx)
 
-     usage
-     (if clean? "/draft clean <label>" "/draft new <label>")]
+        usage
+        (if clean? "/draft clean <label>" "/draft new <label>")]
 
     (cond
       (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
@@ -150,10 +148,9 @@
                               (workspace/isolation-unavailable-hint root))
              :slash/data {:capability-matrix (workspace/workspace-capability-matrix root)}))
       :else
-      (let
-        [draft (workspace/create!
-                 db
-                 {:session-state-id state-id :label label :from current :clean? clean?})]
+      (let [draft (workspace/create!
+                    db
+                    {:session-state-id state-id :label label :from current :clean? clean?})]
         {:slash/status :ok
          :slash/title (str (if clean? "Clean draft '" "Draft '")
                            (workspace/display-label draft)
@@ -180,24 +177,22 @@
 (defn- handle-apply
   "`/draft apply` — land the draft's changes into cwd, then leave the draft."
   [ctx]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     state-id
-     (ctx-session-state-id ctx)
+        state-id
+        (ctx-session-state-id ctx)
 
-     current
-     (session-workspace ctx)]
+        current
+        (session-workspace ctx)]
 
     (cond (nil? current) (err "No active workspace")
           (not (workspace/draft? current)) (err "Not in a draft — /draft new <label> to start one")
-          :else (let
-                  [{:keys [landed changed]}
-                   (workspace/apply! db {:workspace-id (:id current)})
+          :else (let [{:keys [landed changed]}
+                      (workspace/apply! db {:workspace-id (:id current)})
 
-                   label
-                   (workspace/display-label current)]
+                      label
+                      (workspace/display-label current)]
 
                   (workspace/abandon! db {:workspace-id (:id current) :reason "applied"})
                   (when state-id (workspace/exit-to-trunk! db state-id))
@@ -222,20 +217,19 @@
 (defn- handle-abandon
   "`/draft abandon [reason]` — discard the draft and leave it."
   [ctx]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     state-id
-     (ctx-session-state-id ctx)
+        state-id
+        (ctx-session-state-id ctx)
 
-     current
-     (session-workspace ctx)
+        current
+        (session-workspace ctx)
 
-     reason
-     (some-> (str/join " " (:command/argv ctx))
-             str/trim
-             not-empty)]
+        reason
+        (some-> (str/join " " (:command/argv ctx))
+                str/trim
+                not-empty)]
 
     (cond (nil? current) (err "No active workspace")
           (not (workspace/draft? current)) (err "Not in a draft")
@@ -250,12 +244,11 @@
 (defn- handle-status
   "Bare `/draft` — are you on trunk or in a draft?"
   [ctx]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     current
-     (session-workspace ctx)]
+        current
+        (session-workspace ctx)]
 
     (cond
       (workspace/draft? current)
@@ -277,15 +270,14 @@
   "`/draft stash` — leave the draft WITHOUT discarding it, so `/draft resume`
    can re-enter it later. The non-destructive twin of /draft abandon."
   [ctx]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     state-id
-     (ctx-session-state-id ctx)
+        state-id
+        (ctx-session-state-id ctx)
 
-     current
-     (session-workspace ctx)]
+        current
+        (session-workspace ctx)]
 
     (cond (nil? current) (err "No active workspace")
           (not (workspace/draft? current)) (err "Not in a draft — nothing to stash")
@@ -303,21 +295,20 @@
    the current one marked. The gateway keeps stashed drafts alive until they are
    applied or abandoned, so this is how you find one to /draft resume."
   [ctx]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     current
-     (session-workspace ctx)
+        current
+        (session-workspace ctx)
 
-     repo-id
-     (:repo-id current)
+        repo-id
+        (:repo-id current)
 
-     drafts
-     (when repo-id (workspace/list-drafts db repo-id))
+        drafts
+        (when repo-id (workspace/list-drafts db repo-id))
 
-     current-id
-     (when (workspace/draft? current) (:id current))]
+        current-id
+        (when (workspace/draft? current) (:id current))]
 
     (cond (nil? current) (err "No active workspace")
           (empty? drafts) {:slash/status :ok
@@ -341,26 +332,25 @@
   "`/draft resume [label]` — re-enter a stashed draft by label. With no label,
    lists the stashed drafts to choose from. Refuses while already in a draft."
   [ctx]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     state-id
-     (ctx-session-state-id ctx)
+        state-id
+        (ctx-session-state-id ctx)
 
-     current
-     (session-workspace ctx)
+        current
+        (session-workspace ctx)
 
-     label
-     (some-> (str/join " " (:command/argv ctx))
-             str/trim
-             not-empty)
+        label
+        (some-> (str/join " " (:command/argv ctx))
+                str/trim
+                not-empty)
 
-     repo-id
-     (:repo-id current)
+        repo-id
+        (:repo-id current)
 
-     drafts
-     (when repo-id (workspace/list-drafts db repo-id))]
+        drafts
+        (when repo-id (workspace/list-drafts db repo-id))]
 
     (cond
       (nil? state-id) (err "Send a message first, then /draft resume <label>")
@@ -407,18 +397,17 @@
    works in <path>: shell cwd, relative paths, file tools, and search all follow.
    Bare (no path) shows the current root."
   [ctx]
-  (let
-    [db
-     (ctx-db ctx)
+  (let [db
+        (ctx-db ctx)
 
-     state-id
-     (ctx-session-state-id ctx)
+        state-id
+        (ctx-session-state-id ctx)
 
-     current
-     (session-workspace ctx)
+        current
+        (session-workspace ctx)
 
-     path
-     (argv-path ctx)]
+        path
+        (argv-path ctx)]
 
     (cond (nil? path) {:slash/status :ok
                        :slash/title (str "Root: " (or (:root current) "(none)"))

@@ -92,12 +92,11 @@
                                                                              "no onnxruntime")))))
       (expect (not (sherpa/native-error? (ex-info "the disk is full" {})))))
   (it "asks for a restart only when the process really cannot recover"
-      (let
-        [linker
-         (sherpa/native-failure (NoClassDefFoundError. "com/k2fsa/sherpa/onnx/OfflineTts"))
+      (let [linker
+            (sherpa/native-failure (NoClassDefFoundError. "com/k2fsa/sherpa/onnx/OfflineTts"))
 
-         other
-         (sherpa/native-failure (java.io.IOException. "connection reset"))]
+            other
+            (sherpa/native-failure (java.io.IOException. "connection reset"))]
 
         (expect (true? (:is-restart-required (ex-data linker))))
         (expect (str/includes? (ex-message linker) "restart Vis"))
@@ -107,11 +106,10 @@
   (it "passes a working call straight through and only translates what it must"
       (with-redefs [sherpa/ensure-native! (constantly true)]
         (expect (= :spoken (sherpa/call-native (constantly :spoken))))
-        (let
-          [ordinary (try (sherpa/call-native #(throw (ex-info "no such voice"
-                                                              {:type :voice-tts/unknown-voice})))
-                         nil
-                         (catch Throwable t t))]
+        (let [ordinary (try (sherpa/call-native #(throw (ex-info "no such voice"
+                                                                 {:type :voice-tts/unknown-voice})))
+                            nil
+                            (catch Throwable t t))]
           (expect (= :voice-tts/unknown-voice (:type (ex-data ordinary)))
                   "an engine's own refusal is not dressed up as a native failure")))))
 
@@ -143,15 +141,14 @@
   "Every class of sherpa's API jar, read from the jar `VersionInfo` came from.
    The JNI may ask for any of them BY NAME, so the metadata has to name them all."
   []
-  (let
-    [^Class api
-     VersionInfo
+  (let [^Class api
+        VersionInfo
 
-     location
-     (.. api getProtectionDomain getCodeSource getLocation)
+        location
+        (.. api getProtectionDomain getCodeSource getLocation)
 
-     jar
-     (io/file (.toURI location))]
+        jar
+        (io/file (.toURI location))]
 
     (if (.isDirectory jar)
       (throw (ex-info "sherpa is on the classpath as a directory, not its jar." {:path (str jar)}))
@@ -173,12 +170,11 @@
 (defdescribe
   jni-metadata-test
   (it "hands the JNI every type sherpa's API jar carries"
-      (let
-        [known
-         (registered)
+      (let [known
+            (registered)
 
-         api
-         (api-types)]
+            api
+            (api-types)]
 
         (expect (seq api) "no sherpa classes were found - the API jar is not on this classpath")
         (expect (= api (into (sorted-set) (filter sherpa-type?) (keys known)))
@@ -192,12 +188,11 @@
       ;; progress callback. sherpa asks for that method with GetMethodID on OUR
       ;; class, so the class needs a name a build cannot change and metadata of
       ;; its own - a `reify` had neither.
-      (let
-        [known
-         (registered)
+      (let [known
+            (registered)
 
-         callback
-         (.getName GenerationCallback)]
+            callback
+            (.getName GenerationCallback)]
 
         (expect (get known callback) (str callback " is not registered for JNI"))
         (expect (:jniAccessible (get known callback)))
@@ -209,22 +204,21 @@
       ;; class is in the image and `GetFieldID` still finds nothing, so the model
       ;; path arrives EMPTY and what follows is a segfault rather than a message.
       ;; These lists came from a tracing agent run over all three paths.
-      (let
-        [known
-         (registered)
+      (let [known
+            (registered)
 
-         thin
-         (remove (fn [[type-name e]]
-                   (or (not (sherpa-type? type-name))
-                       (and (:jniAccessible e)
-                            (:allDeclaredFields e)
-                            (:allDeclaredMethods e)
-                            (:allDeclaredConstructors e))))
-           known)
+            thin
+            (remove (fn [[type-name e]]
+                      (or (not (sherpa-type? type-name))
+                          (and (:jniAccessible e)
+                               (:allDeclaredFields e)
+                               (:allDeclaredMethods e)
+                               (:allDeclaredConstructors e))))
+              known)
 
-         fields
-         (fn [type-name]
-           (into #{} (map :name) (:fields (get known type-name))))]
+            fields
+            (fn [type-name]
+              (into #{} (map :name) (:fields (get known type-name))))]
 
         (expect (empty? thin)
                 (str "registered too thinly to speak through: " (pr-str (mapv key thin))))
@@ -242,13 +236,12 @@
       ;; sherpa iterates that map FROM C++ by the concrete class it finds: the
       ;; map, the entry set it answers with, the iterator, the entry. `tts` hands
       ;; it a LinkedHashMap because those four names are the same at any size.
-      (let
-        [known
-         (registered)
+      (let [known
+            (registered)
 
-         member
-         (fn [type-name method]
-           (some #(= method (:name %)) (:methods (get known type-name))))]
+            member
+            (fn [type-name method]
+              (some #(= method (:name %)) (:methods (get known type-name))))]
 
         (expect (member "java.util.LinkedHashMap" "entrySet"))
         (expect (member "java.util.LinkedHashMap$LinkedEntrySet" "iterator"))
@@ -262,29 +255,27 @@
       ;; that is the BRIDGE the compiler writes beside the covariant ()Ljava/util/Map$Entry;.
       ;; A member entry names a method by name and parameter types, which resolves to the
       ;; covariant one alone, so GetMethodID answered null - and sherpa calls it anyway.
-      (let
-        [known
-         (registered)
+      (let [known
+            (registered)
 
-         hidden-bridges
-         (fn [[type-name entry]]
-           (when-not (:allDeclaredMethods entry)
-             (when-let [^Class c (try (Class/forName type-name) (catch Throwable _ nil))]
-               (for
-                 [{member :name argument-types :parameterTypes} (:methods entry)
-                  :let [same-shape (filter (fn [^java.lang.reflect.Method m]
-                                             (and (= member (.getName m))
-                                                  (= (count argument-types)
-                                                     (alength (.getParameterTypes m)))))
-                                           (.getDeclaredMethods c))]
-                  :when (some (fn [^java.lang.reflect.Method m]
-                                (.isBridge m))
-                              same-shape)]
+            hidden-bridges
+            (fn [[type-name entry]]
+              (when-not (:allDeclaredMethods entry)
+                (when-let [^Class c (try (Class/forName type-name) (catch Throwable _ nil))]
+                  (for [{member :name argument-types :parameterTypes} (:methods entry)
+                        :let [same-shape (filter (fn [^java.lang.reflect.Method m]
+                                                   (and (= member (.getName m))
+                                                        (= (count argument-types)
+                                                           (alength (.getParameterTypes m)))))
+                                                 (.getDeclaredMethods c))]
+                        :when (some (fn [^java.lang.reflect.Method m]
+                                      (.isBridge m))
+                                    same-shape)]
 
-                 (str type-name "." member)))))
+                    (str type-name "." member)))))
 
-         hidden
-         (vec (mapcat hidden-bridges known))]
+            hidden
+            (vec (mapcat hidden-bridges known))]
 
         (expect (empty? hidden)
                 (str "the JNI can ask for a bridge this file cannot name - register the whole"
@@ -296,20 +287,18 @@
       ;; an unregistered `java.lang.Integer` is not an error message but a
       ;; segfault inside the JNI call trampoline. `String` is the array a
       ;; transcript comes back in, and the throwables are how it reports.
-      (let
-        [known
-         (registered)
+      (let [known
+            (registered)
 
-         member
-         (fn [type-name method]
-           (some #(= method (:name %)) (:methods (get known type-name))))]
+            member
+            (fn [type-name method]
+              (some #(= method (:name %)) (:methods (get known type-name))))]
 
         (expect (member "java.lang.Integer" "intValue")
                 "Integer.intValue is what the progress callback's answer is read with")
         (expect (:jniAccessible (get known "java.lang.String")))
-        (doseq
-          [thrown ["java.lang.Exception" "java.lang.NullPointerException"
-                   "java.lang.RuntimeException"]]
+        (doseq [thrown ["java.lang.Exception" "java.lang.NullPointerException"
+                        "java.lang.RuntimeException"]]
           (expect (member thrown "<init>") (str thrown " cannot be thrown from the JNI")))))
   (it "names the two the JNI asked for first"
       (let [known (registered)]

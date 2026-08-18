@@ -31,30 +31,27 @@
       (expect (= {} (config/router-opts {:router nil})))
       (expect (= {} (config/router-opts {:router "string"}))))
   (it "passes through `:rate-limit` verbatim"
-      (let
-        [block {:same-provider-delays-ms [2000 3000 6000]
-                :fallback-after-ms 30000
-                :respect-retry-after? true
-                :fallback-provider? true}]
+      (let [block {:same-provider-delays-ms [2000 3000 6000]
+                   :fallback-after-ms 30000
+                   :respect-retry-after? true
+                   :fallback-provider? true}]
         (expect (= {:rate-limit block} (config/router-opts {:router {:rate-limit block}})))))
   (it "passes through `:network`, `:budget`, `:tokens`, and CB knobs"
-      (let
-        [cfg {:router {:network {:timeout-ms 600000 :idle-timeout-ms 60000}
-                       :budget {:max-tokens 1000000 :max-cost 5.0}
-                       :tokens {:check-context? false}
-                       :failure-threshold 10
-                       :recovery-ms 30000}}]
+      (let [cfg {:router {:network {:timeout-ms 600000 :idle-timeout-ms 60000}
+                          :budget {:max-tokens 1000000 :max-cost 5.0}
+                          :tokens {:check-context? false}
+                          :failure-threshold 10
+                          :recovery-ms 30000}}]
         (expect (= (:router cfg) (config/router-opts cfg)))))
   (it "drops unknown keys so future config additions don't crash make-router"
-      (let
-        [cfg {:router
-              {:rate-limit {:fallback-after-ms 1} :totally-made-up-key :whatever :another :nope}}]
+      (let [cfg {:router {:rate-limit {:fallback-after-ms 1}
+                          :totally-made-up-key :whatever
+                          :another :nope}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg)))))
   (it "ignores top-level config keys outside `:router`"
-      (let
-        [cfg {:providers [{:id :p1}]
-              :db-spec {:backend :sqlite}
-              :router {:rate-limit {:fallback-after-ms 1}}}]
+      (let [cfg {:providers [{:id :p1}]
+                 :db-spec {:backend :sqlite}
+                 :router {:rate-limit {:fallback-after-ms 1}}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg))))))
 
 (defdescribe
@@ -89,16 +86,16 @@
 (defdescribe
   svar-model-metadata-test
   (it "lets svar retain GLM-5.2's catalog-native effort style and values"
-      (let
-        [provider
-         (config/->svar-provider {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
+      (let [provider
+            (config/->svar-provider
+              {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
 
-         model
-         (-> (svar/make-router [provider])
-             :providers
-             first
-             :models
-             first)]
+            model
+            (-> (svar/make-router [provider])
+                :providers
+                first
+                :models
+                first)]
 
         (expect (= :zai-effort (:reasoning-style model)))
         (expect (= [{:type "effort" :values ["high" "max"]}] (:reasoning-options model)))))
@@ -124,10 +121,9 @@
         (doseq [id [:openAI :zAI-coding :OpenRouter :lmStudio :ACME :x]]
           (expect (= (name id) (config/display-label id))))))
   (it "a registered provider extension still owns its own branding"
-      (with-redefs
-        [registry/provider-by-id (fn [pid]
-                                   (when (= pid :openai)
-                                     {:provider/id pid :provider/label "OpenAI"}))]
+      (with-redefs [registry/provider-by-id (fn [pid]
+                                              (when (= pid :openai)
+                                                {:provider/id pid :provider/label "OpenAI"}))]
         (expect (= "OpenAI" (config/display-label :openai)))))
   (it "falls back to `Provider` only when there is no id at all"
       (with-redefs [registry/provider-by-id (constantly nil)]
@@ -146,51 +142,49 @@
    leaves nothing on disk to read at all."
   (it
     "never lets a concurrent reader see the store missing or half-written"
-    (let
-      [tmp
-       (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-" (System/nanoTime))
+    (let [tmp
+          (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-" (System/nanoTime))
 
-       dir
-       (io/file tmp)
+          dir
+          (io/file tmp)
 
-       path
-       (str (io/file dir "state.yml"))
+          path
+          (str (io/file dir "state.yml"))
 
-       write!
-       @#'config/spit-private!
+          write!
+          @#'config/spit-private!
 
-       body
-       (fn [id]
-         (str "providers:\n" (apply str (repeat 200 (str "  - id: " id "\n")))))
+          body
+          (fn [id]
+            (str "providers:\n" (apply str (repeat 200 (str "  - id: " id "\n")))))
 
-       alpha
-       (body "alpha")
+          alpha
+          (body "alpha")
 
-       bravo
-       (body "bravo")]
+          bravo
+          (body "bravo")]
 
       (try (.mkdirs dir)
            (write! path alpha)
-           (let
-             [absent
-              (atom 0)
+           (let [absent
+                 (atom 0)
 
-              torn
-              (atom 0)
+                 torn
+                 (atom 0)
 
-              samples
-              (atom 0)
+                 samples
+                 (atom 0)
 
-              stop
-              (atom false)
+                 stop
+                 (atom false)
 
-              reader
-              (future (while (not @stop)
-                        (swap! samples inc)
-                        (if-not (.exists (io/file path))
-                          (swap! absent inc)
-                          (let [seen (try (slurp path) (catch Throwable _ ::unreadable))]
-                            (when-not (or (= alpha seen) (= bravo seen)) (swap! torn inc))))))]
+                 reader
+                 (future (while (not @stop)
+                           (swap! samples inc)
+                           (if-not (.exists (io/file path))
+                             (swap! absent inc)
+                             (let [seen (try (slurp path) (catch Throwable _ ::unreadable))]
+                               (when-not (or (= alpha seen) (= bravo seen)) (swap! torn inc))))))]
 
              (dotimes [i 60]
                (write! path (if (even? i) alpha bravo)))
@@ -201,18 +195,17 @@
              (expect (zero? @torn)))
            (finally (rm-rf! dir)))))
   (it "keeps the store owner-only across an overwrite"
-      (let
-        [tmp
-         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-perm-" (System/nanoTime))
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-perm-" (System/nanoTime))
 
-         dir
-         (io/file tmp)
+            dir
+            (io/file tmp)
 
-         path
-         (str (io/file dir "state.yml"))
+            path
+            (str (io/file dir "state.yml"))
 
-         write!
-         @#'config/spit-private!]
+            write!
+            @#'config/spit-private!]
 
         (try (.mkdirs dir)
              (write! path "providers: []\n")
@@ -224,18 +217,17 @@
              (expect (= "providers:\n  - id: alpha\n" (slurp path)))
              (finally (rm-rf! dir)))))
   (it "leaves no temporary file beside the store"
-      (let
-        [tmp
-         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-tmp-" (System/nanoTime))
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-tmp-" (System/nanoTime))
 
-         dir
-         (io/file tmp)
+            dir
+            (io/file tmp)
 
-         path
-         (str (io/file dir "state.yml"))
+            path
+            (str (io/file dir "state.yml"))
 
-         write!
-         @#'config/spit-private!]
+            write!
+            @#'config/spit-private!]
 
         (try (.mkdirs dir)
              (dotimes [i 5]
@@ -254,12 +246,11 @@
    discardable; a key a person authored is not."
   (it
     "drops a malformed memory block on read and lets the human's write through"
-    (let
-      [tmp
-       (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-" (System/nanoTime))
+    (let [tmp
+          (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-" (System/nanoTime))
 
-       path
-       (str tmp "/state.yml")]
+          path
+          (str tmp "/state.yml")]
 
       (try (.mkdirs (io/file tmp))
            ;; `learned_at` is what makes a learned fact expire, so a row without
@@ -267,18 +258,17 @@
            (spit path
                  (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
                       "vision_memory:\n  blind_providers:\n    console-go: {}\n"))
-           (with-redefs
-             [config/config-dir
-              (constantly tmp)
+           (with-redefs [config/config-dir
+                         (constantly tmp)
 
-              config/state-path
-              (constantly path)
+                         config/state-path
+                         (constantly path)
 
-              config/project-config-yaml-paths
-              (constantly [(str tmp "/none/.vis/config.yml")])
+                         config/project-config-yaml-paths
+                         (constantly [(str tmp "/none/.vis/config.yml")])
 
-              config/project-root-yaml-paths
-              (constantly [])]
+                         config/project-root-yaml-paths
+                         (constantly [])]
 
              (let [raw (config/load-global-config-raw)]
                (expect (nil? (get raw "vision_memory")))
@@ -291,56 +281,52 @@
                  (expect (not (str/includes? (slurp path) "vision_memory"))))))
            (finally (rm-rf! (io/file tmp))))))
   (it "keeps a memory block the contract accepts"
-      (let
-        [tmp
-         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-ok-" (System/nanoTime))
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-ok-" (System/nanoTime))
 
-         path
-         (str tmp "/state.yml")]
+            path
+            (str tmp "/state.yml")]
 
         (try (.mkdirs (io/file tmp))
              (spit path
                    (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
                         "vision_memory:\n  blind_providers:\n"
                         "    console-go:\n      learned_at: '2026-08-17T18:00:00Z'\n"))
-             (with-redefs
-               [config/config-dir
-                (constantly tmp)
+             (with-redefs [config/config-dir
+                           (constantly tmp)
 
-                config/state-path
-                (constantly path)
+                           config/state-path
+                           (constantly path)
 
-                config/project-config-yaml-paths
-                (constantly [(str tmp "/none/.vis/config.yml")])
+                           config/project-config-yaml-paths
+                           (constantly [(str tmp "/none/.vis/config.yml")])
 
-                config/project-root-yaml-paths
-                (constantly [])]
+                           config/project-root-yaml-paths
+                           (constantly [])]
 
                (let [raw (config/load-global-config-raw)]
                  (expect (= {"console-go" {"learned_at" "2026-08-17T18:00:00Z"}}
                             (get-in raw ["vision_memory" "blind_providers"])))))
              (finally (rm-rf! (io/file tmp))))))
   (it "still refuses a write whose HUMAN keys are invalid"
-      (let
-        [tmp
-         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-loud-" (System/nanoTime))
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-loud-" (System/nanoTime))
 
-         path
-         (str tmp "/state.yml")]
+            path
+            (str tmp "/state.yml")]
 
         (try (.mkdirs (io/file tmp))
-             (with-redefs
-               [config/config-dir
-                (constantly tmp)
+             (with-redefs [config/config-dir
+                           (constantly tmp)
 
-                config/state-path
-                (constantly path)
+                           config/state-path
+                           (constantly path)
 
-                config/project-config-yaml-paths
-                (constantly [(str tmp "/none/.vis/config.yml")])
+                           config/project-config-yaml-paths
+                           (constantly [(str tmp "/none/.vis/config.yml")])
 
-                config/project-root-yaml-paths
-                (constantly [])]
+                           config/project-root-yaml-paths
+                           (constantly [])]
 
                (expect (= :refused
                           (try (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}]
@@ -358,12 +344,12 @@
   (it
     "first-run connect persists; adding a second provider keeps both + globals"
     (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-test-" (System/nanoTime))]
-      (try (with-redefs
-             [config/config-dir (constantly tmp)
-              config/state-path (constantly (str tmp "/state.yml"))
-              ;; isolate from any real project-local overlay / root YAML
-              config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
-              config/project-root-yaml-paths (constantly [])]
+      (try (with-redefs [config/config-dir (constantly tmp)
+                         config/state-path (constantly (str tmp "/state.yml"))
+                         ;; isolate from any real project-local overlay / root YAML
+                         config/project-config-yaml-paths (constantly
+                                                            [(str tmp "/none/.vis/config.yml")])
+                         config/project-root-yaml-paths (constantly [])]
 
              ;; (0) genuine first run — nothing on disk
              (expect (config/first-run?))
@@ -399,11 +385,11 @@
    that provider is authenticated again. The tag must go with the provider."
   (it "drops a flat `fallback_provider`/`fallback_model` tag naming the removal"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
-        (try (with-redefs
-               [config/config-dir (constantly tmp)
-                config/state-path (constantly (str tmp "/state.yml"))
-                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
-                config/project-root-yaml-paths (constantly [])]
+        (try (with-redefs [config/config-dir (constantly tmp)
+                           config/state-path (constantly (str tmp "/state.yml"))
+                           config/project-config-yaml-paths (constantly
+                                                              [(str tmp "/none/.vis/config.yml")])
+                           config/project-root-yaml-paths (constantly [])]
 
                (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
                                                   {"id" "prov-b" "api_key" "key-b"}]
@@ -420,11 +406,11 @@
              (finally (rm-rf! (io/file tmp))))))
   (it "drops a qualified `provider/model` fallback tag with no `fallback_provider`"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
-        (try (with-redefs
-               [config/config-dir (constantly tmp)
-                config/state-path (constantly (str tmp "/state.yml"))
-                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
-                config/project-root-yaml-paths (constantly [])]
+        (try (with-redefs [config/config-dir (constantly tmp)
+                           config/state-path (constantly (str tmp "/state.yml"))
+                           config/project-config-yaml-paths (constantly
+                                                              [(str tmp "/none/.vis/config.yml")])
+                           config/project-root-yaml-paths (constantly [])]
 
                (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
                                                   {"id" "prov-b" "api_key" "key-b"}]
@@ -435,11 +421,11 @@
              (finally (rm-rf! (io/file tmp))))))
   (it "keeps a fallback tag that names a DIFFERENT provider"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
-        (try (with-redefs
-               [config/config-dir (constantly tmp)
-                config/state-path (constantly (str tmp "/state.yml"))
-                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
-                config/project-root-yaml-paths (constantly [])]
+        (try (with-redefs [config/config-dir (constantly tmp)
+                           config/state-path (constantly (str tmp "/state.yml"))
+                           config/project-config-yaml-paths (constantly
+                                                              [(str tmp "/none/.vis/config.yml")])
+                           config/project-root-yaml-paths (constantly [])]
 
                (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
                                                   {"id" "prov-b" "api_key" "key-b"}
@@ -454,11 +440,11 @@
              (finally (rm-rf! (io/file tmp))))))
   (it "a slash INSIDE a fallback model id is not a provider tag"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
-        (try (with-redefs
-               [config/config-dir (constantly tmp)
-                config/state-path (constantly (str tmp "/state.yml"))
-                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
-                config/project-root-yaml-paths (constantly [])]
+        (try (with-redefs [config/config-dir (constantly tmp)
+                           config/state-path (constantly (str tmp "/state.yml"))
+                           config/project-config-yaml-paths (constantly
+                                                              [(str tmp "/none/.vis/config.yml")])
+                           config/project-root-yaml-paths (constantly [])]
 
                (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
                                                   {"id" "openrouter" "api_key" "key-b"}]
@@ -478,11 +464,11 @@
              (finally (rm-rf! (io/file tmp))))))
   (it "reports no change when the provider is absent and holds no tag"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
-        (try (with-redefs
-               [config/config-dir (constantly tmp)
-                config/state-path (constantly (str tmp "/state.yml"))
-                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
-                config/project-root-yaml-paths (constantly [])]
+        (try (with-redefs [config/config-dir (constantly tmp)
+                           config/state-path (constantly (str tmp "/state.yml"))
+                           config/project-config-yaml-paths (constantly
+                                                              [(str tmp "/none/.vis/config.yml")])
+                           config/project-root-yaml-paths (constantly [])]
 
                (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}]
                                      "fallback_provider" "prov-a"
@@ -497,29 +483,27 @@
   "YAML parsing keeps canonical keys and scalar values as strings; the finite
    internal adapter runs only after validation."
   (it "adapts only known schema keys while preserving user-owned keys"
-      (let
-        [wire
-         {"environment" {"ANTHROPIC_API_KEY" "tok"}
-          "providers"
-          [{"id" "anthropic" "api_style" "anthropic" "llm_headers" {"X-Custom-Header" "v"}}]}
+      (let [wire
+            {"environment" {"ANTHROPIC_API_KEY" "tok"}
+             "providers"
+             [{"id" "anthropic" "api_style" "anthropic" "llm_headers" {"X-Custom-Header" "v"}}]}
 
-         runtime
-         (config/runtime-config wire)]
+            runtime
+            (config/runtime-config wire)]
 
         (expect (= {:environment {"ANTHROPIC_API_KEY" "tok"}
                     :providers
                     [{:id :anthropic :api-style :anthropic :llm-headers {"X-Custom-Header" "v"}}]}
                    runtime))))
   (it "maps svar's is_* YAML keys to their ?-suffixed keyword contracts both ways"
-      (let
-        [wire
-         {"providers" [{"id" "p" "models" [{"name" "m" "is_tool_call" true}]}]
-          "router" {"rate_limit" {"is_respect_retry_after" true "is_fallback_provider" false}
-                    "tokens" {"is_check_context" true}}
-          "system_prompt" {"text" "x" "is_replace" true}}
+      (let [wire
+            {"providers" [{"id" "p" "models" [{"name" "m" "is_tool_call" true}]}]
+             "router" {"rate_limit" {"is_respect_retry_after" true "is_fallback_provider" false}
+                       "tokens" {"is_check_context" true}}
+             "system_prompt" {"text" "x" "is_replace" true}}
 
-         runtime
-         (config/runtime-config wire)]
+            runtime
+            (config/runtime-config wire)]
 
         (expect (true? (get-in runtime [:providers 0 :models 0 :tool-call?])))
         (expect (true? (get-in runtime [:router :rate-limit :respect-retry-after?])))
@@ -530,15 +514,14 @@
                    (first (keys (#'config/->yaml-safe {:respect-retry-after? true})))))
         (expect (= "is_replace" (first (keys (#'config/->yaml-safe {:is-replace true})))))))
   (it "parses vis.yml directly into the string-keyed clojure.spec shape"
-      (let
-        [read-yaml
-         @#'config/read-yaml-config-map
+      (let [read-yaml
+            @#'config/read-yaml-config-map
 
-         dir
-         (io/file "target/config-yaml-test")
+            dir
+            (io/file "target/config-yaml-test")
 
-         yml
-         (io/file dir "vis.yml")]
+            yml
+            (io/file dir "vis.yml")]
 
         (try (.mkdirs dir)
              (spit yml
@@ -551,24 +534,20 @@
              (expect (nil? (read-yaml (.getPath yml))))
              (finally (rm-rf! dir)))))
   (it "search-overlay adapts the validated grep config block"
-      (expect (nil? (with-redefs
-                      [config/load-config-raw (fn []
-                                                {})]
+      (expect (nil? (with-redefs [config/load-config-raw (fn []
+                                                           {})]
                       (config/search-overlay))))
-      (let
-        [overlay (with-redefs
-                   [config/load-config-raw (fn []
-                                             {"grep" {"include_gitignored_paths"
-                                                      ["repositories/"]}})]
-                   (config/search-overlay))]
+      (let [overlay (with-redefs [config/load-config-raw (fn []
+                                                           {"grep" {"include_gitignored_paths"
+                                                                    ["repositories/"]}})]
+                      (config/search-overlay))]
         (expect (= ["repositories/"] (:include-gitignored-paths overlay)))
         (expect (= config/default-search-always-exclude (:always-exclude overlay))))
       (expect (= ["*.log"]
-                 (:always-exclude (with-redefs
-                                    [config/load-config-raw (fn []
-                                                              {"grep"
-                                                               {"include_gitignored_paths" ["r/"]
-                                                                "always_exclude" ["*.log"]}})]
+                 (:always-exclude (with-redefs [config/load-config-raw
+                                                (fn []
+                                                  {"grep" {"include_gitignored_paths" ["r/"]
+                                                           "always_exclude" ["*.log"]}})]
                                     (config/search-overlay)))))))
 
 (defdescribe
@@ -577,30 +556,28 @@
    `vis.yml` preserves the keys verbatim, and the machine YAML writer emits
    the same strings without keyword or namespace conversion."
   (it "a hand-written vis.yml toggles block preserves plain string ids"
-      (let
-        [dir
-         (io/file "target/toggles-yaml-read-test")
+      (let [dir
+            (io/file "target/toggles-yaml-read-test")
 
-         root-yml
-         (io/file dir "vis.yml")]
+            root-yml
+            (io/file dir "vis.yml")]
 
         (try (.mkdirs dir)
              (spit root-yml (str "toggles:\n" "  reasoning_level: deep\n" "  auto_commit: true\n"))
-             (with-redefs
-               [config/global-config-yaml-paths
-                (fn []
-                  [])
+             (with-redefs [config/global-config-yaml-paths
+                           (fn []
+                             [])
 
-                config/state-path
-                (constantly "/nonexistent/state.yml")
+                           config/state-path
+                           (constantly "/nonexistent/state.yml")
 
-                config/project-root-yaml-paths
-                (fn []
-                  [(.getPath root-yml)])
+                           config/project-root-yaml-paths
+                           (fn []
+                             [(.getPath root-yml)])
 
-                config/project-config-yaml-paths
-                (fn []
-                  [])]
+                           config/project-config-yaml-paths
+                           (fn []
+                             [])]
 
                (let [cfg (config/load-config-raw)]
                  (expect (= {"reasoning_level" "deep" "auto_commit" true} (get cfg "toggles")))
@@ -610,9 +587,9 @@
                       (some-> dir
                               .delete)))))
   (it "->yaml-safe emits string toggle ids verbatim and keeps ordinary config keys"
-      (let
-        [safe (#'config/->yaml-safe
-               {:toggles {"reasoning_level" :deep "auto_commit" true} :base-url "x" :providers []})]
+      (let [safe
+            (#'config/->yaml-safe
+             {:toggles {"reasoning_level" :deep "auto_commit" true} :base-url "x" :providers []})]
         (expect (= {"reasoning_level" "deep" "auto_commit" true} (get safe "toggles")))
         (expect (contains? safe "base_url")))))
 
@@ -626,24 +603,23 @@
    merge — the file Vis itself writes can never be shadowed by hand YAML)."
   (it
     "nested .vis/config.yml overrides root vis.yml; disjoint keys from every tier survive"
-    (let
-      [dir
-       (io/file "target/config-precedence-test")
+    (let [dir
+          (io/file "target/config-precedence-test")
 
-       gdir
-       (io/file dir "global")
+          gdir
+          (io/file dir "global")
 
-       gyml
-       (io/file gdir "config.yml")
+          gyml
+          (io/file gdir "config.yml")
 
-       gstate
-       (io/file gdir "state.yml")
+          gstate
+          (io/file gdir "state.yml")
 
-       root-yml
-       (io/file dir "vis.yml")
+          root-yml
+          (io/file dir "vis.yml")
 
-       nested-yml
-       (io/file dir ".vis" "config.yml")]
+          nested-yml
+          (io/file dir ".vis" "config.yml")]
 
       (try (.mkdirs (io/file dir ".vis"))
            (.mkdirs gdir)
@@ -655,21 +631,20 @@
                  (str "system_prompt: FROM-ROOT\n"
                       "grep:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit nested-yml "system_prompt: FROM-NESTED\n")
-           (with-redefs
-             [config/state-path
-              (constantly (.getPath gstate))
+           (with-redefs [config/state-path
+                         (constantly (.getPath gstate))
 
-              config/global-config-yaml-paths
-              (fn []
-                [(.getPath gyml)])
+                         config/global-config-yaml-paths
+                         (fn []
+                           [(.getPath gyml)])
 
-              config/project-root-yaml-paths
-              (fn []
-                [(.getPath root-yml)])
+                         config/project-root-yaml-paths
+                         (fn []
+                           [(.getPath root-yml)])
 
-              config/project-config-yaml-paths
-              (fn []
-                [(.getPath nested-yml)])]
+                         config/project-config-yaml-paths
+                         (fn []
+                           [(.getPath nested-yml)])]
 
              (let [cfg (config/load-config-raw)]
                ;; the nested overlay wins the conflicting key
@@ -687,38 +662,36 @@
            (finally (rm-rf! dir)))))
   (it
     "global ~/.vis: hand-written YAML merges UNDER machine-written state.yml (state wins per key)"
-    (let
-      [dir
-       (io/file "target/config-global-yaml-test")
+    (let [dir
+          (io/file "target/config-global-yaml-test")
 
-       gyml
-       (io/file dir "config.yml")
+          gyml
+          (io/file dir "config.yml")
 
-       gstate
-       (io/file dir "state.yml")
+          gstate
+          (io/file dir "state.yml")
 
-       none
-       (fn []
-         [])]
+          none
+          (fn []
+            [])]
 
       (try (.mkdirs dir)
            (spit gyml
                  (str "system_prompt: FROM-YAML\n"
                       "grep:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit gstate "system_prompt: FROM-STATE\n")
-           (with-redefs
-             [config/state-path
-              (constantly (.getPath gstate))
+           (with-redefs [config/state-path
+                         (constantly (.getPath gstate))
 
-              config/global-config-yaml-paths
-              (fn []
-                [(.getPath gyml)])
+                         config/global-config-yaml-paths
+                         (fn []
+                           [(.getPath gyml)])
 
-              config/project-root-yaml-paths
-              none
+                         config/project-root-yaml-paths
+                         none
 
-              config/project-config-yaml-paths
-              none]
+                         config/project-config-yaml-paths
+                         none]
 
              (let [cfg (config/load-config-raw)]
                ;; conflicting key: the machine-written state.yml wins
@@ -738,39 +711,36 @@
    INVISIBLE: an edit, a delete, and a fresh file all still show through."
   (it
     "reuses the parsed value until a source changes, then reparses"
-    (let
-      [dir
-       (io/file "target/config-cache-test")
+    (let [dir
+          (io/file "target/config-cache-test")
 
-       gstate
-       (io/file dir "state.yml")
+          gstate
+          (io/file dir "state.yml")
 
-       none
-       (fn []
-         [])]
+          none
+          (fn []
+            [])]
 
       (try (.mkdirs dir)
            (spit gstate "system_prompt: ONE\n")
-           (with-redefs
-             [config/state-path
-              (constantly (.getPath gstate))
+           (with-redefs [config/state-path
+                         (constantly (.getPath gstate))
 
-              config/global-config-yaml-paths
-              none
+                         config/global-config-yaml-paths
+                         none
 
-              config/project-root-yaml-paths
-              none
+                         config/project-root-yaml-paths
+                         none
 
-              config/project-config-yaml-paths
-              none]
+                         config/project-config-yaml-paths
+                         none]
 
              (config/invalidate-config-cache!)
-             (let
-               [a
-                (config/load-config-raw)
+             (let [a
+                   (config/load-config-raw)
 
-                b
-                (config/load-config-raw)]
+                   b
+                   (config/load-config-raw)]
 
                ;; cache HIT: the very same parsed map, no re-read
                (expect (identical? a b))
@@ -813,13 +783,12 @@
         (expect (= {"a" [{"b" home}]} (config/interpolate-env {"a" [{"b" "${HOME}"}]})))
         (expect (= 7 (config/interpolate-env 7)))))
   (it "writes a whole-value reference back so a re-save cannot bake the secret in"
-      (let
-        [home
-         (System/getenv "HOME")
+      (let [home
+            (System/getenv "HOME")
 
-         resolved
-         (config/interpolate-env {"providers" [{"api_key" "${HOME}"
-                                                "base_url" "https://x/${HOME}/v1"}]})]
+            resolved
+            (config/interpolate-env {"providers" [{"api_key" "${HOME}"
+                                                   "base_url" "https://x/${HOME}/v1"}]})]
 
         (expect (= [{"api_key" home "base_url" (str "https://x/" home "/v1")}]
                    (get resolved "providers")))
@@ -828,15 +797,14 @@
         (expect (= [{"api_key" "${HOME}" "base_url" (str "https://x/" home "/v1")}]
                    (get (config/restore-env-refs resolved) "providers")))))
   (it "reports, sorted, exactly the unset vars each provider still needs"
-      (let
-        [gapped
-         {:id :gapped :api-key "${VIS_TEST_UNSET_B}"}
+      (let [gapped
+            {:id :gapped :api-key "${VIS_TEST_UNSET_B}"}
 
-         two
-         {:id :two :api-key "${VIS_TEST_UNSET_B}" :base-url "https://${VIS_TEST_UNSET_A}/v1"}
+            two
+            {:id :two :api-key "${VIS_TEST_UNSET_B}" :base-url "https://${VIS_TEST_UNSET_A}/v1"}
 
-         fine
-         {:id :fine :api-key "sk-literal"}]
+            fine
+            {:id :fine :api-key "sk-literal"}]
 
         (expect (= ["VIS_TEST_UNSET_B"] (config/provider-env-gap gapped)))
         (expect (= ["VIS_TEST_UNSET_A" "VIS_TEST_UNSET_B"] (config/provider-env-gap two)))
@@ -850,20 +818,20 @@
       (expect (= "can't use rbi-genai: A_KEY, B_KEY are not set"
                  (config/provider-env-message "rbi-genai" ["A_KEY" "B_KEY"]))))
   (it "resolves through `load-config`, marking the gapped provider without failing"
-      (try (config/invalidate-config-cache!)
-           (with-redefs
-             [config/load-config-raw
-              (constantly {"providers"
-                           [{"id" "gapped" "api_key" "${VIS_TEST_UNSET_A}" "models" [{"name" "m1"}]}
-                            {"id" "fine" "api_key" "${HOME}" "models" [{"name" "m2"}]}]})]
-             (let
-               [cfg (config/load-config)
+      (try
+        (config/invalidate-config-cache!)
+        (with-redefs [config/load-config-raw
+                      (constantly
+                        {"providers"
+                         [{"id" "gapped" "api_key" "${VIS_TEST_UNSET_A}" "models" [{"name" "m1"}]}
+                          {"id" "fine" "api_key" "${HOME}" "models" [{"name" "m2"}]}]})]
+          (let [cfg (config/load-config)
                 [gapped fine] (:providers cfg)]
 
-               (expect (= "${VIS_TEST_UNSET_A}" (:api-key gapped)))
-               (expect (= (System/getenv "HOME") (:api-key fine)))
-               (expect (= {:gapped ["VIS_TEST_UNSET_A"]} (config/provider-env-gaps cfg)))))
-           (finally (config/invalidate-config-cache!)))))
+            (expect (= "${VIS_TEST_UNSET_A}" (:api-key gapped)))
+            (expect (= (System/getenv "HOME") (:api-key fine)))
+            (expect (= {:gapped ["VIS_TEST_UNSET_A"]} (config/provider-env-gaps cfg)))))
+        (finally (config/invalidate-config-cache!)))))
 
 (defdescribe
   provider-compatibility-test
@@ -941,21 +909,19 @@
 (defn- with-dotenv
   "Write a temporary `.env` (and `.env.local`), bind both paths and call `f`."
   [env-text local-text f]
-  (let
-    [env-path
-     (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))
+  (let [env-path
+        (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))
 
-     local-path
-     (str env-path ".local")]
+        local-path
+        (str env-path ".local")]
 
     (try (spit env-path (or env-text ""))
          (when local-text (spit local-path local-text))
-         (binding
-           [config/*extension-dotenv-path*
-            env-path
+         (binding [config/*extension-dotenv-path*
+                   env-path
 
-            config/*extension-dotenv-local-path*
-            (when local-text local-path)]
+                   config/*extension-dotenv-local-path*
+                   (when local-text local-path)]
 
            (f))
          (finally (.delete (io/file env-path)) (.delete (io/file local-path))))))
@@ -1009,8 +975,8 @@
                      (expect (= {:name "VIS_TEST_LOCAL_ONLY" :source :dotenv :value "from-local"}
                                 (config/extension-env-status "VIS_TEST_LOCAL_ONLY"))))))
   (it "layers `.env` ON TOP of the ambient value, and a declaration on top of both"
-      (binding
-        [config/*extension-getenv* {"VIS_TEST_LAYER" "from-ambient" "VIS_TEST_OUTER" "from-outer"}]
+      (binding [config/*extension-getenv* {"VIS_TEST_LAYER" "from-ambient"
+                                           "VIS_TEST_OUTER" "from-outer"}]
         (with-dotenv "VIS_TEST_LAYER=from-dotenv\n"
                      nil
                      (fn []
@@ -1119,16 +1085,15 @@
    zero svar signals."
   (it "delivers a Trove signal to Telemere"
       ;; Trove's default: a console fn that never reaches Telemere.
-      (expect (nil? (tel/with-signal (binding
-                                       [trove/*log-fn* ((requiring-resolve
-                                                          'taoensso.trove.console/get-log-fn))]
+      (expect (nil? (tel/with-signal (binding [trove/*log-fn*
+                                               ((requiring-resolve
+                                                  'taoensso.trove.console/get-log-fn))]
                                        (trove/log! {:level :info :id ::console :msg "sse line"})))))
       (config/route-svar-logs!)
-      (let
-        [signal (tel/with-signal (trove/log! {:level :info
-                                              :id ::stream-line-trace
-                                              :data {:reasoning-acc-len 13}
-                                              :msg "sse line"}))]
+      (let [signal (tel/with-signal (trove/log! {:level :info
+                                                 :id ::stream-line-trace
+                                                 :data {:reasoning-acc-len 13}
+                                                 :msg "sse line"}))]
         (expect (some? signal))
         (expect (= "sse line" (force (:msg_ signal))))
         (expect (= 13
@@ -1161,24 +1126,22 @@
    `~/.vis/config.yml` and the gitignored `.vis/` overlay."
   (it
     "drops the routing keys from a committed vis.yml, keeps the rest, warns once"
-    (let
-      [dir
-       (io/file (str (System/getProperty "java.io.tmpdir") "/vis-root-routing-" (System/nanoTime)))
+    (let [dir
+          (io/file
+            (str (System/getProperty "java.io.tmpdir") "/vis-root-routing-" (System/nanoTime)))
 
-       root-yml
-       (io/file dir "vis.yml")]
+          root-yml
+          (io/file dir "vis.yml")]
 
       (try (.mkdirs dir)
            (spit root-yml
                  (str "default_provider: team-forced\n"
                       "default_model: team-model\n" "fallback_provider: team-backup\n"
                       "fallback_model: team-backup-model\n" "system_prompt: Prefer RST.\n"))
-           (with-redefs
-             [config/project-root-yaml-paths (fn []
-                                               [(.getPath root-yml)])]
-             (let
-               [signal (tel/with-signal (config/load-project-root-config-raw))
-                raw (config/load-project-root-config-raw)]
+           (with-redefs [config/project-root-yaml-paths (fn []
+                                                          [(.getPath root-yml)])]
+             (let [signal (tel/with-signal (config/load-project-root-config-raw))
+                   raw (config/load-project-root-config-raw)]
 
                ;; the project keeps its own config, and only its own
                (expect (= {"system_prompt" "Prefer RST."} raw))
@@ -1199,33 +1162,32 @@
            (finally (rm-rf! dir)))))
   (it
     "a hand-written ~/.vis/config.yml still decides the pair"
-    (let
-      [dir
-       (io/file (str (System/getProperty "java.io.tmpdir") "/vis-global-pair-" (System/nanoTime)))
+    (let [dir
+          (io/file
+            (str (System/getProperty "java.io.tmpdir") "/vis-global-pair-" (System/nanoTime)))
 
-       global-yml
-       (io/file dir "config.yml")]
+          global-yml
+          (io/file dir "config.yml")]
 
       (try (.mkdirs dir)
            (spit global-yml
                  (str "default_provider: mine\n"
                       "default_model: my-model\n"
                       "fallback_provider: my-backup\n"))
-           (with-redefs
-             [config/global-config-yaml-paths
-              (fn []
-                [(.getPath global-yml)])
+           (with-redefs [config/global-config-yaml-paths
+                         (fn []
+                           [(.getPath global-yml)])
 
-              config/state-path
-              (constantly (.getPath (io/file dir "absent-state.yml")))
+                         config/state-path
+                         (constantly (.getPath (io/file dir "absent-state.yml")))
 
-              config/project-root-yaml-paths
-              (fn []
-                [])
+                         config/project-root-yaml-paths
+                         (fn []
+                           [])
 
-              config/project-config-yaml-paths
-              (fn []
-                [])]
+                         config/project-config-yaml-paths
+                         (fn []
+                           [])]
 
              ;; the personal hand-written tier is read WHOLE — the pair is the
              ;; selection the TUI, the gateway and the companion remember, and a
@@ -1242,34 +1204,33 @@
            (finally (config/invalidate-config-cache!) (rm-rf! dir)))))
   (it
     "the gitignored .vis/ overlay still decides the pair"
-    (let
-      [dir
-       (io/file (str (System/getProperty "java.io.tmpdir") "/vis-root-overlay-" (System/nanoTime)))
+    (let [dir
+          (io/file
+            (str (System/getProperty "java.io.tmpdir") "/vis-root-overlay-" (System/nanoTime)))
 
-       root-yml
-       (io/file dir "vis.yml")
+          root-yml
+          (io/file dir "vis.yml")
 
-       overlay-yml
-       (io/file dir ".vis" "config.yml")]
+          overlay-yml
+          (io/file dir ".vis" "config.yml")]
 
       (try (.mkdirs (io/file dir ".vis"))
            (spit root-yml (str "default_provider: team-forced\n" "system_prompt: Prefer RST.\n"))
            (spit overlay-yml (str "default_provider: mine\n" "default_model: my-model\n"))
-           (with-redefs
-             [config/global-config-yaml-paths
-              (fn []
-                [])
+           (with-redefs [config/global-config-yaml-paths
+                         (fn []
+                           [])
 
-              config/state-path
-              (constantly (.getPath (io/file dir "absent-state.yml")))
+                         config/state-path
+                         (constantly (.getPath (io/file dir "absent-state.yml")))
 
-              config/project-root-yaml-paths
-              (fn []
-                [(.getPath root-yml)])
+                         config/project-root-yaml-paths
+                         (fn []
+                           [(.getPath root-yml)])
 
-              config/project-config-yaml-paths
-              (fn []
-                [(.getPath overlay-yml)])]
+                         config/project-config-yaml-paths
+                         (fn []
+                           [(.getPath overlay-yml)])]
 
              (config/invalidate-config-cache!)
              (let [merged (config/load-config-raw)]
@@ -1296,19 +1257,17 @@
       (let [t (ex-info "make-router requires at least one provider" {:type :svar/no-providers})]
         (expect (identical? t (config/no-provider-ex t)))))
   (it "matches the gateway payload the client rethrows: string keys, no :type"
-      (let
-        [t (ex-info "No AI provider is configured yet."
-                    {"error" {"type" config/no-provider-error-type
-                              "message" "No AI provider is configured yet."}
-                     :http-status 503})]
+      (let [t (ex-info "No AI provider is configured yet."
+                       {"error" {"type" config/no-provider-error-type
+                                 "message" "No AI provider is configured yet."}
+                        :http-status 503})]
         (expect (identical? t (config/no-provider-ex t)))))
   (it "walks the cause chain and answers the throwable carrying the verdict"
-      (let
-        [cause
-         (ex-info "No AI provider is configured yet." {:type :vis/no-provider})
+      (let [cause
+            (ex-info "No AI provider is configured yet." {:type :vis/no-provider})
 
-         t
-         (ex-info "session create failed" {} (RuntimeException. "wrapped" cause))]
+            t
+            (ex-info "session create failed" {} (RuntimeException. "wrapped" cause))]
 
         (expect (identical? cause (config/no-provider-ex t)))))
   (it "is nil for a failure adding a provider would not fix"
@@ -1323,103 +1282,132 @@
 ;; hand-written `~/.vis/config.yml` tier and the committed project `vis.yml` —
 ;; filesystem grants included — into the machine store, where the machine tier
 ;; then outranked the very files they came from.
-(defdescribe save-toggles-writes-only-the-machine-tier-test
-             (it "persists the toggle block without folding the other config tiers"
-                 (let [dir (.toFile (Files/createTempDirectory
-                                      "vis-toggle-store"
-                                      (make-array java.nio.file.attribute.FileAttribute 0)))
-                       home (io/file dir "home")
-                       store-dir (io/file home ".vis")
-                       project (io/file dir "project")
-                       old-home (System/getProperty "user.home")
-                       old-dir (System/getProperty "user.dir")]
-                   (try
-                     (.mkdirs store-dir)
-                     (.mkdirs project)
-                     (spit (io/file store-dir "config.yml") "default_model: hand-written-model\n")
-                     (spit (io/file store-dir "state.yml") "default_provider: machine-provider\n")
-                     (spit (io/file project "vis.yml")
-                           (str "workspace:\n  filesystem:\n    - id: sibling\n"
-                                "      path: ~/sibling-repo\n"
-                                "toggles:\n  introspection: true\n"))
-                     (System/setProperty "user.home" (.getPath home))
-                     (System/setProperty "user.dir" (.getPath project))
-                     (config/invalidate-config-cache!)
-                     ;; The merged view legitimately carries every tier ...
-                     (expect (some? (get (config/load-config-raw) "workspace")))
-                     (expect (= "hand-written-model" (get (config/load-config-raw) "default_model")))
-                     (expect (true? (config/save-toggles! {"introspection" true})))
-                     (let [store (config/load-global-config-raw)]
-                       ;; ... the machine store keeps only what it owns.
-                       (expect (= {"introspection" true} (get store "toggles")))
-                       (expect (= "machine-provider" (get store "default_provider")))
-                       (expect (nil? (get store "workspace")))
-                       (expect (nil? (get store "default_model"))))
-                     ;; An identical block is not rewritten.
-                     (expect (false? (config/save-toggles! {"introspection" true})))
-                     (finally
-                       (System/setProperty "user.home" old-home)
-                       (System/setProperty "user.dir" old-dir)
-                       (config/invalidate-config-cache!))))))
+(defdescribe
+  save-toggles-writes-only-the-machine-tier-test
+  (it
+    "persists the toggle block without folding the other config tiers"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-toggle-store"
+                                              (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          home
+          (io/file dir "home")
+
+          store-dir
+          (io/file home ".vis")
+
+          project
+          (io/file dir "project")
+
+          old-home
+          (System/getProperty "user.home")
+
+          old-dir
+          (System/getProperty "user.dir")]
+
+      (try (.mkdirs store-dir)
+           (.mkdirs project)
+           (spit (io/file store-dir "config.yml") "default_model: hand-written-model\n")
+           (spit (io/file store-dir "state.yml") "default_provider: machine-provider\n")
+           (spit (io/file project "vis.yml")
+                 (str "workspace:\n  filesystem:\n    - id: sibling\n"
+                      "      path: ~/sibling-repo\n"
+                      "toggles:\n  introspection: true\n"))
+           (System/setProperty "user.home" (.getPath home))
+           (System/setProperty "user.dir" (.getPath project))
+           (config/invalidate-config-cache!)
+           ;; The merged view legitimately carries every tier ...
+           (expect (some? (get (config/load-config-raw) "workspace")))
+           (expect (= "hand-written-model" (get (config/load-config-raw) "default_model")))
+           (expect (true? (config/save-toggles! {"introspection" true})))
+           (let [store (config/load-global-config-raw)]
+             ;; ... the machine store keeps only what it owns.
+             (expect (= {"introspection" true} (get store "toggles")))
+             (expect (= "machine-provider" (get store "default_provider")))
+             (expect (nil? (get store "workspace")))
+             (expect (nil? (get store "default_model"))))
+           ;; An identical block is not rewritten.
+           (expect (false? (config/save-toggles! {"introspection" true})))
+           (finally (System/setProperty "user.home" old-home)
+                    (System/setProperty "user.dir" old-dir)
+                    (config/invalidate-config-cache!))))))
 
 
 ;; Regression, issue: two writers of `~/.vis/state.yml` read the whole map,
 ;; changed one key and wrote it back. Nothing was ever corrupt — the second
 ;; write simply reinstated the block the first had just replaced, so adding a
 ;; provider quietly undid a toggle flip (and the reverse).
-(defdescribe machine-store-writes-never-lose-each-other-test
-             "`update-machine-config!` is the locked read-modify-write of the machine store."
-             (it "keeps both blocks when providers and toggles are written concurrently"
-                 (let [dir (.toFile (Files/createTempDirectory
-                                      "vis-store-race"
-                                      (make-array java.nio.file.attribute.FileAttribute 0)))
-                       home (io/file dir "home")
-                       store-dir (io/file home ".vis")
-                       old-home (System/getProperty "user.home")]
-                   (try
-                     (.mkdirs store-dir)
-                     (System/setProperty "user.home" (.getPath home))
-                     (config/invalidate-config-cache!)
-                     (let [rounds 30
-                           providers (future
-                                       (dotimes [i rounds]
-                                         (config/update-machine-config!
-                                           (fn [raw]
-                                             (assoc raw "providers"
-                                               (conj (vec (get raw "providers"))
-                                                     {"id" (str "p" i) "api_key" "k"})))
-                                           :test))
-                                       :done)
-                           toggles (future
-                                     (dotimes [i rounds]
-                                       (config/save-toggles! {"introspection" (even? i)}))
-                                     :done)]
-                       (expect (= :done (deref providers 30000 :timeout)))
-                       (expect (= :done (deref toggles 30000 :timeout)))
-                       (let [store (config/load-global-config-raw)]
-                         ;; Every provider survived AND the last toggle write is still there.
-                         (expect (= rounds (count (get store "providers"))))
-                         (expect (some? (get store "toggles")))))
-                     (finally
-                       (System/setProperty "user.home" old-home)
-                       (config/invalidate-config-cache!)))))
+(defdescribe
+  machine-store-writes-never-lose-each-other-test
+  "`update-machine-config!` is the locked read-modify-write of the machine store."
+  (it
+    "keeps both blocks when providers and toggles are written concurrently"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-store-race"
+                                              (make-array java.nio.file.attribute.FileAttribute 0)))
 
-             (it "answers nil and writes nothing when the update changes nothing"
-                 (let [dir (.toFile (Files/createTempDirectory
-                                      "vis-store-noop"
-                                      (make-array java.nio.file.attribute.FileAttribute 0)))
-                       home (io/file dir "home")
-                       store-dir (io/file home ".vis")
-                       old-home (System/getProperty "user.home")]
-                   (try
-                     (.mkdirs store-dir)
-                     (spit (io/file store-dir "state.yml") "default_provider: machine-provider\n")
-                     (System/setProperty "user.home" (.getPath home))
-                     (config/invalidate-config-cache!)
-                     (let [before (slurp (io/file store-dir "state.yml"))]
-                       (expect (nil? (config/update-machine-config! (fn [raw] raw) :test)))
-                       (expect (nil? (config/update-machine-config! (fn [_] nil) :test)))
-                       (expect (= before (slurp (io/file store-dir "state.yml")))))
-                     (finally
-                       (System/setProperty "user.home" old-home)
-                       (config/invalidate-config-cache!))))))
+          home
+          (io/file dir "home")
+
+          store-dir
+          (io/file home ".vis")
+
+          old-home
+          (System/getProperty "user.home")]
+
+      (try (.mkdirs store-dir)
+           (System/setProperty "user.home" (.getPath home))
+           (config/invalidate-config-cache!)
+           (let [rounds
+                 30
+
+                 providers
+                 (future (dotimes [i rounds]
+                           (config/update-machine-config!
+                             (fn [raw]
+                               (assoc raw
+                                 "providers" (conj (vec (get raw "providers"))
+                                                   {"id" (str "p" i) "api_key" "k"})))
+                             :test))
+                         :done)
+
+                 toggles
+                 (future (dotimes [i rounds]
+                           (config/save-toggles! {"introspection" (even? i)}))
+                         :done)]
+
+             (expect (= :done (deref providers 30000 :timeout)))
+             (expect (= :done (deref toggles 30000 :timeout)))
+             (let [store (config/load-global-config-raw)]
+               ;; Every provider survived AND the last toggle write is still there.
+               (expect (= rounds (count (get store "providers"))))
+               (expect (some? (get store "toggles")))))
+           (finally (System/setProperty "user.home" old-home) (config/invalidate-config-cache!)))))
+  (it
+    "answers nil and writes nothing when the update changes nothing"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-store-noop"
+                                              (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          home
+          (io/file dir "home")
+
+          store-dir
+          (io/file home ".vis")
+
+          old-home
+          (System/getProperty "user.home")]
+
+      (try (.mkdirs store-dir)
+           (spit (io/file store-dir "state.yml") "default_provider: machine-provider\n")
+           (System/setProperty "user.home" (.getPath home))
+           (config/invalidate-config-cache!)
+           (let [before (slurp (io/file store-dir "state.yml"))]
+             (expect (nil? (config/update-machine-config! (fn [raw]
+                                                            raw)
+                                                          :test)))
+             (expect (nil? (config/update-machine-config! (fn [_]
+                                                            nil)
+                                                          :test)))
+             (expect (= before (slurp (io/file store-dir "state.yml")))))
+           (finally (System/setProperty "user.home" old-home) (config/invalidate-config-cache!))))))

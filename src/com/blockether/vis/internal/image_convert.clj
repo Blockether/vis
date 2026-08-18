@@ -92,12 +92,11 @@
    unsupported container -- and swallowing it is how a perfectly valid
    attachment ends up dropped with no explanation at all."
   [^Throwable t]
-  (let
-    [msg (some-> t
-                 (.getMessage)
-                 str
-                 str/trim
-                 not-empty)]
+  (let [msg (some-> t
+                    (.getMessage)
+                    str
+                    str/trim
+                    not-empty)]
     (if msg (str/replace msg #"\s+" " ") (.getSimpleName (class t)))))
 
 (defn rasterize-svg
@@ -119,46 +118,44 @@
   ([^bytes data {:keys [max-dimension]}]
    (when (and *enabled?* data (pos? (alength data)))
      (try
-       (let
-         [max-dim
-          (long (or max-dimension svg-max-raster-dimension))
+       (let [max-dim
+             (long (or max-dimension svg-max-raster-dimension))
 
-          ;; The library sizes the canvas the way a BROWSER would -- its own
-          ;; resolved size when the document declares a usable one, else the
-          ;; `viewBox` or the painted ink -- and hands back repaired markup when
-          ;; the original is one resvg would refuse.
-          {:keys [width height svg]}
-          (imaging/svg-canvas data)
+             ;; The library sizes the canvas the way a BROWSER would -- its own
+             ;; resolved size when the document declares a usable one, else the
+             ;; `viewBox` or the painted ink -- and hands back repaired markup when
+             ;; the original is one resvg would refuse.
+             {:keys [width height svg]}
+             (imaging/svg-canvas data)
 
-          payload
-          (or svg data)
+             payload
+             (or svg data)
 
-          iw
-          (double width)
+             iw
+             (double width)
 
-          ih
-          (double height)
+             ih
+             (double height)
 
-          longest
-          (max (double iw) (double ih))
+             longest
+             (max (double iw) (double ih))
 
-          ;; 1:1 with the document's own declared size. Rasterizing needs SOME
-          ;; pixel count, and the honest one is the size the author wrote; the
-          ;; ceiling only exists because a 40000px canvas is an OOM -- and it
-          ;; scales BOTH edges by the SAME factor, so the ratio survives it.
-          scale
-          (/ (double (min (double max-dim) longest)) longest)
+             ;; 1:1 with the document's own declared size. Rasterizing needs SOME
+             ;; pixel count, and the honest one is the size the author wrote; the
+             ;; ceiling only exists because a 40000px canvas is an OOM -- and it
+             ;; scales BOTH edges by the SAME factor, so the ratio survives it.
+             scale
+             (/ (double (min (double max-dim) longest)) longest)
 
-          tw
-          (max 1 (long (Math/round (* (double iw) scale))))
+             tw
+             (max 1 (long (Math/round (* (double iw) scale))))
 
-          th
-          (max 1 (long (Math/round (* (double ih) scale))))]
+             th
+             (max 1 (long (Math/round (* (double ih) scale))))]
 
          (with-open [im (imaging/render-svg payload {:width tw :height th :background "white"})]
-           (let
-             [out (imaging/encode im :png)
-              {:keys [width height]} (imaging/info im)]
+           (let [out (imaging/encode im :png)
+                 {:keys [width height]} (imaging/info im)]
 
              (if (and out (pos? (alength ^bytes out)))
                {:bytes out
@@ -184,9 +181,8 @@
    past the decoder's own memory limit) or cannot be encoded."
   [^bytes data]
   (try (with-open [im (imaging/decode data)]
-         (let
-           [out (imaging/encode im :png)
-            {:keys [width height]} (imaging/info im)]
+         (let [out (imaging/encode im :png)
+               {:keys [width height]} (imaging/info im)]
 
            (if (and out (pos? (alength ^bytes out)))
              {:bytes out
@@ -298,19 +294,19 @@
    must never be mistaken for a picture that fits, or an oversized payload goes
    out believing it was shrunk."
   [^bytes data ^long target ^long max-dimension]
-  (let
-    [out
-     (try (imaging/optimize data {:max-width target :max-height target :force true})
-          (catch Throwable _ nil))
+  (let [out
+        (try (imaging/optimize data {:max-width target :max-height target :force true})
+             (catch Throwable _ nil))
 
-     scaled
-     (when (and out (pos? (alength ^bytes out))) (try (imaging/probe out) (catch Throwable _ nil)))
+        scaled
+        (when (and out (pos? (alength ^bytes out)))
+          (try (imaging/probe out) (catch Throwable _ nil)))
 
-     w
-     (long (or (:width scaled) 0))
+        w
+        (long (or (:width scaled) 0))
 
-     h
-     (long (or (:height scaled) 0))]
+        h
+        (long (or (:height scaled) 0))]
 
     (when (and (pos? w) (pos? h) (<= w max-dimension) (<= h max-dimension))
       {:bytes out :width w :height h})))
@@ -343,18 +339,17 @@
    under it. Never nil, never throws."
   ([^bytes data] (fit-dimensions data max-wire-dimension))
   ([^bytes data ^long max-dimension]
-   (let
-     [scalable?
-      (boolean (and *enabled?* data (pos? (alength data))))
+   (let [scalable?
+         (boolean (and *enabled?* data (pos? (alength data))))
 
-      probe
-      (when scalable? (try (imaging/probe data) (catch Throwable _ nil)))
+         probe
+         (when scalable? (try (imaging/probe data) (catch Throwable _ nil)))
 
-      w
-      (long (or (:width probe) 0))
+         w
+         (long (or (:width probe) 0))
 
-      h
-      (long (or (:height probe) 0))]
+         h
+         (long (or (:height probe) 0))]
 
      (cond
        ;; Measured, and already inside the ceiling: the payload ITSELF, byte for
@@ -418,30 +413,28 @@
   ([^bytes data opts]
    (when (and *enabled?* data (pos? (alength data)))
      (try
-       (let
-         [probe
-          (imaging/probe-video data)
+       (let [probe
+             (imaging/probe-video data)
 
-          frames
-          (long (or (:frames probe) 0))
+             frames
+             (long (or (:frames probe) 0))
 
-          keep-n
-          (long (or (:max-frames opts) video-gif-max-frames))
+             keep-n
+             (long (or (:max-frames opts) video-gif-max-frames))
 
-          stride
-          (max 1 (long (Math/ceil (/ (double (max frames 1)) (double keep-n)))))]
+             stride
+             (max 1 (long (Math/ceil (/ (double (max frames 1)) (double keep-n)))))]
 
          (cond (nil? probe) {:reason "the clip could not be read"}
                (false? (:is-decodable probe))
                {:reason (str "the clip's " (or (:codec probe) "video") " track cannot be decoded")}
-               :else (let
-                       [^bytes gif (imaging/video->gif data
-                                                       {:max-frames keep-n
-                                                        :stride stride
-                                                        :max-dimension
-                                                        (long (or (:max-dimension opts)
-                                                                  video-gif-max-dimension))
-                                                        :fps (or (:fps opts) video-gif-fps)})]
+               :else (let [^bytes gif (imaging/video->gif data
+                                                          {:max-frames keep-n
+                                                           :stride stride
+                                                           :max-dimension
+                                                           (long (or (:max-dimension opts)
+                                                                     video-gif-max-dimension))
+                                                           :fps (or (:fps opts) video-gif-fps)})]
                        (if (and gif (pos? (alength gif)))
                          {:bytes gif
                           :media-type "image/gif"
@@ -459,12 +452,11 @@
    channel count and alpha may legitimately change (oxipng drops a fully opaque
    alpha channel and palettes what it can); WIDTH x HEIGHT x FRAMES may not."
   [^bytes a ^bytes b]
-  (boolean (try (let
-                  [pa
-                   (imaging/probe a)
+  (boolean (try (let [pa
+                      (imaging/probe a)
 
-                   pb
-                   (imaging/probe b)]
+                      pb
+                      (imaging/probe b)]
 
                   (and pa
                        pb

@@ -19,30 +19,27 @@
    still allowing a configured directory to be created after startup."
   [path base-dir home]
   (when-not (str/blank? (str path))
-    (let
-      [expanded
-       (paths/expand-home path home)
+    (let [expanded
+          (paths/expand-home path home)
 
-       ^Path raw
-       (Paths/get expanded (make-array String 0))
+          ^Path raw
+          (Paths/get expanded (make-array String 0))
 
-       ^Path absolute
-       (.normalize (if (.isAbsolute raw)
-                     raw
-                     (.resolve (Paths/get (str base-dir) (make-array String 0)) raw)))]
+          ^Path absolute
+          (.normalize (if (.isAbsolute raw)
+                        raw
+                        (.resolve (Paths/get (str base-dir) (make-array String 0)) raw)))]
 
-      (loop
-        [^Path ancestor
-         absolute
+      (loop [^Path ancestor
+             absolute
 
-         tail
-         ()]
+             tail
+             ()]
 
         (cond (nil? ancestor) (.toString absolute)
               (Files/exists ancestor no-link-options)
-              (let
-                [real (try (.toRealPath ancestor no-link-options)
-                           (catch Throwable _ (.toAbsolutePath ancestor)))]
+              (let [real (try (.toRealPath ancestor no-link-options)
+                              (catch Throwable _ (.toAbsolutePath ancestor)))]
                 (.toString (.normalize ^Path
                                        (reduce (fn [^Path p ^String segment]
                                                  (.resolve p segment))
@@ -54,11 +51,10 @@
   "Render an absolute path under HOME as `~` / `~/…`; leave other paths absolute."
   ([path] (home-relative path (System/getProperty "user.home")))
   ([path home]
-   (let
-     [abbreviated (paths/abbreviate-home (some-> path
-                                                 str
-                                                 not-empty)
-                                         home)]
+   (let [abbreviated (paths/abbreviate-home (some-> path
+                                                    str
+                                                    not-empty)
+                                            home)]
      (if (= "~/" abbreviated) "~" abbreviated))))
 
 (defn- resolve-paths
@@ -78,9 +74,8 @@
 
 (defn- sha256
   [value]
-  (let
-    [digest (.digest (MessageDigest/getInstance "SHA-256")
-                     (.getBytes (pr-str (stable-value value)) StandardCharsets/UTF_8))]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                        (.getBytes (pr-str (stable-value value)) StandardCharsets/UTF_8))]
     (str "sha256:" (apply str (map #(format "%02x" (bit-and 0xff (long %))) digest)))))
 
 (defn snapshot
@@ -92,52 +87,51 @@
     {:keys [base-dir home]
      :or {base-dir (System/getProperty "user.dir") home (System/getProperty "user.home")}}]
    (config-spec/assert-config! config)
-   (let
-     [jail
-      (config-spec/process-jail-config config)
+   (let [jail
+         (config-spec/process-jail-config config)
 
-      network
-      (config-spec/network-config config)
+         network
+         (config-spec/network-config config)
 
-      path-keys
-      [:allow-read-write :allow-read :allow-write :deny-read :deny-write :no-search]
+         path-keys
+         [:allow-read-write :allow-read :allow-write :deny-read :deny-write :no-search]
 
-      jail
-      (reduce (fn [policy key]
-                (update policy key resolve-paths base-dir home))
-              jail
-              path-keys)
+         jail
+         (reduce (fn [policy key]
+                   (update policy key resolve-paths base-dir home))
+                 jail
+                 path-keys)
 
-      ;; (language caches now live in the workspace catalog and resolve through the
-      ;;  path-keys reduce above; no separate cache-resolution pass.)
-      jail
-      (update jail
-              :path-descriptions
-              (fn [m]
-                (into {}
-                      (keep (fn [[k v]]
-                              (when-let [rp (nearest-real-path k base-dir home)]
-                                [rp v])))
-                      m)))
+         ;; (language caches now live in the workspace catalog and resolve through the
+         ;;  path-keys reduce above; no separate cache-resolution pass.)
+         jail
+         (update jail
+                 :path-descriptions
+                 (fn [m]
+                   (into {}
+                         (keep (fn [[k v]]
+                                 (when-let [rp (nearest-real-path k base-dir home)]
+                                   [rp v])))
+                         m)))
 
-      ;; Per-root DRAFT isolation policy, keyed by the SAME canonical path the
-      ;; filesystem grants use. Independent of `:jail-enabled`: a drafted session
-      ;; isolates catalog roots whether or not the OS jail confines them.
-      draft-policies
-      (into {}
-            (keep (fn [[path policy]]
-                    (when-let [rp (nearest-real-path path base-dir home)]
-                      [rp policy])))
-            (config-spec/workspace-draft-policies config))
+         ;; Per-root DRAFT isolation policy, keyed by the SAME canonical path the
+         ;; filesystem grants use. Independent of `:jail-enabled`: a drafted session
+         ;; isolates catalog roots whether or not the OS jail confines them.
+         draft-policies
+         (into {}
+               (keep (fn [[path policy]]
+                       (when-let [rp (nearest-real-path path base-dir home)]
+                         [rp policy])))
+               (config-spec/workspace-draft-policies config))
 
-      policy
-      {:jail-enabled (not= false (get-in config ["jail" "enabled"]))
-       :network network
-       :process-jail jail
-       :draft-policies draft-policies}
+         policy
+         {:jail-enabled (not= false (get-in config ["jail" "enabled"]))
+          :network network
+          :process-jail jail
+          :draft-policies draft-policies}
 
-      generation
-      (sha256 policy)]
+         generation
+         (sha256 policy)]
 
      (assoc policy
        :generation generation
@@ -185,70 +179,67 @@
    `workspace-roots` are the live session overlay; configured grants remain
    immutable. Paths under HOME render as `~/…` without changing enforcement."
   [policy workspace-roots]
-  (let
-    [home
-     (:home policy)
+  (let [home
+        (:home policy)
 
-     jail
-     (:process-jail policy)
+        jail
+        (:process-jail policy)
 
-     network
-     (:network policy)
+        network
+        (:network policy)
 
-     rw
-     (->> (concat workspace-roots (read-write-roots policy))
-          (keep identity)
-          distinct
-          (mapv #(home-relative % home)))
+        rw
+        (->> (concat workspace-roots (read-write-roots policy))
+             (keep identity)
+             distinct
+             (mapv #(home-relative % home)))
 
-     ro
-     (->> (:allow-read jail)
-          distinct
-          (mapv #(home-relative % home)))
+        ro
+        (->> (:allow-read jail)
+             distinct
+             (mapv #(home-relative % home)))
 
-     deny-read
-     (mapv #(home-relative % home) (:deny-read jail))
+        deny-read
+        (mapv #(home-relative % home) (:deny-read jail))
 
-     deny-write
-     (mapv #(home-relative % home) (:deny-write jail))
+        deny-write
+        (mapv #(home-relative % home) (:deny-write jail))
 
-     no-search
-     (mapv #(home-relative % home) (no-search-roots policy))
+        no-search
+        (mapv #(home-relative % home) (no-search-roots policy))
 
-     descriptions
-     (into {}
-           (map (fn [[k v]]
-                  [(home-relative k home) v]))
-           (:path-descriptions jail))
+        descriptions
+        (into {}
+              (map (fn [[k v]]
+                     [(home-relative k home) v]))
+              (:path-descriptions jail))
 
-     ;; Only roots that opt OUT of the default `shared` isolation are worth
-     ;; naming: a drafted session either works on a private copy of them or
-     ;; cannot touch them at all.
-     draft
-     (into {}
-           (keep (fn [[k v]]
-                   (let [p (name v)]
-                     (when-not (= "shared" p) [(home-relative k home) p]))))
-           (draft-policies policy))]
+        ;; Only roots that opt OUT of the default `shared` isolation are worth
+        ;; naming: a drafted session either works on a private copy of them or
+        ;; cannot touch them at all.
+        draft
+        (into {}
+              (keep (fn [[k v]]
+                      (let [p (name v)]
+                        (when-not (= "shared" p) [(home-relative k home) p]))))
+              (draft-policies policy))]
 
-    (cond->
-      {"generation" (:generation policy)
-       "is_jailed" (boolean (:jail-enabled policy))
-       "filesystem" (cond->
-                      {"read_write" rw
-                       "process_read_only" ro
-                       "deny_read" deny-read
-                       "deny_write" deny-write
-                       "no_search" no-search
-                       "descriptions" descriptions}
-                      (seq draft)
-                      (assoc "draft" draft))
-       "network" {"enabled" true
-                  "allowed_domains" (vec (:allowed-domains network))
-                  "denied_domains" (vec (:denied-domains network))
-                  "exclude_domains" (vec (:exclude-domains network))
-                  "allow_private" (boolean (:allow-private network))
-                  "inbound_ports" (vec (:inbound-ports jail))}
-       "changes_require" "reload"}
+    (cond-> {"generation" (:generation policy)
+             "is_jailed" (boolean (:jail-enabled policy))
+             "filesystem" (cond-> {"read_write" rw
+                                   "process_read_only" ro
+                                   "deny_read" deny-read
+                                   "deny_write" deny-write
+                                   "no_search" no-search
+                                   "descriptions" descriptions}
+                            (seq draft)
+                            (assoc "draft" draft))
+             "network" {"enabled" true
+                        "allowed_domains" (vec (:allowed-domains network))
+                        "denied_domains" (vec (:denied-domains network))
+                        "exclude_domains" (vec (:exclude-domains network))
+                        "allow_private" (boolean (:allow-private network))
+                        "inbound_ports" (vec (:inbound-ports jail))}
+             "changes_require" "reload"}
       (:config-error policy)
       (assoc "config_error" (:config-error policy)))))

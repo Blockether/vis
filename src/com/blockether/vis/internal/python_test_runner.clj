@@ -63,22 +63,20 @@
    explicitly named target is honored (pytest behaves the same) instead of
    silently discovering nothing; its own directory is the scan root."
   [dirs]
-  (->> (for
-         [^File e
-          (map io/file dirs)
+  (->> (for [^File e
+             (map io/file dirs)
 
-          :when (.exists e)
-          [^File d ^File f]
-          (if (.isDirectory e)
-            (for
-              [^File f
-               (walk-py e)
+             :when (.exists e)
+             [^File d ^File f]
+             (if (.isDirectory e)
+               (for [^File f
+                     (walk-py e)
 
-               :when (pyx/test-file? f)]
+                     :when (pyx/test-file? f)]
 
-              [e f])
-            (when (str/ends-with? (.getName e) ".py")
-              [[(.getParentFile (.getCanonicalFile e)) e]]))]
+                 [e f])
+               (when (str/ends-with? (.getName e) ".py")
+                 [[(.getParentFile (.getCanonicalFile e)) e]]))]
 
          [d f])
        (reduce (fn [[seen acc] [_ ^File f :as pair]]
@@ -105,15 +103,13 @@
    (let [scan (.getCanonicalPath scan-dir)]
      (str/join "\u0000"
                (distinct (concat (remove str/blank? (map str extra))
-                                 (loop
-                                   [^File d (.getParentFile (.getCanonicalFile test-file))
-                                    acc []]
+                                 (loop [^File d (.getParentFile (.getCanonicalFile test-file))
+                                        acc []]
 
                                    (if (nil? d)
                                      acc
-                                     (let
-                                       [p (.getCanonicalPath d)
-                                        acc (conj acc p)]
+                                     (let [p (.getCanonicalPath d)
+                                           acc (conj acc p)]
 
                                        (if (= p scan) acc (recur (.getParentFile d) acc)))))))))))
 
@@ -168,18 +164,17 @@
    per-test record list. Never throws — a broken test file is one `:errored`
    result, never a host crash."
   [^String shim-src sys-path ^File scan-dir ^File test-file]
-  (let
-    [path
-     (.getCanonicalPath test-file)
+  (let [path
+        (.getCanonicalPath test-file)
 
-     source
-     (slurp test-file)
+        source
+        (slurp test-file)
 
-     paths
-     (test-sys-path scan-dir test-file sys-path)
+        paths
+        (test-sys-path scan-dir test-file sys-path)
 
-     ^Context ctx
-     (pyx/build-context (.getName test-file))]
+        ^Context ctx
+        (pyx/build-context (.getName test-file))]
 
     (try (pyx/bind-host! ctx (.getName test-file))
          (locking ctx
@@ -223,36 +218,33 @@
    resolves it the way the project's packaging metadata says it should."
   ([] (test-python-extensions! nil))
   ([{:keys [dirs sys-path]}]
-   (let
-     [dirs
-      (or dirs (pyx/default-extension-dirs))
+   (let [dirs
+         (or dirs (pyx/default-extension-dirs))
 
-      shim-src
-      (pytest-shim-src)
+         shim-src
+         (pytest-shim-src)
 
-      pairs
-      (discover-tests dirs)]
+         pairs
+         (discover-tests dirs)]
 
      (if (nil? shim-src)
        {:files 0 :ok? false :error "pytest shim not registered" :results [] :tests []}
-       (let
-         [results
-          (mapv (fn [[d f]]
-                  (run-test-file! shim-src sys-path d f))
-                pairs)
+       (let [results
+             (mapv (fn [[d f]]
+                     (run-test-file! shim-src sys-path d f))
+                   pairs)
 
-          tests
-          (vec (for
-                 [r
-                  results
+             tests
+             (vec (for [r
+                        results
 
-                  t
-                  (:tests r)]
+                        t
+                        (:tests r)]
 
-                 (assoc t :file (:file r))))
+                    (assoc t :file (:file r))))
 
-          counts
-          (frequencies (map :outcome tests))]
+             counts
+             (frequencies (map :outcome tests))]
 
          (merge {:files (count results) :ok? (every? :ok? results) :tests tests :results results}
                 (select-keys counts [:passed :failed :errored :skipped :xfailed :xpassed])))))))
@@ -282,49 +274,49 @@
   (cond (:error res) (str "✗ Python extension tests could not run: " (:error res))
         (zero? (long (or files 0))) "No Python extension tests found (test_*.py / *_test.py)."
         :else
-        (let
-          [summary
-           (str (if ok? "✓" "✗")
-                " "
-                files
-                " file(s): "
-                (or passed 0)
-                " passed"
-                (when (pos? (long (or failed 0))) (str ", " failed " failed"))
-                (when (pos? (long (or errored 0))) (str ", " errored " errored"))
-                (when (pos? (long (or skipped 0))) (str ", " skipped " skipped")))
+        (let [summary
+              (str (if ok? "✓" "✗")
+                   " "
+                   files
+                   " file(s): "
+                   (or passed 0)
+                   " passed"
+                   (when (pos? (long (or failed 0))) (str ", " failed " failed"))
+                   (when (pos? (long (or errored 0))) (str ", " errored " errored"))
+                   (when (pos? (long (or skipped 0))) (str ", " skipped " skipped")))
 
-           mark
-           (fn [outcome]
-             (case outcome
-               :passed
-               "✓"
+              mark
+              (fn [outcome]
+                (case outcome
+                  :passed
+                  "✓"
 
-               (:failed :errored)
-               "✗"
+                  (:failed :errored)
+                  "✗"
 
-               :skipped
-               "s"
+                  :skipped
+                  "s"
 
-               :xfailed
-               "x"
+                  :xfailed
+                  "x"
 
-               :xpassed
-               "X"
+                  :xpassed
+                  "X"
 
-               "?"))
+                  "?"))
 
-           file-block
-           (fn [{:keys [file ok? tests error]}]
-             (into [(str "  " (if ok? "✓" "✗") " " (rel-name file) (when error (str " — " error)))]
-                   (map (fn [{:keys [nodeid outcome message]}]
-                          (str "      "
-                               (mark outcome)
-                               " "
-                               nodeid
-                               (when (and (#{:failed :errored} outcome) (seq (first-line message)))
-                                 (str " — " (first-line message))))))
-                   tests))]
+              file-block
+              (fn [{:keys [file ok? tests error]}]
+                (into
+                  [(str "  " (if ok? "✓" "✗") " " (rel-name file) (when error (str " — " error)))]
+                  (map (fn [{:keys [nodeid outcome message]}]
+                         (str "      "
+                              (mark outcome)
+                              " "
+                              nodeid
+                              (when (and (#{:failed :errored} outcome) (seq (first-line message)))
+                                (str " — " (first-line message))))))
+                  tests))]
 
           (str/join "\n" (cons summary (mapcat file-block results))))))
 

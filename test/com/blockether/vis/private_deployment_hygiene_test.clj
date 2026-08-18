@@ -42,12 +42,11 @@
 
 (defn- scannable?
   [^java.io.File file]
-  (let
-    [name
-     (.getName file)
+  (let [name
+        (.getName file)
 
-     ext
-     (str/lower-case (or (second (re-find #"\.([^.]+)$" name)) ""))]
+        ext
+        (str/lower-case (or (second (re-find #"\.([^.]+)$" name)) ""))]
 
     (and (.isFile file)
          (< (.length file) (long max-bytes))
@@ -65,16 +64,15 @@
 (defn- leaks
   "Every `path — what — fix` line found under `root`."
   [root]
-  (vec (for
-         [^java.io.File file
-          (text-files (io/file root))
+  (vec (for [^java.io.File file
+             (text-files (io/file root))
 
-          :let [text
-                (try (slurp file) (catch Exception _ ""))]
-          {:keys [what re fix]}
-          forbidden
+             :let [text
+                   (try (slurp file) (catch Exception _ ""))]
+             {:keys [what re fix]}
+             forbidden
 
-          :when (re-find re text)]
+             :when (re-find re text)]
 
          (str (.getPath file) " leaks " what " — " fix))))
 

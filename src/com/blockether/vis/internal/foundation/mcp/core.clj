@@ -51,9 +51,8 @@
   "Canonical internal transport. `http` is accepted only as a legacy persisted
    spelling; new gateway saves write the standard `streamable_http` form."
   [spec]
-  (case
-    (some-> (:transport spec)
-            name)
+  (case (some-> (:transport spec)
+                name)
     ("streamable_http" "streamable-http" "http")
     :streamable-http
 
@@ -123,27 +122,26 @@
    a `:bearer-fn`, so having one says nothing about whether the server wants
    OAuth - a recorded Bearer challenge does."
   [server-name spec]
-  (let
-    [s
-     (deep-interpolate spec)
+  (let [s
+        (deep-interpolate spec)
 
-     transport
-     (transport-of s)
+        transport
+        (transport-of s)
 
-     headers
-     (or (:headers s) {})
+        headers
+        (or (:headers s) {})
 
-     has-static-auth?
-     (some (fn [[k _]]
-             (= "authorization" (str/lower-case (name k))))
-           headers)
+        has-static-auth?
+        (some (fn [[k _]]
+                (= "authorization" (str/lower-case (name k))))
+              headers)
 
-     www-auth
-     (atom nil)
+        www-auth
+        (atom nil)
 
-     bearer-fn
-     (when (and (= :streamable-http transport) (not has-static-auth?))
-       (mcp-oauth/make-bearer-fn server-name (:url s) www-auth))]
+        bearer-fn
+        (when (and (= :streamable-http transport) (not has-static-auth?))
+          (mcp-oauth/make-bearer-fn server-name (:url s) www-auth))]
 
     (cond-> (assoc s :transport transport)
       (:timeout_ms s)
@@ -166,33 +164,30 @@
    behind the hash of the raw `:mcp` block so a hot loop (per-turn ctx-fn) does
    not re-parse or re-wrap on every call. `${ENV_VAR}` is interpolated."
   []
-  (let
-    [raw
-     (get-in (or (config/load-config-raw) {}) ["mcp"])
+  (let [raw
+        (get-in (or (config/load-config-raw) {}) ["mcp"])
 
-     h
-     (hash raw)]
+        h
+        (hash raw)]
 
     (if (= h (:hash @servers-cache))
       (:value @servers-cache)
-      (let
-        [m
-         (get raw "servers")
+      (let [m
+            (get raw "servers")
 
-         coerced
-         (if (map? m)
-           (into {}
-                 (keep (fn [[k v]]
-                         (let
-                           [nm
-                            (str k)
+            coerced
+            (if (map? m)
+              (into {}
+                    (keep (fn [[k v]]
+                            (let [nm
+                                  (str k)
 
-                            rt
-                            (config/runtime-config v)]
+                                  rt
+                                  (config/runtime-config v)]
 
-                           (when (enabled? rt) [nm (->client-spec nm rt)]))))
-                 m)
-           {})]
+                              (when (enabled? rt) [nm (->client-spec nm rt)]))))
+                    m)
+              {})]
 
         (reset! servers-cache {:hash h :value coerced})
         coerced))))
@@ -245,11 +240,10 @@
    server's connect — in every session — for the same window. Once dropped the
    conn is unreachable from the pool, so closing it late is still exclusive."
   [pool k]
-  (let
-    [conn (locking pool
-            (when-let [conn (get-in @pool [k :conn])]
-              (swap! pool dissoc k)
-              conn))]
+  (let [conn (locking pool
+               (when-let [conn (get-in @pool [k :conn])]
+                 (swap! pool dissoc k)
+                 conn))]
     (when conn (try (mcp/close conn) (catch Throwable _ nil))))
   nil)
 
@@ -268,26 +262,25 @@
   (let [existing (get @pool k)]
     (cond (and existing (mcp/alive? (:conn existing))) (:conn existing)
           existing (do (close-in-pool! pool k) (recur pool k server spec accept?))
-          :else (try (let
-                       [conn (mcp/connect server spec)
-                        [accepted stale]
-                        (locking pool
-                          (let [winner (get @pool k)]
-                            (cond (not (accept?)) [nil [conn]]
-                                  (and winner (mcp/alive? (:conn winner))) [(:conn winner) [conn]]
-                                  :else (do (swap! pool assoc k {:conn conn :spec spec})
-                                            [conn (when winner [(:conn winner)])]))))]
+          :else
+          (try (let [conn (mcp/connect server spec)
+                     [accepted stale]
+                     (locking pool
+                       (let [winner (get @pool k)]
+                         (cond (not (accept?)) [nil [conn]]
+                               (and winner (mcp/alive? (:conn winner))) [(:conn winner) [conn]]
+                               :else (do (swap! pool assoc k {:conn conn :spec spec})
+                                         [conn (when winner [(:conn winner)])]))))]
 
-                       (run! (fn [c]
-                               (try (mcp/close c) (catch Throwable _ nil)))
-                             stale)
-                       accepted)
-                     (catch Throwable t
-                       (tel/log! {:level :warn
-                                  :id ::connect-failed
-                                  :data {:server server :error (ex-message t)}}
-                                 "MCP connect failed")
-                       nil)))))
+                 (run! (fn [c]
+                         (try (mcp/close c) (catch Throwable _ nil)))
+                       stale)
+                 accepted)
+               (catch Throwable t
+                 (tel/log!
+                   {:level :warn :id ::connect-failed :data {:server server :error (ex-message t)}}
+                   "MCP connect failed")
+                 nil)))))
 
 (defn- session-spec-of [session-id server] (get-in @session-specs [session-id server]))
 
@@ -385,12 +378,11 @@
    hold the JVM open."
   []
   (when (and (nil? @supervisor) (seq (configured-servers)))
-    (let
-      [^java.util.concurrent.ScheduledExecutorService ex
-       (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
-         (reify
-           java.util.concurrent.ThreadFactory
-             (newThread [_ r] (doto (Thread. ^Runnable r "vis-mcp-health") (.setDaemon true)))))]
+    (let [^java.util.concurrent.ScheduledExecutorService ex
+          (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
+            (reify
+              java.util.concurrent.ThreadFactory
+                (newThread [_ r] (doto (Thread. ^Runnable r "vis-mcp-health") (.setDaemon true)))))]
       (if (compare-and-set! supervisor nil ex)
         (.scheduleWithFixedDelay ex
                                  ^Runnable
@@ -415,11 +407,10 @@
 (defn clear-session-servers!
   "Drop and CLOSE every session-scoped server attached to `session-id`."
   [session-id]
-  (doseq
-    [k
-     (keys @session-conns)
+  (doseq [k
+          (keys @session-conns)
 
-     :when (= session-id (first k))]
+          :when (= session-id (first k))]
 
     (close-in-pool! session-conns k))
   (swap! session-specs dissoc session-id)
@@ -476,10 +467,9 @@
 
 (defn- server-name
   [name]
-  (let
-    [name (some-> name
-                  str
-                  str/trim)]
+  (let [name (some-> name
+                     str
+                     str/trim)]
     (when-not (seq name)
       (throw (ex-info "MCP server name must be a non-blank string" {:type :mcp/invalid-name})))
     name))
@@ -496,18 +486,16 @@
   (when-not (and (string? session-id) (seq session-id))
     (throw (ex-info "MCP session id must be a non-blank string" {:type :mcp/invalid-session})))
   (clear-session-servers! session-id)
-  (let
-    [coerced (into {}
-                   (map (fn [[k v]]
-                          (let
-                            [nm (server-name k)
-                             spec (->> (dissoc v "name")
-                                       canonicalize-server-spec
-                                       config/runtime-config
-                                       (->client-spec nm))]
+  (let [coerced (into {}
+                      (map (fn [[k v]]
+                             (let [nm (server-name k)
+                                   spec (->> (dissoc v "name")
+                                             canonicalize-server-spec
+                                             config/runtime-config
+                                             (->client-spec nm))]
 
-                            [nm spec])))
-                   servers)]
+                               [nm spec])))
+                      servers)]
     (when (seq coerced) (swap! session-specs assoc session-id coerced))
     (reduce (fn [acc [nm spec]]
               (if (ensure-in-pool! session-conns
@@ -555,15 +543,14 @@
    ctx block. Sorted on purpose: ctx is diffed structurally, so a stable order is
    what lets an unchanged server re-render with no delta at all."
   [conn]
-  (let
-    [cap
-     (long max-ctx-tools)
+  (let [cap
+        (long max-ctx-tools)
 
-     names
-     (sort (keep #(get % "name") (conn-tools conn)))
+        names
+        (sort (keep #(get % "name") (conn-tools conn)))
 
-     n
-     (long (count names))]
+        n
+        (long (count names))]
 
     {:names (vec (take cap names)) :omitted (max 0 (- n cap))}))
 
@@ -572,24 +559,22 @@
    reads off the wire. Nothing here is a keyword: this map is JSON the moment it
    leaves the gateway, and the TUI/Companion read it back by string key."
   [name raw-spec is-managed]
-  (let
-    [spec
-     (config/runtime-config raw-spec)
+  (let [spec
+        (config/runtime-config raw-spec)
 
-     conn
-     (conn-of name)]
+        conn
+        (conn-of name)]
 
-    (cond->
-      {"name" name
-       "transport" (wire-transport spec)
-       "enabled" (enabled? spec)
-       "is_connected" (boolean conn)
-       ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
-       ;; tier is the user's file: listed, never rewritten from here.
-       "is_managed" (boolean is-managed)
-       ;; Stopped by a client and HELD down until explicitly started again.
-       "is_killed" (killed? name)
-       "tools" (tool-count conn)}
+    (cond-> {"name" name
+             "transport" (wire-transport spec)
+             "enabled" (enabled? spec)
+             "is_connected" (boolean conn)
+             ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
+             ;; tier is the user's file: listed, never rewritten from here.
+             "is_managed" (boolean is-managed)
+             ;; Stopped by a client and HELD down until explicitly started again.
+             "is_killed" (killed? name)
+             "tools" (tool-count conn)}
       (:command spec)
       (assoc "command" (:command spec))
 
@@ -643,30 +628,23 @@
   [name raw-spec]
   (when-not (map? raw-spec)
     (throw (ex-info "MCP server must be an object" {:type :mcp/invalid-server})))
-  (let
-    [name
-     (server-name name)
+  (let [name
+        (server-name name)
 
-     raw-spec
-     (-> raw-spec
-         (dissoc "name")
-         canonicalize-server-spec)]
+        raw-spec
+        (-> raw-spec
+            (dissoc "name")
+            canonicalize-server-spec)]
 
     (ensure-managed! name)
-    (let
-      [spec
-       (volatile! nil)]
-
+    (let [spec (volatile! nil)]
       ;; `update-machine-config!` is the LOCKED read-modify-write of the machine
       ;; store — a second writer would otherwise drop this server — and the
       ;; `save-config!` inside it stays the strict schema and secret-preserving
       ;; write boundary.
       (config/update-machine-config!
         (fn [machine]
-          (let
-            [spec*
-             (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)]
-
+          (let [spec* (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)]
             (vreset! spec spec*)
             (assoc-in machine ["mcp" "servers" name] spec*)))
         :gateway-mcp)
@@ -681,12 +659,11 @@
 (defn set-gateway-server-enabled!
   "Persist an enabled/disabled override without exposing or accepting secrets."
   [name enabled]
-  (let
-    [name
-     (server-name name)
+  (let [name
+        (server-name name)
 
-     current
-     (get (machine-servers) name)]
+        current
+        (get (machine-servers) name)]
 
     (when-not current
       (ensure-managed! name)
@@ -696,12 +673,11 @@
 (defn delete-gateway-server!
   "Remove a server from this gateway's machine-owned state and stop it now."
   [name]
-  (let
-    [name
-     (server-name name)
+  (let [name
+        (server-name name)
 
-     machine
-     (or (config/load-global-config-raw) {})]
+        machine
+        (or (config/load-global-config-raw) {})]
 
     (when-not (get-in machine ["mcp" "servers" name])
       ;; A hand-written server LOOKS deletable in the inventory; deleting the
@@ -711,18 +687,16 @@
       (throw (ex-info "Unknown MCP server in gateway state" {:type :mcp/not-found :server name})))
     (config/update-machine-config!
       (fn [machine]
-        (let
-          [servers
-           (dissoc (get-in machine ["mcp" "servers"]) name)
+        (let [servers
+              (dissoc (get-in machine ["mcp" "servers"]) name)
 
-           machine*
-           (if (seq servers)
-             (assoc-in machine ["mcp" "servers"] servers)
-             (update machine "mcp" dissoc "servers"))]
+              machine*
+              (if (seq servers)
+                (assoc-in machine ["mcp" "servers"] servers)
+                (update machine "mcp" dissoc "servers"))]
 
           (if (seq (get machine* "mcp")) machine* (dissoc machine* "mcp"))))
       :gateway-mcp)
-
     (reset-server-cache!)
     (revive! name)
     (disconnect! name)
@@ -735,12 +709,11 @@
    `set-gateway-server-enabled!` for a durable off switch. Works for hand-written
    servers too: killing a runaway process is not editing the user's file."
   [name]
-  (let
-    [name
-     (server-name name)
+  (let [name
+        (server-name name)
 
-     spec
-     (get (raw-servers) name)]
+        spec
+        (get (raw-servers) name)]
 
     (when-not spec (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
     (swap! killed conj name)
@@ -752,12 +725,11 @@
   "Undo a kill: release the brake and connect `name` right now. A disabled server
    stays down — `enabled false` is the user's decision, not a stale brake."
   [name]
-  (let
-    [name
-     (server-name name)
+  (let [name
+        (server-name name)
 
-     spec
-     (get (raw-servers) name)]
+        spec
+        (get (raw-servers) name)]
 
     (when-not spec (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
     (revive! name)
@@ -787,12 +759,11 @@
    string-keyed, like every MCP surface. The caller shows `url` and the user
    authorizes in their own browser."
   [name]
-  (let
-    [name
-     (server-name name)
+  (let [name
+        (server-name name)
 
-     spec
-     (oauth-server-spec name)]
+        spec
+        (oauth-server-spec name)]
 
     (mcp-oauth/start-authorization! name (:url spec) {:auth-hint (:auth spec)})))
 
@@ -801,12 +772,11 @@
    not connected at all), so reconnect it once the tokens exist. `row` is the
    string-keyed wire view of the flow."
   [row]
-  (let
-    [status
-     (get row "status")
+  (let [status
+        (get row "status")
 
-     server
-     (get row "server")]
+        server
+        (get row "server")]
 
     (when (and (= "ok" status) server (not (conn-of server))) (revive! server) (reconcile-async!)))
   row)
@@ -846,18 +816,17 @@
   "Connect a candidate spec without saving it. The connection is always closed;
    only non-secret tool metadata is returned, string-keyed like the inventory."
   [name raw-spec]
-  (let
-    [name
-     (server-name name)
+  (let [name
+        (server-name name)
 
-     spec
-     (->> (dissoc raw-spec "name")
-          canonicalize-server-spec
-          config/runtime-config
-          (->client-spec name))
+        spec
+        (->> (dissoc raw-spec "name")
+             canonicalize-server-spec
+             config/runtime-config
+             (->client-spec name))
 
-     conn
-     (mcp/connect name spec)]
+        conn
+        (mcp/connect name spec)]
 
     (try {"name" name
           "is_connected" true
@@ -895,16 +864,15 @@
    \"signed out\" and send its user hunting for a login screen that does not
    exist."
   [session-id server]
-  (let
-    [spec
-     (get (visible-servers session-id) server)
+  (let [spec
+        (get (visible-servers session-id) server)
 
-     challenged?
-     (boolean (some-> ^clojure.lang.IDeref (:www-auth-atom spec)
-                      deref))
+        challenged?
+        (boolean (some-> ^clojure.lang.IDeref (:www-auth-atom spec)
+                         deref))
 
-     status
-     (when challenged? (mcp-oauth/token-status server))]
+        status
+        (when challenged? (mcp-oauth/token-status server))]
 
     (boolean (and challenged?
                   (or (not (get status "is_authorized"))
@@ -976,10 +944,9 @@
   (into []
         (mapcat
           (fn [[server _spec]]
-            (let
-              [cached (or (some-> (:tools (conn-of server))
-                                  deref)
-                          [])]
+            (let [cached (or (some-> (:tools (conn-of server))
+                                     deref)
+                             [])]
               (keep (fn [t]
                       (when-let [nm (not-empty (str (get t "name")))]
                         {:name (str server "/" nm)
@@ -1047,9 +1014,8 @@
   ([env server tool args]
    (try
      (if-let [conn (ensure-connected! (:session-id env) server)]
-       (let
-         [rows (tool-rows conn)
-          row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
+       (let [rows (tool-rows conn)
+             row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
 
          (cond
            ;; No tool named - or an args map drifted into its slot. Answer with the
@@ -1063,19 +1029,18 @@
                 :tools (mapv #(get % "name") rows)
                 :hint
                 "Call mcp__call with `server` alone for every tool's description and input schema.")
-           :else (let
-                   [r (mcp/call-tool conn tool (if (map? args) args {}))
-                    is-error (boolean (get r "isError"))]
+           :else
+           (let [r (mcp/call-tool conn tool (if (map? args) args {}))
+                 is-error (boolean (get r "isError"))]
 
-                   (ok
-                     :mcp/call
-                     (cond->
-                       {"server" server "tool" tool "content" (get r "content") "is_error" is-error}
-                       ;; A refused call is nearly always an argument mismatch, and the
-                       ;; schema is already cached: ship it WITH the refusal so the retry
-                       ;; costs no extra round trip.
-                       (and is-error row)
-                       (assoc "input_schema" (get row "input_schema")))))))
+             (ok
+               :mcp/call
+               (cond-> {"server" server "tool" tool "content" (get r "content") "is_error" is-error}
+                 ;; A refused call is nearly always an argument mismatch, and the
+                 ;; schema is already cached: ship it WITH the refusal so the retry
+                 ;; costs no extra round trip.
+                 (and is-error row)
+                 (assoc "input_schema" (get row "input_schema")))))))
        (unavailable-err env server))
      (catch Throwable t (call-failed-err env server tool t)))))
 
@@ -1145,38 +1110,35 @@
    `\"scope\": \"session\"`."
   [env]
   (reconcile-async!)
-  (let
-    [sid
-     (:session-id env)
+  (let [sid
+        (:session-id env)
 
-     entry
-     (fn [[nm spec]]
-       (let
-         [session?
-          (some? (session-spec-of sid nm))
+        entry
+        (fn [[nm spec]]
+          (let [session?
+                (some? (session-spec-of sid nm))
 
-          conn
-          (conn-of sid nm)
+                conn
+                (conn-of sid nm)
 
-          {:keys [names omitted]}
-          (ctx-tool-names conn)]
+                {:keys [names omitted]}
+                (ctx-tool-names conn)]
 
-         [nm
-          (cond->
-            {"scope" (if session? "session" "global")
-             "transport" (wire-transport spec)
-             "status" (cond conn "connected"
-                            (and (not session?) (killed? nm)) "killed"
-                            (needs-auth? sid nm) "needs_auth"
-                            :else "disconnected")}
-            conn
-            (assoc "tools" names)
+            [nm
+             (cond-> {"scope" (if session? "session" "global")
+                      "transport" (wire-transport spec)
+                      "status" (cond conn "connected"
+                                     (and (not session?) (killed? nm)) "killed"
+                                     (needs-auth? sid nm) "needs_auth"
+                                     :else "disconnected")}
+               conn
+               (assoc "tools" names)
 
-            (pos? (long omitted))
-            (assoc "tools_omitted" omitted))]))
+               (pos? (long omitted))
+               (assoc "tools_omitted" omitted))]))
 
-     rows
-     (into (sorted-map) (map entry) (visible-servers sid))]
+        rows
+        (into (sorted-map) (map entry) (visible-servers sid))]
 
     (when (seq rows) {"session_env" {"mcp" {"servers" rows}}})))
 

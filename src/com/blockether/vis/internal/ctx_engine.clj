@@ -37,12 +37,11 @@
    Compares parsed segments; malformed scopes sort before all valid ones to
    make their presence obvious in render."
   [a b]
-  (let
-    [pa
-     (parse-scope-form a)
+  (let [pa
+        (parse-scope-form a)
 
-     pb
-     (parse-scope-form b)]
+        pb
+        (parse-scope-form b)]
 
     (cond (and (nil? pa) (nil? pb)) (compare (str a) (str b))
           (nil? pa) -1
@@ -64,43 +63,42 @@
   [error]
   (if-not (map? error)
     error
-    (let
-      [data
-       (if (map? (:data error)) (:data error) {})
+    (let [data
+          (if (map? (:data error)) (:data error) {})
 
-       inner
-       (if (map? (:error data)) (:error data) {})
+          inner
+          (if (map? (:error data)) (:error data) {})
 
-       pick3
-       (fn [k]
-         (or (k inner) (k data) (k error)))
+          pick3
+          (fn [k]
+            (or (k inner) (k data) (k error)))
 
-       message
-       (or (:message error) (:message inner))
+          message
+          (or (:message error) (:message inner))
 
-       etype
-       (or (:type inner) (:type data) (:type error))
+          etype
+          (or (:type inner) (:type data) (:type error))
 
-       reason
-       (pick3 :reason)
+          reason
+          (pick3 :reason)
 
-       ;; ONE hint survives: `:loop-hint` is the model-facing
-       ;; recovery advice (the error normalizer lifts it into the
-       ;; trailer); `:hint` is the human/channel field. Extensions
-       ;; legitimately set both — the prompt needs at most one.
-       hint
-       (or (pick3 :loop-hint) (pick3 :hint))
+          ;; ONE hint survives: `:loop-hint` is the model-facing
+          ;; recovery advice (the error normalizer lifts it into the
+          ;; trailer); `:hint` is the human/channel field. Extensions
+          ;; legitimately set both — the prompt needs at most one.
+          hint
+          (or (pick3 :loop-hint) (pick3 :hint))
 
-       ;; validation-tool forensics the lift contract declares
-       ;; model-actionable (`:failures`, `:checks`, `:mode`)
-       failures
-       (pick3 :failures)
+          ;; validation-tool forensics the lift contract declares
+          ;; model-actionable (`:failures`, `:checks`, `:mode`)
+          failures
+          (pick3 :failures)
 
-       checks
-       (pick3 :checks)
+          checks
+          (pick3 :checks)
 
-       mode
-       (pick3 :mode)]
+          mode
+          (pick3 :mode)]
 
       (cond-> {}
         message
@@ -162,18 +160,17 @@
    of an error/result doesn't already say — the `:src` stays, the dead
    field goes."
   [r]
-  (let
-    [empty-payload?
-     (fn [v]
-       (or (nil? v) (and (coll? v) (empty? v))))
+  (let [empty-payload?
+        (fn [v]
+          (or (nil? v) (and (coll? v) (empty? v))))
 
-     r*
-     (cond-> (dissoc r :channel :tag)
-       (:error r)
-       (update :error model-error)
+        r*
+        (cond-> (dissoc r :channel :tag)
+          (:error r)
+          (update :error model-error)
 
-       (contains? r :result)
-       (update :result model-tool-result))]
+          (contains? r :result)
+          (update :result model-tool-result))]
 
     (cond-> r*
       (and (contains? r* :result) (empty-payload? (:result r*)))
@@ -262,11 +259,10 @@
   "One-line, length-capped form source for the `you ran:` scope index
    rendered in the cross-turn `<conversation-so-far>` resume block."
   [src]
-  (let
-    [s (-> (or src "")
-           str
-           str/trim
-           (str/replace #"\s+" " "))]
+  (let [s (-> (or src "")
+              str
+              str/trim
+              (str/replace #"\s+" " "))]
     (if (> (count s) 90) (str (subs s 0 90) "…") s)))
 
 (defn finalize-turn
@@ -305,18 +301,16 @@
    Returns nil until a request has actually been measured (req <= 0), so
    the first iter of a turn shows nothing rather than a bogus 0%."
   [request-tokens window-tokens turn-tokens fold-cap]
-  (let
-    [req
-     (long (or request-tokens 0))
+  (let [req
+        (long (or request-tokens 0))
 
-     win
-     (long (or window-tokens 0))]
+        win
+        (long (or window-tokens 0))]
 
     (when (pos? req)
-      (cond->
-        {"last_request_tokens" req
-         "turn_total_tokens" (long (or turn-tokens 0))
-         "auto_compress_above" (long (or fold-cap 0))}
+      (cond-> {"last_request_tokens" req
+               "turn_total_tokens" (long (or turn-tokens 0))
+               "auto_compress_above" (long (or fold-cap 0))}
         (pos? win)
         (assoc "model_input_limit"
           win "saturation"
@@ -363,12 +357,11 @@
   "Total of one column across the sampled window, summed as primitives so a
    nonsense reading cannot overflow into an exception at render time."
   ^long [rows k]
-  (loop
-    [acc
-     0
+  (loop [acc
+         0
 
-     rs
-     (seq rows)]
+         rs
+         (seq rows)]
 
     (if rs (recur (+ acc (token-count (get (first rs) k))) (next rs)) acc)))
 
@@ -388,15 +381,14 @@
    reports more is capped at a full hit instead of an impossible percentage.
    Total on every input — see `token-count`."
   [samples input-tokens cached-tokens]
-  (let
-    [in
-     (token-count input-tokens)
+  (let [in
+        (token-count input-tokens)
 
-     cached
-     (token-count cached-tokens)
+        cached
+        (token-count cached-tokens)
 
-     rows
-     (sample-rows samples)]
+        rows
+        (sample-rows samples)]
 
     (if (pos? in)
       (vec (take-last CACHE_RATE_WINDOW (conj rows {"input" in "cached" (min in cached)})))
@@ -407,18 +399,17 @@
    when either side is unnamed. Half a route names no cache, so it is never
    compared with one."
   [provider model]
-  (let
-    [p
-     (some-> provider
-             name
-             str/trim
-             not-empty)
+  (let [p
+        (some-> provider
+                name
+                str/trim
+                not-empty)
 
-     m
-     (some-> model
-             str
-             str/trim
-             not-empty)]
+        m
+        (some-> model
+                str
+                str/trim
+                not-empty)]
 
     (when (and p m) (str p "/" m))))
 
@@ -434,11 +425,10 @@
    step; an unnamed route leaves the window untouched, because a reading nobody
    could attribute is no evidence of a move."
   [samples route]
-  (if-let
-    [r (some-> route
-               str
-               str/trim
-               not-empty)]
+  (if-let [r (some-> route
+                     str
+                     str/trim
+                     not-empty)]
     (let [rows (mapv #(if (get % "route") % (assoc % "route" r)) (sample-rows samples))]
       (vec (reverse (take-while #(= r (get % "route")) (rseq rows)))))
     (sample-rows samples)))
@@ -449,15 +439,14 @@
    exactly what a first, legitimately cold request would look like. Total: a
    ring of junk answers nil, never an exception."
   [samples]
-  (let
-    [rows
-     (sample-rows samples)
+  (let [rows
+        (sample-rows samples)
 
-     total
-     (sum-tokens rows "input")
+        total
+        (sum-tokens rows "input")
 
-     cached
-     (sum-tokens rows "cached")]
+        cached
+        (sum-tokens rows "cached")]
 
     (when (pos? total) (min 100 (long (Math/round (* 100.0 (/ (double cached) (double total)))))))))
 
@@ -486,18 +475,17 @@
    ctx's current turn. A half-named route (either side blank) leaves ctx
    untouched — it would be worse than the pin it replaces."
   [ctx provider model]
-  (let
-    [p
-     (some-> provider
-             name
-             str/trim
-             not-empty)
+  (let [p
+        (some-> provider
+                name
+                str/trim
+                not-empty)
 
-     m
-     (some-> model
-             str
-             str/trim
-             not-empty)]
+        m
+        (some-> model
+                str
+                str/trim
+                not-empty)]
 
     (if (and p m)
       (assoc ctx
@@ -575,22 +563,21 @@
    `[:error token]`. `..` and `-` are the same separator, so `\"t2/i1-i56\"` and
    `\"t2/i1..i56\"` are the same window; an omitted side opens the range."
   [token]
-  (let
-    [t
-     (str/replace (str/trim (str token)) ".." "-")
+  (let [t
+        (str/replace (str/trim (str token)) ".." "-")
 
-     parts
-     (str/split t #"-" -1)
+        parts
+        (str/split t #"-" -1)
 
-     [a b]
-     parts
+        [a b]
+        parts
 
-     one
-     (fn [raw]
-       (fold-endpoint raw nil))
+        one
+        (fn [raw]
+          (fold-endpoint raw nil))
 
-     err
-     [:error (str/trim (str token))]]
+        err
+        [:error (str/trim (str token))]]
 
     (case (count parts)
       1
@@ -606,14 +593,14 @@
             (str/blank? b) (if-let [from (one a)]
                              [:range {"since" from}]
                              err)
-            :else (let
-                    [from
-                     (one a)
+            :else
+            (let [from
+                  (one a)
 
-                     to
-                     (when from (fold-endpoint b (or (first (scope-key from)) (turn-key from))))]
+                  to
+                  (when from (fold-endpoint b (or (first (scope-key from)) (turn-key from))))]
 
-                    (if (and from to) [:range {"from" from "to" to}] err)))
+              (if (and from to) [:range {"from" from "to" to}] err)))
 
       err)))
 
@@ -639,31 +626,30 @@
   [k]
   (if (map? k)
     {:error (str "fold_session takes a key and a gist: " fold-key-grammar)}
-    (let
-      [tokens
-       (into []
-             (comp (mapcat (fn [x]
-                             (str/split (str/trim (str x)) #"[,\s]+")))
-                   (remove str/blank?))
-             (cond (sequential? k) k
-                   (some? k) [k]
-                   :else nil))
+    (let [tokens
+          (into []
+                (comp (mapcat (fn [x]
+                                (str/split (str/trim (str x)) #"[,\s]+")))
+                      (remove str/blank?))
+                (cond (sequential? k) k
+                      (some? k) [k]
+                      :else nil))
 
-       parsed
-       (mapv fold-token tokens)
+          parsed
+          (mapv fold-token tokens)
 
-       of-kind
-       (fn [kind]
-         (into [] (comp (filter #(= kind (first %))) (map second)) parsed))
+          of-kind
+          (fn [kind]
+            (into [] (comp (filter #(= kind (first %))) (map second)) parsed))
 
-       errors
-       (of-kind :error)
+          errors
+          (of-kind :error)
 
-       ranges
-       (of-kind :range)
+          ranges
+          (of-kind :range)
 
-       scopes
-       (into (sorted-set) (of-kind :scope))]
+          scopes
+          (into (sorted-set) (of-kind :scope))]
 
       (cond (empty? tokens) nil
             (seq errors) {:error (str "fold_session: not a step key: "
@@ -726,117 +712,113 @@
    Intents with none of these keys pass through untouched. Pure — same inputs →
    same output."
   [summaries universe]
-  (let
-    [ukeys
-     (into []
-           (keep (fn [u]
-                   (when-let [k (scope-key u)]
-                     [u k]))
-                 universe))
+  (let [ukeys
+        (into []
+              (keep (fn [u]
+                      (when-let [k (scope-key u)]
+                        [u k]))
+                    universe))
 
-     pick
-     (fn [pred]
-       (into #{}
-             (comp (filter (fn [[_ k]]
-                             (pred k)))
-                   (map first))
-             ukeys))
+        pick
+        (fn [pred]
+          (into #{}
+                (comp (filter (fn [[_ k]]
+                                (pred k)))
+                      (map first))
+                ukeys))
 
-     turn-scopes
-     (fn [tn]
-       (into #{}
-             (comp (filter (fn [[_ k]]
-                             (= tn (first k))))
-                   (map first))
-             ukeys))
+        turn-scopes
+        (fn [tn]
+          (into #{}
+                (comp (filter (fn [[_ k]]
+                                (= tn (first k))))
+                      (map first))
+                ukeys))
 
-     universe-turns
-     (into #{}
-           (map (fn [[_ k]]
-                  (first k)))
-           ukeys)
+        universe-turns
+        (into #{}
+              (map (fn [[_ k]]
+                     (first k)))
+              ukeys)
 
-     selector?
-     #{"scopes" "through" "from" "to" "since" "ranges"}]
+        selector?
+        #{"scopes" "through" "from" "to" "since" "ranges"}]
 
     (mapv
       (fn [s]
         (if-not (some #(contains? s %) selector?)
           s
-          (let
-            [cursor-key
-             (fn [raw upper?]
-               (or (scope-key raw)
-                   ;; A bare `tN` cursor is a WHOLE-TURN boundary: as an UPPER
-                   ;; bound it sits after that turn's last iteration, as a LOWER
-                   ;; bound before its first. So `through`/`to tN` cover all of
-                   ;; turn N (and earlier), `from`/`since tN` start at its first
-                   ;; iteration — instead of silently resolving to nothing.
-                   (when-let [tn (turn-key raw)]
-                     [tn (if upper? Long/MAX_VALUE Long/MIN_VALUE)])))
+          (let [cursor-key
+                (fn [raw upper?]
+                  (or (scope-key raw)
+                      ;; A bare `tN` cursor is a WHOLE-TURN boundary: as an UPPER
+                      ;; bound it sits after that turn's last iteration, as a LOWER
+                      ;; bound before its first. So `through`/`to tN` cover all of
+                      ;; turn N (and earlier), `from`/`since tN` start at its first
+                      ;; iteration — instead of silently resolving to nothing.
+                      (when-let [tn (turn-key raw)]
+                        [tn (if upper? Long/MAX_VALUE Long/MIN_VALUE)])))
 
-             ;; ONE window → the universe scopes inside it. Each window resolves
-             ;; independently, so several disjoint spans in one intent can never
-             ;; blur into the gap between them.
-             window
-             (fn [r]
-               (let
-                 [thr
-                  (when-let [c (get r "through")]
-                    (cursor-key c true))
+                ;; ONE window → the universe scopes inside it. Each window resolves
+                ;; independently, so several disjoint spans in one intent can never
+                ;; blur into the gap between them.
+                window
+                (fn [r]
+                  (let [thr
+                        (when-let [c (get r "through")]
+                          (cursor-key c true))
 
-                  frm
-                  (when-let [c (get r "from")]
-                    (cursor-key c false))
+                        frm
+                        (when-let [c (get r "from")]
+                          (cursor-key c false))
 
-                  to
-                  (when-let [c (get r "to")]
-                    (cursor-key c true))
+                        to
+                        (when-let [c (get r "to")]
+                          (cursor-key c true))
 
-                  snc
-                  (when-let [c (get r "since")]
-                    (cursor-key c false))]
+                        snc
+                        (when-let [c (get r "since")]
+                          (cursor-key c false))]
 
-                 (cond-> #{}
-                   thr
-                   (into (pick (fn [k]
-                                 (<= (compare k thr) 0))))
+                    (cond-> #{}
+                      thr
+                      (into (pick (fn [k]
+                                    (<= (compare k thr) 0))))
 
-                   (or frm to)
-                   (into (pick (fn [k]
-                                 (and (or (nil? frm) (>= (compare k frm) 0))
-                                      (or (nil? to) (<= (compare k to) 0))))))
+                      (or frm to)
+                      (into (pick (fn [k]
+                                    (and (or (nil? frm) (>= (compare k frm) 0))
+                                         (or (nil? to) (<= (compare k to) 0))))))
 
-                   snc
-                   (into (pick (fn [k]
-                                 (>= (compare k snc) 0)))))))
+                      snc
+                      (into (pick (fn [k]
+                                    (>= (compare k snc) 0)))))))
 
-             expl
-             (into #{}
-                   (mapcat (fn [sc]
-                             (cond (scope-key sc) [sc]
-                                   (turn-key sc) (turn-scopes (turn-key sc))
-                                   :else [sc])))
-                   (get s "scopes"))
+                expl
+                (into #{}
+                      (mapcat (fn [sc]
+                                (cond (scope-key sc) [sc]
+                                      (turn-key sc) (turn-scopes (turn-key sc))
+                                      :else [sc])))
+                      (get s "scopes"))
 
-             ;; Scopes selected by RANGE selectors only — bulk intent, kept
-             ;; separate so whole-turn coverage is derived from the RANGE, never
-             ;; from an enumerated iteration list. Every window UNIONS.
-             range-sel
-             (into #{} (mapcat window) (intent-ranges s))
+                ;; Scopes selected by RANGE selectors only — bulk intent, kept
+                ;; separate so whole-turn coverage is derived from the RANGE, never
+                ;; from an enumerated iteration list. Every window UNIONS.
+                range-sel
+                (into #{} (mapcat window) (intent-ranges s))
 
-             whole-turns
-             (into (into #{} (keep turn-key) (get s "scopes"))
-                   (when (seq range-sel)
-                     (filter (fn [tn]
-                               (let [ts (turn-scopes tn)]
-                                 (and (seq ts) (every? range-sel ts))))
-                             universe-turns)))]
+                whole-turns
+                (into (into #{} (keep turn-key) (get s "scopes"))
+                      (when (seq range-sel)
+                        (filter (fn [tn]
+                                  (let [ts (turn-scopes tn)]
+                                    (and (seq ts) (every? range-sel ts))))
+                                universe-turns)))]
 
-            (cond->
-              (-> s
-                  (dissoc "through" "from" "to" "since" "ranges")
-                  (assoc "scopes" (into expl range-sel)))
+            (cond-> (-> s
+                        (dissoc "through" "from" "to" "since" "ranges")
+                        (assoc "scopes" (into expl range-sel)))
               (seq whole-turns)
               (update "turns" (fnil into #{}) whole-turns)))))
       summaries)))
@@ -853,49 +835,49 @@
    Order-stable. Expects scopes already resolved (run AFTER expand-through).
    Pure."
   [summaries]
-  (let
-    [v
-     (vec summaries)
+  (let [v
+        (vec summaries)
 
-     n
-     (count v)
+        n
+        (count v)
 
-     covered?
-     (fn [i]
-       (let [si (set (get (nth v i) "scopes"))]
-         (and (seq si)
-              (boolean (some (fn [j]
-                               (when (not= i j)
-                                 (let [sj (set (get (nth v j) "scopes"))]
-                                   (and (every? sj si)           ; si ⊆ sj
-                                        (or (not (every? si sj)) ; proper subset → superset wins
-                                            (< (long i) (long j))))))) ; equal → later wins
-                             (range n))))))
+        covered?
+        (fn [i]
+          (let [si (set (get (nth v i) "scopes"))]
+            (and (seq si)
+                 (boolean (some (fn [j]
+                                  (when (not= i j)
+                                    (let [sj (set (get (nth v j) "scopes"))]
+                                      (and (every? sj si)           ; si ⊆ sj
+                                           (or (not (every? si sj)) ; proper subset → superset wins
+                                               (< (long i) (long j))))))) ; equal → later wins
+                                (range n))))))
 
-     ;; A covered summary's whole-turn intent must survive on a SURVIVING
-     ;; coverer (coverage is transitive, so one always exists when i is
-     ;; covered): index → extra turns to merge.
-     surviving-coverer
-     (fn [i]
-       (let [si (set (get (nth v i) "scopes"))]
-         (some (fn [j]
-                 (when (and (not= i j)
-                            (not (covered? j))
-                            (let [sj (set (get (nth v j) "scopes"))]
-                              (and (every? sj si) (or (not (every? si sj)) (< (long i) (long j))))))
-                   j))
-               (range n))))
+        ;; A covered summary's whole-turn intent must survive on a SURVIVING
+        ;; coverer (coverage is transitive, so one always exists when i is
+        ;; covered): index → extra turns to merge.
+        surviving-coverer
+        (fn [i]
+          (let [si (set (get (nth v i) "scopes"))]
+            (some (fn [j]
+                    (when (and (not= i j)
+                               (not (covered? j))
+                               (let [sj (set (get (nth v j) "scopes"))]
+                                 (and (every? sj si)
+                                      (or (not (every? si sj)) (< (long i) (long j))))))
+                      j))
+                  (range n))))
 
-     merged-turns
-     (reduce (fn [m i]
-               (let [ts (get (nth v i) "turns")]
-                 (if (and (covered? i) (seq ts))
-                   (if-let [j (surviving-coverer i)]
-                     (update m j (fnil into #{}) ts)
-                     m)
-                   m)))
-             {}
-             (range n))]
+        merged-turns
+        (reduce (fn [m i]
+                  (let [ts (get (nth v i) "turns")]
+                    (if (and (covered? i) (seq ts))
+                      (if-let [j (surviving-coverer i)]
+                        (update m j (fnil into #{}) ts)
+                        m)
+                      m)))
+                {}
+                (range n))]
 
     (vec (keep-indexed (fn [i s]
                          (when-not (covered? i)
@@ -929,54 +911,52 @@
    Tokens are ordered by (turn, iter). Scopes/universe entries that don't parse
    are ignored. Pure — same inputs → same output."
   [scopes universe]
-  (let
-    [by-turn
-     (fn [ss]
-       (reduce (fn [m sc]
-                 (if-let [[t i] (scope-key sc)]
-                   (update m t (fnil conj (sorted-set)) i)
-                   m))
-               {}
-               ss))
+  (let [by-turn
+        (fn [ss]
+          (reduce (fn [m sc]
+                    (if-let [[t i] (scope-key sc)]
+                      (update m t (fnil conj (sorted-set)) i)
+                      m))
+                  {}
+                  ss))
 
-     uni
-     (by-turn universe)
+        uni
+        (by-turn universe)
 
-     sel
-     (by-turn scopes)
+        sel
+        (by-turn scopes)
 
-     full?
-     (fn [t]
-       (let [u (get uni t)]
-         (and (seq u) (every? (get sel t #{}) u))))
+        full?
+        (fn [t]
+          (let [u (get uni t)]
+            (and (seq u) (every? (get sel t #{}) u))))
 
-     sel-turns
-     (sort (keys sel))
+        sel-turns
+        (sort (keys sel))
 
-     full-turns
-     (filterv full? sel-turns)
+        full-turns
+        (filterv full? sel-turns)
 
-     all-full?
-     (and (seq sel-turns) (= (set full-turns) (set (keys uni))) (every? full? sel-turns))]
+        all-full?
+        (and (seq sel-turns) (= (set full-turns) (set (keys uni))) (every? full? sel-turns))]
 
     (if all-full?
       ["t*"]
-      (let
-        [full-set
-         (set full-turns)
+      (let [full-set
+            (set full-turns)
 
-         full-tokens
-         (map (fn [[a b]]
-                [[a -1] (if (= a b) (str "t" a "/*") (str "t" a "-t" b "/*"))])
-              (int-runs full-turns))
+            full-tokens
+            (map (fn [[a b]]
+                   [[a -1] (if (= a b) (str "t" a "/*") (str "t" a "-t" b "/*"))])
+                 (int-runs full-turns))
 
-         partial-tokens
-         (mapcat (fn [t]
-                   (when-not (full-set t)
-                     (map (fn [[a b]]
-                            [[t a] (if (= a b) (str "t" t "/i" a) (str "t" t "/i" a "-i" b))])
-                          (int-runs (get sel t)))))
-                 sel-turns)]
+            partial-tokens
+            (mapcat (fn [t]
+                      (when-not (full-set t)
+                        (map (fn [[a b]]
+                               [[t a] (if (= a b) (str "t" t "/i" a) (str "t" t "/i" a "-i" b))])
+                             (int-runs (get sel t)))))
+                    sel-turns)]
 
         (mapv second (sort-by first (concat full-tokens partial-tokens)))))))
 
@@ -990,12 +970,11 @@
   (when (seq tokens)
     (->> tokens
          (reduce (fn [acc tok]
-                   (let
-                     [m
-                      (re-matches #"(t\d+)/(i[\d,i-]*)" tok)
+                   (let [m
+                         (re-matches #"(t\d+)/(i[\d,i-]*)" tok)
 
-                      prev
-                      (peek acc)]
+                         prev
+                         (peek acc)]
 
                      (if (and m prev (= (:turn prev) (nth m 1)))
                        (conj (pop acc) (update prev :iters conj (nth m 2)))
@@ -1062,67 +1041,67 @@
    Pure."
   ([summaries universe weights util] (folds-view summaries universe weights util nil))
   ([summaries universe weights util turn-weights]
-   (let
-     [universe
-      (into [] (comp (filter string?) (distinct)) universe)
+   (let [universe
+         (into [] (comp (filter string?) (distinct)) universe)
 
-      has-uni?
-      (boolean (seq universe))
+         has-uni?
+         (boolean (seq universe))
 
-      resolved
-      (when has-uni? (supersede-summaries (expand-through summaries universe)))
+         resolved
+         (when has-uni? (supersede-summaries (expand-through summaries universe)))
 
-      uni-set
-      (set universe)
+         uni-set
+         (set universe)
 
-      collapsed-set
-      (into #{} (mapcat #(get % "scopes")) resolved)
+         collapsed-set
+         (into #{} (mapcat #(get % "scopes")) resolved)
 
-      live
-      (into [] (remove collapsed-set) universe)
+         live
+         (into [] (remove collapsed-set) universe)
 
-      collapsed-live
-      (filter uni-set collapsed-set)
+         collapsed-live
+         (filter uni-set collapsed-set)
 
-      c
-      (count collapsed-live)
+         c
+         (count collapsed-live)
 
-      total
-      (+ c (count live))
+         total
+         (+ c (count live))
 
-      folded-turns
-      (into #{} (mapcat #(get % "turns")) resolved)
+         folded-turns
+         (into #{} (mapcat #(get % "turns")) resolved)
 
-      qa-toks
-      (when (seq turn-weights) (reduce + 0 (keep #(get turn-weights %) folded-turns)))
+         qa-toks
+         (when (seq turn-weights) (reduce + 0 (keep #(get turn-weights %) folded-turns)))
 
-      saved-toks
-      (let
-        [s (+ (long (or (when (seq weights) (reduce + 0 (keep #(get weights %) collapsed-live))) 0))
-              (long (or qa-toks 0)))]
-        (when (pos? s) s))
+         saved-toks
+         (let [s (+ (long (or (when (seq weights)
+                                (reduce + 0 (keep #(get weights %) collapsed-live)))
+                              0))
+                    (long (or qa-toks 0)))]
+           (when (pos? s) s))
 
-      sat
-      (get util "saturation")
+         sat
+         (get util "saturation")
 
-      live-str
-      (join-scopes (compress-scopes live universe))
+         live-str
+         (join-scopes (compress-scopes live universe))
 
-      now
-      (when has-uni?
-        (str/join " · "
-                  (keep identity
-                        [(when sat (str "context " sat "%"))
-                         (when (pos? total)
-                           (str "saved "
-                                c
-                                "/"
-                                total
-                                " ("
-                                (Math/round (* 100.0 (/ (double c) total)))
-                                "%"
-                                (when saved-toks (str ", ~" (fmt-toks saved-toks) " tok"))
-                                ")")) (when (seq live-str) (str "live " live-str))])))]
+         now
+         (when has-uni?
+           (str/join " · "
+                     (keep identity
+                           [(when sat (str "context " sat "%"))
+                            (when (pos? total)
+                              (str "saved "
+                                   c
+                                   "/"
+                                   total
+                                   " ("
+                                   (Math/round (* 100.0 (/ (double c) total)))
+                                   "%"
+                                   (when saved-toks (str ", ~" (fmt-toks saved-toks) " tok"))
+                                   ")")) (when (seq live-str) (str "live " live-str))])))]
 
      (cond-> {}
        (seq now)
@@ -1136,30 +1115,29 @@
    pressure remains; an ignored warning must never silently expire. The hint names
    `fold_session`, the safe settled boundary, and the evidence to preserve. Pure."
   [util current-turn since-turn]
-  (let
-    [req
-     (long (or (get util "last_request_tokens") 0))
+  (let [req
+        (long (or (get util "last_request_tokens") 0))
 
-     cap
-     (long (or (get util "auto_compress_above") 0))
+        cap
+        (long (or (get util "auto_compress_above") 0))
 
-     armed?
-     (and since-turn current-turn)
+        armed?
+        (and since-turn current-turn)
 
-     advisory?
-     (and (pos? cap) (>= (* req 4) (* cap 3)))
+        advisory?
+        (and (pos? cap) (>= (* req 4) (* cap 3)))
 
-     urgent?
-     (and (pos? cap) (>= (* req 10) (* cap 9)))
+        urgent?
+        (and (pos? cap) (>= (* req 10) (* cap 9)))
 
-     required?
-     (and (pos? cap) (> req cap))
+        required?
+        (and (pos? cap) (> req cap))
 
-     action
-     (cond required? "ACTION REQUIRED"
-           urgent? "FOLD NOW"
-           advisory? "FOLD SOON"
-           :else nil)]
+        action
+        (cond required? "ACTION REQUIRED"
+              urgent? "FOLD NOW"
+              advisory? "FOLD SOON"
+              :else nil)]
 
     (when (and armed? action)
       (str
@@ -1197,28 +1175,27 @@
    ;; breadcrumb where the step collapsed (with its file:line anchors), so nothing
    ;; is echoed. Before any request is measured (no universe) `folds-view` yields
    ;; `{}` and the breadcrumbs alone carry the gists until the next send re-stamps.
-   (let
-     [budget
-      (when (seq (get ctx "session_summaries"))
-        (folds-view (get ctx "session_summaries")
-                    (get ctx "engine_iter_universe")
-                    (get ctx "engine_iter_weights")
-                    (get ctx "engine_utilization")
-                    (get ctx "engine_turn_weights")))
+   (let [budget
+         (when (seq (get ctx "session_summaries"))
+           (folds-view (get ctx "session_summaries")
+                       (get ctx "engine_iter_universe")
+                       (get ctx "engine_iter_weights")
+                       (get ctx "engine_utilization")
+                       (get ctx "engine_turn_weights")))
 
-      hint
-      (over-budget-hint (get ctx "engine_utilization")
-                        (get ctx "session_turn")
-                        (get ctx "engine_overbudget_hint_turn"))
+         hint
+         (over-budget-hint (get ctx "engine_utilization")
+                           (get ctx "session_turn")
+                           (get ctx "engine_overbudget_hint_turn"))
 
-      util
-      (-> (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
-            (seq budget)
-            (merge budget)
+         util
+         (-> (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
+               (seq budget)
+               (merge budget)
 
-            hint
-            (assoc "hint" hint))
-          (with-cache-hit-rate (get ctx cache-samples-key)))]
+               hint
+               (assoc "hint" hint))
+             (with-cache-hit-rate (get ctx cache-samples-key)))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)
@@ -1291,12 +1268,11 @@
    depth-bounded so a self-referential structure cannot loop."
   ([v] (realize-value v 8))
   ([v ^long depth]
-   (let
-     [depth
-      depth
+   (let [depth
+         depth
 
-      depth'
-      (dec depth)]
+         depth'
+         (dec depth)]
 
      (cond (or (nil? v) (zero? depth)) v
            (instance? clojure.lang.IDeref v) (try (realize-value (deref v) depth')
@@ -1335,71 +1311,70 @@
    unrealized seqs."
   ([block position cursor] (block->envelope block position cursor nil))
   ([block _position cursor head-tag-resolver]
-   (let
-     [src
-      (or (:code block) (:src block) "")
+   (let [src
+         (or (:code block) (:src block) "")
 
-      ;; ITERATION scope `tN/iM`. One record = one tool call, identified by
-      ;; `:svar/tool-call-id`; there is no per-form `/fK` index any more.
-      scope
-      (str "t" (:turn cursor) "/i" (:iter cursor))
+         ;; ITERATION scope `tN/iM`. One record = one tool call, identified by
+         ;; `:svar/tool-call-id`; there is no per-form `/fK` index any more.
+         scope
+         (str "t" (:turn cursor) "/i" (:iter cursor))
 
-      raw-result
-      (:result block)
+         raw-result
+         (:result block)
 
-      ;; `realize-value` derefs any `IDeref` it encounters, so every
-      ;; block's result — Var, atom, lazy seq, plain data — lands as
-      ;; fully realised data in the envelope, ready for prompt
-      ;; rendering and introspection.
-      result
-      (realize-value raw-result)
+         ;; `realize-value` derefs any `IDeref` it encounters, so every
+         ;; block's result — Var, atom, lazy seq, plain data — lands as
+         ;; fully realised data in the envelope, ready for prompt
+         ;; rendering and introspection.
+         result
+         (realize-value raw-result)
 
-      duration-ms
-      (when-let [envelope (:envelope block)]
-        (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
-          (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
+         duration-ms
+         (when-let [envelope (:envelope block)]
+           (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
+             (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
 
-      form-envelope
-      (cond-> {:scope scope :tag (classify-form-tag src head-tag-resolver) :src src}
-        (some? duration-ms)
-        (assoc :duration-ms duration-ms)
+         form-envelope
+         (cond-> {:scope scope :tag (classify-form-tag src head-tag-resolver) :src src}
+           (some? duration-ms)
+           (assoc :duration-ms duration-ms)
 
-        (contains? block :result)
-        (assoc :result result)
+           (contains? block :result)
+           (assoc :result result)
 
-        ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
-        ;; form's captured stdout onto the envelope so iteration-results-message
-        ;; can surface it — without this, every print() reads back to the model as
-        ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
-        (some? (:stdout block))
-        (assoc :stdout (:stdout block))
+           ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
+           ;; form's captured stdout onto the envelope so iteration-results-message
+           ;; can surface it — without this, every print() reads back to the model as
+           ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
+           (some? (:stdout block))
+           (assoc :stdout (:stdout block))
 
-        ;; Errors get realized too: an error's `:data` may carry a realized seq
-        ;; (e.g. the protected-name guard's `:names` from `sort`) that the
-        ;; persist path would otherwise flatten to a `{:vis/ref :expr}` placeholder.
-        (some? (:error block))
-        (assoc :error (realize-value (:error block)))
+           ;; Errors get realized too: an error's `:data` may carry a realized seq
+           ;; (e.g. the protected-name guard's `:names` from `sort`) that the
+           ;; persist path would otherwise flatten to a `{:vis/ref :expr}` placeholder.
+           (some? (:error block))
+           (assoc :error (realize-value (:error block)))
 
-        ;; Tool-call identity: which tool_use (svar id) this form answers, plus
-        ;; its name. `iteration-results-message` groups forms by this id so EACH
-        ;; tool_use gets its OWN tool_result carrying its own output — one reply
-        ;; may carry several `python_execution` calls.
-        (some? (:svar/tool-call-id block))
-        (assoc :svar/tool-call-id (:svar/tool-call-id block))
+           ;; Tool-call identity: which tool_use (svar id) this form answers, plus
+           ;; its name. `iteration-results-message` groups forms by this id so EACH
+           ;; tool_use gets its OWN tool_result carrying its own output — one reply
+           ;; may carry several `python_execution` calls.
+           (some? (:svar/tool-call-id block))
+           (assoc :svar/tool-call-id (:svar/tool-call-id block))
 
-        (some? (:vis/tool-name block))
-        (assoc :vis/tool-name (:vis/tool-name block))
+           (some? (:vis/tool-name block))
+           (assoc :vis/tool-name (:vis/tool-name block))
 
-        ;; The eval wall-clock BACKSTOP fired. The flag drives the form's STATUS
-        ;; (:timeout, painted like any other failure through `:error`); no card is
-        ;; derived from it, so nothing rendered has to travel.
-        (:timeout? block)
-        (assoc :timeout? true)
+           ;; The eval wall-clock BACKSTOP fired. The flag drives the form's STATUS
+           ;; (:timeout, painted like any other failure through `:error`); no card is
+           ;; derived from it, so nothing rendered has to travel.
+           (:timeout? block)
+           (assoc :timeout? true)
 
-        ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
-        ;; the card the same way the live stream did — not a first-line body slice.
-        (some? (:result-summary block))
-        (assoc :result-summary (:result-summary block)))]
+           ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
+           ;; the card the same way the live stream did — not a first-line body slice.
+           (some? (:result-summary block))
+           (assoc :result-summary (:result-summary block)))]
 
      ;; The display BODY is a PURE PROJECTION of what the envelope already carries,
      ;; so it is NOT stored: `form/result-render` re-derives the same string on the

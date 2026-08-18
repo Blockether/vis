@@ -80,26 +80,32 @@
 
    `args` are `create-python-context`'s, verbatim."
   [[sym & args] & body]
-  `(let [r# (env-python/create-python-context ~@args)
-         ~sym (:python-context r#)]
+  `(let [r#
+         (env-python/create-python-context ~@args)
+
+         ~sym
+         (:python-context r#)]
+
      (try ~@body
-          (finally
-            (try (.close ^Context (:python-context r#) true) (catch Throwable _# nil))
-            (when-let [e# (:python-engine r#)]
-              (try (.close ^Engine e# true) (catch Throwable _# nil)))))))
+          (finally (try (.close ^Context (:python-context r#) true) (catch Throwable _# nil))
+                   (when-let [e# (:python-engine r#)]
+                     (try (.close ^Engine e# true) (catch Throwable _# nil)))))))
 
 (defmacro with-own-env
   "[[with-own]] for a test that needs the whole `create-python-context` RESULT —
    `:initial-ns-keys`, `:sandbox-ns` — and not just the Context. `binding` is
    destructured against that map; the sandbox is disposed the same way."
   [[binding & args] & body]
-  `(let [r# (env-python/create-python-context ~@args)
-         ~binding r#]
+  `(let [r#
+         (env-python/create-python-context ~@args)
+
+         ~binding
+         r#]
+
      (try ~@body
-          (finally
-            (try (.close ^Context (:python-context r#) true) (catch Throwable _# nil))
-            (when-let [e# (:python-engine r#)]
-              (try (.close ^Engine e# true) (catch Throwable _# nil)))))))
+          (finally (try (.close ^Context (:python-context r#) true) (catch Throwable _# nil))
+                   (when-let [e# (:python-engine r#)]
+                     (try (.close ^Engine e# true) (catch Throwable _# nil)))))))
 
 (defn shared
   "The sandbox shared by every suite that only USES Python."

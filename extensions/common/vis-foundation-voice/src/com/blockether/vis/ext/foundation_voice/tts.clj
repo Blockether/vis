@@ -116,21 +116,20 @@
    WINS - somebody who names their own recording after a shipped voice meant
    their own recording."
   []
-  (let
-    [entry
-     (pocket-asset)
+  (let [entry
+        (pocket-asset)
 
-     dir
-     (assets/install-dir entry)
+        dir
+        (assets/install-dir entry)
 
-     bundled
-     (mapv #(assoc % :clip (str (io/file dir (str (:clip %))))) (:voices entry))
+        bundled
+        (mapv #(assoc % :clip (str (io/file dir (str (:clip %))))) (:voices entry))
 
-     mine
-     (voices/imported)
+        mine
+        (voices/imported)
 
-     shadowed
-     (set (map :id mine))]
+        shadowed
+        (set (map :id mine))]
 
     (into (filterv #(not (shadowed (:id %))) bundled) mine)))
 
@@ -143,10 +142,9 @@
 
 (defn- named-voice
   [voices voice-id]
-  (let
-    [id (some-> voice-id
-                name
-                not-empty)]
+  (let [id (some-> voice-id
+                   name
+                   not-empty)]
     (cond (nil? id) (first voices)
           :else (first (filter #(= id (name (:id %))) voices)))))
 
@@ -173,12 +171,11 @@
   "The manifest entry whose voice is `voice-id`, or the default when none is
    named."
   [voice-id]
-  (let
-    [entries
-     (piper-assets)
+  (let [entries
+        (piper-assets)
 
-     wanted
-     (named-voice (mapv :voice entries) voice-id)]
+        wanted
+        (named-voice (mapv :voice entries) voice-id)]
 
     (or (first (filter #(= (:voice %) wanted) entries))
         (unknown-voice! :piper voice-id (mapv :voice entries)))))
@@ -296,45 +293,43 @@
 
 (defn- piper-config
   ^OfflineTtsConfig [dir espeak-dir model-file]
-  (let
-    [vits
-     (.. (OfflineTtsVitsModelConfig/builder)
-         (setModel (model-path dir model-file))
-         (setTokens (model-path dir "tokens.txt"))
-         ;; Piper phonemizes through espeak-ng, whose tables are installed ONCE
-         ;; and shared: a voice directory holds only the network.
-         (setDataDir (paths/unixify (io/file espeak-dir)))
-         build)
+  (let [vits
+        (.. (OfflineTtsVitsModelConfig/builder)
+            (setModel (model-path dir model-file))
+            (setTokens (model-path dir "tokens.txt"))
+            ;; Piper phonemizes through espeak-ng, whose tables are installed ONCE
+            ;; and shared: a voice directory holds only the network.
+            (setDataDir (paths/unixify (io/file espeak-dir)))
+            build)
 
-     model
-     (.. (OfflineTtsModelConfig/builder)
-         (setVits vits)
-         (setNumThreads (num-threads))
-         (setDebug false)
-         build)]
+        model
+        (.. (OfflineTtsModelConfig/builder)
+            (setVits vits)
+            (setNumThreads (num-threads))
+            (setDebug false)
+            build)]
 
     (.. (OfflineTtsConfig/builder) (setModel model) build)))
 
 (defn- pocket-config
   ^OfflineTtsConfig [dir]
-  (let
-    [pocket
-     (.. (OfflineTtsPocketModelConfig/builder)
-         (setLmFlow (model-path dir "lm_flow.int8.onnx"))
-         (setLmMain (model-path dir "lm_main.int8.onnx"))
-         (setEncoder (model-path dir "encoder.onnx"))
-         (setDecoder (model-path dir "decoder.int8.onnx"))
-         (setTextConditioner (model-path dir "text_conditioner.onnx"))
-         (setVocabJson (model-path dir "vocab.json"))
-         (setTokenScoresJson (model-path dir "token_scores.json"))
-         build)
+  (let [pocket
+        (.. (OfflineTtsPocketModelConfig/builder)
+            (setLmFlow (model-path dir "lm_flow.int8.onnx"))
+            (setLmMain (model-path dir "lm_main.int8.onnx"))
+            (setEncoder (model-path dir "encoder.onnx"))
+            (setDecoder (model-path dir "decoder.int8.onnx"))
+            (setTextConditioner (model-path dir "text_conditioner.onnx"))
+            (setVocabJson (model-path dir "vocab.json"))
+            (setTokenScoresJson (model-path dir "token_scores.json"))
+            build)
 
-     model
-     (.. (OfflineTtsModelConfig/builder)
-         (setPocket pocket)
-         (setNumThreads (num-threads))
-         (setDebug false)
-         build)]
+        model
+        (.. (OfflineTtsModelConfig/builder)
+            (setPocket pocket)
+            (setNumThreads (num-threads))
+            (setDebug false)
+            build)]
 
     (.. (OfflineTtsConfig/builder) (setModel model) build)))
 
@@ -380,27 +375,26 @@
 
 (defn- generate!
   [^OfflineTts tts ^GenerationConfig gen ^String text report]
-  (let
-    [sample-rate
-     (long (.getSampleRate tts))
+  (let [sample-rate
+        (long (.getSampleRate tts))
 
-     produced
-     (AtomicLong. 0)
+        produced
+        (AtomicLong. 0)
 
-     ^OfflineTtsCallback callback
-     (GenerationCallback. produced
-                          sample-rate
-                          (/ (double (count text)) (double chars-per-second))
-                          report)
+        ^OfflineTtsCallback callback
+        (GenerationCallback. produced
+                             sample-rate
+                             (/ (double (count text)) (double chars-per-second))
+                             report)
 
-     ^GeneratedAudio audio
-     (.generateWithConfigAndCallback tts text gen callback)
+        ^GeneratedAudio audio
+        (.generateWithConfigAndCallback tts text gen callback)
 
-     out
-     (File/createTempFile "vis-speech-" ".wav")
+        out
+        (File/createTempFile "vis-speech-" ".wav")
 
-     samples
-     (alength ^floats (.getSamples audio))]
+        samples
+        (alength ^floats (.getSamples audio))]
 
     (when-not (.save audio (str out))
       (.delete out)
@@ -423,12 +417,11 @@
 
 (defn- pocket-generation-config
   ^GenerationConfig [clip-path clip-text]
-  (let
-    [reader
-     (WaveReader. ^String clip-path)
+  (let [reader
+        (WaveReader. ^String clip-path)
 
-     gen
-     (GenerationConfig.)]
+        gen
+        (GenerationConfig.)]
 
     (.setReferenceAudio gen (.getSamples reader))
     (.setReferenceSampleRate gen (.getSampleRate reader))
@@ -464,54 +457,50 @@
    The assets are installed if they are missing, reported as `:preparing`,
    because the download is a real part of \"how long until I hear something\"."
   [family {:keys [text voice-id on-progress]}]
-  (let
-    [report
-     (fn [m]
-       (when on-progress (try (on-progress m) (catch Throwable _ nil))))
+  (let [report
+        (fn [m]
+          (when on-progress (try (on-progress m) (catch Throwable _ nil))))
 
-     spoken
-     (str/trim (str text))]
+        spoken
+        (str/trim (str text))]
 
     (when (str/blank? spoken)
       (throw (ex-info "Nothing to speak" {:type :voice-tts/blank-text :family family})))
-    (let
-      [installed
-       (ensure-assets! family voice-id report)
+    (let [installed
+          (ensure-assets! family voice-id report)
 
-       dir
-       (assets/install-dir (last installed))]
+          dir
+          (assets/install-dir (last installed))]
 
       (report {:phase :synthesizing :progress 0})
       (case family
         :piper
-        (let
-          [espeak-dir
-           (espeak-data-dir!)
+        (let [espeak-dir
+              (espeak-data-dir!)
 
-           model-file
-           (first (filter #(str/ends-with? % ".onnx") (:requires (last installed))))
+              model-file
+              (first (filter #(str/ends-with? % ".onnx") (:requires (last installed))))
 
-           config
-           (piper-config dir espeak-dir model-file)
+              config
+              (piper-config dir espeak-dir model-file)
 
-           tts
-           (loaded-tts [:piper dir] (constantly config))]
+              tts
+              (loaded-tts [:piper dir] (constantly config))]
 
           (generate! tts (piper-generation-config config) spoken report))
 
         :pocket-tts
-        (let
-          [catalogue
-           (pocket-voice-catalogue)
+        (let [catalogue
+              (pocket-voice-catalogue)
 
-           _
-           (when (empty? catalogue) (no-reference-clips! (pocket-asset)))
+              _
+              (when (empty? catalogue) (no-reference-clips! (pocket-asset)))
 
-           voice
-           (or (named-voice catalogue voice-id) (unknown-voice! :pocket-tts voice-id catalogue))
+              voice
+              (or (named-voice catalogue voice-id) (unknown-voice! :pocket-tts voice-id catalogue))
 
-           clip
-           (io/file (str (:clip voice)))]
+              clip
+              (io/file (str (:clip voice)))]
 
           (when-not (.isFile clip)
             (throw (ex-info (str "Reference clip is missing: " (:clip voice))

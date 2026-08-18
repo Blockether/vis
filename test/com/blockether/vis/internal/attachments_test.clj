@@ -39,12 +39,11 @@
   "An INCOMPRESSIBLE PNG: pseudo-random RGB, so no lossless pass can shrink it
    and the optimiser has to earn every byte it saves."
   ^bytes [^long w ^long h]
-  (let
-    [rnd
-     (java.util.Random. 7)
+  (let [rnd
+        (java.util.Random. 7)
 
-     buf
-     (byte-array (* w h 4))]
+        buf
+        (byte-array (* w h 4))]
 
     (dotimes [i (* w h)]
       (aset-byte buf (* i 4) (byte (- (.nextInt rnd 256) 128)))
@@ -148,24 +147,22 @@
       (expect (= (* 25 1024 1024) attachments/max-upload-image-bytes))
       (expect (= (* 5 1024 1024) attachments/max-image-bytes)))
   (it "keeps a 20MB PNG upload that is four times over the per-image wire cap"
-      (let
-        [big
-         (byte-array (concat (seq tiny-png-bytes) (repeat (* 20 1024 1024) (byte 0))))
+      (let [big
+            (byte-array (concat (seq tiny-png-bytes) (repeat (* 20 1024 1024) (byte 0))))
 
-         out
-         (attachments/prepare-inline-attachments [{:base64 (.encodeToString (Base64/getEncoder) big)
-                                                   :filename "huge.png"}])]
+            out
+            (attachments/prepare-inline-attachments
+              [{:base64 (.encodeToString (Base64/getEncoder) big) :filename "huge.png"}])]
 
         (expect (empty? (:skipped out)))
         (expect (= ["image/png"] (mapv :media-type (:attached out))))))
   (it "still refuses a still past the 25MB intake cap, naming that ceiling"
-      (let
-        [huge
-         (byte-array (concat (seq tiny-png-bytes) (repeat (* 26 1024 1024) (byte 0))))
+      (let [huge
+            (byte-array (concat (seq tiny-png-bytes) (repeat (* 26 1024 1024) (byte 0))))
 
-         out
-         (attachments/prepare-inline-attachments
-           [{:base64 (.encodeToString (Base64/getEncoder) huge) :filename "huge.png"}])]
+            out
+            (attachments/prepare-inline-attachments
+              [{:base64 (.encodeToString (Base64/getEncoder) huge) :filename "huge.png"}])]
 
         (expect (empty? (:attached out)))
         (expect (str/includes? (:reason (first (:skipped out))) "exceeds")))))
@@ -175,15 +172,14 @@
   "A dropped clip path is collected by the SAME scanner as a picture — content
    decides, so an extension can neither promote nor demote a file."
   (it "collects an .mp4 named in prose"
-      (let
-        [dir
-         (temp-dir)
+      (let [dir
+            (temp-dir)
 
-         f
-         (write-file dir "clip.mp4" tiny-mp4-bytes)
+            f
+            (write-file dir "clip.mp4" tiny-mp4-bytes)
 
-         res
-         (attachments/collect-user-images (str "look at " (.getAbsolutePath f) " please"))]
+            res
+            (attachments/collect-user-images (str "look at " (.getAbsolutePath f) " please"))]
 
         (expect (= 1 (count (:attached res))))
         (expect (= "video/mp4"
@@ -197,15 +193,14 @@
                        first
                        :path)))))
   (it "collects a .mov"
-      (let
-        [dir
-         (temp-dir)
+      (let [dir
+            (temp-dir)
 
-         f
-         (write-file dir "screen.mov" tiny-mp4-bytes)
+            f
+            (write-file dir "screen.mov" tiny-mp4-bytes)
 
-         res
-         (attachments/collect-user-images (.getAbsolutePath f))]
+            res
+            (attachments/collect-user-images (.getAbsolutePath f))]
 
         (expect (= 1 (count (:attached res))))
         (expect (= "video/mp4"
@@ -214,15 +209,14 @@
                        first
                        :media-type)))))
   (it "leaves a file that only LOOKS like a clip alone"
-      (let
-        [dir
-         (temp-dir)
+      (let [dir
+            (temp-dir)
 
-         f
-         (write-file dir "notes.mp4" (.getBytes "this is prose, not a clip" "UTF-8"))
+            f
+            (write-file dir "notes.mp4" (.getBytes "this is prose, not a clip" "UTF-8"))
 
-         res
-         (attachments/collect-user-images (.getAbsolutePath f))]
+            res
+            (attachments/collect-user-images (.getAbsolutePath f))]
 
         (expect (empty? (:attached res))))))
 
@@ -231,11 +225,11 @@
   "Send time is where a clip becomes something a provider can read: an animated
    GIF sampled across the whole clip, never the container itself."
   (it "sends a clip as an animated GIF"
-      (let
-        [v
-         (attachments/wire-image
-           {:media-type "video/mp4" :base64 tiny-mp4-b64 :path "/tmp/clip.mp4" :filename "clip.mp4"}
-           {:vision? true})]
+      (let [v (attachments/wire-image {:media-type "video/mp4"
+                                       :base64 tiny-mp4-b64
+                                       :path "/tmp/clip.mp4"
+                                       :filename "clip.mp4"}
+                                      {:vision? true})]
         (expect (= "image/gif" (:media-type v)))
         (expect (nil? (:reason v)))
         (expect (str/starts-with? (str (:base64 v)) "R0lGODlh"))
@@ -251,26 +245,25 @@
         (expect (<= (max (long (:width gif)) (long (:height gif)))
                     (long image-convert/video-gif-max-dimension)))))
   (it "an undecodable clip is SKIPPED with a reason instead of throwing"
-      (let
-        [v (attachments/wire-image {:media-type "video/mp4"
-                                    :base64 (.encodeToString (Base64/getEncoder) (ftyp-head "isom"))
-                                    :path "/tmp/broken.mp4"
-                                    :filename "broken.mp4"}
-                                   {:vision? true})]
+      (let [v (attachments/wire-image {:media-type "video/mp4"
+                                       :base64 (.encodeToString (Base64/getEncoder)
+                                                                (ftyp-head "isom"))
+                                       :path "/tmp/broken.mp4"
+                                       :filename "broken.mp4"}
+                                      {:vision? true})]
         (expect (string? (:reason v)))
         (expect (nil? (:base64 v)))))
   (it "NOTHING a clip is DECLARED as can put a video container on the wire"
-      (let
-        [wired (mapv (fn [[declared b64]]
-                       (attachments/wire-image
-                         {:media-type declared :base64 b64 :path "/tmp/clip" :filename "clip"}
-                         {}))
-                     [["video/mp4" tiny-mp4-b64] ["video/quicktime" tiny-mp4-b64]
-                      ;; a lying label: the BYTES are an mp4 either way
-                      ["video/webm" tiny-mp4-b64] ["image/png" tiny-mp4-b64]
-                      ;; and a label that lies the other way, over bytes that are no clip at all
-                      ["video/mp4"
-                       (.encodeToString (Base64/getEncoder) (.getBytes "not a clip" "UTF-8"))]])]
+      (let [wired (mapv (fn [[declared b64]]
+                          (attachments/wire-image
+                            {:media-type declared :base64 b64 :path "/tmp/clip" :filename "clip"}
+                            {}))
+                        [["video/mp4" tiny-mp4-b64] ["video/quicktime" tiny-mp4-b64]
+                         ;; a lying label: the BYTES are an mp4 either way
+                         ["video/webm" tiny-mp4-b64] ["image/png" tiny-mp4-b64]
+                         ;; and a label that lies the other way, over bytes that are no clip at all
+                         ["video/mp4"
+                          (.encodeToString (Base64/getEncoder) (.getBytes "not a clip" "UTF-8"))]])]
         (expect (= 5 (count wired)))
         (expect (not-any? #(attachments/video-media-type? (:media-type %)) wired))
         (expect (every? #(or (some? (:reason %))
@@ -281,41 +274,40 @@
   collect-user-images-test
   (describe
     "path shapes"
-    (it "collects a plain absolute path"
-        (let
-          [dir
-           (temp-dir)
+    (it
+      "collects a plain absolute path"
+      (let [dir
+            (temp-dir)
 
-           f
-           (write-file dir "shot.png" tiny-png-bytes)
+            f
+            (write-file dir "shot.png" tiny-png-bytes)
 
-           res
-           (attachments/collect-user-images (str "what is wrong on " (.getAbsolutePath f) " ?"))]
+            res
+            (attachments/collect-user-images (str "what is wrong on " (.getAbsolutePath f) " ?"))]
 
-          (expect (= 1 (count (:attached res))))
-          (expect (= "image/png"
-                     (-> res
-                         :attached
-                         first
-                         :media-type)))
-          (expect (= tiny-png-b64
-                     (-> res
-                         :attached
-                         first
-                         :base64)))))
+        (expect (= 1 (count (:attached res))))
+        (expect (= "image/png"
+                   (-> res
+                       :attached
+                       first
+                       :media-type)))
+        (expect (= tiny-png-b64
+                   (-> res
+                       :attached
+                       first
+                       :base64)))))
     (it "collects a backslash-escaped path (macOS terminal drop)"
-        (let
-          [dir
-           (temp-dir)
+        (let [dir
+              (temp-dir)
 
-           f
-           (write-file dir "My Shot.png" tiny-png-bytes)
+              f
+              (write-file dir "My Shot.png" tiny-png-bytes)
 
-           escaped
-           (str/replace (.getAbsolutePath f) " " "\\ ")
+              escaped
+              (str/replace (.getAbsolutePath f) " " "\\ ")
 
-           res
-           (attachments/collect-user-images escaped)]
+              res
+              (attachments/collect-user-images escaped)]
 
           (expect (= 1 (count (:attached res))))
           (expect (= (.getAbsolutePath f)
@@ -324,67 +316,62 @@
                          first
                          :path)))))
     (it "collects a single-quoted path with spaces"
-        (let
-          [dir
-           (temp-dir)
+        (let [dir
+              (temp-dir)
 
-           f
-           (write-file dir "Screen Shot.png" tiny-png-bytes)
+              f
+              (write-file dir "Screen Shot.png" tiny-png-bytes)
 
-           res
-           (attachments/collect-user-images (str "look at '" (.getAbsolutePath f) "' please"))]
+              res
+              (attachments/collect-user-images (str "look at '" (.getAbsolutePath f) "' please"))]
 
           (expect (= 1 (count (:attached res))))))
     (it "resolves a path trailed by sentence punctuation"
-        (let
-          [dir
-           (temp-dir)
+        (let [dir
+              (temp-dir)
 
-           f
-           (write-file dir "shot.png" tiny-png-bytes)
+              f
+              (write-file dir "shot.png" tiny-png-bytes)
 
-           res
-           (attachments/collect-user-images (str "see this: " (.getAbsolutePath f) ". thanks"))]
+              res
+              (attachments/collect-user-images (str "see this: " (.getAbsolutePath f) ". thanks"))]
 
           (expect (= 1 (count (:attached res))))))
     (it "resolves a path wrapped in parentheses"
-        (let
-          [dir
-           (temp-dir)
+        (let [dir
+              (temp-dir)
 
-           f
-           (write-file dir "shot.png" tiny-png-bytes)
+              f
+              (write-file dir "shot.png" tiny-png-bytes)
 
-           res
-           (attachments/collect-user-images (str "look (" (.getAbsolutePath f) ")"))]
+              res
+              (attachments/collect-user-images (str "look (" (.getAbsolutePath f) ")"))]
 
           (expect (= 1 (count (:attached res))))))
     (it "resolves a relative path against :workspace-root"
-        (let
-          [dir
-           (temp-dir)
+        (let [dir
+              (temp-dir)
 
-           _
-           (write-file dir "logo.png" tiny-png-bytes)
+              _
+              (write-file dir "logo.png" tiny-png-bytes)
 
-           res
-           (attachments/collect-user-images "check logo.png"
-                                            {:workspace-root (.getAbsolutePath dir)})]
+              res
+              (attachments/collect-user-images "check logo.png"
+                                               {:workspace-root (.getAbsolutePath dir)})]
 
           (expect (= 1 (count (:attached res))))))
     (it "dedupes the same file mentioned twice"
-        (let
-          [dir
-           (temp-dir)
+        (let [dir
+              (temp-dir)
 
-           f
-           (write-file dir "a.png" tiny-png-bytes)
+              f
+              (write-file dir "a.png" tiny-png-bytes)
 
-           p
-           (.getAbsolutePath f)
+              p
+              (.getAbsolutePath f)
 
-           res
-           (attachments/collect-user-images (str p " and again " p))]
+              res
+              (attachments/collect-user-images (str p " and again " p))]
 
           (expect (= 1 (count (:attached res)))))))
   (describe "filtering"
@@ -392,27 +379,25 @@
                 (let [res (attachments/collect-user-images "/nope/definitely/missing.png")]
                   (expect (= {:attached [] :skipped []} res))))
             (it "ignores files whose bytes are not a supported image"
-                (let
-                  [dir
-                   (temp-dir)
+                (let [dir
+                      (temp-dir)
 
-                   f
-                   (write-file dir "fake.png" (.getBytes "not an image" "UTF-8"))
+                      f
+                      (write-file dir "fake.png" (.getBytes "not an image" "UTF-8"))
 
-                   res
-                   (attachments/collect-user-images (.getAbsolutePath f))]
+                      res
+                      (attachments/collect-user-images (.getAbsolutePath f))]
 
                   (expect (= {:attached [] :skipped []} res))))
             (it "ignores non-image extensions without touching the file"
-                (let
-                  [dir
-                   (temp-dir)
+                (let [dir
+                      (temp-dir)
 
-                   f
-                   (write-file dir "notes.txt" (.getBytes "text" "UTF-8"))
+                      f
+                      (write-file dir "notes.txt" (.getBytes "text" "UTF-8"))
 
-                   res
-                   (attachments/collect-user-images (.getAbsolutePath f))]
+                      res
+                      (attachments/collect-user-images (.getAbsolutePath f))]
 
                   (expect (= {:attached [] :skipped []} res))))
             (it "handles blank/nil text"
@@ -420,15 +405,14 @@
                 (expect (= {:attached [] :skipped []} (attachments/collect-user-images "")))))
   (describe "caps"
             (it "skips oversized images with a reason"
-                (let
-                  [dir
-                   (temp-dir)
+                (let [dir
+                      (temp-dir)
 
-                   f
-                   (write-file dir "big.png" tiny-png-bytes)
+                      f
+                      (write-file dir "big.png" tiny-png-bytes)
 
-                   res
-                   (attachments/collect-user-images (.getAbsolutePath f) {:max-bytes 10})]
+                      res
+                      (attachments/collect-user-images (.getAbsolutePath f) {:max-bytes 10})]
 
                   (expect (empty? (:attached res)))
                   (expect (= 1 (count (:skipped res))))
@@ -438,20 +422,19 @@
                                              :reason)
                                          "exceeds"))))
             (it "caps the attachment count and reports the overflow"
-                (let
-                  [dir
-                   (temp-dir)
+                (let [dir
+                      (temp-dir)
 
-                   f1
-                   (write-file dir "one.png" tiny-png-bytes)
+                      f1
+                      (write-file dir "one.png" tiny-png-bytes)
 
-                   f2
-                   (write-file dir "two.png" tiny-png-bytes)
+                      f2
+                      (write-file dir "two.png" tiny-png-bytes)
 
-                   res
-                   (attachments/collect-user-images
-                     (str (.getAbsolutePath f1) " " (.getAbsolutePath f2))
-                     {:max-images 1})]
+                      res
+                      (attachments/collect-user-images
+                        (str (.getAbsolutePath f1) " " (.getAbsolutePath f2))
+                        {:max-images 1})]
 
                   (expect (= 1 (count (:attached res))))
                   (expect (= 1 (count (:skipped res))))
@@ -540,64 +523,59 @@
   (describe
     "prepare-inline-attachments"
     (it "keeps an SVG upload as SVG instead of rasterizing it into the DB"
-        (let
-          [out (attachments/prepare-inline-attachments
-                 [{:base64 (str "data:image/svg+xml;base64," (b64 (.getBytes svg-doc "UTF-8")))
-                   :filename "logo.svg"
-                   :media-type "image/svg+xml"}])]
+        (let [out (attachments/prepare-inline-attachments
+                    [{:base64 (str "data:image/svg+xml;base64," (b64 (.getBytes svg-doc "UTF-8")))
+                      :filename "logo.svg"
+                      :media-type "image/svg+xml"}])]
           (expect (empty? (:skipped out)))
           (expect (= ["image/svg+xml"] (mapv :media-type (:attached out))))))
     (it "stores the SVG even when nothing can render it — the wire gate decides later"
         (binding [image-convert/*enabled?* false]
-          (let
-            [out (attachments/prepare-inline-attachments [{:base64 (b64 (.getBytes svg-doc "UTF-8"))
-                                                           :filename "logo.svg"}])]
+          (let [out (attachments/prepare-inline-attachments
+                      [{:base64 (b64 (.getBytes svg-doc "UTF-8")) :filename "logo.svg"}])]
             (expect (empty? (:skipped out)))
             (expect (= ["image/svg+xml"] (mapv :media-type (:attached out)))))))
     (it "keeps a BMP in its own container, byte-for-byte"
-        (let
-          [bmp
-           (bmp-bytes)
+        (let [bmp
+              (bmp-bytes)
 
-           out
-           (attachments/prepare-inline-attachments [{:base64 (b64 bmp) :filename "shot.bmp"}])]
+              out
+              (attachments/prepare-inline-attachments [{:base64 (b64 bmp) :filename "shot.bmp"}])]
 
           (expect (empty? (:skipped out)))
           (expect (= ["image/bmp"] (mapv :media-type (:attached out))))
           (expect (= (b64 bmp) (:base64 (first (:attached out)))))))
     (it "still attaches a PNG"
-        (let
-          [out (attachments/prepare-inline-attachments [{:base64 tiny-png-b64 :filename "a.png"}])]
+        (let [out (attachments/prepare-inline-attachments [{:base64 tiny-png-b64
+                                                            :filename "a.png"}])]
           (expect (= ["image/png"] (mapv :media-type (:attached out))))))
     (it "accepts an MP4 upload from the companion, sniffed rather than declared"
-        (let
-          [out (attachments/prepare-inline-attachments [{:base64 (str "data:video/mp4;base64,"
-                                                                      tiny-mp4-b64)
-                                                         :filename "clip.mp4"
-                                                         :media-type "application/octet-stream"}])]
+        (let [out (attachments/prepare-inline-attachments
+                    [{:base64 (str "data:video/mp4;base64," tiny-mp4-b64)
+                      :filename "clip.mp4"
+                      :media-type "application/octet-stream"}])]
           (expect (empty? (:skipped out)))
           (expect (= ["video/mp4"] (mapv :media-type (:attached out))))
           (expect (= tiny-mp4-b64 (:base64 (first (:attached out)))))))
     (it "keeps a clip that is far over the per-IMAGE cap — a clip answers to the video cap"
-        (let
-          [out (attachments/prepare-inline-attachments [{:base64 tiny-mp4-b64 :filename "clip.mp4"}]
-                                                       {:max-bytes 64})]
+        (let [out (attachments/prepare-inline-attachments [{:base64 tiny-mp4-b64
+                                                            :filename "clip.mp4"}]
+                                                          {:max-bytes 64})]
           (expect (empty? (:skipped out)))
           (expect (= ["video/mp4"] (mapv :media-type (:attached out))))))
     (it "quotes the EFFECTIVE ceiling when it skips, not the per-image cap"
-        (let
-          [padded
-           (str "<svg xmlns=\"http://www.w3.org/2000/svg\">"
-                (apply str (repeat 200 "<rect/>"))
-                "</svg>")
+        (let [padded
+              (str "<svg xmlns=\"http://www.w3.org/2000/svg\">"
+                   (apply str (repeat 200 "<rect/>"))
+                   "</svg>")
 
-           out
-           (attachments/prepare-inline-attachments [{:base64 (b64 (.getBytes padded "UTF-8"))
-                                                     :filename "logo.svg"}]
-                                                   {:max-bytes 100})
+              out
+              (attachments/prepare-inline-attachments [{:base64 (b64 (.getBytes padded "UTF-8"))
+                                                        :filename "logo.svg"}]
+                                                      {:max-bytes 100})
 
-           reason
-           (:reason (first (:skipped out)))]
+              reason
+              (:reason (first (:skipped out)))]
 
           (expect (empty? (:attached out)))
           ;; 4x rescue factor for a rasterized container: 400B, never "100B".
@@ -628,10 +606,9 @@
                                                                  :media-type "image/jpeg"}))))))
   (describe "a payload no decoder can read"
             (it "is REFUSED in the decoder's own words instead of bricking the session"
-                (let
-                  [wired (attachments/wire-image {:base64 (b64 (corrupt-png))
-                                                  :media-type "image/png"
-                                                  :path "/tmp/dot.png"})]
+                (let [wired (attachments/wire-image {:base64 (b64 (corrupt-png))
+                                                     :media-type "image/png"
+                                                     :path "/tmp/dot.png"})]
                   (expect (nil? (:base64 wired)))
                   (expect (= "/tmp/dot.png" (:path wired)))
                   (expect (re-find #"could not be decoded" (str (:reason wired))))))
@@ -639,12 +616,11 @@
                 (expect (nil? (attachments/wire-image {:base64 tiny-png-b64 :media-type ""})))))
   (describe "a container the wire refuses"
             (it "rasterizes SVG to PNG on the way out, leaving the stored vector alone"
-                (let
-                  [b
-                   (b64 (.getBytes svg-doc "UTF-8"))
+                (let [b
+                      (b64 (.getBytes svg-doc "UTF-8"))
 
-                   wired
-                   (attachments/wire-image {:base64 b :media-type "image/svg+xml"})]
+                      wired
+                      (attachments/wire-image {:base64 b :media-type "image/svg+xml"})]
 
                   (expect (= "image/png" (:media-type wired)))
                   (expect (not= b (:base64 wired)))))
@@ -669,21 +645,20 @@
                                                                 :media-type "image/png"}
                                                                {:max-bytes 8}))))))
     (it "optimizes an oversize image UNDER the cap instead of dropping it"
-        (let
-          [png
-           (noisy-png 400 300)
+        (let [png
+              (noisy-png 400 300)
 
-           cap
-           (long (* 0.4 (alength png)))
+              cap
+              (long (* 0.4 (alength png)))
 
-           wired
-           (attachments/wire-image {:base64 (b64 png) :media-type "image/png"} {:max-bytes cap})
+              wired
+              (attachments/wire-image {:base64 (b64 png) :media-type "image/png"} {:max-bytes cap})
 
-           ;; a third decoder again: the rescued bytes must still be a
-           ;; picture, not merely small.
-           decoded
-           (ImageIO/read (ByteArrayInputStream. (.decode (Base64/getDecoder)
-                                                         ^String (:base64 wired))))]
+              ;; a third decoder again: the rescued bytes must still be a
+              ;; picture, not merely small.
+              decoded
+              (ImageIO/read (ByteArrayInputStream. (.decode (Base64/getDecoder)
+                                                            ^String (:base64 wired))))]
 
           (expect (> (alength png) cap))
           (expect (nil? (:reason wired)))
@@ -697,20 +672,19 @@
         ;; not is exactly Anthropic's `image exceeds 5 MB maximum: 5994492
         ;; bytes > 5242880 bytes` — a 400 that then replays on every later
         ;; turn, plain-text ones included, until the row leaves the session.
-        (let
-          [png
-           (noisy-png 220 220)
+        (let [png
+              (noisy-png 220 220)
 
-           ;; Room to spare for the picture; none once it is encoded.
-           cap
-           (long (* 1.1 (alength png)))
+              ;; Room to spare for the picture; none once it is encoded.
+              cap
+              (long (* 1.1 (alength png)))
 
-           wired
-           (attachments/wire-image {:base64 (b64 png) :media-type "image/png"} {:max-bytes cap})
+              wired
+              (attachments/wire-image {:base64 (b64 png) :media-type "image/png"} {:max-bytes cap})
 
-           decoded
-           (ImageIO/read (ByteArrayInputStream. (.decode (Base64/getDecoder)
-                                                         ^String (:base64 wired))))]
+              decoded
+              (ImageIO/read (ByteArrayInputStream. (.decode (Base64/getDecoder)
+                                                            ^String (:base64 wired))))]
 
           (expect (<= (alength png) cap))
           (expect (> (count (b64 png)) cap))
@@ -728,44 +702,42 @@
                 ;; exceed max allowed size for many-image requests: 2000 pixels`
                 ;; once the session has replayed enough attachments into one
                 ;; request. Bytes were never the only cap.
-                (let
-                  [png
-                   (imaging/encode (imaging/blank 3840 2160 "white") :png)
+                (let [png
+                      (imaging/encode (imaging/blank 3840 2160 "white") :png)
 
-                   wired
-                   (attachments/wire-image {:base64 (b64 png) :media-type "image/png"})
+                      wired
+                      (attachments/wire-image {:base64 (b64 png) :media-type "image/png"})
 
-                   probe
-                   (imaging/probe (.decode (Base64/getDecoder) ^String (:base64 wired)))]
+                      probe
+                      (imaging/probe (.decode (Base64/getDecoder) ^String (:base64 wired)))]
 
                   (expect (nil? (:reason wired)))
                   (expect (= "image/png" (:media-type wired)))
                   (expect (= image-convert/max-wire-dimension (:width probe)))
                   (expect (= 882 (:height probe)))))
             (it "honours the caller's own ceiling, and keys the verdict cache by it"
-                (let
-                  [att
-                   {:base64 (b64 (imaging/encode (imaging/blank 40 20 "white") :png))
-                    :media-type "image/png"}
+                (let [att
+                      {:base64 (b64 (imaging/encode (imaging/blank 40 20 "white") :png))
+                       :media-type "image/png"}
 
-                   dims
-                   (fn [wired]
-                     (let [p (imaging/probe (.decode (Base64/getDecoder) ^String (:base64 wired)))]
-                       [(:width p) (:height p)]))]
+                      dims
+                      (fn [wired]
+                        (let [p (imaging/probe (.decode (Base64/getDecoder)
+                                                        ^String (:base64 wired)))]
+                          [(:width p) (:height p)]))]
 
                   (expect (= [40 20] (dims (attachments/wire-image att))))
                   (expect (= [10 5] (dims (attachments/wire-image att {:max-dimension 10})))))))
   (describe "repeat sends"
             (it "re-uses the cached verdict instead of rasterizing the same SVG every turn"
-                (let
-                  [att
-                   {:base64 (b64 (.getBytes svg-doc "UTF-8")) :media-type "image/svg+xml"}
+                (let [att
+                      {:base64 (b64 (.getBytes svg-doc "UTF-8")) :media-type "image/svg+xml"}
 
-                   a
-                   (attachments/wire-image att)
+                      a
+                      (attachments/wire-image att)
 
-                   b
-                   (attachments/wire-image att)]
+                      b
+                      (attachments/wire-image att)]
 
                   ;; the very same converted String, not merely an equal one: attachments
                   ;; replay on EVERY later turn, so an uncached gate would re-render the
@@ -789,17 +761,16 @@
   wire-images-test
   "The whole message's images, in the shape the prompt manifest speaks."
   (it "attaches what it can and NAMES what it could not send"
-      (let
-        [out (attachments/wire-images
-               [{:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}
-                {:base64 (b64 (corrupt-png)) :media-type "image/png" :path "bad.png"}])]
+      (let [out (attachments/wire-images
+                  [{:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}
+                   {:base64 (b64 (corrupt-png)) :media-type "image/png" :path "bad.png"}])]
         (expect (= ["ok.png"] (mapv :path (:attached out))))
         (expect (= ["bad.png"] (mapv :path (:skipped out))))
         (expect (re-find #"could not be decoded" (str (:reason (first (:skipped out))))))))
   (it "tells a NON-VISION target the files are on disk rather than sending blocks it cannot read"
-      (let
-        [out (attachments/wire-images [{:base64 tiny-png-b64 :media-type "image/png" :path "a.png"}]
-                                      {:vision? false})]
+      (let [out (attachments/wire-images
+                  [{:base64 tiny-png-b64 :media-type "image/png" :path "a.png"}]
+                  {:vision? false})]
         (expect (empty? (:attached out)))
         (expect (= ["a.png"] (mapv :path (:skipped out))))
         (expect (true? (:readable-blind? (first (:skipped out)))))
@@ -808,19 +779,18 @@
       ;; The opt-out: bytes an image replay would re-upload on EVERY later
       ;; request stay stored and displayed, and the model is told they are
       ;; openable on disk instead.
-      (let
-        [out (attachments/wire-images
-               [{:base64 tiny-png-b64 :media-type "image/png" :path "secret.png" :audience "user"}
-                {:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}])]
+      (let [out
+            (attachments/wire-images
+              [{:base64 tiny-png-b64 :media-type "image/png" :path "secret.png" :audience "user"}
+               {:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}])]
         (expect (= ["ok.png"] (mapv :path (:attached out))))
         (expect (= ["secret.png"] (mapv :path (:skipped out))))
         (expect (true? (:readable-blind? (first (:skipped out)))))
         (expect (re-find #"for the human only" (str (:reason (first (:skipped out))))))))
   (it "sends an audience \"model\" image, which is the point of that audience"
-      (let
-        [out
-         (attachments/wire-images
-           [{:base64 tiny-png-b64 :media-type "image/png" :path "probe.png" :audience "model"}])]
+      (let [out
+            (attachments/wire-images
+              [{:base64 tiny-png-b64 :media-type "image/png" :path "probe.png" :audience "model"}])]
         (expect (= ["probe.png"] (mapv :path (:attached out))))
         (expect (empty? (:skipped out)))))
   (it "is empty, not broken, with nothing to send"
@@ -850,27 +820,25 @@
   wire-image-cross-validation-test
   "Everything the gate lets through, re-read by an INDEPENDENT decoder."
   (it "emits a raster a foreign decoder reads, at the size vis reported"
-      (doseq
-        [[label att expected]
-         [["png passed through untouched" {:base64 tiny-png-b64 :media-type "image/png"} [1 1]]
-          ["svg rasterized on the way out"
-           {:base64 (b64 (.getBytes svg-doc "UTF-8")) :media-type "image/svg+xml"} [120 60]]
-          ["bmp re-containered"
-           {:base64 (b64 (imaging/encode (imaging/blank 21 13 "white") :bmp))
-            :media-type "image/bmp"} [21 13]]]]
+      (doseq [[label att expected]
+              [["png passed through untouched" {:base64 tiny-png-b64 :media-type "image/png"} [1 1]]
+               ["svg rasterized on the way out"
+                {:base64 (b64 (.getBytes svg-doc "UTF-8")) :media-type "image/svg+xml"} [120 60]]
+               ["bmp re-containered"
+                {:base64 (b64 (imaging/encode (imaging/blank 21 13 "white") :bmp))
+                 :media-type "image/bmp"} [21 13]]]]
         (let [wired (attachments/wire-image att)]
           (expect (= "image/png" (:media-type wired)) label)
           (expect (= expected (decoded-size wired)) label))))
   (it "keeps the picture, not merely a decodable container"
       ;; A re-container that silently dropped the pixels would still satisfy
       ;; every size assertion above.
-      (let
-        [wired
-         (attachments/wire-image {:base64 (b64 (.getBytes svg-doc "UTF-8"))
-                                  :media-type "image/svg+xml"})
+      (let [wired
+            (attachments/wire-image {:base64 (b64 (.getBytes svg-doc "UTF-8"))
+                                     :media-type "image/svg+xml"})
 
-         ^BufferedImage img
-         (decoded wired)]
+            ^BufferedImage img
+            (decoded wired)]
 
         (expect (= "333333" (format "%06x" (bit-and (.getRGB img 60 30) 0xffffff))))))
   (it "refuses precisely what the foreign decoder also refuses"
@@ -907,14 +875,13 @@
       (expect (not (attachments/hidden-from-user? {:media-type "application/pdf"
                                                    :audience "model"}))))
   (it "names the document to the model instead of sending it, even with vision"
-      (let
-        [{:keys [attached skipped]}
-         (attachments/wire-images
-           [{:path "/tmp/report.pdf" :media-type "application/pdf" :audience "both"}]
-           {:vision? true})
+      (let [{:keys [attached skipped]}
+            (attachments/wire-images
+              [{:path "/tmp/report.pdf" :media-type "application/pdf" :audience "both"}]
+              {:vision? true})
 
-         entry
-         (first skipped)]
+            entry
+            (first skipped)]
 
         (expect (empty? attached))
         (expect (= 1 (count skipped)))

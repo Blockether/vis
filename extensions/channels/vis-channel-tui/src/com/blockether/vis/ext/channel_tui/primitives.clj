@@ -152,19 +152,18 @@
    already-clean single lines it is byte-identical to `.putString(String)`,
    including double-width CJK/emoji column advance."
   [^TextGraphics g x y ^String line ^TextColor fg ^TextColor bg ^java.util.EnumSet mods]
-  (let
-    [mempty?
-     (.isEmpty mods)
+  (let [mempty?
+        (.isEmpty mods)
 
-     ;; Lookup key: for the common no-modifier line, a shared `:none` token
-     ;; avoids touching the EnumSet at all. For a styled run the LIVE `mods`
-     ;; set discriminates by content (EnumSet hashCode/equals are
-     ;; content-based); it is only READ here, never stored.
-     k
-     (if mempty? [line fg bg :none] [line fg bg mods])
+        ;; Lookup key: for the common no-modifier line, a shared `:none` token
+        ;; avoids touching the EnumSet at all. For a styled run the LIVE `mods`
+        ;; set discriminates by content (EnumSet hashCode/equals are
+        ;; content-based); it is only READ here, never stored.
+        k
+        (if mempty? [line fg bg :none] [line fg bg mods])
 
-     ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
-     (.get line-cell-cache k)]
+        ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
+        (.get line-cell-cache k)]
 
     (if cached
       (.putString g (int x) (int y) cached)
@@ -355,12 +354,11 @@
    the next col (`col + STATUS_WIDTH`) so the caller can place the label right
    after. The reusable mark behind settings rows + resource rows."
   [g col row glyph fg bg]
-  (let
-    [col
-     (long col)
+  (let [col
+        (long col)
 
-     row
-     (long row)]
+        row
+        (long row)]
 
     (set-colors! g fg bg)
     (put-str! g col row glyph)
@@ -372,27 +370,26 @@
   "Draw a single-line bordered box at (left, top) of size wxh.
    Draws corners, edges. Does NOT fill interior."
   [g left top w h]
-  (let
-    [left
-     (long left)
+  (let [left
+        (long left)
 
-     top
-     (long top)
+        top
+        (long top)
 
-     w
-     (long w)
+        w
+        (long w)
 
-     h
-     (long h)
+        h
+        (long h)
 
-     right
-     (+ left w -1)
+        right
+        (+ left w -1)
 
-     bottom
-     (+ top h -1)
+        bottom
+        (+ top h -1)
 
-     inner
-     (- w 2)]
+        inner
+        (- w 2)]
 
     ;; Corners
     (set-char! g left top BOX_TL)
@@ -411,18 +408,17 @@
 (defn draw-separator!
   "Draw a horizontal separator with T-junctions at left/right edges."
   [g left right row]
-  (let
-    [left
-     (long left)
+  (let [left
+        (long left)
 
-     right
-     (long right)
+        right
+        (long right)
 
-     row
-     (long row)
+        row
+        (long row)
 
-     inner
-     (- right left 1)]
+        inner
+        (- right left 1)]
 
     (set-char! g left row BOX_T_R)
     (set-char! g right row BOX_T_L)
@@ -692,45 +688,42 @@
   ^"[Lcom.googlecode.lanterna.TextCharacter;"
   [^String line ^TextColor base-fg ^TextColor base-bg ^TextColor code-fg ^TextColor code-bg
    ^TextColor err-fg ^java.util.EnumSet inherited]
-  (let
-    [len
-     (.length line)
+  (let [len
+        (.length line)
 
-     inline
-     (java.util.EnumSet/noneOf SGR)
+        inline
+        (java.util.EnumSet/noneOf SGR)
 
-     code?
-     (boolean-array 1 false)
+        code?
+        (boolean-array 1 false)
 
-     err?
-     (boolean-array 1 false)
+        err?
+        (boolean-array 1 false)
 
-     ^java.util.ArrayList out
-     (java.util.ArrayList. len)
+        ^java.util.ArrayList out
+        (java.util.ArrayList. len)
 
-     emit!
-     (fn [^String seg]
-       (when (pos? (.length seg))
-         (let
-           [^"[Lcom.googlecode.lanterna.TextCharacter;" arr
-            (if (aget code? 0)
-              (TextCharacter/fromString seg code-fg code-bg no-mods)
-              (let [eff ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
-                (.addAll eff inline)
-                (TextCharacter/fromString seg (if (aget err? 0) err-fg base-fg) base-bg eff)))
+        emit!
+        (fn [^String seg]
+          (when (pos? (.length seg))
+            (let [^"[Lcom.googlecode.lanterna.TextCharacter;" arr
+                  (if (aget code? 0)
+                    (TextCharacter/fromString seg code-fg code-bg no-mods)
+                    (let [eff ^java.util.EnumSet (java.util.EnumSet/copyOf inherited)]
+                      (.addAll eff inline)
+                      (TextCharacter/fromString seg (if (aget err? 0) err-fg base-fg) base-bg eff)))
 
-            n
-            (alength arr)]
+                  n
+                  (alength arr)]
 
-           (loop [i 0]
-             (when (< i n) (.add out (aget arr i)) (recur (inc i)))))))]
+              (loop [i 0]
+                (when (< i n) (.add out (aget arr i)) (recur (inc i)))))))]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       run-start
-       0]
+           run-start
+           0]
 
       (if (>= i len)
         (emit! (subs line run-start i))
@@ -765,17 +758,16 @@
    with `blit-line!` via a `:sty`-tagged key (distinct shape, never collides)."
   [^TextGraphics g x y ^String line ^TextColor base-fg ^TextColor base-bg ^TextColor code-fg
    ^TextColor code-bg ^TextColor err-fg ^java.util.EnumSet inherited]
-  (let
-    [iempty?
-     (.isEmpty inherited)
+  (let [iempty?
+        (.isEmpty inherited)
 
-     k
-     (if iempty?
-       [:sty line base-fg base-bg code-fg code-bg err-fg]
-       [:sty line base-fg base-bg code-fg code-bg err-fg inherited])
+        k
+        (if iempty?
+          [:sty line base-fg base-bg code-fg code-bg err-fg]
+          [:sty line base-fg base-bg code-fg code-bg err-fg inherited])
 
-     ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
-     (.get line-cell-cache k)]
+        ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
+        (.get line-cell-cache k)]
 
     (if cached
       (.putString g (int x) (int y) cached)
@@ -810,18 +802,17 @@
   ([^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
    (paint-styled-line! g x y line base-fg base-bg code-fg code-bg base-fg))
   ([^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg err-fg]
-   (let
-     [len
-      (.length line)
+   (let [len
+         (.length line)
 
-      has-sentinel?
-      (loop [i 0]
-        (if (>= i len)
-          false
-          (let [c (int (.charAt line i))]
-            (if (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI)))
-              true
-              (recur (inc i))))))]
+         has-sentinel?
+         (loop [i 0]
+           (if (>= i len)
+             false
+             (let [c (int (.charAt line i))]
+               (if (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI)))
+                 true
+                 (recur (inc i))))))]
 
      (.setForegroundColor g base-fg)
      (.setBackgroundColor g base-bg)
@@ -994,67 +985,63 @@
    zero width; draw helpers skip those safely."
   ([tabs left width active-id] (tab-layout tabs left width active-id {}))
   ([tabs left width active-id {:keys [gap]}]
-   (let
-     [tabs
-      (vec tabs)
+   (let [tabs
+         (vec tabs)
 
-      n
-      (count tabs)
+         n
+         (count tabs)
 
-      left
-      (long left)
+         left
+         (long left)
 
-      width
-      (max 0 (long width))
+         width
+         (max 0 (long width))
 
-      gap
-      (max 0 (long (or gap tab-default-gap)))]
+         gap
+         (max 0 (long (or gap tab-default-gap)))]
 
      (if (or (zero? n) (zero? width))
        []
-       (let
-         [gap
-          (if (>= width (+ n (* gap (dec n)))) gap 0)
+       (let [gap
+             (if (>= width (+ n (* gap (dec n)))) gap 0)
 
-          gap-total
-          (* gap (dec n))
+             gap-total
+             (* gap (dec n))
 
-          content-w
-          (max 0 (- width gap-total))
+             content-w
+             (max 0 (- width gap-total))
 
-          base
-          (quot content-w n)
+             base
+             (quot content-w n)
 
-          extra
-          (rem content-w n)]
+             extra
+             (rem content-w n)]
 
-         (loop
-           [idx
-            0
+         (loop [idx
+                0
 
-            x
-            left
+                x
+                left
 
-            out
-            []]
+                out
+                []]
 
            (if (= idx n)
              out
-             (let
-               [w
-                (+ base (if (< idx extra) 1 0))
+             (let [w
+                   (+ base (if (< idx extra) 1 0))
 
-                tab
-                (nth tabs idx)
+                   tab
+                   (nth tabs idx)
 
-                text
-                (truncate-cols (tab-display-label tab) w)
+                   text
+                   (truncate-cols (tab-display-label tab) w)
 
-                active?
-                (if (some? active-id) (= (:id tab) active-id) (true? (:active? tab)))
+                   active?
+                   (if (some? active-id) (= (:id tab) active-id) (true? (:active? tab)))
 
-                next-x
-                (+ x w (if (= idx (dec n)) 0 gap))]
+                   next-x
+                   (+ x w (if (= idx (dec n)) 0 gap))]
 
                (recur (inc idx)
                       next-x
@@ -1090,9 +1077,8 @@
   (let [layout (tab-layout tabs left width active-id {:gap gap})]
     (set-colors! g (or fg inactive-fg active-fg) (or bg inactive-bg active-bg))
     (fill-rect! g left row width 1)
-    (doseq
-      [{:keys [left width active? text]} layout
-       :when (pos? (long width))]
+    (doseq [{:keys [left width active? text]} layout
+            :when (pos? (long width))]
 
       (clear-styles! g)
       (if active?

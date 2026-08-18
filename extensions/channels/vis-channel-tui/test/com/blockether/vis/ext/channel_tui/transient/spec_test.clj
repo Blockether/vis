@@ -162,26 +162,25 @@
 
 (defdescribe shipped-transients-are-legal-test
              (it "every transient this channel ships satisfies the contract it declares"
-                 (let
-                   [drafts
-                    [{:id "d1" :name "d1" :title "Fix the thing"}]
+                 (let [drafts
+                       [{:id "d1" :name "d1" :title "Fix the thing"}]
 
-                    shipped
-                    {"drafts/spec" (drafts/spec drafts)
-                     "drafts/switch-spec" (drafts/switch-spec drafts)
-                     "drafts/start-in-spec" drafts/start-in-spec
-                     "provider/provider-transient-spec"
-                     (provider/provider-transient-spec
-                       [{:key "a" :type :action :id :add :label "Add a provider"}])
-                     "provider/api-key-transient-spec" (provider/api-key-transient-spec)
-                     "provider/model-transient-spec"
-                     (provider/model-transient-spec [{:id "gpt" :label "gpt"}] 0 #{})
-                     "provider/preset-transient-spec"
-                     (provider/preset-transient-spec [{:id "p" :label "Preset"}] 0)
-                     "provider/local-setup-transient-spec"
-                     (provider/local-setup-transient-spec "Ollama" "http://127.0.0.1:11434")
-                     "mcp-model/server-transient-spec" (mcp-model/server-transient-spec
-                                                         {:id "srv" :name "srv"})}]
+                       shipped
+                       {"drafts/spec" (drafts/spec drafts)
+                        "drafts/switch-spec" (drafts/switch-spec drafts)
+                        "drafts/start-in-spec" drafts/start-in-spec
+                        "provider/provider-transient-spec"
+                        (provider/provider-transient-spec
+                          [{:key "a" :type :action :id :add :label "Add a provider"}])
+                        "provider/api-key-transient-spec" (provider/api-key-transient-spec)
+                        "provider/model-transient-spec"
+                        (provider/model-transient-spec [{:id "gpt" :label "gpt"}] 0 #{})
+                        "provider/preset-transient-spec"
+                        (provider/preset-transient-spec [{:id "p" :label "Preset"}] 0)
+                        "provider/local-setup-transient-spec"
+                        (provider/local-setup-transient-spec "Ollama" "http://127.0.0.1:11434")
+                        "mcp-model/server-transient-spec" (mcp-model/server-transient-spec
+                                                            {:id "srv" :name "srv"})}]
 
                    (expect (= {}
                               (into {}

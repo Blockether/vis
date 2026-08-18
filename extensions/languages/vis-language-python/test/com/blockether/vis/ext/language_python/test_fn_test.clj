@@ -98,12 +98,11 @@
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests/test_math.py") "def test_adds():\n    assert True\n")
-             (let
-               [e (try (core/py-test-fn {:workspace/root (.getPath root) :session-id "sid"}
-                                        {"paths" ["tests/test_math.py::test_adds"]
-                                         "environment" "graalpy"})
-                       nil
-                       (catch clojure.lang.ExceptionInfo e e))]
+             (let [e (try (core/py-test-fn {:workspace/root (.getPath root) :session-id "sid"}
+                                           {"paths" ["tests/test_math.py::test_adds"]
+                                            "environment" "graalpy"})
+                          nil
+                          (catch clojure.lang.ExceptionInfo e e))]
                (expect (= :py/bad-args (:type (ex-data e))))
                (expect (re-find #"environment" (ex-message e))))
              (finally (cleanup root))))))
@@ -118,9 +117,8 @@
              (spit (io/file root "tests" "test_sample.py")
                    (str "def test_ok():\n" "    assert 1 + 1 == 2\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
-             (let
-               [r (core/py-test-fn {:workspace/root (.getPath root)} {"environment" "graalpy"})
-                res (:result r)]
+             (let [r (core/py-test-fn {:workspace/root (.getPath root)} {"environment" "graalpy"})
+                   res (:result r)]
 
                (expect (:success? r))
                (expect (= "graalpy" (get res "runner")))
@@ -145,21 +143,19 @@
       ;; No project pytest is assumed in CI; assert routing from the public option
       ;; to the project-process result shape rather than whether that suite passes.
       (when (has-python?)
-        (let
-          [root
-           (tmp-dir)
+        (let [root
+              (tmp-dir)
 
-           session-id
-           (str "python-test-fn-" (random-uuid))]
+              session-id
+              (str "python-test-fn-" (random-uuid))]
 
           (try (process-jail/register-session-jail!
                  session-id
                  (constantly
                    {:roots-fn (constantly [(.getPath root)]) :net-enabled? true :disabled? true}))
-               (let
-                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)
-                                                 :session-id session-id}
-                                                {"environment" "project"}))]
+               (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)
+                                                    :session-id session-id}
+                                                   {"environment" "project"}))]
                  (expect (= "project" (get res "runner")))
                  ;; ONE spelling of the argv: a `command` STRING, never a `cmd` vec
                  (expect (string? (get res "command")))
@@ -179,9 +175,8 @@
                    (str "def test_ok():\n" "    assert 1 + 1 == 2\n"))
              (spit (io/file root "tests" "test_two.py")
                    (str "def test_other():\n" "    assert 1 == 2\n"))
-             (let
-               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                              {"paths" ["tests/test_one.py"]}))]
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                 {"paths" ["tests/test_one.py"]}))]
                (expect (= 1 (get res "files")))
                (expect (= 1 (get res "pass")))
                (expect (= 0 (get res "fail")))
@@ -192,9 +187,8 @@
         (try (.mkdirs (io/file root "proj" "tests"))
              (spit (io/file root "proj" "tests" "test_deep.py")
                    (str "def test_ok():\n" "    assert True\n"))
-             (let
-               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                              {"cwd" "proj" "paths" ["tests"]}))]
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                 {"cwd" "proj" "paths" ["tests"]}))]
                (expect (= 1 (get res "files")))
                (expect (= 1 (get res "pass")))
                (expect (true? (get res "is_pass"))))
@@ -211,9 +205,8 @@
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests" "helpers.py") "X = 1\n")
-             (let
-               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                              {"paths" ["tests"]}))]
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                 {"paths" ["tests"]}))]
                (expect (= 0 (get res "files")))
                (expect (false? (get res "is_pass")))
                (expect (string? (get res "error"))))
@@ -301,13 +294,12 @@
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests" "test_sample.py") "def test_ok():\n    assert True\n")
-             (with-redefs
-               [pyproj/project-layout (constantly {:import-roots []
-                                                   :testpaths []
-                                                   :warning "project layout not read: boom"})]
-               (let
-                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                {"environment" "graalpy"}))]
+             (with-redefs [pyproj/project-layout (constantly {:import-roots []
+                                                              :testpaths []
+                                                              :warning
+                                                              "project layout not read: boom"})]
+               (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                   {"environment" "graalpy"}))]
                  (expect (= "project layout not read: boom" (get res "warning")))
                  (expect (= 1 (get res "pass")))))
              (finally (cleanup root)))))
@@ -315,9 +307,8 @@
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests" "test_sample.py") "def test_ok():\n    assert True\n")
-             (let
-               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                              {"environment" "graalpy"}))]
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                 {"environment" "graalpy"}))]
                (expect (nil? (get res "warning"))))
              (finally (cleanup root))))))
 
@@ -399,10 +390,9 @@
             "<testcase classname=\"tests.test_x.TestG\" name=\"test_err\" file=\"tests/test_x.py\" line=\"9\">"
             "<error message=\"failed on setup with &quot;ValueError: boom&quot;\">"
             "E       ValueError: boom</error></testcase>" "</testsuite></testsuites>"))
-        (let
-          [r (junit-report (.getPath root) (io/file root "report.xml"))
-           f (first (:failures r))
-           e (second (:failures r))]
+        (let [r (junit-report (.getPath root) (io/file root "report.xml"))
+              f (first (:failures r))
+              e (second (:failures r))]
 
           ;; ONE fault list: the `<failure>` and the `<error>` both ride it,
           ;; each saying which it is in "type".
@@ -435,10 +425,9 @@
              (spit (io/file root "tests" "test_sample.py")
                    (str "def test_ok():\n" "    assert True\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
-             (let
-               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                              {"environment" "graalpy"}))
-                f (first (get res "failures"))]
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                 {"environment" "graalpy"}))
+                   f (first (get res "failures"))]
 
                (expect (= 1 (count (get res "failures"))))
                (expect (= "fail" (get f "type")))
@@ -449,12 +438,11 @@
              (finally (cleanup root)))))
   (it "reports the project backend's failures from pytest's own junit report"
       (when (has-python?)
-        (let
-          [root
-           (tmp-dir)
+        (let [root
+              (tmp-dir)
 
-           session-id
-           (str "python-test-fn-" (random-uuid))]
+              session-id
+              (str "python-test-fn-" (random-uuid))]
 
           (try (process-jail/register-session-jail!
                  session-id
@@ -464,10 +452,9 @@
                (spit (io/file root "tests" "test_sample.py")
                      (str "def test_ok():\n" "    assert True\n\n"
                           "def test_bad():\n" "    assert 1 == 2\n"))
-               (let
-                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)
-                                                 :session-id session-id}
-                                                {"environment" "project"}))]
+               (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)
+                                                    :session-id session-id}
+                                                   {"environment" "project"}))]
                  (expect (= "project" (get res "runner")))
                  ;; pytest itself may be absent on the machine running this suite;
                  ;; assert the faults only for a run that actually reported one.

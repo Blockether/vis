@@ -96,10 +96,9 @@
 (def ^:private idle-reap-ms
   ;; A `delay`, never an eager read: `native-image` initializes this namespace at
   ;; BUILD time, so a top-level `getenv` would ship the BUILDER's answer.
-  (delay (let
-           [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
-                        str/trim
-                        not-empty)]
+  (delay (let [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
+                           str/trim
+                           not-empty)]
            (or (when env (try (Long/parseLong env) (catch Exception _ nil))) (* 20 60 1000)))))
 
 (def ^:private reaper-tick-ms 60000)
@@ -109,15 +108,14 @@
    actively-worked REPL. Stamps whichever registry holds it — a managed process,
    an attachment, or both. No-op when the session has neither for `dir`."
   [session-id dir]
-  (let
-    [k
-     [session-id dir]
+  (let [k
+        [session-id dir]
 
-     stamp
-     (fn [m]
-       (cond-> m
-         (contains? m k)
-         (assoc-in [k :last-touch] (System/currentTimeMillis))))]
+        stamp
+        (fn [m]
+          (cond-> m
+            (contains? m k)
+            (assoc-in [k :last-touch] (System/currentTimeMillis))))]
 
     (swap! processes stamp)
     (swap! attachments stamp)))
@@ -201,13 +199,12 @@
   "Keyword-keyed registry view of an attachment — the shape `session-repls`,
    `live-repl-for-dir` and `resolve-target!` speak."
   [att]
-  (cond->
-    {:id (:id att)
-     :dir (:dir att)
-     :port (:port att)
-     :host (or (:host att) "localhost")
-     :external? true
-     :dialect (or (:dialect att) :clj)}
+  (cond-> {:id (:id att)
+           :dir (:dir att)
+           :port (:port att)
+           :host (or (:host att) "localhost")
+           :external? true
+           :dialect (or (:dialect att) :clj)}
     (:build att)
     (assoc :build
       (:build att) :target
@@ -217,14 +214,13 @@
   "Model-facing STRING-keyed view of an attachment: what it is, where it is, and
    — for shadow-cljs — which build an eval lands in and what that build targets."
   [att]
-  (cond->
-    {"id" (:id att)
-     "cwd" (:dir att)
-     "status" "up"
-     "external" true
-     "host" (or (:host att) "localhost")
-     "port" (:port att)
-     "dialect" (name (or (:dialect att) :clj))}
+  (cond-> {"id" (:id att)
+           "cwd" (:dir att)
+           "status" "up"
+           "external" true
+           "host" (or (:host att) "localhost")
+           "port" (:port att)
+           "dialect" (name (or (:dialect att) :clj))}
     (:build att)
     (assoc "build" (:build att))
 
@@ -302,9 +298,8 @@
    honouring `aliases` (deps.edn aliases / lein profiles). Returns
    `{:tool kw :cmd [strings]}` or nil when no known Clojure build file is present."
   [dir aliases port]
-  (let
-    [present? (fn [n]
-                (.isFile (io/file dir n)))]
+  (let [present? (fn [n]
+                   (.isFile (io/file dir n)))]
     (cond (present? "deps.edn")
           ;; Inject nREPL + the `nrepl.cmdline` main via a synthetic alias we append
           ;; LAST. tools.deps resolves `:main-opts` last-alias-wins (while
@@ -349,24 +344,23 @@
    path. The `~/.vis/logs` sweep (`foundation.housekeeping`) is what bounds the
    resulting one-file-per-start growth. The logs dir is created on demand."
   ^java.io.File [dir]
-  (let
-    [home
-     (System/getProperty "user.home")
+  (let [home
+        (System/getProperty "user.home")
 
-     ;; Relativize against ~ so the log name reflects the project's path
-     ;; RELATIVE to home (e.g. `vis`), not the whole absolute path
-     ;; (`Users_fierycod_vis`). Paths outside home fall back to as-is.
-     rel
-     (let [d (str dir)]
-       (if (and (seq home) (str/starts-with? d home)) (subs d (count home)) d))
+        ;; Relativize against ~ so the log name reflects the project's path
+        ;; RELATIVE to home (e.g. `vis`), not the whole absolute path
+        ;; (`Users_fierycod_vis`). Paths outside home fall back to as-is.
+        rel
+        (let [d (str dir)]
+          (if (and (seq home) (str/starts-with? d home)) (subs d (count home)) d))
 
-     safe
-     (-> rel
-         (str/replace #"[^A-Za-z0-9]+" "_")
-         (str/replace #"(^_+|_+$)" ""))
+        safe
+        (-> rel
+            (str/replace #"[^A-Za-z0-9]+" "_")
+            (str/replace #"(^_+|_+$)" ""))
 
-     logs-dir
-     (io/file home ".vis" "logs")]
+        logs-dir
+        (io/file home ".vis" "logs")]
 
     (.mkdirs logs-dir)
     (io/file logs-dir (str "vis-nrepl-" safe "-" (java.util.UUID/randomUUID) ".log"))))
@@ -385,30 +379,27 @@
    empty but still log-capable resource."
   ([log-path] (tail-log log-path default-log-line-limit))
   ([log-path n]
-   (let
-     [f
-      (when (seq (str log-path)) (io/file (str log-path)))
+   (let [f
+         (when (seq (str log-path)) (io/file (str log-path)))
 
-      n
-      (max 1 (long (or n default-log-line-limit)))]
+         n
+         (max 1 (long (or n default-log-line-limit)))]
 
      (if (and f (.isFile f))
        (try (with-open [raf (RandomAccessFile. f "r")]
-              (let
-                [len (.length raf)
-                 start (max 0 (- len (long tail-read-bytes)))
-                 size (int (- len start))]
+              (let [len (.length raf)
+                    start (max 0 (- len (long tail-read-bytes)))
+                    size (int (- len start))]
 
                 (if (zero? size)
                   []
                   (let [buf (byte-array size)]
                     (.seek raf start)
                     (.readFully raf buf)
-                    (let
-                      [lines (vec (str/split-lines (String. buf StandardCharsets/UTF_8)))
-                       ;; a mid-file start means the first line is partial — drop it
-                       lines (if (and (pos? start) (seq lines)) (subvec lines 1) lines)
-                       c (count lines)]
+                    (let [lines (vec (str/split-lines (String. buf StandardCharsets/UTF_8)))
+                          ;; a mid-file start means the first line is partial — drop it
+                          lines (if (and (pos? start) (seq lines)) (subvec lines 1) lines)
+                          c (count lines)]
 
                       (if (> c n) (subvec lines (- c n)) lines))))))
             (catch Throwable _ []))
@@ -419,12 +410,11 @@
    `health` keeps answering :failed and `last-failure` can explain WHY after
    the process is gone."
   [session-id dir ^Process proc log-path]
-  (let
-    [exit
-     (try (.exitValue proc) (catch Throwable _ nil))
+  (let [exit
+        (try (.exitValue proc) (catch Throwable _ nil))
 
-     tail
-     (tail-log log-path 80)]
+        tail
+        (tail-log log-path 80)]
 
     (swap! last-failures assoc
       [session-id dir]
@@ -495,20 +485,21 @@
    along under \"attached\" — and IS the subject when there is no managed REPL,
    because then it is the only REPL this dir has."
   [session-id dir]
-  (let
-    [{:keys [id port tool aliases pid] :as info}
-     (get @processes [session-id dir])
+  (let [{:keys [id port tool aliases pid] :as info}
+        (get @processes [session-id dir])
 
-     running?
-     (proc-alive? info)
+        running?
+        (proc-alive? info)
 
-     att
-     (get @attachments [session-id dir])]
+        att
+        (get @attachments [session-id dir])]
 
     (if (and att (not running?))
       (assoc (attachment-view att) "result" "status")
-      (cond->
-        {"result" "status" "id" (or id (id-of dir)) "cwd" dir "status" (if running? "up" "down")}
+      (cond-> {"result" "status"
+               "id" (or id (id-of dir))
+               "cwd" dir
+               "status" (if running? "up" "down")}
         running?
         (assoc "running" true)
 
@@ -528,13 +519,13 @@
         ;; recomputed: `log-file` mints a fresh name per call, so a derived path
         ;; would name a file nothing has ever written.
         (and running? (:log info))
-         (assoc "log" (:log info))
+        (assoc "log" (:log info))
 
-         ;; WHAT THIS REPL RUNS WITH, by name and digest only: the delta its
-         ;; start named, so a caller can see why a reuse was refused without a
-         ;; value ever reaching a result, a log or the transcript.
-         (and running? (seq (:env-fingerprint info)))
-         (assoc "env" (:env-fingerprint info))
+        ;; WHAT THIS REPL RUNS WITH, by name and digest only: the delta its
+        ;; start named, so a caller can see why a reuse was refused without a
+        ;; value ever reaching a result, a log or the transcript.
+        (and running? (seq (:env-fingerprint info)))
+        (assoc "env" (:env-fingerprint info))
 
         att
         (assoc "attached" (attachment-view att))))))
@@ -573,7 +564,7 @@
                                :starting)
           (last-failure session-id dir) :failed
           (get @attachments [session-id dir]) (attachment-health session-id dir)
-           :else :down)))
+          :else :down)))
 
 (defn start!
   "Self-start a project nREPL subprocess OWNED by `session-id` in `dir`.
@@ -595,19 +586,18 @@
    Model-facing: STRING keys + STRING enum values (crosses as a tool `:result`)."
   ([session-id dir] (start! session-id dir nil))
   ([session-id dir {:keys [aliases env]}]
-   (let
-     [k
-      [session-id dir]
+   (let [k
+         [session-id dir]
 
-      aliases
-      (launch-aliases aliases)
+         aliases
+         (launch-aliases aliases)
 
-      ;; This start's own env delta, resolved ONCE into its shape: what the
-      ;; process is stamped with, what `status` shows, and what the next start
-      ;; is compared against. A refused name (a pre-exec hijack, a source that
-      ;; produced nothing) denies the start here, before any JVM exists.
-      env-fingerprint
-      (vis/env-fingerprint (vis/call-env-values env))]
+         ;; This start's own env delta, resolved ONCE into its shape: what the
+         ;; process is stamped with, what `status` shows, and what the next start
+         ;; is compared against. A refused name (a pre-exec hijack, a source that
+         ;; produced nothing) denies the start here, before any JVM exists.
+         env-fingerprint
+         (vis/env-fingerprint (vis/call-env-values env))]
 
      ;; SERIALIZE the check-then-spawn per [session-id dir]: without this a
      ;; racing second start! (e.g. a `repl_start` + an eval-autostart)
@@ -626,48 +616,46 @@
                                                  (:env-fingerprint (get @processes k))
                                                  env-fingerprint)]
            (when refusal
-             (throw (ex-info (:message refusal)
-                             {:type :clj/repl-env-mismatch
-                              :id (id-of dir)
-                              :env (:differing refusal)})))
+             (throw (ex-info
+                      (:message refusal)
+                      {:type :clj/repl-env-mismatch :id (id-of dir) :env (:differing refusal)})))
            (assoc (status session-id dir) "result" "already-running"))
          (let [port (free-port!)]
            (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
              (try
-               (let
-                 [log (log-file dir)
-                  ;; Resolve argv + proxy env atomically through the shared,
-                  ;; fail-closed language-process contract. nREPL alone may bind a
-                  ;; loopback listener; direct outbound traffic remains jailed.
-                  launch (vis/session-process-launch session-id cmd {:loopback-port port
-                                                                     :env env})
-                  jailed-cmd (:argv launch)
-                  pb (doto (ProcessBuilder. ^java.util.List jailed-cmd)
-                       (.directory (io/file dir))
-                       (.redirectErrorStream true)
-                       (.redirectOutput log))
-                  _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-                          (when (:replace-env? launch) (.clear e))
-                          (doseq [[k v] (:env launch)]
-                            (.put e ^String k ^String v))
-                          ;; An inherited environment still carries what this
-                          ;; start asked to UNSET; a replaced one never built it.
-                          (doseq [k (:env-remove launch)]
-                            (.remove e ^String k)))
-                  proc (.start pb)
-                  pid (try (.pid proc) (catch Throwable _ nil))
-                  info {:id (id-of dir)
-                        :process proc
-                        :port port
-                        :cmd cmd
-                        :tool tool
-                        :aliases (vec aliases)
-                        :pid pid
-                        :dir dir
-                        :log (.getAbsolutePath log)
-                        :started-at (System/currentTimeMillis)
-                         :last-touch (System/currentTimeMillis)
-                         :env-fingerprint env-fingerprint}]
+               (let [log (log-file dir)
+                     ;; Resolve argv + proxy env atomically through the shared,
+                     ;; fail-closed language-process contract. nREPL alone may bind a
+                     ;; loopback listener; direct outbound traffic remains jailed.
+                     launch
+                     (vis/session-process-launch session-id cmd {:loopback-port port :env env})
+                     jailed-cmd (:argv launch)
+                     pb (doto (ProcessBuilder. ^java.util.List jailed-cmd)
+                          (.directory (io/file dir))
+                          (.redirectErrorStream true)
+                          (.redirectOutput log))
+                     _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+                            (when (:replace-env? launch) (.clear e))
+                            (doseq [[k v] (:env launch)]
+                              (.put e ^String k ^String v))
+                            ;; An inherited environment still carries what this
+                            ;; start asked to UNSET; a replaced one never built it.
+                            (doseq [k (:env-remove launch)]
+                              (.remove e ^String k)))
+                     proc (.start pb)
+                     pid (try (.pid proc) (catch Throwable _ nil))
+                     info {:id (id-of dir)
+                           :process proc
+                           :port port
+                           :cmd cmd
+                           :tool tool
+                           :aliases (vec aliases)
+                           :pid pid
+                           :dir dir
+                           :log (.getAbsolutePath log)
+                           :started-at (System/currentTimeMillis)
+                           :last-touch (System/currentTimeMillis)
+                           :env-fingerprint env-fingerprint}]
 
                  (swap! processes assoc k info)
                  (ensure-reaper!)
@@ -687,19 +675,18 @@
                      ;; the exit code before deciding whether this is "still starting"
                      ;; or a real startup failure.
                      (try (.waitFor proc 100 TimeUnit/MILLISECONDS) (catch Throwable _ nil)))
-                   (let
-                     [alive? (alive? proc)
-                      exit (when-not alive? (try (.exitValue proc) (catch Throwable _ nil)))
-                      log-path (.getAbsolutePath log)
-                      tail (tail-log log-path 80)
-                      base {"id" (id-of dir)
-                            "cwd" dir
-                            "port" port
-                            "tool" (name tool)
-                            "aliases" (mapv name aliases)
-                            "pid" pid
-                            "cmd" cmd
-                            "log" log-path}]
+                   (let [alive? (alive? proc)
+                         exit (when-not alive? (try (.exitValue proc) (catch Throwable _ nil)))
+                         log-path (.getAbsolutePath log)
+                         tail (tail-log log-path 80)
+                         base {"id" (id-of dir)
+                               "cwd" dir
+                               "port" port
+                               "tool" (name tool)
+                               "aliases" (mapv name aliases)
+                               "pid" pid
+                               "cmd" cmd
+                               "log" log-path}]
 
                      (cond
                        (= :up st) (do (clear-failure! session-id dir)
@@ -709,14 +696,14 @@
                        (not alive?)
                        (do (swap! processes dissoc k)
                            (record-failure! session-id dir proc log-path)
-                           (cond->
-                             (assoc base
-                               "result" "failed"
-                               "status" "failed"
-                               "message" (str "nREPL launcher exited before accepting connections"
-                                              (when exit (str " (exit " exit ")"))
-                                              ". See log for details.")
-                               "exit" exit)
+                           (cond-> (assoc base
+                                     "result" "failed"
+                                     "status" "failed"
+                                     "message"
+                                     (str "nREPL launcher exited before accepting connections"
+                                          (when exit (str " (exit " exit ")"))
+                                          ". See log for details.")
+                                     "exit" exit)
                              (seq tail)
                              (assoc "log_tail" tail)))
                        :else
@@ -750,12 +737,11 @@
    whose socket would otherwise leak — while the user's server keeps running
    exactly as it was. No-op-safe. Model-facing STRING-keyed result."
   [session-id dir]
-  (let
-    [k
-     [session-id dir]
+  (let [k
+        [session-id dir]
 
-     {:keys [host port build id]}
-     (get @attachments k)]
+        {:keys [host port build id]}
+        (get @attachments k)]
 
     (if-not port
       {"result" "not-attached"
@@ -787,12 +773,11 @@
    the only REPL a dir has must never answer `not-managed` about the one REPL it
    can see. No-op-safe. Model-facing STRING-keyed result."
   [session-id dir]
-  (let
-    [k
-     [session-id dir]
+  (let [k
+        [session-id dir]
 
-     {:keys [^Process process port]}
-     (get @processes k)]
+        {:keys [^Process process port]}
+        (get @processes k)]
 
     (clear-failure! session-id dir)
     (cond process (do
@@ -837,29 +822,28 @@
    (with the ids that server loaded), \"no-watch\" (a build's REPL needs its
    RUNNING worker), \"select-failed\". Model-facing: STRING keys + STRING enums."
   [session-id dir {:keys [host port build]}]
-  (let
-    [host
-     (or (some-> host
-                 str/trim
-                 not-empty)
-         "localhost")
+  (let [host
+        (or (some-> host
+                    str/trim
+                    not-empty)
+            "localhost")
 
-     build
-     (some-> build
-             str
-             str/trim
-             not-empty)
+        build
+        (some-> build
+                str
+                str/trim
+                not-empty)
 
-     port
-     (or (some-> port
-                 long)
-         (when build (shadow-repl/nrepl-port dir)))
+        port
+        (or (some-> port
+                    long)
+            (when build (shadow-repl/nrepl-port dir)))
 
-     k
-     [session-id dir]
+        k
+        [session-id dir]
 
-     existing
-     (get @attachments k)]
+        existing
+        (get @attachments k)]
 
     (cond
       (nil? port) {"result" "no-port"
@@ -881,19 +865,18 @@
        "message"
        (str "No nREPL answering at " host ":" port " — is it running? Nothing was registered.")}
       :else
-      (let
-        [;; Attaching DEFINES this session's starting state, so the cached
-         ;; connection goes first. A connection already SELECTED on a build
-         ;; evaluates everything — including the shadow probe, whose `resolve`
-         ;; does not exist in ClojureScript — inside that build, so a re-connect
-         ;; would misread its own server as \"not shadow-cljs\". A fresh nREPL
-         ;; session is always CLJ, which is exactly what probing and selecting
-         ;; need.
-         _
-         (nrepl-client/evict! host port)
+      (let [;; Attaching DEFINES this session's starting state, so the cached
+            ;; connection goes first. A connection already SELECTED on a build
+            ;; evaluates everything — including the shadow probe, whose `resolve`
+            ;; does not exist in ClojureScript — inside that build, so a re-connect
+            ;; would misread its own server as \"not shadow-cljs\". A fresh nREPL
+            ;; session is always CLJ, which is exactly what probing and selecting
+            ;; need.
+            _
+            (nrepl-client/evict! host port)
 
-         shadow
-         (when build (shadow-repl/probe! {:host host :port port :build build}))]
+            shadow
+            (when build (shadow-repl/probe! {:host host :port port :build build}))]
 
         (cond (and build (not (:shadow? shadow)))
               {"result" "not-shadow"
@@ -951,26 +934,25 @@
                    "build" build
                    "message" (str "shadow-cljs refused to select build \"" build
                                   "\": " (:message sel))}
-                  (let
-                    [att {:id (attachment-id dir build)
-                          :dir dir
-                          :host host
-                          :port port
-                          :build build
-                          :target (:target shadow)
-                          :dialect (if build :cljs :clj)
-                          :started-at (System/currentTimeMillis)
-                          :last-touch (System/currentTimeMillis)}
-                     ;; ONE cheap eval, so the ANSWER to connect already says whether
-                     ;; this build can evaluate at all — a `watch` with no runtime
-                     ;; joined is a perfectly healthy attachment that evaluates
-                     ;; nothing, and finding that out on the next repl_eval reads as
-                     ;; a broken REPL instead of a missing `node`/browser.
-                     ping (when build (shadow-repl/eval! att {:code "1" :timeout-ms 5000}))]
+                  (let [att {:id (attachment-id dir build)
+                             :dir dir
+                             :host host
+                             :port port
+                             :build build
+                             :target (:target shadow)
+                             :dialect (if build :cljs :clj)
+                             :started-at (System/currentTimeMillis)
+                             :last-touch (System/currentTimeMillis)}
+                        ;; ONE cheap eval, so the ANSWER to connect already says whether
+                        ;; this build can evaluate at all — a `watch` with no runtime
+                        ;; joined is a perfectly healthy attachment that evaluates
+                        ;; nothing, and finding that out on the next repl_eval reads as
+                        ;; a broken REPL instead of a missing `node`/browser.
+                        ping (when build (shadow-repl/eval! att {:code "1" :timeout-ms 5000}))]
 
                     (swap! attachments assoc k att)
-                    (cond->
-                      (assoc (attachment-view att) "result" (if existing "reconnected" "connected"))
+                    (cond-> (assoc (attachment-view att)
+                              "result" (if existing "reconnected" "connected"))
                       build
                       (assoc "runtime" (if (:message ping) "none" "connected"))
 
@@ -985,22 +967,20 @@
    self-prunes once `stop!` drops the process (its `:alive-fn` flips to false)."
   []
   (when (pos? (long @idle-reap-ms))
-    (let
-      [now
-       (System/currentTimeMillis)
+    (let [now
+          (System/currentTimeMillis)
 
-       stale
-       (for
-         [[[sid dir] info]
-          @processes
+          stale
+          (for [[[sid dir] info]
+                @processes
 
-          ;; Only REPLs vis SPAWNED are in here; attachments are the user's own
-          ;; processes and are never reaped, only detached on request.
-          :let [t
-                (long (or (:last-touch info) (:started-at info) 0))]
-          :when (> (- now t) (long @idle-reap-ms))]
+                ;; Only REPLs vis SPAWNED are in here; attachments are the user's own
+                ;; processes and are never reaped, only detached on request.
+                :let [t
+                      (long (or (:last-touch info) (:started-at info) 0))]
+                :when (> (- now t) (long @idle-reap-ms))]
 
-         [sid dir])]
+            [sid dir])]
 
       (doseq [[sid dir] stale]
         (try (stop! sid dir) (catch Throwable _ nil))))))
@@ -1011,17 +991,16 @@
    daemon so it never keeps the JVM alive on shutdown."
   []
   (when (and (pos? (long @idle-reap-ms)) (compare-and-set! reaper nil ::starting))
-    (let
-      [t (Thread. ^Runnable
-                  (fn []
-                    (loop []
+    (let [t (Thread. ^Runnable
+                     (fn []
+                       (loop []
 
-                      (try (Thread/sleep (long reaper-tick-ms))
-                           (reap-idle!)
-                           (catch InterruptedException _ nil)
-                           (catch Throwable _ nil))
-                      (recur)))
-                  "vis-clj-repl-idle-reaper")]
+                         (try (Thread/sleep (long reaper-tick-ms))
+                              (reap-idle!)
+                              (catch InterruptedException _ nil)
+                              (catch Throwable _ nil))
+                         (recur)))
+                     "vis-clj-repl-idle-reaper")]
       (.setDaemon t true)
       (.start t)
       (reset! reaper t))))
@@ -1029,12 +1008,10 @@
 (defn- prune-dead!
   "Drop this session's dead entries from the process atom, best-effort."
   [session-id]
-  (let
-    [dead (for
-            [[[sid _dir :as k] info] @processes
-             :when (and (= sid session-id) (not (proc-alive? info)))]
+  (let [dead (for [[[sid _dir :as k] info] @processes
+                   :when (and (= sid session-id) (not (proc-alive? info)))]
 
-            k)]
+               k)]
     (when (seq dead) (apply swap! processes dissoc dead))))
 
 (defn session-repls
@@ -1052,13 +1029,12 @@
   (prune-dead! session-id)
   (->> (concat (keep (fn [[[sid _dir] info]]
                        (when (and (= sid session-id) (proc-alive? info))
-                         (cond->
-                           {:id (:id info)
-                            :dir (:dir info)
-                            :port (:port info)
-                            :tool (:tool info)
-                            :aliases (:aliases info)
-                            :pid (:pid info)}
+                         (cond-> {:id (:id info)
+                                  :dir (:dir info)
+                                  :port (:port info)
+                                  :tool (:tool info)
+                                  :aliases (:aliases info)
+                                  :pid (:pid info)}
                            (:log info)
                            (assoc :log (:log info)))))
                      @processes)
@@ -1087,15 +1063,14 @@
    shadow-cljs build cannot load a `.clj` test namespace, and handing it to a JVM
    test run would fail as if the tests were broken."
   [session-id dir]
-  (let
-    [info
-     (get @processes [session-id dir])
+  (let [info
+        (get @processes [session-id dir])
 
-     managed-live?
-     (and info
-          (proc-alive? info)
-          (:port info)
-          (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))]
+        managed-live?
+        (and info
+             (proc-alive? info)
+             (:port info)
+             (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))]
 
     (if managed-live?
       (do (touch! session-id dir) info)
@@ -1126,30 +1101,28 @@
                        result reports which REPL ran it, so the model can pass an
                        explicit `id` to override."
   [session-id id default-dir]
-  (let
-    [id
-     (some-> id
-             str
-             str/trim
-             not-empty)
+  (let [id
+        (some-> id
+                str
+                str/trim
+                not-empty)
 
-     ;; "default" is a sentinel, not a real resource id — treat it as "no
-     ;; explicit id" so it falls through to the implicit-default resolution
-     ;; (the single owned REPL, else the default REPL among several).
-     id
-     (when-not (some-> id
-                       str/lower-case
-                       (= "default"))
-       id)]
+        ;; "default" is a sentinel, not a real resource id — treat it as "no
+        ;; explicit id" so it falls through to the implicit-default resolution
+        ;; (the single owned REPL, else the default REPL among several).
+        id
+        (when-not (some-> id
+                          str/lower-case
+                          (= "default"))
+          id)]
 
     (if id
       (if-let [r (repl-by-id session-id id)]
         (do (touch! session-id (:dir r)) r)
-        (throw (ex-info
-                 (str "no nREPL registered under id '"
-                      id
-                      "' in this session — check repl_status(\"clojure\")")
-                 {:type :clj/unknown-repl-id :id id})))
+        (throw (ex-info (str "no nREPL registered under id '"
+                             id
+                             "' in this session — check repl_status(\"clojure\")")
+                        {:type :clj/unknown-repl-id :id id})))
       (let [repls (session-repls session-id)]
         (if (zero? (count repls))
           (throw (ex-info (str "no running nREPL in this session — start one with "

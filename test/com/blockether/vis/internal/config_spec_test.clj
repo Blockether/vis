@@ -283,14 +283,13 @@
       (expect (= {} (config-spec/network-config (update full-config "jail" dissoc "enabled")))))
   (it
     "resolves jail.deny-exec into a separate deny-exec list (rooted passthrough, drops unresolvable)"
-    (let
-      [pol
-       (config-spec/process-jail-config (assoc-in full-config
-                                          ["jail" "deny_exec"]
-                                          ["/opt/nope/curl" "definitely-not-a-real-binary-xyz"]))
+    (let [pol
+          (config-spec/process-jail-config (assoc-in full-config
+                                             ["jail" "deny_exec"]
+                                             ["/opt/nope/curl" "definitely-not-a-real-binary-xyz"]))
 
-       denied
-       (set (:deny-exec pol))]
+          denied
+          (set (:deny-exec pol))]
 
       ;; absolute/home entries pass through verbatim (deny fails safe)
       (expect (contains? denied "/opt/nope/curl"))
@@ -303,15 +302,14 @@
     ;; jail.enabled off => nothing is confined, so every catalog root is
     ;; available and shows in the session, whatever `allow` says. A
     ;; stale/renamed id in `allow` is irrelevant and never deny-safes.
-    (let
-      [with-ghost
-       (assoc-in full-config ["jail" "filesystem" "allow"] ["svar" "ghost-id"])
+    (let [with-ghost
+          (assoc-in full-config ["jail" "filesystem" "allow"] ["svar" "ghost-id"])
 
-       disabled
-       (assoc-in with-ghost ["jail" "enabled"] false)
+          disabled
+          (assoc-in with-ghost ["jail" "enabled"] false)
 
-       enabled
-       (assoc-in with-ghost ["jail" "enabled"] true)]
+          enabled
+          (assoc-in with-ghost ["jail" "enabled"] true)]
 
       ;; disabled => full catalog RW roots (svar, gen, cache), allow ignored.
       (expect (= ["/opt/svar" "~/generated" "~/.m2" "~/.vis"]
@@ -326,21 +324,20 @@
       ;; ENGINE-LEVEL, not a feature toggle: `~/.vis` holds state.yml, the session
       ;; DB, the gateway event journals and the logs, so Vis must reach its own
       ;; state even with an empty catalog or a live deny-by-omission jail.
-      (let
-        [vis-home
-         (get config-spec/vis-home-entry "path")
+      (let [vis-home
+            (get config-spec/vis-home-entry "path")
 
-         bare
-         (config-spec/process-jail-config {})
+            bare
+            (config-spec/process-jail-config {})
 
-         jailed
-         (config-spec/process-jail-config (-> full-config
-                                              (assoc-in ["jail" "enabled"] true)
-                                              (assoc-in ["jail" "filesystem" "allow"] ["svar"])))
+            jailed
+            (config-spec/process-jail-config (-> full-config
+                                                 (assoc-in ["jail" "enabled"] true)
+                                                 (assoc-in ["jail" "filesystem" "allow"] ["svar"])))
 
-         explicit
-         (config-spec/process-jail-config
-           {"workspace" {"filesystem" [{"id" "vh" "path" "~/.vis/" "access" "read-only"}]}})]
+            explicit
+            (config-spec/process-jail-config
+              {"workspace" {"filesystem" [{"id" "vh" "path" "~/.vis/" "access" "read-only"}]}})]
 
         (expect (= [vis-home] (:allow-read-write bare)))
         ;; Out of the DEFAULT search sweep — explicit paths still reach it.
@@ -352,24 +349,22 @@
         (expect (= [] (:allow-read-write explicit)))
         (expect (= ["~/.vis/"] (:allow-read explicit)))))
   (it "redacts credentials from validation failures"
-      (let
-        [bad
-         (assoc-in full-config ["providers" 0 "unknown"] true)
+      (let [bad
+            (assoc-in full-config ["providers" 0 "unknown"] true)
 
-         data
-         (try (config-spec/assert-config! bad "vis.yml") nil (catch Exception e (ex-data e)))]
+            data
+            (try (config-spec/assert-config! bad "vis.yml") nil (catch Exception e (ex-data e)))]
 
         (expect (= :vis/invalid-config (:type data)))
         (expect (not (.contains (pr-str data) "secret")))
         (expect (.contains (pr-str data) "<redacted>"))))
   (it "validates parser output before any runtime adaptation"
       (require 'com.blockether.vis.internal.config :reload)
-      (let
-        [file
-         (io/file "target/invalid-vis-config.yml")
+      (let [file
+            (io/file "target/invalid-vis-config.yml")
 
-         read-yaml
-         (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))]
+            read-yaml
+            (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))]
 
         (try (.mkdirs (.getParentFile file))
              (spit file "jail:\n  filesystem:\n    allow_reed:\n      - ../escape\n")
@@ -383,17 +378,16 @@
   ;; The parser normalizes NOTHING now; the closed schema refuses both by name.
   (it "refuses a top-level sandbox: / filesystem: instead of folding it into jail:"
       (require 'com.blockether.vis.internal.config :reload)
-      (let
-        [file
-         (io/file "target/retired-key-vis-config.yml")
+      (let [file
+            (io/file "target/retired-key-vis-config.yml")
 
-         read-yaml
-         (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))
+            read-yaml
+            (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))
 
-         refused
-         (fn [yaml]
-           (spit file yaml)
-           (try (read-yaml (.getPath file)) nil (catch Exception e (ex-data e))))]
+            refused
+            (fn [yaml]
+              (spit file yaml)
+              (try (read-yaml (.getPath file)) nil (catch Exception e (ex-data e))))]
 
         (try (.mkdirs (.getParentFile file))
              (expect (= :vis/invalid-config (:type (refused "sandbox: false\n"))))
@@ -405,92 +399,95 @@
 (defdescribe
   config-completeness-test
   (it "registers specs for every fixed and dynamic configuration block"
-      (doseq
-        [spec-name [:config :model-map :model :models :provider :providers :rate-limit
-                    :router-network :budget :tokens :router :workspace-entry :workspace-entries
-                    :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
-                    :network-rule :network-rules :network :prompt-map :system-prompt :grep :db-spec
-                    :tui-settings :mcp-server :mcp-servers :mcp :workspace-when
-                    :jail-mach-services]]
+      (doseq [spec-name [:config :model-map :model :models :provider :providers :rate-limit
+                         :router-network :budget :tokens :router :workspace-entry :workspace-entries
+                         :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
+                         :network-rule :network-rules :network :prompt-map :system-prompt :grep
+                         :db-spec :tui-settings :mcp-server :mcp-servers :mcp :workspace-when
+                         :jail-mach-services]]
         (expect (s/get-spec (keyword "com.blockether.vis.internal.config-spec" (name spec-name))))))
   (it
     "keeps every declared key set, schema, and exhaustive fixture in sync"
-    (let
-      [provider
-       (first (get full-config "providers"))
+    (let [provider
+          (first (get full-config "providers"))
 
-       model
-       (first (get provider "models"))
+          model
+          (first (get provider "models"))
 
-       router
-       (get full-config "router")
+          router
+          (get full-config "router")
 
-       jail
-       (get full-config "jail")
+          jail
+          (get full-config "jail")
 
-       filesystem
-       (get jail "filesystem")
+          filesystem
+          (get jail "filesystem")
 
-       network
-       (get jail "network")
+          network
+          (get jail "network")
 
-       rule
-       (first (get network "rules"))
+          rule
+          (first (get network "rules"))
 
-       rule-allow
-       (first (get rule "allow"))
+          rule-allow
+          (first (get rule "allow"))
 
-       mcp
-       (get full-config "mcp")
+          mcp
+          (get full-config "mcp")
 
-       servers
-       (vals (get mcp "servers"))
+          servers
+          (vals (get mcp "servers"))
 
-       workspace
-       (get full-config "workspace")
+          workspace
+          (get full-config "workspace")
 
-       ws-entry
-       (first (get workspace "filesystem"))
+          ws-entry
+          (first (get workspace "filesystem"))
 
-       cases
-       [[config-spec/config-keys config-spec/config-schema (set (keys full-config))]
-        [config-spec/model-keys config-spec/model-schema (set (keys model))]
-        [config-spec/provider-keys config-spec/provider-schema (set (keys provider))]
-        [config-spec/rate-limit-keys config-spec/rate-limit-schema
-         (set (keys (get router "rate_limit")))]
-        [config-spec/router-network-keys config-spec/router-network-schema
-         (set (keys (get router "network")))]
-        [config-spec/budget-keys config-spec/budget-schema (set (keys (get router "budget")))]
-        [config-spec/token-keys config-spec/token-schema (set (keys (get router "tokens")))]
-        [config-spec/router-keys config-spec/router-schema (set (keys router))]
-        [config-spec/workspace-entry-keys config-spec/workspace-entry-schema (set (keys ws-entry))]
-        [config-spec/workspace-when-keys config-spec/workspace-when-schema
-         (set (keys (get ws-entry "when")))]
-        [config-spec/workspace-keys config-spec/workspace-schema (set (keys workspace))]
-        [config-spec/jail-filesystem-keys config-spec/jail-filesystem-schema
-         (set (keys filesystem))] [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
-        [config-spec/jail-mach-services-keys config-spec/jail-mach-services-schema
-         (set (keys (get jail "mach_services")))]
-        [config-spec/network-rule-allow-keys config-spec/network-rule-allow-schema
-         (set (keys rule-allow))]
-        [config-spec/network-rule-keys config-spec/network-rule-schema (set (keys rule))]
-        [config-spec/network-keys config-spec/network-schema (set (keys network))]
-        [config-spec/prompt-keys config-spec/prompt-schema
-         (set (keys (get full-config "system_prompt")))]
-        [config-spec/grep-keys config-spec/grep-schema (set (keys (get full-config "grep")))]
-        [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db_spec")))]
-        [config-spec/tui-keys config-spec/tui-schema (set (keys (get full-config "tui_settings")))]
-        [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
-        [config-spec/python-keys config-spec/python-schema (set (keys (get full-config "python")))]
-        [config-spec/titling-keys config-spec/titling-schema
-         (set (keys (get full-config "titling")))]
-        [config-spec/mcp-server-keys config-spec/mcp-server-schema (into #{} (mapcat keys) servers)]
-        [config-spec/vision-memory-keys config-spec/vision-memory-schema
-         (set (keys (get full-config "vision_memory")))]
-        [config-spec/vision-fact-keys config-spec/vision-fact-schema
-         (into #{} (mapcat keys) (vals (get-in full-config ["vision_memory" "blind_models"])))]
-        [config-spec/vision-eye-keys config-spec/vision-eye-schema
-         (set (keys (get-in full-config ["vision_memory" "working_eye"])))]]]
+          cases
+          [[config-spec/config-keys config-spec/config-schema (set (keys full-config))]
+           [config-spec/model-keys config-spec/model-schema (set (keys model))]
+           [config-spec/provider-keys config-spec/provider-schema (set (keys provider))]
+           [config-spec/rate-limit-keys config-spec/rate-limit-schema
+            (set (keys (get router "rate_limit")))]
+           [config-spec/router-network-keys config-spec/router-network-schema
+            (set (keys (get router "network")))]
+           [config-spec/budget-keys config-spec/budget-schema (set (keys (get router "budget")))]
+           [config-spec/token-keys config-spec/token-schema (set (keys (get router "tokens")))]
+           [config-spec/router-keys config-spec/router-schema (set (keys router))]
+           [config-spec/workspace-entry-keys config-spec/workspace-entry-schema
+            (set (keys ws-entry))]
+           [config-spec/workspace-when-keys config-spec/workspace-when-schema
+            (set (keys (get ws-entry "when")))]
+           [config-spec/workspace-keys config-spec/workspace-schema (set (keys workspace))]
+           [config-spec/jail-filesystem-keys config-spec/jail-filesystem-schema
+            (set (keys filesystem))]
+           [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
+           [config-spec/jail-mach-services-keys config-spec/jail-mach-services-schema
+            (set (keys (get jail "mach_services")))]
+           [config-spec/network-rule-allow-keys config-spec/network-rule-allow-schema
+            (set (keys rule-allow))]
+           [config-spec/network-rule-keys config-spec/network-rule-schema (set (keys rule))]
+           [config-spec/network-keys config-spec/network-schema (set (keys network))]
+           [config-spec/prompt-keys config-spec/prompt-schema
+            (set (keys (get full-config "system_prompt")))]
+           [config-spec/grep-keys config-spec/grep-schema (set (keys (get full-config "grep")))]
+           [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db_spec")))]
+           [config-spec/tui-keys config-spec/tui-schema
+            (set (keys (get full-config "tui_settings")))]
+           [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
+           [config-spec/python-keys config-spec/python-schema
+            (set (keys (get full-config "python")))]
+           [config-spec/titling-keys config-spec/titling-schema
+            (set (keys (get full-config "titling")))]
+           [config-spec/mcp-server-keys config-spec/mcp-server-schema
+            (into #{} (mapcat keys) servers)]
+           [config-spec/vision-memory-keys config-spec/vision-memory-schema
+            (set (keys (get full-config "vision_memory")))]
+           [config-spec/vision-fact-keys config-spec/vision-fact-schema
+            (into #{} (mapcat keys) (vals (get-in full-config ["vision_memory" "blind_models"])))]
+           [config-spec/vision-eye-keys config-spec/vision-eye-schema
+            (set (keys (get-in full-config ["vision_memory" "working_eye"])))]]]
 
       (doseq [[declared schema fixture] cases]
         (expect (= declared (set (keys schema))))
@@ -547,10 +544,10 @@
                  (config-spec/explain-problems {"mcp" {"servers" {"docs" {"transport" "stdioo"
                                                                           "command" "x"}}}}))))
   (it "assert-config! names the offending fields in the thrown message"
-      (let
-        [e (try (config-spec/assert-config! {"grep" {"include-gitignored-paths" ["a"]}} "vis.yml")
-                nil
-                (catch clojure.lang.ExceptionInfo e e))]
+      (let [e (try (config-spec/assert-config! {"grep" {"include-gitignored-paths" ["a"]}}
+                                               "vis.yml")
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
         (expect (.contains (ex-message e) "grep.include-gitignored-paths"))
         (expect (.contains (ex-message e) "did you mean"))
         (expect (= ["vis.yml"] [(:source (ex-data e))]))
@@ -597,13 +594,12 @@
         (expect (= :missing (status {"id" "a" "path" "/opt/nope"})))
         (expect (config-spec/entry-mounted? {"id" "a" "path" "/opt/nope"} mac-env))))
   (it "a linux clause covers WSL, but a wsl clause is not plain linux"
-      (let
-        [wsl
-         {:os "wsl" :exists? #{"/"}}
+      (let [wsl
+            {:os "wsl" :exists? #{"/"}}
 
-         entry
-         (fn [os]
-           {"id" "a" "path" "/" "when" {"os" os}})]
+            entry
+            (fn [os]
+              {"id" "a" "path" "/" "when" {"os" os}})]
 
         (expect (config-spec/entry-mounted? (entry "linux") wsl))
         (expect (config-spec/entry-mounted? (entry ["wsl" "macos"]) wsl))
@@ -624,9 +620,8 @@
                  (config-spec/workspace-draft-policies cross-machine-config
                                                        {:os "macos" :exists? (constantly true)}))))
   (it "an allow list may name a root this host does not mount, but never an unknown id"
-      (let
-        [jailed (assoc cross-machine-config
-                  "jail" {"enabled" true "filesystem" {"allow" ["here" "nix" "maybe"]}})]
+      (let [jailed (assoc cross-machine-config
+                     "jail" {"enabled" true "filesystem" {"allow" ["here" "nix" "maybe"]}})]
         ;; `nix`/`maybe` are declared but unmounted here: skipped, not fatal — the
         ;; same vis.yml has to work on every machine.
         (expect (= ["/" (get config-spec/vis-home-entry "path")]
@@ -639,12 +634,11 @@
                         nil
                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it "diagnostics explain every root that did not mount, and stay empty when all do"
-      (let
-        [msgs
-         (config-spec/workspace-mount-diagnostics cross-machine-config mac-env)
+      (let [msgs
+            (config-spec/workspace-mount-diagnostics cross-machine-config mac-env)
 
-         by-id
-         (into {} (map (juxt :id identity)) msgs)]
+            by-id
+            (into {} (map (juxt :id identity)) msgs)]
 
         (expect (= #{"nix" "gated" "maybe" "stale"} (set (keys by-id))))
         (expect (= :info (:level (by-id "nix"))))
@@ -663,9 +657,8 @@
                      {"workspace" {"filesystem" [{"id" "here" "path" "/"}]}}
                      mac-env)))))
   (it "`when` and `optional` are part of the closed entry contract"
-      (let
-        [entry (fn [m]
-                 (assoc-in full-config ["workspace" "filesystem"] [m]))]
+      (let [entry (fn [m]
+                    (assoc-in full-config ["workspace" "filesystem"] [m]))]
         (expect (config-spec/valid? (entry {"id" "x" "path" "~/ok" "optional" true})))
         (expect (config-spec/valid? (entry {"id" "x" "path" "~/ok" "when" {"os" "macos"}})))
         (expect (config-spec/valid?
@@ -684,10 +677,10 @@
 (defdescribe
   jail-mach-services-test
   (it "keychain: true grants the three Security services and the keychain databases"
-      (let
-        [pol (config-spec/process-jail-config (assoc-in full-config
-                                                ["jail" "mach_services"]
-                                                {"keychain" true "allow" ["com.example.agent"]}))]
+      (let [pol (config-spec/process-jail-config (assoc-in full-config
+                                                   ["jail" "mach_services"]
+                                                   {"keychain" true
+                                                    "allow" ["com.example.agent"]}))]
         (expect (= ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"]
                    config-spec/keychain-mach-services))
         (expect (= ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"
@@ -699,8 +692,8 @@
         (expect (every? (set (:allow-read pol)) config-spec/keychain-read-paths))
         (expect (every? (set (:no-search pol)) config-spec/keychain-read-paths))))
   (it "without the opt-in nothing is granted and nothing is added to the filesystem"
-      (let
-        [pol (config-spec/process-jail-config (update full-config "jail" dissoc "mach_services"))]
+      (let [pol (config-spec/process-jail-config
+                  (update full-config "jail" dissoc "mach_services"))]
         (expect (= [] (:mach-services pol)))
         (expect (= ["~/reference"] (:allow-read pol)))
         (expect (not-any? (set (:no-search pol)) config-spec/keychain-read-paths))))

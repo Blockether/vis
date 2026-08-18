@@ -39,12 +39,11 @@
    DIAGNOSTIC fields are bounded here in the facade so every backend gets the
    same guarantee. The answer's own content is DATA and is persisted verbatim."
   (it "truncates one oversized diagnostic string and names what it cut"
-      (let
-        [huge
-         (apply str (repeat (+ persistance/max-persisted-error-chars 500) "x"))
+      (let [huge
+            (apply str (repeat (+ persistance/max-persisted-error-chars 500) "x"))
 
-         bounded
-         (persistance/bounded-error-text huge)]
+            bounded
+            (persistance/bounded-error-text huge)]
 
         ;; The marker counts itself in: bounding NEVER grows a string.
         (expect (<= (count bounded) persistance/max-persisted-error-chars))
@@ -54,13 +53,12 @@
       (expect (= "boom" (persistance/bounded-error-text "boom")))
       (expect (= "" (persistance/bounded-error-text ""))))
   (it "reaches every string at any depth of a structured error"
-      (let
-        [huge
-         (apply str (repeat (inc persistance/max-persisted-error-chars) "y"))
+      (let [huge
+            (apply str (repeat (inc persistance/max-persisted-error-chars) "y"))
 
-         bounded
-         (persistance/bound-error-data
-           {"type" "error" "code" "python_runtime" "detail" {"message" huge "frames" [huge]}})]
+            bounded
+            (persistance/bound-error-data
+              {"type" "error" "code" "python_runtime" "detail" {"message" huge "frames" [huge]}})]
 
         (expect (= "error" (get bounded "type")))
         (expect (= "python_runtime" (get bounded "code")))
@@ -71,12 +69,11 @@
                     persistance/max-persisted-error-chars)))
       (expect (nil? (persistance/bound-error-data nil))))
   (it "bounds the error and the ERROR content blocks before the backend sees them, and nothing else"
-      (let
-        [huge
-         (apply str (repeat (+ persistance/max-persisted-error-chars 7) "z"))
+      (let [huge
+            (apply str (repeat (+ persistance/max-persisted-error-chars 7) "z"))
 
-         seen
-         (atom nil)]
+            seen
+            (atom nil)]
 
         (with-redefs-fn {#'persistance/resolve-impl (fn [_ _]
                                                       (atom (fn [_ _ opts]

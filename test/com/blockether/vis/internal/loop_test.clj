@@ -7,8 +7,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.loop :as lp]
-    [com.blockether.vis.internal.providers :as providers]
-    [com.blockether.vis.internal.python-extensions :as python-extensions]
+            [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.titling :as titling]
@@ -38,13 +38,9 @@
       invoke!)
     @seen))
 
-(defn- captured-ask-code-opts
-  [opts]
-  (captured-svar-ask-code-opts #(lp/ask-code! opts)))
+(defn- captured-ask-code-opts [opts] (captured-svar-ask-code-opts #(lp/ask-code! opts)))
 
-(defn- captured-llm-text-opts
-  [opts]
-  (captured-svar-ask-code-opts #(lp/llm-text! opts)))
+(defn- captured-llm-text-opts [opts] (captured-svar-ask-code-opts #(lp/llm-text! opts)))
 
 (def ^:private provider-error-explanation perr/provider-error-explanation)
 
@@ -82,44 +78,41 @@
 (defdescribe
   provider-native-reasoning-effort-preflight-test
   (it "rejects unsupported effort before the iteration/provider phase"
-      (let
-        [provider-calls
-         (atom 0)
+      (let [provider-calls
+            (atom 0)
 
-         env
-         {:db-info ::db :environment-id ::environment :router (reasoning-effort-router)}
+            env
+            {:db-info ::db :environment-id ::environment :router (reasoning-effort-router)}
 
-         thrown
-         (try (with-redefs
-                [lp/run-turn! (fn [& _]
-                                (swap! provider-calls inc)
-                                (throw (ex-info "should not run" {})))]
-                (lp/turn! env [{:role "user" :content "task"}] {:reasoning-effort "medium"}))
-              nil
-              (catch clojure.lang.ExceptionInfo e e))]
+            thrown
+            (try (with-redefs [lp/run-turn! (fn [& _]
+                                              (swap! provider-calls inc)
+                                              (throw (ex-info "should not run" {})))]
+                   (lp/turn! env [{:role "user" :content "task"}] {:reasoning-effort "medium"}))
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= 0 @provider-calls))
         (expect (= :vis/unsupported-reasoning-effort (:type (ex-data thrown))))
         (expect (= ["high" "max"] (:supported (ex-data thrown))))))
   (it "does not inject a prompt for models without native reasoning"
-      (let
-        [environment
-         (lp/create-environment ::router {:db :memory})
+      (let [environment
+            (lp/create-environment ::router {:db :memory})
 
-         seen
-         (atom nil)
+            seen
+            (atom nil)
 
-         messages
-         [{:role "system" :content "core"} {:role "user" :content "task"}]
+            messages
+            [{:role "system" :content "core"} {:role "user" :content "task"}]
 
-         message-text
-         (fn [{:keys [content]}]
-           (if (string? content) content (apply str (keep :text content))))]
+            message-text
+            (fn [{:keys [content]}]
+              (if (string? content) content (apply str (keep :text content))))]
 
-        (try (with-redefs
-               [svar/ask-code! (fn [_router opts]
-                                 (reset! seen opts)
-                                 {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+        (try (with-redefs [svar/ask-code!
+                           (fn [_router opts]
+                             (reset! seen opts)
+                             {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
                (lp/run-iteration environment
                                  messages
                                  {:iteration 0
@@ -131,20 +124,19 @@
                (expect (not (contains? @seen :reasoning))))
              (finally (lp/dispose-environment! environment)))))
   (it "builds valid evidence for same-model retries"
-      (let
-        [iteration
-         {:iteration 1
-          :provider "zai-coding-plan"
-          :model "glm-5.2"
-          :effective "high"
-          :wire-style :zai-effort
-          :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "high"}
-          :fallback? false
-          :selected {:provider "zai-coding-plan" :model "glm-5.2"}
-          :requested "high"}
+      (let [iteration
+            {:iteration 1
+             :provider "zai-coding-plan"
+             :model "glm-5.2"
+             :effective "high"
+             :wire-style :zai-effort
+             :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "high"}
+             :fallback? false
+             :selected {:provider "zai-coding-plan" :model "glm-5.2"}
+             :requested "high"}
 
-         eval
-         (turn-eval-evidence "high" [{:reasoning-effort iteration}])]
+            eval
+            (turn-eval-evidence "high" [{:reasoning-effort iteration}])]
 
         (expect (true? (:valid? eval)))
         (expect (= [iteration] (get-in eval [:reasoning-effort :iterations])))))
@@ -153,61 +145,58 @@
         (expect (false? (:valid? eval)))
         (expect (= :missing-reasoning-effort-evidence (get-in eval [:invalid-reasons 0 :type])))))
   (it "a later provider/model fallback invalidates the whole eval"
-      (let
-        [base
-         {:provider "zai-coding-plan"
-          :model "glm-5.2"
-          :effective "max"
-          :wire-style :zai-effort
-          :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "max"}
-          :selected {:provider "zai-coding-plan" :model "glm-5.2"}
-          :requested "max"}
+      (let [base
+            {:provider "zai-coding-plan"
+             :model "glm-5.2"
+             :effective "max"
+             :wire-style :zai-effort
+             :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "max"}
+             :selected {:provider "zai-coding-plan" :model "glm-5.2"}
+             :requested "max"}
 
-         eval
-         (turn-eval-evidence "max"
-                             [{:reasoning-effort (assoc base
-                                                   :iteration 1
-                                                   :fallback? false)}
-                              {:reasoning-effort (assoc base
-                                                   :iteration 2
-                                                   :provider "zai"
-                                                   :fallback? true)}])]
+            eval
+            (turn-eval-evidence "max"
+                                [{:reasoning-effort (assoc base
+                                                      :iteration 1
+                                                      :fallback? false)}
+                                 {:reasoning-effort (assoc base
+                                                      :iteration 2
+                                                      :provider "zai"
+                                                      :fallback? true)}])]
 
         (expect (false? (:valid? eval)))
         (expect (= :provider-model-fallback (get-in eval [:invalid-reasons 0 :type])))
         (expect (= 2 (count (get-in eval [:reasoning-effort :iterations]))))))
   (it
     "threads raw max unchanged and bypasses abstract quick translation"
-    (let
-      [environment
-       (lp/create-environment ::router {:db :memory})
+    (let [environment
+          (lp/create-environment ::router {:db :memory})
 
-       seen
-       (atom nil)]
+          seen
+          (atom nil)]
 
-      (try (with-redefs
-             [svar/ask-code! (fn [_router opts]
-                               (reset! seen opts)
-                               {:stop-reason :end
-                                :tool-calls []
-                                :content "done"
-                                :tokens {}
-                                :routed/reasoning-effort {:requested "max"
-                                                          :effective "max"
-                                                          :supported ["high" "max"]
-                                                          :wire-style :zai-effort
-                                                          :extra-body {:thinking {:type "enabled"}
-                                                                       :reasoning_effort "max"}}})]
-             (let
-               [result (lp/run-iteration environment
-                                         []
-                                         {:iteration 0
-                                          :reasoning-level :quick
-                                          :reasoning-effort "max"
-                                          :resolved-model {:provider :zai-coding-plan
-                                                           :name "glm-5.2"
-                                                           :reasoning? true
-                                                           :reasoning-style :zai-effort}})]
+      (try (with-redefs [svar/ask-code! (fn [_router opts]
+                                          (reset! seen opts)
+                                          {:stop-reason :end
+                                           :tool-calls []
+                                           :content "done"
+                                           :tokens {}
+                                           :routed/reasoning-effort {:requested "max"
+                                                                     :effective "max"
+                                                                     :supported ["high" "max"]
+                                                                     :wire-style :zai-effort
+                                                                     :extra-body
+                                                                     {:thinking {:type "enabled"}
+                                                                      :reasoning_effort "max"}}})]
+             (let [result (lp/run-iteration environment
+                                            []
+                                            {:iteration 0
+                                             :reasoning-level :quick
+                                             :reasoning-effort "max"
+                                             :resolved-model {:provider :zai-coding-plan
+                                                              :name "glm-5.2"
+                                                              :reasoning? true
+                                                              :reasoning-style :zai-effort}})]
                (expect (= "max" (:reasoning-effort @seen)))
                (expect (not (contains? @seen :reasoning)))
                (expect (= "max" (get-in result [:reasoning-effort-resolution :effective])))))
@@ -226,12 +215,11 @@
 (defdescribe
   environment-lifecycle-test
   (it "closes the GraalPy context when disposing an environment"
-      (let
-        [environment
-         (lp/create-environment ::router {:db :memory})
+      (let [environment
+            (lp/create-environment ::router {:db :memory})
 
-         python-context
-         (:python-context environment)]
+            python-context
+            (:python-context environment)]
 
         (lp/dispose-environment! environment)
         (expect (try (env/run-python-block python-context "1") false (catch Throwable _ true))))))
@@ -241,23 +229,22 @@
   (it "keeps every process-jail and network grant immutable until environment rebuild"
       (require 'com.blockether.vis.internal.config-spec :reload)
       (require 'com.blockether.vis.internal.loop :reload)
-      (let
-        [cfg
-         (atom {"workspace" {"filesystem"
-                             [{"id" "full" "path" "/approved/full"}
-                              {"id" "read" "path" "/approved/read" "access" "read-only"}
-                              {"id" "cache" "path" "/approved/cache" "search" false}]}
-                "jail" {"enabled" true
-                        "filesystem" {"allow" ["full" "read" "cache"]}
-                        "network" {"allowed_domains" ["approved.example"] "inbound_ports" [5273]}}})
+      (let [cfg
+            (atom
+              {"workspace" {"filesystem" [{"id" "full" "path" "/approved/full"}
+                                          {"id" "read" "path" "/approved/read" "access" "read-only"}
+                                          {"id" "cache" "path" "/approved/cache" "search" false}]}
+               "jail" {"enabled" true
+                       "filesystem" {"allow" ["full" "read" "cache"]}
+                       "network" {"allowed_domains" ["approved.example"] "inbound_ports" [5273]}}})
 
-         vis-home-root
-         ;; Engine-level implicit grant: Vis's own session folder.
-         (.getCanonicalPath (java.io.File. (System/getProperty "user.home") ".vis"))
+            vis-home-root
+            ;; Engine-level implicit grant: Vis's own session folder.
+            (.getCanonicalPath (java.io.File. (System/getProperty "user.home") ".vis"))
 
-         snapshot
-         (with-redefs [config/load-config-raw #(deref cfg)]
-           ((ns-resolve 'com.blockether.vis.internal.loop 'security-config-snapshot)))]
+            snapshot
+            (with-redefs [config/load-config-raw #(deref cfg)]
+              ((ns-resolve 'com.blockether.vis.internal.loop 'security-config-snapshot)))]
 
         ;; This models a tool editing writable vis.yml after environment creation.
         (reset! cfg {"workspace" {"filesystem"
@@ -344,24 +331,28 @@
 ;; Regression, issue #105: Vis retried a provider stream failure after Svar had already
 ;; finished its own policy, issuing the same user request more than once.
 (defdescribe provider-stream-failure-is-terminal-test
-  (it "does not retry a provider failure that escapes Svar"
-      (let [env (lp/create-environment ::router {:db :memory})
-            calls (atom 0)]
-        (try
-          (with-redefs [svar/ask-code! (fn [_router _opts]
-                                         (swap! calls inc)
-                                         (throw (ex-info "Stream connection error: closed"
-                                                         {:type :svar.core/http-error
-                                                          :stream? true})))]
-            (expect (throws? clojure.lang.ExceptionInfo
-                             #(lp/run-iteration env
-                                                []
-                                                {:iteration 0
-                                                 :resolved-model {:provider :openai
-                                                                  :name "gpt-x"}
-                                                 :on-chunk (fn [_])})))
-            (expect (= 1 @calls)))
-          (finally (lp/dispose-environment! env))))))
+             (it "does not retry a provider failure that escapes Svar"
+                 (let [env
+                       (lp/create-environment ::router {:db :memory})
+
+                       calls
+                       (atom 0)]
+
+                   (try (with-redefs [svar/ask-code! (fn [_router _opts]
+                                                       (swap! calls inc)
+                                                       (throw (ex-info
+                                                                "Stream connection error: closed"
+                                                                {:type :svar.core/http-error
+                                                                 :stream? true})))]
+                          (expect (throws? clojure.lang.ExceptionInfo
+                                           #(lp/run-iteration env
+                                                              []
+                                                              {:iteration 0
+                                                               :resolved-model {:provider :openai
+                                                                                :name "gpt-x"}
+                                                               :on-chunk (fn [_])})))
+                          (expect (= 1 @calls)))
+                        (finally (lp/dispose-environment! env))))))
 
 ;; Regression, issue #116: svar's empty-reply resend ladder was only collected in
 ;; an atom and prepended to the routing trace AFTER `ask-code!` returned, so a turn
@@ -371,74 +362,63 @@
   empty-reply-resend-live-chunk-test
   (it
     "streams every empty-reply re-send to the channel WHILE the call is in flight"
-    (let
-      [env
-       (lp/create-environment ::router {:db :memory})
+    (let [env
+          (lp/create-environment ::router {:db :memory})
 
-       chunks
-       (atom [])
+          chunks
+          (atom [])
 
-       during
-       (atom nil)]
+          during
+          (atom nil)]
 
-      (try
-        (with-redefs
-          [svar/ask-code!
-           (fn [_router opts]
-             (when-let [on-resend (:on-empty-reply-resend opts)]
-               (on-resend {:model "claude-x"
-                           :provider-id :anthropic
-                           :attempt 1
-                           :max-resends 3
-                           :delay-ms 2000}))
-             ;; Everything the UI had been told while the ladder was still running.
-             (reset! during (vec @chunks))
-             {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
-          (lp/run-iteration env
-                            []
-                            {:iteration 0
-                             :resolved-model {:provider :anthropic :name "claude-x"}
-                             :on-chunk #(swap! chunks conj %)})
-          (let
-            [live (filterv #(= :provider-retry-reset (:phase %)) @during)
-             ev (:event (first live))]
+      (try (with-redefs [svar/ask-code!
+                         (fn [_router opts]
+                           (when-let [on-resend (:on-empty-reply-resend opts)]
+                             (on-resend {:model "claude-x"
+                                         :provider-id :anthropic
+                                         :attempt 1
+                                         :max-resends 3
+                                         :delay-ms 2000}))
+                           ;; Everything the UI had been told while the ladder was still running.
+                           (reset! during (vec @chunks))
+                           {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+             (lp/run-iteration env
+                               []
+                               {:iteration 0
+                                :resolved-model {:provider :anthropic :name "claude-x"}
+                                :on-chunk #(swap! chunks conj %)})
+             (let [live (filterv #(= :provider-retry-reset (:phase %)) @during)
+                   ev (:event (first live))]
 
-            (expect (= 1 (count live)))
-            (expect (= {:iteration 1 :attempt 1 :max-retries 3 :delay-ms 2000}
-                       (select-keys (first live) [:iteration :attempt :max-retries :delay-ms])))
-            (expect (= :svar.llm/empty-content (get-in (first live) [:error :type])))
-            (expect (= :empty-content (:reason ev)))
-            (expect (= "anthropic" (:from-provider ev)))
-            (expect (= "claude-x" (:from-model ev)))))
-        (finally (lp/dispose-environment! env))))))
+               (expect (= 1 (count live)))
+               (expect (= {:iteration 1 :attempt 1 :max-retries 3 :delay-ms 2000}
+                          (select-keys (first live) [:iteration :attempt :max-retries :delay-ms])))
+               (expect (= :svar.llm/empty-content (get-in (first live) [:error :type])))
+               (expect (= :empty-content (:reason ev)))
+               (expect (= "anthropic" (:from-provider ev)))
+               (expect (= "claude-x" (:from-model ev)))))
+           (finally (lp/dispose-environment! env))))))
 
 ;; Regression, issue #120: every provider request looked identical in the TUI, so a
 ;; long tool-result loop was indistinguishable from the client re-sending on its
 ;; own — the spinner said "Vis is calling the provider (iter 12)" and never why.
 (defdescribe
   provider-call-continuation-reason-test
-  (let
-    [reason-of
-     (fn [iteration]
-       (let
-         [env
-          (lp/create-environment ::router {:db :memory})
+  (let [reason-of
+        (fn [iteration]
+          (let [env (lp/create-environment ::router {:db :memory})
+                chunks (atom [])]
 
-          chunks
-          (atom [])]
-
-         (try
-           (with-redefs
-             [svar/ask-code! (fn [_router _opts]
-                               {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
-             (lp/run-iteration env
-                               []
-                               {:iteration iteration
-                                :resolved-model {:provider :anthropic :name "claude-x"}
-                                :on-chunk #(swap! chunks conj %)}))
-           (finally (lp/dispose-environment! env)))
-         (:reason (first (filter #(= :provider-call (:phase %)) @chunks)))))]
-
+            (try (with-redefs [svar/ask-code!
+                               (fn [_router _opts]
+                                 {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+                   (lp/run-iteration env
+                                     []
+                                     {:iteration iteration
+                                      :resolved-model {:provider :anthropic :name "claude-x"}
+                                      :on-chunk #(swap! chunks conj %)}))
+                 (finally (lp/dispose-environment! env)))
+            (:reason (first (filter #(= :provider-call (:phase %)) @chunks)))))]
     (it "names the FIRST provider call of a turn as the human's own submit"
         (expect (= :user-submit (reason-of 0))))
     (it "names every later call a tool-result continuation"
@@ -451,11 +431,16 @@
              ;; same blob, 32% of `tool_calls`. The envelope must carry only what a
              ;; reader cannot re-derive.
              (it "drops a render the reader re-derives from the result"
-                 (let [block {:id 0
-                              :code "grep({})"
-                              :result {"files" ["a.clj"]}
-                              :result-render (form/result-render {:src "grep({})" :result {"files" ["a.clj"]}})}
-                       [envelope] (eng/blocks->forms [block] {:turn 1 :iter 1})]
+                 (let [block
+                       {:id 0
+                        :code "grep({})"
+                        :result {"files" ["a.clj"]}
+                        :result-render (form/result-render {:src "grep({})"
+                                                            :result {"files" ["a.clj"]}})}
+
+                       [envelope]
+                       (eng/blocks->forms [block] {:turn 1 :iter 1})]
+
                    (expect (not (contains? envelope :result-render)))
                    (expect (= {"files" ["a.clj"]} (:result envelope)))
                    ;; …and the reader gets the very same body back
@@ -488,36 +473,34 @@
              ;; interrupt unwinds the guest frame, and it must leave the context REUSABLE.
              (it
                "unwinds a runaway guest loop and keeps the context usable"
-               (let
-                 [pc
-                  (:python-context (env/create-python-context {}))
+               (let [pc
+                     (:python-context (env/create-python-context {}))
 
-                  cpu-ns
-                  (fn []
-                    (.getProcessCpuTime
-                      ^com.sun.management.OperatingSystemMXBean
-                      (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
+                     cpu-ns
+                     (fn []
+                       (.getProcessCpuTime
+                         ^com.sun.management.OperatingSystemMXBean
+                         (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
 
-                  ;; `getProcessCpuTime` is JVM-WIDE, so it also counts the rest of the
-                  ;; suite running in parallel — on a loaded CI runner the absolute
-                  ;; number reached 2.14 cores with no guest alive at all (CI run
-                  ;; 30586924255). Only the DELTA against a baseline sampled under the
-                  ;; same load says anything about the guest, and a live spinning guest
-                  ;; is worth a whole extra core.
-                  busy-cores
-                  (fn [ms]
-                    (let [before (cpu-ns)]
-                      (Thread/sleep (long ms))
-                      (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
+                     ;; `getProcessCpuTime` is JVM-WIDE, so it also counts the rest of the
+                     ;; suite running in parallel — on a loaded CI runner the absolute
+                     ;; number reached 2.14 cores with no guest alive at all (CI run
+                     ;; 30586924255). Only the DELTA against a baseline sampled under the
+                     ;; same load says anything about the guest, and a live spinning guest
+                     ;; is worth a whole extra core.
+                     busy-cores
+                     (fn [ms]
+                       (let [before (cpu-ns)]
+                         (Thread/sleep (long ms))
+                         (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
 
-                  ;; 250ms is plenty to see a whole core: a live spinner adds
-                  ;; ~1.0 to the delta, and the threshold below is 0.75.
-                  baseline
-                  (busy-cores 250)]
+                     ;; 250ms is plenty to see a whole core: a live spinner adds
+                     ;; ~1.0 to the delta, and the threshold below is 0.75.
+                     baseline
+                     (busy-cores 250)]
 
-                 (try (let
-                        [result (binding [rt/*eval-timeout-ms* 400]
-                                  ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
+                 (try (let [result (binding [rt/*eval-timeout-ms* 400]
+                                     ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
                         (expect (true? (:timeout? result)))
                         ;; The guest is GONE: no EXTRA core is spinning after the timeout.
                         ;; Take the quieter of two samples so one unlucky GC/JIT burst
@@ -535,66 +518,60 @@
              ;; progress log of a long fetch loop, results already computed — died with
              ;; the frame. The model then re-ran the whole block blind, which is how a
              ;; serial `httpx` sweep burned two turns instead of one.
-             (it
-               "surfaces what the block printed before the wall fired"
-               (let
-                 [pc
-                  (:python-context (env/create-python-context {}))]
+             (it "surfaces what the block printed before the wall fired"
+                 (let [pc (:python-context (env/create-python-context {}))]
+                   (try (let [result (binding [rt/*eval-timeout-ms* 500]
+                                       ((deref #'lp/run-python-code)
+                                         pc
+                                         "print('fetched 1')\nwhile True:\n    pass"))]
+                          (expect (true? (:timeout? result)))
+                          (expect (some? (re-find #"fetched 1" (str (:stdout result))))))
+                        (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                      (catch Throwable _ nil)))))))
 
-                 (try (let
-                        [result (binding [rt/*eval-timeout-ms* 500]
-                                  ((deref #'lp/run-python-code) pc "print('fetched 1')\nwhile True:\n    pass"))]
+(defdescribe
+  python-block-runs-in-the-session-context-test
+  ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
+  ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
+  ;; AMBIENT context (an extension SYMBOL installs its own around every call),
+  ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
+  ;; extra filesystem root — "escapes the allowed workspace roots" — while
+  ;; `cat`/`grep` on the very same path answered normally.
+  (it
+    "gives a shim bridge the filesystem roots the session actually bound"
+    (let [pc
+          (:python-context (env/create-python-context {}))
 
-                        (expect (true? (:timeout? result)))
-                        (expect (some? (re-find #"fetched 1" (str (:stdout result))))))
-                      (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                    (catch Throwable _ nil)))))))
+          ;; Outside the primary cwd and outside every always-on root
+          ;; (temp dirs, `~/.vis`) — reachable ONLY as a bound root.
+          outside
+          (System/getProperty "user.home")
 
-(defdescribe python-block-runs-in-the-session-context-test
-             ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
-             ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
-             ;; AMBIENT context (an extension SYMBOL installs its own around every call),
-             ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
-             ;; extra filesystem root — "escapes the allowed workspace roots" — while
-             ;; `cat`/`grep` on the very same path answered normally.
-             (it
-               "gives a shim bridge the filesystem roots the session actually bound"
-               (let
-                 [pc
-                  (:python-context (env/create-python-context {}))
+          code
+          (str "try:\n"
+               "    rows = ls(" (pr-str outside)
+               ")\n" "    print('listed', isinstance(rows, list))\n"
+               "except Exception as e:\n" "    print('refused', e)\n")
 
-                  ;; Outside the primary cwd and outside every always-on root
-                  ;; (temp dirs, `~/.vis`) — reachable ONLY as a bound root.
-                  outside
-                  (System/getProperty "user.home")
+          env-with
+          (fn [roots]
+            {:workspace/root (System/getProperty "user.dir")
+             :workspace {:repo-root (System/getProperty "user.dir")
+                         :root (System/getProperty "user.dir")}
+             :security-policy {:jail-enabled true}
+             :security/filesystem-roots roots
+             :security/no-search-roots []})
 
-                  code
-                  (str "try:\n"
-                       "    rows = ls(" (pr-str outside) ")\n"
-                       "    print('listed', isinstance(rows, list))\n"
-                       "except Exception as e:\n"
-                       "    print('refused', e)\n")
+          listing
+          (fn [roots]
+            (str (:stdout ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
 
-                  env-with
-                  (fn [roots]
-                    {:workspace/root (System/getProperty "user.dir")
-                     :workspace {:repo-root (System/getProperty "user.dir")
-                                 :root (System/getProperty "user.dir")}
-                     :security-policy {:jail-enabled true}
-                     :security/filesystem-roots roots
-                     :security/no-search-roots []})
-
-                  listing
-                  (fn [roots]
-                    (str (:stdout ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
-
-                 (try
-                   ;; The path is genuinely outside what confinement grants by itself...
-                   (expect (str/starts-with? (listing []) "refused"))
-                   ;; ...and the moment the session binds it, the block's own `ls` reaches it.
-                   (expect (str/starts-with? (listing [outside]) "listed True"))
-                   (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                 (catch Throwable _ nil)))))))
+      (try
+        ;; The path is genuinely outside what confinement grants by itself...
+        (expect (str/starts-with? (listing []) "refused"))
+        ;; ...and the moment the session binds it, the block's own `ls` reaches it.
+        (expect (str/starts-with? (listing [outside]) "listed True"))
+        (finally (try (.close ^org.graalvm.polyglot.Context pc true) (catch Throwable _ nil)))))))
 
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`
@@ -604,32 +581,29 @@
              ;; because none drove a real tool-call response through `run-iteration`. This does.
              (it
                "executes a python_execution tool call through run-iteration without throwing"
-               (let
-                 [env
-                  (lp/create-environment ::router {:db :memory})
+               (let [env
+                     (lp/create-environment ::router {:db :memory})
 
-                  chunks
-                  (atom [])]
+                     chunks
+                     (atom [])]
 
-                 (try (with-redefs
-                        [svar/ask-code! (fn [_router _opts]
-                                          {:stop-reason :tool-calls
-                                           :tool-calls [{:id "call_1"
-                                                         :name "python_execution"
-                                                         :input {:code "print(6*7)"}}]
-                                           :content nil
-                                           :reasoning "computing"
-                                           :tokens {}})]
+                 (try (with-redefs [svar/ask-code! (fn [_router _opts]
+                                                     {:stop-reason :tool-calls
+                                                      :tool-calls [{:id "call_1"
+                                                                    :name "python_execution"
+                                                                    :input {:code "print(6*7)"}}]
+                                                      :content nil
+                                                      :reasoning "computing"
+                                                      :tokens {}})]
                         ;; The bug threw HERE — a tool-call iteration reaching the execute path.
-                        (let
-                          [result (lp/run-iteration env
-                                                    []
-                                                    {:iteration 0
-                                                     :resolved-model {:provider :zai-coding-plan
-                                                                      :name "glm-5.1"}
-                                                     :on-chunk #(swap! chunks conj %)})
-                           tool-calls (:tool-calls result)
-                           form-res (first (filter #(= :form-result (:phase %)) @chunks))]
+                        (let [result (lp/run-iteration env
+                                                       []
+                                                       {:iteration 0
+                                                        :resolved-model {:provider :zai-coding-plan
+                                                                         :name "glm-5.1"}
+                                                        :on-chunk #(swap! chunks conj %)})
+                              tool-calls (:tool-calls result)
+                              form-res (first (filter #(= :form-result (:phase %)) @chunks))]
 
                           ;; tool-call iteration (not a final answer)
                           (expect (nil? (:final-result result)))
@@ -652,37 +626,37 @@
   ;; determinism; and summary-awareness (drop/summarize reshape uniformly).
   (it
     "carries ALL prior answered turns with their r[] scope index"
-    (with-redefs
-      [persistance/db-list-session-turns
-       (fn [_db session-id]
-         (expect (= "s1" session-id))
-         [{:id "t1"
-           :status :done
-           :position 1
-           :user-request "Read a"
-           :content [(content/prose "Read it")]}
-          {:id "t2"
-           :status :done
-           :position 2
-           :user-request "Read b"
-           :content [(content/prose "Read b too")]}
-          {:id "t3" :status :running :user-request "yes"}])
+    (with-redefs [persistance/db-list-session-turns
+                  (fn [_db session-id]
+                    (expect (= "s1" session-id))
+                    [{:id "t1"
+                      :status :done
+                      :position 1
+                      :user-request "Read a"
+                      :content [(content/prose "Read it")]}
+                     {:id "t2"
+                      :status :done
+                      :position 2
+                      :user-request "Read b"
+                      :content [(content/prose "Read b too")]}
+                     {:id "t3" :status :running :user-request "yes"}])
 
-       persistance/db-list-session-turn-iterations
-       (fn [_db id]
-         (case id
-           "t1"
-           [{:status :done
-             :position 1
-             :forms [{:scope "t1/i1/f1" :src "cat(\"a\")" :result {:path "a"}}
-                     {:scope "t1/i1/f2" :src "set_session_title(...)" :result "vis_silent"}]}]
+                  persistance/db-list-session-turn-iterations
+                  (fn [_db id]
+                    (case id
+                      "t1"
+                      [{:status :done
+                        :position 1
+                        :forms
+                        [{:scope "t1/i1/f1" :src "cat(\"a\")" :result {:path "a"}}
+                         {:scope "t1/i1/f2" :src "set_session_title(...)" :result "vis_silent"}]}]
 
-           "t2"
-           [{:status :done
-             :position 1
-             :forms [{:scope "t2/i1/f1" :src "rg({...})" :result {:hits []}}]}]
+                      "t2"
+                      [{:status :done
+                        :position 1
+                        :forms [{:scope "t2/i1/f1" :src "rg({...})" :result {:hits []}}]}]
 
-           []))]
+                      []))]
 
       (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t3")]
         (expect (= 2 (count out))) ; both answered turns, not just latest
@@ -690,35 +664,36 @@
         (expect (= [{:scope "t1/i1/f1" :src "cat(\"a\")"}] (:results (first out)))) ; sentinel f2 excluded
         (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
   (it "keeps synthetic slash commands out of later provider context"
-      (with-redefs
-        [persistance/db-list-session-turns
-         (constantly [{:id "t1"
-                       :status :done
-                       :user-request "/draft list"
-                       :content [(content/prose "2 drafts")]}])
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :user-request "/draft list"
+                                  :content [(content/prose "2 drafts")]}])
 
-         persistance/db-list-session-turn-iterations
-         (constantly [{:status :done
-                       :forms [{:scope "t1/i1/f1"
-                                :tag :user-slash
-                                :src "/draft list"
-                                :result {"drafts" [{"label" "secret-feature"}]}}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [{:status :done
+                                  :forms [{:scope "t1/i1/f1"
+                                           :tag :user-slash
+                                           :src "/draft list"
+                                           :result {"drafts" [{"label" "secret-feature"}]}}]}])]
 
         (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
                                              "t2")))))
-  (it
-    "is deterministic — same DB ⇒ identical output (process-invariant)"
-    (with-redefs
-      [persistance/db-list-session-turns
-       (constantly
-         [{:id "t1" :status :done :position 1 :user-request "q" :content [(content/prose "a")]}])
+  (it "is deterministic — same DB ⇒ identical output (process-invariant)"
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "q"
+                                  :content [(content/prose "a")]}])
 
-       persistance/db-list-session-turn-iterations
-       (constantly
-         [{:status :done :position 1 :forms [{:scope "t1/i1/f1" :src "cat(x)" :result {:k 1}}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [{:status :done
+                                  :position 1
+                                  :forms [{:scope "t1/i1/f1" :src "cat(x)" :result {:k 1}}]}])]
 
-      (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
-        (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
+        (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
+          (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
   (it
     "is summary-aware at ITERATION granularity: session_drop leaves a dropped breadcrumb, fold_session collapses to one gist"
     ;; Folds are recorded at iteration scope (tN/iN) — what the prompt instructs
@@ -727,61 +702,66 @@
     ;; matching (the path-A fix). :drop? — not gist presence — picks the label. A
     ;; dropped iteration collapses to ONE `dropped` audit line (keeping the why);
     ;; a folded iteration with multiple forms collapses to ONE gist line.
-    (with-redefs
-      [persistance/db-list-session-turns
-       (constantly
-         [{:id "t1" :status :done :position 1 :user-request "q" :content [(content/prose "a")]}])
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly [{:id "t1"
+                                :status :done
+                                :position 1
+                                :user-request "q"
+                                :content [(content/prose "a")]}])
 
-       persistance/db-list-session-turn-iterations
-       (constantly [{:status :done
-                     :position 1
-                     :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}} ; iter i1 → dropped
-                             {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}} ; iter i2 → folded
-                             {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])]
+                  persistance/db-list-session-turn-iterations
+                  (constantly [{:status :done
+                                :position 1
+                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}} ; iter i1 → dropped
+                                        {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}} ; iter i2 → folded
+                                        {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])]
 
       ; (same iter, 2nd form)
-      (let
-        [env
-         {:session-id "s1"
-          :db-info ::db
-          :ctx-atom (atom {"session_summaries"
-                           [{"scopes" #{"t1/i1"} "drop" true "gist" "wrong file"} ; drop i1
-                            {"scopes" #{"t1/i2"} "gist" "b pinned"}]})}
+      (let [env
+            {:session-id "s1"
+             :db-info ::db
+             :ctx-atom (atom {"session_summaries"
+                              [{"scopes" #{"t1/i1"} "drop" true "gist" "wrong file"} ; drop i1
+                               {"scopes" #{"t1/i2"} "gist" "b pinned"}]})}
 
-         ; fold i2
-         results
-         (:results (first (previous-turn-context env "t9")))]
+            ; fold i2
+            results
+            (:results (first (previous-turn-context env "t9")))]
 
         (expect (= 2 (count results))) ; i1 dropped-line + i2 gist (each deduped)
         (let [by-scope (into {} (map (juxt :scope identity)) results)]
           (expect (= {:scope "t1/i1" :dropped? true :note "wrong file"} (get by-scope "t1/i1")))
           (expect (= {:scope "t1/i2" :gist "b pinned"} (get by-scope "t1/i2")))))))
   (it "returns nil when every prior turn is current/running/blank-answer"
-      (with-redefs
-        [persistance/db-list-session-turns
-         (constantly
-           [{:id "t1" :status :done :position 1 :user-request "old" :content [(content/prose "")]}
-            {:id "t2" :status :running :user-request "now" :content [(content/prose "partial")]}])
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "old"
+                                  :content [(content/prose "")]}
+                                 {:id "t2"
+                                  :status :running
+                                  :user-request "now"
+                                  :content [(content/prose "partial")]}])
 
-         persistance/db-list-session-turn-iterations
-         (constantly [])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [])]
 
         (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
                                              "t2")))))
   (it "carries prior provider-error turns as unfinished cross-turn context"
-      (with-redefs
-        [persistance/db-list-session-turns
-         (constantly [{:id "t1"
-                       :status :error
-                       :position 1
-                       :user-request "fix web"
-                       :content [(content/error "provider_error" "failed" true)]}
-                      {:id "t2" :status :running :user-request "continue"}])
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :error
+                                  :position 1
+                                  :user-request "fix web"
+                                  :content [(content/error "provider_error" "failed" true)]}
+                                 {:id "t2" :status :running :user-request "continue"}])
 
-         persistance/db-list-session-turn-iterations
-         (constantly [{:status :done
-                       :position 1
-                       :forms [{:scope "t1/i1/f1" :src "cat(ui)" :stdout "read ui"}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [{:status :done
+                                  :position 1
+                                  :forms [{:scope "t1/i1/f1" :src "cat(ui)" :stdout "read ui"}]}])]
 
         (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t2")]
           (expect (= [{:turn 1
@@ -790,87 +770,84 @@
                        :interrupted? true
                        :results [{:scope "t1/i1/f1" :src "cat(ui)"}]}]
                      out)))))
-  (it "fold-of-fold removes every covered turn recap; trailer owns one checkpoint"
-      (with-redefs
-        [persistance/db-list-session-turns
-         (constantly [{:id "t1"
-                       :status :done
-                       :position 1
-                       :user-request "old q1"
-                       :content [(content/prose "old a1")]}
-                      {:id "t2"
-                       :status :done
-                       :position 2
-                       :user-request "old q2"
-                       :content [(content/prose "old a2")]}
-                      {:id "t3" :status :running :position 3 :user-request "now"}])
+  (it
+    "fold-of-fold removes every covered turn recap; trailer owns one checkpoint"
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly [{:id "t1"
+                                :status :done
+                                :position 1
+                                :user-request "old q1"
+                                :content [(content/prose "old a1")]}
+                               {:id "t2"
+                                :status :done
+                                :position 2
+                                :user-request "old q2"
+                                :content [(content/prose "old a2")]}
+                               {:id "t3" :status :running :position 3 :user-request "now"}])
 
-         persistance/db-list-session-turn-iterations
-         (fn [_ id]
-           [{:status :done
-             :position 1
-             :forms [{:scope (str id "/i1/f1") :src (str "cat(" id ")") :result {:ok true}}]}])]
+                  persistance/db-list-session-turn-iterations
+                  (fn [_ id]
+                    [{:status :done
+                      :position 1
+                      :forms
+                      [{:scope (str id "/i1/f1") :src (str "cat(" id ")") :result {:ok true}}]}])]
 
-        (let
-          [env {:session-id "s1"
-                :db-info ::db
-                :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "fine detail"}
-                                                      {"through" "t2/i1"
-                                                       "gist" "one durable checkpoint"}]})}]
-          (expect (nil? (previous-turn-context env "t3"))))))
+      (let [env {:session-id "s1"
+                 :db-info ::db
+                 :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "fine detail"}
+                                                       {"through" "t2/i1"
+                                                        "gist" "one durable checkpoint"}]})}]
+        (expect (nil? (previous-turn-context env "t3"))))))
   (it "a gist-less whole-turn fold of a no-iteration turn leaves a visible tombstone checkpoint"
       ;; No done iterations → no trailer anchor exists anywhere, so previous-
       ;; turn-context must materialize the checkpoint itself instead of letting
       ;; the turn vanish without a trace.
-      (with-redefs
-        [persistance/db-list-session-turns
-         (constantly [{:id "t1"
-                       :status :done
-                       :position 1
-                       :user-request "spent request"
-                       :content [(content/prose "spent answer")]}
-                      {:id "t2" :status :running :position 2}])
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "spent request"
+                                  :content [(content/prose "spent answer")]}
+                                 {:id "t2" :status :running :position 2}])
 
-         persistance/db-list-session-turn-iterations
-         (constantly [])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [])]
 
-        (let
-          [out (previous-turn-context {:session-id "s1"
-                                       :db-info ::db
-                                       :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1"}}]})}
-                                      "t2")]
+        (let [out (previous-turn-context {:session-id "s1"
+                                          :db-info ::db
+                                          :ctx-atom (atom {"session_summaries" [{"scopes"
+                                                                                 #{"t1"}}]})}
+                                         "t2")]
           (expect (= 1 (count out)))
           (expect (:checkpoint? (first out)))
           (expect (= [1] (:turns (first out))))
           (expect (clojure.string/includes? (str (:gist (first out))) "dropped"))
           (expect (nil? (:user-request (first out)))))))
-  (it
-    "an enumerated iteration fold covering EVERY iteration still keeps the turn's Q/A recap"
-    ;; Regression: 'all iterations folded' must NOT be inferred as whole-turn
-    ;; intent — only a bare tN or a spanning range selector removes Q/A.
-    (with-redefs
-      [persistance/db-list-session-turns
-       (constantly [{:id "t1"
-                     :status :done
-                     :position 1
-                     :user-request "keep my question"
-                     :content [(content/prose "keep my answer")]}
-                    {:id "t2" :status :running :position 2}])
+  (it "an enumerated iteration fold covering EVERY iteration still keeps the turn's Q/A recap"
+      ;; Regression: 'all iterations folded' must NOT be inferred as whole-turn
+      ;; intent — only a bare tN or a spanning range selector removes Q/A.
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "keep my question"
+                                  :content [(content/prose "keep my answer")]}
+                                 {:id "t2" :status :running :position 2}])
 
-       persistance/db-list-session-turn-iterations
-       (constantly
-         [{:status :done :position 1 :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [{:status :done
+                                  :position 1
+                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
 
-      (let
-        [out (previous-turn-context {:session-id "s1"
-                                     :db-info ::db
-                                     :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"}
-                                                                            "gist" "read a"}]})}
-                                    "t2")]
-        (expect (= 1 (count out)))
-        (expect (= "keep my question" (:user-request (first out))))
-        (expect (= "keep my answer" (:answer (first out))))
-        (expect (= [{:scope "t1/i1" :gist "read a"}] (:results (first out)))))))
+        (let [out (previous-turn-context
+                    {:session-id "s1"
+                     :db-info ::db
+                     :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "read a"}]})}
+                    "t2")]
+          (expect (= 1 (count out)))
+          (expect (= "keep my question" (:user-request (first out))))
+          (expect (= "keep my answer" (:answer (first out))))
+          (expect (= [{:scope "t1/i1" :gist "read a"}] (:results (first out)))))))
   (it
     "a whole-turn fold ISSUED DURING that turn keeps its Q/A recap next request (answer produced after the fold)"
     ;; Loophole fix (issued_turn invariant): a bare `tN` / spanning-range fold
@@ -878,114 +855,109 @@
     ;; coverage of N against next request's complete universe, but must NOT erase
     ;; N's own answer — which was produced AFTER the fold, so no gist summarizes
     ;; it. Degrades to the enumerated path: Q/A recap kept, result lines folded.
-    (with-redefs
-      [persistance/db-list-session-turns
-       (constantly [{:id "t1"
-                     :status :done
-                     :position 1
-                     :user-request "keep my question"
-                     :content [(content/prose "keep my answer")]}
-                    {:id "t2" :status :running :position 2}])
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly [{:id "t1"
+                                :status :done
+                                :position 1
+                                :user-request "keep my question"
+                                :content [(content/prose "keep my answer")]}
+                               {:id "t2" :status :running :position 2}])
 
-       persistance/db-list-session-turn-iterations
-       (constantly
-         [{:status :done :position 1 :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+                  persistance/db-list-session-turn-iterations
+                  (constantly [{:status :done
+                                :position 1
+                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
 
-      (let
-        [out (previous-turn-context
-               {:session-id "s1"
-                :db-info ::db
-                :ctx-atom (atom {"session_summaries"
-                                 [{"scopes" #{"t1"} "issued_turn" 1 "gist" "folded so far"}]})}
-               "t2")]
+      (let [out (previous-turn-context
+                  {:session-id "s1"
+                   :db-info ::db
+                   :ctx-atom (atom {"session_summaries"
+                                    [{"scopes" #{"t1"} "issued_turn" 1 "gist" "folded so far"}]})}
+                  "t2")]
         (expect (= 1 (count out)))
         (expect (= "keep my question" (:user-request (first out))))
         (expect (= "keep my answer" (:answer (first out)))))))
-  (it
-    "a whole-turn fold ISSUED IN A LATER turn still removes the target turn's Q/A recap"
-    ;; The normal prior-turn case: turn 2 folds turn 1 (issued_turn 2 > 1) — it
-    ;; actually saw turn 1's answer, so removal is safe and the trailer owns the
-    ;; one checkpoint. With only turn 1 present, the whole context collapses.
-    (with-redefs
-      [persistance/db-list-session-turns
-       (constantly [{:id "t1"
-                     :status :done
-                     :position 1
-                     :user-request "old q"
-                     :content [(content/prose "old a")]} {:id "t2" :status :running :position 2}])
+  (it "a whole-turn fold ISSUED IN A LATER turn still removes the target turn's Q/A recap"
+      ;; The normal prior-turn case: turn 2 folds turn 1 (issued_turn 2 > 1) — it
+      ;; actually saw turn 1's answer, so removal is safe and the trailer owns the
+      ;; one checkpoint. With only turn 1 present, the whole context collapses.
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "old q"
+                                  :content [(content/prose "old a")]}
+                                 {:id "t2" :status :running :position 2}])
 
-       persistance/db-list-session-turn-iterations
-       (constantly
-         [{:status :done :position 1 :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [{:status :done
+                                  :position 1
+                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
 
-      (expect (nil? (previous-turn-context {:session-id "s1"
-                                            :db-info ::db
-                                            :ctx-atom (atom {"session_summaries"
-                                                             [{"scopes" #{"t1"}
-                                                               "issued_turn" 2
-                                                               "gist" "folded prior turn"}]})}
-                                           "t2")))))
+        (expect (nil? (previous-turn-context {:session-id "s1"
+                                              :db-info ::db
+                                              :ctx-atom (atom {"session_summaries"
+                                                               [{"scopes" #{"t1"}
+                                                                 "issued_turn" 2
+                                                                 "gist" "folded prior turn"}]})}
+                                             "t2")))))
   (it "carries cancelled turns with settled work and an explicit cancellation boundary"
-  (with-redefs
-    [persistance/db-list-session-turns
-     (constantly [{:id "t1"
-                   :status :cancelled
-                   :position 1
-                   :user-request "inspect and fix"}
-                  {:id "t2" :status :running :position 2 :user-request "continue"}])
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly
+                      [{:id "t1" :status :cancelled :position 1 :user-request "inspect and fix"}
+                       {:id "t2" :status :running :position 2 :user-request "continue"}])
 
-     persistance/db-list-session-turn-iterations
-     (constantly [{:status :done
-                   :position 1
-                   :forms [{:scope "t1/i1/f1" :src "cat(src)" :result {:path "src"}}]}
-                  {:status :running
-                   :position 2
-                   :forms [{:scope "t1/i2/f1" :src "patch(src)"}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [{:status :done
+                                  :position 1
+                                  :forms
+                                  [{:scope "t1/i1/f1" :src "cat(src)" :result {:path "src"}}]}
+                                 {:status :running
+                                  :position 2
+                                  :forms [{:scope "t1/i2/f1" :src "patch(src)"}]}])]
 
-    (expect (= [{:turn 1
-                 :user-request "inspect and fix"
-                 :answer nil
-                 :interrupted? false
-                 :cancelled? true
-                 :results [{:scope "t1/i1/f1" :src "cat(src)"}]}]
-               (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
-                                      "t2"))))))
+        (expect (= [{:turn 1
+                     :user-request "inspect and fix"
+                     :answer nil
+                     :interrupted? false
+                     :cancelled? true
+                     :results [{:scope "t1/i1/f1" :src "cat(src)"}]}]
+                   (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                          "t2"))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"
-                 (with-redefs
-                   [persistance/db-list-session-turns
-                    (fn [_db-info session-id]
-                      (expect (= "s1" session-id))
-                      [{:id "t1" :position 1} {:id "t2" :position 2}
-                       {:id "t3" :position 3 :status :running}])
+                 (with-redefs [persistance/db-list-session-turns
+                               (fn [_db-info session-id]
+                                 (expect (= "s1" session-id))
+                                 [{:id "t1" :position 1} {:id "t2" :position 2}
+                                  {:id "t3" :position 3 :status :running}])
 
-                    persistance/db-list-session-turn-iterations
-                    (fn [_db-info turn-id]
-                      (case turn-id
-                        "t2"
-                        [{:position 1 :input-tokens 42000} {:position 2 :input-tokens 51000}]
+                               persistance/db-list-session-turn-iterations
+                               (fn [_db-info turn-id]
+                                 (case turn-id
+                                   "t2"
+                                   [{:position 1 :input-tokens 42000}
+                                    {:position 2 :input-tokens 51000}]
 
-                        "t1"
-                        [{:position 1 :input-tokens 10000}]
+                                   "t1"
+                                   [{:position 1 :input-tokens 10000}]
 
-                        []))]
+                                   []))]
 
-              (expect (= {:last-request-tokens 51000
-                                :last-request-turn-id "t2"
-                                :last-request-turn-position 2
-                                :last-request-iteration 2
-                                :cache-samples [{"input" 10000 "cached" 0}
-                                                {"input" 42000 "cached" 0}
-                                                {"input" 51000 "cached" 0}]}
+                   (expect (= {:last-request-tokens 51000
+                               :last-request-turn-id "t2"
+                               :last-request-turn-position 2
+                               :last-request-iteration 2
+                               :cache-samples [{"input" 10000 "cached" 0} {"input" 42000 "cached" 0}
+                                               {"input" 51000 "cached" 0}]}
                               (previous-request-usage {:session-id "s1" :db-info ::db} "t3")))))
              (it "returns nil when no prior iteration has input tokens"
-                 (with-redefs
-                   [persistance/db-list-session-turns
-                    (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
+                 (with-redefs [persistance/db-list-session-turns
+                               (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
 
-                    persistance/db-list-session-turn-iterations
-                    (constantly [{:position 1 :input-tokens 0}])]
+                               persistance/db-list-session-turn-iterations
+                               (constantly [{:position 1 :input-tokens 0}])]
 
                    (expect (nil? (previous-request-usage {:session-id "s1" :db-info ::db} "t2"))))))
 
@@ -994,15 +966,14 @@
              ;; measurement, so a transient req=0 (iter-1 seed miss / errored iter)
              ;; BLANKED an already-shown "session_utilization" — the "sometimes works,
              ;; sometimes doesn't" flicker. The stamp must be monotonic.
-             (let
-               [stamp
-                (var-get #'lp/stamp-utilization!)
+             (let [stamp
+                   (var-get #'lp/stamp-utilization!)
 
-                util1
-                {"last_request_tokens" 5000 "saturation" 3}
+                   util1
+                   {"last_request_tokens" 5000 "saturation" 3}
 
-                util2
-                {"last_request_tokens" 9000 "saturation" 5}]
+                   util2
+                   {"last_request_tokens" 9000 "saturation" 5}]
 
                (it "stamps a real measurement onto the ctx-atom"
                    (let [ca (atom {})]
@@ -1020,21 +991,20 @@
 
 (defdescribe
   fold-session-scope-test
-  (let
-    [scope-key
-     (var-get #'eng/scope-key)
+  (let [scope-key
+        (var-get #'eng/scope-key)
 
-     expand-through
-     (var-get #'eng/expand-through)
+        expand-through
+        (var-get #'eng/expand-through)
 
-     apply-summaries
-     (var-get #'lp/apply-summaries)
+        apply-summaries
+        (var-get #'lp/apply-summaries)
 
-     stamp-iter-universe!
-     (var-get #'lp/stamp-iter-universe!)
+        stamp-iter-universe!
+        (var-get #'lp/stamp-iter-universe!)
 
-     prior-scope-index
-     (var-get #'lp/prior-turn-scope-index)]
+        prior-scope-index
+        (var-get #'lp/prior-turn-scope-index)]
 
     (it "scope-key parses iter + form scopes, dropping the form index"
         (expect (= [1 2] (scope-key "t1/i2")))
@@ -1042,8 +1012,8 @@
         (expect (= [10 20] (scope-key "t10/i20")))
         (expect (nil? (scope-key "garbage"))))
     (it "expand-through resolves a range cursor against the universe (inclusive)"
-        (let
-          [out (expand-through [{"through" "t1/i3" "gist" "g"}] ["t1/i1" "t1/i2" "t1/i3" "t1/i4"])]
+        (let [out (expand-through [{"through" "t1/i3" "gist" "g"}]
+                                  ["t1/i1" "t1/i2" "t1/i3" "t1/i4"])]
           (expect (= #{"t1/i1" "t1/i2" "t1/i3"} (get (first out) "scopes")))
           (expect (nil? (get (first out) "through")))
           (expect (= "g" (get (first out) "gist")))))
@@ -1051,32 +1021,30 @@
         (let [s [{"scopes" #{"t1/i2"} "gist" "g"}]]
           (expect (= s (expand-through s ["t1/i1" "t1/i2"])))))
     (it "apply-summaries collapses a through-range over the trailer, sparing later steps"
-        (let
-          [trailer
-           [[0 {:forms-vec [{:scope "t1/i1/f1" :result "a"}]}]
-            [1 {:forms-vec [{:scope "t1/i2/f1" :result "b"}]}]
-            [2 {:forms-vec [{:scope "t1/i3/f1" :result "c"}]}]]
+        (let [trailer
+              [[0 {:forms-vec [{:scope "t1/i1/f1" :result "a"}]}]
+               [1 {:forms-vec [{:scope "t1/i2/f1" :result "b"}]}]
+               [2 {:forms-vec [{:scope "t1/i3/f1" :result "c"}]}]]
 
-           out
-           (apply-summaries trailer [{"through" "t1/i2" "gist" "early"}])]
+              out
+              (apply-summaries trailer [{"through" "t1/i2" "gist" "early"}])]
 
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (true? (:collapsed? (second (nth out 1)))))
           (expect (nil? (:collapsed? (second (nth out 2)))))))
     (it "prices only the projected wire while retaining the raw universe"
-        (let
-          [trailer
-           [[0
-             {:forms-vec [{:scope "t1/i1/f1"
-                           :svar/tool-call-id "call-big"
-                           :result (apply str (repeat 4000 "x"))}]}]
-            [1 {:forms-vec [{:scope "t1/i2/f1" :result (apply str (repeat 400 "y"))}]}]]
+        (let [trailer
+              [[0
+                {:forms-vec [{:scope "t1/i1/f1"
+                              :svar/tool-call-id "call-big"
+                              :result (apply str (repeat 4000 "x"))}]}]
+               [1 {:forms-vec [{:scope "t1/i2/f1" :result (apply str (repeat 400 "y"))}]}]]
 
-           ca
-           (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "already folded"}]})
+              ca
+              (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "already folded"}]})
 
-           wire
-           (apply-summaries trailer (get @ca "session_summaries"))]
+              wire
+              (apply-summaries trailer (get @ca "session_summaries"))]
 
           (stamp-iter-universe! ca trailer wire)
           ;; A collapsed iteration keeps its identity in the universe but no longer
@@ -1094,76 +1062,71 @@
     ;; counter. A seed from a terminal INCOMPLETE turn does replay its settled
     ;; results as plain text, so it keeps its weight.
     (it "prices completed-turn cross-turn seeds at zero, incomplete-turn seeds in full"
-        (let
-          [payload
-           (apply str (repeat 4000 "x"))
+        (let [payload
+              (apply str (repeat 4000 "x"))
 
-           seed
-           (fn [scope status]
-             {:forms-vec [{:scope scope :result payload}]
-              :cross-turn/turn-status status
-              :preserved-thinking/replay? false})
+              seed
+              (fn [scope status]
+                {:forms-vec [{:scope scope :result payload}]
+                 :cross-turn/turn-status status
+                 :preserved-thinking/replay? false})
 
-           trailer
-           [[0 (seed "t1/i1/f1" :done)]
-            [1 (seed "t2/i1/f1" :cancelled)]
-            [2 {:forms-vec [{:scope "t3/i1/f1" :result payload}]}]]
+              trailer
+              [[0 (seed "t1/i1/f1" :done)] [1 (seed "t2/i1/f1" :cancelled)]
+               [2 {:forms-vec [{:scope "t3/i1/f1" :result payload}]}]]
 
-           ca
-           (atom {})]
+              ca
+              (atom {})]
 
           (stamp-iter-universe! ca trailer)
-          (expect (= {"t1/i1" 0 "t2/i1" 1000 "t3/i1" 1000}
-                     (get @ca "engine_iter_weights")))))
+          (expect (= {"t1/i1" 0 "t2/i1" 1000 "t3/i1" 1000} (get @ca "engine_iter_weights")))))
     ;; Frozen-prompt regression (session 0cfd25a7…): a fold recorded under an
     ;; EARLIER/foreign turn numbering kept re-resolving its range cursor against
     ;; every later live turn, collapsing the whole trailer. The model then never
     ;; saw its own tool results and re-issued the same call for 60+ iterations.
     (it "a fold whose cursor outlives the live turn numbering never collapses the live turn"
-        (let
-          [trailer
-           [[0 {:forms-vec [{:scope "t95/i1/f1" :result "a"}]}]
-            [1 {:forms-vec [{:scope "t95/i2/f1" :result "b"}]}]
-            [2 {:forms-vec [{:scope "t95/i3/f1" :result "c"}]}]]
+        (let [trailer
+              [[0 {:forms-vec [{:scope "t95/i1/f1" :result "a"}]}]
+               [1 {:forms-vec [{:scope "t95/i2/f1" :result "b"}]}]
+               [2 {:forms-vec [{:scope "t95/i3/f1" :result "c"}]}]]
 
-           out
-           (apply-summaries trailer [{"through" "t113/i9" "gist" "stale numbering"}])]
+              out
+              (apply-summaries trailer [{"through" "t113/i9" "gist" "stale numbering"}])]
 
           (expect (every? (fn [[_ rec]]
                             (nil? (:collapsed? rec)))
                           out))
           (expect (= trailer out))))
-    (it "a fold recorded in an EARLIER turn never collapses the live turn"
-        (let
-          [trailer
-           [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
-            [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+    (it
+      "a fold recorded in an EARLIER turn never collapses the live turn"
+      (let [trailer
+            [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
+             [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
 
-           out
-           (apply-summaries trailer [{"scopes" #{"t96/i1" "t96/i2"} "gist" "old" "at_turn" 95}])]
+            out
+            (apply-summaries trailer [{"scopes" #{"t96/i1" "t96/i2"} "gist" "old" "at_turn" 95}])]
 
-          (expect (every? (fn [[_ rec]]
-                            (nil? (:collapsed? rec)))
-                          out))))
+        (expect (every? (fn [[_ rec]]
+                          (nil? (:collapsed? rec)))
+                        out))))
     (it "a fold recorded in THIS turn still collapses its own live iterations"
-        (let
-          [trailer
-           [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
-            [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+        (let [trailer
+              [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
+               [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
 
-           out
-           (apply-summaries trailer [{"through" "t96/i1" "gist" "in-turn" "at_turn" 96}])]
+              out
+              (apply-summaries trailer [{"through" "t96/i1" "gist" "in-turn" "at_turn" 96}])]
 
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (nil? (:collapsed? (second (nth out 1)))))))
     (it "a stale-numbered fold still collapses PRIOR-turn scopes on the trailer"
-        (let
-          [trailer
-           [[0 {:preserved-thinking/replay? false :forms-vec [{:scope "t94/i1/f1" :result "old"}]}]
-            [1 {:forms-vec [{:scope "t95/i1/f1" :result "live"}]}]]
+        (let [trailer
+              [[0
+                {:preserved-thinking/replay? false :forms-vec [{:scope "t94/i1/f1" :result "old"}]}]
+               [1 {:forms-vec [{:scope "t95/i1/f1" :result "live"}]}]]
 
-           out
-           (apply-summaries trailer [{"scopes" #{"t94/i1" "t95/i1"} "gist" "g" "at_turn" 94}])]
+              out
+              (apply-summaries trailer [{"scopes" #{"t94/i1" "t95/i1"} "gist" "g" "at_turn" 94}])]
 
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (nil? (:collapsed? (second (nth out 1)))))))
@@ -1171,14 +1134,13 @@
         ;; The path-A regression: a fold recorded at iteration scope (t1/i1) must
         ;; apply to forms carrying FORM scopes (t1/i1/f1, t1/i1/f2) and collapse to
         ;; a SINGLE gist line, not repeat per form.
-        (let
-          [forms
-           [{:scope "t1/i1/f1" :result "a" :src "(cat \"x\")"}
-            {:scope "t1/i1/f2" :result "b" :src "(rg \"y\")"}
-            {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
+        (let [forms
+              [{:scope "t1/i1/f1" :result "a" :src "(cat \"x\")"}
+               {:scope "t1/i1/f2" :result "b" :src "(rg \"y\")"}
+               {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
 
-           out
-           (prior-scope-index forms [{"scopes" #{"t1/i1"} "gist" "explored"}])]
+              out
+              (prior-scope-index forms [{"scopes" #{"t1/i1"} "gist" "explored"}])]
 
           (expect (= 1 (count (filter :gist out))))
           (expect (= {:scope "t1/i1" :gist "explored"} (first (filter :gist out))))
@@ -1189,38 +1151,38 @@
       ;; single fold_session covering 40 iterations replayed its identical gist 40
       ;; times in every later request (and in every message queued behind a running
       ;; turn). Dedup keys on the breadcrumb TEXT, so one fold costs one line.
-      (let
-        [forms
-         (vec (for [i (range 1 21)]
-                {:scope (str "t1/i" i "/f1") :result "r" :src "(cat)"}))
+      (let [forms
+            (vec (for [i (range 1 21)]
+                   {:scope (str "t1/i" i "/f1") :result "r" :src "(cat)"}))
 
-         out
-         (prior-scope-index forms
-                            [{"scopes" (into #{} (map #(str "t1/i" %)) (range 1 21))
-                              "gist" "one big gist"}])]
+            out
+            (prior-scope-index forms
+                               [{"scopes" (into #{} (map #(str "t1/i" %)) (range 1 21))
+                                 "gist" "one big gist"}])]
 
         (expect (= [{:scope "t1/i1" :gist "one big gist"}] out))))
     (it "prior-turn-scope-index: distinct gists stay distinct while each collapses to one line"
-        (let
-          [forms
-           [{:scope "t1/i1/f1" :result "a" :src "(cat)"} {:scope "t1/i2/f1" :result "b" :src "(rg)"}
-            {:scope "t1/i3/f1" :result "c" :src "(ls)"} {:scope "t1/i4/f1" :result "d" :src "(ls)"}]
+        (let [forms
+              [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
+               {:scope "t1/i2/f1" :result "b" :src "(rg)"}
+               {:scope "t1/i3/f1" :result "c" :src "(ls)"}
+               {:scope "t1/i4/f1" :result "d" :src "(ls)"}]
 
-           out
-           (prior-scope-index forms
-                              [{"scopes" #{"t1/i1" "t1/i2"} "gist" "A"}
-                               {"scopes" #{"t1/i3" "t1/i4"} "gist" "B"}])]
+              out
+              (prior-scope-index forms
+                                 [{"scopes" #{"t1/i1" "t1/i2"} "gist" "A"}
+                                  {"scopes" #{"t1/i3" "t1/i4"} "gist" "B"}])]
 
           (expect (= [{:scope "t1/i1" :gist "A"} {:scope "t1/i3" :gist "B"}] out))))
     (it
       "prior-turn-scope-index: a dropped iteration collapses to ONE dropped breadcrumb keeping the why"
-      (let
-        [forms
-         [{:scope "t1/i1/f1" :result "a" :src "(cat)"} {:scope "t1/i1/f2" :result "b" :src "(rg)"} ; same dropped iter → still ONE line
-          {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
+      (let [forms
+            [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
+             {:scope "t1/i1/f2" :result "b" :src "(rg)"} ; same dropped iter → still ONE line
+             {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
 
-         out
-         (prior-scope-index forms [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
+            out
+            (prior-scope-index forms [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
 
         ;; the iteration's forms collapse to a single audit line, not per-form, not vanished
         (expect (= {:scope "t1/i1" :dropped? true :note "misread"} (first (filter :dropped? out))))
@@ -1249,35 +1211,35 @@
   turn-position-state-test
   (it
     "seeds turn-state with persisted turn position before iteration render"
-    (let
-      [seen
-       (atom nil)
+    (let [seen
+          (atom nil)
 
-       env
-       {:db-info ::db :session-id "s1" :turn-state-atom (ctx-loop/make-turn-state-atom)}]
+          env
+          {:db-info ::db :session-id "s1" :turn-state-atom (ctx-loop/make-turn-state-atom)}]
 
-      (with-redefs
-        [persistance/db-store-session-turn!
-         (fn [_db opts]
-           (expect (= {:parent-session-id "s1" :user-request "follow up" :status :running} opts))
-           "turn-3")
+      (with-redefs [persistance/db-store-session-turn!
+                    (fn [_db opts]
+                      (expect (=
+                                {:parent-session-id "s1" :user-request "follow up" :status :running}
+                                opts))
+                      "turn-3")
 
-         persistance/db-update-session-turn!
-         (fn [_db turn-id opts]
-           (reset! seen {:turn-id turn-id :opts opts}))
+                    persistance/db-update-session-turn!
+                    (fn [_db turn-id opts]
+                      (reset! seen {:turn-id turn-id :opts opts}))
 
-         lp/session-turn-position
-         (fn [_env turn-id]
-           (expect (= "turn-3" turn-id))
-           3)
+                    lp/session-turn-position
+                    (fn [_env turn-id]
+                      (expect (= "turn-3" turn-id))
+                      3)
 
-         lp/iteration-loop
-         (fn [env* user-request opts]
-           (expect (= "follow up" user-request))
-           (expect (= "turn-3" (:session-turn-id opts)))
-           (expect (= 3 (:turn-position (ctx-loop/read-turn-state env*))))
-           (expect (nil? (:iteration (ctx-loop/read-turn-state env*))))
-           {:iteration-count 1 :duration-ms 0})]
+                    lp/iteration-loop
+                    (fn [env* user-request opts]
+                      (expect (= "follow up" user-request))
+                      (expect (= "turn-3" (:session-turn-id opts)))
+                      (expect (= 3 (:turn-position (ctx-loop/read-turn-state env*))))
+                      (expect (nil? (:iteration (ctx-loop/read-turn-state env*))))
+                      {:iteration-count 1 :duration-ms 0})]
 
         (let [result (run-normal-turn! env "follow up" {})]
           (expect (= "turn-3" (:session-turn-id result)))
@@ -1285,11 +1247,10 @@
 
 (defdescribe max-tokens-exceeded-retry-test
              (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
-                 (let
-                   [e (ex-info "max_tokens hit"
-                               {:type :svar.llm/max-tokens-exceeded
-                                :output-tokens 2048
-                                :reasoning-length 1900})]
+                 (let [e (ex-info "max_tokens hit"
+                                  {:type :svar.llm/max-tokens-exceeded
+                                   :output-tokens 2048
+                                   :reasoning-length 1900})]
                    (expect (true? (max-tokens-exceeded-error? e)))))
              (it "does not confuse other svar errors with the max-tokens variant"
                  ;; `:svar.llm/empty-content` is the genuine \"model returned nothing useful\"
@@ -1325,13 +1286,12 @@
              ;; So predicate / context helpers consume `(:data iter-err)` for any
              ;; svar-side ex-info keys, NOT top-level. Tests reflect that.
              (it "surfaces dedicated copy + hint for :svar.llm/max-tokens-exceeded"
-                 (let
-                   [iter-err
-                    {:type :svar.llm/max-tokens-exceeded
-                     :data {:reasoning-length 1900 :output-tokens 2048}}
+                 (let [iter-err
+                       {:type :svar.llm/max-tokens-exceeded
+                        :data {:reasoning-length 1900 :output-tokens 2048}}
 
-                    ctx
-                    (llm-provider-error-context 3 iter-err)]
+                       ctx
+                       (llm-provider-error-context 3 iter-err)]
 
                    (expect (= :llm-provider/max-tokens-exhausted (:type ctx)))
                    (expect (= 1900 (:reasoning-length ctx)))
@@ -1345,12 +1305,11 @@
                  ;; Anthropic native `:svar.core/stream-incomplete + :reason
                  ;; max_output_tokens` is detected through `:data` (nested), not
                  ;; top-level — `format-exception` puts raw `ex-data` under `:data`.
-                 (let
-                   [iter-err
-                    {:data {:type :svar.core/stream-incomplete :reason "max_output_tokens"}}
+                 (let [iter-err
+                       {:data {:type :svar.core/stream-incomplete :reason "max_output_tokens"}}
 
-                    ctx
-                    (llm-provider-error-context 2 iter-err)]
+                       ctx
+                       (llm-provider-error-context 2 iter-err)]
 
                    (expect (= :llm-provider/output-budget-exhausted (:type ctx))))))
 
@@ -1379,18 +1338,17 @@
       ;; Returning only the latest step (the pre-fix behaviour) made GLM
       ;; re-derive scratch state each iteration, pinning `cached_tokens`
       ;; across many iterations before the fix.
-      (let
-        [target
-         {:provider :zai-coding-plan :model "glm-5.1"}
+      (let [target
+            {:provider :zai-coding-plan :model "glm-5.1"}
 
-         trailer
-         (mapv #(stub-iter {:id %}) [1 2 3])
+            trailer
+            (mapv #(stub-iter {:id %}) [1 2 3])
 
-         compat
-         (compatible-preserved-thinking-trailer-iters trailer target)
+            compat
+            (compatible-preserved-thinking-trailer-iters trailer target)
 
-         replays
-         (preserved-thinking-replay-messages compat)]
+            replays
+            (preserved-thinking-replay-messages compat)]
 
         (expect (= 3 (count compat)))
         (expect (= 3 (count replays)))
@@ -1406,19 +1364,18 @@
       ;; signatures are not portable (z.ai = raw text, Anthropic = HMAC,
       ;; OpenAI Responses = JSON reasoning item). The compatible filter
       ;; must reject mismatches before this fn sees them.
-      (let
-        [target
-         {:provider :zai-coding-plan :model "glm-5.1"}
+      (let [target
+            {:provider :zai-coding-plan :model "glm-5.1"}
 
-         trailer
-         [(stub-iter {:id 1}) (stub-iter {:id 2 :provider :anthropic :model "claude-sonnet-4.6"})
-          (stub-iter {:id 3})]
+            trailer
+            [(stub-iter {:id 1}) (stub-iter {:id 2 :provider :anthropic :model "claude-sonnet-4.6"})
+             (stub-iter {:id 3})]
 
-         compat
-         (compatible-preserved-thinking-trailer-iters trailer target)
+            compat
+            (compatible-preserved-thinking-trailer-iters trailer target)
 
-         replays
-         (preserved-thinking-replay-messages compat)]
+            replays
+            (preserved-thinking-replay-messages compat)]
 
         (expect (= 2 (count replays)))
         (expect (= ["think-1" "think-3"]
@@ -1432,18 +1389,17 @@
       ;; Cross-turn trailer seeds carry the opt-out flag so historical
       ;; iterations stay visible in transcripts but their opaque thinking
       ;; state is not replayed into a new user turn.
-      (let
-        [target
-         {:provider :zai-coding-plan :model "glm-5.1"}
+      (let [target
+            {:provider :zai-coding-plan :model "glm-5.1"}
 
-         trailer
-         [(stub-iter {:id 1 :replay? false}) (stub-iter {:id 2 :replay? true})]
+            trailer
+            [(stub-iter {:id 1 :replay? false}) (stub-iter {:id 2 :replay? true})]
 
-         compat
-         (compatible-preserved-thinking-trailer-iters trailer target)
+            compat
+            (compatible-preserved-thinking-trailer-iters trailer target)
 
-         replays
-         (preserved-thinking-replay-messages compat)]
+            replays
+            (preserved-thinking-replay-messages compat)]
 
         (expect (= 1 (count replays)))
         (expect (= ["think-2"]
@@ -1453,27 +1409,27 @@
                                first
                                :thinking))
                          replays)))))
-  (it "returns empty when no iteration has an :assistant-message"
-      ;; Iterations that errored before the model produced a usable
-      ;; assistant turn (e.g. provider HTTP 4xx mid-stream) lack
-      ;; `:assistant-message`; the compatible filter drops them so the
-      ;; replay never tries to send an empty/partial block.
-      (let
-        [target
-         {:provider :zai-coding-plan :model "glm-5.1"}
+  (it
+    "returns empty when no iteration has an :assistant-message"
+    ;; Iterations that errored before the model produced a usable
+    ;; assistant turn (e.g. provider HTTP 4xx mid-stream) lack
+    ;; `:assistant-message`; the compatible filter drops them so the
+    ;; replay never tries to send an empty/partial block.
+    (let [target
+          {:provider :zai-coding-plan :model "glm-5.1"}
 
-         trailer
-         [[1
-           {:llm-provider :zai-coding-plan :llm-model "glm-5.1" :preserved-thinking/replay? true}]]
+          trailer
+          [[1
+            {:llm-provider :zai-coding-plan :llm-model "glm-5.1" :preserved-thinking/replay? true}]]
 
-         compat
-         (compatible-preserved-thinking-trailer-iters trailer target)
+          compat
+          (compatible-preserved-thinking-trailer-iters trailer target)
 
-         replays
-         (preserved-thinking-replay-messages compat)]
+          replays
+          (preserved-thinking-replay-messages compat)]
 
-        (expect (zero? (count compat)))
-        (expect (zero? (count replays))))))
+      (expect (zero? (count compat)))
+      (expect (zero? (count replays))))))
 
 (defn- stub-tool-iter
   "Trailer entry for conversation-suffix tests: one tool call with its
@@ -1481,12 +1437,15 @@
   [{:keys [id provider model replay? content attachments]
     :or {provider :lmstudio model "google/gemma-4-12b-qat" replay? true}}]
   [id
-   {:assistant-message
-    {:role "assistant"
-     :content
-     (or content
-         [{:type "thinking" :thinking (str "think-" id) :thinking-signature (str "sig-" id)}
-          {:type "tool_use" :id (str "tc-" id) :name "python_execution" :input {"query" "lmstudio"}}])}
+   {:assistant-message {:role "assistant"
+                        :content (or content
+                                     [{:type "thinking"
+                                       :thinking (str "think-" id)
+                                       :thinking-signature (str "sig-" id)}
+                                      {:type "tool_use"
+                                       :id (str "tc-" id)
+                                       :name "python_execution"
+                                       :input {"query" "lmstudio"}}])}
     :llm-provider provider
     :llm-model model
     :preserved-thinking/replay? replay?
@@ -1496,138 +1455,130 @@
                  :svar/tool-call-id (str "tc-" id)
                  :result {"item_count" 2 "paths" ["a.clj" "b.clj"]}}]}])
 
-(defdescribe conversation-suffix-mismatch-test
-             ;; The session-c4b630c7 regression: the health gate demoted lmstudio so the
-             ;; SELECTED model (target) was anthropic/opus while the ACTUAL server was
-             ;; lmstudio/gemma. The old suffix dropped the whole [assistant, tool_result]
-             ;; pair on that mismatch — the model never saw its own grep result and
-             ;; re-issued the identical call every iteration.
-             (it
-               "replays [assistant sans thinking, tool_result] on provider/model mismatch"
-               (let
-                 [target
-                  {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+(defdescribe
+  conversation-suffix-mismatch-test
+  ;; The session-c4b630c7 regression: the health gate demoted lmstudio so the
+  ;; SELECTED model (target) was anthropic/opus while the ACTUAL server was
+  ;; lmstudio/gemma. The old suffix dropped the whole [assistant, tool_result]
+  ;; pair on that mismatch — the model never saw its own grep result and
+  ;; re-issued the identical call every iteration.
+  (it "replays [assistant sans thinking, tool_result] on provider/model mismatch"
+      (let [target
+            {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
 
-                  suffix
-                  (conversation-suffix [(stub-tool-iter {:id 1})] target)]
+            suffix
+            (conversation-suffix [(stub-tool-iter {:id 1})] target)]
 
-                 (expect (= 2 (count suffix)))
-                 (let
-                   [[assistant results]
-                    suffix
+        (expect (= 2 (count suffix)))
+        (let [[assistant results]
+              suffix
 
-                    types
-                    (mapv :type (:content assistant))]
+              types
+              (mapv :type (:content assistant))]
 
-                   (expect (= "assistant" (:role assistant)))
-                   ;; thinking stripped, tool_use kept — the tool_result stays answerable
-                   (expect (= ["tool_use"] types))
-                   (expect (= "user" (:role results)))
-                   (expect (= "tc-1"
-                              (-> results
-                                  :content
-                                  first
-                                  :tool_use_id)))
-                   (expect (string? (-> results
-                                        :content
-                                        first
-                                        :content)))
-                   (expect (str/includes? (-> results
-                                              :content
-                                              first
-                                              :content)
-                                          "item_count")))))
-             (it "replays thinking verbatim when provider+model match the target"
-                 (let
-                   [target
-                    {:provider :lmstudio :model "google/gemma-4-12b-qat"}
+          (expect (= "assistant" (:role assistant)))
+          ;; thinking stripped, tool_use kept — the tool_result stays answerable
+          (expect (= ["tool_use"] types))
+          (expect (= "user" (:role results)))
+          (expect (= "tc-1"
+                     (-> results
+                         :content
+                         first
+                         :tool_use_id)))
+          (expect (string? (-> results
+                               :content
+                               first
+                               :content)))
+          (expect (str/includes? (-> results
+                                     :content
+                                     first
+                                     :content)
+                                 "item_count")))))
+  (it "replays thinking verbatim when provider+model match the target"
+      (let [target
+            {:provider :lmstudio :model "google/gemma-4-12b-qat"}
 
-                    suffix
-                    (conversation-suffix [(stub-tool-iter {:id 1})] target)]
+            suffix
+            (conversation-suffix [(stub-tool-iter {:id 1})] target)]
 
-                   (expect (= 2 (count suffix)))
-                   (expect (= ["thinking" "tool_use"] (mapv :type (:content (first suffix)))))))
-             (it "degrades to a plain-text results message when only thinking remains"
-                 ;; No tool_use survives the strip → a tool_result would be orphaned
-                 ;; (wire error on Anthropic), so the outputs ride as plain text.
-                 (let
-                   [target
-                    {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+        (expect (= 2 (count suffix)))
+        (expect (= ["thinking" "tool_use"] (mapv :type (:content (first suffix)))))))
+  (it "degrades to a plain-text results message when only thinking remains"
+      ;; No tool_use survives the strip → a tool_result would be orphaned
+      ;; (wire error on Anthropic), so the outputs ride as plain text.
+      (let [target
+            {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
 
-                    entry
-                    (stub-tool-iter {:id 1
-                                     :content [{:type "thinking"
-                                                :thinking "only-thinking"
-                                                :thinking-signature "sig"}]})
+            entry
+            (stub-tool-iter
+              {:id 1
+               :content [{:type "thinking" :thinking "only-thinking" :thinking-signature "sig"}]})
 
-                    suffix
-                    (conversation-suffix [entry] target)]
+            suffix
+            (conversation-suffix [entry] target)]
 
-                   (expect (= 1 (count suffix)))
-                   (let [[results] suffix]
-                     (expect (= "user" (:role results)))
-                     (expect (string? (:content results)))
-                     (expect (str/includes? (:content results) "item_count")))))
-             (it "still excludes successful cross-turn seeds entirely"
-                 (let
-                   [target
-                    {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+        (expect (= 1 (count suffix)))
+        (let [[results] suffix]
+          (expect (= "user" (:role results)))
+          (expect (string? (:content results)))
+          (expect (str/includes? (:content results) "item_count")))))
+  (it "still excludes successful cross-turn seeds entirely"
+      (let [target
+            {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
 
-                    suffix
-                    (conversation-suffix [(stub-tool-iter {:id 1 :replay? false})] target)]
+            suffix
+            (conversation-suffix [(stub-tool-iter {:id 1 :replay? false})] target)]
 
-                   (expect (empty? suffix))))
-             (it "replays terminal-incomplete cross-turn results as plain text without orphaned tool_result blocks"
-                 (let
-                   [target
-                    {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+        (expect (empty? suffix))))
+  (it
+    "replays terminal-incomplete cross-turn results as plain text without orphaned tool_result blocks"
+    (let [target
+          {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
 
-                    [pos rec]
-                    (stub-tool-iter {:id 1 :replay? false})
+          [pos rec]
+          (stub-tool-iter {:id 1 :replay? false})
 
-                    suffix
-                    (conversation-suffix [[pos (assoc rec :cross-turn/turn-status :cancelled)]]
-                                         target)]
+          suffix
+          (conversation-suffix [[pos (assoc rec :cross-turn/turn-status :cancelled)]] target)]
 
-                   (expect (= 1 (count suffix)))
-                   (let [[results] suffix]
-                     (expect (= "user" (:role results)))
-                     (expect (string? (:content results)))
-                     (expect (str/includes? (:content results) "item_count"))
-                     (expect (not (vector? (:content results))))))))
+      (expect (= 1 (count suffix)))
+      (let [[results] suffix]
+        (expect (= "user" (:role results)))
+        (expect (string? (:content results)))
+        (expect (str/includes? (:content results) "item_count"))
+        (expect (not (vector? (:content results))))))))
 
 (defdescribe
   cancellation-continuity-provider-messages-test
-  (it "assembles the cancelled request, abort boundary, settled call, and settled output without a tool protocol orphan"
-      (let
-        [target
-         {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+  (it
+    "assembles the cancelled request, abort boundary, settled call, and settled output without a tool protocol orphan"
+    (let [target
+          {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
 
-         initial
-         (prompt/assemble-initial-messages
-           {:previous-turn-context [{:turn 1
-                                     :user-request "inspect and fix"
-                                     :cancelled? true
-                                     :results [{:scope "t1/i1/f1" :src "cat(src)"}]}]
-            :turn-context "session[\"turn\"] = 2"
-            :initial-user-content "continue"})
+          initial
+          (prompt/assemble-initial-messages {:previous-turn-context
+                                             [{:turn 1
+                                               :user-request "inspect and fix"
+                                               :cancelled? true
+                                               :results [{:scope "t1/i1/f1" :src "cat(src)"}]}]
+                                             :turn-context "session[\"turn\"] = 2"
+                                             :initial-user-content "continue"})
 
-         [pos rec]
-         (stub-tool-iter {:id 1 :replay? false})
+          [pos rec]
+          (stub-tool-iter {:id 1 :replay? false})
 
-         messages
-         (into initial
-               (conversation-suffix
-                 [[pos (assoc rec :cross-turn/turn-status :cancelled)]]
-                 target))]
+          messages
+          (into initial
+                (conversation-suffix [[pos (assoc rec :cross-turn/turn-status :cancelled)]]
+                                     target))]
 
-        (expect (= 3 (count messages)))
-        (expect (str/includes? (:content (first messages)) "inspect and fix"))
-        (expect (str/includes? (:content (first messages)) "cat(src)"))
-        (expect (str/includes? (:content (first messages)) "<turn_cancelled>"))
-        (expect (str/includes? (:content (second messages)) "continue"))
-        (expect (string? (:content (last messages))))
-        (expect (str/includes? (:content (last messages)) "item_count")))))
+      (expect (= 3 (count messages)))
+      (expect (str/includes? (:content (first messages)) "inspect and fix"))
+      (expect (str/includes? (:content (first messages)) "cat(src)"))
+      (expect (str/includes? (:content (first messages)) "<turn_cancelled>"))
+      (expect (str/includes? (:content (second messages)) "continue"))
+      (expect (string? (:content (last messages))))
+      (expect (str/includes? (:content (last messages)) "item_count")))))
 
 
 ;; 1x1 red PNG — REAL pixels. Every image block the loop emits is decoded at
@@ -1642,16 +1593,14 @@
   ;; produced are persisted as :attachments and replayed to the model as
   ;; their OWN vision user message AFTER the <results> — but ONLY when the
   ;; target model advertises :vision.
-  (let
-    [att {:tool-call-id "tc-1"
-          :media-type "image/png"
-          :base64 replay-png-b64
-          :filename "plot.png"
-          :size 67}]
+  (let [att {:tool-call-id "tc-1"
+             :media-type "image/png"
+             :base64 replay-png-b64
+             :filename "plot.png"
+             :size 67}]
     (it "appends a vision user message with the image AFTER results"
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target)]
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target)]
 
           ;; [assistant-replay, <results>, image-user] — image is LAST so it
           ;; never sits between a tool_use and its tool_result.
@@ -1666,9 +1615,8 @@
                            :image_url
                            :url))))))
     (it "omits the image entirely for a text-only (non-vision) target"
-        (let
-          [target {:provider :zai-coding-plan :model "glm-5-turbo"}
-           suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target)]
+        (let [target {:provider :zai-coding-plan :model "glm-5-turbo"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target)]
 
           ;; back to the plain [assistant, results] pair, no image block
           (expect (= 2 (count suffix)))
@@ -1677,16 +1625,15 @@
                                    (some #(= "image_url" (:type %)) (:content m))))
                             suffix))))
     (it "skips a non-image attach artifact — a csv never rides as an image block"
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           csv {:tool-call-id "tc-2"
-                :media-type "text/csv"
-                :base64 "YSxi"
-                :filename "data.csv"
-                :size 3
-                :kind "file"}
-           suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att csv]})] target)
-           img (last suffix)]
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              csv {:tool-call-id "tc-2"
+                   :media-type "text/csv"
+                   :base64 "YSxi"
+                   :filename "data.csv"
+                   :size 3
+                   :kind "file"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att csv]})] target)
+              img (last suffix)]
 
           ;; the image still replays, but ONLY it — the csv artifact is
           ;; DB/display-only, never a broken data:text/csv image block.
@@ -1699,55 +1646,59 @@
                          first
                          :image_url
                          :url)))))
-    (it "rasterizes an SVG figure to PNG on the way out"
-        ;; No wire reads markup, so the vector is converted at SEND time — the
-        ;; stored attachment stays SVG and is re-judged on every later turn.
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           svg {:tool-call-id "tc-3"
-                :media-type "image/svg+xml"
-                :base64 (.encodeToString
-                          (java.util.Base64/getEncoder)
-                          (.getBytes
-                            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><rect width=\"16\" height=\"16\" fill=\"#333\"/></svg>"
-                            "UTF-8"))
-                :filename "fig.svg"
-                :kind "image"}
-           suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [svg]})] target)]
+    (it
+      "rasterizes an SVG figure to PNG on the way out"
+      ;; No wire reads markup, so the vector is converted at SEND time — the
+      ;; stored attachment stays SVG and is re-judged on every later turn.
+      (let
+        [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+         svg
+         {:tool-call-id "tc-3"
+          :media-type "image/svg+xml"
+          :base64
+          (.encodeToString
+            (java.util.Base64/getEncoder)
+            (.getBytes
+              "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><rect width=\"16\" height=\"16\" fill=\"#333\"/></svg>"
+              "UTF-8"))
+          :filename "fig.svg"
+          :kind "image"}
+         suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [svg]})] target)]
 
-          (expect (= 3 (count suffix)))
-          (expect (str/starts-with? (get-in (last suffix) [:content 0 :image_url :url])
-                                    "data:image/png;base64,"))))
+        (expect (= 3 (count suffix)))
+        (expect (str/starts-with? (get-in (last suffix) [:content 0 :image_url :url])
+                                  "data:image/png;base64,"))))
     (it "skips what cannot become a picture at all"
         ;; The session killer: an attachment that merely SAYS `image/…` used to
         ;; satisfy a coarse media-type test, so unrenderable markup, a corrupt
         ;; raster or an unverifiable blank type rode as an image block and the
         ;; provider answered 400 on EVERY later turn, because attachments replay
         ;; — the session never recovered. Now the bytes must decode here.
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           broken-svg {:tool-call-id "tc-3"
-                       :media-type "image/svg+xml"
-                       :base64 (.encodeToString (java.util.Base64/getEncoder)
-                                                (.getBytes "not an image at all" "UTF-8"))
-                       :filename "fig.svg"
-                       :kind "image"}
-           ;; a perfect PNG signature + IHDR over an unreadable stream
-           corrupt (assoc broken-svg
-                     :media-type "image/png"
-                     :filename "dot.png"
-                     :base64 (.encodeToString
-                               (java.util.Base64/getEncoder)
-                               (byte-array
-                                 (concat (take 33
-                                               (.decode (java.util.Base64/getDecoder)
-                                                        ^String replay-png-b64))
-                                         (repeat 24 0)))))
-           blank (assoc broken-svg :media-type "" :filename "fig")
-           only-bad (conversation-suffix [(stub-tool-iter {:id 1
-                                                           :attachments [broken-svg corrupt blank]})]
-                                         target)
-           mixed (conversation-suffix [(stub-tool-iter {:id 1 :attachments [corrupt att]})] target)]
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              broken-svg {:tool-call-id "tc-3"
+                          :media-type "image/svg+xml"
+                          :base64 (.encodeToString (java.util.Base64/getEncoder)
+                                                   (.getBytes "not an image at all" "UTF-8"))
+                          :filename "fig.svg"
+                          :kind "image"}
+              ;; a perfect PNG signature + IHDR over an unreadable stream
+              corrupt (assoc broken-svg
+                        :media-type "image/png"
+                        :filename "dot.png"
+                        :base64 (.encodeToString
+                                  (java.util.Base64/getEncoder)
+                                  (byte-array (concat (take 33
+                                                            (.decode (java.util.Base64/getDecoder)
+                                                                     ^String replay-png-b64))
+                                                      (repeat 24 0)))))
+              blank (assoc broken-svg
+                      :media-type ""
+                      :filename "fig")
+              only-bad (conversation-suffix [(stub-tool-iter
+                                               {:id 1 :attachments [broken-svg corrupt blank]})]
+                                            target)
+              mixed (conversation-suffix [(stub-tool-iter {:id 1 :attachments [corrupt att]})]
+                                         target)]
 
           ;; nothing replayable left → no vision message at all
           (expect (= 2 (count only-bad)))
@@ -1763,10 +1714,9 @@
         ;; The invariant: a figure's vision visibility TRACKS its iteration's
         ;; textual visibility. Once fold_session/session_drop collapses the
         ;; step, its image bytes leave the wire with it — never re-billed.
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           [pos rec] (stub-tool-iter {:id 1 :attachments [att]})
-           suffix (conversation-suffix [[pos (assoc rec :collapsed? true)]] target)]
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              [pos rec] (stub-tool-iter {:id 1 :attachments [att]})
+              suffix (conversation-suffix [[pos (assoc rec :collapsed? true)]] target)]
 
           (expect (not-any? (fn [m]
                               (and (vector? (:content m))
@@ -1776,10 +1726,9 @@
         ;; The leak this guards: a prior-turn figure carried as a seed
         ;; (:preserved-thinking/replay? false) used to be byte-immune to
         ;; compaction because the seed branch ran BEFORE the collapse check.
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           [pos rec] (stub-tool-iter {:id 1 :replay? false :attachments [att]})
-           suffix (conversation-suffix [[pos (assoc rec :collapsed? true)]] target)]
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              [pos rec] (stub-tool-iter {:id 1 :replay? false :attachments [att]})
+              suffix (conversation-suffix [[pos (assoc rec :collapsed? true)]] target)]
 
           (expect (not-any? (fn [m]
                               (and (vector? (:content m))
@@ -1788,17 +1737,16 @@
     (it "still rides a NON-folded cross-turn seed's image to a vision target"
         ;; The reorder must not break the one path that legitimately emits a
         ;; seed's image: its bytes were never wired to any prior turn.
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           suffix (conversation-suffix [(stub-tool-iter {:id 1 :replay? false :attachments [att]})]
-                                       target)]
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              suffix (conversation-suffix [(stub-tool-iter
+                                             {:id 1 :replay? false :attachments [att]})]
+                                          target)]
 
           (expect (= 1 (count suffix)))
           (expect (= ["image_url"] (mapv :type (:content (first suffix)))))))
     (it "emits no image message when an iteration produced no attachments"
-        (let
-          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-           suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
+        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+              suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
 
           (expect (= 2 (count suffix)))))))
 
@@ -1817,69 +1765,72 @@
              :base64 replay-png-b64
              :filename "plot.png"
              :size 67}]
-
     (it "believes the catalog over the model name, in both directions"
-      ;; Sighted upstream, name says nothing.
-      (expect (target-supports-vision? {:provider :openrouter :model "qwen/qwen2.5-vl-72b-instruct"}))
-      (expect (target-supports-vision? {:provider :mistral :model "mistral-medium-latest"}))
-      ;; Text-only upstream behind a name that matches the gpt-4o vision pattern.
-      (expect (not (target-supports-vision? {:provider :openrouter :model "openai/gpt-4o-search-preview"})))
-      ;; Unchanged: a coding-plan text model stays blind.
-      (expect (not (target-supports-vision? {:provider :zai-coding-plan :model "glm-5-turbo"}))))
-
+        ;; Sighted upstream, name says nothing.
+        (expect (target-supports-vision? {:provider :openrouter
+                                          :model "qwen/qwen2.5-vl-72b-instruct"}))
+        (expect (target-supports-vision? {:provider :mistral :model "mistral-medium-latest"}))
+        ;; Text-only upstream behind a name that matches the gpt-4o vision pattern.
+        (expect (not (target-supports-vision? {:provider :openrouter
+                                               :model "openai/gpt-4o-search-preview"})))
+        ;; Unchanged: a coding-plan text model stays blind.
+        (expect (not (target-supports-vision? {:provider :zai-coding-plan :model "glm-5-turbo"}))))
     (it "reads a provider the curated table never mentions"
-      ;; models.dev carries `opencode-go`; svar's own KNOWN_PROVIDERS does not, and
-      ;; the name heuristic has no idea what `mimo-v2.5` is.
-      (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
-      (expect (not (target-supports-vision? {:provider :opencode-go :model "deepseek-v4-flash"}))))
-
+        ;; models.dev carries `opencode-go`; svar's own KNOWN_PROVIDERS does not, and
+        ;; the name heuristic has no idea what `mimo-v2.5` is.
+        (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
+        (expect (not (target-supports-vision? {:provider :opencode-go
+                                               :model "deepseek-v4-flash"}))))
     (it "lets config speak for a model no catalog carries"
-      ;; The escape hatch for local runtimes: nothing else can know a local
-      ;; llava reads images.
-      (expect (target-supports-vision? {:provider :ollama :model "llava:13b"
-                                        :capabilities #{:chat :vision}}))
-      (expect (not (target-supports-vision? {:provider :ollama :model "llava:13b"}))))
-
+        ;; The escape hatch for local runtimes: nothing else can know a local
+        ;; llava reads images.
+        (expect (target-supports-vision?
+                  {:provider :ollama :model "llava:13b" :capabilities #{:chat :vision}}))
+        (expect (not (target-supports-vision? {:provider :ollama :model "llava:13b"}))))
     (it "answers nothing for a target with no provider but keeps the name's word"
-      (expect (target-supports-vision? {:model "claude-opus-4-8"}))
-      (expect (not (target-supports-vision? {:model "glm-5-turbo"}))))
-
+        (expect (target-supports-vision? {:model "claude-opus-4-8"}))
+        (expect (not (target-supports-vision? {:model "glm-5-turbo"}))))
     (it "replays PIXELS to a catalog-sighted target instead of paying for a description"
-      (let [asked (atom 0)
-            describer (fn [images]
-                        (swap! asked inc)
-                        (mapv (fn [_] {:text "a plot" :model "seer-1"}) images))
-            suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})]
-                                        {:provider :opencode-go :model "mimo-v2.5"}
-                                        {:describe-images describer})]
-        (expect (= 3 (count suffix)))
-        (expect (= ["image_url"] (mapv :type (:content (last suffix)))))
-        (expect (zero? @asked))))))
+        (let [asked (atom 0)
+              describer (fn [images]
+                          (swap! asked inc)
+                          (mapv (fn [_]
+                                  {:text "a plot" :model "seer-1"})
+                                images))
+              suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})]
+                                          {:provider :opencode-go :model "mimo-v2.5"}
+                                          {:describe-images describer})]
 
-(defdescribe
-  target-vision-follows-the-live-router-test
-  "The gate's verdict rides the LIVE router, so a provider-level veto reaches it."
-  ;; Regression: a real gateway proxies models models.dev lists as multimodal, but
-  ;; its own request schema has no image content part — six of the fleet's models
-  ;; answered an attached screenshot with HTTP 400 `unknown variant image_url,
-  ;; expected text`. Trusting the catalog alone would have sent pixels into that
-  ;; 400 on every turn that carried an image.
-  (let [router-for (fn [veto?]
-                     (svar/make-router
-                       [(cond-> {:id :openrouter :api-key "k"
-                                 :models [{:name "qwen/qwen2.5-vl-72b-instruct"}]}
-                          veto? (assoc :image-input? false))]))
-        target-for (fn [veto?]
+          (expect (= 3 (count suffix)))
+          (expect (= ["image_url"] (mapv :type (:content (last suffix)))))
+          (expect (zero? @asked))))))
+
+(defdescribe target-vision-follows-the-live-router-test
+             "The gate's verdict rides the LIVE router, so a provider-level veto reaches it."
+             ;; Regression: a real gateway proxies models models.dev lists as multimodal, but
+             ;; its own request schema has no image content part — six of the fleet's models
+             ;; answered an attached screenshot with HTTP 400 `unknown variant image_url,
+             ;; expected text`. Trusting the catalog alone would have sent pixels into that
+             ;; 400 on every turn that carried an image.
+             (let [router-for
+                   (fn [veto?]
+                     (svar/make-router [(cond-> {:id :openrouter
+                                                 :api-key "k"
+                                                 :models [{:name "qwen/qwen2.5-vl-72b-instruct"}]}
+                                          veto?
+                                          (assoc :image-input? false))]))
+
+                   target-for
+                   (fn [veto?]
                      ((deref #'lp/replay-context)
-                      (svar-router/resolve-effective-model (router-for veto?) {})))]
+                       (svar-router/resolve-effective-model (router-for veto?) {})))]
 
-    (it "carries the router's capabilities into the replay target"
-      (expect (contains? (:capabilities (target-for false)) :vision))
-      (expect (not (contains? (:capabilities (target-for true)) :vision))))
-
-    (it "sends pixels only while the provider's wire accepts them"
-      (expect (target-supports-vision? (target-for false)))
-      (expect (not (target-supports-vision? (target-for true)))))))
+               (it "carries the router's capabilities into the replay target"
+                   (expect (contains? (:capabilities (target-for false)) :vision))
+                   (expect (not (contains? (:capabilities (target-for true)) :vision))))
+               (it "sends pixels only while the provider's wire accepts them"
+                   (expect (target-supports-vision? (target-for false)))
+                   (expect (not (target-supports-vision? (target-for true)))))))
 
 (defn- with-throwaway-vision-store
   "Run `f` against a `~/.vis` of this test's own. What the gate learns about image support
@@ -1890,6 +1841,7 @@
     (.mkdirs dir)
     (try (with-redefs [config/config-dir (constantly (.getPath dir))
                        config/state-path (constantly (str (.getPath dir) "/state.yml"))]
+
            (f))
          (finally (vision-describe/clear-image-blind!)))))
 
@@ -1897,7 +1849,8 @@
 ;; image content parts (HTTP 400 `unknown variant image_url, expected text`) was asked
 ;; again on the very next turn, because every later decision re-read the catalog —
 ;; which describes the MODEL and knows nothing about the endpoint in front of it.
-(defdescribe image-blind-learning-reaches-the-gate-test
+(defdescribe
+  image-blind-learning-reaches-the-gate-test
   "What a failed request taught outranks every capability table, for this process and
    for the ones after it."
   (it "stops sending pixels to a provider whose wire refused them"
@@ -1932,8 +1885,9 @@
       (with-throwaway-vision-store
         (fn []
           (lp/handle-iteration-exception!
-            (ex-info "Exceptional status code: 400"
-                     {:status 400 :provider-id :opencode-go :body "messages: at least one required"})
+            (ex-info
+              "Exceptional status code: 400"
+              {:status 400 :provider-id :opencode-go :body "messages: at least one required"})
             {:iteration 1 :messages [] :routing {} :reasoning-level nil})
           (expect (not (vision-describe/image-blind-provider? :opencode-go))))))
   ;; The costly over-generalization in the other direction: one small model that
@@ -1971,25 +1925,36 @@
    size and never meaning. With a sighted model anywhere in the fleet, the same
    newest-first plan now replays each figure as that model's REPORT — text the blind
    model can actually read — while the pixels themselves stay off its wire."
-  (let
-    [att {:tool-call-id "tc-1"
-          :media-type "image/png"
-          :base64 replay-png-b64
-          :filename "plot.png"
-          :size 67}
+  (let [att
+        {:tool-call-id "tc-1"
+         :media-type "image/png"
+         :base64 replay-png-b64
+         :filename "plot.png"
+         :size 67}
 
-     blind-target {:provider :zai-coding-plan :model "glm-5-turbo"}
-     seeing-target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+        blind-target
+        {:provider :zai-coding-plan :model "glm-5-turbo"}
 
-     describer (fn [images]
-                 (mapv (fn [img] {:text (str "a plot of " (:filename img)) :model "seer-1"}) images))
+        seeing-target
+        {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
 
-     suffix-for (fn [target opts]
-                  (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target opts))]
+        describer
+        (fn [images]
+          (mapv (fn [img]
+                  {:text (str "a plot of " (:filename img)) :model "seer-1"})
+                images))
+
+        suffix-for
+        (fn [target opts]
+          (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] target opts))]
 
     (it "replays the figure as text for a blind target"
-        (let [suffix (suffix-for blind-target {:describe-images describer})
-              note (last suffix)]
+        (let [suffix
+              (suffix-for blind-target {:describe-images describer})
+
+              note
+              (last suffix)]
+
           (expect (= 3 (count suffix)))
           (expect (= "user" (:role note)))
           ;; TEXT, not pixels: a blind wire never sees an image block.
@@ -1999,55 +1964,70 @@
           (expect (str/includes? (:content note) "seer-1"))
           (expect (str/includes? (:content note) "second-hand"))
           (expect (not (str/includes? (pr-str suffix) "image_url")))))
-
     (it "keeps today's silent behaviour when no describer is injected"
         ;; The 2-arity is the estimator's and the no-vision-model path: back to the
         ;; plain [assistant, results] pair.
-        (let [suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})] blind-target)]
+        (let [suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})]
+                                          blind-target)]
           (expect (= 2 (count suffix)))))
-
     (it "never describes for a target that can SEE"
-        (let [called (atom 0)
-              suffix (suffix-for seeing-target
-                                 {:describe-images (fn [images]
-                                                     (swap! called inc)
-                                                     (describer images))})]
+        (let [called
+              (atom 0)
+
+              suffix
+              (suffix-for seeing-target
+                          {:describe-images (fn [images]
+                                              (swap! called inc)
+                                              (describer images))})]
+
           (expect (zero? @called))
           (expect (= 3 (count suffix)))
           (expect (= ["image_url"] (mapv :type (:content (last suffix)))))))
-
     (it "degrades to today's behaviour when the describer answers nothing"
         ;; Toggle off, blind fleet, refused ask, deadline — all arrive here as nil.
-        (let [suffix (suffix-for blind-target {:describe-images (fn [_] nil)})]
+        (let [suffix (suffix-for blind-target
+                                 {:describe-images (fn [_]
+                                                     nil)})]
           (expect (= 2 (count suffix)))))
-
     ;; Regression: the describer ran per ITERATION, so a turn that produced a figure
     ;; in each of three steps paid three SERIAL round trips — and three separate
     ;; hard deadlines — inside request assembly, with the user waiting on all of it.
     (it "describes the WHOLE trailer in one pass"
-        (let [passes (atom [])
-              trailer (mapv (fn [i]
-                              (stub-tool-iter {:id (inc i)
-                                               :attachments [(assoc att
-                                                               :filename (str "plot-" i ".png")
-                                                               :tool-call-id (str "tc-" (inc i)))]}))
-                            (range 3))
-              suffix (conversation-suffix trailer
-                                          blind-target
-                                          {:describe-images (fn [images]
-                                                              (swap! passes conj (mapv :filename images))
-                                                              (describer images))})
-              reports (filter #(str/includes? (str (:content %)) "a plot of") suffix)]
+        (let [passes
+              (atom [])
+
+              trailer
+              (mapv (fn [i]
+                      (stub-tool-iter {:id (inc i)
+                                       :attachments [(assoc att
+                                                       :filename (str "plot-" i ".png")
+                                                       :tool-call-id (str "tc-" (inc i)))]}))
+                    (range 3))
+
+              suffix
+              (conversation-suffix trailer
+                                   blind-target
+                                   {:describe-images (fn [images]
+                                                       (swap! passes conj (mapv :filename images))
+                                                       (describer images))})
+
+              reports
+              (filter #(str/includes? (str (:content %)) "a plot of") suffix)]
+
           (expect (= 1 (count @passes)))
           (expect (= #{"plot-0.png" "plot-1.png" "plot-2.png"} (set (first @passes))))
           ;; Each iteration still gets ITS figure's report, in its own place.
           (expect (= 3 (count reports)))))
     (it "describes only the images the replay budget kept"
-        (let [seen (atom [])
-              suffix (suffix-for blind-target
-                                 {:describe-images (fn [images]
-                                                     (swap! seen into (map :filename images))
-                                                     (describer images))})]
+        (let [seen
+              (atom [])
+
+              suffix
+              (suffix-for blind-target
+                          {:describe-images (fn [images]
+                                              (swap! seen into (map :filename images))
+                                              (describer images))})]
+
           (expect (= ["plot.png"] @seen))
           (expect (= 3 (count suffix)))))))
 
@@ -2056,33 +2036,33 @@
   "The replay seam wired to the REAL side-channel (only the provider call stubbed),
    so the loop's own plumbing — toggle, capability routing, cache, message shape —
    is exercised, not a hand-rolled stand-in."
-  (let
-    [att {:tool-call-id "tc-1"
-          :media-type "image/png"
-          :base64 replay-png-b64
-          :filename "plot.png"
-          :size 67}
+  (let [att
+        {:tool-call-id "tc-1"
+         :media-type "image/png"
+         :base64 replay-png-b64
+         :filename "plot.png"
+         :size 67}
 
-     seeing-router (svar/make-router [{:id :seeing
-                                       :api-key "k"
-                                       :base-url "http://seeing.invalid"
-                                       :api-style :openai
-                                       :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
+        seeing-router
+        (svar/make-router [{:id :seeing
+                            :api-key "k"
+                            :base-url "http://seeing.invalid"
+                            :api-style :openai
+                            :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
 
     (it "replays a figure a blind model cannot see as that fleet's report"
         (vision-describe/clear-cache!)
-        (let
-          [suffix
-           (with-redefs-fn {#'svar/ask! (fn [_ _] {:result {:description "a red pixel on white"}})}
-             #(conversation-suffix
-                [(stub-tool-iter {:id 1 :attachments [att]})]
-                {:provider :zai-coding-plan :model "glm-5-turbo"}
-                {:describe-images ((deref #'lp/replay-image-describer)
-                                   {:router seeing-router}
-                                   "why is the plot empty?")}))
+        (let [suffix
+              (with-redefs-fn {#'svar/ask! (fn [_ _]
+                                             {:result {:description "a red pixel on white"}})}
+                #(conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})]
+                                      {:provider :zai-coding-plan :model "glm-5-turbo"}
+                                      {:describe-images ((deref #'lp/replay-image-describer)
+                                                          {:router seeing-router}
+                                                          "why is the plot empty?")}))
 
-           note
-           (last suffix)]
+              note
+              (last suffix)]
 
           (expect (= 3 (count suffix)))
           (expect (string? (:content note)))
@@ -2101,7 +2081,6 @@
                                          :api-style :openai
                                          :models [{:name "cheap-blind" :capabilities #{:chat}}]}])]
           (expect (nil? ((describer) {:router router} "ctx")))))
-
     (it "is a fn when the fleet has a seeing model"
         (let [router (svar/make-router [{:id :seeing
                                          :api-key "k"
@@ -2109,16 +2088,14 @@
                                          :api-style :openai
                                          :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
           (expect (fn? ((describer) {:router router} "ctx")))))
-
     ;; Regression: a router-SHAPED config map (no live provider state) made the sight
     ;; probe throw an NPE out of svar's resolver, so a plain text turn — no images
     ;; anywhere near it — died on the way into the request.
     (it "is nil for a router-shaped config map, and never throws"
         (expect (nil? ((describer)
-                       {:router {:providers [{:id :zai-coding-plan
-                                              :models [{:name "glm-5-turbo"}]}]}}
-                       "ctx"))))
-
+                        {:router {:providers [{:id :zai-coding-plan
+                                               :models [{:name "glm-5-turbo"}]}]}}
+                        "ctx"))))
     (it "is nil while the vision_fallback_describe toggle is off"
         (let [router (svar/make-router [{:id :seeing
                                          :api-key "k"
@@ -2126,32 +2103,43 @@
                                          :api-style :openai
                                          :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
           (toggles/set-value! "vision_fallback_describe" false)
-          (try
-            (expect (nil? ((describer) {:router router} "ctx")))
-            (finally (toggles/reset-to-default! "vision_fallback_describe")))))))
+          (try (expect (nil? ((describer) {:router router} "ctx")))
+               (finally (toggles/reset-to-default! "vision_fallback_describe")))))))
 (defdescribe
   conversation-suffix-image-budget-test
   "An image is never REFERENCED by a later request, it is re-uploaded in full on
    every one of them — so an unbudgeted trailer eventually exceeds the provider's
    request limit and then EVERY turn fails, text-only ones included. Newest
    images ride; the rest are NAMED, with the id that brings them back."
-  (let
-    [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-     att (fn [id]
-           {:id (str "att-" id)
-            :tool-call-id (str "tc-" id)
-            :media-type "image/png"
-            :base64 replay-png-b64
-            :filename (str "plot-" id ".png")
-            :size 67})
-     trailer (fn []
-               (mapv (fn [id] (stub-tool-iter {:id id :attachments [(att id)]})) [1 2 3]))
-     image-msgs (fn [suffix]
-                  (filterv #(and (vector? (:content %))
-                                 (some (fn [b] (= "image_url" (:type b))) (:content %)))
-                           suffix))
-     notes (fn [suffix]
-             (filterv #(re-find #"show_attachment" (str (:content %))) suffix))]
+  (let [target
+        {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+
+        att
+        (fn [id]
+          {:id (str "att-" id)
+           :tool-call-id (str "tc-" id)
+           :media-type "image/png"
+           :base64 replay-png-b64
+           :filename (str "plot-" id ".png")
+           :size 67})
+
+        trailer
+        (fn []
+          (mapv (fn [id]
+                  (stub-tool-iter {:id id :attachments [(att id)]}))
+                [1 2 3]))
+
+        image-msgs
+        (fn [suffix]
+          (filterv #(and (vector? (:content %))
+                         (some (fn [b]
+                                 (= "image_url" (:type b)))
+                               (:content %)))
+            suffix))
+
+        notes
+        (fn [suffix]
+          (filterv #(re-find #"show_attachment" (str (:content %))) suffix))]
 
     (it "replays every image when the budget is not under pressure"
         (let [suffix (conversation-suffix (trailer) target)]
@@ -2160,8 +2148,12 @@
     (it "keeps the NEWEST image and names the older ones once the COUNT budget is spent"
         (with-redefs-fn {#'lp/max-replay-images 1}
           (fn []
-            (let [suffix (conversation-suffix (trailer) target)
-                  dropped (str/join " " (map (comp str :content) (notes suffix)))]
+            (let [suffix
+                  (conversation-suffix (trailer) target)
+
+                  dropped
+                  (str/join " " (map (comp str :content) (notes suffix)))]
+
               (expect (= 1 (count (image-msgs suffix))))
               (expect (= 2 (count (notes suffix))))
               ;; the freshest figure is the one the model is reasoning about
@@ -2178,14 +2170,13 @@
     (it "spends nothing on a text-only target — no images, and no notes about them"
         (with-redefs-fn {#'lp/max-replay-images 1}
           (fn []
-            (let [suffix (conversation-suffix (trailer) {:provider :zai-coding-plan
-                                                        :model "glm-5-turbo"})]
+            (let [suffix (conversation-suffix (trailer)
+                                              {:provider :zai-coding-plan :model "glm-5-turbo"})]
               (expect (empty? (image-msgs suffix)))
               (expect (empty? (notes suffix)))))))
     (it "keeps an audience \"user\" artifact out of the budget and off the wire entirely"
         (let [suffix (conversation-suffix
-                       [(stub-tool-iter {:id 1
-                                         :attachments [(assoc (att 1) :audience "user")]})]
+                       [(stub-tool-iter {:id 1 :attachments [(assoc (att 1) :audience "user")]})]
                        target)]
           ;; stored + displayed, but never an image block and never a budget note:
           ;; the caller already decided the model does not need these pixels.
@@ -2198,12 +2189,16 @@
   "The ANSWER is the model's own prose and NOTHING else: `finalize-answer!` stores
    it verbatim as the turn's best answer — no artifact is ever spliced under it."
   (it "leaves the answer exactly as the model wrote it"
-      (let [env {:turn-state-atom (atom {}) :ctx-atom (atom {})}
-            value (with-redefs [ctx-loop/finalize-turn! (fn [_ _] nil)]
-                    (#'lp/finalize-answer! env "Just prose."))]
+      (let [env
+            {:turn-state-atom (atom {}) :ctx-atom (atom {})}
+
+            value
+            (with-redefs [ctx-loop/finalize-turn! (fn [_ _]
+                                                    nil)]
+              (#'lp/finalize-answer! env "Just prose."))]
+
         (expect (= "Just prose." (if (map? value) (:answer value) value)))
-        (expect (= "Just prose."
-                   (:answer-markdown (:best-answer @(:turn-state-atom env))))))))
+        (expect (= "Just prose." (:answer-markdown (:best-answer @(:turn-state-atom env))))))))
 
 ;; multi-fence-hint / attach-multi-fence-hint / empty-code-error-with-observation
 ;; tests removed: those fns were deleted with the fenced-era machinery (lenient
@@ -2212,11 +2207,10 @@
 
 (defdescribe
   token-usage-normalization-test
-  (let
-    [canonical {:input-tokens 8889
-                :output-tokens 69
-                :input-tokens-details {:regular 112 :cache-write 8777 :cache-read 0}
-                :total-tokens 8958}]
+  (let [canonical {:input-tokens 8889
+                   :output-tokens 69
+                   :input-tokens-details {:regular 112 :cache-write 8777 :cache-read 0}
+                   :total-tokens 8958}]
     (it "uses svar's canonical api-usage without reshaping it"
         (expect (= canonical (ask-result->api-usage {:api-usage canonical}))))
     (it "normalizes current svar keyword token maps when canonical usage is absent"
@@ -2225,24 +2219,23 @@
                      {:tokens
                       {:input 8889 :output 69 :cached 0 :cache-created 8777 :input-regular 112}}))))
     (it "keeps the legacy string-key token fallback working"
-        (expect (= canonical
-                   (ask-result->api-usage {:tokens {"input" 8889
-                                                    "output" 69
-                                                    "cached" 0
-                                                    "cache_created" 8777
-                                                    "input_regular" 112}}))))
+        (expect
+          (= canonical
+             (ask-result->api-usage
+               {:tokens
+                {"input" 8889 "output" 69 "cached" 0 "cache_created" 8777 "input_regular" 112}}))))
     (it "applies an explicit service-tier cost multiplier to every billed token class"
         (let [estimate (deref #'lp/estimate-token-cost)
               usage {:input-tokens 8298 :output-tokens 6}
               standard (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage})
-              priority (estimate "gpt-5.6-sol" 8298 6
-                                 {:api-usage usage :cost-multiplier 2.0})]
+              priority (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage :cost-multiplier 2.0})]
+
           (doseq [k ["input_cost" "output_cost" "total_cost"]]
-            (expect (< (Math/abs (- (* 2.0 (double (get standard k)))
-                                    (double (get priority k))))
+            (expect (< (Math/abs (- (* 2.0 (double (get standard k))) (double (get priority k))))
                        1.0E-12)))))
     (it "recognizes Priority pricing only for the Codex provider"
-        (let [multiplier (deref (ns-resolve 'com.blockether.vis.internal.loop 'codex-fast-cost-multiplier))]
+        (let [multiplier (deref (ns-resolve 'com.blockether.vis.internal.loop
+                                            'codex-fast-cost-multiplier))]
           (expect (= 2.0 (multiplier {:service_tier "priority"} :openai-codex)))
           (expect (= 2.0 (multiplier {"service_tier" "PRIORITY"} "openai-codex")))
           (expect (= 1.0 (multiplier {:service_tier "priority"} :openai)))
@@ -2260,34 +2253,33 @@
   iteration-start-hook-test
   (it
     "collects active :turn.iteration/start hooks as hook-task descriptors (D12)"
-    (let
-      [seen
-       (atom nil)
+    (let [seen
+          (atom nil)
 
-       ext
-       {:ext/name "test.hooks"
-        :ext/hooks [{:id :test/title
-                     :doc "title"
-                     :phase :turn.iteration/start
-                     :fn (fn [ctx]
-                           (reset! seen ctx)
-                           {:title "set title" :importance :warn})}
-                    {:id :test/answer
-                     :doc "answer"
-                     :phase :turn.answer/validate
-                     :fn (fn [_]
-                           {:reject true})}
-                    {:id :test/no-title
-                     :doc "missing title—rejected"
-                     :phase :turn.iteration/start
-                     :fn (fn [_]
-                           {:importance :warn})}]}
+          ext
+          {:ext/name "test.hooks"
+           :ext/hooks [{:id :test/title
+                        :doc "title"
+                        :phase :turn.iteration/start
+                        :fn (fn [ctx]
+                              (reset! seen ctx)
+                              {:title "set title" :importance :warn})}
+                       {:id :test/answer
+                        :doc "answer"
+                        :phase :turn.answer/validate
+                        :fn (fn [_]
+                              {:reject true})}
+                       {:id :test/no-title
+                        :doc "missing title—rejected"
+                        :phase :turn.iteration/start
+                        :fn (fn [_]
+                              {:importance :warn})}]}
 
-       ctx
-       {:session-title nil :title-refresh? true :turn-position 1}
+          ctx
+          {:session-title nil :title-refresh? true :turn-position 1}
 
-       hits
-       (collect-iteration-start-hints {} [ext] ctx)]
+          hits
+          (collect-iteration-start-hints {} [ext] ctx)]
 
       ;; Only the title-bearing :turn.iteration/start hook materialises;
       ;; the :turn.answer/validate hook is the wrong phase and the
@@ -2306,27 +2298,24 @@
         (try
           ;; svar/ask! must NEVER fire — guard it so a regression to re-titling
           ;; throws instead of silently passing.
-          (with-redefs
-            [svar/ask! (fn [& _]
-                         (throw (ex-info "must not re-title" {})))]
+          (with-redefs [svar/ask! (fn [& _]
+                                    (throw (ex-info "must not re-title" {})))]
             (expect (nil? (maybe-auto-title! env "some unrelated new request")))
             (expect (= "Old focus" @(:session-title-atom env))))
           (finally (lp/dispose-environment! env)))))
   (it "auto-title treats Untitled placeholders as missing previous titles"
-      (let
-        [seen
-         (atom nil)
+      (let [seen
+            (atom nil)
 
-         router-stub
-         {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
+            router-stub
+            {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
 
-         env
-         (lp/create-environment router-stub {:db :memory :title "Untitled"})]
+            env
+            (lp/create-environment router-stub {:db :memory :title "Untitled"})]
 
-        (try (with-redefs
-               [svar/ask! (fn [_router opts]
-                            (reset! seen opts)
-                            {:result {:title "Current Bug Triage"}})]
+        (try (with-redefs [svar/ask! (fn [_router opts]
+                                       (reset! seen opts)
+                                       {:result {:title "Current Bug Triage"}})]
                ;; The LLM upgrade is DEFERRED past the foreground turn by
                ;; default (Blockether/vis#71), so it is this entry point that
                ;; carries it, not `maybe-auto-title!`.
@@ -2341,28 +2330,25 @@
              (finally (lp/dispose-environment! env)))))
   (it
     "auto-title declares the preferred plan order, then deterministic fallback when the chain fails"
-    (let
-      [router-stub
-       {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}
-                    {:id :openai-codex :models [{:name "gpt-5.3-codex"}]}]}
+    (let [router-stub
+          {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}
+                       {:id :openai-codex :models [{:name "gpt-5.3-codex"}]}]}
 
-       seen
-       (atom nil)
+          seen
+          (atom nil)
 
-       env
-       (lp/create-environment router-stub {:db :memory :title "Untitled"})]
+          env
+          (lp/create-environment router-stub {:db :memory :title "Untitled"})]
 
       (try
         ;; svar owns the per-provider walk now; the host makes ONE call that
         ;; declares `:prefer-providers`. A thrown call → deterministic fallback.
-        (with-redefs
-          [svar/ask! (fn [_router opts]
-                       (reset! seen opts)
-                       (throw (ex-info "Exceptional status code: 400" {})))]
-          (let
-            [f (titling/after-turn-auto-title!
-                 env
-                 "1dff1f5a-76dc-431e-ad2b-97af14c731f1 can you check why TUI title is missing?")]
+        (with-redefs [svar/ask! (fn [_router opts]
+                                  (reset! seen opts)
+                                  (throw (ex-info "Exceptional status code: 400" {})))]
+          (let [f (titling/after-turn-auto-title!
+                    env
+                    "1dff1f5a-76dc-431e-ad2b-97af14c731f1 can you check why TUI title is missing?")]
             @f
             (expect (= [:zai-coding-plan :alibaba-coding-plan]
                        (take 2 (get-in @seen [:routing :prefer-providers]))))
@@ -2373,9 +2359,8 @@
         (try
           ;; The model has no `set_session_title` binding; calling it raises
           ;; (NameError) and surfaces as a structured eval error.
-          (let
-            [bad (env/run-python-block (:python-context env)
-                                       "set_session_title(\"Liveness check\")")]
+          (let [bad (env/run-python-block (:python-context env)
+                                          "set_session_title(\"Liveness check\")")]
             (expect (some? (:error bad))))
           (finally (lp/dispose-environment! env))))))
 
@@ -2438,143 +2423,141 @@
         (expect (contains? opts :semantic-timeout-ms))
         (expect (nil? (:semantic-timeout-ms opts))))))
 
-(defdescribe python-eval-test
-             (it "executes a Python assignment and the binding persists in the sandbox"
-                 (let [env (lp/create-environment ::router {:db :memory})]
-                   (try (let [result ((var-get #'lp/execute-code) env "x = 1")]
-                          (expect (nil? (:error result))))
-                        ;; Sandbox globals persist REPL-style across evals on the same context.
-                        (let [read-back (env/run-python-block (:python-context env) "x")]
-                          (expect (nil? (:error read-back)))
-                          (expect (= 1 (:result read-back))))
-                        (finally (lp/dispose-environment! env)))))
-             (it "gives a plain Python block five minutes before the backstop fires"
-                 ;; The watchdog is a BACKSTOP for a block that will never finish on its
-                 ;; own, never a co-deadline for work in progress. At two minutes ordinary
-                 ;; in-sandbox compute — a large parse, an image pass, an analytic loop —
-                 ;; was killed exactly where it got expensive, and it names no bounded call
-                 ;; for the widener below to see.
-                 (expect (= (* 5 60 1000) rt/DEFAULT_EVAL_TIMEOUT_MS))
-                 (expect (= rt/DEFAULT_EVAL_TIMEOUT_MS
-                            (eval-timeout-ms-for-code rt/DEFAULT_EVAL_TIMEOUT_MS "print(1)")))
-                 ;; Every bounded-call floor stays ABOVE the plain default, so a block that
-                 ;; makes one still gets that call's own budget plus the widener's grace.
-                 (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)))
-                 (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)))
-                 (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS rt/MAX_EVAL_TIMEOUT_MS)))
-             (it "extends the outer eval timeout when shell code asks for a longer timeout"
-                 (expect (= 120000 (eval-timeout-ms-for-code 120000 "print(1)")))
-                 ;; Any `shell` call floors at the CAP, literal budget or not: the literal
-                 ;; bounds ONE call, and a second unannotated call in the same block owns
-                 ;; shell's default — which IS the cap.
-                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                            (eval-timeout-ms-for-code
-                              120000
-                              "await shell({\"command\": \"clojure -M:test\", \"timeout_secs\": 180})")))
-                 (expect (= 310000
-                            (eval-timeout-ms-for-code
-                              120000
-                              "subprocess.run([\"sleep\", \"1\"], timeout=300)"))))
-             (it "keeps the eval ceiling above the longest shell budget plus its grace"
-                 ;; The widener floors the watchdog at the shell cap + grace; a ceiling at or
-                 ;; below that would clamp the watchdog back UNDER the shell envelope and kill
-                 ;; a legal wait with a bare `Timeout` and no output.
-                 (expect (< (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
-             (it "reads a millisecond budget too, so repl_eval's own timeout is not preempted"
-                 ;; REGRESSION: the scan only understood seconds, so an explicitly long
-                 ;; `timeout_ms` (repl_eval, MCP) died at the 120s watchdog instead.
-                 (expect (= 310000
-                            (eval-timeout-ms-for-code
-                              120000
-                              "await repl_eval(\"clojure\", code=\"(x)\", timeout_ms=300000)")))
-                 ;; Sub-second budgets round UP, never to a zero-second widening.
-                 (expect (= 120000
-                            (eval-timeout-ms-for-code 120000 "await repl_eval(\"clojure\", timeout_ms=500)"))))
-             (it "floors the watchdog above a bounded call whose timeout is NOT a literal"
-                 ;; REGRESSION: the watchdog EQUALLED shell's own 120s default, and a
-                 ;; timeout that is a variable / expression / plain default is invisible
-                 ;; to a text scan. The watchdog started first, so it always won and the
-                 ;; turn got a bare `Timeout (120s)` with no stdout instead of shell's
-                 ;; structured envelope.
-                 ;;
-                 ;; The floor is shell's CAP (`MAX_SHELL_TIMEOUT_SECS`, thirty minutes), not
-                 ;; a shorter budget: a `wait` whose budget the scan cannot read may legally
-                 ;; own the full cap, and the watchdog is a BACKSTOP, never a co-deadline.
-                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                            (eval-timeout-ms-for-code 120000 "r = await shell(command=\"sleep 300\")")))
-                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                            (eval-timeout-ms-for-code
-                              120000
-                              "secs = 600\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)")))
-                 ;; A literal budget does not lower the floor either: it bounds ONE call, and
-                 ;; the next call in the block can still own shell's default.
-                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                            (eval-timeout-ms-for-code
-                              120000
-                              "r = await shell(command=\"x\", timeout_secs=180)")))
-                 ;; A test run owns a multi-minute budget and answers timeouts itself.
-                 (expect (= (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)
-                            (eval-timeout-ms-for-code
-                              120000
-                              "r = await run_tests({\"paths\": [\"test/a_test.clj\"]})")))
-                 ;; Prose that merely mentions the word must not widen anything.
-                 (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('shell is bounded')"))))
-             (it "keeps the eval wall above a test run's own ten-minute budget"
-                 ;; One run may legitimately take ten minutes — a cold full suite pays
-                 ;; JVM start, namespace loading and compilation before the first
-                 ;; assertion. The run answers its own timeout with a STRUCTURED result,
-                 ;; so the watchdog above it has to fire later than the run's budget or
-                 ;; that result is lost and the block dies on a bare `Timeout`.
-                 (expect (= (* 10 60 1000) rt/RUN_TESTS_TIMEOUT_MS))
-                 (expect (= rt/RUN_TESTS_FLOOR_SECS (quot rt/RUN_TESTS_TIMEOUT_MS 1000)))
-                 (expect (< rt/RUN_TESTS_TIMEOUT_MS
-                            (eval-timeout-ms-for-code
-                              rt/DEFAULT_EVAL_TIMEOUT_MS
-                              "r = await run_tests({\"paths\": [\"test\"]})")))
-                 (expect (< (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
-             (it "floors the watchdog above a block that reaches the network"
-                 ;; REGRESSION: HTTP was not a bounded-call FAMILY at all. The shims'
-                 ;; own per-request default is 30s, a sweep loops over N hosts, and the
-                 ;; fetch helper usually lives in an EARLIER block — so an ordinary
-                 ;; crawl raced the 120s watchdog and lost, with no output to show for
-                 ;; it.
-                 (expect (= (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)
-                            (eval-timeout-ms-for-code 120000 "r = httpx.post(url, json=payload)")))
-                 (expect (= 310000 (eval-timeout-ms-for-code 120000 "import requests\nfetch_all(hosts)")))
-                 (expect (= 310000 (eval-timeout-ms-for-code 120000 "urlopen(u).read()")))
-                 ;; A literal `timeout=` bounds ONE request, never the loop around it,
-                 ;; so it must NOT shrink the floor the way a shell budget does.
-                 (expect (= 310000
-                            (eval-timeout-ms-for-code 120000 "for u in urls:\n    requests.get(u, timeout=5)")))
-                 ;; …but a longer explicitly requested budget still wins outright.
-                 (expect (= 610000 (eval-timeout-ms-for-code 120000 "requests.get(u, timeout=600)")))
-                 ;; Prose that merely mentions a client must not widen anything.
-                 (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')"))))
-             (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
-                 ;; Regression: GraalPy's ast.get_source_segment truncates
-                 ;; the per-form source when a statement carries a non-BMP char (emoji 👆),
-                 ;; dropping the closing quotes -> the lone re-eval raised a spurious
-                 ;; "unterminated triple-quoted string" SyntaxError, the (done ...) answer
-                 ;; form errored, the turn never finalized, and the model looped re-emitting
-                 ;; done(). Our pure-Python codepoint slice must keep every segment intact —
-                 ;; including a MULTILINE triple-quoted string with emoji mid- and last-line.
-                 (let
-                   [{:keys [python-context]}
-                    (env/create-python-context {})
+(defdescribe
+  python-eval-test
+  (it "executes a Python assignment and the binding persists in the sandbox"
+      (let [env (lp/create-environment ::router {:db :memory})]
+        (try (let [result ((var-get #'lp/execute-code) env "x = 1")]
+               (expect (nil? (:error result))))
+             ;; Sandbox globals persist REPL-style across evals on the same context.
+             (let [read-back (env/run-python-block (:python-context env) "x")]
+               (expect (nil? (:error read-back)))
+               (expect (= 1 (:result read-back))))
+             (finally (lp/dispose-environment! env)))))
+  (it "gives a plain Python block five minutes before the backstop fires"
+      ;; The watchdog is a BACKSTOP for a block that will never finish on its
+      ;; own, never a co-deadline for work in progress. At two minutes ordinary
+      ;; in-sandbox compute — a large parse, an image pass, an analytic loop —
+      ;; was killed exactly where it got expensive, and it names no bounded call
+      ;; for the widener below to see.
+      (expect (= (* 5 60 1000) rt/DEFAULT_EVAL_TIMEOUT_MS))
+      (expect (= rt/DEFAULT_EVAL_TIMEOUT_MS
+                 (eval-timeout-ms-for-code rt/DEFAULT_EVAL_TIMEOUT_MS "print(1)")))
+      ;; Every bounded-call floor stays ABOVE the plain default, so a block that
+      ;; makes one still gets that call's own budget plus the widener's grace.
+      (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)))
+      (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)))
+      (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS rt/MAX_EVAL_TIMEOUT_MS)))
+  (it "extends the outer eval timeout when shell code asks for a longer timeout"
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print(1)")))
+      ;; Any `shell` call floors at the CAP, literal budget or not: the literal
+      ;; bounds ONE call, and a second unannotated call in the same block owns
+      ;; shell's default — which IS the cap.
+      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
+                 (eval-timeout-ms-for-code
+                   120000
+                   "await shell({\"command\": \"clojure -M:test\", \"timeout_secs\": 180})")))
+      (expect (= 310000
+                 (eval-timeout-ms-for-code 120000
+                                           "subprocess.run([\"sleep\", \"1\"], timeout=300)"))))
+  (it "keeps the eval ceiling above the longest shell budget plus its grace"
+      ;; The widener floors the watchdog at the shell cap + grace; a ceiling at or
+      ;; below that would clamp the watchdog back UNDER the shell envelope and kill
+      ;; a legal wait with a bare `Timeout` and no output.
+      (expect (< (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
+  (it "reads a millisecond budget too, so repl_eval's own timeout is not preempted"
+      ;; REGRESSION: the scan only understood seconds, so an explicitly long
+      ;; `timeout_ms` (repl_eval, MCP) died at the 120s watchdog instead.
+      (expect (= 310000
+                 (eval-timeout-ms-for-code
+                   120000
+                   "await repl_eval(\"clojure\", code=\"(x)\", timeout_ms=300000)")))
+      ;; Sub-second budgets round UP, never to a zero-second widening.
+      (expect (= 120000
+                 (eval-timeout-ms-for-code 120000 "await repl_eval(\"clojure\", timeout_ms=500)"))))
+  (it "floors the watchdog above a bounded call whose timeout is NOT a literal"
+      ;; REGRESSION: the watchdog EQUALLED shell's own 120s default, and a
+      ;; timeout that is a variable / expression / plain default is invisible
+      ;; to a text scan. The watchdog started first, so it always won and the
+      ;; turn got a bare `Timeout (120s)` with no stdout instead of shell's
+      ;; structured envelope.
+      ;;
+      ;; The floor is shell's CAP (`MAX_SHELL_TIMEOUT_SECS`, thirty minutes), not
+      ;; a shorter budget: a `wait` whose budget the scan cannot read may legally
+      ;; own the full cap, and the watchdog is a BACKSTOP, never a co-deadline.
+      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
+                 (eval-timeout-ms-for-code 120000 "r = await shell(command=\"sleep 300\")")))
+      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
+                 (eval-timeout-ms-for-code
+                   120000
+                   "secs = 600\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)")))
+      ;; A literal budget does not lower the floor either: it bounds ONE call, and
+      ;; the next call in the block can still own shell's default.
+      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
+                 (eval-timeout-ms-for-code 120000
+                                           "r = await shell(command=\"x\", timeout_secs=180)")))
+      ;; A test run owns a multi-minute budget and answers timeouts itself.
+      (expect (= (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)
+                 (eval-timeout-ms-for-code
+                   120000
+                   "r = await run_tests({\"paths\": [\"test/a_test.clj\"]})")))
+      ;; Prose that merely mentions the word must not widen anything.
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('shell is bounded')"))))
+  (it "keeps the eval wall above a test run's own ten-minute budget"
+      ;; One run may legitimately take ten minutes — a cold full suite pays
+      ;; JVM start, namespace loading and compilation before the first
+      ;; assertion. The run answers its own timeout with a STRUCTURED result,
+      ;; so the watchdog above it has to fire later than the run's budget or
+      ;; that result is lost and the block dies on a bare `Timeout`.
+      (expect (= (* 10 60 1000) rt/RUN_TESTS_TIMEOUT_MS))
+      (expect (= rt/RUN_TESTS_FLOOR_SECS (quot rt/RUN_TESTS_TIMEOUT_MS 1000)))
+      (expect (< rt/RUN_TESTS_TIMEOUT_MS
+                 (eval-timeout-ms-for-code rt/DEFAULT_EVAL_TIMEOUT_MS
+                                           "r = await run_tests({\"paths\": [\"test\"]})")))
+      (expect (< (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
+  (it "floors the watchdog above a block that reaches the network"
+      ;; REGRESSION: HTTP was not a bounded-call FAMILY at all. The shims'
+      ;; own per-request default is 30s, a sweep loops over N hosts, and the
+      ;; fetch helper usually lives in an EARLIER block — so an ordinary
+      ;; crawl raced the 120s watchdog and lost, with no output to show for
+      ;; it.
+      (expect (= (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)
+                 (eval-timeout-ms-for-code 120000 "r = httpx.post(url, json=payload)")))
+      (expect (= 310000 (eval-timeout-ms-for-code 120000 "import requests\nfetch_all(hosts)")))
+      (expect (= 310000 (eval-timeout-ms-for-code 120000 "urlopen(u).read()")))
+      ;; A literal `timeout=` bounds ONE request, never the loop around it,
+      ;; so it must NOT shrink the floor the way a shell budget does.
+      (expect (= 310000
+                 (eval-timeout-ms-for-code 120000
+                                           "for u in urls:\n    requests.get(u, timeout=5)")))
+      ;; …but a longer explicitly requested budget still wins outright.
+      (expect (= 610000 (eval-timeout-ms-for-code 120000 "requests.get(u, timeout=600)")))
+      ;; Prose that merely mentions a client must not widen anything.
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')"))))
+  (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
+      ;; Regression: GraalPy's ast.get_source_segment truncates
+      ;; the per-form source when a statement carries a non-BMP char (emoji 👆),
+      ;; dropping the closing quotes -> the lone re-eval raised a spurious
+      ;; "unterminated triple-quoted string" SyntaxError, the (done ...) answer
+      ;; form errored, the turn never finalized, and the model looped re-emitting
+      ;; done(). Our pure-Python codepoint slice must keep every segment intact —
+      ;; including a MULTILINE triple-quoted string with emoji mid- and last-line.
+      (let [{:keys [python-context]}
+            (env/create-python-context {})
 
-                    ;; emoji on the first AND a later line; the second form re-reads the var.
-                    code
-                    (str "msg = \"\"\"# Heading 👆\n\n- bin/ 🚀\n\nPełne ł ó ż 🌳\"\"\"\n" "msg")
+            ;; emoji on the first AND a later line; the second form re-reads the var.
+            code
+            (str "msg = \"\"\"# Heading 👆\n\n- bin/ 🚀\n\nPełne ł ó ż 🌳\"\"\"\n" "msg")
 
-                    {:keys [error result]}
-                    (env/run-python-block python-context code)]
+            {:keys [error result]}
+            (env/run-python-block python-context code)]
 
-                   (expect (nil? error))
-                   ;; the final expression re-reads the multi-line emoji string unchanged
-                   (expect (string? result))
-                   (expect (clojure.string/includes? result "👆"))
-                   (expect (clojure.string/includes? result "🌳"))
-                   (expect (clojure.string/includes? result "Pełne ł ó ż")))))
+        (expect (nil? error))
+        ;; the final expression re-reads the multi-line emoji string unchanged
+        (expect (string? result))
+        (expect (clojure.string/includes? result "👆"))
+        (expect (clojure.string/includes? result "🌳"))
+        (expect (clojure.string/includes? result "Pełne ł ó ż")))))
 
 (defdescribe final-answer-gate-test
              ;; `final-answer-gate-error` itself carries ONLY extension
@@ -2649,36 +2632,33 @@
   "summarize/drop operate at ITERATION (tN/iN) granularity: a summarized step
    collapses entirely (its assistant+tool_result pair leaves the wire) to one
    gist line; a non-collapsed step renders as a tool_result tagged `# tN/iN`."
-  (let
-    [apply-summaries
-     (var-get #'lp/apply-summaries)
+  (let [apply-summaries
+        (var-get #'lp/apply-summaries)
 
-     irm
-     (var-get #'lp/iteration-results-message)]
+        irm
+        (var-get #'lp/iteration-results-message)]
 
     (it "summarize([tN/iN]) tags the iteration :collapsed? and swaps it for the gist"
-        (let
-          [tis
-           [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big output"}]}]
-            [2 {:forms-vec [{:scope "t1/i2/f1" :stdout "keep me"}]}]]
+        (let [tis
+              [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big output"}]}]
+               [2 {:forms-vec [{:scope "t1/i2/f1" :stdout "keep me"}]}]]
 
-           out
-           (apply-summaries tis [{"scopes" #{"t1/i1"} "gist" "did the thing"}])
+              out
+              (apply-summaries tis [{"scopes" #{"t1/i1"} "gist" "did the thing"}])
 
-           r1
-           (second (first out))
+              r1
+              (second (first out))
 
-           r2
-           (second (second out))]
+              r2
+              (second (second out))]
 
           (expect (true? (:collapsed? r1)))
           (expect (nil? (:collapsed? r2)))
           ;; collapsed → plain-text gist line (NOT a tool_result)
           (expect (= "# ⋯ folded t1/i1 · did the thing" (:content (irm r1))))))
     (it "session_drop collapses to a `⋯ dropped <scopes> · <why>` line (reason kept)"
-        (let
-          [out (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
-                                [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
+        (let [out (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
+                                   [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
           (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first out))))))))
     (it "a live step renders as a tool_result tagged with its # tN/iN handle"
         (let [m (irm {:forms-vec [{:scope "t1/i1/f1" :stdout "hello"}] :tool-calls [{:id "c1"}]})]
@@ -2699,15 +2679,14 @@
   ;; call raised came back to the model as the traceback alone — every call that
   ;; had already printed was dropped on the wire (the store and the human card
   ;; kept it), and the whole round had to be run again.
-  (let
-    [irm
-     (var-get #'lp/iteration-results-message)
+  (let [irm
+        (var-get #'lp/iteration-results-message)
 
-     body
-     (fn [form]
-       (get-in (irm {:tool-calls [{:id "A" :name "python_execution"}]
-                     :forms-vec [(merge {:scope "t1/i1/f1" :svar/tool-call-id "A"} form)]})
-               [:content 0 :content]))]
+        body
+        (fn [form]
+          (get-in (irm {:tool-calls [{:id "A" :name "python_execution"}]
+                        :forms-vec [(merge {:scope "t1/i1/f1" :svar/tool-call-id "A"} form)]})
+                  [:content 0 :content]))]
 
     (it "partial stdout rides along with the error — printed output first"
         (let [b (body {:stdout "LISTED_THE_TREE"
@@ -2733,17 +2712,16 @@
    return — forms are grouped by `:svar/tool-call-id`. A call's return IS the
    text it print()s. No more 'first call carries everything, the rest get a
    stub'."
-  (let
-    [irm
-     (var-get #'lp/iteration-results-message)
+  (let [irm
+        (var-get #'lp/iteration-results-message)
 
-     pre
-     (var-get #'lp/code-entries-preflight)]
+        pre
+        (var-get #'lp/code-entries-preflight)]
 
     (it "each parallel tool_use is answered by its OWN result"
-        (let
-          [m
-           (irm {:tool-calls [{:id "A" :name "python_execution"} {:id "B" :name "python_execution"}
+        (let [m
+              (irm
+                {:tool-calls [{:id "A" :name "python_execution"} {:id "B" :name "python_execution"}
                               {:id "P" :name "python_execution"}]
                  ;; A and B returned a value without printing (:result); P printed
                  ;; (:stdout) — the engine emits ONE channel per call, never both.
@@ -2751,8 +2729,8 @@
                              {:scope "t1/i1/f2" :svar/tool-call-id "B" :result "BBB"}
                              {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
-           by-id
-           (into {} (map (juxt :tool_use_id :content)) (:content m))]
+              by-id
+              (into {} (map (juxt :tool_use_id :content)) (:content m))]
 
           (expect (= 3 (count (:content m))))
           ;; A/B → their RETURN value; not cross-contaminated
@@ -2765,28 +2743,30 @@
         ;; Regression guard for the `ntr` removal: nothing stores a call's return
         ;; any more, so no result may advertise a coordinate to re-read it by — a
         ;; handle here would promise a store that no longer exists.
-        (let
-          [m
-           (irm {:tool-calls [{:id "toolu_A" :name "python_execution"} {:id "P" :name "python_execution"}]
-                 :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
-                             {:scope "t1/i1/f2" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
+        (let [m
+              (irm {:tool-calls [{:id "toolu_A" :name "python_execution"}
+                                 {:id "P" :name "python_execution"}]
+                    :forms-vec
+                    [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
+                     {:scope "t1/i1/f2" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
-           all
-           (str/join "\n" (map :content (:content m)))]
+              all
+              (str/join "\n" (map :content (:content m)))]
 
           (expect (str/includes? all "AAA"))
           (expect (str/includes? all "PPP"))
           (expect (not (str/includes? all "ntr")))
           (expect (not (str/includes? all "# saved:")))))
     (it "a FAILED call's tool_result is flagged :is_error true; a successful one is not"
-        (let
-          [m
-           (irm {:tool-calls [{:id "ok" :name "python_execution"} {:id "bad" :name "python_execution"}]
-                 :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "ok" :result "FILE"}
-                             {:scope "t1/i1/f2" :svar/tool-call-id "bad" :error "No such file"}]})
+        (let [m
+              (irm {:tool-calls [{:id "ok" :name "python_execution"}
+                                 {:id "bad" :name "python_execution"}]
+                    :forms-vec
+                    [{:scope "t1/i1/f1" :svar/tool-call-id "ok" :result "FILE"}
+                     {:scope "t1/i1/f2" :svar/tool-call-id "bad" :error "No such file"}]})
 
-           by-id
-           (into {} (map (juxt :tool_use_id identity)) (:content m))]
+              by-id
+              (into {} (map (juxt :tool_use_id identity)) (:content m))]
 
           ;; svar passes :is_error to Anthropic as `is_error: true`; on OpenAI/Gemini
           ;; the error TEXT carries the signal.
@@ -2796,38 +2776,36 @@
     (it "a call that produced no output returns the no-return hint"
         ;; engine emitted neither :stdout nor :result (e.g. python_execution that
         ;; only did assignments and printed nothing)
-        (let
-          [m (irm {:tool-calls [{:id "P" :name "python_execution"}]
-                   :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "P"}]})]
+        (let [m (irm {:tool-calls [{:id "P" :name "python_execution"}]
+                      :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "P"}]})]
           (expect (str/includes? (get-in m [:content 0 :content]) "no return"))))
     (it "an unpaired/fold form folds onto the FIRST call (nothing lost)"
-        (let
-          [m
-           (irm {:tool-calls [{:id "A" :name "python_execution"}]
-                 :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "body"}
-                             {:summary? true :summary-iters ["t1/i0"] :summary-gist "ctx"}]})
+        (let [m
+              (irm {:tool-calls [{:id "A" :name "python_execution"}]
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "body"}
+                                {:summary? true :summary-iters ["t1/i0"] :summary-gist "ctx"}]})
 
-           c
-           (get-in m [:content 0 :content])]
+              c
+              (get-in m [:content 0 :content])]
 
           (expect (str/includes? c "body"))
           (expect (str/includes? c "folded t1/i0 · ctx"))))
     (it "code-entries-preflight keeps distinct tool-calls SEPARATE (no merge)"
-        (let
-          [entries
-           (:code-entries
-             (pre 1
-                  [{:lang "python" :source "cat(\"a\")" :svar/tool-call-id "A" :vis/tool-name "cat"}
-                   {:lang "python"
-                    :source "rg({\"any\":[\"x\"]})"
-                    :svar/tool-call-id "B"
-                    :vis/tool-name "rg"}]))]
+        (let [entries (:code-entries (pre 1
+                                          [{:lang "python"
+                                            :source "cat(\"a\")"
+                                            :svar/tool-call-id "A"
+                                            :vis/tool-name "cat"}
+                                           {:lang "python"
+                                            :source "rg({\"any\":[\"x\"]})"
+                                            :svar/tool-call-id "B"
+                                            :vis/tool-name "rg"}]))]
           (expect (= 2 (count entries)))
           (expect (= ["A" "B"] (mapv :svar/tool-call-id entries)))))
     (it "code-entries-preflight STILL merges legacy id-less blocks (provider stutter)"
-        (let
-          [entries (:code-entries
-                     (pre 1 [{:lang "python" :source "x = 1"} {:lang "python" :source "y = 2"}]))]
+        (let [entries (:code-entries (pre 1
+                                          [{:lang "python" :source "x = 1"}
+                                           {:lang "python" :source "y = 2"}]))]
           (expect (= 1 (count entries)))))))
 
 (defdescribe
@@ -2837,34 +2815,28 @@
    wire keeps only the `[Table: …]` headline and a pointer back to the stored
    attachment. Replayed rows are the most expensive thing a session can carry:
    they are re-uploaded on every later request for the rest of the session."
-  (let
-    [irm
-     (var-get #'lp/iteration-results-message)
+  (let [irm
+        (var-get #'lp/iteration-results-message)
 
-     display
-      form/result-display
+        display
+        form/result-display
 
-     fence
-     (str "````vis-table\n"
-          "[Table: fleet.csv 2 rows × 2 cols, 12 B] fleet counts\n"
-          "fleet.csv\n"
-          "text/csv\n"
-          "2x2\n"
-          "12 B\n"
-          "machine,sessions\n"
-          "studio,12\n"
-          "rack-01,120\n"
-          "````")
+        fence
+        (str "````vis-table\n" "[Table: fleet.csv 2 rows × 2 cols, 12 B] fleet counts\n"
+             "fleet.csv\n" "text/csv\n"
+             "2x2\n" "12 B\n"
+             "machine,sessions\n" "studio,12\n"
+             "rack-01,120\n" "````")
 
-     stdout
-     (str "before\n" fence "\nafter")
+        stdout
+        (str "before\n" fence "\nafter")
 
-     wire
-     (fn [out]
-       (str (:content (first (:content (irm {:tool-calls [{:id "P" :name "python_execution"}]
-                                             :forms-vec [{:scope "t1/i1/f1"
-                                                          :svar/tool-call-id "P"
-                                                          :stdout out}]}))))))]
+        wire
+        (fn [out]
+          (str (:content (first (:content (irm {:tool-calls [{:id "P" :name "python_execution"}]
+                                                :forms-vec [{:scope "t1/i1/f1"
+                                                             :svar/tool-call-id "P"
+                                                             :stdout out}]}))))))]
 
     (it "keeps the headline on the wire but not one data row"
         (let [text (wire stdout)]
@@ -2876,13 +2848,11 @@
           ;; Text around the fence is untouched — only the payload goes.
           (expect (str/includes? text "before"))
           (expect (str/includes? text "after"))))
-
     (it "leaves a vis-image fence alone: it carries a host path, not a payload"
         (let [text (wire (str "````vis-image\n[Image: shot.png 2×2, 9 B]\n"
                               "/tmp/shot.png\nimage/png\n2x2\n9 B\n````"))]
           (expect (str/includes? text "````vis-image"))
           (expect (str/includes? text "/tmp/shot.png"))))
-
     (it "still hands the WHOLE grid to the transcript"
         (let [body (str (:body (display {:stdout stdout})))]
           (expect (str/includes? body "````vis-table"))
@@ -2892,24 +2862,22 @@
   repeated-actions-continue-test
   "Repeated actions are valid work. The loop continues until the model returns an answer."
   (it "does not checkpoint or force-finalize identical actions"
-      (let
-        [router-stub
-         {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
+      (let [router-stub
+            {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
 
-         env
-         (lp/create-environment router-stub {:db :memory})
+            env
+            (lp/create-environment router-stub {:db :memory})
 
-         calls
-         (atom 0)]
+            calls
+            (atom 0)]
 
-        (try (with-redefs
-               [svar/ask-code!
-                (fn [_ _]
-                  (if (<= (swap! calls inc) 4)
-                    {:blocks [{:lang "clojure" :source "(def probe 1)"}]
-                     :raw "```clojure\n(def probe 1)\n```"
-                     :tokens {}}
-                    {:stop-reason :end :tool-calls [] :content "finished" :tokens {}}))]
+        (try (with-redefs [svar/ask-code!
+                           (fn [_ _]
+                             (if (<= (swap! calls inc) 4)
+                               {:blocks [{:lang "clojure" :source "(def probe 1)"}]
+                                :raw "```clojure\n(def probe 1)\n```"
+                                :tokens {}}
+                               {:stop-reason :end :tool-calls [] :content "finished" :tokens {}}))]
                (let [result (lp/turn! env [(svar/user "repeat if needed")] {})]
                  (expect (= 5 @calls))
                  (expect (= "finished" (lp/answer-markdown (:answer result))))))
@@ -2921,48 +2889,47 @@
     "honor-config-roots! — explicit primary/fallback pairs are the router's roots"
     (let [f (var-get #'lp/honor-config-roots!)]
       (it "honors string-valued defaults without treating provider/model order as configuration"
-          (let
-            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
-                                 {:id :anthropic-coding-plan
-                                  :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
-             config {:default-provider "anthropic-coding-plan"
-                     :default-model "claude-fable-5"
-                     :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
-                                 {:id :anthropic-coding-plan
-                                  :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
-             routed (f router config)
-             p (first (:providers routed))]
+          (let [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                    {:id :anthropic-coding-plan
+                                     :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
+                config {:default-provider "anthropic-coding-plan"
+                        :default-model "claude-fable-5"
+                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                    {:id :anthropic-coding-plan
+                                     :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
+                routed (f router config)
+                p (first (:providers routed))]
 
             (expect (= [:anthropic-coding-plan :zai-coding-plan] (mapv :id (:providers routed))))
             (expect (= ["claude-fable-5" "claude-opus-4-8"] (mapv :name (:models p))))
             (expect (= "claude-fable-5" (:root p)))
             (expect (= "claude-fable-5" (:name (lp/resolve-effective-model routed))))))
       (it "keeps legacy first-provider/first-model behavior when explicit defaults are absent"
-          (let
-            [router {:providers [{:id :anthropic-coding-plan
-                                  :models [{:name "claude-opus-4-8"} {:name "claude-sonnet-4-6"}]}]}
-             config {:providers [{:id :anthropic-coding-plan :models ["claude-sonnet-4-6"]}]}
-             routed (f router config)]
+          (let [router {:providers [{:id :anthropic-coding-plan
+                                     :models [{:name "claude-opus-4-8"}
+                                              {:name "claude-sonnet-4-6"}]}]}
+                config {:providers [{:id :anthropic-coding-plan :models ["claude-sonnet-4-6"]}]}
+                routed (f router config)]
 
             (expect (= "claude-sonnet-4-6" (:name (lp/resolve-effective-model routed))))))
       (it "leaves the router intact when the explicit pair is not in its catalog"
-          (let
-            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]}
-             config {:default-provider "anthropic-coding-plan"
-                     :default-model "claude-fable-5"
-                     :providers [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}]
+          (let [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]}
+                config {:default-provider "anthropic-coding-plan"
+                        :default-model "claude-fable-5"
+                        :providers [{:id :anthropic-coding-plan
+                                     :models [{:name "claude-fable-5"}]}]}]
 
             (expect (= router (f router config)))))
       (it "a resolvable provider still wins when the model name does not match its catalog"
-          (let
-            [router {:providers [{:id :zai-coding-plan
-                                  :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
-                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
-             config {:default-provider "anthropic-coding-plan"
-                     :default-model "typo-model"
-                     :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
-                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
-             routed (f router config)]
+          (let [router {:providers
+                        [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+                         {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
+                config {:default-provider "anthropic-coding-plan"
+                        :default-model "typo-model"
+                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                    {:id :anthropic-coding-plan
+                                     :models [{:name "claude-fable-5"}]}]}
+                routed (f router config)]
 
             (expect (= :anthropic-coding-plan (:id (first (:providers routed)))))
             (expect (= "claude-fable-5" (:root (first (:providers routed)))))))
@@ -2970,30 +2937,28 @@
           ;; openrouter serves ids like `z-ai/glm-4.6v`. Splitting them on the
           ;; slash asked for provider `:z-ai`, which no fleet has, so the
           ;; default the user picked never became the router's root.
-          (let
-            [fleet [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
-                    {:id :openrouter :models [{:name "glm-5.2"} {:name "z-ai/glm-4.6v"}]}]
-             router {:providers fleet}
-             config {:default-provider "openrouter"
-                     :default-model "z-ai/glm-4.6v"
-                     :providers fleet}
-             routed (f router config)
-             p (first (:providers routed))]
+          (let [fleet [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
+                       {:id :openrouter :models [{:name "glm-5.2"} {:name "z-ai/glm-4.6v"}]}]
+                router {:providers fleet}
+                config
+                {:default-provider "openrouter" :default-model "z-ai/glm-4.6v" :providers fleet}
+                routed (f router config)
+                p (first (:providers routed))]
 
             (expect (= :openrouter (:id p)))
             (expect (= "z-ai/glm-4.6v" (:root p)))
             (expect (= "z-ai/glm-4.6v" (:name (lp/resolve-effective-model routed))))))
       (it "default_model accepts the provider/model form and its provider wins"
-          (let
-            [router {:providers [{:id :zai-coding-plan
-                                  :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
-                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
-             config {:default-provider "anthropic-coding-plan"
-                     :default-model "zai-coding-plan/glm-4.7"
-                     :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
-                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
-             routed (f router config)
-             p (first (:providers routed))]
+          (let [router {:providers
+                        [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+                         {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
+                config {:default-provider "anthropic-coding-plan"
+                        :default-model "zai-coding-plan/glm-4.7"
+                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                    {:id :anthropic-coding-plan
+                                     :models [{:name "claude-fable-5"}]}]}
+                routed (f router config)
+                p (first (:providers routed))]
 
             (expect (= :zai-coding-plan (:id p)))
             (expect (= "glm-4.7" (:root p)))
@@ -3004,10 +2969,9 @@
   router-for-model-test
   (describe
     "router-for-model — a coordinator PROPOSES a child model"
-    (let
-      [router {:providers [{:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"}]}
-                           {:id :anthropic
-                            :models [{:name "claude-haiku-4-5"} {:name "claude-sonnet-4-6"}]}]}]
+    (let [router {:providers [{:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"}]}
+                              {:id :anthropic
+                               :models [{:name "claude-haiku-4-5"} {:name "claude-sonnet-4-6"}]}]}]
       (it "the proposed model becomes the child's EFFECTIVE model"
           (expect (= "claude-haiku-4-5"
                      (:name (lp/resolve-effective-model (lp/router-for-model router
@@ -3021,9 +2985,8 @@
             ;; then the rest as fallback — svar routes this order, no svar change.
             (expect (= "claude-sonnet-4-6" (:name (lp/resolve-effective-model r))))
             (expect (= ["claude-sonnet-4-6" "claude-haiku-4-5" "claude-opus-4-8"]
-                       (vec (for
-                              [p (:providers r)
-                               m (:models p)]
+                       (vec (for [p (:providers r)
+                                  m (:models p)]
 
                               (:name m)))))))
       (it "omitted (nil/blank) → child inherits the parent's default model"
@@ -3047,24 +3010,25 @@
    carries no forced `:routing`, so the turn
    kept running the default provider's root model while the turn card and the
    cost row named the cheap model that never ran."
-  (let
-    [router (svar/make-router
-              [{:id :prov-a
-                :api-key "k"
-                :base-url "https://a.example.com"
-                :models [{:name "a-big"} {:name "a-small"}]}
-               {:id :prov-b
-                :api-key "k"
-                :base-url "https://b.example.com"
-                :models [{:name "b-cheap"}]}])
+  (let [router
+        (svar/make-router [{:id :prov-a
+                            :api-key "k"
+                            :base-url "https://a.example.com"
+                            :models [{:name "a-big"} {:name "a-small"}]}
+                           {:id :prov-b
+                            :api-key "k"
+                            :base-url "https://b.example.com"
+                            :models [{:name "b-cheap"}]}])
 
-     ;; What svar ACTUALLY calls, not what Vis displays.
-     selected (fn [r prefs]
-                (let [[p m] (svar-router/select-provider r prefs)]
-                  [(:id p) (:name m)]))
+        ;; What svar ACTUALLY calls, not what Vis displays.
+        selected
+        (fn [r prefs]
+          (let [[p m] (svar-router/select-provider r prefs)]
+            [(:id p) (:name m)]))
 
-     seats (fn [r]
-             (mapv (juxt :id :priority :root) (:providers r)))]
+        seats
+        (fn [r]
+          (mapv (juxt :id :priority :root) (:providers r)))]
 
     (it "svar itself picks the coordinator's model across providers"
         (expect (= [:prov-a "a-big"] (selected router {:strategy :root})))
@@ -3094,30 +3058,28 @@
   router-for-pinned-provider-test
   (describe
     "a session pin must ATTRIBUTE to the provider it calls (duplicate model names)"
-    (let
-      [;; both providers expose "gpt-5.4" — the tie `router-for-model` cannot break
-       router
-       {:providers [{:id :openai-codex :models [{:name "gpt-5.4"} {:name "gpt-5.5"}]}
-                    {:id :github-copilot-individual
-                     :models [{:name "gpt-5.4"} {:name "claude-opus-5"}]}]}
+    (let [;; both providers expose "gpt-5.4" — the tie `router-for-model` cannot break
+          router
+          {:providers [{:id :openai-codex :models [{:name "gpt-5.4"} {:name "gpt-5.5"}]}
+                       {:id :github-copilot-individual
+                        :models [{:name "gpt-5.4"} {:name "claude-opus-5"}]}]}
 
-       hoist
-       #'lp/router-for-pinned-provider
+          hoist
+          #'lp/router-for-pinned-provider
 
-       forced
-       #'lp/forced-routing-for-pref]
+          forced
+          #'lp/forced-routing-for-pref]
 
       (it "model-only hoisting picks the CONFIG-order provider — the old, wrong attribution"
           (expect (= :openai-codex
                      (:provider (lp/resolve-effective-model (lp/router-for-model router
                                                                                  "gpt-5.4"))))))
       (it "hoisting the PINNED provider makes root provider+model match the forced routing"
-          (let
-            [pinned
-             (hoist (lp/router-for-model router "gpt-5.4") :github-copilot-individual)
+          (let [pinned
+                (hoist (lp/router-for-model router "gpt-5.4") :github-copilot-individual)
 
-             root
-             (lp/resolve-effective-model pinned)]
+                root
+                (lp/resolve-effective-model pinned)]
 
             (expect (= :github-copilot-individual (:provider root)))
             (expect (= "gpt-5.4" (:name root)))
@@ -3135,37 +3097,37 @@
 
 (defdescribe
   prepare-turn-model-preference-test
-  (let [prepare #'lp/prepare-turn-context
-        router {:providers [{:id :openai-codex
-                             :models [{:name "shared"} {:name "gpt-explicit"}]}
-                            {:id :lmstudio
-                             :models [{:name "shared"} {:name "ornith"}]}]}
-        env {:db-info ::db
-             :session-id "session-1"
-             :router router}
-        messages [{:role "user" :content "hello"}]]
+  (let [prepare
+        #'lp/prepare-turn-context
+
+        router
+        {:providers [{:id :openai-codex :models [{:name "shared"} {:name "gpt-explicit"}]}
+                     {:id :lmstudio :models [{:name "shared"} {:name "ornith"}]}]}
+
+        env
+        {:db-info ::db :session-id "session-1" :router router}
+
+        messages
+        [{:role "user" :content "hello"}]]
+
     (it "uses a persisted provider and model as one indivisible pin"
         (with-redefs-fn {#'session-model/model-of (fn [& _]
-                                                    {:provider "lmstudio"
-                                                     :model "ornith"})}
-          #(let [ctx (prepare env messages {})]
-             (expect (= :lmstudio (:root-provider ctx)))
-             (expect (= "ornith" (:root-model ctx)))
-             (expect (= {:provider :lmstudio :model "ornith"}
-                        (:routing ctx))))))
+                                                    {:provider "lmstudio" :model "ornith"})}
+          #(let [ctx (prepare env messages {})] (expect (= :lmstudio (:root-provider ctx)))
+             (expect (= "ornith" (:root-model ctx))) (expect (= {:provider :lmstudio
+                                                                 :model "ornith"}
+                                                                (:routing ctx))))))
     (it "trims the persisted pin so the display root names the model that RAN"
         ;; The routing helpers trim; the display/cost root did not. A pref with
         ;; stray whitespace (a hand-edited DB row, a client that pads the field)
         ;; therefore BOUND "ornith" while the turn card named LM Studio's FIRST
         ;; model — a model that turn never ran.
         (with-redefs-fn {#'session-model/model-of (fn [& _]
-                                                    {:provider "  lmstudio  "
-                                                     :model "  ornith  "})}
-          #(let [ctx (prepare env messages {})]
-             (expect (= :lmstudio (:root-provider ctx)))
-             (expect (= "ornith" (:root-model ctx)))
-             (expect (= {:provider :lmstudio :model "ornith"}
-                        (:routing ctx))))))
+                                                    {:provider "  lmstudio  " :model "  ornith  "})}
+          #(let [ctx (prepare env messages {})] (expect (= :lmstudio (:root-provider ctx)))
+             (expect (= "ornith" (:root-model ctx))) (expect (= {:provider :lmstudio
+                                                                 :model "ornith"}
+                                                                (:routing ctx))))))
     (it "honors a live-catalog model the pinned provider does not list statically"
         ;; What the pickers actually offer: `/v1/providers/:id/models` (the TUI's
         ;; "show all models", the companion's router dialog) lists the provider's
@@ -3173,80 +3135,76 @@
         ;; through to the default model because the pinned provider's static
         ;; `:models` did not contain it.
         (with-redefs-fn {#'session-model/model-of (fn [& _]
-                                                    {:provider "lmstudio"
-                                                     :model "qwen3-next-80b"})}
-          #(let [ctx (prepare env messages {})]
-             (expect (= :lmstudio (:root-provider ctx)))
-             (expect (= "qwen3-next-80b" (:root-model ctx)))
-             (expect (= {:provider :lmstudio :model "qwen3-next-80b"}
-                        (:routing ctx))))))
+                                                    {:provider "lmstudio" :model "qwen3-next-80b"})}
+          #(let [ctx (prepare env messages {})] (expect (= :lmstudio (:root-provider ctx)))
+             (expect (= "qwen3-next-80b" (:root-model ctx))) (expect (= {:provider :lmstudio
+                                                                         :model "qwen3-next-80b"}
+                                                                        (:routing ctx))))))
     (it "does not combine a caller model with the persisted provider"
         (with-redefs-fn {#'session-model/model-of (fn [& _]
-                                                    {:provider "lmstudio"
-                                                     :model "shared"})}
+                                                    {:provider "lmstudio" :model "shared"})}
           #(let [ctx (prepare env messages {:model "shared"})]
              ;; Both providers offer this model. An explicit model retains the
              ;; router's normal provider choice instead of borrowing LM Studio
              ;; from an unrelated persisted pair.
-             (expect (= :openai-codex (:root-provider ctx)))
-             (expect (= "shared" (:root-model ctx)))
-             (expect (= {:model "shared"}
-                        (:routing ctx))))))))
+             (expect (= :openai-codex (:root-provider ctx))) (expect (= "shared" (:root-model ctx)))
+             (expect (= {:model "shared"} (:routing ctx))))))))
 
 (defdescribe
   context-overflow-terminal-breaker-test
   "Typed context overflow must never be fed back into an unreachable next model call."
-  (let
-    [overflow-ex
-     (fn overflow-ex
-       ([input max-input source]
-        (overflow-ex :svar.tokens/context-overflow input max-input source))
-       ([type input max-input source]
-        (ex-info "Context overflow"
-                 {:type type
-                  :source source
-                  :model "claude-fable-5"
-                  :input-tokens input
-                  :max-input-tokens max-input
-                  :overflow (when (and input max-input) (- input max-input))})))
+  (let [overflow-ex
+        (fn overflow-ex ([input max-input source] (overflow-ex :svar.tokens/context-overflow input
+                                                    max-input source)) ([type input max-input
+                                                                         source]
+                                                                        (ex-info "Context overflow"
+                                                                          {:type type
+                                                                           :source source
+                                                                           :model "claude-fable-5"
+                                                                           :input-tokens input
+                                                                           :max-input-tokens
+                                                                           max-input
+                                                                           :overflow
+                                                                           (when (and input
+                                                                                   max-input)
+                                                                             (- input
+                                                                               max-input))})))
 
-     ctx
-     {:iteration 1 :messages [] :routing {} :reasoning-level nil}]
+        ctx
+        {:iteration 1 :messages [] :routing {} :reasoning-level nil}]
 
-    (doseq
-      [[label type input max-input source]
-       [["extreme preflight" :svar.tokens/context-overflow 81325 8192 :preflight]
-        ["exact limit edge" :svar.tokens/context-overflow 8193 8192 :preflight]
-        ["marginal preflight" :svar.tokens/context-overflow 9000 8192 :preflight]
-        ["provider-confirmed" :svar.tokens/context-overflow 200001 200000 :provider]
-        ["unmeasured provider overflow" :svar.tokens/context-overflow nil nil :provider]
-        ;; The type svar's `ask-code!` PREFLIGHT guard actually throws. VIS matched
-        ;; only the `tokens` variant, so this one skipped every overflow handler:
-        ;; a 1.44M-of-1M-token session fed the overflow back for three iterations
-        ;; (each retry ~180 tokens BIGGER) and died with a bogus provider card.
-        ["ask-code! preflight guard" :svar.core/context-overflow 1437952 1000000 :preflight]
-        ["ask-code! guard, marginal" :svar.core/context-overflow 9000 8192 :preflight]]]
+    (doseq [[label type input max-input source]
+            [["extreme preflight" :svar.tokens/context-overflow 81325 8192 :preflight]
+             ["exact limit edge" :svar.tokens/context-overflow 8193 8192 :preflight]
+             ["marginal preflight" :svar.tokens/context-overflow 9000 8192 :preflight]
+             ["provider-confirmed" :svar.tokens/context-overflow 200001 200000 :provider]
+             ["unmeasured provider overflow" :svar.tokens/context-overflow nil nil :provider]
+             ;; The type svar's `ask-code!` PREFLIGHT guard actually throws. VIS matched
+             ;; only the `tokens` variant, so this one skipped every overflow handler:
+             ;; a 1.44M-of-1M-token session fed the overflow back for three iterations
+             ;; (each retry ~180 tokens BIGGER) and died with a bogus provider card.
+             ["ask-code! preflight guard" :svar.core/context-overflow 1437952 1000000 :preflight]
+             ["ask-code! guard, marginal" :svar.core/context-overflow 9000 8192 :preflight]]]
       (it (str label " is terminal")
           (let [result (lp/handle-iteration-exception! (overflow-ex type input max-input source)
-                                                      ctx)]
+                                                       ctx)]
             (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
             (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))
     (it "preserves typed details for the error card and diagnostics"
-        (let
-          [result
-           (lp/handle-iteration-exception! (overflow-ex 210000 200000 :provider) ctx)
+        (let [result
+              (lp/handle-iteration-exception! (overflow-ex 210000 200000 :provider) ctx)
 
-           data
-           (get-in result [:com.blockether.vis.internal.loop/iteration-error :data])]
+              data
+              (get-in result [:com.blockether.vis.internal.loop/iteration-error :data])]
 
           (expect (= :svar.tokens/context-overflow (:type data)))
           (expect (= 210000 (:input-tokens data)))
           (expect (= 200000 (:max-input-tokens data)))
           (expect (= :provider (:source data)))))
     (it "does not make unrelated model errors terminal"
-        (let
-          [result
-           (lp/handle-iteration-exception! (ex-info "NameError: nope" {:type :vis/eval-error}) ctx)]
+        (let [result (lp/handle-iteration-exception! (ex-info "NameError: nope"
+                                                              {:type :vis/eval-error})
+                                                     ctx)]
           (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
 
 ;; Regression: a pinned provider accepted the POST and sent no response header for
@@ -3257,14 +3215,17 @@
   pre-output-stream-retry-test
   "A stream watchdog that fires before ANY output is the one provider failure Vis
    re-issues itself: no header, no byte, no token, nothing billed, nothing painted."
-  (let
-    [retryable? @#'lp/pre-output-stream-retryable?
+  (let [retryable?
+        @#'lp/pre-output-stream-retryable?
 
-     backoff @#'lp/pre-output-stream-backoff-ms
+        backoff
+        @#'lp/pre-output-stream-backoff-ms
 
-     next-counters @#'lp/next-retry-counters
+        next-counters
+        @#'lp/next-retry-counters
 
-     ttft (ex-info "Stream TTFT timeout (60000 ms)" {:type :svar.core/stream-ttft-timeout})]
+        ttft
+        (ex-info "Stream TTFT timeout (60000 ms)" {:type :svar.core/stream-ttft-timeout})]
 
     (it "re-issues every typed watchdog abort while no output has streamed"
         (doseq [error-type [:svar.core/stream-ttft-timeout :svar.core/stream-idle-timeout
@@ -3288,8 +3249,9 @@
         (expect (= 1000 (backoff 0)))
         (expect (= 3000 (backoff 1)))
         (expect (= 3000 (backoff 7)))
-        (expect (= [1 1] (next-counters :com.blockether.vis.internal.loop/retry-pre-output-stream
-                                        {:attempt 0 :max-tokens-attempt 1}))))
+        (expect (= [1 1]
+                   (next-counters :com.blockether.vis.internal.loop/retry-pre-output-stream
+                                  {:attempt 0 :max-tokens-attempt 1}))))
     (it "still fails the turn once the pre-output budget is spent"
         (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error
                          (lp/handle-iteration-exception! ttft
@@ -3303,14 +3265,12 @@
    (`pre-output-stream-retry-test`). They must end the turn instead of becoming
    visible model-feedback iterations."
   (let [ctx {:iteration 5 :messages [] :routing {} :reasoning-level nil}]
-    (doseq
-      [error-type [:svar.core/stream-cancelled :svar.core/stream-idle-timeout
-                   :svar.core/stream-semantic-timeout]]
+    (doseq [error-type [:svar.core/stream-cancelled :svar.core/stream-idle-timeout
+                        :svar.core/stream-semantic-timeout]]
       (it (str error-type " is fatal and cannot create a duplicate next iteration")
-          (let
-            [result (lp/handle-iteration-exception! (ex-info "Terminal stream watchdog failure"
-                                                             {:type error-type})
-                                                    ctx)]
+          (let [result (lp/handle-iteration-exception! (ex-info "Terminal stream watchdog failure"
+                                                                {:type error-type})
+                                                       ctx)]
             (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
             (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))))
 
@@ -3319,43 +3279,42 @@
   ;; Regression, issue #105: Vis used to retry svar's terminal provider-unavailable
   ;; result three more times, stacking a second retry ladder above svar.
   (it "surfaces svar's provider-unavailable result without an outer Vis retry"
-      (let [ctx {:iteration 1 :messages [] :routing {} :reasoning-level nil}
-            result (lp/handle-iteration-exception!
-                     (ex-info "Provider unavailable"
-                              {:type :svar.llm/provider-unavailable :status 503})
-                     ctx)]
-        (expect
-          (contains? result :com.blockether.vis.internal.loop/iteration-error))
-        (expect
-          (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))
+      (let [ctx
+            {:iteration 1 :messages [] :routing {} :reasoning-level nil}
+
+            result
+            (lp/handle-iteration-exception!
+              (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status 503})
+              ctx)]
+
+        (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
+        (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))
 ;; The reply is ONE program: multiple fences a provider splits out collapse to a
 ;; single code-entry so the form cap spans the whole reply and r["…/fF"] numbers
 ;; continuously (no per-fence f1 collision).
 (defdescribe code-entries-preflight-merge-test
              (it "collapses multiple fenced blocks into ONE code-entry = the normalized concat"
-                 (let
-                   [pre
-                    (@#'lp/code-entries-preflight
-                     2
-                     [{:source "rg(1)" :lang "python"} {:source "cat(2)" :lang "python"}])
+                 (let [pre
+                       (@#'lp/code-entries-preflight
+                        2
+                        [{:source "rg(1)" :lang "python"} {:source "cat(2)" :lang "python"}])
 
-                    entries
-                    (:code-entries pre)]
+                       entries
+                       (:code-entries pre)]
 
                    (expect (= 1 (count entries)))
                    (expect (= "rg(1)\n\ncat(2)" (:expr (first entries))))))
              (it "leaves a single fenced block untouched"
-                 (let
-                   [entries (:code-entries
-                              (@#'lp/code-entries-preflight 1 [{:source "rg(1)" :lang "python"}]))]
+                 (let [entries (:code-entries (@#'lp/code-entries-preflight
+                                               1
+                                               [{:source "rg(1)" :lang "python"}]))]
                    (expect (= 1 (count entries)))
                    (expect (= "rg(1)" (:expr (first entries))))))
              (it "dedups identical stutter-fences first (one survivor, not merged with itself)"
-                 (let
-                   [entries (:code-entries (@#'lp/code-entries-preflight
-                                            2
-                                            [{:source "rg(1)" :lang "python"}
-                                             {:source "rg(1)" :lang "python"}]))]
+                 (let [entries (:code-entries (@#'lp/code-entries-preflight
+                                               2
+                                               [{:source "rg(1)" :lang "python"}
+                                                {:source "rg(1)" :lang "python"}]))]
                    (expect (= 1 (count entries)))
                    (expect (= "rg(1)" (:expr (first entries)))))))
 
@@ -3365,13 +3324,12 @@
   ;; The guard's comment-only branch parses inside the SESSION's own GraalPy
   ;; context (post one-context consolidation), so the test threads a real
   ;; context through — built lazily ONCE for the block.
-  (let
-    [ctx
-     (delay (:python-context (env/create-python-context {})))
+  (let [ctx
+        (delay (:python-context (env/create-python-context {})))
 
-     err
-     (fn [expr]
-       (#'lp/literal-code-block-error @ctx expr))]
+        err
+        (fn [expr]
+          (#'lp/literal-code-block-error @ctx expr))]
 
     (it "valid Python code passes the guard (nil)" (expect (nil? (err "x = 1"))))
     (it "a bare string program is rejected and points at native answering, not :answer/:code"
@@ -3391,56 +3349,54 @@
           (expect (not (str/includes? m ";;")))))))
 
 
-(defdescribe
-  only-python-execution-is-advertised-test
-  ;; ONE tool reaches the provider. Every other capability is already a bare Python
-  ;; name inside that sandbox — found with `apropos(text)`, read with `doc(name)`,
-  ;; called from inside a block — so a second JSON schema advertises a door the
-  ;; model can open anyway and charges for it on every single request.
-  (it
-    "advertises exactly one tool, and it is python_execution"
-    (let
-      [tools
-       (@#'lp/model-facing-tools nil)
+(defdescribe only-python-execution-is-advertised-test
+             ;; ONE tool reaches the provider. Every other capability is already a bare Python
+             ;; name inside that sandbox — found with `apropos(text)`, read with `doc(name)`,
+             ;; called from inside a block — so a second JSON schema advertises a door the
+             ;; model can open anyway and charges for it on every single request.
+             (it
+               "advertises exactly one tool, and it is python_execution"
+               (let [tools
+                     (@#'lp/model-facing-tools nil)
 
-       tool
-       (first tools)]
+                     tool
+                     (first tools)]
 
-      (expect (= ["python_execution"] (mapv :name tools)))
-      ;; No extension can add a tool: `model-facing-tools` does not take extensions
-      ;; at all any more, which is the proof rather than an assertion about them.
-      (expect (= 1 (count tools)))
-      ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
-      ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
-      ;; turn failed before a token. The one tool is advertised unconstrained.
-      (expect (not-any? :strict tools))
-      ;; The raw-result contract is FOLDED into the description exactly once, and the
-      ;; separate `:result` key never reaches a provider.
-      (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
-      (expect (not (contains? tool :result)))
-      ;; One tool, one argument: the whole model-facing schema surface.
-      (expect (= {:type "object"
-                  :properties {"code" {:type "string" :description "Python source."}}
-                  :required ["code"]
-                  :additionalProperties false}
-                 (:schema tool)))
-      (doseq
-        [fact ["project packages need a project REPL" "plain Python" "errors surface"
-               ;; With no result store left, the description states the one rule that
-               ;; replaces it: what you did not print is gone when the block ends.
-               "gone from the transcript once the block ends"
-               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
-               ;; prompt deliberately dropped its duplicate copy.
-               "`sh.logs()`" "no tool waits for you"
-               ;; Sandbox Python does NOT close a dropped file handle, so an
-               ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
-               ;; enough of them and no `shell` child can be spawned at
-               ;; all. The sandbox reclaims and caps them
-               ;; (`env-python-fd-test`); the description says so, because the
-               ;; cheapest fix is the block never leaking in the first place.
-               "Close what you open" "with open(...)" "leaked descriptors"
-               "VIS_PY_MAX_OPEN_FILES"]]
-        (expect (str/includes? (:description tool) fact))))))
+                 (expect (= ["python_execution"] (mapv :name tools)))
+                 ;; No extension can add a tool: `model-facing-tools` does not take extensions
+                 ;; at all any more, which is the proof rather than an assertion about them.
+                 (expect (= 1 (count tools)))
+                 ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
+                 ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
+                 ;; turn failed before a token. The one tool is advertised unconstrained.
+                 (expect (not-any? :strict tools))
+                 ;; The raw-result contract is FOLDED into the description exactly once, and the
+                 ;; separate `:result` key never reaches a provider.
+                 (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
+                 (expect (not (contains? tool :result)))
+                 ;; One tool, one argument: the whole model-facing schema surface.
+                 (expect (= {:type "object"
+                             :properties {"code" {:type "string" :description "Python source."}}
+                             :required ["code"]
+                             :additionalProperties false}
+                            (:schema tool)))
+                 (doseq [fact ["project packages need a project REPL" "plain Python"
+                               "errors surface"
+                               ;; With no result store left, the description states the one rule that
+                               ;; replaces it: what you did not print is gone when the block ends.
+                               "gone from the transcript once the block ends"
+                               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
+                               ;; prompt deliberately dropped its duplicate copy.
+                               "`sh.logs()`" "no tool waits for you"
+                               ;; Sandbox Python does NOT close a dropped file handle, so an
+                               ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
+                               ;; enough of them and no `shell` child can be spawned at
+                               ;; all. The sandbox reclaims and caps them
+                               ;; (`env-python-fd-test`); the description says so, because the
+                               ;; cheapest fix is the block never leaking in the first place.
+                               "Close what you open" "with open(...)" "leaked descriptors"
+                               "VIS_PY_MAX_OPEN_FILES"]]
+                   (expect (str/includes? (:description tool) fact))))))
 
 (def ^:private settle-gather-futures! (deref #'lp/settle-gather-futures!))
 
@@ -3455,15 +3411,14 @@
    platform-thread ceiling, no backlog, reclaimable idle workers, and the
    cancellation tests below prove children do not outlive their coordinator."
   (it "is a bounded, self-reclaiming platform pool with no queued-task retention"
-      (let
-        [^java.util.concurrent.ThreadPoolExecutor exec
-         gather-executor
+      (let [^java.util.concurrent.ThreadPoolExecutor exec
+            gather-executor
 
-         worker-virtual?
-         (.get (.submit exec
-                        ^java.util.concurrent.Callable
-                        (fn []
-                          (.isVirtual (Thread/currentThread)))))]
+            worker-virtual?
+            (.get (.submit exec
+                           ^java.util.concurrent.Callable
+                           (fn []
+                             (.isVirtual (Thread/currentThread)))))]
 
         (expect (instance? java.util.concurrent.ThreadPoolExecutor exec))
         (expect (= 0 (.getCorePoolSize exec)))
@@ -3475,41 +3430,39 @@
         (expect (<= (.getPoolSize exec) (int gather-max-threads)))))
   (it
     "backpressures a saturated virtual submitter instead of pinning it with guest work"
-    (let
-      [^java.util.concurrent.ThreadPoolExecutor exec
-       gather-executor
+    (let [^java.util.concurrent.ThreadPoolExecutor exec
+          gather-executor
 
-       release
-       (java.util.concurrent.CountDownLatch. 1)
+          release
+          (java.util.concurrent.CountDownLatch. 1)
 
-       started
-       (java.util.concurrent.CountDownLatch. (int gather-max-threads))
+          started
+          (java.util.concurrent.CountDownLatch. (int gather-max-threads))
 
-       blockers
-       (mapv (fn [_]
-               (.submit exec
-                        ^java.util.concurrent.Callable
-                        (fn []
-                          (.countDown started)
-                          (.await release)
-                          nil)))
-             (range gather-max-threads))]
+          blockers
+          (mapv (fn [_]
+                  (.submit exec
+                           ^java.util.concurrent.Callable
+                           (fn []
+                             (.countDown started)
+                             (.await release)
+                             nil)))
+                (range gather-max-threads))]
 
       (try (expect (.await started 5 java.util.concurrent.TimeUnit/SECONDS))
-           (let
-             [result
-              (promise)
+           (let [result
+                 (promise)
 
-              submitter
-              (Thread/startVirtualThread
-                ^Runnable
-                (fn []
-                  (try (deliver result
-                                (.get (.submit exec
-                                               ^java.util.concurrent.Callable
-                                               (fn []
-                                                 (.isVirtual (Thread/currentThread))))))
-                       (catch Throwable e (deliver result e)))))]
+                 submitter
+                 (Thread/startVirtualThread
+                   ^Runnable
+                   (fn []
+                     (try (deliver result
+                                   (.get (.submit exec
+                                                  ^java.util.concurrent.Callable
+                                                  (fn []
+                                                    (.isVirtual (Thread/currentThread))))))
+                          (catch Throwable e (deliver result e)))))]
 
              (Thread/sleep 25)
              (expect (not (realized? result)))
@@ -3531,20 +3484,19 @@
   ;; hard-cancels every child and propagates.
   (it "settles every slot in order — value OR error, a failing slot never aborts siblings"
       (let [exec (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)]
-        (try (let
-               [futs [(.submit exec
-                               ^java.util.concurrent.Callable
-                               (fn []
-                                 1))
-                      (.submit exec
-                               ^java.util.concurrent.Callable
-                               (fn []
-                                 (throw (ex-info "boom" {}))))
-                      (.submit exec
-                               ^java.util.concurrent.Callable
-                               (fn []
-                                 3))]
-                outcomes (settle-gather-futures! futs)]
+        (try (let [futs [(.submit exec
+                                  ^java.util.concurrent.Callable
+                                  (fn []
+                                    1))
+                         (.submit exec
+                                  ^java.util.concurrent.Callable
+                                  (fn []
+                                    (throw (ex-info "boom" {}))))
+                         (.submit exec
+                                  ^java.util.concurrent.Callable
+                                  (fn []
+                                    3))]
+                   outcomes (settle-gather-futures! futs)]
 
                (expect (= {:ok 1} (nth outcomes 0)))
                (expect (= "boom" (ex-message (:err (nth outcomes 1)))))
@@ -3552,42 +3504,40 @@
              (finally (.shutdownNow exec)))))
   (it
     "hard-cancels still-running children and rethrows when the settling thread is interrupted"
-    (let
-      [exec
-       (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)
+    (let [exec
+          (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)
 
-       child-started
-       (promise)
+          child-started
+          (promise)
 
-       child-interrupted
-       (promise)]
+          child-interrupted
+          (promise)]
 
-      (try (let
-             [futs
-              [(.submit exec
-                        ^java.util.concurrent.Callable
-                        (fn []
-                          (deliver child-started true)
-                          (try (Thread/sleep 60000)
-                               :never
-                               (catch InterruptedException _
-                                 (deliver child-interrupted true)
-                                 :interrupted))))]
+      (try (let [futs
+                 [(.submit exec
+                           ^java.util.concurrent.Callable
+                           (fn []
+                             (deliver child-started true)
+                             (try (Thread/sleep 60000)
+                                  :never
+                                  (catch InterruptedException _
+                                    (deliver child-interrupted true)
+                                    :interrupted))))]
 
-              _
-              (when (= ::timeout (deref child-started 5000 ::timeout))
-                (throw (ex-info "child did not start" {})))
+                 _
+                 (when (= ::timeout (deref child-started 5000 ::timeout))
+                   (throw (ex-info "child did not start" {})))
 
-              _
-              (.interrupt (Thread/currentThread))
+                 _
+                 (.interrupt (Thread/currentThread))
 
-              thrown
-              (try (settle-gather-futures! futs)
-                   nil
-                   (catch InterruptedException e e)
-                   (finally
-                     ;; clear the flag before any further test plumbing
-                     (Thread/interrupted)))]
+                 thrown
+                 (try (settle-gather-futures! futs)
+                      nil
+                      (catch InterruptedException e e)
+                      (finally
+                        ;; clear the flag before any further test plumbing
+                        (Thread/interrupted)))]
 
              (expect (some? thrown))
              (expect (.isCancelled ^java.util.concurrent.Future (first futs)))
@@ -3617,21 +3567,21 @@
   auth-provider-fallback-routing-test
   "Terminal auth recovery releases one dead provider only after refresh handling ends."
   (it "unpinns the failed provider and enables observable fleet auth fallback"
-      (let
-        [fallback
-         @#'lp/auth-fallback-routing
+      (let [fallback
+            @#'lp/auth-fallback-routing
 
-         error
-         (ex-info "OAuth access token has been revoked" {:type :svar.core/http-error :status 401})
+            error
+            (ex-info "OAuth access token has been revoked"
+                     {:type :svar.core/http-error :status 401})
 
-         routing
-         {:provider :openai-codex
-          :model "gpt-5.6-sol"
-          :on-transient-error :fallback-model-in-the-same-provider
-          :reasoning :deep}
+            routing
+            {:provider :openai-codex
+             :model "gpt-5.6-sol"
+             :on-transient-error :fallback-model-in-the-same-provider
+             :reasoning :deep}
 
-         result
-         (fallback error routing {:provider :openai-codex})]
+            result
+            (fallback error routing {:provider :openai-codex})]
 
         (expect (= {:on-transient-error :hybrid
                     :on-auth-error :fallback-provider
@@ -3640,15 +3590,14 @@
                    result))))
   (it
     "preserves existing exclusions and refuses replay after visible output"
-    (let
-      [fallback
-       @#'lp/auth-fallback-routing
+    (let [fallback
+          @#'lp/auth-fallback-routing
 
-       base
-       {:provider :openai-codex :model "gpt-5.6-sol" :exclude-providers #{:broken}}
+          base
+          {:provider :openai-codex :model "gpt-5.6-sol" :exclude-providers #{:broken}}
 
-       model
-       {:provider :openai-codex}]
+          model
+          {:provider :openai-codex}]
 
       (expect (= #{:broken :openai-codex}
                  (:exclude-providers (fallback (ex-info "Unauthorized" {:status 401}) base model))))
@@ -3657,22 +3606,21 @@
       (expect
         (nil? (fallback (ex-info "Unauthorized" {:status 401 :reasoning-acc-len 1}) base model)))))
   (it "runs at most once and only for an identified failing provider"
-      (let
-        [fallback
-         @#'lp/auth-fallback-routing
+      (let [fallback
+            @#'lp/auth-fallback-routing
 
-         error
-         (ex-info "Unauthorized" {:status 401})]
+            error
+            (ex-info "Unauthorized" {:status 401})]
 
         (expect (nil?
                   (fallback error {:on-auth-error :fallback-provider} {:provider :openai-codex})))
         (expect (= nil (fallback error {} {})))))
   (it "threads the auth-fallback retry without consuming another retry budget"
-      (let
-        [next-counters
-         @#'lp/next-retry-counters
-         base
-         {:attempt 2 :max-tokens-attempt 1}]
+      (let [next-counters
+            @#'lp/next-retry-counters
+
+            base
+            {:attempt 2 :max-tokens-attempt 1}]
 
         (expect (= [2 1] (next-counters {::lp/retry-auth-fallback {}} base))))))
 
@@ -3682,16 +3630,20 @@
    per-iteration atom, so before the cooldown every next iteration re-sent to the
    dead provider: 20 401s and 19 fallbacks in a quarter of an hour (issue #82)."
   (it "keeps a released provider excluded on the NEXT iteration and re-admits it on success"
-      (let
-        [cooldown @#'lp/provider-auth-cooldown
+      (let [cooldown
+            @#'lp/provider-auth-cooldown
 
-         note! @#'lp/note-provider-auth-cooldown!
+            note!
+            @#'lp/note-provider-auth-cooldown!
 
-         request-ok! @#'lp/note-provider-request-ok!
+            request-ok!
+            @#'lp/note-provider-request-ok!
 
-         apply-cooldown @#'lp/apply-auth-cooldown-routing
+            apply-cooldown
+            @#'lp/apply-auth-cooldown-routing
 
-         base {:on-transient-error :fallback-model-in-the-same-provider}]
+            base
+            {:on-transient-error :fallback-model-in-the-same-provider}]
 
         (try (reset! cooldown {})
              ;; Iteration 1 exhausts auth recovery and falls back: FIRST trip, warns.
@@ -3707,38 +3659,42 @@
              (request-ok! {:provider :rbi-genai} {:llm-provider :rbi-genai})
              (expect (= base (apply-cooldown base)))
              (finally (reset! cooldown {})))))
-  (it "expires with the window and releases even an explicitly pinned provider"
-      (let
-        [cooldown @#'lp/provider-auth-cooldown
+  (it
+    "expires with the window and releases even an explicitly pinned provider"
+    (let [cooldown
+          @#'lp/provider-auth-cooldown
 
-         apply-cooldown @#'lp/apply-auth-cooldown-routing
+          apply-cooldown
+          @#'lp/apply-auth-cooldown-routing
 
-         now (System/currentTimeMillis)]
+          now
+          (System/currentTimeMillis)]
 
-        (try
-          ;; A lapsed window releases routing, but the STRIKE record survives it: the
-          ;; next rejection has to escalate rather than restart at the base window
-          ;; (issue #154). Only a record lapsed for longer than the ceiling is pruned.
-          (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3 :strikes 3}})
-          (expect (= {} (apply-cooldown {})))
-          (expect (= 3 (:strikes (get @cooldown :rbi-genai))))
-          (reset! cooldown {:rbi-genai {:until (- now 7200000) :since (- now 7260000) :hits 3 :strikes 3}})
-          (expect (= {} (apply-cooldown {})))
-          (expect (= {} @cooldown))
-          ;; A pin does NOT outrank the cooldown: every main turn is pinned, so the
-          ;; old exemption exempted every turn (see `auth-cooldown-storm-test`).
-          (reset! cooldown {:rbi-genai {:until (+ now 60000) :since now :hits 1}})
-          (expect (= {:on-auth-error :fallback-provider
-                      :on-transient-error :hybrid
-                      :exclude-providers #{:rbi-genai}}
-                     (apply-cooldown {:provider :rbi-genai :model "m"})))
-          ;; A pin on a HEALTHY provider survives, with the cooled peer excluded around it.
-          (expect (= {:provider :openai
-                      :on-auth-error :fallback-provider
-                      :on-transient-error :hybrid
-                      :exclude-providers #{:rbi-genai}}
-                     (apply-cooldown {:provider :openai})))
-          (finally (reset! cooldown {})))))
+      (try
+        ;; A lapsed window releases routing, but the STRIKE record survives it: the
+        ;; next rejection has to escalate rather than restart at the base window
+        ;; (issue #154). Only a record lapsed for longer than the ceiling is pruned.
+        (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3 :strikes 3}})
+        (expect (= {} (apply-cooldown {})))
+        (expect (= 3 (:strikes (get @cooldown :rbi-genai))))
+        (reset! cooldown {:rbi-genai
+                          {:until (- now 7200000) :since (- now 7260000) :hits 3 :strikes 3}})
+        (expect (= {} (apply-cooldown {})))
+        (expect (= {} @cooldown))
+        ;; A pin does NOT outrank the cooldown: every main turn is pinned, so the
+        ;; old exemption exempted every turn (see `auth-cooldown-storm-test`).
+        (reset! cooldown {:rbi-genai {:until (+ now 60000) :since now :hits 1}})
+        (expect (= {:on-auth-error :fallback-provider
+                    :on-transient-error :hybrid
+                    :exclude-providers #{:rbi-genai}}
+                   (apply-cooldown {:provider :rbi-genai :model "m"})))
+        ;; A pin on a HEALTHY provider survives, with the cooled peer excluded around it.
+        (expect (= {:provider :openai
+                    :on-auth-error :fallback-provider
+                    :on-transient-error :hybrid
+                    :exclude-providers #{:rbi-genai}}
+                   (apply-cooldown {:provider :openai})))
+        (finally (reset! cooldown {})))))
   (it "reports the cooldown for observability"
       (let [cooldown @#'lp/provider-auth-cooldown]
         (try (reset! cooldown {})
@@ -3746,11 +3702,11 @@
              (let [metrics (lp/auth-cooldown-metrics)]
                (expect (= #{:rbi-genai} (:cooled-providers metrics)))
                (expect (= 300000 (:cooldown-ms metrics)))
-             (expect (= 1 (:hits (get (:cooldowns metrics) :rbi-genai))))
-             ;; The ceiling is part of the snapshot: an escalating window is only
-             ;; readable if the reader knows where it stops.
-             (expect (= 3600000 (:cooldown-max-ms metrics)))
-             (expect (= 1 (:strikes (get (:cooldowns metrics) :rbi-genai)))))
+               (expect (= 1 (:hits (get (:cooldowns metrics) :rbi-genai))))
+               ;; The ceiling is part of the snapshot: an escalating window is only
+               ;; readable if the reader knows where it stops.
+               (expect (= 3600000 (:cooldown-max-ms metrics)))
+               (expect (= 1 (:strikes (get (:cooldowns metrics) :rbi-genai)))))
              (finally (reset! cooldown {}))))))
 
 ;; Regression, issue #114: vis logged `Provider auth recovery exhausted; falling back
@@ -3766,18 +3722,22 @@
   auth-cooldown-storm-test
   "The logged cooldown must be ENFORCED: a dead credential is neither re-probed nor
    re-minted until the window elapses or the provider itself accepts a request."
-  (let
-    [cooldown @#'lp/provider-auth-cooldown
+  (let [cooldown
+        @#'lp/provider-auth-cooldown
 
-     note! @#'lp/note-provider-auth-cooldown!
+        note!
+        @#'lp/note-provider-auth-cooldown!
 
-     request-ok! @#'lp/note-provider-request-ok!
+        request-ok!
+        @#'lp/note-provider-request-ok!
 
-     apply-cooldown @#'lp/apply-auth-cooldown-routing
+        apply-cooldown
+        @#'lp/apply-auth-cooldown-routing
 
-     released {:on-auth-error :fallback-provider
-               :on-transient-error :hybrid
-               :exclude-providers #{:rbi-genai}}]
+        released
+        {:on-auth-error :fallback-provider
+         :on-transient-error :hybrid
+         :exclude-providers #{:rbi-genai}}]
 
     (it "releases a PINNED dead provider instead of re-probing it every iteration"
         (try
@@ -3789,22 +3749,20 @@
                                       :model "gpt-5"
                                       :on-transient-error :fallback-model-in-the-same-provider})))
           ;; `:force-provider` is the same pin under another name.
-          (expect (= released
-                     (apply-cooldown {:force-provider :rbi-genai :force-model "gpt-5"})))
+          (expect (= released (apply-cooldown {:force-provider :rbi-genai :force-model "gpt-5"})))
           (finally (reset! cooldown {}))))
     (it "keeps the cooldown armed when a PEER served the turn"
-        (try
-          (reset! cooldown {})
-          (note! :rbi-genai)
-          ;; `resolved-model` is the pre-call guess (router head, i.e. the pin); only
-          ;; the iteration result knows which provider actually answered.
-          (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :openai})
-          (expect (= #{:rbi-genai} (:cooled-providers (lp/auth-cooldown-metrics))))
-          (expect (= released (apply-cooldown {:provider :rbi-genai :model "gpt-5"})))
-          ;; The provider that DID answer is re-admitted at once.
-          (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :rbi-genai})
-          (expect (= #{} (:cooled-providers (lp/auth-cooldown-metrics))))
-          (finally (reset! cooldown {}))))))
+        (try (reset! cooldown {})
+             (note! :rbi-genai)
+             ;; `resolved-model` is the pre-call guess (router head, i.e. the pin); only
+             ;; the iteration result knows which provider actually answered.
+             (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :openai})
+             (expect (= #{:rbi-genai} (:cooled-providers (lp/auth-cooldown-metrics))))
+             (expect (= released (apply-cooldown {:provider :rbi-genai :model "gpt-5"})))
+             ;; The provider that DID answer is re-admitted at once.
+             (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :rbi-genai})
+             (expect (= #{} (:cooled-providers (lp/auth-cooldown-metrics))))
+             (finally (reset! cooldown {}))))))
 
 (defdescribe
   wrapped-auth-exhaustion-cooldown-test
@@ -3813,32 +3771,36 @@
    read the WRAPPER only, so a wrapped credential failure took neither the rescue
    route nor the cooldown and the dead provider was re-probed every iteration
    (issue #82)."
-  (let
-    [wrapper
-     (ex-info "Provider unavailable"
-              {:type :svar.llm/provider-unavailable
-               :attempts [{:provider :rbi-genai
-                           :model "gpt-5"
-                           :status 401
-                           :reason :authentication
-                           :error "API authentication failed. Check your API key."}
-                          {:provider :openai
-                           :model "gpt-5"
-                           :status 401
-                           :reason :authentication
-                           :error "Incorrect API key provided"}]})
+  (let [wrapper
+        (ex-info "Provider unavailable"
+                 {:type :svar.llm/provider-unavailable
+                  :attempts [{:provider :rbi-genai
+                              :model "gpt-5"
+                              :status 401
+                              :reason :authentication
+                              :error "API authentication failed. Check your API key."}
+                             {:provider :openai
+                              :model "gpt-5"
+                              :status 401
+                              :reason :authentication
+                              :error "Incorrect API key provided"}]})
 
-     mixed
-     (ex-info "Provider unavailable"
-              {:type :svar.llm/provider-unavailable
-               :attempts [{:provider :rbi-genai :status 401 :reason :authentication :error "bad key"}
-                          {:provider :openai :status 503 :reason :transient-error :error "upstream down"}]})
+        mixed
+        (ex-info
+          "Provider unavailable"
+          {:type :svar.llm/provider-unavailable
+           :attempts
+           [{:provider :rbi-genai :status 401 :reason :authentication :error "bad key"}
+            {:provider :openai :status 503 :reason :transient-error :error "upstream down"}]})
 
-     shaped? @#'lp/auth-error-shaped?
+        shaped?
+        @#'lp/auth-error-shaped?
 
-     fallback-routing @#'lp/auth-fallback-routing
+        fallback-routing
+        @#'lp/auth-fallback-routing
 
-     resolved {:provider :rbi-genai :name "gpt-5"}]
+        resolved
+        {:provider :rbi-genai :name "gpt-5"}]
 
     (it "reads the credential verdict off the attempts when the wrapper hides it"
         (expect (= true (shaped? wrapper)))
@@ -3878,25 +3840,33 @@
   "A rescued turn must MOVE the session, not just survive: the pick follows the provider
    that actually answered, the surfaces are told why, and the dead credential is probed
    ever less often instead of on a fixed five-minute loop."
-  (let
-    [cooldown @#'lp/provider-auth-cooldown
+  (let [cooldown
+        @#'lp/provider-auth-cooldown
 
-     note! @#'lp/note-provider-auth-cooldown!
+        note!
+        @#'lp/note-provider-auth-cooldown!
 
-     request-ok! @#'lp/note-provider-request-ok!
+        request-ok!
+        @#'lp/note-provider-request-ok!
 
-     window @#'lp/auth-cooldown-window-ms
+        window
+        @#'lp/auth-cooldown-window-ms
 
-     cooled @#'lp/auth-cooled-providers
+        cooled
+        @#'lp/auth-cooled-providers
 
-     move @#'lp/auth-rescue-pick-move
+        move
+        @#'lp/auth-rescue-pick-move
 
-     reseat! @#'lp/reseat-pick-after-auth-rescue!
+        reseat!
+        @#'lp/reseat-pick-after-auth-rescue!
 
-     ;; Exactly the shape the DB hands back: provider and model as strings.
-     pinned {:provider "rbi-genai" :model "gpt-5"}
+        ;; Exactly the shape the DB hands back: provider and model as strings.
+        pinned
+        {:provider "rbi-genai" :model "gpt-5"}
 
-     served {:llm-provider :openai :llm-model "gpt-5.4"}]
+        served
+        {:llm-provider :openai :llm-model "gpt-5.4"}]
 
     (it "moves the pick onto the provider that answered once the pinned one is cooled"
         (expect (= {:from {:provider "rbi-genai" :model "gpt-5"}
@@ -3918,56 +3888,49 @@
         (expect (nil? (move pinned {:llm-provider :openai} #{:rbi-genai})))
         (expect (nil? (move pinned {:llm-provider :openai :llm-model "  "} #{:rbi-genai}))))
     (it "writes the new pick with its reason and returns the chunk that says why"
-        (let
-          [set-args
-           (atom nil)
+        (let [set-args
+              (atom nil)
 
-           switch-args
-           (atom nil)]
+              switch-args
+              (atom nil)]
 
-          (try
-            (reset! cooldown {})
-            (note! :rbi-genai)
-            (with-redefs
-              [session-model/model-of (fn [& _]
-                                        pinned)
+          (try (reset! cooldown {})
+               (note! :rbi-genai)
+               (with-redefs [session-model/model-of
+                             (fn [& _]
+                               pinned)
 
-               session-model/set-model! (fn [& args]
-                                          (reset! set-args (vec args)))
+                             session-model/set-model!
+                             (fn [& args]
+                               (reset! set-args (vec args)))
 
-               session-model/record-switch! (fn [& args]
-                                              (reset! switch-args (vec args)))]
+                             session-model/record-switch!
+                             (fn [& args]
+                               (reset! switch-args (vec args)))]
 
-              (expect (= {:from {:provider "rbi-genai" :model "gpt-5"}
-                          :to {:provider "openai" :model "gpt-5.4"}}
-                         (reseat! {:db-info :db :session-id "sess-1"} served)))
-              ;; The reason rides the write, so the broadcast can tell the surfaces why
-              ;; the chip changed under the user's hands.
-              (expect (= [:db "sess-1" "openai" "gpt-5.4" :authentication-fallback] @set-args))
-              (expect (= [:db
-                          "sess-1"
-                          {:provider "rbi-genai" :model "gpt-5"}
-                          {:provider "openai" :model "gpt-5.4"}
-                          :authentication-fallback]
-                         @switch-args)))
-            (finally (reset! cooldown {})))))
+                 (expect (= {:from {:provider "rbi-genai" :model "gpt-5"}
+                             :to {:provider "openai" :model "gpt-5.4"}}
+                            (reseat! {:db-info :db :session-id "sess-1"} served)))
+                 ;; The reason rides the write, so the broadcast can tell the surfaces why
+                 ;; the chip changed under the user's hands.
+                 (expect (= [:db "sess-1" "openai" "gpt-5.4" :authentication-fallback] @set-args))
+                 (expect (= [:db "sess-1" {:provider "rbi-genai" :model "gpt-5"}
+                             {:provider "openai" :model "gpt-5.4"} :authentication-fallback]
+                            @switch-args)))
+               (finally (reset! cooldown {})))))
     (it "touches nothing when the pick was never on the dead provider"
         (let [set-args (atom nil)]
-          (try
-            (reset! cooldown {})
-            (note! :some-other-provider)
-            (with-redefs
-              [session-model/model-of (fn [& _]
-                                        pinned)
+          (try (reset! cooldown {})
+               (note! :some-other-provider)
+               (with-redefs [session-model/model-of (fn [& _]
+                                                      pinned)
+                             session-model/set-model! (fn [& args]
+                                                        (reset! set-args (vec args)))
+                             session-model/record-switch! (fn [& _])]
 
-               session-model/set-model! (fn [& args]
-                                          (reset! set-args (vec args)))
-
-               session-model/record-switch! (fn [& _])]
-
-              (expect (nil? (reseat! {:db-info :db :session-id "sess-1"} served)))
-              (expect (nil? @set-args)))
-            (finally (reset! cooldown {})))))
+                 (expect (nil? (reseat! {:db-info :db :session-id "sess-1"} served)))
+                 (expect (nil? @set-args)))
+               (finally (reset! cooldown {})))))
     (it "announces the move on the live stream and in the turn's own routing trace"
         ;; Two different readers: the progress chunk is what a channel draws while the
         ;; turn runs, the trace event is what the finished turn's note explains from.
@@ -3992,10 +3955,11 @@
                       :actual {:provider "openai" :model "gpt-5.4"}
                       :fallback? true
                       :trace [(@#'lp/pick-move-event move)]}
-                     (@#'lp/llm-routing-summary {:provider :rbi-genai :name "gpt-5"}
-                                                {:llm-provider :openai
-                                                 :llm-model "gpt-5.4"
-                                                 :llm-routing-trace [(@#'lp/pick-move-event move)]})))))
+                     (@#'lp/llm-routing-summary
+                      {:provider :rbi-genai :name "gpt-5"}
+                      {:llm-provider :openai
+                       :llm-model "gpt-5.4"
+                       :llm-routing-trace [(@#'lp/pick-move-event move)]})))))
     (it "probes a credential that keeps failing ever less often, up to an hour"
         ;; The point of the escalation: a key nobody has fixed stops costing a 401 +
         ;; refresh + fallback every five minutes for the rest of the day.
@@ -4005,35 +3969,33 @@
         ;; A first rejection, and anything malformed, still gets the base window.
         (expect (= 300000 (window nil))))
     (it "escalates across UNBROKEN strikes and forgets the streak once a request lands"
-        (try
-          (reset! cooldown {})
-          (note! :rbi-genai)
-          (expect (= 1 (:strikes (get @cooldown :rbi-genai))))
-          ;; A window that lapsed without any success is still a strike: re-probing
-          ;; found the credential just as dead.
-          (swap! cooldown assoc-in [:rbi-genai :until] (- (System/currentTimeMillis) 1000))
-          (expect (= #{} (cooled)))
-          (note! :rbi-genai)
-          (let [entry (get @cooldown :rbi-genai)]
-            (expect (= 2 (:strikes entry)))
-            (expect (= #{:rbi-genai} (cooled)))
-            ;; Doubled, not restarted at the base window.
-            (expect (< (+ (System/currentTimeMillis) 300000) (long (:until entry)))))
-          ;; One accepted request is proof the credential works again: back to base.
-          (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :rbi-genai})
-          (note! :rbi-genai)
-          (let [entry (get @cooldown :rbi-genai)]
-            (expect (= 1 (:strikes entry)))
-            (expect (>= (+ (System/currentTimeMillis) 300000) (long (:until entry)))))
-          (finally (reset! cooldown {}))))
+        (try (reset! cooldown {})
+             (note! :rbi-genai)
+             (expect (= 1 (:strikes (get @cooldown :rbi-genai))))
+             ;; A window that lapsed without any success is still a strike: re-probing
+             ;; found the credential just as dead.
+             (swap! cooldown assoc-in [:rbi-genai :until] (- (System/currentTimeMillis) 1000))
+             (expect (= #{} (cooled)))
+             (note! :rbi-genai)
+             (let [entry (get @cooldown :rbi-genai)]
+               (expect (= 2 (:strikes entry)))
+               (expect (= #{:rbi-genai} (cooled)))
+               ;; Doubled, not restarted at the base window.
+               (expect (< (+ (System/currentTimeMillis) 300000) (long (:until entry)))))
+             ;; One accepted request is proof the credential works again: back to base.
+             (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :rbi-genai})
+             (note! :rbi-genai)
+             (let [entry (get @cooldown :rbi-genai)]
+               (expect (= 1 (:strikes entry)))
+               (expect (>= (+ (System/currentTimeMillis) 300000) (long (:until entry)))))
+             (finally (reset! cooldown {}))))
     (it "forgets a record whose window lapsed long ago instead of hoarding it"
-        (try
-          (reset! cooldown {})
-          (note! :rbi-genai)
-          (swap! cooldown assoc-in [:rbi-genai :until] (- (System/currentTimeMillis) 7200000))
-          (expect (= #{} (cooled)))
-          (expect (nil? (get @cooldown :rbi-genai)))
-          (finally (reset! cooldown {}))))))
+        (try (reset! cooldown {})
+             (note! :rbi-genai)
+             (swap! cooldown assoc-in [:rbi-genai :until] (- (System/currentTimeMillis) 7200000))
+             (expect (= #{} (cooled)))
+             (expect (nil? (get @cooldown :rbi-genai)))
+             (finally (reset! cooldown {}))))))
 ;; Regression, issue #154: nothing let a human REFUSE the rescue. Every automatic route
 ;; off the picked model — the cooldown exclusion, the post-refresh rescue, the refusal
 ;; switch — happened unasked, answered from a model they had not chosen, and started that
@@ -4042,26 +4004,36 @@
   provider-fallback-toggle-test
   "`provider_fallback` is the human's call. Every automatic route off the session's pick
    asks it first, and an untouched install still rescues exactly as before."
-  (let
-    [cooldown @#'lp/provider-auth-cooldown
+  (let [cooldown
+        @#'lp/provider-auth-cooldown
 
-     note! @#'lp/note-provider-auth-cooldown!
+        note!
+        @#'lp/note-provider-auth-cooldown!
 
-     cooldown-routing @#'lp/apply-auth-cooldown-routing
+        cooldown-routing
+        @#'lp/apply-auth-cooldown-routing
 
-     fallback-routing @#'lp/auth-fallback-routing
+        fallback-routing
+        @#'lp/auth-fallback-routing
 
-     refusals @#'lp/refusal-fallbacks-for
+        refusals
+        @#'lp/refusal-fallbacks-for
 
-      pin @#'lp/pin-routing-to-model
-     auth-error (ex-info "Unauthorized" {:status 401})
+        pin
+        @#'lp/pin-routing-to-model
 
-     pinned {:provider :rbi-genai :model "gpt-5"}
+        auth-error
+        (ex-info "Unauthorized" {:status 401})
 
-     claude-fleet {:providers [{:id :anthropic-coding-plan
-                                :models [{:name "claude-opus-5"} {:name "claude-opus-4-8"}]}]}
+        pinned
+        {:provider :rbi-genai :model "gpt-5"}
 
-     refused-model {:provider :anthropic-coding-plan :name "claude-opus-5"}]
+        claude-fleet
+        {:providers [{:id :anthropic-coding-plan
+                      :models [{:name "claude-opus-5"} {:name "claude-opus-4-8"}]}]}
+
+        refused-model
+        {:provider :anthropic-coding-plan :name "claude-opus-5"}]
 
     (it "ships ON, so an untouched install rescues turns exactly as before"
         (let [spec (toggles/toggle-spec "provider_fallback")]
@@ -4069,58 +4041,51 @@
           (expect (true? (:default spec)))
           (expect (true? (toggles/enabled? "provider_fallback")))))
     (it "drops a cooled pin and excludes the dead credential while fallback is allowed"
-        (try
-          (reset! cooldown {})
-          (note! :rbi-genai)
-          (let [routed (cooldown-routing pinned)]
-            (expect (= #{:rbi-genai} (:exclude-providers routed)))
-            (expect (= :fallback-provider (:on-auth-error routed)))
-            (expect (nil? (:provider routed))))
-          (finally (reset! cooldown {}))))
+        (try (reset! cooldown {})
+             (note! :rbi-genai)
+             (let [routed (cooldown-routing pinned)]
+               (expect (= #{:rbi-genai} (:exclude-providers routed)))
+               (expect (= :fallback-provider (:on-auth-error routed)))
+               (expect (nil? (:provider routed))))
+             (finally (reset! cooldown {}))))
     (it "leaves the pin exactly as it found it once fallback is off"
         ;; With nowhere to land, excluding the cooled provider would only trade its real
         ;; 401 for a routing failure that names no credential at all.
-        (try
-          (reset! cooldown {})
-          (note! :rbi-genai)
-          (toggles/set-value! "provider_fallback" false)
-          (expect (= pinned (cooldown-routing pinned)))
-          (finally (toggles/reset-to-default! "provider_fallback")
-                   (reset! cooldown {}))))
+        (try (reset! cooldown {})
+             (note! :rbi-genai)
+             (toggles/set-value! "provider_fallback" false)
+             (expect (= pinned (cooldown-routing pinned)))
+             (finally (toggles/reset-to-default! "provider_fallback") (reset! cooldown {}))))
     (it "builds no cross-provider rescue route once fallback is off"
         (expect (some? (fallback-routing auth-error pinned {:provider :rbi-genai})))
-        (try
-          (toggles/set-value! "provider_fallback" false)
-          (expect (nil? (fallback-routing auth-error pinned {:provider :rbi-genai})))
-          (finally (toggles/reset-to-default! "provider_fallback"))))
+        (try (toggles/set-value! "provider_fallback" false)
+             (expect (nil? (fallback-routing auth-error pinned {:provider :rbi-genai})))
+             (finally (toggles/reset-to-default! "provider_fallback"))))
     (it "still offers the in-provider refusal switch once provider fallback is off"
         ;; A refusal is not a provider failure: the credential, the provider and the wire
         ;; all worked. Refusing PEER credentials must not also refuse the sibling model
         ;; Anthropic documents as the recovery — `refusal_fallback` owns that call.
         (expect (= ["claude-opus-4-8"] (refusals claude-fleet refused-model)))
-        (try
-          (toggles/set-value! "provider_fallback" false)
-          (expect (= ["claude-opus-4-8"] (refusals claude-fleet refused-model)))
-          (finally (toggles/reset-to-default! "provider_fallback"))))
+        (try (toggles/set-value! "provider_fallback" false)
+             (expect (= ["claude-opus-4-8"] (refusals claude-fleet refused-model)))
+             (finally (toggles/reset-to-default! "provider_fallback"))))
     (it "pins the call to the model it resolved once fallback is off"
         ;; Without the pin, svar's own provider walk answers from a peer no matter what
         ;; Vis excluded upstream — the exclusion list is advice, the pin is a contract.
         (expect (= {} (pin nil {:provider :rbi-genai :name "gpt-5"})))
-        (try
-          (toggles/set-value! "provider_fallback" false)
-          (expect (= {:provider :rbi-genai :model "gpt-5"}
-                     (pin nil {:provider :rbi-genai :name "gpt-5"})))
-          (expect (= {:capabilities #{:vision} :provider :rbi-genai :model "gpt-5"}
-                     (pin {:capabilities #{:vision}} {:provider :rbi-genai :name "gpt-5"})))
-          (finally (toggles/reset-to-default! "provider_fallback"))))
+        (try (toggles/set-value! "provider_fallback" false)
+             (expect (= {:provider :rbi-genai :model "gpt-5"}
+                        (pin nil {:provider :rbi-genai :name "gpt-5"})))
+             (expect (= {:capabilities #{:vision} :provider :rbi-genai :model "gpt-5"}
+                        (pin {:capabilities #{:vision}} {:provider :rbi-genai :name "gpt-5"})))
+             (finally (toggles/reset-to-default! "provider_fallback"))))
     (it "never pins half a route"
         ;; A provider with no model name — or a name with no provider — would pin a
         ;; DIFFERENT model than the one this very call resolved.
-        (try
-          (toggles/set-value! "provider_fallback" false)
-          (expect (= {} (pin nil {:provider :rbi-genai})))
-          (expect (= {} (pin nil {:name "gpt-5"})))
-          (finally (toggles/reset-to-default! "provider_fallback"))))))
+        (try (toggles/set-value! "provider_fallback" false)
+             (expect (= {} (pin nil {:provider :rbi-genai})))
+             (expect (= {} (pin nil {:name "gpt-5"})))
+             (finally (toggles/reset-to-default! "provider_fallback"))))))
 
 ;; Regression, issue #154 follow-up: a safety refusal was handled like a provider failure.
 ;; Turning `provider_fallback` off silenced the recovery Anthropic documents, the fallback
@@ -4130,18 +4095,22 @@
   refusal-fallback-scope-test
   "An Anthropic refusal is HTTP 200 from a HEALTHY provider: the recovery is a sibling
    model of that same provider, gated by its own switch, and never a route off it."
-  (let
-    [refusals @#'lp/refusal-fallbacks-for
+  (let [refusals
+        @#'lp/refusal-fallbacks-for
 
-     pin-provider @#'lp/pin-routing-to-provider
+        pin-provider
+        @#'lp/pin-routing-to-provider
 
-     chunk @#'lp/refusal-fallback-chunk
+        chunk
+        @#'lp/refusal-fallback-chunk
 
-     fleet {:providers [{:id :anthropic-coding-plan
-                         :models [{:name "claude-opus-5"} {:name "claude-opus-4-8"}]}
-                        {:id :peer :models [{:name "claude-opus-4-8"}]}]}
+        fleet
+        {:providers [{:id :anthropic-coding-plan
+                      :models [{:name "claude-opus-5"} {:name "claude-opus-4-8"}]}
+                     {:id :peer :models [{:name "claude-opus-4-8"}]}]}
 
-     refused {:provider :anthropic-coding-plan :name "claude-opus-5"}]
+        refused
+        {:provider :anthropic-coding-plan :name "claude-opus-5"}]
 
     (it "offers the sibling the refusing provider actually serves"
         (expect (= ["claude-opus-4-8"] (refusals fleet refused))))
@@ -4150,7 +4119,7 @@
         ;; either dies as a routing failure naming no credential, or resolves on the peer
         ;; that does serve it — moving billing because of a content decision.
         (expect (nil? (refusals {:providers [{:id :anthropic-coding-plan
-                                             :models [{:name "claude-opus-5"}]}]}
+                                              :models [{:name "claude-opus-5"}]}]}
                                 refused))))
     (it "offers nothing when no router can confirm what the provider serves"
         (expect (nil? (refusals nil refused))))
@@ -4165,10 +4134,9 @@
         ;; a model switch for an error it will never see.
         (expect (nil? (refusals fleet {:provider :peer :name "claude-opus-4-8"}))))
     (it "is its own switch: off surfaces the decline, on keeps the recovery"
-        (try
-          (toggles/set-value! "refusal_fallback" false)
-          (expect (nil? (refusals fleet refused)))
-          (finally (toggles/reset-to-default! "refusal_fallback")))
+        (try (toggles/set-value! "refusal_fallback" false)
+             (expect (nil? (refusals fleet refused)))
+             (finally (toggles/reset-to-default! "refusal_fallback")))
         (expect (= ["claude-opus-4-8"] (refusals fleet refused))))
     (it "pins the provider that refused, so the switch cannot buy a peer credential"
         (expect (= {:provider :anthropic-coding-plan} (pin-provider nil refused)))
@@ -4181,10 +4149,11 @@
         ;; A retry event says the provider misbehaved; this one answered first time and
         ;; declined on purpose. The model-scoped type is also what tells the turn note the
         ;; cache is cold, because an Anthropic prompt cache belongs to ONE model.
-        (let [ev (:event (chunk 2 {:from-model "claude-opus-5"
-                                   :to-model "claude-opus-4-8"
-                                   :category "policy"
-                                   :attempt 1}))]
+        (let [ev (:event (chunk 2
+                                {:from-model "claude-opus-5"
+                                 :to-model "claude-opus-4-8"
+                                 :category "policy"
+                                 :attempt 1}))]
           (expect (= :llm.routing/model-fallback (:event/type ev)))
           (expect (= :refusal (:reason ev)))
           (expect (= "claude-opus-5" (:from-model ev)))
@@ -4198,15 +4167,18 @@
   "What answered the last request is what the next one is measured against: the served
    provider/model reaches both the session dict's routing and the context ceiling, and
    never outlives the turn that observed it."
-  (let
-    [limit @#'lp/iteration-context-limit
+  (let [limit
+        @#'lp/iteration-context-limit
 
-     stamp! @#'lp/stamp-served-route!
+        stamp!
+        @#'lp/stamp-served-route!
 
-     served-model @#'lp/turn-served-model
+        served-model
+        @#'lp/turn-served-model
 
-     router {:providers [{:id :pinned :models [{:name "big" :input-limit 1000000}]}
-                         {:id :peer :models [{:name "small" :input-limit 128000}]}]}]
+        router
+        {:providers [{:id :pinned :models [{:name "big" :input-limit 1000000}]}
+                     {:id :peer :models [{:name "small" :input-limit 128000}]}]}]
 
     (it "measures the window of the model that ANSWERED, not the one that was pinned"
         (expect (= 128000 (limit nil {:input-limit 128000} {:input-limit 1000000}))))
@@ -4229,8 +4201,12 @@
         (expect (= 200000 (limit ##NaN {:input-limit ##Inf} {:context {}}))))
     (it "always answers a positive whole number of tokens"
         (expect (every? #(and (integer? %) (pos? %))
-                        (for [a [nil 0 -1 "x" ##NaN 1e14 :kw]
-                              b [nil {} {:context "128000"} {:input-limit 0}]]
+                        (for [a
+                              [nil 0 -1 "x" ##NaN 1e14 :kw]
+
+                              b
+                              [nil {} {:context "128000"} {:input-limit 0}]]
+
                           (limit a b nil)))))
     (it "stamps the provider that answered and resolves it back to that model"
         (let [ctx-atom (atom {"session_turn" 3})]
@@ -4250,8 +4226,12 @@
           (stamp! {:ctx-atom ctx-atom} {:llm-provider :peer})
           (expect (nil? (eng/served-route @ctx-atom)))))
     (it "names the model that answered in the session dict the agent reads"
-        (let [ctx (eng/stamp-served-route {"session_turn" 2 "session_id" "s1"} :peer "small")
-              enriched (ctx-loop/enrich-ctx {:routing {"provider" "pinned" "model" "big"}} ctx)]
+        (let [ctx
+              (eng/stamp-served-route {"session_turn" 2 "session_id" "s1"} :peer "small")
+
+              enriched
+              (ctx-loop/enrich-ctx {:routing {"provider" "pinned" "model" "big"}} ctx)]
+
           (expect (= {"provider" "peer" "model" "small"} (get enriched "session_routing")))))
     (it "still shows the pinned route while the turn has been served by nobody"
         (let [enriched (ctx-loop/enrich-ctx {:routing {"provider" "pinned" "model" "big"}}
@@ -4267,18 +4247,23 @@
   "The rolling cache readout is measured, bounded and honest: one sample per REQUEST,
    the newest window only, no number at all before something was measured, and it rides
    `session_utilization` while the ring it is derived from never reaches the model."
-  (let
-    [stamp! @#'lp/stamp-cache-sample!
+  (let [stamp!
+        @#'lp/stamp-cache-sample!
 
-     ring (fn [& pairs]
-            (reduce (fn [acc [in cached]] (eng/note-cache-sample acc in cached)) [] pairs))
+        ring
+        (fn [& pairs]
+          (reduce (fn [acc [in cached]]
+                    (eng/note-cache-sample acc in cached))
+                  []
+                  pairs))
 
-     attributed (fn [route & pairs]
-                  (reduce (fn [acc [in cached]]
-                            (-> (eng/note-cache-sample acc in cached)
-                                (eng/attribute-cache-samples route)))
-                          []
-                          pairs))]
+        attributed
+        (fn [route & pairs]
+          (reduce (fn [acc [in cached]]
+                    (-> (eng/note-cache-sample acc in cached)
+                        (eng/attribute-cache-samples route)))
+                  []
+                  pairs))]
 
     (it "one measured request is one sample"
         (expect (= [{"input" 1000 "cached" 900}] (ring [1000 900]))))
@@ -4287,7 +4272,10 @@
         (expect (= [] (ring [0 0])))
         (expect (= [{"input" 1000 "cached" 900}] (ring [1000 900] [0 0]))))
     (it "keeps only the newest window"
-        (let [full (apply ring (map (fn [i] [1000 i]) (range 20)))]
+        (let [full (apply ring
+                     (map (fn [i]
+                            [1000 i])
+                          (range 20)))]
           (expect (= eng/CACHE_RATE_WINDOW (count full)))
           (expect (= 19 (get (last full) "cached")))))
     (it "clamps a provider that claims more cache reads than it read input"
@@ -4304,16 +4292,27 @@
         ;; Per-request averaging would call this 45%; the money is in the tokens.
         (expect (= 82 (eng/cache-hit-rate (ring [10000 9000] [1000 0])))))
     (it "falls as a cold provider takes over — the number the issue asked for"
-        (let [warm (apply ring (repeat 4 [10000 9500]))
-              cold (reduce (fn [acc _] (eng/note-cache-sample acc 10000 0)) warm (range 4))]
+        (let [warm
+              (apply ring (repeat 4 [10000 9500]))
+
+              cold
+              (reduce (fn [acc _]
+                        (eng/note-cache-sample acc 10000 0))
+                      warm
+                      (range 4))]
+
           (expect (= 95 (eng/cache-hit-rate warm)))
           (expect (= 48 (eng/cache-hit-rate cold)))))
     (it "rides session_utilization, and the ring itself never ships"
-        (let [ctx {"session_id" "s"
-                   "session_turn" 2
-                   "engine_utilization" {"last_request_tokens" 1000 "saturation" 1}
-                   eng/cache-samples-key (ring [1000 250])}
-              view (eng/session-view ctx)]
+        (let [ctx
+              {"session_id" "s"
+               "session_turn" 2
+               "engine_utilization" {"last_request_tokens" 1000 "saturation" 1}
+               eng/cache-samples-key (ring [1000 250])}
+
+              view
+              (eng/session-view ctx)]
+
           (expect (= 25 (get-in view ["session_utilization" "cache_hit_rate"])))
           (expect (= 1 (get-in view ["session_utilization" "cache_hit_window"])))
           (expect (not (contains? view eng/cache-samples-key)))))
@@ -4331,8 +4330,7 @@
           (expect (= [{"input" 1000 "cached" 800} {"input" 2000 "cached" 0}]
                      (get @ca eng/cache-samples-key)))
           (expect (= 27 (eng/cache-hit-rate (get @ca eng/cache-samples-key))))))
-    (it "works headless: no ctx-atom, no ring, no throw"
-        (expect (nil? (stamp! nil 1000 800))))
+    (it "works headless: no ctx-atom, no ring, no throw" (expect (nil? (stamp! nil 1000 800))))
     ;; The four below are what a randomized attack on this readout actually threw:
     ;; a readout is never worth a dead render or a dead turn.
     (it "a gateway that reports its token counts as STRINGS measures nothing"
@@ -4356,34 +4354,34 @@
                                       eng/cache-samples-key 42})]
           (expect (= {"last_request_tokens" 10} (get view "session_utilization")))))
     (it "a resumed session inherits the rate it earned on disk"
-        (with-redefs
-          [persistance/db-list-session-turns
-           (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
+        (with-redefs [persistance/db-list-session-turns
+                      (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
 
-           persistance/db-list-session-turn-iterations
-           (fn [_db-info turn-id]
-             (case turn-id
-               "t1"
-               [{:position 1 :input-tokens 10000 :input-cache-read-tokens 9000}]
+                      persistance/db-list-session-turn-iterations
+                      (fn [_db-info turn-id]
+                        (case turn-id
+                          "t1"
+                          [{:position 1 :input-tokens 10000 :input-cache-read-tokens 9000}]
 
-               "t2"
-               [{:position 1 :input-tokens 10000 :input-cache-read-tokens 8000}]
+                          "t2"
+                          [{:position 1 :input-tokens 10000 :input-cache-read-tokens 8000}]
 
-               []))]
+                          []))]
 
-          (let [seeded (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db} "t3"))]
+          (let [seeded (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db}
+                                                               "t3"))]
             (expect (= [{"input" 10000 "cached" 9000} {"input" 10000 "cached" 8000}] seeded))
             (expect (= 85 (eng/cache-hit-rate seeded))))))
     (it "reads only as far back as the window — a long session costs one page"
         (let [asked (atom [])]
-          (with-redefs
-            [persistance/db-list-session-turns
-             (constantly (mapv (fn [i] {:id (str "t" i) :position i}) (range 1 41)))
-
-             persistance/db-list-session-turn-iterations
-             (fn [_db-info turn-id]
-               (swap! asked conj turn-id)
-               [{:position 1 :input-tokens 1000 :input-cache-read-tokens 500}])]
+          (with-redefs [persistance/db-list-session-turns (constantly (mapv (fn [i]
+                                                                              {:id (str "t" i)
+                                                                               :position i})
+                                                                            (range 1 41)))
+                        persistance/db-list-session-turn-iterations
+                        (fn [_db-info turn-id]
+                          (swap! asked conj turn-id)
+                          [{:position 1 :input-tokens 1000 :input-cache-read-tokens 500}])]
 
             (let [samples (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db}
                                                                   "t41"))]
@@ -4393,36 +4391,50 @@
     ;; LEFT, so a 95%-warm pin rescued onto a cold peer published a comfortable 72% in the
     ;; very turn whose note says the prompt cache was lost.
     (it "drops the samples of the endpoint the session left the moment another one answers"
-        (let [warm (attributed "anthropic-coding-plan/claude-opus-5"
-                               [100000 95000]
-                               [100000 96000]
-                               [100000 95000])
+        (let [warm
+              (attributed "anthropic-coding-plan/claude-opus-5"
+                          [100000 95000]
+                          [100000 96000]
+                          [100000 95000])
 
-              rescued (-> (eng/note-cache-sample warm 100000 0)
-                          (eng/attribute-cache-samples "openrouter/kimi-k2.7"))]
+              rescued
+              (-> (eng/note-cache-sample warm 100000 0)
+                  (eng/attribute-cache-samples "openrouter/kimi-k2.7"))]
+
           (expect (= 95 (eng/cache-hit-rate warm)))
           (expect (= 0 (eng/cache-hit-rate rescued)))
           (expect (= 1 (count rescued)))))
     (it "measures the rescuing endpoint as IT warms, never the one it replaced"
-        (let [rescued (attributed "openrouter/kimi-k2.7" [100000 0])
-              warming (-> (eng/note-cache-sample rescued 100000 60000)
-                          (eng/attribute-cache-samples "openrouter/kimi-k2.7"))]
+        (let [rescued
+              (attributed "openrouter/kimi-k2.7" [100000 0])
+
+              warming
+              (-> (eng/note-cache-sample rescued 100000 60000)
+                  (eng/attribute-cache-samples "openrouter/kimi-k2.7"))]
+
           (expect (= 30 (eng/cache-hit-rate warming)))
           (expect (= 2 (count warming)))))
     (it "a reading nobody could attribute never resets the window"
         ;; An iteration that errored before naming its route is not evidence of a move.
-        (let [warm (attributed "a/one" [1000 900] [1000 900])
-              unnamed (-> (eng/note-cache-sample warm 1000 900)
-                          (eng/attribute-cache-samples nil))]
+        (let [warm
+              (attributed "a/one" [1000 900] [1000 900])
+
+              unnamed
+              (-> (eng/note-cache-sample warm 1000 900)
+                  (eng/attribute-cache-samples nil))]
+
           (expect (= 3 (count unnamed)))
           (expect (= 90 (eng/cache-hit-rate unnamed)))))
     (it "coming back measures the NEW visit, not the visit before the move"
-        (let [there (-> (attributed "a/one" [1000 900])
-                        (eng/note-cache-sample 1000 0)
-                        (eng/attribute-cache-samples "b/two"))
+        (let [there
+              (-> (attributed "a/one" [1000 900])
+                  (eng/note-cache-sample 1000 0)
+                  (eng/attribute-cache-samples "b/two"))
 
-              back (-> (eng/note-cache-sample there 1000 500)
-                       (eng/attribute-cache-samples "a/one"))]
+              back
+              (-> (eng/note-cache-sample there 1000 500)
+                  (eng/attribute-cache-samples "a/one"))]
+
           (expect (= [{"input" 1000 "cached" 500 "route" "a/one"}] back))))
     (it "half a route names no cache, so it resets nothing"
         (expect (nil? (eng/route-label "openrouter" nil)))
@@ -4432,8 +4444,12 @@
         (expect (= [] (eng/attribute-cache-samples 42 "a/b")))
         (expect (= [] (eng/attribute-cache-samples nil "a/b"))))
     (it "the served-route stamp is what names the samples of the request it followed"
-        (let [ca (atom {"session_turn" 3})
-              stamp-route! @#'lp/stamp-served-route!]
+        (let [ca
+              (atom {"session_turn" 3})
+
+              stamp-route!
+              @#'lp/stamp-served-route!]
+
           (stamp! ca 1000 900)
           (stamp-route! {:ctx-atom ca}
                         {:llm-provider :anthropic-coding-plan :llm-model "claude-opus-5"})
@@ -4443,30 +4459,30 @@
                      (get @ca eng/cache-samples-key)))
           (expect (= 0 (eng/cache-hit-rate (get @ca eng/cache-samples-key))))))
     (it "a resumed session inherits only what the endpoint it will talk to earned"
-        (with-redefs
-          [persistance/db-list-session-turns
-           (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
+        (with-redefs [persistance/db-list-session-turns
+                      (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
 
-           persistance/db-list-session-turn-iterations
-           (fn [_db-info turn-id]
-             (case turn-id
-               "t1"
-               [{:position 1
-                 :input-tokens 10000
-                 :input-cache-read-tokens 9500
-                 :llm-actual-provider "anthropic-coding-plan"
-                 :llm-actual-model "claude-opus-5"}]
+                      persistance/db-list-session-turn-iterations
+                      (fn [_db-info turn-id]
+                        (case turn-id
+                          "t1"
+                          [{:position 1
+                            :input-tokens 10000
+                            :input-cache-read-tokens 9500
+                            :llm-actual-provider "anthropic-coding-plan"
+                            :llm-actual-model "claude-opus-5"}]
 
-               "t2"
-               [{:position 1
-                 :input-tokens 10000
-                 :input-cache-read-tokens 0
-                 :llm-actual-provider "openrouter"
-                 :llm-actual-model "kimi-k2.7"}]
+                          "t2"
+                          [{:position 1
+                            :input-tokens 10000
+                            :input-cache-read-tokens 0
+                            :llm-actual-provider "openrouter"
+                            :llm-actual-model "kimi-k2.7"}]
 
-               []))]
+                          []))]
 
-          (let [seeded (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db} "t3"))]
+          (let [seeded (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db}
+                                                               "t3"))]
             (expect (= [{"input" 10000 "cached" 0 "route" "openrouter/kimi-k2.7"}] seeded))
             (expect (= 0 (eng/cache-hit-rate seeded))))))))
 
@@ -4475,29 +4491,27 @@
   "A session pick naming a model only the provider's LIVE catalog lists must still
    BIND. It used to validate away to `{}` and the turn silently ran the default
    model while the picker showed the pick as applied (issue #81)."
-  (let
-    [router
-     {:providers [{:id :openai-codex :models [{:name "gpt-5.4"}]}
-                  {:id :zai-coding-plan :models [{:name "glm-4.7"}]}]}
+  (let [router
+        {:providers [{:id :openai-codex :models [{:name "gpt-5.4"}]}
+                     {:id :zai-coding-plan :models [{:name "glm-4.7"}]}]}
 
-     materialise @#'lp/router-with-pinned-model
+        materialise
+        @#'lp/router-with-pinned-model
 
-     forced @#'lp/forced-routing-for-pref]
+        forced
+        @#'lp/forced-routing-for-pref]
 
     (it "a config-unknown model alone forces NOTHING — the regression"
         (expect (= {} (forced router :zai-coding-plan "glm-4.8"))))
     (it "materialising the pin makes the pick force routing and own the display root"
-        (let
-          [pinned (materialise router :zai-coding-plan "glm-4.8")]
-
-          (expect (= [{:name "glm-4.7"} {:name "glm-4.8"}]
-                     (:models (second (:providers pinned)))))
+        (let [pinned (materialise router :zai-coding-plan "glm-4.8")]
+          (expect (= [{:name "glm-4.7"} {:name "glm-4.8"}] (:models (second (:providers pinned)))))
           (expect (= {:provider :zai-coding-plan :model "glm-4.8"}
                      (forced pinned :zai-coding-plan "glm-4.8")))
           ;; …and display/cost attribution follows the same router.
           (expect (= :zai-coding-plan
                      (:provider (lp/resolve-effective-model (lp/router-for-model pinned
-                                                                                "glm-4.8")))))))
+                                                                                 "glm-4.8")))))))
     (it "accepts the id as a string, exactly as the session pref stores it"
         (expect (= {:provider :zai-coding-plan :model "glm-4.8"}
                    (forced (materialise router "zai-coding-plan" "glm-4.8")
@@ -4530,9 +4544,8 @@
         ;; (minted == baked-token) never matched a rotating-token provider and
         ;; fell open into an endless re-mint. Recency matches every provider.
         (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
-        (with-redefs
-          [config/baked-token (fn [_]
-                                "a-totally-different-token")]
+        (with-redefs [config/baked-token (fn [_]
+                                           "a-totally-different-token")]
           (expect (true? (refresh-just-failed? (auth-401) {:provider :ap})))))
     (it "note-provider-request-ok! clears the marker so a later 401 re-mints, not backs off"
         (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
@@ -4543,17 +4556,16 @@
         ;; No dead-credential latch exists any more: the provider is
         ;; always eligible to recover; the classifier just prefers the
         ;; SAME-token backoff over another re-mint while lag settles.
-        (with-redefs
-          [config/baked-token
-           (fn [_]
-             "T-fresh")
+        (with-redefs [config/baked-token
+                      (fn [_]
+                        "T-fresh")
 
-           registry/provider-by-id
-           (fn [_]
-             {:provider/get-token-fn (fn []
-                                       {:token "T-fresh"})
-              :provider/refresh-token-fn (fn [& _]
-                                           :ok)})]
+                      registry/provider-by-id
+                      (fn [_]
+                        {:provider/get-token-fn (fn []
+                                                  {:token "T-fresh"})
+                         :provider/refresh-token-fn (fn [& _]
+                                                      :ok)})]
 
           (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
           (expect (true? (auth-refreshable-error? (auth-401) {:provider :ap})))))
@@ -4580,118 +4592,133 @@
   "The breaker budgets forced refreshes per window and drains once they stop."
   (it "grants exactly the per-window budget, reports open, then denies without recording"
       (reset! auth-refresh-events {})
-      (expect (every? true?
-                      (repeatedly AUTH_REFRESH_WINDOW_MAX
-                                  #(auth-refresh-allowed? :ap))))
+      (expect (every? true? (repeatedly AUTH_REFRESH_WINDOW_MAX #(auth-refresh-allowed? :ap))))
       (expect (= #{:ap} (:breaker-open (lp/auth-refresh-metrics))))
-      (dotimes [_ 25] (expect (false? (auth-refresh-allowed? :ap))))
-      (expect (= (long AUTH_REFRESH_WINDOW_MAX)
-                 (long (count (get @auth-refresh-events :ap))))))
-
+      (dotimes [_ 25]
+        (expect (false? (auth-refresh-allowed? :ap))))
+      (expect (= (long AUTH_REFRESH_WINDOW_MAX) (long (count (get @auth-refresh-events :ap))))))
   (it "closes again once the recorded refreshes age out of the window"
       (let [stale (- (System/currentTimeMillis) (long AUTH_REFRESH_WINDOW_MS) 1)]
-        (reset! auth-refresh-events
-                {:ap (vec (repeat AUTH_REFRESH_WINDOW_MAX stale))})
+        (reset! auth-refresh-events {:ap (vec (repeat AUTH_REFRESH_WINDOW_MAX stale))})
         (expect (true? (auth-refresh-allowed? :ap)))
         (expect (= 1 (count (get @auth-refresh-events :ap))))))
-
   (it "budgets each provider independently"
       (reset! auth-refresh-events {})
-      (dotimes [_ AUTH_REFRESH_WINDOW_MAX] (auth-refresh-allowed? :ap))
+      (dotimes [_ AUTH_REFRESH_WINDOW_MAX]
+        (auth-refresh-allowed? :ap))
       (expect (false? (auth-refresh-allowed? :ap)))
       (expect (true? (auth-refresh-allowed? :other)))
       (reset! auth-refresh-events {})))
 
-(defdescribe
-  request-bound-credential-hydration-test
-  "Every provider attempt reads dynamic auth fields without rebuilding router state."
-  (it "replaces all dynamic credential fields while preserving router state"
-      (let [state (atom {:health :warm})
-            router {:providers [{:id :ap
-                                 :api-key "old"
-                                 :base-url "https://old.example"
-                                 :llm-headers {"old" "header"}
-                                 :responses-path "/old"}]
-                    :state state
-                    :budget {:spent 42}}]
-        (with-redefs
-          [registry/provider-by-id
-           (fn [_]
-             {:provider/get-token-fn
-              (fn []
-                {:token "fresh"
-                 :api-url "https://fresh.example"
-                 :llm-headers {"fresh" "header"}
-                 :responses-path "/responses"})})]
-          (let [hydrated (hydrate-router-credentials router)]
-            (expect (identical? state (:state hydrated)))
-            (expect (= {:spent 42} (:budget hydrated)))
-            (expect (= {:id :ap
-                        :api-key "fresh"
-                        :base-url "https://fresh.example"
-                        :llm-headers {"fresh" "header"}
-                        :responses-path "/responses"}
-                       (first (:providers hydrated))))))))
+(defdescribe request-bound-credential-hydration-test
+             "Every provider attempt reads dynamic auth fields without rebuilding router state."
+             (it "replaces all dynamic credential fields while preserving router state"
+                 (let [state
+                       (atom {:health :warm})
 
-  (it "retains the exact old provider snapshot when token lookup fails"
-      (let [provider {:id :ap :api-key "still-usable" :base-url "https://old.example"}
-            router {:providers [provider]}]
-        (with-redefs
-          [registry/provider-by-id
-           (fn [_]
-             {:provider/get-token-fn (fn [] (throw (ex-info "disk race" {})))})]
-          (expect (= provider (first (:providers (hydrate-router-credentials router))))))))
+                       router
+                       {:providers [{:id :ap
+                                     :api-key "old"
+                                     :base-url "https://old.example"
+                                     :llm-headers {"old" "header"}
+                                     :responses-path "/old"}]
+                        :state state
+                        :budget {:spent 42}}]
 
-  (it "leaves static providers untouched"
-      (let [router {:providers [{:id :static :api-key "configured"}]}]
-        (with-redefs [registry/provider-by-id (constantly nil)]
-          (expect (= router (hydrate-router-credentials router)))))))
+                   (with-redefs [registry/provider-by-id (fn [_]
+                                                           {:provider/get-token-fn
+                                                            (fn []
+                                                              {:token "fresh"
+                                                               :api-url "https://fresh.example"
+                                                               :llm-headers {"fresh" "header"}
+                                                               :responses-path "/responses"})})]
+                     (let [hydrated (hydrate-router-credentials router)]
+                       (expect (identical? state (:state hydrated)))
+                       (expect (= {:spent 42} (:budget hydrated)))
+                       (expect (= {:id :ap
+                                   :api-key "fresh"
+                                   :base-url "https://fresh.example"
+                                   :llm-headers {"fresh" "header"}
+                                   :responses-path "/responses"}
+                                  (first (:providers hydrated))))))))
+             (it "retains the exact old provider snapshot when token lookup fails"
+                 (let [provider
+                       {:id :ap :api-key "still-usable" :base-url "https://old.example"}
 
-(defdescribe
-  request-bound-auth-refresh-test
-  "401 recovery adopts peer rotations first and refreshes only the exact rejected token."
-  (it "adopts a peer token without spending breaker budget or calling refresh"
-      (let [refreshes (atom [])
-            attempt-router {:providers [{:id :ap :api-key "rejected"}]}]
-        (reset! auth-refresh-events {})
-        (with-redefs
-          [registry/provider-by-id
-           (fn [_]
-             {:provider/get-token-fn (fn [] {:token "peer-fresh"})
-              :provider/refresh-token-fn (fn [rejected] (swap! refreshes conj rejected))})]
-          (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
-          (expect (= [] @refreshes))
-          (expect (= {} @auth-refresh-events)))))
+                       router
+                       {:providers [provider]}]
 
-  (it "passes the exact attempt token to refresh, not a process-global baked token"
-      (let [refreshes (atom [])
-            attempt-router {:providers [{:id :ap :api-key "attempt-rejected"}]}]
-        (reset! auth-refresh-events {})
-        (with-redefs
-          [config/baked-token (constantly "wrong-global-token")
-           registry/provider-by-id
-           (fn [_]
-             {:provider/get-token-fn (fn [] {:token "attempt-rejected"})
-              :provider/refresh-token-fn (fn [rejected] (swap! refreshes conj rejected))})]
-          (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
-          (expect (= ["attempt-rejected"] @refreshes))
-          (expect (= 1 (count (get @auth-refresh-events :ap)))))))
+                   (with-redefs [registry/provider-by-id (fn [_]
+                                                           {:provider/get-token-fn
+                                                            (fn []
+                                                              (throw (ex-info "disk race" {})))})]
+                     (expect (= provider
+                                (first (:providers (hydrate-router-credentials router))))))))
+             (it "leaves static providers untouched"
+                 (let [router {:providers [{:id :static :api-key "configured"}]}]
+                   (with-redefs [registry/provider-by-id (constantly nil)]
+                     (expect (= router (hydrate-router-credentials router)))))))
 
-  (it "an open breaker neither refreshes nor mistakes the rejected token for a peer"
-      (let [refreshes (atom 0)
-            attempt-router {:providers [{:id :ap :api-key "same"}]}]
-        (reset! auth-refresh-events
-                {:ap (vec (repeat AUTH_REFRESH_WINDOW_MAX (System/currentTimeMillis)))})
-        (with-redefs
-          [registry/provider-by-id
-           (fn [_]
-             {:provider/get-token-fn (fn [] {:token "same"})
-              :provider/refresh-token-fn (fn [& _] (swap! refreshes inc))})]
-          (expect (false? (try-refresh-provider-token! attempt-router {:provider :ap})))
-          (expect (= 0 @refreshes))
-          (expect (= AUTH_REFRESH_WINDOW_MAX
-                     (count (get @auth-refresh-events :ap))))))
-      (reset! auth-refresh-events {})))
+(defdescribe request-bound-auth-refresh-test
+             "401 recovery adopts peer rotations first and refreshes only the exact rejected token."
+             (it "adopts a peer token without spending breaker budget or calling refresh"
+                 (let [refreshes
+                       (atom [])
+
+                       attempt-router
+                       {:providers [{:id :ap :api-key "rejected"}]}]
+
+                   (reset! auth-refresh-events {})
+                   (with-redefs [registry/provider-by-id
+                                 (fn [_]
+                                   {:provider/get-token-fn (fn []
+                                                             {:token "peer-fresh"})
+                                    :provider/refresh-token-fn (fn [rejected]
+                                                                 (swap! refreshes conj rejected))})]
+                     (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
+                     (expect (= [] @refreshes))
+                     (expect (= {} @auth-refresh-events)))))
+             (it
+               "passes the exact attempt token to refresh, not a process-global baked token"
+               (let [refreshes
+                     (atom [])
+
+                     attempt-router
+                     {:providers [{:id :ap :api-key "attempt-rejected"}]}]
+
+                 (reset! auth-refresh-events {})
+                 (with-redefs [config/baked-token
+                               (constantly "wrong-global-token")
+
+                               registry/provider-by-id
+                               (fn [_]
+                                 {:provider/get-token-fn (fn []
+                                                           {:token "attempt-rejected"})
+                                  :provider/refresh-token-fn (fn [rejected]
+                                                               (swap! refreshes conj rejected))})]
+
+                   (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
+                   (expect (= ["attempt-rejected"] @refreshes))
+                   (expect (= 1 (count (get @auth-refresh-events :ap)))))))
+             (it "an open breaker neither refreshes nor mistakes the rejected token for a peer"
+                 (let [refreshes
+                       (atom 0)
+
+                       attempt-router
+                       {:providers [{:id :ap :api-key "same"}]}]
+
+                   (reset! auth-refresh-events {:ap (vec (repeat AUTH_REFRESH_WINDOW_MAX
+                                                                 (System/currentTimeMillis)))})
+                   (with-redefs [registry/provider-by-id
+                                 (fn [_]
+                                   {:provider/get-token-fn (fn []
+                                                             {:token "same"})
+                                    :provider/refresh-token-fn (fn [& _]
+                                                                 (swap! refreshes inc))})]
+                     (expect (false? (try-refresh-provider-token! attempt-router {:provider :ap})))
+                     (expect (= 0 @refreshes))
+                     (expect (= AUTH_REFRESH_WINDOW_MAX (count (get @auth-refresh-events :ap))))))
+                 (reset! auth-refresh-events {})))
 
 (def ^:private env-cache (deref #'lp/cache))
 
@@ -4707,76 +4734,72 @@
   (let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
     (.set la (- (System/currentTimeMillis) (long ms)))))
 
-(defdescribe
-  env-reaper-test
-  ;; The idle-env reaper is the authoritative backstop against unbounded
-  ;; GraalPy Context growth. An empty {} env is safe to dispose:
-  ;; dispose-environment! no-ops with no :python-context / :db-info.
-  (describe
-    "evict-if-idle!"
-    (it "disposes + evicts an idle, unlocked entry"
-        (let
-          [k
-           "reaper-test/idle"
+(defdescribe env-reaper-test
+             ;; The idle-env reaper is the authoritative backstop against unbounded
+             ;; GraalPy Context growth. An empty {} env is safe to dispose:
+             ;; dispose-environment! no-ops with no :python-context / :db-info.
+             (describe "evict-if-idle!"
+                       (it "disposes + evicts an idle, unlocked entry"
+                           (let [k
+                                 "reaper-test/idle"
 
-           entry
-           (new-cache-entry {})]
+                                 entry
+                                 (new-cache-entry {})]
 
-          (swap! env-cache assoc k entry)
-          (try (backdate-entry! entry 10000)
-               (expect (true? (evict-if-idle! k 5000)))
-               (expect (not (contains? @env-cache k)))
-               (finally (swap! env-cache dissoc k)))))
-    (it
-      "skips an entry whose lock is held (a running turn)"
-      (let
-        [k
-         "reaper-test/busy"
+                             (swap! env-cache assoc k entry)
+                             (try (backdate-entry! entry 10000)
+                                  (expect (true? (evict-if-idle! k 5000)))
+                                  (expect (not (contains? @env-cache k)))
+                                  (finally (swap! env-cache dissoc k)))))
+                       (it
+                         "skips an entry whose lock is held (a running turn)"
+                         (let [k
+                               "reaper-test/busy"
 
-         entry
-         (new-cache-entry {})
+                               entry
+                               (new-cache-entry {})
 
-         ^java.util.concurrent.locks.ReentrantLock lock
-         (:lock entry)]
+                               ^java.util.concurrent.locks.ReentrantLock lock
+                               (:lock entry)]
 
-        (swap! env-cache assoc k entry)
-        ;; A running turn holds the lock on ANOTHER thread;
-        ;; ReentrantLock is reentrant, so the lock MUST be
-        ;; held off-thread for tryLock to genuinely fail.
-        (let
-          [held
-           (promise)
+                           (swap! env-cache assoc k entry)
+                           ;; A running turn holds the lock on ANOTHER thread;
+                           ;; ReentrantLock is reentrant, so the lock MUST be
+                           ;; held off-thread for tryLock to genuinely fail.
+                           (let [held
+                                 (promise)
 
-           release
-           (promise)
+                                 release
+                                 (promise)
 
-           holder
-           (Thread. ^Runnable
-                    (fn []
-                      (.lock lock)
-                      (deliver held true)
-                      @release
-                      (.unlock lock)))]
+                                 holder
+                                 (Thread. ^Runnable
+                                          (fn []
+                                            (.lock lock)
+                                            (deliver held true)
+                                            @release
+                                            (.unlock lock)))]
 
-          (try (backdate-entry! entry 10000)
-               (.start holder)
-               @held
-               (expect (false? (evict-if-idle! k 5000)))
-               (expect (contains? @env-cache k))
-               (finally (deliver release true) (.join holder 1000) (swap! env-cache dissoc k))))))
-    (it "keeps a freshly-touched (not-yet-idle) entry"
-        (let
-          [k
-           "reaper-test/warm"
+                             (try (backdate-entry! entry 10000)
+                                  (.start holder)
+                                  @held
+                                  (expect (false? (evict-if-idle! k 5000)))
+                                  (expect (contains? @env-cache k))
+                                  (finally (deliver release true)
+                                           (.join holder 1000)
+                                           (swap! env-cache dissoc k))))))
+                       (it "keeps a freshly-touched (not-yet-idle) entry"
+                           (let [k
+                                 "reaper-test/warm"
 
-           entry
-           (new-cache-entry {})]
+                                 entry
+                                 (new-cache-entry {})]
 
-          (swap! env-cache assoc k entry)
-          (try (touch-entry! entry)
-               (expect (false? (evict-if-idle! k 60000)))
-               (expect (contains? @env-cache k))
-               (finally (swap! env-cache dissoc k)))))))
+                             (swap! env-cache assoc k entry)
+                             (try (touch-entry! entry)
+                                  (expect (false? (evict-if-idle! k 60000)))
+                                  (expect (contains? @env-cache k))
+                                  (finally (swap! env-cache dissoc k)))))))
 
 (def ^:private reap-idle-envs! (deref #'lp/reap-idle-envs!))
 
@@ -4805,31 +4828,29 @@
               (expect (not (contains? @env-cache k))))
             (finally (swap! env-cache dissoc k)))))
     (it "still skips a locked entry (a running turn) under pressure"
-        (let
-          [k
-           "watermark-test/busy"
+        (let [k
+              "watermark-test/busy"
 
-           entry
-           (new-cache-entry {})
+              entry
+              (new-cache-entry {})
 
-           ^java.util.concurrent.locks.ReentrantLock lock
-           (:lock entry)]
+              ^java.util.concurrent.locks.ReentrantLock lock
+              (:lock entry)]
 
           (swap! env-cache assoc k entry)
-          (let
-            [held
-             (promise)
+          (let [held
+                (promise)
 
-             release
-             (promise)
+                release
+                (promise)
 
-             holder
-             (Thread. ^Runnable
-                      (fn []
-                        (.lock lock)
-                        (deliver held true)
-                        @release
-                        (.unlock lock)))]
+                holder
+                (Thread. ^Runnable
+                         (fn []
+                           (.lock lock)
+                           (deliver held true)
+                           @release
+                           (.unlock lock)))]
 
             (try (.start holder)
                  @held
@@ -4838,27 +4859,25 @@
                    (expect (contains? @env-cache k)))
                  (finally (deliver release true) (.join holder 1000) (swap! env-cache dissoc k))))))
     (it "heap-pressure? is disabled when BOTH gates are off"
-        (expect (false? (with-redefs
-                          [lp/env-heap-watermark-pct
-                           (delay 0)
+        (expect (false? (with-redefs [lp/env-heap-watermark-pct
+                                      (delay 0)
 
-                           lp/env-heap-budget-mb
-                           (delay 0)
+                                      lp/env-heap-budget-mb
+                                      (delay 0)
 
-                           lp/env-rss-budget-mb
-                           (delay 0)]
+                                      lp/env-rss-budget-mb
+                                      (delay 0)]
 
                           (heap-pressure?)))))
     (it "heap-pressure? fires on the absolute MB budget when the percent watermark can't reach"
-        (expect (true? (with-redefs
-                         [lp/env-heap-watermark-pct
-                          (delay 0)
+        (expect (true? (with-redefs [lp/env-heap-watermark-pct
+                                     (delay 0)
 
-                          lp/env-heap-budget-mb
-                          (delay 1)
+                                     lp/env-heap-budget-mb
+                                     (delay 1)
 
-                          lp/env-rss-budget-mb
-                          (delay 0)]
+                                     lp/env-rss-budget-mb
+                                     (delay 0)]
 
                          (heap-pressure?)))))))
 
@@ -4883,31 +4902,29 @@
                "recycle-env!"
                (it
                  "swaps a fresh env in place, reuses the lock, disposes the old"
-                 (let
-                   [k
-                    "recycle-test/turn-cap"
+                 (let [k
+                       "recycle-test/turn-cap"
 
-                    old-env
-                    {:marker :old}
+                       old-env
+                       {:marker :old}
 
-                    fresh-env
-                    {:marker :fresh}
+                       fresh-env
+                       {:marker :fresh}
 
-                    entry
-                    (new-cache-entry old-env)
+                       entry
+                       (new-cache-entry old-env)
 
-                    disposed
-                    (atom [])]
+                       disposed
+                       (atom [])]
 
                    (swap! env-cache assoc k entry)
-                   (try (with-redefs
-                          [lp/open-env!
-                           (fn [_ _]
-                             fresh-env)
+                   (try (with-redefs [lp/open-env!
+                                      (fn [_ _]
+                                        fresh-env)
 
-                           lp/dispose-environment!
-                           (fn [e]
-                             (swap! disposed conj e))]
+                                      lp/dispose-environment!
+                                      (fn [e]
+                                        (swap! disposed conj e))]
 
                           (recycle-env! k))
                         (let [e2 (get @env-cache k)]
@@ -4927,108 +4944,96 @@
 ;; settings dialog calls `toggles/set-enabled!` directly, as does any extension —
 ;; persisted to state.yml and refreshed nothing: every other cached session kept
 ;; its stale tool surface (no `shell`, no `subprocess`) until a restart.
-(defdescribe toggle-change-refreshes-cached-envs-test
-             (describe
-               "a toggle change from ANY channel"
-               (it
-                 "refreshes extension bindings in every idle cached env"
-                 (toggles/register-toggle!
-                   {:id "loop_test_fanout" :label "Fan-out" :default false})
-                 (let
-                   [k
-                    "toggle-fanout-test/idle"
+(defdescribe
+  toggle-change-refreshes-cached-envs-test
+  (describe
+    "a toggle change from ANY channel"
+    (it "refreshes extension bindings in every idle cached env"
+        (toggles/register-toggle! {:id "loop_test_fanout" :label "Fan-out" :default false})
+        (let [k
+              "toggle-fanout-test/idle"
 
-                    entry
-                    (new-cache-entry {:marker :idle})
+              entry
+              (new-cache-entry {:marker :idle})
 
-                    synced
-                    (atom [])]
+              synced
+              (atom [])]
 
-                   (swap! env-cache assoc k entry)
-                   (try (with-redefs
-                          [lp/sync-active-extension-symbols!
-                           (fn [e]
-                             (swap! synced conj e))]
+          (swap! env-cache assoc k entry)
+          (try (with-redefs [lp/sync-active-extension-symbols! (fn [e]
+                                                                 (swap! synced conj e))]
+                 ;; NOT the HTTP handler: the bare toggles API the TUI
+                 ;; dialog and every extension flip goes through.
+                 (toggles/set-enabled! "loop_test_fanout" true))
+               (expect (some #(= {:marker :idle} %) @synced))
+               (finally (swap! env-cache dissoc k)
+                        (toggles/set-enabled! "loop_test_fanout" false)))))
+    (it "leaves a session that is mid-turn to its own next-turn sync"
+        (toggles/register-toggle!
+          {:id "loop_test_fanout_busy" :label "Fan-out busy" :default false})
+        (let [k
+              "toggle-fanout-test/busy"
 
-                          ;; NOT the HTTP handler: the bare toggles API the TUI
-                          ;; dialog and every extension flip goes through.
-                          (toggles/set-enabled! "loop_test_fanout" true))
-                        (expect (some #(= {:marker :idle} %) @synced))
-                        (finally (swap! env-cache dissoc k)
-                                 (toggles/set-enabled! "loop_test_fanout" false)))))
-               (it
-                 "leaves a session that is mid-turn to its own next-turn sync"
-                 (toggles/register-toggle!
-                   {:id "loop_test_fanout_busy" :label "Fan-out busy" :default false})
-                 (let
-                   [k
-                    "toggle-fanout-test/busy"
+              entry
+              (new-cache-entry {:marker :busy})
 
-                    entry
-                    (new-cache-entry {:marker :busy})
+              ^java.util.concurrent.locks.ReentrantLock lock
+              (:lock entry)
 
-                    ^java.util.concurrent.locks.ReentrantLock lock
-                    (:lock entry)
+              release
+              (promise)
 
-                    release
-                    (promise)
+              started
+              (promise)
 
-                    started
-                    (promise)
+              holder
+              (doto (Thread. ^Runnable
+                             (fn []
+                               (.lock lock)
+                               (deliver started true)
+                               (try @release (finally (.unlock lock)))))
+                (.setDaemon true)
+                (.start))
 
-                    holder
-                    (doto (Thread. ^Runnable (fn []
-                                               (.lock lock)
-                                               (deliver started true)
-                                               (try @release (finally (.unlock lock)))))
-                      (.setDaemon true)
-                      (.start))
+              synced
+              (atom [])]
 
-                    synced
-                    (atom [])]
-
-                   (swap! env-cache assoc k entry)
-                   (try @started
-                        (with-redefs
-                          [lp/sync-active-extension-symbols!
-                           (fn [e]
-                             (swap! synced conj e))]
-
-                          (toggles/set-enabled! "loop_test_fanout_busy" true))
-                        (expect (not-any? #(= {:marker :busy} %) @synced))
-                        (finally (deliver release true)
-                                 (.join holder 1000)
-                                 (swap! env-cache dissoc k)
-                                 (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
+          (swap! env-cache assoc k entry)
+          (try @started
+               (with-redefs [lp/sync-active-extension-symbols! (fn [e]
+                                                                 (swap! synced conj e))]
+                 (toggles/set-enabled! "loop_test_fanout_busy" true))
+               (expect (not-any? #(= {:marker :busy} %) @synced))
+               (finally (deliver release true)
+                        (.join holder 1000)
+                        (swap! env-cache dissoc k)
+                        (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
 
 (defdescribe env-reaper-enablement-test
              (it "starts for the absolute heap budget even when every older policy is off"
                  (let [enabled? (deref #'lp/env-reaper-enabled?)]
-                   (expect (true? (with-redefs
-                                    [lp/env-reaper-interval-ms (delay 1000)
-                                     lp/env-idle-ttl-ms (delay 0)
-                                     lp/env-cache-max (delay 0)
-                                     lp/env-heap-watermark-pct (delay 0)
-                                     lp/env-heap-budget-mb (delay 1)
-                                     lp/env-rss-budget-mb (delay 0)]
+                   (expect (true? (with-redefs [lp/env-reaper-interval-ms (delay 1000)
+                                                lp/env-idle-ttl-ms (delay 0)
+                                                lp/env-cache-max (delay 0)
+                                                lp/env-heap-watermark-pct (delay 0)
+                                                lp/env-heap-budget-mb (delay 1)
+                                                lp/env-rss-budget-mb (delay 0)]
 
                                     (enabled?))))
-                   (expect (false? (with-redefs
-                                     [lp/env-reaper-interval-ms (delay 1000)
-                                      lp/env-idle-ttl-ms (delay 0)
-                                      lp/env-cache-max (delay 0)
-                                      lp/env-heap-watermark-pct (delay 0)
-                                      lp/env-heap-budget-mb (delay 0)
-                                      lp/env-rss-budget-mb (delay 0)]
+                   (expect (false? (with-redefs [lp/env-reaper-interval-ms (delay 1000)
+                                                 lp/env-idle-ttl-ms (delay 0)
+                                                 lp/env-cache-max (delay 0)
+                                                 lp/env-heap-watermark-pct (delay 0)
+                                                 lp/env-heap-budget-mb (delay 0)
+                                                 lp/env-rss-budget-mb (delay 0)]
 
                                      (enabled?))))))
              (it "samples bounded runtime metrics without mutating the cache"
-                 (let
-                   [before
-                    (count @env-cache)
+                 (let [before
+                       (count @env-cache)
 
-                    snapshot
-                    (lp/gateway-runtime-metrics)]
+                       snapshot
+                       (lp/gateway-runtime-metrics)]
 
                    (expect (= before (:env-cache-size snapshot)))
                    (expect (pos? (:jvm-heap-max-bytes snapshot)))
@@ -5052,26 +5057,26 @@
     "one-shot overflow rescue"
     (it
       "folds the OLDEST settled work only, shrinks wire input, and leaves canonical history unchanged"
-      (let
-        [large
-         (apply str (repeat 20000 "x"))
+      (let [large
+            (apply str (repeat 20000 "x"))
 
-         content
-         [{:type "text" :text large} {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+            content
+            [{:type "text" :text large}
+             {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
 
-         trailer
-         [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
+            trailer
+            [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
 
-         original
-         trailer
+            original
+            trailer
 
-         recovery
-         (emergency-fold-projection [{:role "system" :content "stable"}]
-                                    trailer
-                                    []
-                                    {:provider :openai :model "gpt"}
-                                    "gpt-4o"
-                                    (constantly 1000000))]
+            recovery
+            (emergency-fold-projection [{:role "system" :content "stable"}]
+                                       trailer
+                                       []
+                                       {:provider :openai :model "gpt"}
+                                       "gpt-4o"
+                                       (constantly 1000000))]
 
         (expect (some? recovery))
         (expect (< (:after-tokens recovery) (:before-tokens recovery)))
@@ -5086,18 +5091,16 @@
                        :content)))
         (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
                       (:messages recovery)))
-        (expect (some #(re-find #"1 tool call" (str (:content %)))
-                      (:messages recovery)))))
+        (expect (some #(re-find #"1 tool call" (str (:content %))) (:messages recovery)))))
     (it "measures the estimator's undercount from the refused request, never a constant"
-        (let
-          [;; Session cd24926e: the provider priced the very same 132-iteration seed at
-           ;; 1,437,952 where the local estimator read 963,503.
-           factor
-           (estimator-undercount 1437952 963503)
+        (let [;; Session cd24926e: the provider priced the very same 132-iteration seed at
+              ;; 1,437,952 where the local estimator read 963,503.
+              factor
+              (estimator-undercount 1437952 963503)
 
-           budget
-           (overflow-fold-budget {:provider-tokens 1437952 :provider-limit 1000000 :margin 0.9}
-                                 963503)]
+              budget
+              (overflow-fold-budget {:provider-tokens 1437952 :provider-limit 1000000 :margin 0.9}
+                                    963503)]
 
           (expect (< 1.49 (double factor) 1.5))
           ;; A DIFFERENT mix measures differently — that is the point of measuring.
@@ -5114,92 +5117,93 @@
           (expect (= 5000 (overflow-fold-budget {:cut 0.5} 10000)))
           (expect (= 5000 (overflow-fold-budget {:provider-limit 999 :cut 0.5} 10000)))
           (expect (nil? (overflow-fold-budget {} 10000)))))
-    (it "escalates: each rescue folds strictly more, then goes terminal"
-        (let
-          [content
-           [{:type "text" :text (apply str (repeat 5000 "x"))}
-            {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+    (it
+      "escalates: each rescue folds strictly more, then goes terminal"
+      (let [content
+            [{:type "text" :text (apply str (repeat 5000 "x"))}
+             {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
 
-           trailer
-           (mapv (fn [i] (stub-tool-iter {:id i :content content})) (range 1 13))
+            trailer
+            (mapv (fn [i]
+                    (stub-tool-iter {:id i :content content}))
+                  (range 1 13))
 
-           state
-           (atom {:attempts 0})
+            state
+            (atom {:attempts 0})
 
-           overflow
-           (ex-info "Context overflow"
-                    {:type :svar.core/context-overflow
-                     :source :preflight
-                     :input-tokens 20000
-                     :max-input-tokens 10000})
+            overflow
+            (ex-info "Context overflow"
+                     {:type :svar.core/context-overflow
+                      :source :preflight
+                      :input-tokens 20000
+                      :max-input-tokens 10000})
 
-           rescue
-           (fn []
-             (context-overflow-recovery! {:error overflow
-                                          :output-started? (atom false)
-                                          :recovery-state state
-                                          :ctx-atom (atom {})
-                                          :turn-input-tokens 0
-                                          :base-messages []
-                                          :trailer-iters trailer
-                                          :summaries []
-                                          :replay-target {:provider :openai :model "gpt"}
-                                          :replay-policies {}
-                                          :model "gpt-4o"}))
+            rescue
+            (fn []
+              (context-overflow-recovery! {:error overflow
+                                           :output-started? (atom false)
+                                           :recovery-state state
+                                           :ctx-atom (atom {})
+                                           :turn-input-tokens 0
+                                           :base-messages []
+                                           :trailer-iters trailer
+                                           :summaries []
+                                           :replay-target {:provider :openai :model "gpt"}
+                                           :replay-policies {}
+                                           :model "gpt-4o"}))
 
-           rescues
-           (mapv (fn [_] (rescue)) (range 4))]
+            rescues
+            (mapv (fn [_]
+                    (rescue))
+                  (range 4))]
 
-          (expect (= [1 2 3 nil] (mapv :attempt rescues)))
-          (expect (nil? (last rescues)))
-          ;; Every rescue keeps recent work; only the oldest prefix collapses.
-          (expect (every? #(< (count (:scopes %)) (count trailer)) (butlast rescues)))
-          (expect (apply < (mapv #(count (:scopes %)) (butlast rescues))))
-          (expect (apply > (mapv :after-tokens (butlast rescues))))
-          (expect (every? #(<= (long (:after-tokens %)) (long (:budget-tokens %)))
-                          (butlast rescues)))
-          ;; Every rescue reports the undercount it measured, and its projection priced
-          ;; through that measurement stays under the limit the provider refused.
-          (expect (every? #(some? (:estimator-undercount %)) (butlast rescues)))
-          (expect (every? #(< (* (double (:after-tokens %)) (double (:estimator-undercount %)))
-                              (double (:provider-limit %)))
-                          (butlast rescues)))
-          (expect (not-any? #(contains? (:scopes %) "t1/i12") (butlast rescues)))))
+        (expect (= [1 2 3 nil] (mapv :attempt rescues)))
+        (expect (nil? (last rescues)))
+        ;; Every rescue keeps recent work; only the oldest prefix collapses.
+        (expect (every? #(< (count (:scopes %)) (count trailer)) (butlast rescues)))
+        (expect (apply < (mapv #(count (:scopes %)) (butlast rescues))))
+        (expect (apply > (mapv :after-tokens (butlast rescues))))
+        (expect (every? #(<= (long (:after-tokens %)) (long (:budget-tokens %))) (butlast rescues)))
+        ;; Every rescue reports the undercount it measured, and its projection priced
+        ;; through that measurement stays under the limit the provider refused.
+        (expect (every? #(some? (:estimator-undercount %)) (butlast rescues)))
+        (expect (every? #(< (* (double (:after-tokens %)) (double (:estimator-undercount %)))
+                            (double (:provider-limit %)))
+                        (butlast rescues)))
+        (expect (not-any? #(contains? (:scopes %) "t1/i12") (butlast rescues)))))
     (it "preserves existing semantic fold gists"
-        (let
-          [large
-           (apply str (repeat 5000 "x"))
+        (let [large
+              (apply str (repeat 5000 "x"))
 
-           content
-           [{:type "text" :text large}
-            {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+              content
+              [{:type "text" :text large}
+               {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
 
-           trailer
-           [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
+              trailer
+              [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
 
-           recovery
-           (emergency-fold-projection
-             []
-             trailer
-             [{"scopes" #{"t1/i1"} "gist" "IMPORTANT ROOT CAUSE" "at_turn" 1}]
-             {:provider :openai :model "gpt"}
-             "gpt-4o"
-             (constantly 1000000))
+              recovery
+              (emergency-fold-projection
+                []
+                trailer
+                [{"scopes" #{"t1/i1"} "gist" "IMPORTANT ROOT CAUSE" "at_turn" 1}]
+                {:provider :openai :model "gpt"}
+                "gpt-4o"
+                (constantly 1000000))
 
-           contents
-           (mapv (comp str :content) (:messages recovery))]
+              contents
+              (mapv (comp str :content) (:messages recovery))]
 
           (expect (= #{"t1/i2"} (:scopes recovery)))
           (expect (some #(str/includes? % "IMPORTANT ROOT CAUSE") contents))
           (expect (some #(str/includes? % "Emergency transport fold") contents))))
     (it "refuses a retry whose folded estimate still exceeds the provider budget"
-        (let
-          [content
-           [{:type "text" :text (apply str (repeat 5000 "x"))}
-            {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+        (let [content
+              [{:type "text" :text (apply str (repeat 5000 "x"))}
+               {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
 
-           trailer
-           [(stub-tool-iter {:id 1 :content content})]]
+              trailer
+              [(stub-tool-iter {:id 1 :content content})]]
 
           (expect (nil? (emergency-fold-projection []
                                                    trailer
@@ -5214,62 +5218,60 @@
           (expect (true? (provider-output-chunk? {:phase phase})))))
     (it
       "performs exactly one smaller retry, preserves live and canonical input, then terminates"
-      (let
-        [large
-         (apply str (repeat 30000 "x"))
+      (let [large
+            (apply str (repeat 30000 "x"))
 
-         content
-         [{:type "text" :text large} {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+            content
+            [{:type "text" :text large}
+             {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
 
-         canonical
-         [(stub-tool-iter {:id 1 :content content})]
+            canonical
+            [(stub-tool-iter {:id 1 :content content})]
 
-         original
-         canonical
+            original
+            canonical
 
-         base
-         [{:role "system" :content "stable"} {:role "user" :content "CURRENT USER REQUEST"}]
+            base
+            [{:role "system" :content "stable"} {:role "user" :content "CURRENT USER REQUEST"}]
 
-         calls
-         (atom [])
+            calls
+            (atom [])
 
-         rescue-state
-         (atom {:attempts 0})
+            rescue-state
+            (atom {:attempts 0})
 
-         output?
-         (atom false)
+            output?
+            (atom false)
 
-         ctx-atom
-         (atom {"session_turn" 1})
+            ctx-atom
+            (atom {"session_turn" 1})
 
-         overflow
-         (ex-info "Context overflow"
-                  {:type :svar.tokens/context-overflow
-                   :source :preflight
-                   :input-tokens 20000
-                   :max-input-tokens 10000})
+            overflow
+            (ex-info "Context overflow"
+                     {:type :svar.tokens/context-overflow
+                      :source :preflight
+                      :input-tokens 20000
+                      :max-input-tokens 10000})
 
-         terminal
-         (loop
-           [messages (into base
-                           (conversation-suffix canonical {:provider :openai :model "gpt"}))]
-           (swap! calls conj messages)
-           (let [result (try (throw overflow) (catch Exception e e))]
-             (if-let
-               [recovery (context-overflow-recovery! {:error result
-                                                      :output-started? output?
-                                                      :recovery-state rescue-state
-                                                      :ctx-atom ctx-atom
-                                                      :turn-input-tokens 0
-                                                      :base-messages base
-                                                      :trailer-iters canonical
-                                                      :summaries []
-                                                      :replay-target {:provider :openai
-                                                                      :model "gpt"}
-                                                      :replay-policies {}
-                                                      :model "gpt-4o"})]
-               (recur (:messages recovery))
-               result)))]
+            terminal
+            (loop [messages (into base
+                                  (conversation-suffix canonical {:provider :openai :model "gpt"}))]
+              (swap! calls conj messages)
+              (let [result (try (throw overflow) (catch Exception e e))]
+                (if-let [recovery (context-overflow-recovery! {:error result
+                                                               :output-started? output?
+                                                               :recovery-state rescue-state
+                                                               :ctx-atom ctx-atom
+                                                               :turn-input-tokens 0
+                                                               :base-messages base
+                                                               :trailer-iters canonical
+                                                               :summaries []
+                                                               :replay-target {:provider :openai
+                                                                               :model "gpt"}
+                                                               :replay-policies {}
+                                                               :model "gpt-4o"})]
+                  (recur (:messages recovery))
+                  result)))]
 
         (expect (= 2 (count @calls)))
         (expect (< (count (pr-str (second @calls))) (count (pr-str (first @calls)))))
@@ -5288,19 +5290,18 @@
 
 (defdescribe attachment-reinspection-wire-test
              (it "renders a reinspection image as a canonical vision message"
-                 (let
-                   [wired-images
-                    (deref #'lp/iteration-wired-images)
+                 (let [wired-images
+                       (deref #'lp/iteration-wired-images)
 
-                    image-messages
-                    (deref #'lp/iteration-image-messages)
+                       image-messages
+                       (deref #'lp/iteration-image-messages)
 
-                    msg
-                    (first (image-messages
-                             {:images (wired-images {:reinspect-attachments
-                                                     [{:id "att-1"
-                                                       :media-type "image/png"
-                                                       :base64 replay-png-b64}]})}))]
+                       msg
+                       (first (image-messages {:images (wired-images {:reinspect-attachments
+                                                                      [{:id "att-1"
+                                                                        :media-type "image/png"
+                                                                        :base64
+                                                                        replay-png-b64}]})}))]
 
                    (expect (= "user" (:role msg)))
                    (expect (= "image_url" (get-in msg [:content 0 :type])))
@@ -5314,16 +5315,15 @@
   (describe
     "an empty fleet caused by an unset ${NAME}"
     (it "names the variable instead of svar's generic 'at least one provider'"
-        (let
-          [cfg
-           {:providers
-            [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}" :models [{:name "gpt-4o"}]}]}
+        (let [cfg
+              {:providers
+               [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}" :models [{:name "gpt-4o"}]}]}
 
-           svar-err
-           (ex-info "make-router requires at least one provider" {:type :svar/no-providers})
+              svar-err
+              (ex-info "make-router requires at least one provider" {:type :svar/no-providers})
 
-           restated
-           (env-gap-router-error cfg svar-err)]
+              restated
+              (env-gap-router-error cfg svar-err)]
 
           (expect (str/includes? (ex-message restated) "VIS_TEST_UNSET_RBI_KEY"))
           (expect (str/includes? (ex-message restated) "rbi-genai"))
@@ -5333,32 +5333,31 @@
           (expect (= {:rbi-genai ["VIS_TEST_UNSET_RBI_KEY"]} (:env-gaps (ex-data restated))))
           (expect (identical? svar-err (.getCause ^Throwable restated)))))
     (it "restates through a wrapping exception too"
-        (let
-          [cfg
-           {:providers [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}"}]}
+        (let [cfg
+              {:providers [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}"}]}
 
-           wrapped
-           (ex-info "creating session"
-                    {}
-                    (ex-info "make-router requires at least one provider"
-                             {:type :svar/no-providers}))]
+              wrapped
+              (ex-info "creating session"
+                       {}
+                       (ex-info "make-router requires at least one provider"
+                                {:type :svar/no-providers}))]
 
           (expect (str/includes? (ex-message (env-gap-router-error cfg wrapped))
                                  "VIS_TEST_UNSET_RBI_KEY")))))
   (describe "anything else"
             (it "is returned untouched — no env gap, or not a no-providers failure"
-                (let
-                  [gapped
-                   {:providers [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}"}]}
+                (let [gapped
+                      {:providers [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}"}]}
 
-                   resolved
-                   {:providers [{:id :ok :api-key "sk-literal"}]}
+                      resolved
+                      {:providers [{:id :ok :api-key "sk-literal"}]}
 
-                   svar-err
-                   (ex-info "make-router requires at least one provider" {:type :svar/no-providers})
+                      svar-err
+                      (ex-info "make-router requires at least one provider"
+                               {:type :svar/no-providers})
 
-                   other
-                   (ex-info "boom" {})]
+                      other
+                      (ex-info "boom" {})]
 
                   (expect (identical? svar-err (env-gap-router-error resolved svar-err)))
                   (expect (identical? other (env-gap-router-error gapped other)))))))
@@ -5369,12 +5368,11 @@
    the turn instead of being fed back as a synthetic user message — feeding it
    back re-asks the SAME provider that just refused, which surfaced as repeated
    question/answer pairs before the consecutive-error limit killed the turn."
-  (let
-    [fatal? (fn [e]
-              (boolean (::lp/fatal-iteration-error (lp/handle-iteration-exception!
-                                                     e
-                                                     {:iteration 2
-                                                      :messages [{:role "user" :content "hi"}]}))))]
+  (let [fatal? (fn [e]
+                 (boolean (::lp/fatal-iteration-error
+                            (lp/handle-iteration-exception!
+                              e
+                              {:iteration 2 :messages [{:role "user" :content "hi"}]}))))]
     (it "fails the turn on a rate limit"
         (expect (fatal? (ex-info "provider rate limited this request"
                                  {:status 429
@@ -5389,7 +5387,7 @@
                            :provider :anthropic-coding-plan
                            :body (str "{\"type\":\"error\",\"error\":{\"type\":"
                                       "\"invalid_request_error\",\"message\":"
-                                      "\"Third-party apps now draw from your extra usage.\"}}") }))))
+                                      "\"Third-party apps now draw from your extra usage.\"}}")}))))
     (it "still feeds a correctable model/code failure back for self-correction"
         (expect (not (fatal? (ex-info "Syntax error in generated code" {:type :vis/code-error})))))
     (it "still feeds a plain internal bug back for self-correction"
@@ -5399,23 +5397,21 @@
       ;; exception is untyped, while its cause carries the 429 provider data.
       ;; It must be terminal, otherwise iteration-loop adds synthetic user
       ;; feedback and asks the same rate-limited provider again.
-      (let
-        [result (lp/handle-iteration-exception!
-                  (ex-info "HTTP client request failed"
-                           {}
-                           (ex-info "provider rate limited this request"
-                                    {:status 429
-                                     :provider :anthropic-coding-plan
-                                     :body "{\"error\":{\"type\":\"rate_limit_error\"}}"}))
-                  {:iteration 2 :messages [{:role "user" :content "hi"}]})]
+      (let [result (lp/handle-iteration-exception!
+                     (ex-info "HTTP client request failed"
+                              {}
+                              (ex-info "provider rate limited this request"
+                                       {:status 429
+                                        :provider :anthropic-coding-plan
+                                        :body "{\"error\":{\"type\":\"rate_limit_error\"}}"}))
+                     {:iteration 2 :messages [{:role "user" :content "hi"}]})]
         (expect (true? (::lp/fatal-iteration-error result)))))
   (it "fails once when a wrapped invalid-key error reaches the gateway"
-      (let
-        [result (lp/handle-iteration-exception!
-                  (ex-info "HTTP client request failed"
-                           {}
-                           (ex-info "invalid API key" {:status 401 :provider :openai-codex}))
-                  {:iteration 2 :messages [{:role "user" :content "hi"}]})]
+      (let [result (lp/handle-iteration-exception!
+                     (ex-info "HTTP client request failed"
+                              {}
+                              (ex-info "invalid API key" {:status 401 :provider :openai-codex}))
+                     {:iteration 2 :messages [{:role "user" :content "hi"}]})]
         (expect (true? (::lp/fatal-iteration-error result))))))
 
 ;; Regression: a stream that ended before the provider's terminal marker reached
@@ -5428,38 +5424,37 @@
   "Svar refuses to resend a stream once output has been rendered, so a truncation
    is TERMINAL by design and the log line is the only record left. It must carry
    svar's bounded stream-finalization evidence and name the classified kind."
-  (let
-    [reasoning-transcript
-     (apply str (repeat 200 "reasoning-transcript "))
+  (let [reasoning-transcript
+        (apply str (repeat 200 "reasoning-transcript "))
 
-     truncated
-     (ex-info "Stream ended before terminal marker."
-              {:type :svar.core/stream-truncated
-               :stream? true
-               :url "https://gateway.example.com/v1/messages"
-               :stream-finalization {:terminal? false
-                                     :terminal-kind nil
-                                     :terminal-event-type nil
-                                     :last-event-type "content_block_delta"
-                                     :finish-reason nil
-                                     :incomplete? false
-                                     :incomplete-reason nil
-                                     :content-acc-len 0
-                                     :reasoning-acc-len 4200
-                                     :http-status 200}
-               :content-acc-len 0
-               :reasoning-acc-len 4200
-               :partial-content nil
-               :reasoning reasoning-transcript})
+        truncated
+        (ex-info "Stream ended before terminal marker."
+                 {:type :svar.core/stream-truncated
+                  :stream? true
+                  :url "https://gateway.example.com/v1/messages"
+                  :stream-finalization {:terminal? false
+                                        :terminal-kind nil
+                                        :terminal-event-type nil
+                                        :last-event-type "content_block_delta"
+                                        :finish-reason nil
+                                        :incomplete? false
+                                        :incomplete-reason nil
+                                        :content-acc-len 0
+                                        :reasoning-acc-len 4200
+                                        :http-status 200}
+                  :content-acc-len 0
+                  :reasoning-acc-len 4200
+                  :partial-content nil
+                  :reasoning reasoning-transcript})
 
-     format-exception-short
-     #'com.blockether.vis.internal.loop/format-exception-short
+        format-exception-short
+        #'com.blockether.vis.internal.loop/format-exception-short
 
-     log-message
-     #'com.blockether.vis.internal.loop/non-correctable-log-message
+        log-message
+        #'com.blockether.vis.internal.loop/non-correctable-log-message
 
-     short-form
-     (format-exception-short truncated)]
+        short-form
+        (format-exception-short truncated)]
 
     (it "keeps svar's stream-finalization evidence in the logged short form"
         (expect (= {:terminal? false
@@ -5485,12 +5480,13 @@
                         " - failing turn instead of re-asking the same provider")
                    (log-message truncated)))
         (expect (str/includes? (log-message (ex-info "provider rate limited this request"
-                                                     {:status 429 :provider :anthropic-coding-plan}))
+                                                     {:status 429
+                                                      :provider :anthropic-coding-plan}))
                                "(rate-limit)")))
     (it "still ends the turn and carries the evidence onto the turn row"
-        (let [result (lp/handle-iteration-exception!
-                       truncated
-                       {:iteration 14 :messages [{:role "user" :content "hi"}]})]
+        (let [result (lp/handle-iteration-exception! truncated
+                                                     {:iteration 14
+                                                      :messages [{:role "user" :content "hi"}]})]
           (expect (true? (::lp/fatal-iteration-error result)))
           (expect (= "content_block_delta"
                      (get-in (::lp/iteration-error result)
@@ -5503,25 +5499,26 @@
    shell variable, so the turn must end ONCE with the actionable message —
    not be fed back for self-correction and not be flattened into the generic
    provider card."
-  (let
-    [handle
-     (fn [e]
-       (lp/handle-iteration-exception! e {:iteration 1 :messages [{:role "user" :content "hi"}]}))
+  (let [handle
+        (fn [e]
+          (lp/handle-iteration-exception! e
+                                          {:iteration 1 :messages [{:role "user" :content "hi"}]}))
 
-     fatal?
-     (fn [e]
-       (boolean (::lp/fatal-iteration-error (handle e))))
+        fatal?
+        (fn [e]
+          (boolean (::lp/fatal-iteration-error (handle e))))
 
-     user-error-content
-     #'com.blockether.vis.internal.loop/user-error-content
+        user-error-content
+        #'com.blockether.vis.internal.loop/user-error-content
 
-     env-gap
-     (ex-info (str "No usable provider — can't use rbi-genai: "
+        env-gap
+        (ex-info (str
+                   "No usable provider — can't use rbi-genai: "
                    "RBI_GENAI_API_KEY is not set.\n"
                    "Set RBI_GENAI_API_KEY in your shell (export NAME=value) and start vis again.")
-              {:type :svar/no-providers
-               :vis/user-error true
-               :env-gaps {:rbi-genai ["RBI_GENAI_API_KEY"]}})]
+                 {:type :svar/no-providers
+                  :vis/user-error true
+                  :env-gaps {:rbi-genai ["RBI_GENAI_API_KEY"]}})]
 
     (it "fails the turn on an unset provider env var" (expect (fatal? env-gap)))
     (it "fails the turn when the user error is only on a cause"
@@ -5532,12 +5529,11 @@
     (it "still feeds a correctable model/code failure back for self-correction"
         (expect (not (fatal? (ex-info "Syntax error in generated code" {:type :vis/code-error})))))
     (it "renders the actionable env-var message instead of the generic provider card"
-        (let
-          [blocks
-           (user-error-content (::lp/iteration-error (handle env-gap)))
+        (let [blocks
+              (user-error-content (::lp/iteration-error (handle env-gap)))
 
-           block
-           (first blocks)]
+              block
+              (first blocks)]
 
           (expect (= 1 (count blocks)))
           (expect (= "error" (get block "type")))
@@ -5567,92 +5563,138 @@
                    (expect (= "provider_quota-exhausted" (get block "code")))
                    (expect (str/includes? (get block "message") "plan, usage limits")))))
 
-(defdescribe
-  reload-router-hook-test
-  ;; `/reload` used to re-read vis.yml WITHOUT rebuilding the router, so a
-  ;; changed `default_model` kept routing to the old model and the TUI footer
-  ;; chip kept naming it until a restart.
-  (describe
-    "reload-router!"
-    (it "no-ops while the router was never built (lazy first use is preserved)"
-        (with-redefs [lp/router-initialized? (fn [] false)
-                      lp/rebuild-router! (fn [_] (throw (ex-info "must not build" {})))
-                      lp/refresh-cached-routers! (fn [_] (throw (ex-info "must not reseat" {})))]
-          (expect (nil? (lp/reload-router!)))))
-    (it "rebuilds from the reloaded config and reseats cached session envs"
-        (let [built (atom nil)
-              seated (atom nil)
-              cfg {:providers [{:id :acme}] :default-model "new-model"}]
-          (with-redefs [lp/router-initialized? (fn [] true)
-                        config/current-config (fn [] cfg)
-                        lp/rebuild-router! (fn [c] (reset! built c) ::rebuilt)
-                        lp/refresh-cached-routers! (fn [r] (reset! seated r))]
-            (expect (nil? (lp/reload-router!))))
-          (expect (= cfg @built))
-          (expect (= ::rebuilt @seated)))))
-  (describe
-    "/reload wiring"
-    (it "is registered as a reload hook that rebuilds the router"
-        (let [hook (get @@#'extension/reload-hooks
-                        :com.blockether.vis.internal.loop/router-reload)
-              built (atom nil)
-              seated (atom nil)
-              cfg {:providers [] :default-model "after-reload"}]
-          (expect (ifn? hook))
-          (with-redefs [lp/router-initialized? (fn [] true)
-                        config/current-config (fn [] cfg)
-                        lp/rebuild-router! (fn [c] (reset! built c) ::rebuilt)
-                        lp/refresh-cached-routers! (fn [r] (reset! seated r))]
-            (hook))
-          (expect (= cfg @built))
-          (expect (= ::rebuilt @seated))))))
+(defdescribe reload-router-hook-test
+             ;; `/reload` used to re-read vis.yml WITHOUT rebuilding the router, so a
+             ;; changed `default_model` kept routing to the old model and the TUI footer
+             ;; chip kept naming it until a restart.
+             (describe "reload-router!"
+                       (it "no-ops while the router was never built (lazy first use is preserved)"
+                           (with-redefs [lp/router-initialized?
+                                         (fn []
+                                           false)
+
+                                         lp/rebuild-router!
+                                         (fn [_]
+                                           (throw (ex-info "must not build" {})))
+
+                                         lp/refresh-cached-routers!
+                                         (fn [_]
+                                           (throw (ex-info "must not reseat" {})))]
+
+                             (expect (nil? (lp/reload-router!)))))
+                       (it "rebuilds from the reloaded config and reseats cached session envs"
+                           (let [built
+                                 (atom nil)
+
+                                 seated
+                                 (atom nil)
+
+                                 cfg
+                                 {:providers [{:id :acme}] :default-model "new-model"}]
+
+                             (with-redefs [lp/router-initialized?
+                                           (fn []
+                                             true)
+
+                                           config/current-config
+                                           (fn []
+                                             cfg)
+
+                                           lp/rebuild-router!
+                                           (fn [c]
+                                             (reset! built c)
+                                             ::rebuilt)
+
+                                           lp/refresh-cached-routers!
+                                           (fn [r]
+                                             (reset! seated r))]
+
+                               (expect (nil? (lp/reload-router!))))
+                             (expect (= cfg @built))
+                             (expect (= ::rebuilt @seated)))))
+             (describe
+               "/reload wiring"
+               (it
+                 "is registered as a reload hook that rebuilds the router"
+                 (let [hook
+                       (get @@#'extension/reload-hooks
+                            :com.blockether.vis.internal.loop/router-reload)
+
+                       built
+                       (atom nil)
+
+                       seated
+                       (atom nil)
+
+                       cfg
+                       {:providers [] :default-model "after-reload"}]
+
+                   (expect (ifn? hook))
+                   (with-redefs [lp/router-initialized?
+                                 (fn []
+                                   true)
+
+                                 config/current-config
+                                 (fn []
+                                   cfg)
+
+                                 lp/rebuild-router!
+                                 (fn [c]
+                                   (reset! built c)
+                                   ::rebuilt)
+
+                                 lp/refresh-cached-routers!
+                                 (fn [r]
+                                   (reset! seated r))]
+
+                     (hook))
+                   (expect (= cfg @built))
+                   (expect (= ::rebuilt @seated))))))
 
 (defdescribe human-input-parks-the-eval-wall-test
              ;; REGRESSION: HITL. Code that ASKS the operator blocks in
              ;; human-input/request!, and the enclosing wall used to bill that
              ;; thinking time — the call died with a timeout while the dialog was
              ;; still on screen and the answer was never applied.
-             (it "a human-input pause parks the enclosing wall instead of timing out"
-                 (let
-                   [chan
-                    (keyword "vis-test" (str "loop-hitl-" (random-uuid)))
+             (it
+               "a human-input pause parks the enclosing wall instead of timing out"
+               (let [chan
+                     (keyword "vis-test" (str "loop-hitl-" (random-uuid)))
 
-                    events
-                    (atom [])
+                     events
+                     (atom [])
 
-                    ask
-                    (fn []
-                      (hi/request! {:title "Login"
-                                    :session-id "loop-hitl-session"
-                                    :fields [{:id "otp" :label "OTP"}]
-                                    :timeout-ms 10000
-                                    :channel-ids [chan]}))]
+                     ask
+                     (fn []
+                       (hi/request! {:title "Login"
+                                     :session-id "loop-hitl-session"
+                                     :fields [{:id "otp" :label "OTP"}]
+                                     :timeout-ms 10000
+                                     :channel-ids [chan]}))]
 
-                   (ce/add-channel-event-listener! chan ::hitl-wall #(swap! events conj %))
-                   (try
-                     (let
-                       [answerer
-                        (future
-                          (loop [n 0]
-                            (if-let [request-id (some #(when (= :human-input/request (:op %))
-                                                         (:request-id %))
-                                                      @events)]
-                              ;; The operator takes MUCH longer than the 20ms wall.
-                              (do (Thread/sleep 1500) (hi/submit! request-id {"otp" "123456"}))
-                              (when (< n 400) (Thread/sleep 10) (recur (inc n))))))
+                 (ce/add-channel-event-listener! chan ::hitl-wall #(swap! events conj %))
+                 (try (let [answerer
+                            (future
+                              (loop [n 0]
+                                (if-let [request-id (some #(when (= :human-input/request (:op %))
+                                                             (:request-id %))
+                                                          @events)]
+                                  ;; The operator takes MUCH longer than the 20ms wall.
+                                  (do (Thread/sleep 1500) (hi/submit! request-id {"otp" "123456"}))
+                                  (when (< n 400) (Thread/sleep 10) (recur (inc n))))))
 
-                        {:keys [deadline park]}
-                        (rt/parkable-wall (System/currentTimeMillis) 20)
+                            {:keys [deadline park]}
+                            (rt/parkable-wall (System/currentTimeMillis) 20)
 
-                        result
-                        (binding [rt/*blocking-wall-park* park]
-                          (ask))]
+                            result
+                            (binding [rt/*blocking-wall-park* park]
+                              (ask))]
 
-                       (deref answerer 5000 nil)
-                       (expect (true? (:is-submitted result)))
-                       ;; the wall MOVED: it is no longer the 20ms one the call started with
-                       (expect (> @deadline (+ (System/currentTimeMillis) -10))))
-                     (finally (ce/remove-channel-event-listener! chan ::hitl-wall))))))
+                        (deref answerer 5000 nil)
+                        (expect (true? (:is-submitted result)))
+                        ;; the wall MOVED: it is no longer the 20ms one the call started with
+                        (expect (> @deadline (+ (System/currentTimeMillis) -10))))
+                      (finally (ce/remove-channel-event-listener! chan ::hitl-wall))))))
 
 (def ^:private live-views-dir
   "The private var every view record hangs under, redefined per test so nothing
@@ -5675,83 +5717,101 @@
    and answer `[result ids-the-block-left-open]`. Anything left open is closed
    here, so one test cannot leak a view into the next."
   [code]
-  (with-redefs-fn
-    {live-views-dir (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
-                                              (str "vis-views-" (random-uuid))))}
+  (with-redefs-fn {live-views-dir (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
+                                                             (str "vis-views-" (random-uuid))))}
     (fn []
-      (let [pc (:python-context (env/create-python-context {}))
+      (let [pc
+            (:python-context (env/create-python-context {}))
+
             ;; The bridge an extension crosses for a view, on a context of its own.
-            _ (python-extensions/bind-host! pc "loop-test")
-            before (hi/open-live-ids)
-            left #(remove before (hi/open-live-ids))]
+            _
+            (python-extensions/bind-host! pc "loop-test")
+
+            before
+            (hi/open-live-ids)
+
+            left
+            #(remove before (hi/open-live-ids))]
+
         (try [(binding [rt/*eval-timeout-ms* rt/MIN_EVAL_TIMEOUT_MS]
-                ((deref #'lp/run-python-code) pc code))
-              (vec (left))]
-             (finally
-               (doseq [view-id (left)] (hi/close-live! view-id))
-               (try (.close ^org.graalvm.polyglot.Context pc true)
-                    (catch Throwable _ nil))))))))
+                ((deref #'lp/run-python-code) pc code)) (vec (left))]
+             (finally (doseq [view-id (left)]
+                        (hi/close-live! view-id))
+                      (try (.close ^org.graalvm.polyglot.Context pc true)
+                           (catch Throwable _ nil))))))))
 
 (defdescribe live-view-owns-the-eval-wall-test
-  ;; Regression, reported from the app: watching a CI run died at `Timeout (300s)` with the
-  ;; build still going — five minutes is the eval backstop, and a run worth
-  ;; showing a human takes fifteen. Worse, the pane the wall left behind never
-  ;; closed: hours later the phone still painted the last poll it had seen and
-  ;; still offered a Stop nobody was listening to.
-  (describe "a run SHOWING its work holds the wall, and the run's end ends the view"
-    (it "is not killed at the eval wall while a live view is open"
-      (let [[result left] (watching-block (str (open-a-view)
-                                               "import time\n"
-                                               "time.sleep(4.0)\n"
-                                               "print('watched to the end')\n"))]
-        ;; 4s of watching under a 3s wall: without the hold this is `Timeout (3s)`.
-        (expect (nil? (:timeout? result)))
-        (expect (some? (re-find #"watched to the end" (str (:stdout result)))))
-        (expect (= 1 (count left)))))
-
-    (it "closes a view the block never closed, so no pane outlives its run"
-      (let [[result left] (watching-block (str (open-a-view)
-                                               "raise RuntimeError('the poll blew up')\n"))]
-        (expect (some? (:error result)))
-        (expect (= [] left))))))
+             ;; Regression, reported from the app: watching a CI run died at `Timeout (300s)` with the
+             ;; build still going — five minutes is the eval backstop, and a run worth
+             ;; showing a human takes fifteen. Worse, the pane the wall left behind never
+             ;; closed: hours later the phone still painted the last poll it had seen and
+             ;; still offered a Stop nobody was listening to.
+             (describe "a run SHOWING its work holds the wall, and the run's end ends the view"
+                       (it "is not killed at the eval wall while a live view is open"
+                           (let [[result left] (watching-block (str
+                                                                 (open-a-view)
+                                                                 "import time\n"
+                                                                 "time.sleep(4.0)\n"
+                                                                 "print('watched to the end')\n"))]
+                             ;; 4s of watching under a 3s wall: without the hold this is `Timeout (3s)`.
+                             (expect (nil? (:timeout? result)))
+                             (expect (some? (re-find #"watched to the end" (str (:stdout result)))))
+                             (expect (= 1 (count left)))))
+                       (it "closes a view the block never closed, so no pane outlives its run"
+                           (let [[result left] (watching-block
+                                                 (str (open-a-view)
+                                                      "raise RuntimeError('the poll blew up')\n"))]
+                             (expect (some? (:error result)))
+                             (expect (= [] left))))))
 (defdescribe normalize-tool-input-strings-only-test
-  (describe "model-drift and extension EDN are stringified, keys AND values"
-    (it "stringifies keyword/symbol values at every depth"
-      (let [normalize #'lp/normalize-tool-input
-            normalized (normalize {:op :delete
-                                   :paths ['a "b"]
-                                   :edits [{:mode :replace/nested}]
-                                   :count 3
-                                   :is_overwrite true})]
-        (expect (= {"op" "delete"
-                    "paths" ["a" "b"]
-                    "edits" [{"mode" "replace/nested"}]
-                    "count" 3
-                    "is_overwrite" true}
-                   normalized))))))
+             (describe "model-drift and extension EDN are stringified, keys AND values"
+                       (it "stringifies keyword/symbol values at every depth"
+                           (let [normalize
+                                 #'lp/normalize-tool-input
+
+                                 normalized
+                                 (normalize {:op :delete
+                                             :paths ['a "b"]
+                                             :edits [{:mode :replace/nested}]
+                                             :count 3
+                                             :is_overwrite true})]
+
+                             (expect (= {"op" "delete"
+                                         "paths" ["a" "b"]
+                                         "edits" [{"mode" "replace/nested"}]
+                                         "count" 3
+                                         "is_overwrite" true}
+                                        normalized))))))
 
 (defdescribe tool-call-door-strings-only-test
-  (describe "model drift is repaired once, at the door"
-    (it "normalizes every tool call's :input at every depth"
-      (let [door #'lp/normalize-tool-calls
-            calls (door [{:id "t1" :name "patch"
-                          :input {:edits [{:path "a.clj" :from_anchor "1:aa" :replace "x"}]}}
-                         {:id "t2" :name "delete" :input {:paths ["x"]}}])]
-        (expect (= [{"edits" [{"path" "a.clj" "from_anchor" "1:aa" "replace" "x"}]}
-                    {"paths" ["x"]}]
-                   (mapv :input calls)))
-        (expect (= ["t1" "t2"] (mapv :id calls)))))
-    (it "repairs a model-drift `\":path\"` key at every depth"
-      ;; svar hands the wire key over verbatim, so a model that writes a leading
-      ;; colon INTO its JSON is repaired here and nowhere else.
-      (let [[tc] (#'lp/normalize-tool-calls
-                   [{:id "p" :name "patch"
-                     :input {":edits" [{":path" "a.clj" ":from_anchor" "1:aa"}]}}])]
-        (expect (= {"edits" [{"path" "a.clj" "from_anchor" "1:aa"}]} (:input tc)))))
-    (it "lets downstream consumers read string keys only — no keyword fallback"
-      (let [[tc] (#'lp/normalize-tool-calls [{:id "w" :name "python_execution"
-                                              :input {:code "print(1)"}}])]
-        (expect (= {"code" "print(1)"} (:input tc)))))))
+             (describe
+               "model drift is repaired once, at the door"
+               (it "normalizes every tool call's :input at every depth"
+                   (let [door
+                         #'lp/normalize-tool-calls
+
+                         calls
+                         (door [{:id "t1"
+                                 :name "patch"
+                                 :input {:edits [{:path "a.clj" :from_anchor "1:aa" :replace "x"}]}}
+                                {:id "t2" :name "delete" :input {:paths ["x"]}}])]
+
+                     (expect (= [{"edits" [{"path" "a.clj" "from_anchor" "1:aa" "replace" "x"}]}
+                                 {"paths" ["x"]}]
+                                (mapv :input calls)))
+                     (expect (= ["t1" "t2"] (mapv :id calls)))))
+               (it "repairs a model-drift `\":path\"` key at every depth"
+                   ;; svar hands the wire key over verbatim, so a model that writes a leading
+                   ;; colon INTO its JSON is repaired here and nowhere else.
+                   (let [[tc] (#'lp/normalize-tool-calls
+                               [{:id "p"
+                                 :name "patch"
+                                 :input {":edits" [{":path" "a.clj" ":from_anchor" "1:aa"}]}}])]
+                     (expect (= {"edits" [{"path" "a.clj" "from_anchor" "1:aa"}]} (:input tc)))))
+               (it "lets downstream consumers read string keys only — no keyword fallback"
+                   (let [[tc] (#'lp/normalize-tool-calls
+                               [{:id "w" :name "python_execution" :input {:code "print(1)"}}])]
+                     (expect (= {"code" "print(1)"} (:input tc)))))))
 
 ;; A tool call whose arguments were CORRUPTED inside the provider's own
 ;; tool-call encoding: the model's closing tag arrived mangled
@@ -5760,36 +5820,49 @@
 ;; `apropos("</antmlutparameter>\n")` and answered "no unadvertised capabilities
 ;; match" to a question nobody asked, and a `cat` whose JSON the model
 ;; entity-escaped (`&quot;`) reached the tool as one garbage key.
-(defdescribe tool-call-protocol-leak-test
-  (describe "a leaked tool-call tag is not an argument value"
+(defdescribe
+  tool-call-protocol-leak-test
+  (describe
+    "a leaked tool-call tag is not an argument value"
     (it "drops the mangled closing tag and runs the call the model meant"
-      (let [[tc] (#'lp/normalize-tool-calls
-                   [{:id "a" :name "python_execution" :input {"code" "</antmlutparameter>\n"}}])]
-        (expect (= {} (:input tc)))))
+        (let [[tc] (#'lp/normalize-tool-calls
+                    [{:id "a" :name "python_execution" :input {"code" "</antmlutparameter>\n"}}])]
+          (expect (= {} (:input tc)))))
     (it "drops a `</invoke>` value carried under an entity-escaped key"
-      (let [[tc] (#'lp/normalize-tool-calls
-                   [{:id "c" :name "cat"
-                     :input {"workflows/ci.yml&quot;, &quot;ranges&quot;: [[-1, -1]]}]" "\n</invoke>\n"}}])]
-        (expect (= {} (:input tc)))))
+        (let [[tc] (#'lp/normalize-tool-calls
+                    [{:id "c"
+                      :name "cat"
+                      :input {"workflows/ci.yml&quot;, &quot;ranges&quot;: [[-1, -1]]}]"
+                              "\n</invoke>\n"}}])]
+          (expect (= {} (:input tc)))))
     (it "keeps a value that merely MENTIONS the tag"
-      (let [[tc] (#'lp/normalize-tool-calls
-                   [{:id "g" :name "grep" :input {"query" "who writes </parameter> here"}}])]
-        (expect (= {"query" "who writes </parameter> here"} (:input tc)))))
+        (let [[tc] (#'lp/normalize-tool-calls
+                    [{:id "g" :name "grep" :input {"query" "who writes </parameter> here"}}])]
+          (expect (= {"query" "who writes </parameter> here"} (:input tc)))))
     ;; The drop is the right repair, but it also ERASES the evidence: the second
     ;; instance of this fault was only ever found because the mangled tag had
     ;; been persisted in `session_turn_iteration.tool_calls`. Nothing corrupt
     ;; reaches engine data now, so the log line is the only trace left of a
     ;; provider that mangled its own tool-call encoding.
     (it "records the argument it dropped"
-      (let [{:keys [signals]} (tel/with-signals
-                                (#'lp/normalize-tool-calls
-                                  [{:id "a" :name "apropos"
-                                    :input {"query" "</antmlutparameter>\n"}}]))
-            leak (first (filter #(= ::lp/tool-protocol-leak (:id %)) signals))]
-        (expect (some? leak))
-        (expect (= :warn (:level leak)))
-        (expect (= "query" (-> leak :data :argument)))
-        (expect (= "</antmlutparameter>\n" (-> leak :data :value))))))
+        (let [{:keys [signals]}
+              (tel/with-signals
+                (#'lp/normalize-tool-calls
+                 [{:id "a" :name "apropos" :input {"query" "</antmlutparameter>\n"}}]))
+
+              leak
+              (first (filter #(= ::lp/tool-protocol-leak (:id %)) signals))]
+
+          (expect (some? leak))
+          (expect (= :warn (:level leak)))
+          (expect (= "query"
+                     (-> leak
+                         :data
+                         :argument)))
+          (expect (= "</antmlutparameter>\n"
+                     (-> leak
+                         :data
+                         :value))))))
   ;; The same wreckage one level up: the corrupted `arguments` payload never
   ;; decoded to an OBJECT at all. svar's tool-argument decode is strict and
   ;; FAITHFUL — it hands whatever JSON value it read straight back, so
@@ -5797,24 +5870,30 @@
   ;; every consumer past this door (the sandbox program, persistence) reads a
   ;; string-keyed map.
   (describe "an arguments payload that is not an object at all"
-    (it "drops a bare string payload and runs the call the model meant"
-      (let [[tc] (#'lp/normalize-tool-calls
-                   [{:id "a" :name "python_execution" :input "</invoke>"}])]
-        (expect (= {} (:input tc)))))
-    (it "drops a vector payload"
-      (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input [1 2]}])]
-        (expect (= {} (:input tc)))))
-    (it "drops a scalar payload"
-      (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input 42}])]
-        (expect (= {} (:input tc)))))
-    (it "records the payload it refused"
-      (let [{:keys [signals]} (tel/with-signals
-                                (#'lp/normalize-tool-calls
-                                  [{:id "a" :name "apropos" :input "</invoke>"}]))
-            leak (first (filter #(= ::lp/tool-input-not-an-object (:id %)) signals))]
-        (expect (some? leak))
-        (expect (= :warn (:level leak)))
-        (expect (str/includes? (str (-> leak :data :value)) "</invoke>"))))))
+            (it "drops a bare string payload and runs the call the model meant"
+                (let [[tc] (#'lp/normalize-tool-calls
+                            [{:id "a" :name "python_execution" :input "</invoke>"}])]
+                  (expect (= {} (:input tc)))))
+            (it "drops a vector payload"
+                (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input [1 2]}])]
+                  (expect (= {} (:input tc)))))
+            (it "drops a scalar payload"
+                (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input 42}])]
+                  (expect (= {} (:input tc)))))
+            (it "records the payload it refused"
+                (let [{:keys [signals]}
+                      (tel/with-signals (#'lp/normalize-tool-calls
+                                         [{:id "a" :name "apropos" :input "</invoke>"}]))
+
+                      leak
+                      (first (filter #(= ::lp/tool-input-not-an-object (:id %)) signals))]
+
+                  (expect (some? leak))
+                  (expect (= :warn (:level leak)))
+                  (expect (str/includes? (str (-> leak
+                                                  :data
+                                                  :value))
+                                         "</invoke>"))))))
 
 ;; GitHub Copilot bills a request as a FULL premium interaction unless the
 ;; caller marks it `X-Initiator: agent` (a MISSING header means `user`), and
@@ -5833,8 +5912,7 @@
                          [:opts :llm-headers "X-Initiator"]))))
   (it "still lets a caller pin the initiator explicitly"
       (expect (= "user"
-                 (get-in (captured-ask-code-opts {:messages []
-                                                  :llm-headers {"X-Initiator" "user"}})
+                 (get-in (captured-ask-code-opts {:messages [] :llm-headers {"X-Initiator" "user"}})
                          [:opts :llm-headers "X-Initiator"])))))
 
 ;; Regression: Copilot Claude capped `:deep` to `:balanced`. The cap was written
@@ -5842,66 +5920,62 @@
 ;; proxy; on the native `/v1/messages` wire the cap only bought thinking
 ;; SHALLOWER than Anthropic's own default effort, which is how a `:deep` turn
 ;; came back with two-word thinking summaries.
-(defdescribe
-  copilot-claude-reasoning-level-test
-  (it "sends the requested depth on EVERY Copilot plan"
-      (doseq [provider [:github-copilot :github-copilot-individual :github-copilot-business
-                        :github-copilot-enterprise]]
-        (expect (= :deep
-                   (#'lp/copilot-claude-reasoning-level {:provider provider
-                                                         :name "claude-opus-5"}
-                                                        "please refactor the loop"
-                                                        :deep)))))
-  (it "leaves non-Copilot providers at the requested level"
-      (expect (= :deep
-                 (#'lp/copilot-claude-reasoning-level {:provider :anthropic-coding-plan
-                                                       :name "claude-opus-5"}
-                                                      "please refactor the loop"
-                                                      :deep))))
-  (it "names no depth for casual Copilot chat, leaving it to adaptive thinking"
-      (expect (nil? (#'lp/copilot-claude-reasoning-level {:provider :github-copilot-individual
-                                                          :name "claude-opus-5"}
-                                                         "hey"
-                                                         :deep)))))
+(defdescribe copilot-claude-reasoning-level-test
+             (it "sends the requested depth on EVERY Copilot plan"
+                 (doseq [provider [:github-copilot :github-copilot-individual
+                                   :github-copilot-business :github-copilot-enterprise]]
+                   (expect (= :deep
+                              (#'lp/copilot-claude-reasoning-level
+                               {:provider provider :name "claude-opus-5"}
+                               "please refactor the loop"
+                               :deep)))))
+             (it "leaves non-Copilot providers at the requested level"
+                 (expect (= :deep
+                            (#'lp/copilot-claude-reasoning-level
+                             {:provider :anthropic-coding-plan :name "claude-opus-5"}
+                             "please refactor the loop"
+                             :deep))))
+             (it "names no depth for casual Copilot chat, leaving it to adaptive thinking"
+                 (expect (nil? (#'lp/copilot-claude-reasoning-level
+                                {:provider :github-copilot-individual :name "claude-opus-5"}
+                                "hey"
+                                :deep)))))
 
 ;; Regression, issue #112: the `:provider-call` lifecycle marker carried only the iteration
 ;; and a start timestamp, so a stalled stream had nothing to name — the gateway failed the
 ;; turn without ever telling the human which provider and model went silent.
-(defdescribe
-  provider-call-chunk-test
-  (it "names the provider and model the call is dispatched to"
-      (expect (= {:phase :provider-call
-                  :iteration 3
-                  :reason :tool-result
-                  :started-at-ms 42
-                  :provider "github-copilot-enterprise"
-                  :model "claude-opus-5"}
-                 (#'lp/provider-call-chunk
-                  3
-                  {:provider :github-copilot-enterprise :name "claude-opus-5"}
-                  42))))
-
-  (it "leaves out what the router could not resolve"
-      (expect (= {:phase :provider-call
-                  :iteration 0
-                  :reason :user-submit
-                  :started-at-ms 1
-                  :provider nil
-                  :model nil}
-                 (#'lp/provider-call-chunk 0 {} 1)))))
+(defdescribe provider-call-chunk-test
+             (it "names the provider and model the call is dispatched to"
+                 (expect (= {:phase :provider-call
+                             :iteration 3
+                             :reason :tool-result
+                             :started-at-ms 42
+                             :provider "github-copilot-enterprise"
+                             :model "claude-opus-5"}
+                            (#'lp/provider-call-chunk
+                             3
+                             {:provider :github-copilot-enterprise :name "claude-opus-5"}
+                             42))))
+             (it "leaves out what the router could not resolve"
+                 (expect (= {:phase :provider-call
+                             :iteration 0
+                             :reason :user-submit
+                             :started-at-ms 1
+                             :provider nil
+                             :model nil}
+                            (#'lp/provider-call-chunk 0 {} 1)))))
 
 (defdescribe providers-router-rebuild-hook-wiring-test
-  ;; The picker's config-affecting saves fire `providers/rebuild-shared-router!`,
-  ;; which only rebuilds the shared router because `loop` registered `reload-router!`
-  ;; as that hook. Before the wiring the hook fired into nil and a default-model
-  ;; change never reached the shared router — a new session's first turn kept the
-  ;; OLD root until the model was re-pinned on the session.
-  ;; The hook holds the VAR: `permission-config-snapshot-test` above reloads this
-  ;; namespace, and a hook holding the FUNCTION was left pointing at the version
-  ;; from the first load — dead wiring that only a full-suite run ever showed.
-  (it "wires reload-router! as the providers router-rebuild hook"
-      (expect (identical? (providers/router-rebuild-hook-val)
-                          #'lp/reload-router!))))
+             ;; The picker's config-affecting saves fire `providers/rebuild-shared-router!`,
+             ;; which only rebuilds the shared router because `loop` registered `reload-router!`
+             ;; as that hook. Before the wiring the hook fired into nil and a default-model
+             ;; change never reached the shared router — a new session's first turn kept the
+             ;; OLD root until the model was re-pinned on the session.
+             ;; The hook holds the VAR: `permission-config-snapshot-test` above reloads this
+             ;; namespace, and a hook holding the FUNCTION was left pointing at the version
+             ;; from the first load — dead wiring that only a full-suite run ever showed.
+             (it "wires reload-router! as the providers router-rebuild hook"
+                 (expect (identical? (providers/router-rebuild-hook-val) #'lp/reload-router!))))
 
 ;; Regression: `list_attachments()` located a TOOL artifact by its iteration
 ;; alone, so a descriptor for anything the model produced carried no turn id at
@@ -5955,14 +6029,21 @@
    promise is delivered — a turn wedged inside the engine, which is the only way
    to make an off-thread `tryLock` genuinely fail (the lock is reentrant)."
   [^java.util.concurrent.locks.ReentrantLock lock]
-  (let [held (promise)
-        release (promise)
-        ghost (Thread. ^Runnable (fn []
-                                   (.lock lock)
-                                   (deliver held true)
-                                   @release
-                                   (.unlock lock))
-                       "wedged-engine-test-ghost")]
+  (let [held
+        (promise)
+
+        release
+        (promise)
+
+        ghost
+        (Thread. ^Runnable
+                 (fn []
+                   (.lock lock)
+                   (deliver held true)
+                   @release
+                   (.unlock lock))
+                 "wedged-engine-test-ghost")]
+
     (.setDaemon ghost true)
     (.start ghost)
     @held
@@ -5975,84 +6056,105 @@
 ;; that lock with a bare `.lock`, so the NEXT turn parked in `Unsafe.park`
 ;; forever: `turn.started` on the wire, not one event after it, and deaf to its
 ;; own cancel. The session was dead for the life of the daemon.
-(defdescribe wedged-engine-lock-test
+(defdescribe
+  wedged-engine-lock-test
   (describe
     "a turn queued behind a wedged one"
     (it
       "waits while the lock is legitimately held, but stays interruptible"
-      (let [id "wedge-test/queued"
-            k (cache-key id)
-            entry (new-cache-entry {:marker :ghost})
-            ghost (hold-lock-forever! (:lock entry))
-            outcome (promise)]
+      (let [id
+            "wedge-test/queued"
+
+            k
+            (cache-key id)
+
+            entry
+            (new-cache-entry {:marker :ghost})
+
+            ghost
+            (hold-lock-forever! (:lock entry))
+
+            outcome
+            (promise)]
+
         (swap! env-cache assoc k entry)
-        (try
-          (let [queued (Thread. ^Runnable
-                                (fn []
-                                  (try (lp/send! id "hello" {})
-                                       (deliver outcome :returned)
-                                       (catch InterruptedException _
-                                         (deliver outcome :interrupted))
-                                       (catch Throwable t
-                                         (deliver outcome [:threw (str (class t))]))))
-                                "wedged-engine-test-queued")]
-            (.setDaemon queued true)
-            (.start queued)
-            ;; a running turn owns the lock: queueing is correct, so nothing resolves
-            (Thread/sleep 400)
-            (expect (not (realized? outcome)))
-            ;; ...but a cancel must be able to take this turn OFF that queue
-            (.interrupt queued)
-            (expect (= :interrupted (deref outcome 5000 :parked-forever)))
-            (.join queued 1000))
-          (finally (deliver (:release ghost) true)
-                   (.join ^Thread (:thread ghost) 2000)
-                   (swap! env-cache dissoc k)))))
+        (try (let [queued (Thread.
+                            ^Runnable
+                            (fn []
+                              (try (lp/send! id "hello" {})
+                                   (deliver outcome :returned)
+                                   (catch InterruptedException _ (deliver outcome :interrupted))
+                                   (catch Throwable t (deliver outcome [:threw (str (class t))]))))
+                            "wedged-engine-test-queued")]
+               (.setDaemon queued true)
+               (.start queued)
+               ;; a running turn owns the lock: queueing is correct, so nothing resolves
+               (Thread/sleep 400)
+               (expect (not (realized? outcome)))
+               ;; ...but a cancel must be able to take this turn OFF that queue
+               (.interrupt queued)
+               (expect (= :interrupted (deref outcome 5000 :parked-forever)))
+               (.join queued 1000))
+             (finally (deliver (:release ghost) true)
+                      (.join ^Thread (:thread ghost) 2000)
+                      (swap! env-cache dissoc k)))))
     (it
       "abandons a CONDEMNED engine and runs on a fresh context"
-      (let [id "wedge-test/condemned"
-            k (cache-key id)
-            entry (new-cache-entry {:marker :ghost})
-            ^java.util.concurrent.locks.ReentrantLock dead-lock (:lock entry)
-            ghost (hold-lock-forever! dead-lock)
-            got (promise)]
+      (let [id
+            "wedge-test/condemned"
+
+            k
+            (cache-key id)
+
+            entry
+            (new-cache-entry {:marker :ghost})
+
+            ^java.util.concurrent.locks.ReentrantLock dead-lock
+            (:lock entry)
+
+            ghost
+            (hold-lock-forever! dead-lock)
+
+            got
+            (promise)]
+
         (swap! env-cache assoc k entry)
-        (try
-          (with-redefs-fn {#'lp/open-env! (fn [_ _]
-                                            {:marker :fresh})}
-            (fn []
-              (let [waiter (Thread. ^Runnable
-                                    (fn []
-                                      (let [e (acquire-turn-lock! id)]
-                                        (.unlock ^java.util.concurrent.locks.ReentrantLock (:lock e))
-                                        (deliver got e)))
-                                    "wedged-engine-test-waiter")]
-                (.setDaemon waiter true)
-                (.start waiter)
-                ;; nothing has declared the holder dead yet, so we keep waiting
-                (Thread/sleep 400)
-                (expect (not (realized? got)))
-                ;; the daemon's cancel backstop declares the turn over
-                (expect (true? (lp/condemn-env! id)))
-                (let [fresh (deref got 5000 ::parked)]
-                  (expect (not= ::parked fresh))
-                  ;; a FRESH env under a FRESH lock — the ghost keeps the old one
-                  (expect (= {:marker :fresh} (:environment fresh)))
-                  (expect (not (identical? dead-lock (:lock fresh)))))
-                (.join waiter 1000))))
-          (finally (deliver (:release ghost) true)
-                   (.join ^Thread (:thread ghost) 2000)
-                   (swap! env-cache dissoc k)))))))
+        (try (with-redefs-fn {#'lp/open-env! (fn [_ _]
+                                               {:marker :fresh})}
+               (fn []
+                 (let [waiter (Thread. ^Runnable
+                                       (fn []
+                                         (let [e (acquire-turn-lock! id)]
+                                           (.unlock ^java.util.concurrent.locks.ReentrantLock
+                                                    (:lock e))
+                                           (deliver got e)))
+                                       "wedged-engine-test-waiter")]
+                   (.setDaemon waiter true)
+                   (.start waiter)
+                   ;; nothing has declared the holder dead yet, so we keep waiting
+                   (Thread/sleep 400)
+                   (expect (not (realized? got)))
+                   ;; the daemon's cancel backstop declares the turn over
+                   (expect (true? (lp/condemn-env! id)))
+                   (let [fresh (deref got 5000 ::parked)]
+                     (expect (not= ::parked fresh))
+                     ;; a FRESH env under a FRESH lock — the ghost keeps the old one
+                     (expect (= {:marker :fresh} (:environment fresh)))
+                     (expect (not (identical? dead-lock (:lock fresh)))))
+                   (.join waiter 1000))))
+             (finally (deliver (:release ghost) true)
+                      (.join ^Thread (:thread ghost) 2000)
+                      (swap! env-cache dissoc k)))))))
 (defdescribe voice-projection-prompt-test
-  (it "activates the voice projection instructions only for the requested turn"
-      (let [projected (#'lp/voice-system-prompt "base" {"voice_projection" true})]
-        (expect (str/includes? projected "base"))
-        (expect (str/includes? projected "vis-speech"))
-        (expect (str/includes? projected "text-to-speech"))
-        (expect (str/includes? projected "text-only turn"))
-        (expect (str/includes? projected "do not mention voice mode")))
-      (expect (= "base" (#'lp/voice-system-prompt "base" {})))
-      (expect (= "base" (#'lp/voice-system-prompt "base" {:voice_projection true})))))
+             (it "activates the voice projection instructions only for the requested turn"
+                 (let [projected (#'lp/voice-system-prompt "base" {"voice_projection" true})]
+                   (expect (str/includes? projected "base"))
+                   (expect (str/includes? projected "vis-speech"))
+                   (expect (str/includes? projected "text-to-speech"))
+                   (expect (str/includes? projected "text-only turn"))
+                   (expect (str/includes? projected "do not mention voice mode")))
+                 (expect (= "base" (#'lp/voice-system-prompt "base" {})))
+                 (expect (= "base" (#'lp/voice-system-prompt "base" {:voice_projection true})))))
 
 (def ^:private failed-turn-outcome
   "A finished turn's terminal payload: content, structured error, counters, CTX."
@@ -6068,8 +6170,12 @@
   "Every payload `persist-turn-outcome!` hands the store, plus what it returned.
    `reject?` decides which payloads the store refuses."
   [reject? opts]
-  (let [calls (atom [])
-        result (atom nil)]
+  (let [calls
+        (atom [])
+
+        result
+        (atom nil)]
+
     (with-redefs-fn {#'persistance/db-update-session-turn!
                      (fn [_db _id o]
                        (swap! calls conj o)
@@ -6094,8 +6200,12 @@
         (expect (true? result))
         (expect (= [failed-turn-outcome] calls))))
   (it "degrades to a recorded outcome when the full payload is refused"
-      (let [{:keys [calls result]} (outcome-writes #(some? (:ctx %)) failed-turn-outcome)
-            degraded (second calls)]
+      (let [{:keys [calls result]}
+            (outcome-writes #(some? (:ctx %)) failed-turn-outcome)
+
+            degraded
+            (second calls)]
+
         (expect (true? result))
         (expect (= 2 (count calls)))
         ;; The turn ENDS: same status and counters, no CTX, no unstorable answer.
@@ -6109,10 +6219,10 @@
         (expect (str/includes? (get (:error degraded) "message") "SQLITE_TOOBIG"))))
   (it "keeps a successful turn's own status when only its answer is refused"
       (let [{:keys [calls result]} (outcome-writes #(some? (:ctx %))
-                                                  (assoc failed-turn-outcome
-                                                    :status :success
-                                                    :error nil
-                                                    :prior-outcome :complete))]
+                                                   (assoc failed-turn-outcome
+                                                     :status :success
+                                                     :error nil
+                                                     :prior-outcome :complete))]
         (expect (true? result))
         (expect (= :success (:status (second calls))))
         (expect (= "turn_outcome_persist_failed" (get (:error (second calls)) "code")))))
@@ -6131,59 +6241,72 @@
   failed-turn-finalization-test
   "A failed turn ALWAYS records its outcome: content rebuilt from the trace's
    provider failure, never a throw out of the finalizer."
-  (it "records the outcome and the provider failure when the fallback is not answer-shaped"
-      (let [writes (atom [])
+  (it
+    "records the outcome and the provider failure when the fallback is not answer-shaped"
+    (let [writes
+          (atom [])
 
-            trace [{:iteration 1}
-                   {:iteration 2
-                    :error {:message "Stream idle timeout (300000ms with no bytes): closed"
-                            :data {:type :svar.core/stream-idle-timeout
-                                   :idle-timeout-ms 300000}}}]
+          trace
+          [{:iteration 1}
+           {:iteration 2
+            :error {:message "Stream idle timeout (300000ms with no bytes): closed"
+                    :data {:type :svar.core/stream-idle-timeout :idle-timeout-ms 300000}}}]
 
-            result (with-redefs-fn {#'persistance/db-update-session-turn!
-                                    (fn [_db _id o] (swap! writes conj o) :written)}
-                     #(#'lp/finalize-turn-result
-                       {:db-info {} :root-model "m" :root-provider :p}
-                       {:session-turn-id "turn-1"
-                        :start-time (System/nanoTime)
-                        :iteration-count 2
-                        :status :error
-                        :trace trace
-                        :answer {:overloaded true :status 529}
-                        :total-tokens-atom (atom {})
-                        :total-cost-atom (atom {})}))
+          result
+          (with-redefs-fn {#'persistance/db-update-session-turn! (fn [_db _id o]
+                                                                   (swap! writes conj o)
+                                                                   :written)}
+            #(#'lp/finalize-turn-result
+               {:db-info {} :root-model "m" :root-provider :p}
+               {:session-turn-id "turn-1"
+                :start-time (System/nanoTime)
+                :iteration-count 2
+                :status :error
+                :trace trace
+                :answer {:overloaded true :status 529}
+                :total-tokens-atom (atom {})
+                :total-cost-atom (atom {})}))
 
-            written (first @writes)
+          written
+          (first @writes)
 
-            card (first (:content written))]
-        ;; the terminal write happened at all - the whole point
-        (expect (= 1 (count @writes)))
-        (expect (= :error (:status written)))
-        (expect (= 2 (:iteration-count written)))
-        ;; content is the real provider failure, never the validation string
-        (expect (= "error" (get card "type")))
-        (expect (nil? (re-find #"(?i)canonical content" (pr-str (:content written)))))
-        (expect (some? (:error written)))
-        (expect (= :error (:status result)))))
+          card
+          (first (:content written))]
+
+      ;; the terminal write happened at all - the whole point
+      (expect (= 1 (count @writes)))
+      (expect (= :error (:status written)))
+      (expect (= 2 (:iteration-count written)))
+      ;; content is the real provider failure, never the validation string
+      (expect (= "error" (get card "type")))
+      (expect (nil? (re-find #"(?i)canonical content" (pr-str (:content written)))))
+      (expect (some? (:error written)))
+      (expect (= :error (:status result)))))
   (it "keeps the answer's own blocks when the fallback IS answer-shaped"
-      (let [writes (atom [])
+      (let [writes
+            (atom [])
 
-            answer [(content/error "provider_error" "upstream refused" false)]
+            answer
+            [(content/error "provider_error" "upstream refused" false)]
 
-            _ (with-redefs-fn {#'persistance/db-update-session-turn!
-                               (fn [_db _id o] (swap! writes conj o) :written)}
-                #(#'lp/finalize-turn-result
-                  {:db-info {}}
-                  {:session-turn-id "turn-2"
-                   :start-time (System/nanoTime)
-                   :iteration-count 1
-                   :status :error
-                   :trace []
-                   :answer answer
-                   :total-tokens-atom (atom {})
-                   :total-cost-atom (atom {})}))
+            _
+            (with-redefs-fn {#'persistance/db-update-session-turn! (fn [_db _id o]
+                                                                     (swap! writes conj o)
+                                                                     :written)}
+              #(#'lp/finalize-turn-result
+                 {:db-info {}}
+                 {:session-turn-id "turn-2"
+                  :start-time (System/nanoTime)
+                  :iteration-count 1
+                  :status :error
+                  :trace []
+                  :answer answer
+                  :total-tokens-atom (atom {})
+                  :total-cost-atom (atom {})}))
 
-            written (first @writes)]
+            written
+            (first @writes)]
+
         (expect (= 1 (count @writes)))
         (expect (= "upstream refused" (get (first (:content written)) "message"))))))
 
@@ -6193,28 +6316,38 @@
 ;; toggles, the vision memory, the MCP servers and the selection tags were gone.
 (defdescribe set-provider-keeps-the-rest-of-the-store-test
              "Persisting a provider is an update of the machine store, not a replacement."
-             (it "leaves every unrelated machine key in place"
-                 (let [dir (.toFile (java.nio.file.Files/createTempDirectory
-                                      "vis-set-provider"
-                                      (make-array java.nio.file.attribute.FileAttribute 0)))
-                       home (java.io.File. dir "home")
-                       store-dir (java.io.File. home ".vis")
-                       old-home (System/getProperty "user.home")]
-                   (try
-                     (.mkdirs store-dir)
-                     (spit (java.io.File. store-dir "state.yml")
-                           "toggles:\n  introspection: true\ndefault_provider: keep-me\n")
-                     (System/setProperty "user.home" (.getPath home))
-                     (config/invalidate-config-cache!)
-                     (with-redefs-fn {#'lp/rebuild-router! (fn [_] :router)
-                                      #'lp/refresh-cached-routers! (fn [_] nil)
-                                      #'config/current-config (fn [] {:providers []})}
-                       (fn []
-                         (lp/set-provider! {:id :probe :api-key "k" :models [{:name "m"}]})))
-                     (let [store (config/load-global-config-raw)]
-                       (expect (= {"introspection" true} (get store "toggles")))
-                       (expect (= "keep-me" (get store "default_provider")))
-                       (expect (= ["probe"] (mapv #(get % "id") (get store "providers")))))
-                     (finally
-                       (System/setProperty "user.home" old-home)
-                       (config/invalidate-config-cache!))))))
+             (it
+               "leaves every unrelated machine key in place"
+               (let [dir
+                     (.toFile (java.nio.file.Files/createTempDirectory
+                                "vis-set-provider"
+                                (make-array java.nio.file.attribute.FileAttribute 0)))
+
+                     home
+                     (java.io.File. dir "home")
+
+                     store-dir
+                     (java.io.File. home ".vis")
+
+                     old-home
+                     (System/getProperty "user.home")]
+
+                 (try (.mkdirs store-dir)
+                      (spit (java.io.File. store-dir "state.yml")
+                            "toggles:\n  introspection: true\ndefault_provider: keep-me\n")
+                      (System/setProperty "user.home" (.getPath home))
+                      (config/invalidate-config-cache!)
+                      (with-redefs-fn {#'lp/rebuild-router! (fn [_]
+                                                              :router)
+                                       #'lp/refresh-cached-routers! (fn [_]
+                                                                      nil)
+                                       #'config/current-config (fn []
+                                                                 {:providers []})}
+                        (fn []
+                          (lp/set-provider! {:id :probe :api-key "k" :models [{:name "m"}]})))
+                      (let [store (config/load-global-config-raw)]
+                        (expect (= {"introspection" true} (get store "toggles")))
+                        (expect (= "keep-me" (get store "default_provider")))
+                        (expect (= ["probe"] (mapv #(get % "id") (get store "providers")))))
+                      (finally (System/setProperty "user.home" old-home)
+                               (config/invalidate-config-cache!))))))

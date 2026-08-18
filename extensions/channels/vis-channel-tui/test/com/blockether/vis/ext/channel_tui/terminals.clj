@@ -19,12 +19,11 @@
   ;; throws "Unexpected interrupt" when Thread.interrupted() is set, which
   ;; made the wheel-coalescing reads flaky depending on test order.
   (Thread/interrupted)
-  (let
-    [terminal
-     (DefaultVirtualTerminal. (TerminalSize. 80 30))
+  (let [terminal
+        (DefaultVirtualTerminal. (TerminalSize. 80 30))
 
-     screen
-     (TerminalScreen. terminal)]
+        screen
+        (TerminalScreen. terminal)]
 
     (.startScreen screen)
     {:terminal terminal :screen screen}))
@@ -44,12 +43,11 @@
   (->> (range 30)
        (map (fn [y]
               (reduce (fn [acc x]
-                        (let
-                          [^TextCharacter ch
-                           (.getCharacter terminal (TerminalPosition. (int x) (int y)))
+                        (let [^TextCharacter ch
+                              (.getCharacter terminal (TerminalPosition. (int x) (int y)))
 
-                           s
-                           (if ch (.getCharacterString ch) " ")]
+                              s
+                              (if ch (.getCharacterString ch) " ")]
 
                           (-> acc
                               (update :text str s)

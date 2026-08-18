@@ -55,21 +55,19 @@
    far, or `ms` elapses. Returns the text read — the ASSERTION decides whether
    that was enough, so a timeout fails with the bytes that did arrive."
   ^String [^SocketChannel ch pred ms]
-  (let
-    [buf
-     (ByteBuffer/allocate 4096)
+  (let [buf
+        (ByteBuffer/allocate 4096)
 
-     deadline
-     (+ (System/currentTimeMillis) (long ms))]
+        deadline
+        (+ (System/currentTimeMillis) (long ms))]
 
     (loop [acc ""]
       (.clear buf)
       (let [n (.read ch buf)]
-        (cond (pos? n) (let
-                         [ba (byte-array n)
-                          _ (.flip buf)
-                          _ (.get buf ba)
-                          acc' (str acc (String. ba))]
+        (cond (pos? n) (let [ba (byte-array n)
+                             _ (.flip buf)
+                             _ (.get buf ba)
+                             acc' (str acc (String. ba))]
 
                          (if (pred acc') acc' (recur acc')))
               (neg? n) acc
@@ -83,18 +81,17 @@
         (expect (str/ends-with? (str (.getFileName p)) "__dev-server.sock"))
         (expect (str/includes? (str (.getFileName p)) "sess-abc"))))
   (it "replays buffered output, tees a real terminal's live output, and types into it"
-      (let
-        [pty
-         (real-pty)
+      (let [pty
+            (real-pty)
 
-         path
-         (tmp-sock)
+            path
+            (tmp-sock)
 
-         {:keys [stop] sp :path}
-         (pb/serve! {:pty pty
-                     :path path
-                     :replay-fn (fn []
-                                  (.getBytes "REPLAY\n"))})]
+            {:keys [stop] sp :path}
+            (pb/serve! {:pty pty
+                        :path path
+                        :replay-fn (fn []
+                                     (.getBytes "REPLAY\n"))})]
 
         (try (expect (.exists (File. ^String sp)))
              (with-open [ch (connect sp)]
@@ -111,15 +108,14 @@
         ;; stop unlinks the socket file
         (expect (not (.exists (File. ^String sp))))))
   (it "find-socket resolves an explicit socket path"
-      (let
-        [pty
-         (real-pty)
+      (let [pty
+            (real-pty)
 
-         path
-         (tmp-sock)
+            path
+            (tmp-sock)
 
-         {:keys [stop] sp :path}
-         (pb/serve! {:pty pty :path path})]
+            {:keys [stop] sp :path}
+            (pb/serve! {:pty pty :path path})]
 
         (try (expect (= sp (str (pb/find-socket {:socket sp})))) (finally (stop) (kill! pty)))))
   (it "attach! returns exit code 2 for a missing socket"

@@ -41,12 +41,11 @@
   "A skill's text IS its `SKILL.md`: the frontmatter summary, then the whole body
    verbatim. There is no second, shorter description anywhere to drift from it."
   (it "carries the whole body and no call — a skill is prose"
-      (let
-        [skills
-         (discovery/skills)
+      (let [skills
+            (discovery/skills)
 
-         by-name
-         (into {} (map (juxt :name identity)) (dc/entries))]
+            by-name
+            (into {} (map (juxt :name identity)) (dc/entries))]
 
         (expect (seq skills))
         (doseq [s skills]
@@ -133,12 +132,12 @@
 (defdescribe index-text-test
              "`doc()` is CURATED: a hand-ordered short list that names where the rest is."
              (it "prints only curated names that exist, and points at apropos"
-                 (let
-                   [es
-                    [{:name "grep" :text "Search file content."} {:name "zzz" :text "Not curated."}]
+                 (let [es
+                       [{:name "grep" :text "Search file content."}
+                        {:name "zzz" :text "Not curated."}]
 
-                    out
-                    (dc/index-text es)]
+                       out
+                       (dc/index-text es)]
 
                    (expect (str/includes? out "grep — Search file content."))
                    (expect (not (str/includes? out "zzz")))
@@ -163,9 +162,8 @@
   (it "documents only call shapes the runtime accepts"
       (let [es (dc/entries)]
         (expect (seq es))
-        (doseq
-          [e es
-           [re what] refused-call-shapes]
+        (doseq [e es
+                [re what] refused-call-shapes]
 
           (expect (nil? (re-find re (:text e))) (str (:name e) " documents " what)))))
   (it "catches each banned shape when one does appear"
@@ -195,12 +193,11 @@
              (expect (= 1 @runs))
              (finally (dc/register-source! ::stamped (constantly :gone) (constantly []))))))
   (it "re-runs a source the moment its stamp changes"
-      (let
-        [stamp
-         (atom :v1)
+      (let [stamp
+            (atom :v1)
 
-         runs
-         (atom 0)]
+            runs
+            (atom 0)]
 
         (try (dc/register-source! ::restamped
                                   (fn []
@@ -241,12 +238,12 @@
    whole — so the excerpt has to prove the document is worth opening: its own
    opening, the region the query landed in, and a fragment from deeper down."
   (it "shows the opening, the matched region and a fragment from further down"
-      (let
-        [{:keys [gist at hit]}
-         (dc/preview deep-doc [(term "screenshot")])
+      (let [{:keys [gist at hit]}
+            (dc/preview deep-doc [(term "screenshot")])
 
-         wanted
-         (inc (count (take-while #(not (str/includes? % "Capture")) (str/split-lines deep-doc))))]
+            wanted
+            (inc (count (take-while #(not (str/includes? % "Capture"))
+                                    (str/split-lines deep-doc))))]
 
         (expect (str/starts-with? gist "Automate a browser end to end"))
         (expect (str/includes? gist "Capture a screenshot"))
@@ -254,12 +251,11 @@
         (expect (= wanted at) "`at` must be the line the matched region starts on")
         (expect (= ["screenshot"] hit))))
   (it "answers `at` 0 when the opening already held the match"
-      (let
-        [text
-         "Run pack tests; prefer the smallest target: a file or a directory."
+      (let [text
+            "Run pack tests; prefer the smallest target: a file or a directory."
 
-         {:keys [gist at]}
-         (dc/preview text [(term "tests")])]
+            {:keys [gist at]}
+            (dc/preview text [(term "tests")])]
 
         (expect (zero? at))
         (expect (= text gist))))
@@ -283,13 +279,12 @@
       (let [huge (apply str (repeat 4000 "screenshot everything everywhere all the time. "))]
         (expect (<= (count (:gist (dc/preview huge [(term "screenshot")]))) 300))))
   (it "never re-shows what the opening already printed"
-      (let
-        [text
-         (str "Apply EVERY anchored edit for one file in a single atomic write, "
-              "in prose or in code, with patch(path, edits).\n\n"
-              "Every anchor resolves against ONE read.")
+      (let [text
+            (str "Apply EVERY anchored edit for one file in a single atomic write, "
+                 "in prose or in code, with patch(path, edits).\n\n"
+                 "Every anchor resolves against ONE read.")
 
-         {:keys [gist]}
-         (dc/preview text [(term "anchor")])]
+            {:keys [gist]}
+            (dc/preview text [(term "anchor")])]
 
         (expect (< (count (re-seq #"anchored edit" gist)) 2)))))

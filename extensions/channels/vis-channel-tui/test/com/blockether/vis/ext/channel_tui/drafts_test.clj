@@ -26,15 +26,14 @@
         ;; A row with no name is still a row you can point at.
         (expect (= ["Untitled draft"] (mapv :label (drafts/rows [{"workspace_id" "ws-x"}]))))))
   (it "creating, switching and abandoning are three COMMANDS, never one list"
-      (let
-        [spec
-         (drafts/spec sample)
+      (let [spec
+            (drafts/spec sample)
 
-         items
-         (mapcat :items (:groups spec))
+            items
+            (mapcat :items (:groups spec))
 
-         k
-         (by-key spec)]
+            k
+            (by-key spec)]
 
         (expect (= ["Commands"] (mapv :title (:groups spec))))
         ;; Nothing to arm and remember: `--clean` used to be a flag, so the band
@@ -59,12 +58,11 @@
       ;; Esc.
       (expect (nil? (drafts/choice nil))))
   (it "the switch band is the LIST: trunk first, the workspace we are in marked ●"
-      (let
-        [spec
-         (drafts/switch-spec sample)
+      (let [spec
+            (drafts/switch-spec sample)
 
-         k
-         (by-key spec)]
+            k
+            (by-key spec)]
 
         (expect (= ["Switch to"] (mapv :title (:groups spec))))
         (expect (= [:trunk [:draft "ws-current"] [:draft "ws-parked"]]
@@ -134,19 +132,18 @@
                  ;; table rots. `/draft`'s own usage line in the engine is the list of verbs
                  ;; a human can type, so a verb added there and not here fails HERE instead
                  ;; of silently falling back to the modal path.
-                 (let
-                   [usage
-                    (->> wss/specs
-                         (filter #(= "draft" (:slash/name %)))
-                         first
-                         :slash/usage)
+                 (let [usage
+                       (->> wss/specs
+                            (filter #(= "draft" (:slash/name %)))
+                            first
+                            :slash/usage)
 
-                    verbs
-                    (->> (re-find #"<(.*)>" usage)
-                         second
-                         (re-seq #"[a-z]+")
-                         (remove #{"label"})
-                         set)]
+                       verbs
+                       (->> (re-find #"<(.*)>" usage)
+                            second
+                            (re-seq #"[a-z]+")
+                            (remove #{"label"})
+                            set)]
 
                    (expect (= #{"new" "clean" "apply" "stash" "resume" "list" "abandon"} verbs))
                    ;; `apply` and `stash` ask nothing — they carry their own answer and stay

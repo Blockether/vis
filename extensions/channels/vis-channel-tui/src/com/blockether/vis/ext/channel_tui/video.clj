@@ -160,30 +160,29 @@
   ([src] (decode-frames src nil))
   ([src
     {:keys [max-frames stride max-dimension encoding] :or {max-frames default-max-frames stride 1}}]
-   (let
-     [file
-      (io-file src)
+   (let [file
+         (io-file src)
 
-      _
-      (checked-meta file)
+         _
+         (checked-meta file)
 
-      step
-      (max 1 (long stride))
+         step
+         (max 1 (long stride))
 
-      png?
-      (= :png encoding)
+         png?
+         (= :png encoding)
 
-      decoded
-      (img/decode-video file
-                        (cond-> {:max-frames (max 0 (long max-frames)) :stride step}
-                          max-dimension
-                          (assoc :max-dimension (long max-dimension))
+         decoded
+         (img/decode-video file
+                           (cond-> {:max-frames (max 0 (long max-frames)) :stride step}
+                             max-dimension
+                             (assoc :max-dimension (long max-dimension))
 
-                          png?
-                          (assoc :encoding "png")))
+                             png?
+                             (assoc :encoding "png")))
 
-      {:keys [width height]}
-      decoded]
+         {:keys [width height]}
+         decoded]
 
      {:width width
       :height height
@@ -219,11 +218,10 @@
   (let [file (io-file src)]
     (checked-meta file)
     (img/video->gif file
-                    (cond->
-                      {:max-frames (max 0 (long max-frames))
-                       :stride (max 1 (long stride))
-                       :max-dimension (long (or max-dimension default-gif-max-dimension))
-                       :loop-count -1}
+                    (cond-> {:max-frames (max 0 (long max-frames))
+                             :stride (max 1 (long stride))
+                             :max-dimension (long (or max-dimension default-gif-max-dimension))
+                             :loop-count -1}
                       fps
                       (assoc :fps (double fps))))))
 
@@ -287,9 +285,8 @@
    nil when `src` holds no decodable picture."
   ([src] (poster src nil))
   ([src {:keys [max-dimension]}]
-   (let
-     [{:keys [frames]} (decode-frames src
-                                      {:max-frames 1 :max-dimension max-dimension :encoding :png})]
+   (let [{:keys [frames]}
+         (decode-frames src {:max-frames 1 :max-dimension max-dimension :encoding :png})]
      (when-let [f (first frames)]
        {:png (frame->png f) :width (:width f) :height (:height f)}))))
 
@@ -319,11 +316,10 @@
                       class
                       .getName)})))
   (when-let [proto (or protocol (timg/images-protocol))]
-    (let
-      [box (timg/cell-size {:w width :h height} (or cols 80) rows)
-       cols' (:cols box)
-       rows' (:rows box)
-       delay-ms (max 1 (long (Math/round (/ 1000.0 (double (or fps 12))))))]
+    (let [box (timg/cell-size {:w width :h height} (or cols 80) rows)
+          cols' (:cols box)
+          rows' (:rows box)
+          delay-ms (max 1 (long (Math/round (/ 1000.0 (double (or fps 12))))))]
 
       {:protocol proto
        :cols cols'
@@ -373,32 +369,30 @@
    Returns `{:frames :protocol :cols :rows}`, or nil when the terminal cannot
    draw inline images (a non-graphical TERM — nothing is written in that case)."
   [src {:keys [out loops cols rows max-dimension encoding] :or {loops 1} :as opts}]
-  (let
-    [decoded (decode-frames src
-                            (cond-> opts
-                              ;; Decode straight to the size the terminal will
-                              ;; DRAW. A 1080p clip in an 80-column window is
-                              ;; ~6x more pixels than the cells can show: it
-                              ;; doubles decode time and turns 10 MB of escape
-                              ;; bytes into 60 MB, all of it discarded by the
-                              ;; terminal's own downscale. Callers wanting the
-                              ;; native picture pass `:max-dimension` explicitly.
-                              (nil? max-dimension)
-                              (assoc :max-dimension (timg/box-pixels cols rows))
+  (let [decoded (decode-frames src
+                               (cond-> opts
+                                 ;; Decode straight to the size the terminal will
+                                 ;; DRAW. A 1080p clip in an 80-column window is
+                                 ;; ~6x more pixels than the cells can show: it
+                                 ;; doubles decode time and turns 10 MB of escape
+                                 ;; bytes into 60 MB, all of it discarded by the
+                                 ;; terminal's own downscale. Callers wanting the
+                                 ;; native picture pass `:max-dimension` explicitly.
+                                 (nil? max-dimension)
+                                 (assoc :max-dimension (timg/box-pixels cols rows))
 
-                              ;; Let the cdylib encode the frames. PNG is what
-                              ;; both protocols transmit, so decoding to RGBA
-                              ;; first only buys an extra copy: ~140 MB of
-                              ;; base64'd pixels across the FFI boundary and
-                              ;; onto the heap for a 120-frame 720p clip.
-                              (nil? encoding)
-                              (assoc :encoding :png)))]
+                                 ;; Let the cdylib encode the frames. PNG is what
+                                 ;; both protocols transmit, so decoding to RGBA
+                                 ;; first only buys an extra copy: ~140 MB of
+                                 ;; base64'd pixels across the FFI boundary and
+                                 ;; onto the heap for a 120-frame 720p clip.
+                                 (nil? encoding)
+                                 (assoc :encoding :png)))]
     (when-let [{:keys [frames protocol cols rows]} (playback-sequences decoded opts)]
-      (let
-        [^java.io.OutputStream os (or out System/out)
-         emit (fn [^String s]
-                (.write os (.getBytes s "UTF-8"))
-                (.flush os))]
+      (let [^java.io.OutputStream os (or out System/out)
+            emit (fn [^String s]
+                   (.write os (.getBytes s "UTF-8"))
+                   (.flush os))]
 
         ;; Save the cursor ONCE: every frame's escape restores to it.
         (emit "\u001b7")
@@ -408,9 +402,8 @@
                    (emit escape)
                    ;; Sleep to the frame's SCHEDULED wall-clock slot, not for a flat
                    ;; delay, so encode time doesn't accumulate into a slow clip.
-                   (let
-                     [due (+ t0 (* (inc (long i)) (long delay-ms) 1000000))
-                      left (quot (- due (System/nanoTime)) 1000000)]
+                   (let [due (+ t0 (* (inc (long i)) (long delay-ms) 1000000))
+                         left (quot (- due (System/nanoTime)) 1000000)]
 
                      (when (pos? left) (Thread/sleep left))))))
              (finally

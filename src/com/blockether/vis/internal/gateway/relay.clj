@@ -72,11 +72,10 @@
    silently trusting cleartext would put a permanent right to push to that phone
    on the wire. Loopback is the exception; it never reaches a network."
   [url]
-  (let
-    [u (some-> url
-               str
-               str/trim
-               (str/replace #"/+$" ""))]
+  (let [u (some-> url
+                  str
+                  str/trim
+                  (str/replace #"/+$" ""))]
     (when (and (not (str/blank? u))
                (or (str/starts-with? u "https://")
                    (and (str/starts-with? u "http://") (loopback? u))))
@@ -105,21 +104,20 @@
    `DEFAULT-URL` on this machine, and an empty value turns relaying off. Never
    throws."
   []
-  (let
-    [side
-     (or (side-config) {})
+  (let [side
+        (or (side-config) {})
 
-     env
-     (env-val "VIS_PUSH_RELAY_URL")
+        env
+        (env-val "VIS_PUSH_RELAY_URL")
 
-     raw
-     (some-> (or env (:url side) DEFAULT-URL)
-             str
-             str/trim
-             (str/replace #"/+$" ""))
+        raw
+        (some-> (or env (:url side) DEFAULT-URL)
+                str
+                str/trim
+                (str/replace #"/+$" ""))
 
-     usable
-     (usable-url raw)]
+        usable
+        (usable-url raw)]
 
     {:url (when-not (str/blank? raw) raw)
      :source (cond env "env"
@@ -169,26 +167,25 @@
 
 (defn- post-once
   [url grant notification]
-  (try (let
-         [resp
-          (http/request {:uri (str url "/v1/push")
-                         :method :post
-                         :client @http-client
-                         :headers {"authorization" (str "Bearer " grant)
-                                   "content-type" "application/json"}
-                         :body (payload notification)
-                         :timeout 15000
-                         :throw false
-                         :as :string})
+  (try (let [resp
+             (http/request {:uri (str url "/v1/push")
+                            :method :post
+                            :client @http-client
+                            :headers {"authorization" (str "Bearer " grant)
+                                      "content-type" "application/json"}
+                            :body (payload notification)
+                            :timeout 15000
+                            :throw false
+                            :as :string})
 
-          status
-          (:status resp)
+             status
+             (:status resp)
 
-          parsed
-          (wire/parse-json (:body resp))
+             parsed
+             (wire/parse-json (:body resp))
 
-          reason
-          (str (or (get parsed "reason") (get-in parsed ["error" "code"]) ""))]
+             reason
+             (str (or (get parsed "reason") (get-in parsed ["error" "code"]) ""))]
 
          {:status status :reason reason})
        (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
@@ -205,19 +202,19 @@
   (let [url (usable-url relay-url)]
     (cond (str/blank? (str relay-url)) {:status 0 :reason "not-configured"}
           (nil? url) {:status 0 :reason "insecure-relay-url"}
-          :else
-          (let
-            [first-try (post-once url grant notification)
-             result (if-not (transient-verdict? first-try)
-                      first-try
-                      (do (Thread/sleep ^long RETRY-DELAY-MS) (post-once url grant notification)))]
+          :else (let [first-try (post-once url grant notification)
+                      result (if-not (transient-verdict? first-try)
+                               first-try
+                               (do (Thread/sleep ^long RETRY-DELAY-MS)
+                                   (post-once url grant notification)))]
 
-            (when (not= 200 (:status result))
-              (tel/log! {:level :warn
-                         :id ::relay-push-failed
-                         :data
-                         {:grant (mask grant) :status (:status result) :reason (:reason result)}}))
-            result))))
+                  (when (not= 200 (:status result))
+                    (tel/log! {:level :warn
+                               :id ::relay-push-failed
+                               :data {:grant (mask grant)
+                                      :status (:status result)
+                                      :reason (:reason result)}}))
+                  result))))
 
 (defn dead-grant?
   "True when the relay's verdict means this grant will never deliver again —

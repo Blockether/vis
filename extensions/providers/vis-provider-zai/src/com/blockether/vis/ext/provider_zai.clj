@@ -99,12 +99,11 @@
   "Merge `slice` into the existing auth file under `plan-tag`. When
    `slice` is nil, REMOVE the plan entry. Returns the new map."
   [plan-tag slice]
-  (let
-    [current
-     (or (load-auth-file) {})
+  (let [current
+        (or (load-auth-file) {})
 
-     next-state
-     (if (nil? slice) (dissoc current plan-tag) (assoc current plan-tag slice))]
+        next-state
+        (if (nil? slice) (dissoc current plan-tag) (assoc current plan-tag slice))]
 
     (if (seq next-state)
       (save-auth-file! next-state)
@@ -205,12 +204,11 @@
 (defn- make-status-fn
   [plan-tag]
   (fn []
-    (let
-      [{:keys [provider-id label]}
-       (get PLANS plan-tag)
+    (let [{:keys [provider-id label]}
+          (get PLANS plan-tag)
 
-       detected
-       (detect-key plan-tag)]
+          detected
+          (detect-key plan-tag)]
 
       (cond-> {:is-authenticated (some? detected) :provider-id provider-id :label label}
         detected
@@ -240,9 +238,8 @@
 
 (defn- limit-kind
   [limit]
-  (case
-    (some-> (field limit :type)
-            str/upper-case)
+  (case (some-> (field limit :type)
+                str/upper-case)
     "TOKENS_LIMIT"
     :tokens
 
@@ -253,15 +250,14 @@
 
 (defn- limit-label
   [limit]
-  (let
-    [kind
-     (limit-kind limit)
+  (let [kind
+        (limit-kind limit)
 
-     unit
-     (field limit :unit)
+        unit
+        (field limit :unit)
 
-     number
-     (field limit :number)]
+        number
+        (field limit :number)]
 
     (cond (and (= :tokens kind) (= 3 unit) (= 5 number)) "Z.ai coding plan 5h token quota"
           (and (= :tokens kind) (= 6 unit) (= 7 number)) "Z.ai coding plan 7d token quota"
@@ -271,15 +267,14 @@
 
 (defn- limit-id
   [limit idx]
-  (let
-    [kind
-     (limit-kind limit)
+  (let [kind
+        (limit-kind limit)
 
-     unit
-     (field limit :unit)
+        unit
+        (field limit :unit)
 
-     number
-     (field limit :number)]
+        number
+        (field limit :number)]
 
     (cond (and (= :tokens kind) (= 3 unit) (= 5 number)) :zai-coding-plan-5h
           (and (= :tokens kind) (= 6 unit) (= 7 number)) :zai-coding-plan-7d
@@ -287,28 +282,27 @@
 
 (defn- limit-window
   [limit]
-  (let
-    [unit
-     (field limit :unit)
+  (let [unit
+        (field limit :unit)
 
-     number
-     (field limit :number)
+        number
+        (field limit :number)
 
-     reset-at-ms
-     (field limit :nextResetTime)
+        reset-at-ms
+        (field limit :nextResetTime)
 
-     base
-     (case unit
-       3
-       {:kind :rolling :unit :hour :size (or number 1)}
+        base
+        (case unit
+          3
+          {:kind :rolling :unit :hour :size (or number 1)}
 
-       5
-       {:kind :calendar :unit :month :size (or number 1)}
+          5
+          {:kind :calendar :unit :month :size (or number 1)}
 
-       6
-       {:kind :rolling :unit :day :size (or number 1)}
+          6
+          {:kind :rolling :unit :day :size (or number 1)}
 
-       nil)]
+          nil)]
 
     (cond-> base
       (and base (number? reset-at-ms))
@@ -316,36 +310,34 @@
 
 (defn- quota-limit-row
   [idx limit]
-  (let
-    [kind
-     (limit-kind limit)
+  (let [kind
+        (limit-kind limit)
 
-     usage
-     (field limit :usage)
+        usage
+        (field limit :usage)
 
-     current
-     (field limit :currentValue)
+        current
+        (field limit :currentValue)
 
-     remaining
-     (field limit :remaining)
+        remaining
+        (field limit :remaining)
 
-     percentage
-     (field limit :percentage)
+        percentage
+        (field limit :percentage)
 
-     window
-     (limit-window limit)
+        window
+        (limit-window limit)
 
-     token-pct?
-     (and (= :tokens kind) (number? percentage))]
+        token-pct?
+        (and (= :tokens kind) (number? percentage))]
 
-    (cond->
-      {:id (limit-id limit idx)
-       :label (limit-label limit)
-       :scope :plan
-       :kind kind
-       :precision :exact
-       :source :provider-api
-       :is-unlimited false}
+    (cond-> {:id (limit-id limit idx)
+             :label (limit-label limit)
+             :scope :plan
+             :kind kind
+             :precision :exact
+             :source :provider-api
+             :is-unlimited false}
       window
       (assoc :window window)
 
@@ -372,18 +364,17 @@
 
 (defn- quota->dynamic-limits
   [quota]
-  (let
-    [data
-     (or (field quota :data) quota)
+  (let [data
+        (or (field quota :data) quota)
 
-     limits
-     (field data :limits)
+        limits
+        (field data :limits)
 
-     rows
-     (if (sequential? limits) (mapv quota-limit-row (range) limits) [])
+        rows
+        (if (sequential? limits) (mapv quota-limit-row (range) limits) [])
 
-     level
-     (field data :level)]
+        level
+        (field data :level)]
 
     (cond-> {:limits rows}
       (empty? rows)
@@ -394,18 +385,17 @@
 
 (defn- fetch-quota!
   [api-key]
-  (let
-    [response
-     (http/get coding-quota-url
-               {:headers {"Accept" "application/json" "Authorization" (str "Bearer " api-key)}
-                :timeout 30000
-                :throw false})
+  (let [response
+        (http/get coding-quota-url
+                  {:headers {"Accept" "application/json" "Authorization" (str "Bearer " api-key)}
+                   :timeout 30000
+                   :throw false})
 
-     status
-     (:status response)
+        status
+        (:status response)
 
-     body
-     (:body response)]
+        body
+        (:body response)]
 
     (if (<= 200 status 299)
       (json/read-json body :key-fn keyword)
@@ -420,12 +410,11 @@
 (defn- make-limits-fn
   [plan-tag]
   (fn []
-    (let
-      [{:keys [provider-id label]}
-       (get PLANS plan-tag)
+    (let [{:keys [provider-id label]}
+          (get PLANS plan-tag)
 
-       detected
-       (detect-key plan-tag)]
+          detected
+          (detect-key plan-tag)]
 
       {:provider-id provider-id
        :status (if detected :ok :unauthenticated)
@@ -462,15 +451,14 @@
    instruct the user to set it and re-run."
   [plan-tag]
   (fn [printer-fn]
-    (let
-      [print!
-       (or printer-fn (constantly nil))
+    (let [print!
+          (or printer-fn (constantly nil))
 
-       {:keys [provider-id label env-keys base-url]}
-       (get PLANS plan-tag)
+          {:keys [provider-id label env-keys base-url]}
+          (get PLANS plan-tag)
 
-       existing
-       (detect-key plan-tag)]
+          existing
+          (detect-key plan-tag)]
 
       (cond
         ;; Configured or already on disk -> no-op so re-running auth doesn't

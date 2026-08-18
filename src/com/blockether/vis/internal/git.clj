@@ -84,22 +84,20 @@
    the caller spawns the next one."
   ([^File dir args] (run-git dir args nil))
   ([^File dir args {:keys [timeout-secs]}]
-   (let
-     [t0
-      (System/currentTimeMillis)
+   (let [t0
+         (System/currentTimeMillis)
 
-      spawned
-      (volatile! nil)]
+         spawned
+         (volatile! nil)]
 
      (try
        (let [pb (ProcessBuilder. ^java.util.List (git-argv args))]
          (.directory pb (or dir (cwd-file)))
-         (let
-           [p (.start pb)
-            _ (vreset! spawned p)
-            out (future (slurp (io/reader (.getInputStream p))))
-            err (future (slurp (io/reader (.getErrorStream p))))
-            done (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
+         (let [p (.start pb)
+               _ (vreset! spawned p)
+               out (future (slurp (io/reader (.getInputStream p))))
+               err (future (slurp (io/reader (.getErrorStream p))))
+               done (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
 
            (when-not done
              (terminate! p)
@@ -157,9 +155,8 @@
    authorization and execution."
   [args]
   (let [tokens (mapv str args)]
-    (loop
-      [global-args []
-       remaining (seq tokens)]
+    (loop [global-args []
+           remaining (seq tokens)]
 
       (if-let [arg (first remaining)]
         (cond (contains? git-global-options-with-value arg)
@@ -199,9 +196,8 @@
   [args]
   (loop [remaining (seq args)]
     (when-let [arg (first remaining)]
-      (let
-        [long-option (some #(when (or (= arg %) (str/starts-with? arg (str % "="))) %)
-                           (filter #(str/starts-with? % "--") commit-index-mutating-options))]
+      (let [long-option (some #(when (or (= arg %) (str/starts-with? arg (str % "="))) %)
+                              (filter #(str/starts-with? % "--") commit-index-mutating-options))]
         (cond long-option long-option
               (and (= "--fixup" arg) (str/starts-with? (str (second remaining)) "reword:"))
               "--fixup=reword"
@@ -232,12 +228,11 @@
 
 (defn- exact-commit
   [^File dir tokens global-args candidate-tree head-before opts]
-  (let
-    [current-result
-     (run-git dir (prefixed-args global-args ["write-tree"]) opts)
+  (let [current-result
+        (run-git dir (prefixed-args global-args ["write-tree"]) opts)
 
-     current-tree
-     (str/trim (or (:out current-result) ""))]
+        current-tree
+        (str/trim (or (:out current-result) ""))]
 
     (cond
       (not= 0 (:exit current-result)) current-result
@@ -253,10 +248,9 @@
             ;; but there is no new commit tree to assert.
             (if (= head-before head-after)
               result
-              (let
-                [tree-result
-                 (run-git dir (prefixed-args global-args ["rev-parse" "HEAD^{tree}"]) opts)
-                 actual-tree (str/trim (or (:out tree-result) ""))]
+              (let [tree-result
+                    (run-git dir (prefixed-args global-args ["rev-parse" "HEAD^{tree}"]) opts)
+                    actual-tree (str/trim (or (:out tree-result) ""))]
 
                 (cond
                   (not= 0 (:exit tree-result))
@@ -269,22 +263,21 @@
 
 (defn- dispatch-exact-commit
   [^File dir tokens global-args repo-root candidate-tree opts]
-  (let
-    [head-before
-     (git-value dir global-args ["rev-parse" "--verify" "HEAD"] opts)
+  (let [head-before
+        (git-value dir global-args ["rev-parse" "--verify" "HEAD"] opts)
 
-     context
-     {:root repo-root :candidate-tree candidate-tree :index-preserving? true}
+        context
+        {:root repo-root :candidate-tree candidate-tree :index-preserving? true}
 
-     result
-     (try (extension/invoke-operation
-            :git/commit
-            context
-            (fn []
-              (exact-commit dir tokens global-args candidate-tree head-before opts))
-            [])
-          (catch Throwable t
-            (failed-git-result (or (ex-message t) "Commit authorization failed."))))]
+        result
+        (try (extension/invoke-operation
+               :git/commit
+               context
+               (fn []
+                 (exact-commit dir tokens global-args candidate-tree head-before opts))
+               [])
+             (catch Throwable t
+               (failed-git-result (or (ex-message t) "Commit authorization failed."))))]
 
     (if (and (map? result) (contains? result :exit))
       result
@@ -310,18 +303,17 @@
                 "and commit without "
                 arg
                 "."))
-            (let
-              [repo-result
-               (run-git dir (prefixed-args global-args ["rev-parse" "--show-toplevel"]) opts)]
+            (let [repo-result
+                  (run-git dir (prefixed-args global-args ["rev-parse" "--show-toplevel"]) opts)]
               (if (not= 0 (:exit repo-result))
                 repo-result
-                (let
-                  [repo-root (some-> (:out repo-result)
-                                     str/trim
-                                     not-empty
-                                     io/file
-                                     .getCanonicalPath)
-                   candidate-result (run-git dir (prefixed-args global-args ["write-tree"]) opts)]
+                (let [repo-root (some-> (:out repo-result)
+                                        str/trim
+                                        not-empty
+                                        io/file
+                                        .getCanonicalPath)
+                      candidate-result
+                      (run-git dir (prefixed-args global-args ["write-tree"]) opts)]
 
                   (if (not= 0 (:exit candidate-result))
                     candidate-result
@@ -397,24 +389,27 @@
    Returns {:branch <str> :head <sha|nil> :detached? bool :upstream? bool
             :ahead <int> :behind <int> :entries [{:x :y :type :path :dir?}]}."
   [^File dir {:keys [ignored? untracked-all?]}]
-  (let
-    [args
-     (cond-> ["status" "--porcelain=v2" "--branch" "-z"]
-       ignored?
-       (conj "--ignored=matching")
+  (let [args
+        (cond-> ["status" "--porcelain=v2" "--branch" "-z"]
+          ignored?
+          (conj "--ignored=matching")
 
-       untracked-all?
-       (conj "--untracked-files=all"))
+          untracked-all?
+          (conj "--untracked-files=all"))
 
-     {:keys [exit out]}
-     (run-git dir args)]
+        {:keys [exit out]}
+        (run-git dir args)]
 
     (when (= 0 exit)
       (let [toks (vec (remove empty? (str/split (or out "") #"\u0000")))]
-        (loop
-          [i 0
-           acc
-           {:branch nil :head nil :detached? false :upstream? false :ahead 0 :behind 0 :entries []}]
+        (loop [i 0
+               acc {:branch nil
+                    :head nil
+                    :detached? false
+                    :upstream? false
+                    :ahead 0
+                    :behind 0
+                    :entries []}]
 
           (if (>= i (count toks))
             acc
@@ -441,9 +436,8 @@
                                                                 (subs 1)))))))
                     (str/starts-with? t "# ") (recur (inc i) acc)
                     (str/starts-with? t "1 ")
-                    (let
-                      [xy (subs t 2 4)
-                       path (nth (str/split t #" " 9) 8 "")]
+                    (let [xy (subs t 2 4)
+                          path (nth (str/split t #" " 9) 8 "")]
 
                       (recur (inc i)
                              (update acc
@@ -451,9 +445,8 @@
                                      conj
                                      {:x (nth xy 0) :y (nth xy 1) :type :changed :path path})))
                     (str/starts-with? t "2 ")
-                    (let
-                      [xy (subs t 2 4)
-                       path (nth (str/split t #" " 10) 9 "")]
+                    (let [xy (subs t 2 4)
+                          path (nth (str/split t #" " 10) 9 "")]
 
                       ;; type-2 records carry the original path in the NEXT token.
                       (recur (+ i 2)
@@ -462,9 +455,8 @@
                                      conj
                                      {:x (nth xy 0) :y (nth xy 1) :type :changed :path path})))
                     (str/starts-with? t "u ")
-                    (let
-                      [xy (subs t 2 4)
-                       path (nth (str/split t #" " 11) 10 "")]
+                    (let [xy (subs t 2 4)
+                          path (nth (str/split t #" " 11) 10 "")]
 
                       (recur (inc i)
                              (update acc
@@ -532,12 +524,11 @@
   "Detailed, environment-facing counters from a parsed porcelain map (as
    returned by the private status reader). Mirrors the historical JGit shape."
   [porcelain]
-  (let
-    [{:keys [modified untracked added changed missing removed conflicting]}
-     (count-buckets (:entries porcelain))
+  (let [{:keys [modified untracked added changed missing removed conflicting]}
+        (count-buckets (:entries porcelain))
 
-     changes?
-     (boolean (some pos? [modified untracked added changed missing removed conflicting]))]
+        changes?
+        (boolean (some pos? [modified untracked added changed missing removed conflicting]))]
 
     {:clean? (not changes?)
      :dirty? changes?
@@ -553,9 +544,8 @@
 (defn- dirty-counts
   "User-facing dirty buckets (footer): modified / created / deleted."
   [porcelain]
-  (let
-    [{:keys [modified changed added untracked missing removed]} (count-buckets (:entries
-                                                                                 porcelain))]
+  (let [{:keys [modified changed added untracked missing removed]} (count-buckets (:entries
+                                                                                    porcelain))]
     {:modified (+ (long modified) (long changed))
      :created (+ (long added) (long untracked))
      :deleted (+ (long missing) (long removed))}))
@@ -601,15 +591,14 @@
    tracked file is fine. Repo-less / nil-safe → false."
   [^File f]
   (boolean (when (and f (.exists ^File f))
-             (let
-               [cf
-                (.getCanonicalFile ^File f)
+             (let [cf
+                   (.getCanonicalFile ^File f)
 
-                dir
-                (.getParentFile ^java.io.File cf)
+                   dir
+                   (.getParentFile ^java.io.File cf)
 
-                {:keys [exit out]}
-                (run-git dir ["status" "--porcelain" "-z" "--" (.getPath cf)])]
+                   {:keys [exit out]}
+                   (run-git dir ["status" "--porcelain" "-z" "--" (.getPath cf)])]
 
                (and (= 0 exit)
                     (some (fn [line]
@@ -679,15 +668,13 @@
    nil/blank `root`."
   ([root] (workspace-status root (System/currentTimeMillis) default-cache-ms))
   ([root now-ms ttl-ms]
-   (when-let
-     [start (some-> root
-                    str
-                    str/trim
-                    not-empty
-                    io/file)]
-     (try (let
-            [cwd (.getPath (.getCanonicalFile start))
-             {:keys [expires-at value]} (get @working-tree-status-cache cwd)]
+   (when-let [start (some-> root
+                            str
+                            str/trim
+                            not-empty
+                            io/file)]
+     (try (let [cwd (.getPath (.getCanonicalFile start))
+                {:keys [expires-at value]} (get @working-tree-status-cache cwd)]
 
             (if expires-at
               (do (when (>= (long now-ms) (long expires-at))
@@ -714,39 +701,38 @@
       :ignored-exact #{<repo-rel-path> …}
       :ignored-prefixes [\"dir/\" …]}"
   [^File top]
-  (let
-    [p
-     (porcelain-tokens top {:ignored? true :untracked-all? true})
+  (let [p
+        (porcelain-tokens top {:ignored? true :untracked-all? true})
 
-     entries
-     (:entries p)
+        entries
+        (:entries p)
 
-     status-of
-     (fn [{:keys [type x y]}]
-       (case type
-         :unmerged
-         :conflict
+        status-of
+        (fn [{:keys [type x y]}]
+          (case type
+            :unmerged
+            :conflict
 
-         :untracked
-         :untracked
+            :untracked
+            :untracked
 
-         :changed
-         (cond (or (= x \D) (= y \D)) :deleted
-               (= x \A) :added
-               :else :modified)
+            :changed
+            (cond (or (= x \D) (= y \D)) :deleted
+                  (= x \A) :added
+                  :else :modified)
 
-         nil))
+            nil))
 
-     path-status
-     (reduce (fn [m e]
-               (if-let [s (status-of e)]
-                 (assoc m (:path e) s)
-                 m))
-             {}
-             (remove #(= :ignored (:type %)) entries))
+        path-status
+        (reduce (fn [m e]
+                  (if-let [s (status-of e)]
+                    (assoc m (:path e) s)
+                    m))
+                {}
+                (remove #(= :ignored (:type %)) entries))
 
-     ignored
-     (filter #(= :ignored (:type %)) entries)]
+        ignored
+        (filter #(= :ignored (:type %)) entries)]
 
     {:repo-root top
      :path-status path-status

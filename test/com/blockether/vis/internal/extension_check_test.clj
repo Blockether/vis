@@ -168,13 +168,12 @@
                 ;; exactly the arguments the lambda or the def declares in its place:
                 ;; `validate=lambda: None` is refused here for the same reason the
                 ;; running `vis.ask` refuses it, instead of blowing up at submit time.
-                (let
-                  [messages
-                   (mapv :message (:problems (report "validators.py")))
+                (let [messages
+                      (mapv :message (:problems (report "validators.py")))
 
-                   neither
-                   (str "a validate function takes the value, or the value "
-                        "and every value - this one takes neither")]
+                      neither
+                      (str "a validate function takes the value, or the value "
+                           "and every value - this one takes neither")]
 
                   (expect (= #{"invalid-request"} (kinds "validators.py")))
                   (expect (= 3 (count messages)))
@@ -227,20 +226,18 @@
                   (expect (:is-valid r)))))
   (describe "a run is data, not a throw"
             (it "reports an unreadable path instead of aborting the run"
-                (let
-                  [rs (check/check-files [(io/file (System/getProperty "java.io.tmpdir")
-                                                   "vis-extension-check-absent.py")])]
+                (let [rs (check/check-files [(io/file (System/getProperty "java.io.tmpdir")
+                                                      "vis-extension-check-absent.py")])]
                   (expect (= 1 (count rs)))
                   (expect (= #{"unreadable"} (set (map :kind (:problems (first rs))))))
                   (expect (not (check/ok? rs))))))
   (describe "the printed report"
             (it "carries one line per file, one per problem, and a tally"
-                (let
-                  [text
-                   (check/report-text [(report "valid.py") (report "bad-select.py")])
+                (let [text
+                      (check/report-text [(report "valid.py") (report "bad-select.py")])
 
-                   lines
-                   (str/split-lines text)]
+                      lines
+                      (str/split-lines text)]
 
                   (expect (str/starts-with? (first lines) "ok   valid.py"))
                   (expect (some #(str/starts-with? % "FAIL bad-select.py") lines))
@@ -248,9 +245,8 @@
                   (expect (= "2 files, 2 forms checked, 1 problem" (last lines))))))
   (describe "expand-paths"
             (it "turns a directory into its own *.py files, in name order"
-                (let
-                  [dir (io/file (System/getProperty "java.io.tmpdir")
-                                (str "vis-extension-check-" (System/nanoTime)))]
+                (let [dir (io/file (System/getProperty "java.io.tmpdir")
+                                   (str "vis-extension-check-" (System/nanoTime)))]
                   (.mkdirs dir)
                   (try (spit (io/file dir "b.py") valid-py)
                        (spit (io/file dir "a.py") valid-py)

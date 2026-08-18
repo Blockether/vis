@@ -97,9 +97,8 @@
   (let [head (when (seq? form) (first form))]
     (cond (contains? definition-heads head) (shadowed form shadow)
           (and (contains? var-heads head) (symbol? (second form)))
-          (let
-            [[_ nm & more] form
-             init (when (seq more) (last more))]
+          (let [[_ nm & more] form
+                init (when (seq more) (last more))]
 
             (if (seq more) (list 'do (list 'def nm) (list 'fn [] init)) (list 'def nm)))
           :else (list 'fn [] form))))
@@ -112,12 +111,11 @@
    that form only — the warnings already emitted are kept, exactly as a partially
    compiling file behaved before."
   [code shadow]
-  (let
-    [rdr
-     (clojure.lang.LineNumberingPushbackReader. (java.io.StringReader. (str code)))
+  (let [rdr
+        (clojure.lang.LineNumberingPushbackReader. (java.io.StringReader. (str code)))
 
-     opts
-     {:eof ::eof :read-cond :allow :features #{:clj}}]
+        opts
+        {:eof ::eof :read-cond :allow :features #{:clj}}]
 
     (binding [*read-eval* false]
       (loop []
@@ -162,28 +160,26 @@
    whose deps were not yet loaded otherwise reported hundreds of findings from
    inside those libraries, at their rows, stamped with the target's path."
   [code source]
-  (let
-    [shadow
-     (gensym "vis-lint-reflect-")
+  (let [shadow
+        (gensym "vis-lint-reflect-")
 
-     sw
-     (java.io.StringWriter.)]
+        sw
+        (java.io.StringWriter.)]
 
-    (try (binding
-           [*err*
-            sw
+    (try (binding [*err*
+                   sw
 
-            *warn-on-reflection*
-            true
+                   *warn-on-reflection*
+                   true
 
-            *unchecked-math*
-            :warn-on-boxed
+                   *unchecked-math*
+                   :warn-on-boxed
 
-            *file*
-            source
+                   *file*
+                   source
 
-            *ns*
-            (create-ns shadow)]
+                   *ns*
+                   (create-ns shadow)]
 
            (clojure.core/refer-clojure)
            (compile-forms! code shadow))
@@ -257,12 +253,11 @@
    every file, and a global reset there kept throwing away everything just
    computed — the second pass over an unchanged project still cost seconds."
   [key compute]
-  (let
-    [generation
-     (loaded-generation)
+  (let [generation
+        (loaded-generation)
 
-     hit
-     (.get ^java.util.Map cache key)]
+        hit
+        (.get ^java.util.Map cache key)]
 
     (if (= generation (nth hit 0 ::miss))
       (do (swap! cache-stats update "hits" inc) (nth hit 1))
@@ -306,15 +301,14 @@
   ([code file]
    (if (str/blank? (str code))
      []
-     (let
-       [;; The compiler prints `*file*` as a warning's source; keep the old
-        ;; `NO_SOURCE_PATH` shape when the caller named no target so every
-        ;; warning line still parses, and use it to tell our own warnings from
-        ;; those emitted while dependencies load.
-        source
-        (if (str/blank? (str file)) "NO_SOURCE_PATH" (str file))
+     (let [;; The compiler prints `*file*` as a warning's source; keep the old
+           ;; `NO_SOURCE_PATH` shape when the caller named no target so every
+           ;; warning line still parses, and use it to tell our own warnings from
+           ;; those emitted while dependencies load.
+           source
+           (if (str/blank? (str file)) "NO_SOURCE_PATH" (str file))
 
-        code
-        (str code)]
+           code
+           (str code)]
 
        (mapv #(assoc % "file" source) (cached (digest code) #(compute-findings code source)))))))

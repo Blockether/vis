@@ -92,44 +92,42 @@
   "POST application/x-www-form-urlencoded through babashka.http-client;
    return parsed JSON map on HTTP 2xx, nil otherwise."
   [url params & [extra-headers]]
-  (let
-    [body
-     (str/join "&"
-               (map (fn [[k v]]
-                      (str (java.net.URLEncoder/encode (str k) "UTF-8")
-                           "="
-                           (java.net.URLEncoder/encode (str v) "UTF-8")))
-                    params))
+  (let [body
+        (str/join "&"
+                  (map (fn [[k v]]
+                         (str (java.net.URLEncoder/encode (str k) "UTF-8")
+                              "="
+                              (java.net.URLEncoder/encode (str v) "UTF-8")))
+                       params))
 
-     resp
-     (http/post url
-                {:headers (merge COPILOT_HEADERS
-                                 {"Accept" "application/json"
-                                  "Content-Type" "application/x-www-form-urlencoded"}
-                                 (or extra-headers {}))
-                 :body body
-                 :timeout 30000
-                 :throw false})
+        resp
+        (http/post url
+                   {:headers (merge COPILOT_HEADERS
+                                    {"Accept" "application/json"
+                                     "Content-Type" "application/x-www-form-urlencoded"}
+                                    (or extra-headers {}))
+                    :body body
+                    :timeout 30000
+                    :throw false})
 
-     status
-     (:status resp)]
+        status
+        (:status resp)]
 
     (when (<= 200 status 299) (json-body (:body resp)))))
 
 (defn- get-json
   "GET with Bearer auth through babashka.http-client, return parsed JSON map."
   [url bearer-token]
-  (let
-    [resp
-     (http/get url
-               {:headers (merge COPILOT_HEADERS
-                                {"Accept" "application/json"
-                                 "Authorization" (str "Bearer " bearer-token)})
-                :timeout 30000
-                :throw false})
+  (let [resp
+        (http/get url
+                  {:headers (merge COPILOT_HEADERS
+                                   {"Accept" "application/json"
+                                    "Authorization" (str "Bearer " bearer-token)})
+                   :timeout 30000
+                   :throw false})
 
-     status
-     (:status resp)]
+        status
+        (:status resp)]
 
     (if (<= 200 status 299)
       (json-body (:body resp))
@@ -162,15 +160,13 @@
 
 (defn- normalize-account-type
   [value]
-  (let
-    [raw (cond (keyword? value) (name value)
-               (string? value) value
-               :else nil)]
-    (when-let
-      [s (some-> raw
-                 str/lower-case
-                 str/trim
-                 not-empty)]
+  (let [raw (cond (keyword? value) (name value)
+                  (string? value) value
+                  :else nil)]
+    (when-let [s (some-> raw
+                         str/lower-case
+                         str/trim
+                         not-empty)]
       (let [account-type (keyword s)]
         (when (contains? COPILOT_ACCOUNT_TYPES account-type) account-type)))))
 
@@ -218,18 +214,17 @@
    Returns token string or nil. Silent on non-macOS or missing entry."
   []
   (when (= "Mac OS X" (System/getProperty "os.name"))
-    (try (let
-           [proc
-            (-> (ProcessBuilder. ["security" "find-generic-password" "-s" "copilot-cli" "-a"
-                                  "github.com" "-w"])
-                (.redirectErrorStream true)
-                (.start))
+    (try (let [proc
+               (-> (ProcessBuilder. ["security" "find-generic-password" "-s" "copilot-cli" "-a"
+                                     "github.com" "-w"])
+                   (.redirectErrorStream true)
+                   (.start))
 
-            out
-            (str/trim (slurp (.getInputStream proc)))
+               out
+               (str/trim (slurp (.getInputStream proc)))
 
-            ok
-            (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)]
+               ok
+               (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)]
 
            (when (and ok (zero? (.exitValue proc)) (not (str/blank? out))) out))
          (catch Exception e (cancellation/preserve-interrupt! e) nil))))
@@ -260,12 +255,13 @@
    The caller must display user-code and verification-uri to the user."
   ([] (start-device-flow! nil))
   ([{:keys [enterprise-domain]}]
-   (let
-     [url
-      (if enterprise-domain (str "https://" enterprise-domain "/login/device/code") DEVICE_CODE_URL)
+   (let [url
+         (if enterprise-domain
+           (str "https://" enterprise-domain "/login/device/code")
+           DEVICE_CODE_URL)
 
-      resp
-      (post-form url {"client_id" CLIENT_ID "scope" "read:user"})]
+         resp
+         (post-form url {"client_id" CLIENT_ID "scope" "read:user"})]
 
      (when-not resp
        (throw (ex-info "Failed to start device flow - no response from GitHub" {:url url})))
@@ -286,31 +282,29 @@
   ([device-code interval] (poll-for-token! device-code interval 900 nil))
   ([device-code interval expires-in] (poll-for-token! device-code interval expires-in nil))
   ([device-code interval expires-in {:keys [enterprise-domain] :as opts}]
-   (let
-     [account-type
-      (configured-account-type opts)
+   (let [account-type
+         (configured-account-type opts)
 
-      url
-      (if enterprise-domain
-        (str "https://" enterprise-domain "/login/oauth/access_token")
-        ACCESS_TOKEN_URL)
+         url
+         (if enterprise-domain
+           (str "https://" enterprise-domain "/login/oauth/access_token")
+           ACCESS_TOKEN_URL)
 
-      deadline
-      (+ (System/currentTimeMillis) (* (long (or expires-in 900)) 1000))
+         deadline
+         (+ (System/currentTimeMillis) (* (long (or expires-in 900)) 1000))
 
-      interval-ms
-      (long (* (max 5 (long (or interval 5))) 1000))]
+         interval-ms
+         (long (* (max 5 (long (or interval 5))) 1000))]
 
      (loop []
 
        (when (> (System/currentTimeMillis) deadline)
          (throw (ex-info "Device flow expired - user did not authorize in time" {})))
        (Thread/sleep interval-ms)
-       (let
-         [resp (post-form url
-                          {"client_id" CLIENT_ID
-                           "device_code" device-code
-                           "grant_type" "urn:ietf:params:oauth:grant-type:device_code"})]
+       (let [resp (post-form url
+                             {"client_id" CLIENT_ID
+                              "device_code" device-code
+                              "grant_type" "urn:ietf:params:oauth:grant-type:device_code"})]
          (cond (:access_token resp) (let [oauth-token (:access_token resp)]
                                       (save-auth-file! {:oauth-token oauth-token
                                                         :refresh-token (:refresh_token resp)
@@ -401,16 +395,15 @@
 
 (defn- enable-copilot-model!
   [token api-url model-id]
-  (try (let
-         [resp (http/post (str api-url "/models/" model-id "/policy")
-                          {:headers (merge COPILOT_HEADERS
-                                           {"Content-Type" "application/json"
-                                            "Authorization" (str "Bearer " token)
-                                            (str "openai-" "inten" "t") "chat-policy"
-                                            "x-interaction-type" "chat-policy"})
-                           :body "{\"state\":\"enabled\"}"
-                           :timeout 30000
-                           :throw false})]
+  (try (let [resp (http/post (str api-url "/models/" model-id "/policy")
+                             {:headers (merge COPILOT_HEADERS
+                                              {"Content-Type" "application/json"
+                                               "Authorization" (str "Bearer " token)
+                                               (str "openai-" "inten" "t") "chat-policy"
+                                               "x-interaction-type" "chat-policy"})
+                              :body "{\"state\":\"enabled\"}"
+                              :timeout 30000
+                              :throw false})]
          (<= 200 (:status resp) 299))
        (catch Throwable _ false)))
 
@@ -435,12 +428,11 @@
    converging. Falls back to `expires_at - REFRESH_MARGIN_MS` for caches minted
    before `:refresh-at-ms` existed."
   [cached account-type ^long now]
-  (let
-    [hard
-     (long (or (:expires-at-ms cached) 0))
+  (let [hard
+        (long (or (:expires-at-ms cached) 0))
 
-     refresh-at
-     (long (or (:refresh-at-ms cached) (- hard (long REFRESH_MARGIN_MS))))]
+        refresh-at
+        (long (or (:refresh-at-ms cached) (- hard (long REFRESH_MARGIN_MS))))]
 
     (boolean (and cached
                   (:token cached)
@@ -453,33 +445,31 @@
    Returns {:token str :expires-at-ms long :api-url str}. `:api-url` is the LLM
    base WITH `/v1` (`{host}/v1`), derived from the token's `endpoints.api`."
   [oauth-token & [{:keys [enterprise-domain] :as opts}]]
-  (let
-    [account-type
-     (configured-account-type opts)
+  (let [account-type
+        (configured-account-type opts)
 
-     url
-     (if enterprise-domain
-       (str "https://api." enterprise-domain "/copilot_internal/v2/token")
-       COPILOT_TOKEN_URL)
+        url
+        (if enterprise-domain
+          (str "https://api." enterprise-domain "/copilot_internal/v2/token")
+          COPILOT_TOKEN_URL)
 
-     resp
-     (get-json url oauth-token)]
+        resp
+        (get-json url oauth-token)]
 
     (when-not (:token resp)
       (throw (ex-info "Copilot token exchange failed - no token in response"
                       {:response resp :url url})))
-    (let
-      [token
-       (:token resp)
+    (let [token
+          (:token resp)
 
-       now
-       (System/currentTimeMillis)
+          now
+          (System/currentTimeMillis)
 
-       hard-ms
-       (* (long (:expires_at resp)) 1000)
+          hard-ms
+          (* (long (:expires_at resp)) 1000)
 
-       refresh-in
-       (:refresh_in resp)]
+          refresh-in
+          (:refresh_in resp)]
 
       {:token token
        :expires-at-ms hard-ms
@@ -507,15 +497,14 @@
      :enterprise-domain - for GHE (e.g. \"github.mycompany.com\")"
   ([] (get-copilot-token! nil))
   ([opts]
-   (let
-     [account-type
-      (configured-account-type opts)
+   (let [account-type
+         (configured-account-type opts)
 
-      cached
-      @token-cache
+         cached
+         @token-cache
 
-      now
-      (System/currentTimeMillis)]
+         now
+         (System/currentTimeMillis)]
 
      (if (cached-token-usable? cached account-type now)
        ;; Cached token is still valid. Reuse the LLM base captured at exchange
@@ -529,18 +518,17 @@
         :account-type account-type
         :llm-headers COPILOT_HEADERS}
        ;; Need to refresh
-       (let
-         [oauth-token
-          (or (:oauth-token cached)
-              (:oauth-token (detect-oauth-token))
-              (throw (ex-info
-                       (str "No GitHub Copilot OAuth token found. Run `vis-agent providers auth "
-                            (name (account-provider-id account-type))
-                            "` to authenticate.")
-                       {:type :vis/copilot-not-authenticated})))
+       (let [oauth-token
+             (or (:oauth-token cached)
+                 (:oauth-token (detect-oauth-token))
+                 (throw (ex-info
+                          (str "No GitHub Copilot OAuth token found. Run `vis-agent providers auth "
+                               (name (account-provider-id account-type))
+                               "` to authenticate.")
+                          {:type :vis/copilot-not-authenticated})))
 
-          fresh
-          (exchange-for-copilot-token! oauth-token (assoc opts :account-type account-type))]
+             fresh
+             (exchange-for-copilot-token! oauth-token (assoc opts :account-type account-type))]
 
          (reset! token-cache (assoc fresh
                                :oauth-token oauth-token
@@ -574,24 +562,23 @@
    `:active-account-type` instead of claiming a sign-in it does not own."
   ([] (status nil))
   ([opts]
-   (let
-     [account-type
-      (configured-account-type opts)
+   (let [account-type
+         (configured-account-type opts)
 
-      active
-      (credential-account-type)
+         active
+         (credential-account-type)
 
-      credential
-      (detect-oauth-token)
+         credential
+         (detect-oauth-token)
 
-      detected
-      (when (= account-type active) credential)
+         detected
+         (when (= account-type active) credential)
 
-      cached
-      @token-cache
+         cached
+         @token-cache
 
-      now
-      (System/currentTimeMillis)]
+         now
+         (System/currentTimeMillis)]
 
      (cond-> {:is-authenticated (some? detected) :account-type account-type}
        (and credential (not= account-type active))
@@ -649,62 +636,60 @@
 
    `:used` keeps the raw (unclamped) spend so overage stays visible."
   [reset-ms [quota-key quota]]
-  (let
-    [id
-     (keyword (name quota-key))
+  (let [id
+        (keyword (name quota-key))
 
-     label
-     (-> (name quota-key)
-         (str/replace "_" " ")
-         (str/replace "-" " ")
-         str/capitalize)
+        label
+        (-> (name quota-key)
+            (str/replace "_" " ")
+            (str/replace "-" " ")
+            str/capitalize)
 
-     raw-remaining
-     (response-field quota :remaining)
+        raw-remaining
+        (response-field quota :remaining)
 
-     limit
-     (or (response-field quota :entitlement) (response-field quota :limit))
+        limit
+        (or (response-field quota :entitlement) (response-field quota :limit))
 
-     pct
-     (response-field quota :percent_remaining)
+        pct
+        (response-field quota :percent_remaining)
 
-     unlimited?
-     (true? (response-field quota :unlimited))
+        unlimited?
+        (true? (response-field quota :unlimited))
 
-     exhausted?
-     (and (not unlimited?)
-          (or (and (number? raw-remaining) (not (pos? (double raw-remaining))))
-              (false? (response-field quota :has_quota))))
+        exhausted?
+        (and (not unlimited?)
+             (or (and (number? raw-remaining) (not (pos? (double raw-remaining))))
+                 (false? (response-field quota :has_quota))))
 
-     overage?
-     (and (number? raw-remaining) (neg? (double raw-remaining)))
+        overage?
+        (and (number? raw-remaining) (neg? (double raw-remaining)))
 
-     note
-     (cond unlimited? "unlimited (token-based billing)"
-           exhausted? (str (when (number? pct)
-                             (String/format java.util.Locale/ROOT
-                                            "%.1f%% remaining - "
-                                            (object-array [(double pct)])))
-                           "quota exhausted"
-                           (when overage?
-                             (String/format java.util.Locale/ROOT
-                                            " (%.0f over)"
-                                            (object-array [(- (double raw-remaining))])))
-                           (if (true? (response-field quota :overage_permitted))
-                             "; overage billing applies"
-                             "; requests are rejected until it resets"))
-           (number? pct)
-           (String/format java.util.Locale/ROOT "%.1f%% remaining" (object-array [(double pct)]))
-           :else nil)]
+        note
+        (cond unlimited? "unlimited (token-based billing)"
+              exhausted? (str (when (number? pct)
+                                (String/format java.util.Locale/ROOT
+                                               "%.1f%% remaining - "
+                                               (object-array [(double pct)])))
+                              "quota exhausted"
+                              (when overage?
+                                (String/format java.util.Locale/ROOT
+                                               " (%.0f over)"
+                                               (object-array [(- (double raw-remaining))])))
+                              (if (true? (response-field quota :overage_permitted))
+                                "; overage billing applies"
+                                "; requests are rejected until it resets"))
+              (number? pct)
+              (String/format java.util.Locale/ROOT "%.1f%% remaining" (object-array [(double pct)]))
+              :else nil)]
 
-    (cond->
-      {:id id
-       :label label
-       :scope :account
-       :kind :requests
-       :precision :exact
-       :source :provider-api
-       :is-unlimited unlimited?}
+    (cond-> {:id id
+             :label label
+             :scope :account
+             :kind :requests
+             :precision :exact
+             :source :provider-api
+             :is-unlimited unlimited?}
       (and (not unlimited?) (number? raw-remaining))
       (assoc :remaining (max 0.0 (double raw-remaining)))
 
@@ -724,12 +709,11 @@
 
 (defn- limited-quota-rows
   [reset-ms usage]
-  (let
-    [remaining
-     (response-field usage :limited_user_quotas)
+  (let [remaining
+        (response-field usage :limited_user_quotas)
 
-     monthly
-     (response-field usage :monthly_quotas)]
+        monthly
+        (response-field usage :monthly_quotas)]
 
     (if (and (map? remaining) (map? monthly))
       (mapv (fn [[k rem]]
@@ -739,21 +723,20 @@
 
 (defn- fetch-user-usage!
   [oauth-token]
-  (let
-    [resp
-     (http/get "https://api.github.com/copilot_internal/user"
-               {:headers (merge COPILOT_HEADERS
-                                {"Accept" "application/json"
-                                 "Authorization" (str "Bearer " oauth-token)
-                                 "X-GitHub-Api-Version" "2025-04-01"})
-                :timeout 30000
-                :throw false})
+  (let [resp
+        (http/get "https://api.github.com/copilot_internal/user"
+                  {:headers (merge COPILOT_HEADERS
+                                   {"Accept" "application/json"
+                                    "Authorization" (str "Bearer " oauth-token)
+                                    "X-GitHub-Api-Version" "2025-04-01"})
+                   :timeout 30000
+                   :throw false})
 
-     status
-     (:status resp)
+        status
+        (:status resp)
 
-     body
-     (:body resp)]
+        body
+        (:body resp)]
 
     (if (<= 200 status 299)
       (json-body body)
@@ -767,14 +750,13 @@
 (defn- dynamic-limits!
   []
   (if-let [{:keys [oauth-token]} (detect-oauth-token)]
-    (let
-      [usage (fetch-user-usage! oauth-token)
-       reset-ms (or (parse-epoch-ms (response-field usage :quota_reset_date))
-                    (parse-epoch-ms (response-field usage :limited_user_reset_date)))
-       rows (let [snapshots (response-field usage :quota_snapshots)]
-              (if (seq snapshots)
-                (quota-map-rows reset-ms snapshots)
-                (limited-quota-rows reset-ms usage)))]
+    (let [usage (fetch-user-usage! oauth-token)
+          reset-ms (or (parse-epoch-ms (response-field usage :quota_reset_date))
+                       (parse-epoch-ms (response-field usage :limited_user_reset_date)))
+          rows (let [snapshots (response-field usage :quota_snapshots)]
+                 (if (seq snapshots)
+                   (quota-map-rows reset-ms snapshots)
+                   (limited-quota-rows reset-ms usage)))]
 
       {:status :ok
        :dynamic {:limits rows
@@ -827,12 +809,11 @@
     ;; is the token the server just 401'd: never reuse it — a still-cached
     ;; but revoked token would otherwise be handed straight back and 401 again.
     (fn [rejected]
-      (let
-        [cached
-         @token-cache
+      (let [cached
+            @token-cache
 
-         now
-         (System/currentTimeMillis)]
+            now
+            (System/currentTimeMillis)]
 
         (when (and (cached-token-usable? cached account-type now) (not= rejected (:token cached)))
           (get-copilot-token! {:account-type account-type}))))
@@ -881,21 +862,20 @@
    signed in."
   ([printer-fn] (interactive-auth! printer-fn nil))
   ([printer-fn opts]
-   (let
-     [print!
-      (or printer-fn (constantly nil))
+   (let [print!
+         (or printer-fn (constantly nil))
 
-      account-type
-      (configured-account-type opts)
+         account-type
+         (configured-account-type opts)
 
-      opts
-      (assoc opts :account-type account-type)
+         opts
+         (assoc opts :account-type account-type)
 
-      credential
-      (detect-oauth-token)
+         credential
+         (detect-oauth-token)
 
-      active
-      (credential-account-type)]
+         active
+         (credential-account-type)]
 
      (if (and credential (= account-type active))
        (do (print! "  Already authenticated with GitHub Copilot.")
@@ -907,9 +887,8 @@
                         (name (account-provider-id account-type))
                         "` first to re-authenticate."))
            :already-authenticated)
-       (let
-         [{:keys [user-code verification-uri device-code interval expires-in]} (start-device-flow!
-                                                                                 opts)]
+       (let [{:keys [user-code verification-uri device-code interval expires-in]}
+             (start-device-flow! opts)]
          (print! "")
          (print! (str "  Account type: " (name account-type)))
          (when credential
@@ -920,12 +899,11 @@
          (print! "")
          (print! "  Waiting for authorization...")
          (poll-for-token! device-code interval expires-in opts)
-         (let
-           [{:keys [token api-url]} (get-copilot-token! opts)
-            ;; Model-policy lives at the ROOT host (`{host}/models/…/policy`),
-            ;; not under `/v1` — strip the LLM-base version segment.
-            policy-root (str/replace (or api-url "") #"/v1/?$" "")
-            {:keys [attempted enabled]} (enable-known-copilot-models! token policy-root)]
+         (let [{:keys [token api-url]} (get-copilot-token! opts)
+               ;; Model-policy lives at the ROOT host (`{host}/models/…/policy`),
+               ;; not under `/v1` — strip the LLM-base version segment.
+               policy-root (str/replace (or api-url "") #"/v1/?$" "")
+               {:keys [attempted enabled]} (enable-known-copilot-models! token policy-root)]
 
            (print! (str "  Enabled " enabled "/" attempted " known Copilot model policies.")))
          (print! "  ✓ Authenticated! GitHub Copilot is ready.")
@@ -945,12 +923,11 @@
    Device flow is the best remote UX of the three OAuth providers: nothing has
    to be pasted back, so a phone can complete it unaided."
   [account-type]
-  (let
-    [opts
-     {:account-type account-type}
+  (let [opts
+        {:account-type account-type}
 
-     {:keys [user-code verification-uri device-code interval expires-in]}
-     (start-device-flow! opts)]
+        {:keys [user-code verification-uri device-code interval expires-in]}
+        (start-device-flow! opts)]
 
     {:kind :device
      :url verification-uri
@@ -969,12 +946,11 @@
    block (the gateway) run this on their own thread."
   [{:keys [device-code interval expires-in opts]}]
   (poll-for-token! device-code interval expires-in opts)
-  (let
-    [{:keys [token api-url]}
-     (get-copilot-token! opts)
+  (let [{:keys [token api-url]}
+        (get-copilot-token! opts)
 
-     policy-root
-     (str/replace (or api-url "") #"/v1/?$" "")]
+        policy-root
+        (str/replace (or api-url "") #"/v1/?$" "")]
 
     (enable-known-copilot-models! token policy-root))
   {:status :ok})
@@ -1003,27 +979,26 @@
    svar's per-model api-style overlay; `:responses-path` is provider-scoped
    but harmless to the Anthropic path (which appends `/messages` itself)."
   [account-type]
-  (let
-    [pid
-     (account-provider-id account-type)
+  (let [pid
+        (account-provider-id account-type)
 
-     label
-     (account-provider-label account-type)
+        label
+        (account-provider-label account-type)
 
-     base
-     (get COPILOT_ACCOUNT_BASE_URLS account-type)
+        base
+        (get COPILOT_ACCOUNT_BASE_URLS account-type)
 
-     shared
-     {:provider/status-fn (make-status-fn account-type)
-      :provider/logout-fn #'logout!
-      :provider/detect-fn (make-detect-fn account-type)
-      :provider/auth-fn (make-auth-fn account-type)
-      :provider/auth-start-fn (fn copilot-auth-start []
-                                (auth-start account-type))
-      :provider/auth-await-fn #'auth-await
-      :provider/get-token-fn (make-get-token-fn account-type)
-      :provider/refresh-token-fn (make-force-refresh-fn account-type)
-      :provider/limits-fn (make-limits-fn account-type)}]
+        shared
+        {:provider/status-fn (make-status-fn account-type)
+         :provider/logout-fn #'logout!
+         :provider/detect-fn (make-detect-fn account-type)
+         :provider/auth-fn (make-auth-fn account-type)
+         :provider/auth-start-fn (fn copilot-auth-start []
+                                   (auth-start account-type))
+         :provider/auth-await-fn #'auth-await
+         :provider/get-token-fn (make-get-token-fn account-type)
+         :provider/refresh-token-fn (make-force-refresh-fn account-type)
+         :provider/limits-fn (make-limits-fn account-type)}]
 
     [(merge shared
             {:provider/id pid

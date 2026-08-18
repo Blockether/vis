@@ -125,15 +125,14 @@
       ;; A wrapped logical line lands as adjacent ranges tagged with one :line-id;
       ;; a double-click on ANY fragment must select the whole line, not just the
       ;; clicked visual row.
-      (let
-        [ranges
-         [{:row 4 :col 2 :width 6 :line-id 7} {:row 5 :col 2 :width 6 :line-id 7}]
+      (let [ranges
+            [{:row 4 :col 2 :width 6 :line-id 7} {:row 5 :col 2 :width 6 :line-id 7}]
 
-         expected
-         {:anchor (selection/point 2 11) :focus (selection/point 7 12)}
+            expected
+            {:anchor (selection/point 2 11) :focus (selection/point 7 12)}
 
-         viewport
-         {:viewport-top 2 :eff-scroll 9}]
+            viewport
+            {:viewport-top 2 :eff-scroll 9}]
 
         (expect (= expected
                    (selection/line-selection-at-point (selection/point 5 5) ranges viewport)))

@@ -86,40 +86,37 @@
 (defdescribe
   uncaptured-streams-test
   (it "drains both uncaptured streams into the sink instead of a descriptor"
-      (let
-        [[seen emit]
-         (recorder)
+      (let [[seen emit]
+            (recorder)
 
-         process
-         (start! emit {:command ["/bin/sh" "-c" "echo OUT; echo ERR >&2"]})]
+            process
+            (start! emit {:command ["/bin/sh" "-c" "echo OUT; echo ERR >&2"]})]
 
         (expect (zero? (.waitFor process)))
         (expect (wait-until 5000 #(= 2 (count @seen))))
         (expect (= ["OUT"] (lines-of seen "stdout")))
         (expect (= ["ERR"] (lines-of seen "stderr")))))
   (it "hands the guest an empty stream for anything a drain thread owns"
-      (let
-        [[_ emit]
-         (recorder)
+      (let [[_ emit]
+            (recorder)
 
-         process
-         (start! emit {:command ["/bin/sh" "-c" "echo HIDDEN"]})]
+            process
+            (start! emit {:command ["/bin/sh" "-c" "echo HIDDEN"]})]
 
         (expect (zero? (.waitFor process)))
         (expect (= "" (slurp-stream (.getInputStream process))))
         (expect (= "" (slurp-stream (.getErrorStream process))))))
   (it "drains a stream the guest redirected to its own sink"
-      (let
-        [[seen emit]
-         (recorder)
+      (let [[seen emit]
+            (recorder)
 
-         sink
-         (ByteArrayOutputStream.)
+            sink
+            (ByteArrayOutputStream.)
 
-         process
-         (start! emit
-                 {:command ["/bin/sh" "-c" "echo TO-SINK"]
-                  :out (ProcessHandler$Redirect/createRedirectToStream sink)})]
+            process
+            (start! emit
+                    {:command ["/bin/sh" "-c" "echo TO-SINK"]
+                     :out (ProcessHandler$Redirect/createRedirectToStream sink)})]
 
         (expect (zero? (.waitFor process)))
         (expect (wait-until 5000 #(str/includes? (str sink) "TO-SINK")))
@@ -147,15 +144,14 @@
 
 (defdescribe captured-streams-test
              (it "passes a piped stream to the guest and logs nothing"
-                 (let
-                   [[seen emit]
-                    (recorder)
+                 (let [[seen emit]
+                       (recorder)
 
-                    process
-                    (start! emit
-                            {:command ["/bin/sh" "-c" "echo CAPTURED; echo CAPTURED-ERR >&2"]
-                             :out ProcessHandler$Redirect/PIPE
-                             :err ProcessHandler$Redirect/PIPE})]
+                       process
+                       (start! emit
+                               {:command ["/bin/sh" "-c" "echo CAPTURED; echo CAPTURED-ERR >&2"]
+                                :out ProcessHandler$Redirect/PIPE
+                                :err ProcessHandler$Redirect/PIPE})]
 
                    (expect (= "CAPTURED\n" (slurp-stream (.getInputStream process))))
                    (expect (= "CAPTURED-ERR\n" (slurp-stream (.getErrorStream process))))
@@ -164,18 +160,17 @@
              (it "honours a merge the guest asked for instead of splitting it"
                  ;; `stderr=STDOUT`: both streams arrive on stdout, and the guest
                  ;; must not find stderr separately readable.
-                 (let
-                   [[seen emit]
-                    (recorder)
+                 (let [[seen emit]
+                       (recorder)
 
-                    process
-                    (start! emit
-                            {:command ["/bin/sh" "-c" "echo M-OUT; echo M-ERR >&2"]
-                             :merged? true
-                             :out ProcessHandler$Redirect/PIPE})
+                       process
+                       (start! emit
+                               {:command ["/bin/sh" "-c" "echo M-OUT; echo M-ERR >&2"]
+                                :merged? true
+                                :out ProcessHandler$Redirect/PIPE})
 
-                    merged
-                    (slurp-stream (.getInputStream process))]
+                       merged
+                       (slurp-stream (.getInputStream process))]
 
                    (expect (zero? (.waitFor process)))
                    (expect (str/includes? merged "M-OUT"))
@@ -183,14 +178,14 @@
                    (expect (= "" (slurp-stream (.getErrorStream process))))
                    (expect (= [] @seen))))
              (it "drains a merged stream the guest left uncaptured"
-                 (let
-                   [[seen emit]
-                    (recorder)
+                 (let [[seen emit]
+                       (recorder)
 
-                    process
-                    (start! emit
-                            {:command ["/bin/sh" "-c" "echo MERGED-LEAK; echo MERGED-LEAK-ERR >&2"]
-                             :merged? true})]
+                       process
+                       (start! emit
+                               {:command ["/bin/sh" "-c"
+                                          "echo MERGED-LEAK; echo MERGED-LEAK-ERR >&2"]
+                                :merged? true})]
 
                    (expect (zero? (.waitFor process)))
                    (expect (wait-until 5000 #(= 2 (count (lines-of seen "stdout")))))
@@ -198,15 +193,14 @@
              (it "leaves stdin to the guest, so an interactive child keeps its prompt"
                  ;; Rewriting stdin would hang `sudo`, `ssh` and credential prompts
                  ;; on a prompt nobody can see; the input redirect is passed through.
-                 (let
-                   [[_ emit]
-                    (recorder)
+                 (let [[_ emit]
+                       (recorder)
 
-                    process
-                    (start! emit
-                            {:command ["/bin/sh" "-c" "cat"]
-                             :in ProcessHandler$Redirect/PIPE
-                             :out ProcessHandler$Redirect/PIPE})]
+                       process
+                       (start! emit
+                               {:command ["/bin/sh" "-c" "cat"]
+                                :in ProcessHandler$Redirect/PIPE
+                                :out ProcessHandler$Redirect/PIPE})]
 
                    (with-open [stdin (.getOutputStream process)]
                      (.write stdin (.getBytes "STDIN-OK" StandardCharsets/UTF_8)))
@@ -264,17 +258,16 @@
   (it "gives the guest a line while the child is still running"
       ;; A chunk is handed over as it arrives, so a guest streaming a
       ;; long-running child's output does not wait for it to exit.
-      (let
-        [[_ emit]
-         (recorder)
+      (let [[_ emit]
+            (recorder)
 
-         process
-         (start! emit
-                 {:command ["/bin/sh" "-c" "echo FIRST-LINE; sleep 20; echo LAST-LINE"]
-                  :out ProcessHandler$Redirect/PIPE})
+            process
+            (start! emit
+                    {:command ["/bin/sh" "-c" "echo FIRST-LINE; sleep 20; echo LAST-LINE"]
+                     :out ProcessHandler$Redirect/PIPE})
 
-         reader
-         (io/reader (.getInputStream process))]
+            reader
+            (io/reader (.getInputStream process))]
 
         (expect (= "FIRST-LINE" (.readLine ^java.io.BufferedReader reader)))
         (expect (.isAlive process) "the line arrived before the child exited")
@@ -283,17 +276,16 @@
   (it "breaks the child's pipe when the guest stops reading early"
       ;; Closing the stream must reach the real pipe, or an endless child
       ;; would keep running against a backlog nobody drains.
-      (let
-        [[_ emit]
-         (recorder)
+      (let [[_ emit]
+            (recorder)
 
-         process
-         (start! emit
-                 {:command ["/bin/sh" "-c" "while true; do echo SPAM; done"]
-                  :out ProcessHandler$Redirect/PIPE})
+            process
+            (start! emit
+                    {:command ["/bin/sh" "-c" "while true; do echo SPAM; done"]
+                     :out ProcessHandler$Redirect/PIPE})
 
-         stream
-         (.getInputStream process)]
+            stream
+            (.getInputStream process)]
 
         (expect (pos? (.read stream (byte-array 16))))
         (.close stream)
@@ -307,38 +299,35 @@
       (let [[_ emit] (recorder)]
         (expect (= 7 (.waitFor (start! emit {:command ["/bin/sh" "-c" "exit 7"]}))))))
   (it "passes the environment the guest asked for"
-      (let
-        [[_ emit]
-         (recorder)
+      (let [[_ emit]
+            (recorder)
 
-         process
-         (start! emit
-                 {:command ["/bin/sh" "-c" "echo $VIS_HANDLER_TEST_VALUE"]
-                  :environment {"VIS_HANDLER_TEST_VALUE" "from-guest"}
-                  :out ProcessHandler$Redirect/PIPE})]
+            process
+            (start! emit
+                    {:command ["/bin/sh" "-c" "echo $VIS_HANDLER_TEST_VALUE"]
+                     :environment {"VIS_HANDLER_TEST_VALUE" "from-guest"}
+                     :out ProcessHandler$Redirect/PIPE})]
 
         (expect (= "from-guest\n" (slurp-stream (.getInputStream process))))))
   (it "passes the working directory the guest asked for"
-      (let
-        [[_ emit]
-         (recorder)
+      (let [[_ emit]
+            (recorder)
 
-         dir
-         (str (Files/createTempDirectory "vis-handler-test" (make-array FileAttribute 0)))
+            dir
+            (str (Files/createTempDirectory "vis-handler-test" (make-array FileAttribute 0)))
 
-         process
-         (start!
-           emit
-           {:command ["/bin/sh" "-c" "pwd"] :directory dir :out ProcessHandler$Redirect/PIPE})]
+            process
+            (start!
+              emit
+              {:command ["/bin/sh" "-c" "pwd"] :directory dir :out ProcessHandler$Redirect/PIPE})]
 
         (expect (str/includes? (slurp-stream (.getInputStream process)) "vis-handler-test"))))
   (it "still terminates a child on request"
-      (let
-        [[_ emit]
-         (recorder)
+      (let [[_ emit]
+            (recorder)
 
-         process
-         (start! emit {:command ["/bin/sh" "-c" "sleep 30"]})]
+            process
+            (start! emit {:command ["/bin/sh" "-c" "sleep 30"]})]
 
         (expect (.isAlive process))
         (.destroyForcibly process)
@@ -356,10 +345,9 @@
     ;; fd 1/2, so extension output appeared on the operator's terminal
     ;; and in no log at all.
     (let [[seen emit] (recorder)]
-      (with-redefs
-        [process-handler/log-emit (fn [label]
-                                    (fn [stream line]
-                                      (emit stream (str label "|" line))))]
+      (with-redefs [process-handler/log-emit (fn [label]
+                                               (fn [stream line]
+                                                 (emit stream (str label "|" line))))]
         (let [^Context ctx (pyx/build-context "containment-test.py")]
           (try
             (.eval ctx "python" "import sys\nprint('GUEST-PRINT')\nsys.stdout.flush()")
@@ -392,12 +380,11 @@
   "Eval `code` in a real extension context; answer its `__vis_res__` string.
    `@TMP@` in `code` is replaced by a fresh temp directory."
   [label code]
-  (let
-    [dir
-     (str (Files/createTempDirectory "vis-redirect" (into-array FileAttribute [])))
+  (let [dir
+        (str (Files/createTempDirectory "vis-redirect" (into-array FileAttribute [])))
 
-     ^Context ctx
-     (pyx/build-context label)]
+        ^Context ctx
+        (pyx/build-context label)]
 
     (try (.eval ctx "python" ^String (str/replace code "@TMP@" dir))
          (.asString (.getMember (.getBindings ctx "python") "__vis_res__"))
@@ -498,10 +485,9 @@
       ;; child's bytes there would put them back on the operator's terminal,
       ;; which is the leak the whole namespace exists to close.
       (let [[seen emit] (recorder)]
-        (with-redefs
-          [process-handler/log-emit (fn [label]
-                                      (fn [stream line]
-                                        (emit stream (str label "|" line))))]
+        (with-redefs [process-handler/log-emit (fn [label]
+                                                 (fn [stream line]
+                                                   (emit stream (str label "|" line))))]
           (let [^Context ctx (pyx/build-context "redirect-sys-stdout.py")]
             (try (.eval
                    ctx
@@ -523,16 +509,15 @@
              ;; Regression, issue #142: the real pid never left the host handler, so the
              ;; guest was left holding GraalPy's per-context child-slot index.
              (it "hands the started child's OS pid over exactly once"
-                 (let
-                   [[_ emit]
-                    (recorder)
+                 (let [[_ emit]
+                       (recorder)
 
-                    handoff
-                    (process-handler/pid-handoff)
+                       handoff
+                       (process-handler/pid-handoff)
 
-                    ^Process started
-                    (start-on! (process-handler/contained-handler emit handoff)
-                               {:command ["/bin/sh" "-c" "exit 0"]})]
+                       ^Process started
+                       (start-on! (process-handler/contained-handler emit handoff)
+                                  {:command ["/bin/sh" "-c" "exit 0"]})]
 
                    (expect (= (.pid started) (process-handler/claim-pid! handoff))
                            "the pid of the process this handler really started")
@@ -546,34 +531,33 @@
              ;; stranger's - by then exited - pid.
              (it
                "confines the slot to the thread that started the child"
-               (let
-                 [[_ emit]
-                  (recorder)
+               (let [[_ emit]
+                     (recorder)
 
-                  handoff
-                  (process-handler/pid-handoff)
+                     handoff
+                     (process-handler/pid-handoff)
 
-                  handler
-                  (process-handler/contained-handler emit handoff)
+                     handler
+                     (process-handler/contained-handler emit handoff)
 
-                  started-elsewhere
-                  (promise)
+                     started-elsewhere
+                     (promise)
 
-                  claimed-elsewhere
-                  (promise)
+                     claimed-elsewhere
+                     (promise)
 
-                  release
-                  (promise)
+                     release
+                     (promise)
 
-                  ^Thread other
-                  (Thread. ^Runnable
-                           (fn []
-                             (let
-                               [^Process p (start-on! handler {:command ["/bin/sh" "-c" "exit 0"]})]
-                               (deliver started-elsewhere (.pid p))
-                               (deref release 5000 :timeout)
-                               (deliver claimed-elsewhere (process-handler/claim-pid! handoff))
-                               (.waitFor p))))]
+                     ^Thread other
+                     (Thread. ^Runnable
+                              (fn []
+                                (let [^Process p (start-on! handler
+                                                            {:command ["/bin/sh" "-c" "exit 0"]})]
+                                  (deliver started-elsewhere (.pid p))
+                                  (deref release 5000 :timeout)
+                                  (deliver claimed-elsewhere (process-handler/claim-pid! handoff))
+                                  (.waitFor p))))]
 
                  (.start other)
                  (expect (number? (deref started-elsewhere 5000 nil))
@@ -623,15 +607,14 @@
                 (str "import subprocess\n" "child = subprocess.Popen(['/bin/sleep', '30'])\n"
                      "pid = child.pid\n" "slot = getattr(child, '__vis_virtual_pid__', pid)\n")
                 (fn [ctx]
-                  (let
-                    [pid
-                     (.asLong (member ctx "pid"))
+                  (let [pid
+                        (.asLong (member ctx "pid"))
 
-                     slot
-                     (.asLong (member ctx "slot"))
+                        slot
+                        (.asLong (member ctx "slot"))
 
-                     found
-                     (ProcessHandle/of pid)]
+                        found
+                        (ProcessHandle/of pid)]
 
                     (expect (= 1 slot) "the first child of a context still lands in the first slot")
                     (expect (not= slot pid) "the handle carries a pid, not the slot index")
@@ -713,10 +696,9 @@
            "    __t.join()\n" "pids = [child.pid for child in children]\n")
       (fn [ctx]
         (let [^Value pids (member ctx "pids")]
-          (doseq
-            [i (range (.getArraySize pids))
-             :let [pid (.asLong (.getArrayElement pids i))
-                   found (ProcessHandle/of pid)]]
+          (doseq [i (range (.getArraySize pids))
+                  :let [pid (.asLong (.getArrayElement pids i))
+                        found (ProcessHandle/of pid)]]
 
             (expect (.isPresent found) (str "child " i " carries the pid of a process that exists"))
             (expect (str/includes? (str (.orElse (.commandLine (.info ^ProcessHandle (.get found)))

@@ -8,10 +8,9 @@
 (defn- on-path?
   "Is executable `bin` resolvable on PATH?"
   [bin]
-  (let
-    [dirs (str/split (or (System/getenv "PATH") "")
-                     (re-pattern (java.util.regex.Pattern/quote (System/getProperty
-                                                                  "path.separator"))))]
+  (let [dirs (str/split (or (System/getenv "PATH") "")
+                        (re-pattern (java.util.regex.Pattern/quote (System/getProperty
+                                                                     "path.separator"))))]
     (boolean (some (fn [d]
                      (let [f (io/file d bin)]
                        (and (.isFile f) (.canExecute f))))

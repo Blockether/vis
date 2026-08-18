@@ -22,9 +22,8 @@
 
 (defn- workspace-has-python?
   [env]
-  (let
-    [root (some-> (:workspace/root env)
-                  io/file)]
+  (let [root (some-> (:workspace/root env)
+                     io/file)]
     (when (and root (.isDirectory root))
       (or (some #(.exists (io/file root %))
                 ["pyproject.toml" "setup.py" "setup.cfg" "requirements.txt" "Pipfile" "uv.lock"])
@@ -52,10 +51,9 @@
 
 (defn- repl-resource-id
   [dir id]
-  (let
-    [id (some-> id
-                str
-                str/trim)]
+  (let [id (some-> id
+                   str
+                   str/trim)]
     (if (seq id) id (str "pyrepl:" dir))))
 
 (defn register-repl-resource!
@@ -85,47 +83,46 @@
 ;; Language-facade handlers
 
 (defn py-start-repl-fn
-   "REPL-lifecycle handler for Python. The facade's `repl_start` / `repl_status` /
+  "REPL-lifecycle handler for Python. The facade's `repl_start` / `repl_status` /
    `repl_stop` verbs reach a pack as a positional `op` STRING plus opts
    `{dir, id, env}` — there is NO restart (stop, then start), and a `repl_start`
    for a REPL that is already running REUSES it, refusing only when this call
    named a different `env`. `op` arrives as a STRING from the model
    (strings-only boundary) — dispatch on it, no keyword minting."
   [env op opts]
-  (let
-    [root
-     (env-root env)
+  (let [root
+        (env-root env)
 
-      ;; A MISSING op must never spawn: every pack defaults to "status", the one
-      ;; step with no side effect.
-      op
-      (if (string? op) op "status")
+        ;; A MISSING op must never spawn: every pack defaults to "status", the one
+        ;; step with no side effect.
+        op
+        (if (string? op) op "status")
 
-     id
-     (or (get opts "id") (get opts "repl_id"))
+        id
+        (or (get opts "id") (get opts "repl_id"))
 
-     dir
-     (resolve-dir root (get opts "cwd"))]
+        dir
+        (resolve-dir root (get opts "cwd"))]
 
-     (case op
-       "status"
-       (extension/success {:result (assoc (repl/status dir) "id" (repl-resource-id dir id))})
+    (case op
+      "status"
+      (extension/success {:result (assoc (repl/status dir) "id" (repl-resource-id dir id))})
 
-       "stop"
-       (let [r (assoc (repl/stop! dir) "id" (repl-resource-id dir id))]
-         (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
-         (extension/success {:result r}))
+      "stop"
+      (let [r (assoc (repl/stop! dir) "id" (repl-resource-id dir id))]
+        (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
+        (extension/success {:result r}))
 
-       "start"
-       (let [r (assoc (repl/start! dir (assoc (or opts {})
-                                         "id" (repl-resource-id dir id)
-                                         :session-id (:session-id env)))
-                 "id" (repl-resource-id dir id))]
-         (register-repl-resource! (:session-id env) dir r id)
-         (extension/success {:result r}))
+      "start"
+      (let [r (assoc (repl/start! dir
+                                  (assoc (or opts {})
+                                    "id" (repl-resource-id dir id)
+                                    :session-id (:session-id env)))
+                "id" (repl-resource-id dir id))]
+        (register-repl-resource! (:session-id env) dir r id)
+        (extension/success {:result r}))
 
-      (throw (ex-info (str "python REPL lifecycle: unknown op "
-                           (pr-str op)
+      (throw (ex-info (str "python REPL lifecycle: unknown op " (pr-str op)
                            " — the verbs are repl_start / repl_status / repl_stop; there is no"
                            " repl_connect for Python, Vis owns the interpreter process.")
                       {:type :py/bad-args :got op})))))
@@ -135,21 +132,20 @@
    `{code, dir, timeout_ms}`. Requires a running REPL for the dir, then evaluates
    with globals persistent across calls."
   [env arg]
-  (let
-    [root
-     (env-root env)
+  (let [root
+        (env-root env)
 
-     code
-     (cond (string? arg) arg
-           (map? arg) (str (or (get arg "code") (get arg "source")))
-           :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
-                                 {:type :py/bad-args :got arg})))
+        code
+        (cond (string? arg) arg
+              (map? arg) (str (or (get arg "code") (get arg "source")))
+              :else (throw (ex-info "repl_eval(python) expects a code string or {\"code\": ...}"
+                                    {:type :py/bad-args :got arg})))
 
-     dir
-     (resolve-dir root (and (map? arg) (get arg "cwd")))
+        dir
+        (resolve-dir root (and (map? arg) (get arg "cwd")))
 
-     tmo
-     (and (map? arg) (get arg "timeout_ms"))]
+        tmo
+        (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
       ;; Home-homogenized: the message reads `~/vis`, matching the REPL ids in
@@ -188,25 +184,23 @@
    are load bearing: a collection error prints at the TOP, the verdict and the
    `short test summary info` at the BOTTOM."
   [^String s n]
-  (let
-    [len
-     (count s)
+  (let [len
+        (count s)
 
-     n
-     (long n)]
+        n
+        (long n)]
 
     (if (<= len n)
       s
       ;; The marker itself is charged against the cap, so the result still fits.
-      (let
-        [kept
-         (max 0 (- n 96))
+      (let [kept
+            (max 0 (- n 96))
 
-         head-n
-         (quot kept 3)
+            head-n
+            (quot kept 3)
 
-         tail-n
-         (- kept head-n)]
+            tail-n
+            (- kept head-n)]
 
         (str (subs s 0 head-n)
              "\n\n… " (- len kept)
@@ -218,12 +212,11 @@
    when the body has one, else its first non-blank line. Capped — the full
    traceback stays in `output`."
   [s]
-  (let
-    [lines
-     (remove str/blank? (str/split-lines (str s)))
+  (let [lines
+        (remove str/blank? (str/split-lines (str s)))
 
-     head
-     (str/trim (str (or (last (filter #(re-find #"^E\s" %) lines)) (first lines) "")))]
+        head
+        (str/trim (str (or (last (filter #(re-find #"^E\s" %) lines)) (first lines) "")))]
 
     (if (> (count head) 400) (str (subs head 0 400) "…") head)))
 
@@ -235,30 +228,29 @@
    against the run's `cwd` when it lands there (pytest writes it relative to its
    own rootdir), and pytest's 0-based `line` becomes the contract's 1-based one."
   [^String dir case-attrs fault ^String fault-type]
-  (let
-    [rel
-     (str (or (:file case-attrs) ""))
+  (let [rel
+        (str (or (:file case-attrs) ""))
 
-     resolved
-     (when (seq rel)
-       (let [^java.io.File f (io/file dir rel)]
-         (if (.exists f) (.getCanonicalPath f) rel)))
+        resolved
+        (when (seq rel)
+          (let [^java.io.File f (io/file dir rel)]
+            (if (.exists f) (.getCanonicalPath f) rel)))
 
-     line
-     (some-> (:line case-attrs)
-             str
-             parse-long)
+        line
+        (some-> (:line case-attrs)
+                str
+                parse-long)
 
-     ns-name
-     (str (or (:classname case-attrs) ""))
+        ns-name
+        (str (or (:classname case-attrs) ""))
 
-     attr-message
-     (str/trim (str (or (:message (:attrs fault)) "")))]
+        attr-message
+        (str/trim (str (or (:message (:attrs fault)) "")))]
 
-    (cond->
-      {"test" (str (:name case-attrs))
-       "type" fault-type
-       "message" (fault-headline (if (seq attr-message) attr-message (apply str (:content fault))))}
+    (cond-> {"test" (str (:name case-attrs))
+             "type" fault-type
+             "message" (fault-headline
+                         (if (seq attr-message) attr-message (apply str (:content fault))))}
       (seq ns-name)
       (assoc "ns" ns-name)
 
@@ -279,71 +271,69 @@
    `<testsuite>` attributes also give counts for a run that printed no summary."
   [^String dir ^java.io.File xml]
   (when (.isFile xml)
-    (try
-      (let
-        [root
-         (with-open [in (io/input-stream xml)]
-           (xml/parse in))
+    (try (let [root
+               (with-open [in (io/input-stream xml)]
+                 (xml/parse in))
 
-         suites
-         (if (= :testsuite (:tag root)) [root] (filterv #(= :testsuite (:tag %)) (:content root)))
+               suites
+               (if (= :testsuite (:tag root))
+                 [root]
+                 (filterv #(= :testsuite (:tag %)) (:content root)))
 
-         cases
-         (for
-           [s
-            suites
+               cases
+               (for [s
+                     suites
 
-            c
-            (:content s)
+                     c
+                     (:content s)
 
-            :when (= :testcase (:tag c))]
+                     :when (= :testcase (:tag c))]
 
-           c)
+                 c)
 
-         faults
-         (fn [tag fault-type]
-           (vec (for
-                  [c
-                   cases
+               faults
+               (fn [tag fault-type]
+                 (vec (for [c
+                            cases
 
-                   f
-                   (:content c)
+                            f
+                            (:content c)
 
-                   :when (= tag (:tag f))]
+                            :when (= tag (:tag f))]
 
-                  (junit-fault dir (:attrs c) f fault-type))))
+                        (junit-fault dir (:attrs c) f fault-type))))
 
-         attr-sum
-         (fn ^long [k]
-           (long (reduce +
-                         0
-                         (keep #(some-> (get-in % [:attrs k])
-                                        str
-                                        parse-long)
-                               suites))))
+               attr-sum
+               (fn ^long [k]
+                 (long (reduce +
+                               0
+                               (keep #(some-> (get-in % [:attrs k])
+                                              str
+                                              parse-long)
+                                     suites))))
 
-         tests
-         (long (attr-sum :tests))
+               tests
+               (long (attr-sum :tests))
 
-         failed
-         (long (attr-sum :failures))
+               failed
+               (long (attr-sum :failures))
 
-         errored
-         (long (attr-sum :errors))
+               errored
+               (long (attr-sum :errors))
 
-         skipped
-         (long (attr-sum :skipped))]
+               skipped
+               (long (attr-sum :skipped))]
 
-        ;; pytest's own words are DISJOINT (`failures` beside `errors`); the
-        ;; contract's `fail` holds every fault and `errored` is its erroring
-        ;; SUBSET, so the sum happens HERE, where the two are known apart.
-        {:failures (into (faults :failure "fail") (faults :error "error"))
-         :counts {"pass" (max 0 (- tests failed errored skipped))
-                  "fail" (+ failed errored)
-                  "errored" errored
-                  "skipped" skipped}})
-      ;; A malformed or half-written report is not a reason to lose the run.
-      (catch Exception _ nil))))
+           ;; pytest's own words are DISJOINT (`failures` beside `errors`); the
+           ;; contract's `fail` holds every fault and `errored` is its erroring
+           ;; SUBSET, so the sum happens HERE, where the two are known apart.
+           {:failures (into (faults :failure "fail") (faults :error "error"))
+            :counts {"pass" (max 0 (- tests failed errored skipped))
+                     "fail" (+ failed errored)
+                     "errored" errored
+                     "skipped" skipped}})
+         ;; A malformed or half-written report is not a reason to lose the run.
+         (catch Exception _ nil))))
 
 (defn- graalpy-faults
   "The hermetic backend's per-test records as surface-contract faults — one map
@@ -353,16 +343,14 @@
    the project backend (issue #136): counts alone name nothing the reader can
    open."
   [tests outcomes]
-  (vec (for
-         [{:keys [nodeid outcome message file]}
-          tests
+  (vec (for [{:keys [nodeid outcome message file]}
+             tests
 
-          :when (contains? outcomes outcome)]
+             :when (contains? outcomes outcome)]
 
-         (cond->
-           {"test" (or (second (str/split (str nodeid) #"::" 2)) (str nodeid))
-            "type" (if (= :errored outcome) "error" "fail")
-            "message" (fault-headline message)}
+         (cond-> {"test" (or (second (str/split (str nodeid) #"::" 2)) (str nodeid))
+                  "type" (if (= :errored outcome) "error" "fail")
+                  "message" (fault-headline message)}
            (seq (str file))
            (assoc "file" (str file))))))
 
@@ -381,23 +369,22 @@
    false green."
   ([^String dir opts] (resolve-test-paths dir opts nil))
   ([^String dir opts testpaths]
-   (let
-     [ids
-      (mapv contract/split-node-id (map str (get opts "paths")))
+   (let [ids
+         (mapv contract/split-node-id (map str (get opts "paths")))
 
-      located
-      (filterv :path ids)
+         located
+         (filterv :path ids)
 
-      names
-      (into [] (comp (remove :path) (keep :var)) ids)
+         names
+         (into [] (comp (remove :path) (keep :var)) ids)
 
-      abs
-      (mapv (fn [{:keys [path var]}]
-              (str (resolve-dir dir path) (when var (str "::" var))))
-            located)
+         abs
+         (mapv (fn [{:keys [path var]}]
+                 (str (resolve-dir dir path) (when var (str "::" var))))
+               located)
 
-      missing
-      (vec (remove #(.exists (io/file ^String (first (str/split % #"::" 2)))) abs))]
+         missing
+         (vec (remove #(.exists (io/file ^String (first (str/split % #"::" 2)))) abs))]
 
      (when (seq missing)
        (throw (ex-info (str "run_tests(python) target does not exist: "
@@ -418,33 +405,31 @@
    to the project interpreter when a failure smells like a missing third-party
    module the sandbox can't see."
   [paths sys-path]
-  (let
-    [res
-     (ptr/test-python-extensions! {:dirs paths :sys-path sys-path})
+  (let [res
+        (ptr/test-python-extensions! {:dirs paths :sys-path sys-path})
 
-     dep-smell?
-     (boolean (some (fn [t]
-                      (and (= :errored (:outcome t))
-                           (re-find #"(?i)ModuleNotFoundError|No module named|ImportError"
-                                    (str (:message t)))))
-                    (:tests res)))]
+        dep-smell?
+        (boolean (some (fn [t]
+                         (and (= :errored (:outcome t))
+                              (re-find #"(?i)ModuleNotFoundError|No module named|ImportError"
+                                       (str (:message t)))))
+                       (:tests res)))]
 
-    (cond->
-      {"runner" "graalpy"
-       ;; In-process contexts, no shell — the surface contract's "repl" mode.
-       "mode" "repl"
-       "framework" "pytest"
-       "tool" "graalpy"
-       "files" (:files res)
-       "is_pass" (boolean (:ok? res))
-       "pass" (or (:passed res) 0)
-       ;; Outcomes are disjoint here too: `fail` is every fault, `errored` the
-       ;; subset of it that THREW — never a count added on top.
-       "fail" (+ (long (or (:failed res) 0)) (long (or (:errored res) 0)))
-       "errored" (or (:errored res) 0)
-       "skipped" (or (:skipped res) 0)
-       "failures" (graalpy-faults (:tests res) #{:failed :errored})
-       "output" (ptr/render-test-report res)}
+    (cond-> {"runner" "graalpy"
+             ;; In-process contexts, no shell — the surface contract's "repl" mode.
+             "mode" "repl"
+             "framework" "pytest"
+             "tool" "graalpy"
+             "files" (:files res)
+             "is_pass" (boolean (:ok? res))
+             "pass" (or (:passed res) 0)
+             ;; Outcomes are disjoint here too: `fail` is every fault, `errored` the
+             ;; subset of it that THREW — never a count added on top.
+             "fail" (+ (long (or (:failed res) 0)) (long (or (:errored res) 0)))
+             "errored" (or (:errored res) 0)
+             "skipped" (or (:skipped res) 0)
+             "failures" (graalpy-faults (:tests res) #{:failed :errored})
+             "output" (ptr/render-test-report res)}
       (:error res)
       (assoc "error" (:error res))
 
@@ -478,23 +463,22 @@
    nothing but a duration. Once pytest reported ANY outcome, the words it left out
    are ZERO."
   [s]
-  (let
-    [n
-     (fn [re]
-       (some-> (second (re-find re (str s)))
-               parse-long))
+  (let [n
+        (fn [re]
+          (some-> (second (re-find re (str s)))
+                  parse-long))
 
-     passed
-     (n #"(?m)(\d+) passed")
+        passed
+        (n #"(?m)(\d+) passed")
 
-     failed
-     (n #"(?m)(\d+) failed")
+        failed
+        (n #"(?m)(\d+) failed")
 
-     errored
-     (n #"(?m)(\d+) error(?:ed|s)?\b")
+        errored
+        (n #"(?m)(\d+) error(?:ed|s)?\b")
 
-     skipped
-     (n #"(?m)(\d+) skipped")]
+        skipped
+        (n #"(?m)(\d+) skipped")]
 
     (when (or passed failed errored skipped)
       {"pass" (or passed 0)
@@ -516,66 +500,62 @@
    itself); `names` are the PATHLESS `::test_name` ids, joined into ONE `-k`
    expression because pytest keeps only the last `-k` flag it is given."
   [session-id ^String dir paths names]
-  (let
-    [^java.io.File junit
-     (java.io.File/createTempFile "vis-pytest-" ".xml")
+  (let [^java.io.File junit
+        (java.io.File/createTempFile "vis-pytest-" ".xml")
 
-     cmd
-     (cond->
-       (-> (interpreter/resolve-command dir)
-           (conj "-m" "pytest")
-           (into paths))
-       (seq names)
-       (conj "-k" (str/join " or " names))
+        cmd
+        (cond-> (-> (interpreter/resolve-command dir)
+                    (conj "-m" "pytest")
+                    (into paths))
+          (seq names)
+          (conj "-k" (str/join " or " names))
 
-       :always
-       (conj "-o" "junit_family=xunit1" (str "--junitxml=" (.getPath junit))))
+          :always
+          (conj "-o" "junit_family=xunit1" (str "--junitxml=" (.getPath junit))))
 
-     launch
-     (vis/session-process-launch session-id cmd)
+        launch
+        (vis/session-process-launch session-id cmd)
 
-     pb
-     (doto (ProcessBuilder. ^java.util.List (:argv launch))
-       (.directory (io/file dir))
-       (.redirectErrorStream true))
+        pb
+        (doto (ProcessBuilder. ^java.util.List (:argv launch))
+          (.directory (io/file dir))
+          (.redirectErrorStream true))
 
-     _env
-     (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-       (when (:replace-env? launch) (.clear e))
-       (doseq [[k v] (:env launch)]
-         (.put e ^String k ^String v)))
+        _env
+        (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
+          (when (:replace-env? launch) (.clear e))
+          (doseq [[k v] (:env launch)]
+            (.put e ^String k ^String v)))
 
-     p
-     (.start pb)
+        p
+        (.start pb)
 
-     out
-     (future (slurp (.getInputStream p)))
+        out
+        (future (slurp (.getInputStream p)))
 
-     done?
-     (.waitFor p (long rt/RUN_TESTS_TIMEOUT_MS) java.util.concurrent.TimeUnit/MILLISECONDS)]
+        done?
+        (.waitFor p (long rt/RUN_TESTS_TIMEOUT_MS) java.util.concurrent.TimeUnit/MILLISECONDS)]
 
     (when-not done? (.destroyForcibly p))
-    (try (let
-           [s
-            (str @out)
+    (try (let [s
+               (str @out)
 
-            report
-            (junit-report dir junit)
+               report
+               (junit-report dir junit)
 
-            counts
-            (or (pytest-counts s) (:counts report))]
+               counts
+               (or (pytest-counts s) (:counts report))]
 
-           (cond->
-             (merge {"runner" "project"
-                     "mode" "cli"
-                     "framework" "pytest"
-                     "tool" "pytest"
-                     "command" (str/join " " cmd)
-                     "cwd" dir
-                     "exit" (when done? (.exitValue p))
-                     "timed_out" (not done?)
-                     "output" (clamp-output s output-char-cap)}
-                    counts)
+           (cond-> (merge {"runner" "project"
+                           "mode" "cli"
+                           "framework" "pytest"
+                           "tool" "pytest"
+                           "command" (str/join " " cmd)
+                           "cwd" dir
+                           "exit" (when done? (.exitValue p))
+                           "timed_out" (not done?)
+                           "output" (clamp-output s output-char-cap)}
+                          counts)
              (seq (:failures report))
              (assoc "failures" (:failures report))))
          (finally (.delete junit)))))
@@ -587,12 +567,11 @@
    `environment`, config says `runner`, and neither spelling is accepted in the
    other's place."
   [opts]
-  (let
-    [environment
-     (str/lower-case (str (or (get opts "environment") "")))
+  (let [environment
+        (str/lower-case (str (or (get opts "environment") "")))
 
-     configured
-     (str/lower-case (str (or (interpreter/configured-runner) "graalpy")))]
+        configured
+        (str/lower-case (str (or (interpreter/configured-runner) "graalpy")))]
 
     (cond (= "project" environment) "project"
           ;; An explicit environment that is not `project` is the sandbox,
@@ -628,48 +607,46 @@
    `python.runner` in merged config chooses the DEFAULT backend; an explicit
    `environment` argument still wins."
   [env arg]
-  (let
-    [root
-     (env-root env)
+  (let [root
+        (env-root env)
 
-     opts
-     (if (map? arg) arg {})
+        opts
+        (if (map? arg) arg {})
 
-     dir
-     (resolve-dir root (get opts "cwd"))
+        dir
+        (resolve-dir root (get opts "cwd"))
 
-     runner
-     (select-runner opts)
+        runner
+        (select-runner opts)
 
-     ;; The project interpreter reads the project's own config itself; only the
-     ;; hermetic backend has to be taught the layout (one throwaway context).
-     layout
-     (when (= "graalpy" runner) (pyproj/project-layout dir))
+        ;; The project interpreter reads the project's own config itself; only the
+        ;; hermetic backend has to be taught the layout (one throwaway context).
+        layout
+        (when (= "graalpy" runner) (pyproj/project-layout dir))
 
-     ;; The hermetic backend discovers and runs whole files; it has no
-     ;; test-name filter, so a node id it CANNOT honor is refused by name
-     ;; instead of running every test in the file and reporting that as the
-     ;; selection the caller asked for.
-     _
-     (when (= "graalpy" runner)
-       (when-let
-         [named (seq (filter :var (map contract/split-node-id (map str (get opts "paths")))))]
-         (throw (ex-info (str "run_tests(python) cannot select a single test in the hermetic"
-                              " sandbox: " (pr-str (mapv (fn [{:keys [path var]}]
-                                                           (str path "::" var))
-                                                         named))
-                              " — rerun with {\"environment\": \"project\"} so the project's own"
-                              " pytest reads the node id, or name the FILE to run all of it.")
-                         {:type :py/bad-args :paths (mapv :path named)}))))
+        ;; The hermetic backend discovers and runs whole files; it has no
+        ;; test-name filter, so a node id it CANNOT honor is refused by name
+        ;; instead of running every test in the file and reporting that as the
+        ;; selection the caller asked for.
+        _
+        (when (= "graalpy" runner)
+          (when-let [named (seq (filter :var
+                                        (map contract/split-node-id (map str (get opts "paths")))))]
+            (throw (ex-info (str "run_tests(python) cannot select a single test in the hermetic"
+                                 " sandbox: " (pr-str (mapv (fn [{:keys [path var]}]
+                                                              (str path "::" var))
+                                                            named))
+                                 " — rerun with {\"environment\": \"project\"} so the project's own"
+                                 " pytest reads the node id, or name the FILE to run all of it.")
+                            {:type :py/bad-args :paths (mapv :path named)}))))
 
-     {:keys [paths names]}
-     (resolve-test-paths dir opts (:testpaths layout))]
+        {:keys [paths names]}
+        (resolve-test-paths dir opts (:testpaths layout))]
 
-    (extension/success {:result (cond->
-                                  (assoc (if (= "project" runner)
-                                           (project-test (:session-id env) dir paths names)
-                                           (graalpy-test paths (:import-roots layout)))
-                                    "language" "python")
+    (extension/success {:result (cond-> (assoc (if (= "project" runner)
+                                                 (project-test (:session-id env) dir paths names)
+                                                 (graalpy-test paths (:import-roots layout)))
+                                          "language" "python")
                                   (:warning layout)
                                   (assoc "warning" (:warning layout)))})))
 

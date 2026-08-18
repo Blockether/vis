@@ -52,18 +52,17 @@
    Preferred/default models are presented first. Appends the 'Show all models...'
    toggle when dated variants were hidden."
   [provider preferred-models show-all?]
-  (let
-    [{:keys [models hidden-count]}
-     (vis/gateway-provider-model-options (:id provider) show-all?)
+  (let [{:keys [models hidden-count]}
+        (vis/gateway-provider-model-options (:id provider) show-all?)
 
-     preferred
-     (into #{} (map #(if (map? %) (vis/model-name %) (str %))) preferred-models)
+        preferred
+        (into #{} (map #(if (map? %) (vis/model-name %) (str %))) preferred-models)
 
-     items
-     (->> models
-          (mapv (fn [id]
-                  {:label id :id id}))
-          (move-matches-first #(contains? preferred (:id %))))]
+        items
+        (->> models
+             (mapv (fn [id]
+                     {:label id :id id}))
+             (move-matches-first #(contains? preferred (:id %))))]
 
     (if (and (not show-all?) (pos? (long hidden-count)))
       (conj items {:label "Show all models..." :id :show-all})
@@ -108,22 +107,21 @@
    up, and so does the wall clock; either way the poll is cancelled and the caller
    reads it as a cancel."
   [q label result]
-  (let
-    [started-at-ms
-     (System/currentTimeMillis)
+  (let [started-at-ms
+        (System/currentTimeMillis)
 
-     deadline-ms
-     (+ started-at-ms (long device-wait-timeout-ms))
+        deadline-ms
+        (+ started-at-ms (long device-wait-timeout-ms))
 
-     finished?
-     ((:wait! q)
-       (str label " — waiting for authorization")
-       (fn []
-         (str "Finish the login in the browser · "
-              (quot (- (System/currentTimeMillis) started-at-ms) 1000)
-              "s"))
-       (fn []
-         (or (realized? result) (>= (System/currentTimeMillis) deadline-ms))))]
+        finished?
+        ((:wait! q)
+          (str label " — waiting for authorization")
+          (fn []
+            (str "Finish the login in the browser · "
+                 (quot (- (System/currentTimeMillis) started-at-ms) 1000)
+                 "s"))
+          (fn []
+            (or (realized? result) (>= (System/currentTimeMillis) deadline-ms))))]
 
     (if (and finished? (realized? result))
       @result
@@ -139,25 +137,24 @@
    what the last keystroke left behind (`Copied the code.`), so the band reports
    itself instead of stacking a toast over the code the user is still reading."
   [verification-uri user-code status]
-  {:groups [{:title (str "Code  " user-code)
-             :items [{:key "c" :type :action :id :copy :label "Copy the code"}]}
-            {:title (str verification-uri)
-             :items [{:key "o" :type :action :id :open :label "Open the URL in a browser"}]}
-            (cond->
-              {:items
-               [{:key "w" :type :action :id :wait :label "Wait — I authorized in the browser"}]}
-              (not (str/blank? (str status)))
-              (assoc :title (str status)))]})
+  {:groups
+   [{:title (str "Code  " user-code)
+     :items [{:key "c" :type :action :id :copy :label "Copy the code"}]}
+    {:title (str verification-uri)
+     :items [{:key "o" :type :action :id :open :label "Open the URL in a browser"}]}
+    (cond-> {:items
+             [{:key "w" :type :action :id :wait :label "Wait — I authorized in the browser"}]}
+      (not (str/blank? (str status)))
+      (assoc :title (str status)))]})
 
 (defn- device-auth-band!
   "Show the device code IN THE CALLER'S BAND and let the terminal act on it.
    Returns true when the user says they authorized, nil on Esc."
   [q label verification-uri user-code]
   (loop [status nil]
-    (case
-      (:action ((:transient! q)
-                 (assoc (device-auth-transient-spec verification-uri user-code status)
-                   :title label)))
+    (case (:action ((:transient! q)
+                     (assoc (device-auth-transient-spec verification-uri user-code status)
+                       :title label)))
       :copy
       (do (input/clipboard-copy! user-code) (recur "Copied the device code to the clipboard."))
 
@@ -185,39 +182,36 @@
    (if (and (not force?) (gateway-authenticated? provider-id))
      true
      (try
-       (let
-         [flow
-          (vis/gateway-provider-auth-start! provider-id)
+       (let [flow
+             (vis/gateway-provider-auth-start! provider-id)
 
-          flow-id
-          (get flow "flow_id")
+             flow-id
+             (get flow "flow_id")
 
-          uri
-          (or (get flow "verification_uri") (get flow "url"))
+             uri
+             (or (get flow "verification_uri") (get flow "url"))
 
-          user-code
-          (get flow "user_code")
+             user-code
+             (get flow "user_code")
 
-          interval-ms
-          (max 1000 (long (or (get flow "interval_ms") 5000)))]
+             interval-ms
+             (max 1000 (long (or (get flow "interval_ms") 5000)))]
 
          (cond (not (and flow-id uri user-code))
                (do ((:note! q) label "No device code came back from vis.") nil)
                (not (device-auth-band! q label uri user-code))
                (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
-               :else (let
-                       [poll
-                        (vis/worker-future
-                          "vis-tui-device-auth-poll"
-                          #(loop []
+               :else (let [poll
+                           (vis/worker-future
+                             "vis-tui-device-auth-poll"
+                             #(loop [] (let [verdict (vis/gateway-provider-auth-poll! provider-id
+                                                                                      flow-id)]
+                                         (if (= "pending" (get verdict "status"))
+                                           (do (Thread/sleep interval-ms) (recur))
+                                           verdict))))
 
-                             (let [verdict (vis/gateway-provider-auth-poll! provider-id flow-id)]
-                               (if (= "pending" (get verdict "status"))
-                                 (do (Thread/sleep interval-ms) (recur))
-                                 verdict))))
-
-                        verdict
-                        (wait-for-device-auth! q label poll)]
+                           verdict
+                           (wait-for-device-auth! q label poll)]
 
                        (cond (= device-auth-cancelled verdict)
                              (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
@@ -249,26 +243,24 @@
 
    Returns true on success, nil on cancel or failure (the band already said so)."
   [q provider-id label]
-  (try (let
-         [flow
-          (vis/gateway-provider-auth-start! provider-id)
+  (try (let [flow
+             (vis/gateway-provider-auth-start! provider-id)
 
-          flow-id
-          (get flow "flow_id")
+             flow-id
+             (get flow "flow_id")
 
-          url
-          (get flow "url")]
+             url
+             (get flow "url")]
 
          (if-not (and flow-id url)
            (do ((:note! q) label "No authorization URL came back from vis.") nil)
            (do (opener/open! url)
-               (let
-                 [pasted
-                  ((:read! q) (str label " — paste the final browser URL:") {:placeholder url})
+               (let [pasted
+                     ((:read! q) (str label " — paste the final browser URL:") {:placeholder url})
 
-                  input
-                  (some-> pasted
-                          str/trim)]
+                     input
+                     (some-> pasted
+                             str/trim)]
 
                  (if (str/blank? input)
                    (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
@@ -375,12 +367,11 @@
   "Run `f` on a worker future and give up after `gateway-probe-timeout-ms`,
    answering `(on-timeout message)` rather than blocking the caller further."
   [label f on-timeout]
-  (let
-    [fut
-     (vis/worker-future label f)
+  (let [fut
+        (vis/worker-future label f)
 
-     value
-     (deref fut gateway-probe-timeout-ms ::timed-out)]
+        value
+        (deref fut gateway-probe-timeout-ms ::timed-out)]
 
     (if (identical? ::timed-out value)
       (do (.cancel ^java.util.concurrent.Future fut true)
@@ -456,15 +447,14 @@
   ([provider status] (provider-action-items provider status false))
   ([provider status is-fallback] (provider-action-items provider status is-fallback false))
   ([provider status is-fallback is-default]
-   (let
-     [registered
-      (vis/provider-by-id (:id provider))
+   (let [registered
+         (vis/provider-by-id (:id provider))
 
-      is-authenticated
-      (provider-authenticated? provider status)
+         is-authenticated
+         (provider-authenticated? provider status)
 
-      auth-label
-      (if is-authenticated "Re-authenticate" "Authenticate")]
+         auth-label
+         (if is-authenticated "Re-authenticate" "Authenticate")]
 
      (->
        (cond-> [{:id :default :label "Set as Default..." :key \d}]
@@ -500,18 +490,16 @@
    routing first, then the account verbs. A group with no surviving action is
    dropped, so a provider that cannot authenticate never shows an empty heading."
   [actions]
-  (let
-    [group (fn [title pred]
-             (when-let
-               [items (seq (into []
-                                 (comp (filter pred)
-                                       (map (fn [action]
-                                              {:key (str (:key action))
-                                               :type :action
-                                               :id (:id action)
-                                               :label (:label action)})))
-                                 actions))]
-               {:title title :items (vec items)}))]
+  (let [group (fn [title pred]
+                (when-let [items (seq (into []
+                                            (comp (filter pred)
+                                                  (map (fn [action]
+                                                         {:key (str (:key action))
+                                                          :type :action
+                                                          :id (:id action)
+                                                          :label (:label action)})))
+                                            actions))]
+                  {:title title :items (vec items)}))]
     {:groups (into []
                    (remove nil?)
                    [(group "Routing" #(contains? routing-action-ids (:id %)))
@@ -538,41 +526,40 @@
    many choices for one screen, each chosen with ONE keystroke, `n` / `p` between
    pages. `:commands` are the caller's own extra commands, appended after paging."
   [{:keys [title items page page-size commands]}]
-  (let
-    [page-size
-     (long
-       (p/clamp (long (or page-size (count model-transient-keys))) 1 (count model-transient-keys)))
+  (let [page-size
+        (long (p/clamp (long (or page-size (count model-transient-keys)))
+                       1
+                       (count model-transient-keys)))
 
-     items
-     (vec items)
+        items
+        (vec items)
 
-     pages
-     (max 1 (quot (+ (count items) (dec page-size)) page-size))
+        pages
+        (max 1 (quot (+ (count items) (dec page-size)) page-size))
 
-     page
-     (long (p/clamp (long page) 0 (dec pages)))
+        page
+        (long (p/clamp (long page) 0 (dec pages)))
 
-     from
-     (min (count items) (* page page-size))
+        from
+        (min (count items) (* page page-size))
 
-     window
-     (subvec items from (min (count items) (+ from page-size)))
+        window
+        (subvec items from (min (count items) (+ from page-size)))
 
-     commands
-     (-> (if (> pages 1)
-             [{:key "n" :type :action :id ::next-page :label "Next page"}
-              {:key "p" :type :action :id ::prev-page :label "Previous page"}]
-             [])
-         (into commands))]
+        commands
+        (-> (if (> pages 1)
+                [{:key "n" :type :action :id ::next-page :label "Next page"}
+                 {:key "p" :type :action :id ::prev-page :label "Previous page"}]
+                [])
+            (into commands))]
 
-    {:groups (cond->
-               [{:title (if (> pages 1) (str title "  " (inc page) "/" pages) title)
-                 :items (into []
-                              (map-indexed (fn [i item]
-                                             (assoc item
-                                               :key (str (nth model-transient-keys i))
-                                               :type :action)))
-                              window)}]
+    {:groups (cond-> [{:title (if (> pages 1) (str title "  " (inc page) "/" pages) title)
+                       :items (into []
+                                    (map-indexed (fn [i item]
+                                                   (assoc item
+                                                     :key (str (nth model-transient-keys i))
+                                                     :type :action)))
+                                    window)}]
                (seq commands)
                (conj {:title "Commands" :items commands}))}))
 
@@ -586,26 +573,24 @@
    the tagged pair stays findable without reading the cards."
   ([entries page marks] (model-transient-spec entries page marks (count model-transient-keys)))
   ([entries page marks page-size]
-   (let
-     [models
-      (into [] (remove #(= :show-all (:id %))) entries)
+   (let [models
+         (into [] (remove #(= :show-all (:id %))) entries)
 
-      show-all?
-      (boolean (some #(= :show-all (:id %)) entries))
+         show-all?
+         (boolean (some #(= :show-all (:id %)) entries))
 
-      labelled
-      (mapv (fn [model]
-              (let
-                [id
-                 (:id model)
+         labelled
+         (mapv (fn [model]
+                 (let [id
+                       (:id model)
 
-                 role
-                 (cond (and (some? (:default marks)) (= id (:default marks))) "  (default)"
-                       (and (some? (:fallback marks)) (= id (:fallback marks))) "  (fallback)"
-                       :else "")]
+                       role
+                       (cond (and (some? (:default marks)) (= id (:default marks))) "  (default)"
+                             (and (some? (:fallback marks)) (= id (:fallback marks))) "  (fallback)"
+                             :else "")]
 
-                {:id id :label (str (:label model) role)}))
-            models)]
+                   {:id id :label (str (:label model) role)}))
+               models)]
 
      (paged-key-groups {:title "Models"
                         :items labelled
@@ -643,20 +628,18 @@
    to page a long catalog, `*` to expand the models the gateway hid. Returns the
    chosen model id, or nil when the user backed out with Esc."
   [^TerminalScreen screen g geom provider entries preferred marks page-size]
-  (let
-    [geom
-     (dlg/host-band-region screen geom)
+  (let [geom
+        (dlg/host-band-region screen geom)
 
-     title
-     (str (or (:label provider) (vis/display-label (:id provider))) " — models")]
+        title
+        (str (or (:label provider) (vis/display-label (:id provider))) " — models")]
 
     (loop [entries entries]
-      (let
-        [picked (run-paged-transient! screen
-                                      g
-                                      geom
-                                      title
-                                      #(model-transient-spec entries % marks page-size))]
+      (let [picked (run-paged-transient! screen
+                                         g
+                                         geom
+                                         title
+                                         #(model-transient-spec entries % marks page-size))]
         (if (= picked :show-all) (recur (build-model-list provider preferred true)) picked)))))
 
 (defn api-key-hint
@@ -720,36 +703,33 @@
    Returns the provider row WITHOUT the key on success (the daemon holds the
    credential), nil on cancel or failure (the band already said so)."
   [q provider]
-  (let
-    [pid
-     (:id provider)
+  (let [pid
+        (:id provider)
 
-     label
-     (str (vis/display-label pid) " Authentication")]
+        label
+        (str (vis/display-label pid) " Authentication")]
 
     (try
-      (let
-        [flow
-         (vis/gateway-provider-auth-start! pid)
+      (let [flow
+            (vis/gateway-provider-auth-start! pid)
 
-         flow-id
-         (get flow "flow_id")
+            flow-id
+            (get flow "flow_id")
 
-         hint
-         (api-key-hint (get flow "instructions"))]
+            hint
+            (api-key-hint (get flow "instructions"))]
 
         (if-not flow-id
           (do
             ((:note! q) label (str (vis/display-label pid) " cannot be authenticated through vis."))
             nil)
-          (let
-            [raw
-             (read-api-key! q hint)
+          (let [raw
+                (read-api-key! q hint)
 
-             api-key
-             (some-> raw
-                     str/trim
-                     not-empty)]
+                api-key
+                (some-> raw
+                        str/trim
+                        not-empty)]
 
             (if (nil? api-key)
               (do (vis/gateway-provider-auth-cancel! pid flow-id) nil)
@@ -774,15 +754,14 @@
   ([^TerminalScreen screen g region provider]
    (authenticate-provider! screen g region provider false))
   ([^TerminalScreen screen g region provider force?]
-   (let
-     [q
-      (dlg/band-questions screen g (dlg/host-band-region screen region))
+   (let [q
+         (dlg/band-questions screen g (dlg/host-band-region screen region))
 
-      pid
-      (:id provider)
+         pid
+         (:id provider)
 
-      label
-      (vis/display-label pid)]
+         label
+         (vis/display-label pid)]
 
      (cond (vis/provider-command-minted? provider)
            ;; The credential is MINTED BY THE MACHINE: `api_key_command` runs per
@@ -827,12 +806,11 @@
 
    Returns true when the removal ran."
   [^TerminalScreen screen g region provider]
-  (let
-    [label
-     (vis/display-label (:id provider))
+  (let [label
+        (vis/display-label (:id provider))
 
-     {:keys [confirm! note!]}
-     (dlg/band-questions screen g region)]
+        {:keys [confirm! note!]}
+        (dlg/band-questions screen g region)]
 
     (when (confirm! (str "Remove " label "?")
                     {:cost (str "Signs out of " label
@@ -854,28 +832,27 @@
    itself and returns `::rejected` instead of killing the caller's loop; nil
    means the user backed out."
   [^TerminalScreen screen g region provider role default-selection fallback-selection]
-  (let
-    [current
-     (if (= role :fallback) fallback-selection default-selection)
+  (let [current
+        (if (= role :fallback) fallback-selection default-selection)
 
-     preferred
-     (when (same-id? (:id provider) (:provider-id current)) [(:model current)])
+        preferred
+        (when (same-id? (:id provider) (:provider-id current)) [(:model current)])
 
-     rows
-     (max 1 (- (long (:hint-row region)) (long (:min-row region)) 1))
+        rows
+        (max 1 (- (long (:hint-row region)) (long (:min-row region)) 1))
 
-     choice
-     (run-model-transient!
-       screen
-       g
-       region
-       provider
-       (build-model-list provider preferred false)
-       preferred
-       {:default (when (same-id? (:id provider) (:provider-id default-selection))
-                   (:model default-selection))
-        :fallback (when (tagged? provider fallback-selection) (:model fallback-selection))}
-       (model-transient-page-size rows))]
+        choice
+        (run-model-transient!
+          screen
+          g
+          region
+          provider
+          (build-model-list provider preferred false)
+          preferred
+          {:default (when (same-id? (:id provider) (:provider-id default-selection))
+                      (:model default-selection))
+           :fallback (when (tagged? provider fallback-selection) (:model fallback-selection))}
+          (model-transient-page-size rows))]
 
     (when choice
       (try (if (= role :fallback)
@@ -897,62 +874,59 @@
    not about a snapshot the caller carried in. Returns true when something
    changed and the caller should reload its inventory."
   [^TerminalScreen screen g region provider-id]
-  (let
-    [region
-     (dlg/host-band-region screen region)
+  (let [region
+        (dlg/host-band-region screen region)
 
-     config
-     (or (vis/load-config) {:providers []})
+        config
+        (or (vis/load-config) {:providers []})
 
-     base
-     (vec (or (:providers config) []))
+        base
+        (vec (or (:providers config) []))
 
-     configured-ids
-     (into #{} (map :id) base)
+        configured-ids
+        (into #{} (map :id) base)
 
-     fleet
-     (into base
-           (remove #(contains? configured-ids (:id %)))
-           (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))
+        fleet
+        (into base
+              (remove #(contains? configured-ids (:id %)))
+              (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))
 
-     provider
-     (first (filter #(same-id? (:id %) provider-id) fleet))
+        provider
+        (first (filter #(same-id? (:id %) provider-id) fleet))
 
-     default-selection
-     (dlg/router-primary config fleet)
+        default-selection
+        (dlg/router-primary config fleet)
 
-     fallback-selection
-     (when-let [pid (:fallback-provider config)]
-       {:provider-id (keyword (name pid)) :model (:fallback-model config)})]
+        fallback-selection
+        (when-let [pid (:fallback-provider config)]
+          {:provider-id (keyword (name pid)) :model (:fallback-model config)})]
 
     (when provider
-      (let
-        [actions
-         (provider-action-items provider
-                                (gateway-provider-status-safe provider)
-                                (tagged? provider fallback-selection)
-                                (tagged? provider default-selection))
+      (let [actions
+            (provider-action-items provider
+                                   (gateway-provider-status-safe provider)
+                                   (tagged? provider fallback-selection)
+                                   (tagged? provider default-selection))
 
-         picked
-         (:action (dlg/embed-transient! screen
-                                        g
-                                        region
-                                        (str (vis/display-label (:id provider)) " — actions")
-                                        (provider-transient-spec actions)))
+            picked
+            (:action (dlg/embed-transient! screen
+                                           g
+                                           region
+                                           (str (vis/display-label (:id provider)) " — actions")
+                                           (provider-transient-spec actions)))
 
-         action
-         (some #(when (= picked (:id %)) %) actions)]
+            action
+            (some #(when (= picked (:id %)) %) actions)]
 
         (case (:id action)
           (:default :fallback)
-          (let
-            [selection (choose-router-model! screen
-                                             g
-                                             region
-                                             provider
-                                             (if (= (:id action) :fallback) :fallback :primary)
-                                             default-selection
-                                             fallback-selection)]
+          (let [selection (choose-router-model! screen
+                                                g
+                                                region
+                                                provider
+                                                (if (= (:id action) :fallback) :fallback :primary)
+                                                default-selection
+                                                fallback-selection)]
             (boolean (and (some? selection) (not= selection ::rejected))))
 
           :clear-fallback
@@ -1015,14 +989,13 @@
 (defn- read-local-base-url!
   "Run the endpoint band. Returns the URL to use, or nil when the user backed out."
   [^TerminalScreen screen g region preset]
-  (let
-    [{:keys [action options]}
-     (dlg/embed-transient! screen
-                           g
-                           region
-                           (str (:label preset) " — setup")
-                           (assoc (local-setup-transient-spec (:label preset) (:base-url preset))
-                             :read-option (dlg/region-option-reader screen g region)))]
+  (let [{:keys [action options]}
+        (dlg/embed-transient! screen
+                              g
+                              region
+                              (str (:label preset) " — setup")
+                              (assoc (local-setup-transient-spec (:label preset) (:base-url preset))
+                                :read-option (dlg/region-option-reader screen g region)))]
     (when (= :add action)
       (or (some-> (:base-url options)
                   str
@@ -1036,48 +1009,46 @@
    a band in the SAME frame. Persists the provider and returns its config, or nil
    when the user backed out anywhere along the way."
   [^TerminalScreen screen g region preset]
-  (let
-    [pid
-     (:id preset)
+  (let [pid
+        (:id preset)
 
-     local?
-     (contains? local-no-auth-provider-ids pid)
+        local?
+        (contains? local-no-auth-provider-ids pid)
 
-     oauth?
-     (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
+        oauth?
+        (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
 
-     base-url
-     (if local? (read-local-base-url! screen g region preset) (:base-url preset))
+        base-url
+        (if local? (read-local-base-url! screen g region preset) (:base-url preset))
 
-     preset
-     (assoc preset :base-url base-url)
+        preset
+        (assoc preset :base-url base-url)
 
-     ;; Sign-in is a band here too: the device code, the pasted redirect URL and
-     ;; the API-key field all paint in THIS frame, so the model band that follows
-     ;; lands on the settings list the user never lost sight of.
-     auth-ok?
-     (and (or (not local?) (some? base-url))
-          (or local?
-              (some? (:api-key preset))
-              (some? (authenticate-provider! screen g region preset))))
+        ;; Sign-in is a band here too: the device code, the pasted redirect URL and
+        ;; the API-key field all paint in THIS frame, so the model band that follows
+        ;; lands on the settings list the user never lost sight of.
+        auth-ok?
+        (and (or (not local?) (some? base-url))
+             (or local?
+                 (some? (:api-key preset))
+                 (some? (authenticate-provider! screen g region preset))))
 
-     config
-     (when auth-ok?
-       (if-let [oauth-models (when oauth? (not-empty (default-model-configs preset)))]
-         (provider-config-with-models preset oauth-models)
-         (let [preferred (vis/provider-default-model-names preset)]
-           (when-let
-             [model (run-model-transient! screen
-                                          g
-                                          region
-                                          preset
-                                          (build-model-list preset preferred false)
-                                          preferred
-                                          {}
-                                          (band-page-size region))]
-             (cond-> (provider-config-with-models preset [{:name model}])
-               (and (string? (:api-key preset)) (not oauth?))
-               (assoc :api-key (:api-key preset)))))))]
+        config
+        (when auth-ok?
+          (if-let [oauth-models (when oauth? (not-empty (default-model-configs preset)))]
+            (provider-config-with-models preset oauth-models)
+            (let [preferred (vis/provider-default-model-names preset)]
+              (when-let [model (run-model-transient! screen
+                                                     g
+                                                     region
+                                                     preset
+                                                     (build-model-list preset preferred false)
+                                                     preferred
+                                                     {}
+                                                     (band-page-size region))]
+                (cond-> (provider-config-with-models preset [{:name model}])
+                  (and (string? (:api-key preset)) (not oauth?))
+                  (assoc :api-key (:api-key preset)))))))]
 
     (when config (save-provider-config! (conj (vec (vis/configured-providers)) config)) config)))
 
@@ -1091,15 +1062,14 @@
   ([^TerminalScreen screen g region]
    (add-provider-transient! screen g region (into #{} (map :id) (vis/configured-providers))))
   ([^TerminalScreen screen g region existing-ids]
-   (let
-     [existing
-      (set existing-ids)
+   (let [existing
+         (set existing-ids)
 
-      available
-      (vec (remove #(contains? existing (:id %)) (vis/provider-presets)))
+         available
+         (vec (remove #(contains? existing (:id %)) (vis/provider-presets)))
 
-      region
-      (dlg/host-band-region screen region)]
+         region
+         (dlg/host-band-region screen region)]
 
      (if (empty? available)
        (do (dlg/embed-transient! screen
@@ -1113,11 +1083,11 @@
                                                      :label
                                                      "Every provider is already configured"}]}]})
            nil)
-       (when-let
-         [pid (run-paged-transient! screen
-                                    g
-                                    region
-                                    "Add provider"
-                                    #(preset-transient-spec available % (band-page-size region)))]
+       (when-let [pid (run-paged-transient!
+                        screen
+                        g
+                        region
+                        "Add provider"
+                        #(preset-transient-spec available % (band-page-size region)))]
          (add-preset-provider! screen g region (first (filter #(= pid (:id %)) available))))))))
 

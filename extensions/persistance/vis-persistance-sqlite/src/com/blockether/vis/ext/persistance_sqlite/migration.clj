@@ -49,23 +49,22 @@
    build-generated `_index.edn`. Returns nil when no index exists (JVM/dev),
    so callers fall back to Flyway's directory scanning."
   ^ResourceProvider [locations]
-  (let
-    [cl
-     (or (.getContextClassLoader (Thread/currentThread)) (.getClassLoader ResourceProvider))
+  (let [cl
+        (or (.getContextClassLoader (Thread/currentThread)) (.getClassLoader ResourceProvider))
 
-     res
-     (vec (for
-            [loc
-             locations
+        res
+        (vec
+          (for [loc
+                locations
 
-             :let [base
-                   (strip-classpath loc)
+                :let [base
+                      (strip-classpath loc)
 
-                   idx
-                   (io/resource (str base "/_index.edn"))]
-             :when idx
-             fname
-             (edn/read-string (slurp idx))]
+                      idx
+                      (io/resource (str base "/_index.edn"))]
+                :when idx
+                fname
+                (edn/read-string (slurp idx))]
 
             (ClassPathResource. (Location. loc) (str base "/" fname) cl StandardCharsets/UTF_8)))]
 
@@ -123,18 +122,17 @@
 (defn- migration-sql-texts
   "The SQL bodies of every migration shipped at `locations`, in file order."
   [locations]
-  (vec (for
-         [loc
-          locations
+  (vec (for [loc
+             locations
 
-          :let [base
-                (strip-classpath loc)]
-          fname
-          (or (migration-filenames base) [])
+             :let [base
+                   (strip-classpath loc)]
+             fname
+             (or (migration-filenames base) [])
 
-          :let [res
-                (io/resource (str base "/" fname))]
-          :when res]
+             :let [res
+                   (io/resource (str base "/" fname))]
+             :when res]
 
          (slurp res))))
 
@@ -143,16 +141,15 @@
 (defn- closing-paren
   "Index of the `)` closing the `(` at index `open`, or nil."
   [^String s ^long open]
-  (loop
-    [i
-     (inc open)
+  (loop [i
+         (inc open)
 
-     depth
-     1
+         depth
+         1
 
-     q
-     ;; NUL = "not inside a quoted literal"; a real char keeps the loop primitive.
-     \u0000]
+         q
+         ;; NUL = "not inside a quoted literal"; a real char keeps the loop primitive.
+         \u0000]
 
     (when (< i (.length s))
       (let [c (.charAt s i)]
@@ -166,21 +163,20 @@
   "Split a `CREATE TABLE` body at the commas that separate its definitions,
    ignoring commas nested in parens (CHECK, composite keys) or quotes."
   [^String body]
-  (loop
-    [i
-     0
+  (loop [i
+         0
 
-     depth
-     0
+         depth
+         0
 
-     q
-     \u0000
+         q
+         \u0000
 
-     start
-     0
+         start
+         0
 
-     acc
-     []]
+         acc
+         []]
 
     (if (>= i (.length body))
       (conj acc (subs body start))
@@ -201,12 +197,11 @@
   "`{:name ... :sql ...}` for one member of a `CREATE TABLE` body, or nil when
    that member is a table-level constraint rather than a column."
   [^String part]
-  (let
-    [text
-     (str/trim (str/replace part #"\s+" " "))
+  (let [text
+        (str/trim (str/replace part #"\s+" " "))
 
-     head
-     (first (str/split text #"[\s(]" 2))]
+        head
+        (first (str/split text #"[\s(]" 2))]
 
     (when (and (seq text)
                (not (contains? table-constraint-heads (str/lower-case (or head ""))))
@@ -216,22 +211,20 @@
 (defn- canonical-columns
   "Table name -> ordered column definitions, parsed out of the canonical SQL."
   [^String sql]
-  (let
-    [s
-     (strip-sql-comments sql)
+  (let [s
+        (strip-sql-comments sql)
 
-     m
-     (re-matcher
-       #"(?i)create\s+table\s+(?:if\s+not\s+exists\s+)?[\"`\[]?([A-Za-z0-9_]+)[\"`\]]?\s*\("
-       s)]
+        m
+        (re-matcher
+          #"(?i)create\s+table\s+(?:if\s+not\s+exists\s+)?[\"`\[]?([A-Za-z0-9_]+)[\"`\]]?\s*\("
+          s)]
 
     (loop [acc {}]
       (if-not (.find m)
         acc
-        (let
-          [table (.group m 1)
-           open (dec (.end m))
-           close (closing-paren s open)]
+        (let [table (.group m 1)
+              open (dec (.end m))
+              close (closing-paren s open)]
 
           (recur (if close
                    (assoc acc
@@ -253,12 +246,11 @@
 (defn- existing-columns
   "Lower-cased column names of `table`, or an empty set when it does not exist."
   [^java.sql.Connection conn ^String table]
-  (with-open
-    [st
-     (.createStatement conn)
+  (with-open [st
+              (.createStatement conn)
 
-     rs
-     (.executeQuery st (str "PRAGMA table_info(" table ")"))]
+              rs
+              (.executeQuery st (str "PRAGMA table_info(" table ")"))]
 
     (loop [acc #{}]
       (if (.next rs) (recur (conj acc (str/lower-case (.getString rs "name")))) acc))))
@@ -279,13 +271,12 @@
   (let [tables (reduce merge {} (map canonical-columns (migration-sql-texts locations)))]
     (when (seq tables)
       (with-open [conn (.getConnection ds)]
-        (doseq
-          [[table cols] tables
-           :let [have (existing-columns conn table)]
-           :when (seq have)
-           col cols
-           :when (and (not (contains? have (str/lower-case ^String (:name col))))
-                      (addable-column? col))]
+        (doseq [[table cols] tables
+                :let [have (existing-columns conn table)]
+                :when (seq have)
+                col cols
+                :when (and (not (contains? have (str/lower-case ^String (:name col))))
+                           (addable-column? col))]
 
           ;; Best effort: a racing process may have added it already, and a
           ;; definition SQLite still refuses must surface at its real use site
@@ -326,28 +317,26 @@
    depth zero: `BEGIN` and `CASE` open a block a trigger body closes with `END`,
    so every semicolon inside a trigger stays with its trigger."
   [^String sql]
-  (let
-    [^String s
-     (strip-sql-comments sql)
+  (let [^String s
+        (strip-sql-comments sql)
 
-     n
-     (long (.length s))]
+        n
+        (long (.length s))]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       q
-       \u0000
+           q
+           \u0000
 
-       depth
-       0
+           depth
+           0
 
-       start
-       0
+           start
+           0
 
-       acc
-       []]
+           acc
+           []]
 
       (if (>= i n)
         (into [] (comp (map str/trim) (filter seq)) (conj acc (subs s start)))
@@ -356,9 +345,8 @@
                 (or (= c \') (= c \")) (recur (inc i) c depth start acc)
                 (and (= c \;) (zero? depth))
                 (recur (inc i) q depth (inc i) (conj acc (subs s start i)))
-                (or (Character/isLetter c) (= c \_)) (let
-                                                       [e (word-end s i n)
-                                                        w (str/upper-case (subs s i e))]
+                (or (Character/isLetter c) (= c \_)) (let [e (word-end s i n)
+                                                           w (str/upper-case (subs s i e))]
 
                                                        (recur e
                                                               q
@@ -397,11 +385,10 @@
    why a retired column used to survive every open on a store that already
    existed."
   [^java.sql.Connection conn ^String table ^String column]
-  (with-open
-    [st (.prepareStatement conn
-                           (str "SELECT type, name FROM sqlite_master"
-                                " WHERE type IN ('table','trigger','view','index')"
-                                " AND name <> ? AND sql LIKE ?"))]
+  (with-open [st (.prepareStatement conn
+                                    (str "SELECT type, name FROM sqlite_master"
+                                         " WHERE type IN ('table','trigger','view','index')"
+                                         " AND name <> ? AND sql LIKE ?"))]
     (.setString st 1 table)
     (.setString st 2 (str "%" column "%"))
     (with-open [rs (.executeQuery st)]
@@ -423,26 +410,24 @@
    surviving columns. One transaction — a store ends up either fully retired or
    exactly as it started, never with its search triggers missing."
   [^java.sql.Connection conn objects ^String table ^String column]
-  (let
-    [deps
-     (dependent-objects conn table column)
+  (let [deps
+        (dependent-objects conn table column)
 
-     dep-names
-     (into #{} (map (comp str/lower-case :name)) deps)
+        dep-names
+        (into #{} (map (comp str/lower-case :name)) deps)
 
-     recreate
-     (filterv #(contains? dep-names (str/lower-case ^String (:name %))) objects)]
+        recreate
+        (filterv #(contains? dep-names (str/lower-case ^String (:name %))) objects)]
 
     (doseq [{:keys [kind name]} deps]
       (execute-ddl! conn (str "DROP " (str/upper-case kind) " IF EXISTS " name)))
     (execute-ddl! conn (str "ALTER TABLE " table " DROP COLUMN " column))
     (doseq [{:keys [sql]} recreate]
       (execute-ddl! conn sql))
-    (doseq
-      [{:keys [kind name sql]}
-       recreate
+    (doseq [{:keys [kind name sql]}
+            recreate
 
-       :when (and (= "table" kind) (re-find #"(?i)using\s+fts5" ^String sql))]
+            :when (and (= "table" kind) (re-find #"(?i)using\s+fts5" ^String sql))]
 
       (execute-ddl! conn (str "INSERT INTO " name "(" name ") VALUES('rebuild')")))))
 
@@ -453,9 +438,8 @@
   [^DataSource ds locations]
   (let [objects (canonical-objects (migration-sql-texts locations))]
     (with-open [conn (.getConnection ds)]
-      (doseq
-        [[^String table ^String column] retired-columns
-         :when (contains? (existing-columns conn table) (str/lower-case column))]
+      (doseq [[^String table ^String column] retired-columns
+              :when (contains? (existing-columns conn table) (str/lower-case column))]
 
         (let [auto (.getAutoCommit conn)]
           (try (.setAutoCommit conn false)
@@ -474,27 +458,25 @@
    by `reconcile-canonical-columns!` and stripped of `retired-columns`, so one
    canonical migration keeps serving stores that already exist."
   [^DataSource ds locations]
-  (let
-    [locs
-     (cond (string? locations) [locations]
-           (sequential? locations) (vec locations)
-           :else (throw (ex-info "locations must be a string or coll of strings"
-                                 {:type :persistance/invalid-migration-locations
-                                  :got (type locations)})))
+  (let [locs
+        (cond (string? locations) [locations]
+              (sequential? locations) (vec locations)
+              :else (throw (ex-info "locations must be a string or coll of strings"
+                                    {:type :persistance/invalid-migration-locations
+                                     :got (type locations)})))
 
-     rp
-     (index-resource-provider locs)
+        rp
+        (index-resource-provider locs)
 
-     ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
-     (cond->
-       (-> (org.flywaydb.core.Flyway/configure)
-           (.dataSource ds)
-           (.locations ^"[Ljava.lang.String;" (into-array String locs))
-           (.baselineOnMigrate true)
-           (.baselineVersion "0")
-           (.mixed true))
-       rp
-       (.resourceProvider rp))]
+        ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
+        (cond-> (-> (org.flywaydb.core.Flyway/configure)
+                    (.dataSource ds)
+                    (.locations ^"[Ljava.lang.String;" (into-array String locs))
+                    (.baselineOnMigrate true)
+                    (.baselineVersion "0")
+                    (.mixed true))
+          rp
+          (.resourceProvider rp))]
 
     (let [^org.flywaydb.core.Flyway flyway (.load cfg)]
       (try

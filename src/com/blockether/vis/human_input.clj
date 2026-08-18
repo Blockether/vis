@@ -86,17 +86,16 @@
    dated against, and one pair of builders means `row` and `column` mean the
    same thing wherever a human reads them."
   [direction nodes]
-  (let
-    [id
-     (when (string? (first nodes)) (first nodes))
+  (let [id
+        (when (string? (first nodes)) (first nodes))
 
-     fields
-     (vec (if id (rest nodes) nodes))
+        fields
+        (vec (if id (rest nodes) nodes))
 
-     group
-     (cond-> {:type "group" :direction direction :fields fields}
-       id
-       (assoc :id id))]
+        group
+        (cond-> {:type "group" :direction direction :fields fields}
+          id
+          (assoc :id id))]
 
     (if (engine/live-nodes? fields) (checked-node group) (checked group))
     group))

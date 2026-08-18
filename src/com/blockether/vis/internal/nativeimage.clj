@@ -94,19 +94,17 @@
   ;; class is initialized through Clojure's loader (which pushes the binding) and
   ;; its top-level (set! *warn-on-reflection* …) succeeds — before the analysis
   ;; can raw-init it on a binding-less worker thread.
-  (binding
-    [*warn-on-reflection*
-     false
+  (binding [*warn-on-reflection*
+            false
 
-     *unchecked-math*
-     false]
+            *unchecked-math*
+            false]
 
-    (let
-      [nses
-       (preload-namespaces)
+    (let [nses
+          (preload-namespaces)
 
-       broken
-       (atom [])]
+          broken
+          (atom [])]
 
       (println "[vis/native-image] pre-initializing" (count nses) "namespaces via require…")
       (doseq [ns-str nses]
@@ -151,50 +149,49 @@
   ;; MissingForeignRegistrationError, which lanterna catches and silently
   ;; degrades back to stty. Registering here keeps the fast path in the binary.
   (try
-    (let
-      [layouts
-       (fn ^"[Ljava.lang.foreign.MemoryLayout;" [ls]
-         (into-array java.lang.foreign.MemoryLayout ls))
+    (let [layouts
+          (fn ^"[Ljava.lang.foreign.MemoryLayout;" [ls]
+            (into-array java.lang.foreign.MemoryLayout ls))
 
-       descriptor
-       (fn [args]
-         (java.lang.foreign.FunctionDescriptor/of java.lang.foreign.ValueLayout/JAVA_INT
-                                                  (layouts args)))
+          descriptor
+          (fn [args]
+            (java.lang.foreign.FunctionDescriptor/of java.lang.foreign.ValueLayout/JAVA_INT
+                                                     (layouts args)))
 
-       ;; REFLECTIVE on purpose. `RuntimeForeignAccess` is @Platforms(HOSTED_ONLY):
-       ;; it exists in the image BUILDER, never in the image. graal-build-time
-       ;; initializes every Clojure namespace at build time, so this Feature's
-       ;; Vars land in the image heap and the analysis PARSES this fn as
-       ;; application code — a static reference then aborts the build with
-       ;; "Type is not available in this platform:
-       ;; org.graalvm.nativeimage.hosted.RuntimeForeignAccess". Looking the
-       ;; class up by name keeps the build-time call working and leaves the
-       ;; parsed method free of the hosted type.
-       register!
-       (fn [desc & options]
-         (let
-           [k
-            (Class/forName "org.graalvm.nativeimage.hosted.RuntimeForeignAccess")
+          ;; REFLECTIVE on purpose. `RuntimeForeignAccess` is @Platforms(HOSTED_ONLY):
+          ;; it exists in the image BUILDER, never in the image. graal-build-time
+          ;; initializes every Clojure namespace at build time, so this Feature's
+          ;; Vars land in the image heap and the analysis PARSES this fn as
+          ;; application code — a static reference then aborts the build with
+          ;; "Type is not available in this platform:
+          ;; org.graalvm.nativeimage.hosted.RuntimeForeignAccess". Looking the
+          ;; class up by name keeps the build-time call working and leaves the
+          ;; parsed method free of the hosted type.
+          register!
+          (fn [desc & options]
+            (let [k
+                  (Class/forName "org.graalvm.nativeimage.hosted.RuntimeForeignAccess")
 
-            m
-            (->> (.getMethods k)
-                 (filter (fn [^java.lang.reflect.Method mm]
-                           (and (= "registerForDowncall" (.getName mm))
-                                (= 2 (alength (.getParameterTypes mm))))))
-                 first)
+                  m
+                  (->> (.getMethods k)
+                       (filter (fn [^java.lang.reflect.Method mm]
+                                 (and (= "registerForDowncall" (.getName mm))
+                                      (= 2 (alength (.getParameterTypes mm))))))
+                       first)
 
-            _
-            (when-not m
-              (throw (ex-info (str "no registerForDowncall/2 on " k
-                                   " - had " (mapv str (.getMethods k)))
-                              {})))
+                  _
+                  (when-not m
+                    (throw (ex-info (str "no registerForDowncall/2 on " k
+                                         " - had " (mapv str (.getMethods k)))
+                                    {})))
 
-            opt-t
-            (.getComponentType ^Class (aget (.getParameterTypes ^java.lang.reflect.Method m) 1))]
+                  opt-t
+                  (.getComponentType ^Class
+                                     (aget (.getParameterTypes ^java.lang.reflect.Method m) 1))]
 
-           (.invoke ^java.lang.reflect.Method m
-                    nil
-                    (into-array Object [desc (into-array opt-t options)]))))]
+              (.invoke ^java.lang.reflect.Method m
+                       nil
+                       (into-array Object [desc (into-array opt-t options)]))))]
 
       ;; NEVER on Linux, where the TTY is driven by forking /bin/stty exactly as it
       ;; was through v0.1.32: this registration has never been proven there, and

@@ -96,22 +96,21 @@
              (it "evaluates a deep path in linear time, not quadratically"
                  ;; Regression: `(?:^|.*/)body/.*$` has TWO unbounded `.*` and pinned a core
                  ;; for ~2ms per deep path, making a repo-wide walk take a minute.
-                 (let
-                   [m
-                    (rules "*.log" "build/" "**/node_modules/**")
+                 (let [m
+                       (rules "*.log" "build/" "**/node_modules/**")
 
-                    deep
-                    (str (apply str (repeat 200 "some-directory-name/")) "file.txt")
+                       deep
+                       (str (apply str (repeat 200 "some-directory-name/")) "file.txt")
 
-                    start
-                    (System/nanoTime)
+                       start
+                       (System/nanoTime)
 
-                    _
-                    (dotimes [_ 200]
-                      (gi/ignored? m deep false))
+                       _
+                       (dotimes [_ 200]
+                         (gi/ignored? m deep false))
 
-                    ms
-                    (/ (- (System/nanoTime) start) 1e6)]
+                       ms
+                       (/ (- (System/nanoTime) start) 1e6)]
 
                    (expect (not (gi/ignored? m deep false)))
                    (expect (< ms 2000) (str "200 deep-path matches took " ms "ms")))))

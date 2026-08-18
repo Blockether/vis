@@ -24,16 +24,15 @@
 (defmacro with-fs-context
   "A sandbox Context whose Python filesystem is confined to `dir`."
   [dir & body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context})
-      (:python-context (ep/create-python-context {} (constantly [~dir])))]
+  `(let [~(with-meta 'python-context {:tag `Context})
+         (:python-context (ep/create-python-context {} (constantly [~dir])))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (defmacro with-context
   "A plain IO-NONE sandbox Context (inline mode only)."
   [& body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
+                                                                         {}))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (def ^:private report-code
@@ -67,12 +66,11 @@
                                         (str "import pytest\nrc = pytest.main(['" d
                                              "'])\n" report-code)))))))
   (it "accepts a single file path directly"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_one.py")]
+            f
+            (str d "/test_one.py")]
 
         (spit f "def test_one():\n    assert True\n")
         (with-fs-context d
@@ -98,13 +96,12 @@
       (let [d (tmp-dir)]
         (spit (str d "/test_boom.py") "def test_boom():\n    x = 41\n    assert x == 42\n")
         (with-fs-context d
-                         (let
-                           [lr (ev python-context
-                                   (str "import pytest\nrc = pytest.main(['"
-                                        d
-                                        "'])\n"
-                                        "rep = pytest.__dict__['_vis_last_report']\n"
-                                        "[l for (n,o,l) in rep if o == 'failed'][0]"))]
+                         (let [lr (ev python-context
+                                      (str "import pytest\nrc = pytest.main(['"
+                                           d
+                                           "'])\n"
+                                           "rep = pytest.__dict__['_vis_last_report']\n"
+                                           "[l for (n,o,l) in rep if o == 'failed'][0]"))]
                            (expect (str/includes? lr "test_boom"))
                            (expect (str/includes? lr "41")))))))
 
@@ -409,12 +406,11 @@
   "Issue #78: `path.py::name` must SELECT that node, and a run that executed
    nothing must not exit 0."
   (it "runs only the named function of a node id"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_pick.py")]
+            f
+            (str d "/test_pick.py")]
 
         (spit f "def test_one():\n    assert True\ndef test_two():\n    assert False\n")
         (with-fs-context d
@@ -423,12 +419,11 @@
                                         (str "import pytest\nrc = pytest.main(['" f
                                              "::test_one'])\n" report-code)))))))
   (it "selects a class method, and a bare class name selects its methods"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_cls.py")]
+            f
+            (str d "/test_cls.py")]
 
         (spit f
               (str "class TestBox:\n" "    def test_a(self):\n        assert True\n"
@@ -445,12 +440,11 @@
                                         (str "import pytest\nrc = pytest.main(['" f
                                              "::TestBox'])\n" report-code)))))))
   (it "selects one parametrized case by its bracketed id"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_param.py")]
+            f
+            (str d "/test_param.py")]
 
         (spit f
               (str "import pytest\n"
@@ -462,12 +456,11 @@
                                         (str "import pytest\nrc = pytest.main(['" f
                                              "::test_pos[2]'])\n" report-code)))))))
   (it "merges several node ids naming the same file into ONE load"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_merge.py")]
+            f
+            (str d "/test_merge.py")]
 
         (spit f
               (str "def test_a():\n    assert True\n"
@@ -481,12 +474,11 @@
                                              "::test_a', '" f
                                              "::test_b'])\n" report-code)))))))
   (it "exits 5 (no tests collected), never 0, when a node id matches nothing"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_none.py")]
+            f
+            (str d "/test_none.py")]
 
         (spit f "def test_one():\n    assert True\n")
         (with-fs-context d
@@ -502,12 +494,11 @@
                               (ev python-context
                                   (str "import pytest\npytest.main(['" d "/test_absent.py'])")))))))
   (it "--collect-only LISTS node ids and runs nothing"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_co.py")]
+            f
+            (str d "/test_co.py")]
 
         (spit f "def test_one():\n    assert True\ndef test_two():\n    assert False\n")
         (with-fs-context d
@@ -582,103 +573,97 @@
    `--junitxml` is the machine-readable half of the same contract."
   (it
     "reports even when a test leaves sys.stdout pointing elsewhere"
-    (let
-      [d
-       (tmp-dir)
+    (let [d
+          (tmp-dir)
 
-       f
-       (str d "/test_swap.py")]
+          f
+          (str d "/test_swap.py")]
 
       (spit f
             (str "import sys, io\n"
                  "def test_ok():\n    print('own output')\n    assert True\n"
                  "def test_swap():\n    sys.stdout = io.StringIO()\n    assert 1 == 2\n"))
-      (with-fs-context d
-                       (let
-                         [[rc restored out]
-                          (str/split
-                            (ev python-context
-                                (str "import pytest, io, contextlib, sys\n"
-                                     "_b = io.StringIO()\n" "with contextlib.redirect_stdout(_b):\n"
-                                     "    _rc = pytest.main(['" f
-                                     "'])\n" "    _ok = sys.stdout is _b\n"
-                                     "str(_rc) + chr(0) + ('RESTORED' if _ok else 'LEAKED')"
-                                     " + chr(0) + _b.getvalue()\n"))
-                            #"\x00"
-                            3)]
-                         (expect (= "1" rc))
-                         (expect (= "RESTORED" restored))
-                         ;; A PASSING test's stdout is CAPTURED (issue #110) — like real
-                         ;; pytest, it is not echoed into the report. What this case pins is
-                         ;; that the report itself still reaches the stream the run started
-                         ;; on, even after a test swapped `sys.stdout` from under it.
-                         (expect (str/includes? out "test session starts"))
-                         (expect (not (str/includes? out "own output")))
-                         (expect (str/includes? out "1 failed, 1 passed"))
-                         (expect (str/includes? out "FAILED"))))))
+      (with-fs-context
+        d
+        (let [[rc restored out]
+              (str/split (ev python-context
+                             (str "import pytest, io, contextlib, sys\n"
+                                  "_b = io.StringIO()\n" "with contextlib.redirect_stdout(_b):\n"
+                                  "    _rc = pytest.main(['" f
+                                  "'])\n" "    _ok = sys.stdout is _b\n"
+                                  "str(_rc) + chr(0) + ('RESTORED' if _ok else 'LEAKED')"
+                                  " + chr(0) + _b.getvalue()\n"))
+                         #"\x00"
+                         3)]
+          (expect (= "1" rc))
+          (expect (= "RESTORED" restored))
+          ;; A PASSING test's stdout is CAPTURED (issue #110) — like real
+          ;; pytest, it is not echoed into the report. What this case pins is
+          ;; that the report itself still reaches the stream the run started
+          ;; on, even after a test swapped `sys.stdout` from under it.
+          (expect (str/includes? out "test session starts"))
+          (expect (not (str/includes? out "own output")))
+          (expect (str/includes? out "1 failed, 1 passed"))
+          (expect (str/includes? out "FAILED"))))))
   (it "consumes the value of a value-taking option instead of collecting it"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_p.py")]
+            f
+            (str d "/test_p.py")]
 
         (spit f "def test_one():\n    assert True\n")
         (with-fs-context d
-                         (let
-                           [[rc out] (str/split (captured
-                                                  python-context
-                                                  (str "['-p', 'no:cacheprovider', '" f "']"))
-                                                #"\x00"
-                                                2)]
+                         (let [[rc out] (str/split (captured
+                                                     python-context
+                                                     (str "['-p', 'no:cacheprovider', '" f "']"))
+                                                   #"\x00"
+                                                   2)]
                            (expect (= "0" rc))
                            (expect (str/includes? out "1 passed"))))))
-  (it "--junitxml writes a JUnit report file and says so"
-      (let
-        [d
-         (tmp-dir)
+  (it
+    "--junitxml writes a JUnit report file and says so"
+    (let [d
+          (tmp-dir)
 
-         f
-         (str d "/test_j.py")
+          f
+          (str d "/test_j.py")
 
-         x
-         (str d "/j.xml")]
+          x
+          (str d "/j.xml")]
 
-        (spit f "def test_pass():\n    assert True\ndef test_fail():\n    assert 1 == 2\n")
-        (with-fs-context
-          d
-          (let
-            [[rc out]
-             (str/split (captured python-context (str "['" f "', '--junitxml=" x "']")) #"\x00" 2)
+      (spit f "def test_pass():\n    assert True\ndef test_fail():\n    assert 1 == 2\n")
+      (with-fs-context
+        d
+        (let [[rc out]
+              (str/split (captured python-context (str "['" f "', '--junitxml=" x "']")) #"\x00" 2)
 
-             xml
-             (slurp x)]
+              xml
+              (slurp x)]
 
-            (expect (= "1" rc))
-            (expect (str/includes? out (str "generated xml file: " x)))
-            (expect (str/includes? xml "<testsuite name=\"pytest\""))
-            (expect (str/includes? xml "tests=\"2\""))
-            (expect (str/includes? xml "failures=\"1\""))
-            (expect (str/includes? xml "name=\"test_fail\""))
-            (expect (str/includes? xml "<failure message="))))))
+          (expect (= "1" rc))
+          (expect (str/includes? out (str "generated xml file: " x)))
+          (expect (str/includes? xml "<testsuite name=\"pytest\""))
+          (expect (str/includes? xml "tests=\"2\""))
+          (expect (str/includes? xml "failures=\"1\""))
+          (expect (str/includes? xml "name=\"test_fail\""))
+          (expect (str/includes? xml "<failure message="))))))
   (it "reports an unwritable --junitxml target without failing the run"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         f
-         (str d "/test_ju.py")]
+            f
+            (str d "/test_ju.py")]
 
         (spit f "def test_one():\n    assert True\n")
-        (with-fs-context
-          d
-          (let
-            [[rc out]
-             (str/split (captured python-context (str "['" f "', '--junitxml=" d "']")) #"\x00" 2)]
-            (expect (= "0" rc))
-            (expect (str/includes? out "1 passed"))
-            (expect (str/includes? out "could not write xml file"))))))
+        (with-fs-context d
+                         (let [[rc out] (str/split (captured python-context
+                                                             (str "['" f "', '--junitxml=" d "']"))
+                                                   #"\x00"
+                                                   2)]
+                           (expect (= "0" rc))
+                           (expect (str/includes? out "1 passed"))
+                           (expect (str/includes? out "could not write xml file"))))))
   (it "turns an internal error into EXIT_INTERNALERROR with a visible report"
       (with-context (let [[rc out] (str/split (captured python-context "[], ns=5") #"\x00" 2)]
                       (expect (= "3" rc))
@@ -764,15 +749,14 @@
                                          " + ';notfound=' + str('not found' in out)"
                                          " + ';cap=' + str('Captured stdout call' in out)"))))))))
   (it "one test never inherits another test's captured output"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         _
-         (spit (str d "/test_two.py")
-               (str "def test_first():\n" "    print('FIRST-ONLY')\n"
-                    "    assert 1 == 2\n" "def test_second():\n"
-                    "    print('SECOND-ONLY')\n" "    assert 1 == 3\n"))]
+            _
+            (spit (str d "/test_two.py")
+                  (str "def test_first():\n" "    print('FIRST-ONLY')\n"
+                       "    assert 1 == 2\n" "def test_second():\n"
+                       "    print('SECOND-ONLY')\n" "    assert 1 == 3\n"))]
 
         (with-fs-context
           d
@@ -844,15 +828,14 @@
                                                " < out.find('CALL-OUT')"
                                                " < out.find('TEARDOWN-OUT'))"))))))))
   (it "pops a capsys tail nobody read back to the original stream under -s"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         _
-         (spit (str d "/test_pop.py")
-               (str "def test_pop(capsys):\n"
-                    "    print('CAPTURED-HELLO')\n" "    o, e = capsys.readouterr()\n"
-                    "    print('POPPED-' + o.strip())\n" "    print('TAIL-NEVER-READ')\n"))]
+            _
+            (spit (str d "/test_pop.py")
+                  (str "def test_pop(capsys):\n"
+                       "    print('CAPTURED-HELLO')\n" "    o, e = capsys.readouterr()\n"
+                       "    print('POPPED-' + o.strip())\n" "    print('TAIL-NEVER-READ')\n"))]
 
         (with-fs-context d
                          (expect (= "RC=0;pop=True;tail=True;live=True"
@@ -865,15 +848,14 @@
                                                " + ';live=' + str(-1 < out.find('POPPED-')"
                                                " < out.find('test session starts'))"))))))))
   (it "counts a single setup error as pytest's `1 error`, not `1 errors`"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         _
-         (spit (str d "/test_boom.py")
-               (str "import pytest\n" "@pytest.fixture\n"
-                    "def boom():\n" "    raise RuntimeError('setup exploded')\n"
-                    "def test_uses_boom(boom):\n" "    pass\n"))]
+            _
+            (spit (str d "/test_boom.py")
+                  (str "import pytest\n" "@pytest.fixture\n"
+                       "def boom():\n" "    raise RuntimeError('setup exploded')\n"
+                       "def test_uses_boom(boom):\n" "    pass\n"))]
 
         (with-fs-context d
                          (expect (= "RC=1;singular=True;plural=False"
@@ -891,22 +873,22 @@
 (defdescribe
   capfd-descriptor-test
   (it "reads back a descriptor-level write, which capsys still cannot see"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         _
-         (spit (str d "/test_fd.py")
-               (str
-                 "import os\n" "def test_fd(capfd):\n"
-                 "    print('VIA-STREAM')\n" "    os.write(1, b'VIA-DESCRIPTOR\\n')\n"
-                 "    out, err = capfd.readouterr()\n" "    assert 'VIA-STREAM' in out, repr(out)\n"
-                 "    assert 'VIA-DESCRIPTOR' in out, repr(out)\n"
-                 "    os.write(2, b'ERR-DESCRIPTOR\\n')\n"
-                 "    o2, e2 = capfd.readouterr()\n" "    assert 'ERR-DESCRIPTOR' in e2, repr(e2)\n"
-                 "def test_capsys_is_stream_only(capsys):\n" "    os.write(1, b'NEVER-SEEN\\n')\n"
-                 "    out, err = capsys.readouterr()\n"
-                 "    assert 'NEVER-SEEN' not in out, repr(out)\n"))]
+            _
+            (spit
+              (str d "/test_fd.py")
+              (str
+                "import os\n" "def test_fd(capfd):\n"
+                "    print('VIA-STREAM')\n" "    os.write(1, b'VIA-DESCRIPTOR\\n')\n"
+                "    out, err = capfd.readouterr()\n" "    assert 'VIA-STREAM' in out, repr(out)\n"
+                "    assert 'VIA-DESCRIPTOR' in out, repr(out)\n"
+                "    os.write(2, b'ERR-DESCRIPTOR\\n')\n"
+                "    o2, e2 = capfd.readouterr()\n" "    assert 'ERR-DESCRIPTOR' in e2, repr(e2)\n"
+                "def test_capsys_is_stream_only(capsys):\n" "    os.write(1, b'NEVER-SEEN\\n')\n"
+                "    out, err = capsys.readouterr()\n"
+                "    assert 'NEVER-SEEN' not in out, repr(out)\n"))]
 
         (with-fs-context
           d
@@ -915,14 +897,13 @@
                      (ev python-context
                          (str "import pytest\n" "rc = pytest.main(['" d "'])\n" report-code)))))))
   (it "replays a descriptor tail nobody read under the failure"
-      (let
-        [d
-         (tmp-dir)
+      (let [d
+            (tmp-dir)
 
-         _
-         (spit (str d "/test_fd_tail.py")
-               (str "import os\n" "def test_tail(capfd):\n"
-                    "    os.write(1, b'FD-TAIL-NEVER-READ\\n')\n" "    assert 1 == 2\n"))]
+            _
+            (spit (str d "/test_fd_tail.py")
+                  (str "import os\n" "def test_tail(capfd):\n"
+                       "    os.write(1, b'FD-TAIL-NEVER-READ\\n')\n" "    assert 1 == 2\n"))]
 
         (with-fs-context d
                          (expect (= "RC=1;tail=True"

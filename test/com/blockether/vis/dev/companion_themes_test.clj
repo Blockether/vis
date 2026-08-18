@@ -21,12 +21,11 @@
         "run `clojure -X:companion-themes`")))
 
 (deftest every-built-in-theme-is-paintable-without-a-gateway
-  (let
-    [css
-     (companion-themes/stylesheet)
+  (let [css
+        (companion-themes/stylesheet)
 
-     catalog
-     (companion-themes/catalog-module)]
+        catalog
+        (companion-themes/catalog-module)]
 
     (testing "each built-in palette has its own `data-theme` block and catalog row"
       (doseq [id (keys theme/built-in-themes)]

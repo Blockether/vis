@@ -57,20 +57,19 @@
    normalize. This is the path used for the under-root check."
   ^Path [^Path p]
   (let [abs (.normalize (.toAbsolutePath p))]
-    (loop
-      [^Path anc abs
-       tail ()]
+    (loop [^Path anc abs
+           tail ()]
 
       (cond
         ;; nearest existing ancestor (NOFOLLOW so a dangling symlink still counts
         ;; as 'exists' and gets resolved by toRealPath below)
-        (Files/exists anc nofollow)
-        (let [real-anc (try (.toRealPath anc no-link-opts) (catch Throwable _ anc))]
-          (.normalize ^Path
-                      (reduce (fn [^Path acc ^String seg]
-                                (.resolve acc seg))
-                              real-anc
-                              tail)))
+        (Files/exists anc nofollow) (let [real-anc (try (.toRealPath anc no-link-opts)
+                                                        (catch Throwable _ anc))]
+                                      (.normalize ^Path
+                                                  (reduce (fn [^Path acc ^String seg]
+                                                            (.resolve acc seg))
+                                                          real-anc
+                                                          tail)))
         (nil? (.getParent anc)) abs
         :else (recur (.getParent anc) (cons (str (.getFileName anc)) tail))))))
 
@@ -103,9 +102,9 @@
                (let [s (str r)]
                  (when-not (str/blank? s)
                    (or (get @cache s)
-                       (when-let
-                         [rp (try (.toRealPath (Paths/get s (make-array String 0)) no-link-opts)
-                                  (catch Throwable _ nil))]
+                       (when-let [rp (try (.toRealPath (Paths/get s (make-array String 0))
+                                                       no-link-opts)
+                                          (catch Throwable _ nil))]
                          (swap! cache assoc s rp)
                          rp))))))
        vec))
@@ -126,23 +125,22 @@
    guest — the attachment outbox, temp scratch, `~/.vis` — not the user's tree,
    and a guard able to refuse them is a guard able to brick a live session."
   ^Path [roots-fn cache extra-roots gate-fn operation p]
-  (let
-    [^Path pp
-     (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
+  (let [^Path pp
+        (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
 
-     real
-     (real-path pp)
+        real
+        (real-path pp)
 
-     extra
-     (vec extra-roots)
+        extra
+        (vec extra-roots)
 
-     roots
-     (into extra (current-real-roots roots-fn cache))
+        roots
+        (into extra (current-real-roots roots-fn cache))
 
-     engine-owned?
-     (some (fn [^Path root]
-             (.startsWith real root))
-           extra)]
+        engine-owned?
+        (some (fn [^Path root]
+                (.startsWith real root))
+              extra)]
 
     (when-not (some (fn [^Path root]
                       (.startsWith real root))
@@ -155,10 +153,10 @@
                                 operation
                                 " reason=outside_approved_filesystem_roots"))))
     (when (and gate-fn (not engine-owned?))
-      (when-let
-        [refusal (try (gate-fn operation (str real))
-                      (catch Throwable _
-                        {:reason "the :fs/access gate itself failed; file IO fails closed."}))]
+      (when-let [refusal (try (gate-fn operation (str real))
+                              (catch Throwable _
+                                {:reason
+                                 "the :fs/access gate itself failed; file IO fails closed."}))]
         ;; The gate's own sentence IS the remedy — it names what to do instead, so
         ;; the guest error is actionable without naming the path.
         (throw (IOException. (str "[vis:sandbox_denied] operation=" operation
@@ -218,88 +216,87 @@
   (^FileSystem [roots-fn] (confined-filesystem roots-fn nil nil))
   (^FileSystem [roots-fn outbox] (confined-filesystem roots-fn outbox nil))
   (^FileSystem [roots-fn outbox gate-fn]
-   (let
-     [^FileSystem d
-      (FileSystem/newDefaultFileSystem)
+   (let [^FileSystem d
+         (FileSystem/newDefaultFileSystem)
 
-      root-cache
-      (atom {})
+         root-cache
+         (atom {})
 
-      ^Path outbox-real
-      (when-let [dir (:dir outbox)]
-        (try (.toRealPath (Paths/get (str dir) (make-array String 0)) no-link-opts)
-             (catch Throwable _ (real-path (Paths/get (str dir) (make-array String 0))))))
+         ^Path outbox-real
+         (when-let [dir (:dir outbox)]
+           (try (.toRealPath (Paths/get (str dir) (make-array String 0)) no-link-opts)
+                (catch Throwable _ (real-path (Paths/get (str dir) (make-array String 0))))))
 
-      on-close
-      (:on-close outbox)
+         on-close
+         (:on-close outbox)
 
-      extra-roots
-      (into (into (if outbox-real [outbox-real] []) @temp-roots) @vis-always-roots)
+         extra-roots
+         (into (into (if outbox-real [outbox-real] []) @temp-roots) @vis-always-roots)
 
-      c
-      (fn [operation p]
-        (confine! roots-fn root-cache extra-roots gate-fn operation p))
+         c
+         (fn [operation p]
+           (confine! roots-fn root-cache extra-roots gate-fn operation p))
 
-      confined
-      (proxy [FileSystem] []
-        ;; path math — no file access, no confinement
-        (parsePath [arg]
-          (if (instance? java.net.URI arg)
-            (.parsePath d ^java.net.URI arg)
-            (.parsePath d ^String arg)))
-        (toAbsolutePath [p] (.toAbsolutePath d ^Path p))
-        (getSeparator [] (.getSeparator d))
-        (getPathSeparator [] (.getPathSeparator d))
-        ;; confine the path, then delegate the real op
-        (toRealPath [p opts] (.toRealPath d (c "file-read" p) opts))
-        (checkAccess [p modes opts] (.checkAccess d (c "file-read" p) modes opts))
-        (readAttributes [p attrs opts] (.readAttributes d (c "file-read" p) attrs opts))
-        (newByteChannel [p opts attrs]
-          (let
-            [^Path cp
-             (c (if (write-opts? opts) "file-write" "file-read") p)
+         confined
+         (proxy [FileSystem] []
+           ;; path math — no file access, no confinement
+           (parsePath [arg]
+             (if (instance? java.net.URI arg)
+               (.parsePath d ^java.net.URI arg)
+               (.parsePath d ^String arg)))
+           (toAbsolutePath [p] (.toAbsolutePath d ^Path p))
+           (getSeparator [] (.getSeparator d))
+           (getPathSeparator [] (.getPathSeparator d))
+           ;; confine the path, then delegate the real op
+           (toRealPath [p opts] (.toRealPath d (c "file-read" p) opts))
+           (checkAccess [p modes opts] (.checkAccess d (c "file-read" p) modes opts))
+           (readAttributes [p attrs opts] (.readAttributes d (c "file-read" p) attrs opts))
+           (newByteChannel [p opts attrs]
+             (let [^Path cp
+                   (c (if (write-opts? opts) "file-write" "file-read") p)
 
-             ch
-             (.newByteChannel d cp opts attrs)
+                   ch
+                   (.newByteChannel d cp opts attrs)
 
-             ;; DORMANT (`on-close` is nil — the engine wires no outbox):
-             ;; tap a WRITE opened under the OUTBOX *or* any system temp
-             ;; root (/tmp, $TMPDIR) so that, once the sandbox CLOSED the
-             ;; file, it streamed to the DB as a
-             ;; `session_iteration_attachment`. Retired in favour of
-             ;; `attach`; see `mpl-capture/incidental-capture-enabled?`.
-             tap?
-             (and on-close
-                  (write-opts? opts)
-                  (let [^Path rp (real-path cp)]
-                    (or (and outbox-real (.startsWith rp outbox-real))
-                        (some (fn [^Path tr]
-                                (.startsWith rp tr))
-                              @temp-roots))))]
+                   ;; DORMANT (`on-close` is nil — the engine wires no outbox):
+                   ;; tap a WRITE opened under the OUTBOX *or* any system temp
+                   ;; root (/tmp, $TMPDIR) so that, once the sandbox CLOSED the
+                   ;; file, it streamed to the DB as a
+                   ;; `session_iteration_attachment`. Retired in favour of
+                   ;; `attach`; see `mpl-capture/incidental-capture-enabled?`.
+                   tap?
+                   (and on-close
+                        (write-opts? opts)
+                        (let [^Path rp (real-path cp)]
+                          (or (and outbox-real (.startsWith rp outbox-real))
+                              (some (fn [^Path tr]
+                                      (.startsWith rp tr))
+                                    @temp-roots))))]
 
-            (if tap? (tap-write-channel ch cp on-close) ch)))
-        (newDirectoryStream [dir filt] (.newDirectoryStream d (c "file-read" dir) filt))
-        (createDirectory [dir attrs] (.createDirectory d (c "file-write" dir) attrs))
-        (delete [p] (.delete d (c "file-write" p)))
-        (copy [src dst opts] (.copy d (c "file-read" src) (c "file-write" dst) opts))
-        (move [src dst opts] (.move d (c "file-write" src) (c "file-write" dst) opts))
-        (createLink [link existing] (.createLink d (c "file-write" link) (c "file-read" existing)))
-        (createSymbolicLink [link target attrs]
-          (.createSymbolicLink d (c "file-write" link) (c "file-read" target) attrs))
-        (readSymbolicLink [link] (.readSymbolicLink d (c "file-read" link)))
-        (setAttribute [p attr value opts] (.setAttribute d (c "file-write" p) attr value opts))
-        ;; default interface methods — proxy does NOT inherit them, so delegate
-        ;; explicitly. Pure metadata delegates raw; file-touching ones confine.
-        (getMimeType [p] (.getMimeType d ^Path p))
-        (getEncoding [p] (.getEncoding d ^Path p))
-        (getTempDirectory [] (.getTempDirectory d))
-        (isSameFile [p1 p2 opts] (.isSameFile d (c "file-read" p1) (c "file-read" p2) opts))
-        (setCurrentWorkingDirectory [p] (.setCurrentWorkingDirectory d (c "file-read" p)))
-        (getFileStoreBlockSize [p] (.getFileStoreBlockSize d (c "file-read" p)))
-        (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace d (c "file-read" p)))
-        (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c "file-read" p)))
-        (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c "file-read" p)))
-        (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c "file-read" p))))]
+               (if tap? (tap-write-channel ch cp on-close) ch)))
+           (newDirectoryStream [dir filt] (.newDirectoryStream d (c "file-read" dir) filt))
+           (createDirectory [dir attrs] (.createDirectory d (c "file-write" dir) attrs))
+           (delete [p] (.delete d (c "file-write" p)))
+           (copy [src dst opts] (.copy d (c "file-read" src) (c "file-write" dst) opts))
+           (move [src dst opts] (.move d (c "file-write" src) (c "file-write" dst) opts))
+           (createLink [link existing]
+             (.createLink d (c "file-write" link) (c "file-read" existing)))
+           (createSymbolicLink [link target attrs]
+             (.createSymbolicLink d (c "file-write" link) (c "file-read" target) attrs))
+           (readSymbolicLink [link] (.readSymbolicLink d (c "file-read" link)))
+           (setAttribute [p attr value opts] (.setAttribute d (c "file-write" p) attr value opts))
+           ;; default interface methods — proxy does NOT inherit them, so delegate
+           ;; explicitly. Pure metadata delegates raw; file-touching ones confine.
+           (getMimeType [p] (.getMimeType d ^Path p))
+           (getEncoding [p] (.getEncoding d ^Path p))
+           (getTempDirectory [] (.getTempDirectory d))
+           (isSameFile [p1 p2 opts] (.isSameFile d (c "file-read" p1) (c "file-read" p2) opts))
+           (setCurrentWorkingDirectory [p] (.setCurrentWorkingDirectory d (c "file-read" p)))
+           (getFileStoreBlockSize [p] (.getFileStoreBlockSize d (c "file-read" p)))
+           (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace d (c "file-read" p)))
+           (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c "file-read" p)))
+           (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c "file-read" p)))
+           (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c "file-read" p))))]
 
      ;; Layer GraalPy's language-home + internal-resource read access ON TOP so
      ;; importing the stdlib still works while user paths stay confined.

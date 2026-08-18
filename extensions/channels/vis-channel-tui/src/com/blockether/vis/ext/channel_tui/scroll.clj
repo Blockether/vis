@@ -159,12 +159,11 @@
    — used when FOLLOW is settled at the bottom). A concrete row is
    returned while parked or mid-ease."
   [sc ^long max-s]
-  (let
-    [sc
-     (norm sc)
+  (let [sc
+        (norm sc)
 
-     pos
-     (:pos sc)]
+        pos
+        (:pos sc)]
 
     (case (:mode sc)
       ;; Settled at (or below) the bottom ⇒ nil exact-bottom lock.
@@ -183,9 +182,9 @@
   (let [diff (- target cur)]
     (cond (zero? diff) cur
           (= 1 (Math/abs diff)) target
-          :else
-          (let [step (long (Math/max 1 (long (Math/ceil (* (double step-frac) (Math/abs diff))))))]
-            (if (pos? diff) (Math/min target (+ cur step)) (Math/max target (- cur step)))))))
+          :else (let [step
+                      (long (Math/max 1 (long (Math/ceil (* (double step-frac) (Math/abs diff))))))]
+                  (if (pos? diff) (Math/min target (+ cur step)) (Math/max target (- cur step)))))))
 
 (defn ease
   "Advance the on-screen `:pos` one step toward `desired`. Called once per
@@ -203,15 +202,14 @@
    An ease still runs for DELIBERATE movement (`up`/`down`/jump-to-bottom seed
    `:pos` themselves) and ends here, snapped, when it arrives."
   [sc ^long max-s]
-  (let
-    [sc
-     (norm sc)
+  (let [sc
+        (norm sc)
 
-     d
-     (desired sc max-s)
+        d
+        (desired sc max-s)
 
-     cur
-     (displayed sc max-s)]
+        cur
+        (displayed sc max-s)]
 
     (if (and (:pos sc) (not= cur d)) (assoc sc :pos (step-toward cur d)) (dissoc sc :pos))))
 
@@ -229,18 +227,17 @@
    from where the view currently sits while a continuing ease keeps its
    origin."
   [sc ^long amount ^long max-s]
-  (let
-    [sc
-     (norm sc)
+  (let [sc
+        (norm sc)
 
-     cur
-     (displayed sc max-s)
+        cur
+        (displayed sc max-s)
 
-     base
-     (if (= :follow (:mode sc)) max-s (long (:offset sc)))
+        base
+        (if (= :follow (:mode sc)) max-s (long (:offset sc)))
 
-     t
-     (max 0 (- base amount))]
+        t
+        (max 0 (- base amount))]
 
     {:mode :at :offset t :pos (or (:pos sc) cur)}))
 
@@ -253,18 +250,17 @@
    bottom while FOLLOWING) so an alternating momentum stream can't walk the
    viewport backward off a half-eased position."
   [sc ^long amount ^long max-s]
-  (let
-    [sc
-     (norm sc)
+  (let [sc
+        (norm sc)
 
-     cur
-     (displayed sc max-s)
+        cur
+        (displayed sc max-s)
 
-     base
-     (if (= :follow (:mode sc)) max-s (long (:offset sc)))
+        base
+        (if (= :follow (:mode sc)) max-s (long (:offset sc)))
 
-     t
-     (+ base amount)]
+        t
+        (+ base amount)]
 
     (if (>= t (- max-s (long slack-rows)))
       (assoc follow :pos (or (:pos sc) cur))
@@ -314,12 +310,11 @@
    `effective-delta` is nil when the tick was fully absorbed — the caller drops
    it. `new-momentum` is what the caller stores back for the next poll."
   [momentum delta]
-  (let
-    [m
-     (long (or momentum 0))
+  (let [m
+        (long (or momentum 0))
 
-     r
-     (long delta)]
+        r
+        (long delta)]
 
     (cond (zero? r) [m nil]
           (or (zero? m) (pos? (* r m))) [(cap-momentum (+ m r)) r]
@@ -346,18 +341,16 @@
    Callers compute this at USE time (raw stored momentum + elapsed wall-clock
    ms), never store the decayed value back per poll — that would compound."
   [momentum idle-ms]
-  (let
-    [m
-     (long (or momentum 0))
+  (let [m
+        (long (or momentum 0))
 
-     idle
-     (max 0 (long idle-ms))]
+        idle
+        (max 0 (long idle-ms))]
 
     (cond (zero? m) 0
           (>= idle (long momentum-hold-ms)) 0
-          :else (let
-                  [scaled (long (Math/round
-                                  (* m (- 1.0 (/ (double idle) (double momentum-hold-ms))))))]
+          :else (let [scaled (long (Math/round
+                                     (* m (- 1.0 (/ (double idle) (double momentum-hold-ms))))))]
                   (if (zero? scaled) (Long/signum m) scaled)))))
 
 (defn to-y

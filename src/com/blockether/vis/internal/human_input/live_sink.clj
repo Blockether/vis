@@ -66,12 +66,11 @@
   "The record ONE [[record-uri]] names, or nil for anything that is not one: another
    scheme, a missing half, or a segment that is not a plain id."
   ^File [uri]
-  (let
-    [prefix
-     (str record-scheme "://")
+  (let [prefix
+        (str record-scheme "://")
 
-     s
-     (str uri)]
+        s
+        (str uri)]
 
     (when (str/starts-with? s prefix)
       (let [[session-id view-id extra] (str/split (subs s (count prefix)) #"/")]
@@ -186,14 +185,13 @@
   [^File file]
   (when (and file (.isFile file))
     (with-open [reader (io/reader file)]
-      (let
-        [last-line (reduce (fn [_ line]
-                             line)
-                           nil
-                           (line-seq reader))
-         record (some-> last-line
-                        json/read-json
-                        wire/->engine)]
+      (let [last-line (reduce (fn [_ line]
+                                line)
+                              nil
+                              (line-seq reader))
+            record (some-> last-line
+                           json/read-json
+                           wire/->engine)]
 
         (when (= "close" (:kind record)) (:result record))))))
 
@@ -256,15 +254,14 @@
    instead of being told the run has no history. One streamed pass, and only the
    asked-for page is held."
   [^File file node-id from limit]
-  (let
-    [node-id
-     (str node-id)
+  (let [node-id
+        (str node-id)
 
-     from
-     (max 0 (long from))
+        from
+        (max 0 (long from))
 
-     end
-     (+ from (max 0 (long limit)))]
+        end
+        (+ from (max 0 (long limit)))]
 
     (if-not (and file (.isFile file))
       (assoc empty-log

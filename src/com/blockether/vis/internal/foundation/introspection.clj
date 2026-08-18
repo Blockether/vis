@@ -78,16 +78,15 @@
    model emits `:answer` -- there is no model-visible budget, so the
    pointer carries only `:current`."
   [env]
-  (let
-    [iter-raw
-     (some-> (:turn-state-atom env)
-             deref
-             :iteration)
+  (let [iter-raw
+        (some-> (:turn-state-atom env)
+                deref
+                :iteration)
 
-     current-position
-     (cond (map? iter-raw) (or (:position iter-raw) 1)
-           (number? iter-raw) iter-raw
-           :else 1)]
+        current-position
+        (cond (map? iter-raw) (or (:position iter-raw) 1)
+              (number? iter-raw) iter-raw
+              :else 1)]
 
     {:current (long current-position)}))
 
@@ -112,22 +111,20 @@
   (into []
         (mapcat
           (fn [iteration]
-            (let
-              [base
-               {:iteration-id (:id iteration)
-                :iteration (:position iteration)
-                :duration-ms (:duration-ms iteration)}
+            (let [base
+                  {:iteration-id (:id iteration)
+                   :iteration (:position iteration)
+                   :duration-ms (:duration-ms iteration)}
 
-               forms
-               (iteration-forms iteration)]
+                  forms
+                  (iteration-forms iteration)]
 
               (if (seq forms)
                 (mapv (fn [form]
-                        (cond->
-                          (assoc base
-                            :code (or (:src form) (:code iteration))
-                            :result (:result form)
-                            :error (:error form))
+                        (cond-> (assoc base
+                                  :code (or (:src form) (:code iteration))
+                                  :result (:result form)
+                                  :error (:error form))
                           (:vis/tool-name form)
                           (assoc :tool (:vis/tool-name form))
 
@@ -146,18 +143,17 @@
    string when at least one component exists. Returns nil when both
    are nil/blank - callers `cond->` on the result."
   [provider model]
-  (let
-    [provider-str
-     (some-> provider
-             name
-             str/trim
-             not-empty)
+  (let [provider-str
+        (some-> provider
+                name
+                str/trim
+                not-empty)
 
-     model-str
-     (some-> model
-             str
-             str/trim
-             not-empty)]
+        model-str
+        (some-> model
+                str
+                str/trim
+                not-empty)]
 
     (cond (and provider-str model-str) (str provider-str "/" model-str)
           model-str model-str
@@ -267,24 +263,22 @@
 (defn- provider-failure
   [iteration]
   (when-let [error (:error iteration)]
-    (let
-      [error-map (or (parse-json-map error) {:message (str error)})
-       data (:data error-map)
-       ;; `:type` / `:reason` are JSON string values carried straight
-       ;; into the failure map, which crosses the strings-only
-       ;; boundary - keep them as strings, never mint keywords.
-       type (:type data)
-       reason (:reason data)
-       raw-data (:raw-data data)]
+    (let [error-map (or (parse-json-map error) {:message (str error)})
+          data (:data error-map)
+          ;; `:type` / `:reason` are JSON string values carried straight
+          ;; into the failure map, which crosses the strings-only
+          ;; boundary - keep them as strings, never mint keywords.
+          type (:type data)
+          reason (:reason data)
+          raw-data (:raw-data data)]
 
-      (cond->
-        {:source :provider
-         :iteration-id (:id iteration)
-         :iteration (:position iteration)
-         :status (:status iteration)
-         :message (or (:message error-map) (str error))
-         :classification
-         (if (schema-rejected-type? type) :provider-schema-rejected :provider-error)}
+      (cond-> {:source :provider
+               :iteration-id (:id iteration)
+               :iteration (:position iteration)
+               :status (:status iteration)
+               :message (or (:message error-map) (str error))
+               :classification
+               (if (schema-rejected-type? type) :provider-schema-rejected :provider-error)}
         type
         (assoc :type type)
 
@@ -316,15 +310,14 @@
 
 (defn- classify-expression-failure
   [code error]
-  (let
-    [message
-     (or (error-text error) "")
+  (let [message
+        (or (error-text error) "")
 
-     lower-message
-     (str/lower-case message)
+        lower-message
+        (str/lower-case message)
 
-     tool-name
-     (or (tool-name-from-code code) "")]
+        tool-name
+        (or (tool-name-from-code code) "")]
 
     (cond (cancellation-failure? lower-message) :turn-cancelled
           (and (str/includes? tool-name "rg")
@@ -380,9 +373,8 @@
   (into []
         (keep (fn [form]
                 (when-let [error (:error form)]
-                  (let
-                    [code (or (:src form) (:code iteration))
-                     classification (classify-expression-failure code error)]
+                  (let [code (or (:src form) (:code iteration))
+                        classification (classify-expression-failure code error)]
 
                     {:source :code
                      :iteration-id (:id iteration)
@@ -397,10 +389,10 @@
 (defn- failures-from-iterations
   [db-info iterations]
   (vec (mapcat (fn [iteration]
-                 (let
-                   [provider (when-let [failure (provider-failure iteration)]
-                               [(assoc failure
-                                  :advice (advice-for-classification (:classification failure)))])]
+                 (let [provider (when-let [failure (provider-failure iteration)]
+                                  [(assoc failure
+                                     :advice (advice-for-classification (:classification
+                                                                          failure)))])]
                    (concat provider (expression-failures-for-iteration db-info iteration))))
                iterations)))
 
@@ -424,22 +416,20 @@
   ([env session-id]
    (let [{:keys [db-info]} env]
      (when-let [turn (latest-turn db-info session-id)]
-       (let
-         [iterations (iteration-rows db-info (:id turn))
-          attempts (attempts-from-iterations db-info iterations)]
+       (let [iterations (iteration-rows db-info (:id turn))
+             attempts (attempts-from-iterations db-info iterations)]
 
          ;; No `:errors` key: a `(filterv :error attempts)` would be a
          ;; verbatim DUPLICATE of every errored attempt (full code+result
          ;; again) that nothing consumes. `:failures` already carries the
          ;; curated failure diagnostics, and the model can derive raw errored
          ;; attempts itself: [a for a in r["attempts"] if a.get("error")].
-         (cond->
-           {:id (:id turn)
-            :user-request (:user-request turn)
-            :status (:status turn)
-            :attempts attempts
-            :failures (failures-from-iterations db-info iterations)
-            :cost (turn-cost-summary turn)}
+         (cond-> {:id (:id turn)
+                  :user-request (:user-request turn)
+                  :status (:status turn)
+                  :attempts attempts
+                  :failures (failures-from-iterations db-info iterations)
+                  :cost (turn-cost-summary turn)}
            (same-uuid? session-id (current-session-id env))
            (assoc :iteration (iteration-pointer env))
 
@@ -457,32 +447,29 @@
   [db-info session-id]
   (when (and db-info session-id)
     (try (when-let [session (vis/db-get-session db-info session-id)]
-           (let
-             [turn-rows (vis/db-list-session-turns db-info session-id)
-              turns (mapv (fn [turn]
-                            (let [iteration-count (count (iteration-rows db-info (:id turn)))]
-                              (cond->
-                                {:id (:id turn)
-                                 :outcome (or (:prior-outcome turn) (:status turn))
-                                 :iteration-count iteration-count}
-                                (:user-request turn)
-                                (assoc :user-request (:user-request turn))
+           (let [turn-rows (vis/db-list-session-turns db-info session-id)
+                 turns (mapv (fn [turn]
+                               (let [iteration-count (count (iteration-rows db-info (:id turn)))]
+                                 (cond-> {:id (:id turn)
+                                          :outcome (or (:prior-outcome turn) (:status turn))
+                                          :iteration-count iteration-count}
+                                   (:user-request turn)
+                                   (assoc :user-request (:user-request turn))
 
-                                (:answer turn)
-                                (assoc :answer (:answer turn))
+                                   (:answer turn)
+                                   (assoc :answer (:answer turn))
 
-                                (:total-cost turn)
-                                (assoc :total-cost (:total-cost turn)))))
-                          turn-rows)]
+                                   (:total-cost turn)
+                                   (assoc :total-cost (:total-cost turn)))))
+                             turn-rows)]
 
-             (cond->
-               {:id session-id
-                :channel (:channel session)
-                :title (:title session)
-                :model (:model session)
-                :created-at (:created-at session)
-                :turns turns
-                :turn-count (count turns)}
+             (cond-> {:id session-id
+                      :channel (:channel session)
+                      :title (:title session)
+                      :model (:model session)
+                      :created-at (:created-at session)
+                      :turns turns
+                      :turn-count (count turns)}
                (:provider session)
                (assoc :provider (:provider session))
 
@@ -518,19 +505,17 @@
    produced it."
   ([db-info session] (session-index-row db-info session (session-turn-rows db-info (:id session))))
   ([_db-info session turns]
-   (let
-     [modified-at (or (->> turns
-                           (keep :created-at)
-                           (sort-by #(if (inst? %) (inst-ms %) 0))
-                           last)
-                      (:created-at session))]
-     (cond->
-       {:id (:id session)
-        :channel (:channel session)
-        :title (:title session)
-        :created-at (:created-at session)
-        :modified-at modified-at
-        :turn-count (count turns)}
+   (let [modified-at (or (->> turns
+                              (keep :created-at)
+                              (sort-by #(if (inst? %) (inst-ms %) 0))
+                              last)
+                         (:created-at session))]
+     (cond-> {:id (:id session)
+              :channel (:channel session)
+              :title (:title session)
+              :created-at (:created-at session)
+              :modified-at modified-at
+              :turn-count (count turns)}
        (:external-id session)
        (assoc :external-id (:external-id session))))))
 
@@ -555,12 +540,11 @@
    wire uses (`is_<foo>`): the band it earned plus which side matched, with the
    server's snippet windows when it carries them."
   [match]
-  (cond->
-    {:rank (:rank match)
-     :is-in-title (boolean (:in-title? match))
-     :is-in-request (boolean (:in-request? match))
-     :is-in-reply (boolean (:in-reply? match))
-     :is-in-thinking (boolean (:in-thinking? match))}
+  (cond-> {:rank (:rank match)
+           :is-in-title (boolean (:in-title? match))
+           :is-in-request (boolean (:in-request? match))
+           :is-in-reply (boolean (:in-reply? match))
+           :is-in-thinking (boolean (:in-thinking? match))}
     (:request-snippet match)
     (assoc :request-snippet (:request-snippet match))
 
@@ -595,11 +579,10 @@
      (vec (sort-by recency-key (mapcat #(channel-session-rows env %) (known-channels))))
      []))
   ([env search]
-   (if-let
-     [q (some-> search
-                str
-                str/trim
-                not-empty)]
+   (if-let [q (some-> search
+                      str
+                      str/trim
+                      not-empty)]
      (search-session-rows env q)
      (foundation-sessions-data env))))
 
@@ -611,25 +594,22 @@
    matches `target` (an id or an unambiguous prefix)."
   ([env] (foundation-session-descriptor env (current-session-id env)))
   ([env target]
-   (let
-     [db
-      (:db-info env)
+   (let [db
+         (:db-info env)
 
-      wanted
-      (or target (current-session-id env))
+         wanted
+         (or target (current-session-id env))
 
-      session-id
-      (or (try (vis/db-resolve-session-id db wanted) (catch Throwable _ nil)) wanted)]
+         session-id
+         (or (try (vis/db-resolve-session-id db wanted) (catch Throwable _ nil)) wanted)]
 
      (when (and db session-id)
        (try (when-let [session (vis/db-get-session db session-id)]
-              (let
-                [turns (session-turn-rows db (:id session))
-                 last-turn (last turns)]
+              (let [turns (session-turn-rows db (:id session))
+                    last-turn (last turns)]
 
-                (cond->
-                  (assoc (session-index-row db session turns)
-                    :is-current (boolean (same-uuid? (:id session) (current-session-id env))))
+                (cond-> (assoc (session-index-row db session turns)
+                          :is-current (boolean (same-uuid? (:id session) (current-session-id env))))
                   (:provider session)
                   (assoc :provider (:provider session))
 
@@ -642,9 +622,8 @@
 
                   last-turn
                   (assoc :last-turn
-                    (cond->
-                      {:id (:id last-turn)
-                       :outcome (or (:prior-outcome last-turn) (:status last-turn))}
+                    (cond-> {:id (:id last-turn)
+                             :outcome (or (:prior-outcome last-turn) (:status last-turn))}
                       (:user-request last-turn)
                       (assoc :user-request (preview (:user-request last-turn) 200)))))))
             (catch Throwable _ nil))))))
@@ -728,16 +707,15 @@
    varying tail that would otherwise scatter identical-cause errors
    across distinct buckets."
   [failure]
-  (let
-    [message
-     (or (:message failure) "")
+  (let [message
+        (or (:message failure) "")
 
-     head
-     (or (some-> (re-find #"^([^:\n]{1,80}):" message)
-                 second
-                 str/trim)
-         (let [trimmed (str/trim message)]
-           (subs trimmed 0 (min 60 (count trimmed)))))]
+        head
+        (or (some-> (re-find #"^([^:\n]{1,80}):" message)
+                    second
+                    str/trim)
+            (let [trimmed (str/trim message)]
+              (subs trimmed 0 (min 60 (count trimmed)))))]
 
     [(:source failure) (:classification failure) head]))
 
@@ -807,15 +785,14 @@
    times' pathology. `:repetition-clusters` carries the supporting
    data (signature, count, sample failure)."
   ([env]
-   (let
-     [turn
-      (turn-snapshot env)
+   (let [turn
+         (turn-snapshot env)
 
-      failures
-      (vec (:failures turn))
+         failures
+         (vec (:failures turn))
 
-      clusters
-      (repetition-clusters failures)]
+         clusters
+         (repetition-clusters failures)]
 
      {:turn-id (:id turn)
       :user-request (:user-request turn)
@@ -827,12 +804,11 @@
       :failures failures
       :next-actions (next-actions failures clusters)}))
   ([env session-id]
-   (let
-     [failures
-      (vec (foundation-failures env session-id))
+   (let [failures
+         (vec (foundation-failures env session-id))
 
-      clusters
-      (repetition-clusters failures)]
+         clusters
+         (repetition-clusters failures)]
 
      {:session-id session-id
       :failure-count (count failures)
@@ -846,12 +822,11 @@
 
 (defn- usage-tokens
   [iteration]
-  (let
-    [input
-     (long (or (:input-tokens iteration) 0))
+  (let [input
+        (long (or (:input-tokens iteration) 0))
 
-     cached
-     (long (or (:input-cache-read-tokens iteration) 0))]
+        cached
+        (long (or (:input-cache-read-tokens iteration) 0))]
 
     {:input input
      :cached cached
@@ -921,15 +896,14 @@
 
 (defn- usage-tool-errors
   [iterations]
-  (let
-    [errors
-     (->> iterations
-          (mapcat :tool-call-statuses)
-          (filter tool-failure?)
-          vec)
+  (let [errors
+        (->> iterations
+             (mapcat :tool-call-statuses)
+             (filter tool-failure?)
+             vec)
 
-     limit
-     20]
+        limit
+        20]
 
     {:tool-errors (mapv usage-tool-error (take limit errors))
      :tool-errors-truncated? (> (count errors) limit)}))
@@ -954,15 +928,14 @@
 
 (defn- route
   [{:keys [provider model]}]
-  (let
-    [provider
-     (cond (keyword? provider) (name provider)
-           (some? provider) (str provider))
+  (let [provider
+        (cond (keyword? provider) (name provider)
+              (some? provider) (str provider))
 
-     model
-     (some-> model
-             str
-             not-empty)]
+        model
+        (some-> model
+                str
+                not-empty)]
 
     (when model
       {:provider (some-> provider
@@ -980,14 +953,13 @@
 
 (defn- routing-event?
   [event type]
-  (let
-    [actual
-     (or (:event/type event) (:type event))
+  (let [actual
+        (or (:event/type event) (:type event))
 
-     persisted-type
-     (if-let [ns (namespace type)]
-       (str ns "_" (name type))
-       (name type))]
+        persisted-type
+        (if-let [ns (namespace type)]
+          (str ns "_" (name type))
+          (name type))]
 
     (or (= type actual)
         ;; Wire serialization flattens a namespaced keyword's slash into an
@@ -1040,12 +1012,11 @@
   [iterations]
   (->> iterations
        (keep (fn [usage]
-               (let
-                 [from
-                  (route (:llm-selected usage))
+               (let [from
+                     (route (:llm-selected usage))
 
-                  to
-                  (route (:llm-actual usage))]
+                     to
+                     (route (:llm-actual usage))]
 
                  (when (and from to (not= from to)) [from to]))))
        frequencies
@@ -1056,12 +1027,11 @@
 
 (defn- usage-routing
   [iterations]
-  (let
-    [events
-     (vec (mapcat usage-routing-events iterations))
+  (let [events
+        (vec (mapcat usage-routing-events iterations))
 
-     retries
-     (count (filter #(routing-event? % :llm.routing/provider-retry) events))]
+        retries
+        (count (filter #(routing-event? % :llm.routing/provider-retry) events))]
 
     {:selected (usage-route-rows iterations :llm-selected)
      :actual (usage-route-rows iterations :llm-actual)
@@ -1073,32 +1043,30 @@
 
 (defn- manual-model-switches
   [db-info sid]
-  (let
-    [switches (->> (safe-call
-                     #(persistance/db-list-extension-aggregates
-                        db-info
-                        {:extension-id "vis" :kind :session-model-switch :session-soul-id sid})
-                     [])
-                   (keep (fn [{:keys [content created-at]}]
-                           (when (map? content)
-                             (assoc (select-keys content [:from :to :source])
-                               :at-ms (some-> ^java.util.Date created-at
-                                              .getTime)))))
-                   vec)]
+  (let [switches (->> (safe-call
+                        #(persistance/db-list-extension-aggregates
+                           db-info
+                           {:extension-id "vis" :kind :session-model-switch :session-soul-id sid})
+                        [])
+                      (keep (fn [{:keys [content created-at]}]
+                              (when (map? content)
+                                (assoc (select-keys content [:from :to :source])
+                                  :at-ms (some-> ^java.util.Date created-at
+                                                 .getTime)))))
+                      vec)]
     {:manual-switches (vec (take routing-event-limit switches))
      :manual-switches-truncated? (> (long (count switches)) (long routing-event-limit))}))
 
 (defn- usage-iteration
   [turn iteration]
-  (let
-    [calls
-     (native-tool-calls turn iteration)
+  (let [calls
+        (native-tool-calls turn iteration)
 
-     outcomes
-     (tool-outcomes calls)
+        outcomes
+        (tool-outcomes calls)
 
-     routing-trace
-     (vec (or (:llm-routing-trace iteration) []))]
+        routing-trace
+        (vec (or (:llm-routing-trace iteration) []))]
 
     {:turn (:position turn)
      :iteration (:position iteration)
@@ -1121,13 +1089,12 @@
 
 (defn- add-tool-row
   [summary usage tool calls]
-  (let
-    [summary (or summary
-                 (assoc (empty-usage)
-                   :tool tool
-                   :calls 0
-                   :errors 0
-                   :outcomes (tool-outcomes [])))]
+  (let [summary (or summary
+                    (assoc (empty-usage)
+                      :tool tool
+                      :calls 0
+                      :errors 0
+                      :outcomes (tool-outcomes [])))]
     (-> (add-iteration-usage summary usage)
         (update :calls + (count calls))
         (update :errors + (count (filter tool-failure? calls)))
@@ -1137,14 +1104,13 @@
   "Group model iterations by every native tool they invoked. Usage intentionally
    overlaps across tools, so grouped rows must not be summed."
   [iterations]
-  (let
-    [by-tool (reduce (fn [by-tool usage]
-                       (reduce-kv (fn [by-tool tool calls]
-                                    (update by-tool tool #(add-tool-row % usage tool calls)))
-                                  by-tool
-                                  (group-by :tool (:tool-call-statuses usage))))
-                     {}
-                     iterations)]
+  (let [by-tool (reduce (fn [by-tool usage]
+                          (reduce-kv (fn [by-tool tool calls]
+                                       (update by-tool tool #(add-tool-row % usage tool calls)))
+                                     by-tool
+                                     (group-by :tool (:tool-call-statuses usage))))
+                        {}
+                        iterations)]
     (->> by-tool
          vals
          (sort-by :tool)
@@ -1154,15 +1120,14 @@
   "Compact token/cost, tool-outcome, and provider-routing ledger. It deliberately
    omits messages, code, results, and raw provider payloads."
   [env session-id]
-  (let
-    [target-id
-     (or session-id (:session-id env))
+  (let [target-id
+        (or session-id (:session-id env))
 
-     data
-     (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+        data
+        (safe-call #(transcript/transcript (:db-info env) target-id) nil)
 
-     empty-routing
-     (merge (usage-routing []) (manual-model-switches (:db-info env) target-id))]
+        empty-routing
+        (merge (usage-routing []) (manual-model-switches (:db-info env) target-id))]
 
     (if-not data
       {:schema-version 1
@@ -1175,35 +1140,33 @@
        :tool-errors []
        :tool-errors-truncated? false
        :routing empty-routing}
-      (let
-        [turns
-         (mapv (fn [turn]
-                 (let
-                   [iterations
-                    (mapv (partial usage-iteration turn) (:iterations turn))
+      (let [turns
+            (mapv (fn [turn]
+                    (let [iterations
+                          (mapv (partial usage-iteration turn) (:iterations turn))
 
-                    totals
-                    (usage-total iterations)]
+                          totals
+                          (usage-total iterations)]
 
-                   {:position (:position turn)
-                    :status (:status turn)
-                    :iteration-count (count iterations)
-                    :tokens (:tokens totals)
-                    :cost-usd (:cost-usd totals)
-                    :tool-calls (:tool-calls totals)
-                    :tool-errors (:tool-errors totals)
-                    :tool-outcomes (:tool-outcomes totals)
-                    :iterations iterations}))
-               (:turns data))
+                      {:position (:position turn)
+                       :status (:status turn)
+                       :iteration-count (count iterations)
+                       :tokens (:tokens totals)
+                       :cost-usd (:cost-usd totals)
+                       :tool-calls (:tool-calls totals)
+                       :tool-errors (:tool-errors totals)
+                       :tool-outcomes (:tool-outcomes totals)
+                       :iterations iterations}))
+                  (:turns data))
 
-         iterations
-         (vec (mapcat :iterations turns))
+            iterations
+            (vec (mapcat :iterations turns))
 
-         {:keys [tool-errors tool-errors-truncated?]}
-         (usage-tool-errors iterations)
+            {:keys [tool-errors tool-errors-truncated?]}
+            (usage-tool-errors iterations)
 
-         routing
-         (merge (usage-routing iterations) (manual-model-switches (:db-info env) target-id))]
+            routing
+            (merge (usage-routing iterations) (manual-model-switches (:db-info env) target-id))]
 
         {:schema-version 1
          :scope :session-usage
@@ -1237,33 +1200,32 @@
    transcript payload. Default target is the current session; pass a
    session id or unambiguous prefix to inspect another session."
   [env session-id]
-  (let
-    [target-id
-     (or session-id (:session-id env))
+  (let [target-id
+        (or session-id (:session-id env))
 
-     transcript-data
-     (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+        transcript-data
+        (safe-call #(transcript/transcript (:db-info env) target-id) nil)
 
-     resolved-id
-     (or (get-in transcript-data [:session :id]) target-id)
+        resolved-id
+        (or (get-in transcript-data [:session :id]) target-id)
 
-     session-summary
-     (safe-call #(foundation-session env resolved-id) nil)
+        session-summary
+        (safe-call #(foundation-session env resolved-id) nil)
 
-     failures
-     (safe-call #(foundation-failures env resolved-id) [])
+        failures
+        (safe-call #(foundation-failures env resolved-id) [])
 
-     diagnosis
-     (safe-call #(foundation-diagnose env resolved-id) {})
+        diagnosis
+        (safe-call #(foundation-diagnose env resolved-id) {})
 
-     forks
-     (safe-call #(foundation-session-forks env resolved-id) [])
+        forks
+        (safe-call #(foundation-session-forks env resolved-id) [])
 
-     turn-retries
-     (safe-call #(retries-by-turn env (:turns transcript-data)) {})
+        turn-retries
+        (safe-call #(retries-by-turn env (:turns transcript-data)) {})
 
-     usage
-     (safe-call #(foundation-usage-data env resolved-id) {})]
+        usage
+        (safe-call #(foundation-usage-data env resolved-id) {})]
 
     {:schema-version 1
      :scope :session

@@ -67,27 +67,25 @@
    itself reports it — `:file-bytes` is the live file, `:free-bytes` what a
    VACUUM would give back."
   [^DataSource ds]
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     st
-     (.createStatement conn)]
+              st
+              (.createStatement conn)]
 
-    (let
-      [pragma
-       (fn [^String name]
-         (with-open [rs (.executeQuery st (str "PRAGMA " name))]
-           (if (.next rs) (.getLong rs 1) 0)))
+    (let [pragma
+          (fn [^String name]
+            (with-open [rs (.executeQuery st (str "PRAGMA " name))]
+              (if (.next rs) (.getLong rs 1) 0)))
 
-       page-size
-       (long (pragma "page_size"))
+          page-size
+          (long (pragma "page_size"))
 
-       page-count
-       (long (pragma "page_count"))
+          page-count
+          (long (pragma "page_count"))
 
-       freelist
-       (long (pragma "freelist_count"))]
+          freelist
+          (long (pragma "freelist_count"))]
 
       {:page-size page-size
        :page-count page-count
@@ -124,15 +122,14 @@
    CREATES. Answers nil when another process (or another thread of this one) is
    already reclaiming the same store."
   [^File marker f]
-  (let
-    [raf
-     (RandomAccessFile. marker "rw")
+  (let [raf
+        (RandomAccessFile. marker "rw")
 
-     channel
-     (.getChannel raf)
+        channel
+        (.getChannel raf)
 
-     ^FileLock lock
-     (try (.tryLock channel) (catch OverlappingFileLockException _ nil) (catch Throwable _ nil))]
+        ^FileLock lock
+        (try (.tryLock channel) (catch OverlappingFileLockException _ nil) (catch Throwable _ nil))]
 
     (try (when lock (f))
          (finally (try (when lock (.release lock)) (catch Throwable _ nil))
@@ -143,12 +140,11 @@
   "One rewrite under the held lock, stamping `marker` on success. Reports rather
    than throws: a busy store is a later retry, not a failed open."
   [^DataSource ds ^String db-file ^File marker space]
-  (let
-    [before
-     (.length (File. db-file))
+  (let [before
+        (.length (File. db-file))
 
-     started
-     (System/currentTimeMillis)]
+        started
+        (System/currentTimeMillis)]
 
     (try (vacuum! ds)
          (.setLastModified marker (System/currentTimeMillis))
@@ -172,15 +168,14 @@
    `:min-free-fraction`."
   ([^DataSource ds ^String db-file] (maybe-vacuum! ds db-file nil))
   ([^DataSource ds ^String db-file {:keys [now-ms interval-days min-free-bytes min-free-fraction]}]
-   (try (let
-          [marker
-           (marker-file db-file)
+   (try (let [marker
+              (marker-file db-file)
 
-           now
-           (long (or now-ms (System/currentTimeMillis)))
+              now
+              (long (or now-ms (System/currentTimeMillis)))
 
-           window
-           (long (or interval-days vacuum-interval-days))]
+              window
+              (long (or interval-days vacuum-interval-days))]
 
           (if-not (time-due? marker now window)
             {:is-vacuumed false :reason :recent}

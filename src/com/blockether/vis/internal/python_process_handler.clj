@@ -74,21 +74,20 @@
    every line instead of on an arbitrary buffer boundary. Newlines are not
    part of `line`; a trailing carriage return is dropped."
   ^OutputStream [emit]
-  (let
-    [buf
-     (ByteArrayOutputStream.)
+  (let [buf
+        (ByteArrayOutputStream.)
 
-     emit-buffered!
-     (fn []
-       (let [bytes (.toByteArray buf)]
-         (.reset buf)
-         (when (pos? (alength bytes))
-           (let [line (String. bytes StandardCharsets/UTF_8)]
-             (emit (if (.endsWith line "\r") (subs line 0 (dec (count line))) line))))))
+        emit-buffered!
+        (fn []
+          (let [bytes (.toByteArray buf)]
+            (.reset buf)
+            (when (pos? (alength bytes))
+              (let [line (String. bytes StandardCharsets/UTF_8)]
+                (emit (if (.endsWith line "\r") (subs line 0 (dec (count line))) line))))))
 
-     write-byte!
-     (fn [b]
-       (if (= 10 b) (emit-buffered!) (.write buf (int b))))]
+        write-byte!
+        (fn [b]
+          (if (= 10 b) (emit-buffered!) (.write buf (int b))))]
 
     (proxy [OutputStream] []
       (write
@@ -163,69 +162,68 @@
    abandons the backlog and closes `source`, so a guest that stops reading
    early still breaks the child's pipe."
   ^InputStream [^InputStream source ^String thread-name]
-  (let
-    [queue
-     (LinkedBlockingQueue.)
+  (let [queue
+        (LinkedBlockingQueue.)
 
-     budget
-     (Semaphore. guest-backlog-bytes)
+        budget
+        (Semaphore. guest-backlog-bytes)
 
-     abandoned
-     (AtomicBoolean. false)
+        abandoned
+        (AtomicBoolean. false)
 
-     pump
-     (doto (Thread. ^Runnable
-                    (fn []
-                      (try (let [buffer (byte-array pump-chunk-bytes)]
-                             (loop []
+        pump
+        (doto (Thread. ^Runnable
+                       (fn []
+                         (try (let [buffer (byte-array pump-chunk-bytes)]
+                                (loop []
 
-                               (let [n (.read source buffer)]
-                                 (when (pos? n)
-                                   (.acquire budget n)
-                                   (when-not (.get abandoned)
-                                     (.put queue (Arrays/copyOf buffer n))
-                                     (recur))))))
-                           (catch Throwable _ nil)
-                           (finally (try (.close source) (catch Throwable _ nil)))))
-                    thread-name)
-       (.setDaemon true)
-       (.start))
+                                  (let [n (.read source buffer)]
+                                    (when (pos? n)
+                                      (.acquire budget n)
+                                      (when-not (.get abandoned)
+                                        (.put queue (Arrays/copyOf buffer n))
+                                        (recur))))))
+                              (catch Throwable _ nil)
+                              (finally (try (.close source) (catch Throwable _ nil)))))
+                       thread-name)
+          (.setDaemon true)
+          (.start))
 
-     lock
-     (Object.)
+        lock
+        (Object.)
 
-     current
-     (volatile! nil)
+        current
+        (volatile! nil)
 
-     next-chunk!
-     (fn []
-       (loop []
+        next-chunk!
+        (fn []
+          (loop []
 
-         (let [chunk (.poll queue 50 TimeUnit/MILLISECONDS)]
-           (cond (some? chunk) (do (.release budget (alength ^bytes chunk)) chunk)
-                 (.get abandoned) nil
-                 (.isAlive pump) (recur)
-                 ;; The pump exits after its last `put`, so one non-blocking
-                 ;; re-poll settles the race between that put and this check.
-                 :else (.poll queue)))))
+            (let [chunk (.poll queue 50 TimeUnit/MILLISECONDS)]
+              (cond (some? chunk) (do (.release budget (alength ^bytes chunk)) chunk)
+                    (.get abandoned) nil
+                    (.isAlive pump) (recur)
+                    ;; The pump exits after its last `put`, so one non-blocking
+                    ;; re-poll settles the race between that put and this check.
+                    :else (.poll queue)))))
 
-     ready
-     (fn []
-       (or @current
-           (when-let [chunk (next-chunk!)]
-             (vreset! current [chunk 0]))))
+        ready
+        (fn []
+          (or @current
+              (when-let [chunk (next-chunk!)]
+                (vreset! current [chunk 0]))))
 
-     take-bytes!
-     (fn [^bytes destination ^long offset ^long length]
-       (locking lock
-         (if-let [[^bytes chunk position] (ready)]
-           (let [taken (min length (- (alength chunk) (long position)))]
-             (System/arraycopy chunk (int position) destination (int offset) (int taken))
-             (vreset! current
-                      (when (< (+ (long position) taken) (alength chunk))
-                        [chunk (+ (long position) taken)]))
-             taken)
-           -1)))]
+        take-bytes!
+        (fn [^bytes destination ^long offset ^long length]
+          (locking lock
+            (if-let [[^bytes chunk position] (ready)]
+              (let [taken (min length (- (alength chunk) (long position)))]
+                (System/arraycopy chunk (int position) destination (int offset) (int taken))
+                (vreset! current
+                         (when (< (+ (long position) taken) (alength chunk))
+                           [chunk (+ (long position) taken)]))
+                taken)
+              -1)))]
 
     (proxy [InputStream] []
       (read
@@ -321,24 +319,23 @@
    child's real OS pid is left in this thread's `handoff` slot for the guest
    half to claim."
   ^Process [emit handoff ^ProcessHandler$ProcessCommand command]
-  (let
-    [out-redirect
-     (.getOutputRedirect command)
+  (let [out-redirect
+        (.getOutputRedirect command)
 
-     err-redirect
-     (.getErrorRedirect command)
+        err-redirect
+        (.getErrorRedirect command)
 
-     merged?
-     (.isRedirectErrorStream command)
+        merged?
+        (.isRedirectErrorStream command)
 
-     guest-reads-out?
-     (= ProcessHandler$Redirect/PIPE out-redirect)
+        guest-reads-out?
+        (= ProcessHandler$Redirect/PIPE out-redirect)
 
-     guest-reads-err?
-     (= ProcessHandler$Redirect/PIPE err-redirect)
+        guest-reads-err?
+        (= ProcessHandler$Redirect/PIPE err-redirect)
 
-     builder
-     (ProcessBuilder. ^List (.getCommand command))]
+        builder
+        (ProcessBuilder. ^List (.getCommand command))]
 
     (when-let [dir (.getDirectory command)]
       (.directory builder (io/file dir)))
@@ -351,28 +348,27 @@
     (.redirectOutput builder ProcessBuilder$Redirect/PIPE)
     (.redirectError builder ProcessBuilder$Redirect/PIPE)
     (.redirectErrorStream builder merged?)
-    (let
-      [process
-       (.start builder)
+    (let [process
+          (.start builder)
 
-       out-stream
-       (if guest-reads-out?
-         (buffered-guest-stream (.getInputStream process) "vis-extension-process-stdout-backlog")
-         (do (drain! (.getInputStream process)
-                     (hidden-stream-sink out-redirect emit "stdout")
-                     "vis-extension-process-stdout")
-             (InputStream/nullInputStream)))
+          out-stream
+          (if guest-reads-out?
+            (buffered-guest-stream (.getInputStream process) "vis-extension-process-stdout-backlog")
+            (do (drain! (.getInputStream process)
+                        (hidden-stream-sink out-redirect emit "stdout")
+                        "vis-extension-process-stdout")
+                (InputStream/nullInputStream)))
 
-       err-stream
-       (cond
-         ;; A merged stderr has no stream of its own to read or drain.
-         merged? (InputStream/nullInputStream)
-         guest-reads-err? (buffered-guest-stream (.getErrorStream process)
-                                                 "vis-extension-process-stderr-backlog")
-         :else (do (drain! (.getErrorStream process)
-                           (hidden-stream-sink err-redirect emit "stderr")
-                           "vis-extension-process-stderr")
-                   (InputStream/nullInputStream)))]
+          err-stream
+          (cond
+            ;; A merged stderr has no stream of its own to read or drain.
+            merged? (InputStream/nullInputStream)
+            guest-reads-err? (buffered-guest-stream (.getErrorStream process)
+                                                    "vis-extension-process-stderr-backlog")
+            :else (do (drain! (.getErrorStream process)
+                              (hidden-stream-sink err-redirect emit "stderr")
+                              "vis-extension-process-stderr")
+                      (InputStream/nullInputStream)))]
 
       ;; The guest claims this the moment its `Popen` constructor returns
       ;; (`vis-python/process_redirect.py`), which is the only place the real

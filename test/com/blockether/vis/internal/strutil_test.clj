@@ -31,15 +31,14 @@
              (it "wraps a body the body itself cannot close early"
                  (expect (= "```\nx\n```" (su/fenced "x")))
                  (expect (= "```clj\nx\n```" (su/fenced "x" "clj")))
-                 (let
-                   [body
-                    "```\nnested\n```"
+                 (let [body
+                       "```\nnested\n```"
 
-                    out
-                    (su/fenced body "md")
+                       out
+                       (su/fenced body "md")
 
-                    delimiter
-                    (first (str/split-lines out))]
+                       delimiter
+                       (first (str/split-lines out))]
 
                    (expect (str/starts-with? delimiter "````"))
                    (expect (str/ends-with? out (str/replace delimiter "md" "")))

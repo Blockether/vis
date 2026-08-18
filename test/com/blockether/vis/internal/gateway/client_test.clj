@@ -19,12 +19,11 @@
 ;; Regression: direct API debugging reimplemented registry discovery and authentication
 ;; instead of using the gateway client's canonical transport.
 (deftest request-uses-the-canonical-authenticated-client
-  (let
-    [calls
-     (atom [])
+  (let [calls
+        (atom [])
 
-     response
-     {:status 201 :body "created"}]
+        response
+        {:status 201 :body "created"}]
 
     (with-redefs-fn {(rv 'ensure-gateway!) (fn []
                                              (swap! calls conj [:gateway])
@@ -62,18 +61,17 @@
                @request))))))
 
 (deftest ensure-client-registers-once-from-canonical-string-keyed-response
-  (let
-    [client-id-atom
-     @(rv 'client-id)
+  (let [client-id-atom
+        @(rv 'client-id)
 
-     previous
-     @client-id-atom
+        previous
+        @client-id-atom
 
-     calls
-     (atom 0)
+        calls
+        (atom 0)
 
-     ensure-client
-     (rv 'ensure-client!)]
+        ensure-client
+        (rv 'ensure-client!)]
 
     (try (reset! client-id-atom nil)
          (with-redefs-fn {(rv 'send-json-with-entry!) (fn [_entry method path body]
@@ -90,12 +88,11 @@
          (finally (reset! client-id-atom previous)))))
 
 (deftest authenticated-loopback-orphan-is-stopped-and-replaced
-  (let
-    [token-file
-     (java.io.File/createTempFile "vis-gateway-token-" ".txt")
+  (let [token-file
+        (java.io.File/createTempFile "vis-gateway-token-" ".txt")
 
-     calls
-     (atom [])]
+        calls
+        (atom [])]
 
     (try (spit token-file "stable-secret\n")
          (with-redefs-fn {#'discovery/default-token-file (fn []
@@ -133,24 +130,23 @@
         (is (empty? @calls))))))
 
 (deftest occupied-orphan-port-never-spawns-a-bind-loser
-  (let
-    [spawns
-     (atom 0)
+  (let [spawns
+        (atom 0)
 
-     ex
-     (with-redefs-fn {(rv 'retire-loopback-orphan!) (constantly nil)
-                      (rv 'port-free?) (constantly false)
-                      #'discovery/await-registry! (fn [_db _probe opts]
-                                                    (is (= 3000 (:timeout-ms opts)))
-                                                    (is (= 100 (:poll-ms opts)))
-                                                    nil)
-                      #'discovery/discover-or-start! (fn [& _]
-                                                       (swap! spawns inc)
-                                                       {:mode :spawned :entry fake-entry})}
-       (fn []
-         (try ((rv 'discover-or-recover!) "/tmp/orphan/vis.db" "127.0.0.1" 7890)
-              nil
-              (catch clojure.lang.ExceptionInfo e e))))]
+        ex
+        (with-redefs-fn {(rv 'retire-loopback-orphan!) (constantly nil)
+                         (rv 'port-free?) (constantly false)
+                         #'discovery/await-registry! (fn [_db _probe opts]
+                                                       (is (= 3000 (:timeout-ms opts)))
+                                                       (is (= 100 (:poll-ms opts)))
+                                                       nil)
+                         #'discovery/discover-or-start! (fn [& _]
+                                                          (swap! spawns inc)
+                                                          {:mode :spawned :entry fake-entry})}
+          (fn []
+            (try ((rv 'discover-or-recover!) "/tmp/orphan/vis.db" "127.0.0.1" 7890)
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))))]
 
     (is (= :gateway/orphaned-port (:type (ex-data ex))))
     (is (true? (:vis/user-error (ex-data ex))))
@@ -173,21 +169,19 @@
         (is (zero? @spawns))))))
 
 (deftest stale-registry-stop-does-not-report-a-listening-gateway-as-stopped
-  (let
-    [server
-     (java.net.ServerSocket. 0)
+  (let [server
+        (java.net.ServerSocket. 0)
 
-     port
-     (.getLocalPort server)]
+        port
+        (.getLocalPort server)]
 
-    (try (let
-           [result (with-redefs-fn {(rv 'db-target) (constantly "/tmp/orphan/vis.db")
-                                    #'discovery/read-registry (constantly (assoc fake-entry
-                                                                            :port port))
-                                    #'discovery/registry-fresh? (constantly false)
-                                    #'discovery/pid-alive? (constantly false)}
-                     (fn []
-                       (client/stop-daemon!)))]
+    (try (let [result (with-redefs-fn {(rv 'db-target) (constantly "/tmp/orphan/vis.db")
+                                       #'discovery/read-registry (constantly (assoc fake-entry
+                                                                               :port port))
+                                       #'discovery/registry-fresh? (constantly false)
+                                       #'discovery/pid-alive? (constantly false)}
+                        (fn []
+                          (client/stop-daemon!)))]
            (is (not= "stopped" (:status result))
                "a listening configured endpoint must not be reported as stopped")
            (is (= :gateway/orphaned-daemon (:type result)))
@@ -261,17 +255,15 @@
 ;; keeps serving the old image, so the next client to find it unused replaces it.
 (deftest a-daemon-older-than-this-build-is-replaced-only-when-nobody-is-using-it
   (testing "an idle daemon on the old image is the whole reason this rule exists"
-    (let [verdict (client/stale-bounce-verdict {:ours "0.1.40"
-                                                :theirs "0.1.39"
-                                                :status idle-status})]
+    (let [verdict (client/stale-bounce-verdict
+                    {:ours "0.1.40" :theirs "0.1.39" :status idle-status})]
       (is (true? (:bounce? verdict)))
       (is (= "0.1.39" (:from verdict)))
       (is (= "0.1.40" (:to verdict)))))
   (testing "no version is worth aborting somebody's work for"
     (is (= :clients
-           (:reason (client/stale-bounce-verdict {:ours "0.1.40"
-                                                  :theirs "0.1.39"
-                                                  :status (assoc idle-status "clients" 1)}))))
+           (:reason (client/stale-bounce-verdict
+                      {:ours "0.1.40" :theirs "0.1.39" :status (assoc idle-status "clients" 1)}))))
     (is (= :running-turns
            (:reason (client/stale-bounce-verdict {:ours "0.1.40"
                                                   :theirs "0.1.39"
@@ -393,51 +385,69 @@
 ;; this build no longer speaks; the mismatch screen belongs to a daemon somebody is
 ;; USING, never to an idle one this process is free to replace.
 (deftest an-idle-daemon-too-old-to-speak-to-is-replaced-not-refused
-  (let [guard @(rv 'stale-bounce-attempted?)
-        handshake @(rv 'gateway-handshake*)
-        cached @(rv 'cached-entry)
-        previous-handshake @handshake
-        previous-entry @cached
-        stops (atom 0)
-        attaches (atom 0)
-        new-entry (assoc fake-entry :pid 4243)]
+  (let [guard
+        @(rv 'stale-bounce-attempted?)
+
+        handshake
+        @(rv 'gateway-handshake*)
+
+        cached
+        @(rv 'cached-entry)
+
+        previous-handshake
+        @handshake
+
+        previous-entry
+        @cached
+
+        stops
+        (atom 0)
+
+        attaches
+        (atom 0)
+
+        new-entry
+        (assoc fake-entry :pid 4243)]
+
     (reset! guard false)
     (reset! cached nil)
     (reset! handshake {:protocol 1 :min-client 1 :min-gateway 1 :version "0.1.39"})
-    (try
-      (with-redefs-fn
-        {(requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version)
-         (constantly "0.1.40")
-         (rv 'report-version-bounce!) (constantly nil)
-         (rv 'remote-gateway) (constantly nil)
-         (rv 'db-target) (constantly "/tmp/vis-stale-bounce-test.db")
-         (rv 'send-json-with-entry!) (fn [& _] idle-status)
-         (rv 'await-daemon-down!) (constantly true)
-         #'discovery/registry-fresh? (constantly false)
-         (rv 'discover-or-recover!)
-         (fn [& _]
-           (let [attach (swap! attaches inc)]
-             (when (> attach 1)
-               ;; What this process starts in its place speaks this build's protocol.
-               (reset! handshake {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.40"}))
-             {:entry (if (> attach 1) new-entry fake-entry)}))
-         #'client/stop-daemon! (fn []
-                                 (swap! stops inc)
-                                 (reset! cached nil)
-                                 {:status "stopped" :stopping false})}
-        (fn []
-          (is (= new-entry (client/ensure-gateway!))
-              "an idle daemon older than this build is replaced, not refused as incompatible")
-          (is (= 1 @stops))
-          (is (= 2 @attaches))))
-      (finally (reset! guard false)
-               (reset! handshake previous-handshake)
-               (reset! cached previous-entry)))))
+    (try (with-redefs-fn {(requiring-resolve
+                            'com.blockether.vis.internal.gateway.protocol/release-version)
+                          (constantly "0.1.40")
+                          (rv 'report-version-bounce!) (constantly nil)
+                          (rv 'remote-gateway) (constantly nil)
+                          (rv 'db-target) (constantly "/tmp/vis-stale-bounce-test.db")
+                          (rv 'send-json-with-entry!) (fn [& _]
+                                                        idle-status)
+                          (rv 'await-daemon-down!) (constantly true)
+                          #'discovery/registry-fresh? (constantly false)
+                          (rv 'discover-or-recover!)
+                          (fn [& _]
+                            (let [attach (swap! attaches inc)]
+                              (when (> attach 1)
+                                ;; What this process starts in its place speaks this build's protocol.
+                                (reset! handshake
+                                  {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.40"}))
+                              {:entry (if (> attach 1) new-entry fake-entry)}))
+                          #'client/stop-daemon! (fn []
+                                                  (swap! stops inc)
+                                                  (reset! cached nil)
+                                                  {:status "stopped" :stopping false})}
+           (fn []
+             (is (= new-entry (client/ensure-gateway!))
+                 "an idle daemon older than this build is replaced, not refused as incompatible")
+             (is (= 1 @stops))
+             (is (= 2 @attaches))))
+         (finally (reset! guard false)
+                  (reset! handshake previous-handshake)
+                  (reset! cached previous-entry)))))
 ;; Regression (reported: a gateway that stopped answering had to be killed by hand):
 ;; `stop-daemon!` reported a live orphan and handed the human an `lsof` line, with
 ;; the daemon's pid sitting in the registry entry it had just read.
 (deftest an-unresponsive-daemon-is-escalated-to-its-registered-pid
-  (let [killed (atom nil)
+  (let [killed
+        (atom nil)
 
         result
         (with-redefs-fn {(rv 'db-target) (constantly "/tmp/wedged/vis.db")
@@ -527,15 +537,14 @@
    consumed left-to-right) and a scripted `status`. Records how many times the
    destructive stop-daemon! / await-daemon-down! fired."
   [{:keys [probes status]}]
-  (let
-    [probe-seq
-     (atom probes)
+  (let [probe-seq
+        (atom probes)
 
-     stops
-     (atom 0)
+        stops
+        (atom 0)
 
-     awaits
-     (atom 0)]
+        awaits
+        (atom 0)]
 
     (with-redefs-fn {(rv 'ensure-gateway!) (fn [& _]
                                              fake-entry)
@@ -554,9 +563,8 @@
                      (rv 'db-target) (fn []
                                        :fake-db)}
       (fn []
-        (let
-          [result (try {:entry (client/ensure-gateway-serving! "/ui")}
-                       (catch clojure.lang.ExceptionInfo e {:ex (ex-data e)}))]
+        (let [result (try {:entry (client/ensure-gateway-serving! "/ui")}
+                          (catch clojure.lang.ExceptionInfo e {:ex (ex-data e)}))]
           (assoc result
             :stops @stops
             :awaits @awaits))))))
@@ -579,9 +587,8 @@
   (testing
     "a real 404 on an IDLE daemon (no other clients, no running turn) respawns:
             stop → await-down → re-ensure → re-probe :served"
-    (let
-      [{:keys [entry stops awaits ex]} (run-serving! {:probes [:absent :served]
-                                                      :status {"clients" 1 "running_turns" 0}})]
+    (let [{:keys [entry stops awaits ex]} (run-serving! {:probes [:absent :served]
+                                                         :status {"clients" 1 "running_turns" 0}})]
       (is (nil? ex))
       (is (= fake-entry entry))
       (is (= 1 stops) "the idle stale daemon is stopped exactly once")
@@ -589,9 +596,8 @@
 
 (deftest busy-daemon-is-not-force-killed
   (testing "a real 404 on a daemon OTHER clients depend on is refused, not nuked"
-    (let
-      [{:keys [ex stops awaits]} (run-serving! {:probes [:absent]
-                                                :status {"clients" 2 "running_turns" 0}})]
+    (let [{:keys [ex stops awaits]} (run-serving! {:probes [:absent]
+                                                   :status {"clients" 2 "running_turns" 0}})]
       (is (= :gateway/route-missing-busy (:type ex)))
       (is (= 2 (:clients ex)))
       (is (zero? stops) "a shared daemon is never stopped")
@@ -599,32 +605,29 @@
 
 (deftest running-turn-blocks-restart
   (testing "a real 404 while a turn is running is refused — a restart would abort it"
-    (let
-      [{:keys [ex stops]} (run-serving! {:probes [:absent]
-                                         :status {"clients" 1 "running_turns" 1}})]
+    (let [{:keys [ex stops]} (run-serving! {:probes [:absent]
+                                            :status {"clients" 1 "running_turns" 1}})]
       (is (= :gateway/route-missing-busy (:type ex)))
       (is (= 1 (:running-turns ex)))
       (is (zero? stops) "an in-flight turn is never force-aborted by the heal"))))
 
 (deftest respawn-that-still-404s-throws-route-missing
   (testing "if the fresh daemon STILL lacks the route, surface a clear error"
-    (let
-      [{:keys [ex stops]} (run-serving! {:probes [:absent :absent]
-                                         :status {"clients" 1 "running_turns" 0}})]
+    (let [{:keys [ex stops]} (run-serving! {:probes [:absent :absent]
+                                            :status {"clients" 1 "running_turns" 0}})]
       (is (= :gateway/route-missing (:type ex)))
       (is (= 1 stops)))))
 
 (deftest port-free?-reflects-a-live-listener
   (testing "port-free? is false while something listens, true once released"
-    (let
-      [port-free?
-       (rv 'port-free?)
+    (let [port-free?
+          (rv 'port-free?)
 
-       sock
-       (java.net.ServerSocket. 0)
+          sock
+          (java.net.ServerSocket. 0)
 
-       port
-       (.getLocalPort sock)]
+          port
+          (.getLocalPort sock)]
 
       (try (is (false? (port-free? "127.0.0.1" port)) "occupied port is not free")
            (finally (.close sock)))
@@ -642,16 +645,16 @@
     ;; forever: the SSE connection never closed, the tab kept spinning, and a
     ;; queued turn draining behind it streamed in under a stream that had
     ;; never ended.
-    (let
-      [[action event']
-       (client/sse-event-action {"type" "turn.cancelled" "turn_id" "t1" "status" "cancelled"} "t1")]
+    (let [[action event'] (client/sse-event-action
+                            {"type" "turn.cancelled" "turn_id" "t1" "status" "cancelled"}
+                            "t1")]
       (is (= :terminal action))
       (is (= "cancelled" (get event' "status")))))
   (testing "a FAILED own turn is terminal"
     (is (= :terminal (first (client/sse-event-action {"type" "turn.failed" "turn_id" "t1"} "t1")))))
   (testing "own queued record deleted synthesizes a cancelled terminal (no hang)"
-    (let
-      [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"} "t1")]
+    (let [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"}
+                                                   "t1")]
       (is (= :terminal action))
       (is (= "cancelled" (get event' "status")))
       (is (= "turn.completed" (get event' "type")))))
@@ -668,25 +671,23 @@
   (testing
     "the blocking result IS the canonical snake_case string-keyed wire event
            (plus derived fills) — tokens/cost/utilization are never re-keyed"
-    (let
-      [t->r
-       (rv 'terminal-event->result)
+    (let [t->r
+          (rv 'terminal-event->result)
 
-       ;; What `parse-json` yields after the SSE hop: snake_case STRING keys.
-       event
-       {"type" "turn.completed"
-        "turn_id" "t1"
-        "session_id" "s1"
-        "cost" {"total_cost" 0.0123 "model" "m" "provider" "p"}
-        "tokens" {"input" 10 "cached" 4 "output" 2}
-        "utilization" {"saturation" 42 "headroom_tokens" 1000}}
+          ;; What `parse-json` yields after the SSE hop: snake_case STRING keys.
+          event
+          {"type" "turn.completed"
+           "turn_id" "t1"
+           "session_id" "s1"
+           "cost" {"total_cost" 0.0123 "model" "m" "provider" "p"}
+           "tokens" {"input" 10 "cached" 4 "output" 2}
+           "utilization" {"saturation" 42 "headroom_tokens" 1000}}
 
-       result
-       (with-redefs
-         [client/get-turn (fn [_ _]
-                            {"content" [{"id" "b1" "type" "prose" "markdown" "done"}]
-                             "iteration_count" 1})]
-         (t->r event "t1"))]
+          result
+          (with-redefs [client/get-turn (fn [_ _]
+                                          {"content" [{"id" "b1" "type" "prose" "markdown" "done"}]
+                                           "iteration_count" 1})]
+            (t->r event "t1"))]
 
       (is (= 0.0123 (get-in result ["cost" "total_cost"])) "cost stays canonical")
       (is (= "m" (get-in result ["cost" "model"])))
@@ -708,10 +709,9 @@
                        (rv 'sse-reconnect-backoff-ms) 0
                        (rv 'sse-reconnect-max-attempts) 2}
         (fn []
-          (let
-            [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
-                     nil
-                     (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (let [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
             (is (true? (:gateway-disconnected ex)))
             (is (= 3 @reads) "initial attempt + 2 reconnects")))))))
 
@@ -750,10 +750,9 @@
                                               (throw (ex-info "boom" {:kaboom true})))
                      (rv 'sse-reconnect-backoff-ms) 0}
       (fn []
-        (let
-          [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (let [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
           (is (true? (:kaboom ex))))))))
 
 (deftest mux-advance-cursor!-honours-the-subscription-ready-echo
@@ -782,33 +781,31 @@
 
 (deftest mux-subscribe!-shares-one-remote-session-subscription
   (testing "multiple local listeners for one sid do not reconnect/open one SSE per tab"
-    (let
-      [mux-var
-       (rv 'mux)
+    (let [mux-var
+          (rv 'mux)
 
-       restarts
-       (atom 0)
+          restarts
+          (atom 0)
 
-       seen-a
-       (atom [])
+          seen-a
+          (atom [])
 
-       seen-b
-       (atom [])]
+          seen-b
+          (atom [])]
 
       (reset! @mux-var {:subs {} :epoch 0 :future nil :stream nil})
       (with-redefs-fn {(rv 'restart-mux!) (fn []
                                             (swap! restarts inc)
                                             nil)}
         (fn []
-          (let
-            [cleanup-a
-             (client/mux-subscribe! "sid-1" #(swap! seen-a conj %) 10)
+          (let [cleanup-a
+                (client/mux-subscribe! "sid-1" #(swap! seen-a conj %) 10)
 
-             cleanup-b
-             (client/mux-subscribe! "sid-1" #(swap! seen-b conj %) 10)
+                cleanup-b
+                (client/mux-subscribe! "sid-1" #(swap! seen-b conj %) 10)
 
-             entry
-             (get-in @@mux-var [:subs "sid-1"])]
+                entry
+                (get-in @@mux-var [:subs "sid-1"])]
 
             (is (= 1 @restarts) "second listener for same sid should not reopen /v1/events")
             (is (= 2 (count (:sinks entry))))
@@ -826,18 +823,17 @@
             (is (empty? (:subs @@mux-var)))))))))
 
 (deftest mux-finalization-barrier-forbids-new-subscriptions
-  (let
-    [mux-var
-     (rv 'mux)
+  (let [mux-var
+        (rv 'mux)
 
-     finalizing-var
-     (rv 'client-finalizing?)
+        finalizing-var
+        (rv 'client-finalizing?)
 
-     previous-mux
-     @@mux-var
+        previous-mux
+        @@mux-var
 
-     previous-finalizing
-     @@finalizing-var]
+        previous-finalizing
+        @@finalizing-var]
 
     (try (reset! @mux-var {:subs {} :epoch 0 :future nil :stream nil})
          (reset! @finalizing-var true)
@@ -848,31 +844,29 @@
                           (fn []
                             (throw (ex-info "must not restart during finalization" {})))}
            (fn []
-             (let
-               [cleanup (client/mux-subscribe! "sid-final"
-                                               (fn [_])
-                                               0)]
+             (let [cleanup (client/mux-subscribe! "sid-final"
+                                                  (fn [_])
+                                                  0)]
                (is (fn? cleanup))
                (is (empty? (:subs @@mux-var)))
                (cleanup))))
          (finally (reset! @mux-var previous-mux) (reset! @finalizing-var previous-finalizing)))))
 
 (deftest restart-mux-never-starts-a-reader-during-finalization
-  (let
-    [mux-var
-     (rv 'mux)
+  (let [mux-var
+        (rv 'mux)
 
-     finalizing-var
-     (rv 'client-finalizing?)
+        finalizing-var
+        (rv 'client-finalizing?)
 
-     previous-mux
-     @@mux-var
+        previous-mux
+        @@mux-var
 
-     previous-finalizing
-     @@finalizing-var
+        previous-finalizing
+        @@finalizing-var
 
-     starts
-     (atom 0)]
+        starts
+        (atom 0)]
 
     (try (reset! @mux-var {:subs {"sid-final" {:cursor-atom (atom 0)
                                                :sinks {"sub" (fn [_])}}}
@@ -890,32 +884,31 @@
          (finally (reset! @mux-var previous-mux) (reset! @finalizing-var previous-finalizing)))))
 
 (deftest shutdown-subscriptions-closes-all-streams-without-reconnect
-  (let
-    [mux-var
-     (rv 'mux)
+  (let [mux-var
+        (rv 'mux)
 
-     subscriptions-var
-     (rv 'subscriptions)
+        subscriptions-var
+        (rv 'subscriptions)
 
-     finalizing-var
-     (rv 'client-finalizing?)
+        finalizing-var
+        (rv 'client-finalizing?)
 
-     previous-mux
-     @@mux-var
+        previous-mux
+        @@mux-var
 
-     previous-subscriptions
-     @@subscriptions-var
+        previous-subscriptions
+        @@subscriptions-var
 
-     previous-finalizing
-     @@finalizing-var
+        previous-finalizing
+        @@finalizing-var
 
-     closes
-     (atom 0)
+        closes
+        (atom 0)
 
-     closeable
-     (reify
-       java.io.Closeable
-         (close [_] (swap! closes inc)))]
+        closeable
+        (reify
+          java.io.Closeable
+            (close [_] (swap! closes inc)))]
 
     (try (reset! @finalizing-var false)
          (reset! @subscriptions-var {"legacy" {:future nil :stream (atom closeable)}})
@@ -940,18 +933,17 @@
   ;; and kicks a single-flight refresh; once it lands, subsequent reads are
   ;; served from cache. If someone reintroduces a synchronous round-trip this
   ;; test blocks for `slow-ms` and the timing assertion fails.
-  (let
-    [slow-ms
-     300
+  (let [slow-ms
+        300
 
-     cache
-     (rv 'resources-cache)
+        cache
+        (rv 'resources-cache)
 
-     inflight
-     (rv 'resources-refreshing)
+        inflight
+        (rv 'resources-refreshing)
 
-     calls
-     (atom 0)]
+        calls
+        (atom 0)]
 
     (with-redefs-fn {(rv 'list-resources) (fn [_sid]
                                             (swap! calls inc)
@@ -960,15 +952,14 @@
       (fn []
         (reset! @cache {})
         (reset! @inflight #{})
-        (let
-          [t0
-           (System/nanoTime)
+        (let [t0
+              (System/nanoTime)
 
-           cold
-           (client/list-resources-cached "sid-x")
+              cold
+              (client/list-resources-cached "sid-x")
 
-           cold-ms
-           (/ (- (System/nanoTime) t0) 1e6)]
+              cold-ms
+              (/ (- (System/nanoTime) t0) 1e6)]
 
           (is (nil? cold) "cold read serves the last-known value (nil) immediately")
           (is (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
@@ -977,15 +968,14 @@
             (client/list-resources-cached "sid-x"))
           (await-value #(client/list-resources-cached "sid-x") [{"id" "bg"}])
           (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
-          (let
-            [t1
-             (System/nanoTime)
+          (let [t1
+                (System/nanoTime)
 
-             warm
-             (client/list-resources-cached "sid-x")
+                warm
+                (client/list-resources-cached "sid-x")
 
-             warm-ms
-             (/ (- (System/nanoTime) t1) 1e6)]
+                warm-ms
+                (/ (- (System/nanoTime) t1) 1e6)]
 
             (is (= [{"id" "bg"}] warm) "a fresh entry is served from cache")
             (is (< warm-ms 50.0) "warm read is a pure cache hit")
@@ -996,18 +986,17 @@
   ;; pref every frame. This used to be a LIVE daemon round-trip per frame; it
   ;; must serve from a per-sid cache and refresh in the background — same
   ;; discipline as `list-resources-cached` above.
-  (let
-    [slow-ms
-     300
+  (let [slow-ms
+        300
 
-     cache
-     (rv 'session-model-cache)
+        cache
+        (rv 'session-model-cache)
 
-     inflight
-     (rv 'session-model-refreshing)
+        inflight
+        (rv 'session-model-refreshing)
 
-     calls
-     (atom 0)]
+        calls
+        (atom 0)]
 
     (with-redefs-fn {(rv 'session-model) (fn [_sid]
                                            (swap! calls inc)
@@ -1016,15 +1005,14 @@
       (fn []
         (reset! @cache {})
         (reset! @inflight #{})
-        (let
-          [t0
-           (System/nanoTime)
+        (let [t0
+              (System/nanoTime)
 
-           cold
-           (client/session-model-cached "sid-m")
+              cold
+              (client/session-model-cached "sid-m")
 
-           cold-ms
-           (/ (- (System/nanoTime) t0) 1e6)]
+              cold-ms
+              (/ (- (System/nanoTime) t0) 1e6)]
 
           (is (nil? cold) "cold read serves the last-known value (nil) immediately")
           (is (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
@@ -1033,15 +1021,14 @@
             (client/session-model-cached "sid-m"))
           (await-value #(client/session-model-cached "sid-m") {:provider "anthropic" :model "opus"})
           (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
-          (let
-            [t1
-             (System/nanoTime)
+          (let [t1
+                (System/nanoTime)
 
-             warm
-             (client/session-model-cached "sid-m")
+                warm
+                (client/session-model-cached "sid-m")
 
-             warm-ms
-             (/ (- (System/nanoTime) t1) 1e6)]
+                warm-ms
+                (/ (- (System/nanoTime) t1) 1e6)]
 
             (is (= {:provider "anthropic" :model "opus"} warm) "a fresh entry is served from cache")
             (is (< warm-ms 50.0) "warm read is a pure cache hit")
@@ -1142,10 +1129,9 @@
 (deftest rejected-requests-surface-the-daemons-own-reason
   (testing
     "a 400 whose reason is nested under error.message reaches the caller verbatim, so the TUI dialog explains the refusal instead of printing a bare status"
-    (let
-      [e (refusal-ex 400
-                     (str "{\"error\":{\"message\":\"Fallback provider must differ "
-                          "from the primary provider (anthropic-coding-plan)\"}}"))]
+    (let [e (refusal-ex 400
+                        (str "{\"error\":{\"message\":\"Fallback provider must differ "
+                             "from the primary provider (anthropic-coding-plan)\"}}"))]
       (is (some? e))
       (is (= "Fallback provider must differ from the primary provider (anthropic-coding-plan)"
              (ex-message e)))
@@ -1159,24 +1145,24 @@
 ;; function handed back the whole fleet's status AND limits from the one
 ;; /v1/router read that already carries both.
 (deftest router-diagnostics-loads-the-whole-fleet-in-one-call
-  (let
-    [calls
-     (atom 0)
+  (let [calls
+        (atom 0)
 
-     fleet
-     [{"id" "openai"
-       "status" {"is_authenticated" true "source" "gateway"}
-       "limits" {"provider_id" "openai"
-                 "status" "ready"
-                 "static" {"rpm" 10}
-                 "dynamic" {"limits" [{"id" "requests" "scope" "account" "is_unlimited" false}]}}}
-      {"id" "anthropic" "status" {"is_authenticated" false} "limits" nil}]
+        fleet
+        [{"id" "openai"
+          "status" {"is_authenticated" true "source" "gateway"}
+          "limits" {"provider_id" "openai"
+                    "status" "ready"
+                    "static" {"rpm" 10}
+                    "dynamic" {"limits"
+                               [{"id" "requests" "scope" "account" "is_unlimited" false}]}}}
+         {"id" "anthropic" "status" {"is_authenticated" false} "limits" nil}]
 
-     result
-     (with-redefs-fn {#'client/router (fn []
-                                        (swap! calls inc)
-                                        fleet)}
-       #(client/router-diagnostics))]
+        result
+        (with-redefs-fn {#'client/router (fn []
+                                           (swap! calls inc)
+                                           fleet)}
+          #(client/router-diagnostics))]
 
     (testing "one gateway read serves every provider"
       (is (= 1 @calls))
@@ -1213,21 +1199,20 @@
                                   (catch clojure.lang.ExceptionInfo e e)))))))))
 
 (deftest remote-target-attaches-without-registry-or-spawn
-  (let
-    [target
-     ((rv 'remote-entry) "10.0.0.5:7891" "tok")
+  (let [target
+        ((rv 'remote-entry) "10.0.0.5:7891" "tok")
 
-     fresh-until
-     @(rv 'entry-fresh-until-ns)
+        fresh-until
+        @(rv 'entry-fresh-until-ns)
 
-     cached
-     @(rv 'cached-entry)
+        cached
+        @(rv 'cached-entry)
 
-     previous-fresh
-     @fresh-until
+        previous-fresh
+        @fresh-until
 
-     previous-cached
-     @cached]
+        previous-cached
+        @cached]
 
     (try (reset! fresh-until 0)
          (with-redefs-fn {(rv 'remote-gateway) (constantly target)
@@ -1244,17 +1229,16 @@
          (finally (reset! fresh-until previous-fresh) (reset! cached previous-cached)))))
 
 (deftest remote-request-carries-the-bearer-token-and-claims-no-pid
-  (let
-    [captured
-     (atom nil)
+  (let [captured
+        (atom nil)
 
-     target
-     ((rv 'remote-entry) "10.0.0.5:7891" "tok")
+        target
+        ((rv 'remote-entry) "10.0.0.5:7891" "tok")
 
-     capture
-     (fn [request]
-       (reset! captured request)
-       {:status 200 :body "{}"})]
+        capture
+        (fn [request]
+          (reset! captured request)
+          {:status 200 :body "{}"})]
 
     (with-redefs-fn {#'http/request capture}
       (fn []
@@ -1272,15 +1256,14 @@
                  (get-in @captured [:headers "X-Vis-Client-Pid"]))))))))
 
 (deftest tokenless-remote-probe-accepts-an-auth-free-gateway
-  (let
-    [handshake
-     @(rv 'gateway-handshake*)
+  (let [handshake
+        @(rv 'gateway-handshake*)
 
-     previous
-     @handshake
+        previous
+        @handshake
 
-     body
-     "{\"status\":\"ok\",\"secret_match\":false}"]
+        body
+        "{\"status\":\"ok\",\"secret_match\":false}"]
 
     (try (with-redefs-fn {(rv 'gw-send!) (fn [& _]
                                            {:status 200 :body body})}
@@ -1292,23 +1275,22 @@
          (finally (reset! handshake previous)))))
 
 (deftest remote-client-lease-carries-no-pid
-  (let
-    [client-id-atom
-     @(rv 'client-id)
+  (let [client-id-atom
+        @(rv 'client-id)
 
-     previous
-     @client-id-atom
+        previous
+        @client-id-atom
 
-     captured
-     (atom nil)
+        captured
+        (atom nil)
 
-     ensure-client
-     (rv 'ensure-client!)
+        ensure-client
+        (rv 'ensure-client!)
 
-     register
-     (fn [_entry _method _path body]
-       (reset! captured body)
-       {"client_id" "cid"})]
+        register
+        (fn [_entry _method _path body]
+          (reset! captured body)
+          {"client_id" "cid"})]
 
     (try (with-redefs-fn {(rv 'send-json-with-entry!) register}
            (fn []

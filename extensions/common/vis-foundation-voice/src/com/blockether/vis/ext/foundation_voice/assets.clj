@@ -95,12 +95,11 @@
    whether they can be had."
   ([entry] (sources entry (some? (hf-token))))
   ([entry is-token-available]
-   (let
-     [gated
-      (filter :is-token-required (:sources entry))
+   (let [gated
+         (filter :is-token-required (:sources entry))
 
-      open
-      (remove :is-token-required (:sources entry))]
+         open
+         (remove :is-token-required (:sources entry))]
 
      (vec (if is-token-available (concat gated open) open)))))
 
@@ -139,19 +138,17 @@
    verified on the way in, so there is no unpack step and progress is shared out
    by declared size."
   [source staging report]
-  (let
-    [files
-     (:files source)
+  (let [files
+        (:files source)
 
-     total
-     (max 1 (long (reduce + 0 (map #(long (or (:bytes %) 0)) files))))]
+        total
+        (max 1 (long (reduce + 0 (map #(long (or (:bytes %) 0)) files))))]
 
-    (loop
-      [remaining
-       files
+    (loop [remaining
+           files
 
-       done
-       0]
+           done
+           0]
 
       (when-let [f (first remaining)]
         (files/download! (:url f)
@@ -202,34 +199,31 @@
   ([entry] (install! entry (install-dir entry) nil))
   ([entry on-progress] (install! entry (install-dir entry) on-progress))
   ([entry dir on-progress]
-   (let
-     [staging
-      (io/file (str dir ".staging-" (System/nanoTime)))
+   (let [staging
+         (io/file (str dir ".staging-" (System/nanoTime)))
 
-      report
-      (fn [phase pct]
-        (when on-progress (on-progress {:phase phase :progress pct})))
+         report
+         (fn [phase pct]
+           (when on-progress (on-progress {:phase phase :progress pct})))
 
-      candidates
-      (sources entry)]
+         candidates
+         (sources entry)]
 
      (when (empty? candidates)
        (throw (ex-info (str "No source for " (:id entry) " is usable")
                        {:type :voice-assets/no-source :id (:id entry)})))
      (try
-       (loop
-         [remaining
-          candidates
+       (loop [remaining
+              candidates
 
-          failures
-          []]
+              failures
+              []]
 
          (if-let [source (first remaining)]
-           (let
-             [failure (try (install-from-source! entry source staging report)
-                           nil
-                           (catch Throwable t
-                             {:host (:host source) :error (or (ex-message t) (str t))}))]
+           (let [failure (try (install-from-source! entry source staging report)
+                              nil
+                              (catch Throwable t
+                                {:host (:host source) :error (or (ex-message t) (str t))}))]
              (if failure
                (recur (rest remaining) (conj failures failure))
                (let [final (io/file dir)]

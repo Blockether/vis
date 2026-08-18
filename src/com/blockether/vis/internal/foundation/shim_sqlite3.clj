@@ -33,22 +33,20 @@
   "Rewrite :name / @name / $name placeholders to positional `?` (outside string
    literals), returning [sql ordered-names]. Plain `?` placeholders are untouched."
   [^String sql]
-  (let
-    [sb
-     (StringBuilder.)
+  (let [sb
+        (StringBuilder.)
 
-     names
-     (ArrayList.)
+        names
+        (ArrayList.)
 
-     n
-     (.length sql)]
+        n
+        (.length sql)]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       q
-       nil]
+           q
+           nil]
 
       (if (>= i n)
         [(.toString sb) (vec names)]
@@ -59,13 +57,12 @@
                      (< (inc i) n)
                      (let [c2 (.charAt sql (inc i))]
                        (or (Character/isLetter c2) (= c2 \_))))
-                (let
-                  [j (long (loop [k (inc i)]
-                             (if (and (< k n)
-                                      (let [c (.charAt sql k)]
-                                        (or (Character/isLetterOrDigit c) (= c \_))))
-                               (recur (inc k))
-                               k)))]
+                (let [j (long (loop [k (inc i)]
+                                (if (and (< k n)
+                                         (let [c (.charAt sql k)]
+                                           (or (Character/isLetterOrDigit c) (= c \_))))
+                                  (recur (inc k))
+                                  k)))]
                   (.add names (subs sql (inc i) j))
                   (.append sb \?)
                   (recur j nil))
@@ -106,18 +103,17 @@
 
 (defn- collect-rs
   [^ResultSet rs]
-  (let
-    [md
-     (.getMetaData rs)
+  (let [md
+        (.getMetaData rs)
 
-     nc
-     (.getColumnCount md)
+        nc
+        (.getColumnCount md)
 
-     cols
-     (mapv #(.getColumnLabel md (inc (long %))) (range nc))
+        cols
+        (mapv #(.getColumnLabel md (inc (long %))) (range nc))
 
-     rows
-     (ArrayList.)]
+        rows
+        (ArrayList.)]
 
     (while (.next rs)
       (.add rows
@@ -138,30 +134,28 @@
 
 (defn- op-connect
   [scope database]
-  (let
-    [db
-     (if (or (nil? database) (= database "") (= database ":memory:")) ":memory:" (str database))
+  (let [db
+        (if (or (nil? database) (= database "") (= database ":memory:")) ":memory:" (str database))
 
-     url
-     (if (= db ":memory:") "jdbc:sqlite::memory:" (str "jdbc:sqlite:" db))
+        url
+        (if (= db ":memory:") "jdbc:sqlite::memory:" (str "jdbc:sqlite:" db))
 
-     c
-     (DriverManager/getConnection url)]
+        c
+        (DriverManager/getConnection url)]
 
     (.setAutoCommit c true)
     (res/open! scope ::conns c)))
 
 (defn- op-execute
   [conn-h ^String sql params]
-  (let
-    [c
-     (conn-of conn-h)
+  (let [c
+        (conn-of conn-h)
 
-     [sql2 names]
-     (rewrite-named sql)
+        [sql2 names]
+        (rewrite-named sql)
 
-     ^PreparedStatement ps
-     (.prepareStatement c sql2)]
+        ^PreparedStatement ps
+        (.prepareStatement c sql2)]
 
     (try (bind-params! ps params names)
          (if (select-sql? sql)
@@ -169,51 +163,47 @@
              (assoc m
                "rowcount" (count (get m "rows"))
                "lastrowid" nil))
-           (let
-             [uc
-              (.executeUpdate ps)
+           (let [uc
+                 (.executeUpdate ps)
 
-              lid
-              (with-open
-                [st
-                 (.createStatement c)
+                 lid
+                 (with-open [st
+                             (.createStatement c)
 
-                 rs
-                 (.executeQuery st "select last_insert_rowid()")]
+                             rs
+                             (.executeQuery st "select last_insert_rowid()")]
 
-                (when (.next rs) (.getLong rs 1)))]
+                   (when (.next rs) (.getLong rs 1)))]
 
              {"description" nil "rows" [] "rowcount" uc "lastrowid" lid}))
          (finally (.close ps)))))
 
 (defn- op-executemany
   [conn-h ^String sql seq-params]
-  (let
-    [c
-     (conn-of conn-h)
+  (let [c
+        (conn-of conn-h)
 
-     [sql2 names]
-     (rewrite-named sql)
+        [sql2 names]
+        (rewrite-named sql)
 
-     ^PreparedStatement ps
-     (.prepareStatement c sql2)]
+        ^PreparedStatement ps
+        (.prepareStatement c sql2)]
 
     (try (doseq [p seq-params]
            (bind-params! ps p names)
            (.addBatch ps))
          ;; CPython reports the rows the whole batch changed; JDBC hands back one
          ;; update count per statement, and -2 (SUCCESS_NO_INFO) for "unknown".
-         (let
-           [^ints counts
-            (.executeBatch ps)
+         (let [^ints counts
+               (.executeBatch ps)
 
-            n
-            (areduce counts
-                     i
-                     acc
-                     0
-                     (let [u (aget counts i)]
-                       (if (neg? u) acc (+ acc u))))]
+               n
+               (areduce counts
+                        i
+                        acc
+                        0
+                        (let [u (aget counts i)]
+                          (if (neg? u) acc (+ acc u))))]
 
            {"description" nil "rows" [] "rowcount" n "lastrowid" nil})
          (finally (.close ps)))))
@@ -222,10 +212,9 @@
   [conn-h ^String sql]
   (let [c (conn-of conn-h)]
     (with-open [st (.createStatement c)]
-      (doseq
-        [chunk (str/split sql #";")
-         :let [s (str/trim chunk)]
-         :when (seq s)]
+      (doseq [chunk (str/split sql #";")
+              :let [s (str/trim chunk)]
+              :when (seq s)]
 
         (.execute st s)))
     {"description" nil "rows" [] "rowcount" -1 "lastrowid" nil}))
@@ -251,12 +240,11 @@
 
 (defn- op-total-changes
   [conn-h]
-  (with-open
-    [st
-     (.createStatement (conn-of conn-h))
+  (with-open [st
+              (.createStatement (conn-of conn-h))
 
-     rs
-     (.executeQuery st "select total_changes()")]
+              rs
+              (.executeQuery st "select total_changes()")]
 
     (if (.next rs) (.getLong rs 1) 0)))
 
@@ -308,12 +296,12 @@
          "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. Bindings "
          "support int/float/str/None only, else `InterfaceError`.")
        :shim/bindings sqlite-bridge-bindings
-       :shim/resources
-       {::conns {:resource/label "sqlite connection"
-                 :resource/release (fn [_h ^Connection c] (.close c))
-                 ;; Backstop for a runaway guest inside ONE session; the scope is
-                 ;; what stops a connection outliving the session that opened it.
-                 :resource/max 64}}
+       :shim/resources {::conns {:resource/label "sqlite connection"
+                                 :resource/release (fn [_h ^Connection c]
+                                                     (.close c))
+                                 ;; Backstop for a runaway guest inside ONE session; the scope is
+                                 ;; what stops a connection outliving the session that opened it.
+                                 :resource/max 64}}
        :shim/source "vis-shims/sqlite3.py"}]}))
 
 (vis/register-extension! vis-extension)

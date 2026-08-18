@@ -214,23 +214,22 @@
    tiny registrar + heavy implementation pair. Throws a useful error
    when the backend is missing the fn."
   [db-spec-or-store fn-name]
-  (let
-    [bid
-     (pick-backend-id db-spec-or-store)
+  (let [bid
+        (pick-backend-id db-spec-or-store)
 
-     ns-sym
-     (get-in @backends [bid :ns])
+        ns-sym
+        (get-in @backends [bid :ns])
 
-     _
-     (when-not ns-sym
-       (throw (ex-info (str "Backend " bid " not registered")
-                       {:backend bid :registered (vec (keys @backends))})))
+        _
+        (when-not ns-sym
+          (throw (ex-info (str "Backend " bid " not registered")
+                          {:backend bid :registered (vec (keys @backends))})))
 
-     _
-     (require-backend-ns! bid ns-sym)
+        _
+        (require-backend-ns! bid ns-sym)
 
-     v
-     (ns-resolve ns-sym fn-name)]
+        v
+        (ns-resolve ns-sym fn-name)]
 
     (when-not v
       (throw (ex-info (str "Backend " bid " (" ns-sym ") does not implement '" fn-name "'")
@@ -254,12 +253,11 @@
    selection still throws because the store/spec itself is invalid.
    Auto-loads the backend ns the same way `resolve-impl` does."
   [db-spec-or-store fn-name]
-  (let
-    [bid
-     (pick-backend-id db-spec-or-store)
+  (let [bid
+        (pick-backend-id db-spec-or-store)
 
-     ns-sym
-     (get-in @backends [bid :ns])]
+        ns-sym
+        (get-in @backends [bid :ns])]
 
     (when-not ns-sym
       (throw (ex-info (str "Backend " bid " not registered")
@@ -289,18 +287,17 @@
    any backend-providing namespaces from the classpath."
   [db-spec]
   (manifest/scan-extensions!)
-  (let
-    [normalized
-     (normalize-spec db-spec)
+  (let [normalized
+        (normalize-spec db-spec)
 
-     bid
-     (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
+        bid
+        (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
 
-     f
-     @(resolve-impl {:backend bid} 'db-open!)
+        f
+        @(resolve-impl {:backend bid} 'db-open!)
 
-     store
-     (f normalized)]
+        store
+        (f normalized)]
 
     (cond (nil? store) nil
           (map? store) (assoc store :backend bid)
@@ -361,27 +358,25 @@
    a normal error is persisted byte for byte."
   ([s] (bounded-error-text s max-persisted-error-chars))
   ([s max-chars]
-   (let
-     [s
-      (str s)
+   (let [s
+         (str s)
 
-      n
-      (count s)
+         n
+         (count s)
 
-      max-chars
-      (long max-chars)]
+         max-chars
+         (long max-chars)]
 
      (if (<= n max-chars)
        s
        ;; Reserve room for the marker the cut itself produces, sized by the
        ;; WIDEST it can be, so the bounded string counts its own tail in.
-       (let
-         [marker
-          (fn [keep]
-            (str " ...<+" (- n (long keep)) " chars truncated>"))
+       (let [marker
+             (fn [keep]
+               (str " ...<+" (- n (long keep)) " chars truncated>"))
 
-          keep
-          (max 0 (- max-chars (count (marker 0))))]
+             keep
+             (max 0 (- max-chars (count (marker 0))))]
 
          (str (subs s 0 keep) (marker keep)))))))
 

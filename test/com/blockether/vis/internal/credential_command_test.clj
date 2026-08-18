@@ -78,14 +78,13 @@
         (expect (= 1 (exec-count)))))
   (it "is single-flight: 12 concurrent cold callers fork the helper ONCE"
       (fresh!)
-      (let
-        [av
-         (ok-script)
+      (let [av
+            (ok-script)
 
-         results
-         (doall (pmap (fn [_]
-                        (cred/resolve! :race av))
-                      (range 12)))]
+            results
+            (doall (pmap (fn [_]
+                           (cred/resolve! :race av))
+                         (range 12)))]
 
         (expect (every? #(= {:token secret} %) results))
         (expect (= 1 (exec-count)))))
@@ -112,12 +111,11 @@
         (expect (str/includes? error "vis-definitely-not-installed-xyz"))))
   (it "a non-zero exit reports the code and the helper's stderr, never stdout"
       (fresh!)
-      (let
-        [av
-         (script! "boom.sh" (str "echo '" secret "'\necho 'not logged in' >&2\nexit 3"))
+      (let [av
+            (script! "boom.sh" (str "echo '" secret "'\necho 'not logged in' >&2\nexit 3"))
 
-         {:keys [error token]}
-         (cred/resolve! :boom av)]
+            {:keys [error token]}
+            (cred/resolve! :boom av)]
 
         (expect (nil? token))
         (expect (str/includes? error "3"))
@@ -126,12 +124,11 @@
         (expect (not (str/includes? error secret)))))
   (it "blank stdout is a failure, not an empty credential"
       (fresh!)
-      (let
-        [av
-         (script! "silent.sh" "exit 0")
+      (let [av
+            (script! "silent.sh" "exit 0")
 
-         {:keys [error token]}
-         (cred/resolve! :silent av)]
+            {:keys [error token]}
+            (cred/resolve! :silent av)]
 
         (expect (nil? token))
         (expect (str/includes? error "no credential"))))
@@ -156,12 +153,11 @@
   credential-gap-test
   (it "a failing helper reads as a provider credential gap, like an unset ${NAME}"
       (fresh!)
-      (let
-        [provider
-         {:id :gap :api-key-command ["vis-definitely-not-installed-xyz"] :models [{:name "m1"}]}
+      (let [provider
+            {:id :gap :api-key-command ["vis-definitely-not-installed-xyz"] :models [{:name "m1"}]}
 
-         {:keys [reason env-vars]}
-         (config/provider-credential-gap provider)]
+            {:keys [reason env-vars]}
+            (config/provider-credential-gap provider)]
 
         (expect (string? reason))
         (expect (nil? env-vars))
@@ -173,21 +169,19 @@
         (expect (nil? (config/provider-credential-error provider)))))
   (it "the cached read paints without forking a subprocess"
       (fresh!)
-      (let
-        [provider {:id :cachedgap
-                   :api-key-command ["vis-definitely-not-installed-xyz"]
-                   :models [{:name "m1"}]}]
+      (let [provider {:id :cachedgap
+                      :api-key-command ["vis-definitely-not-installed-xyz"]
+                      :models [{:name "m1"}]}]
         (expect (nil? (config/provider-credential-gap-cached provider)))
         (config/provider-credential-gap provider)
         (expect (:reason (config/provider-credential-gap-cached provider)))))
   (it "invalidate-credential-command! is the config-level refresh seam"
       (fresh!)
-      (let
-        [av
-         (ok-script)
+      (let [av
+            (ok-script)
 
-         provider
-         {:id :seam :api-key-command av :models [{:name "m1"}]}]
+            provider
+            {:id :seam :api-key-command av :models [{:name "m1"}]}]
 
         (config/provider-credential-gap provider)
         (config/invalidate-credential-command! :seam)
@@ -196,21 +190,19 @@
 (defdescribe
   config-shape-test
   (it "the YAML contract accepts argv and bare-program spellings"
-      (let
-        [cfg (yamlstar/load (str "providers:\n"
-                                 "  - id: sso_gateway\n" "    compatibility: openai-responses\n"
-                                 "    base_url: https://gateway.example.com/v1\n"
-                                 "    api_key_command: [token-helper, --env, sbox]\n"
-                                 "    models:\n" "      - name: m1\n"))]
+      (let [cfg (yamlstar/load (str "providers:\n"
+                                    "  - id: sso_gateway\n" "    compatibility: openai-responses\n"
+                                    "    base_url: https://gateway.example.com/v1\n"
+                                    "    api_key_command: [token-helper, --env, sbox]\n"
+                                    "    models:\n" "      - name: m1\n"))]
         (expect (config-spec/valid? cfg))
         (expect (config-spec/valid?
                   (assoc-in cfg ["providers" 0 "api_key_command"] "token-helper")))))
   (it "rejects an empty, blank or non-string command"
-      (let
-        [cfg (yamlstar/load (str "providers:\n" "  - id: sso_gateway\n"
-                                 "    base_url: https://gateway.example.com/v1\n"
-                                 "    api_key_command: [token-helper]\n"
-                                 "    models:\n" "      - name: m1\n"))]
+      (let [cfg (yamlstar/load (str "providers:\n" "  - id: sso_gateway\n"
+                                    "    base_url: https://gateway.example.com/v1\n"
+                                    "    api_key_command: [token-helper]\n"
+                                    "    models:\n" "      - name: m1\n"))]
         (expect (config-spec/valid? cfg))
         (expect (not (config-spec/valid? (assoc-in cfg ["providers" 0 "api_key_command"] []))))
         (expect (not (config-spec/valid? (assoc-in cfg ["providers" 0 "api_key_command"] ""))))
@@ -221,11 +213,10 @@
                                              (assoc-in ["providers" 0 "api-key-command"]
                                                        ["h"])))))))
   (it "runtime-config carries the argv through as :api-key-command"
-      (let
-        [cfg (yamlstar/load (str "providers:\n" "  - id: sso_gateway\n"
-                                 "    base_url: https://gateway.example.com/v1\n"
-                                 "    api_key_command: [token-helper, --env, sbox]\n"
-                                 "    models:\n" "      - name: m1\n"))]
+      (let [cfg (yamlstar/load (str "providers:\n" "  - id: sso_gateway\n"
+                                    "    base_url: https://gateway.example.com/v1\n"
+                                    "    api_key_command: [token-helper, --env, sbox]\n"
+                                    "    models:\n" "      - name: m1\n"))]
         (expect (= ["token-helper" "--env" "sbox"]
                    (-> cfg
                        config/runtime-config
@@ -236,12 +227,11 @@
 (defdescribe never-persisted-test
              (it "the resolved token never reaches the durable provider shape"
                  (fresh!)
-                 (let
-                   [av
-                    (ok-script)
+                 (let [av
+                       (ok-script)
 
-                    provider
-                    {:id :persist :api-key-command av :models [{:name "m1"}]}]
+                       provider
+                       {:id :persist :api-key-command av :models [{:name "m1"}]}]
 
                    (expect (= {:token secret} (cred/resolve! :persist av)))
                    (let [persisted (providers/persisted-provider-config provider)]
@@ -265,15 +255,14 @@
   command-credential-validity-test
   (it "a built router records the ARGV as the refresh seam, never the token"
       (fresh!)
-      (let
-        [av
-         (rotating-script)
+      (let [av
+            (rotating-script)
 
-         built
-         (config/->svar-provider {:id :sso-seam
-                                  :api-key-command av
-                                  :models [{:name "m1"}]
-                                  :base-url "https://gateway.example.com/v1"})]
+            built
+            (config/->svar-provider {:id :sso-seam
+                                     :api-key-command av
+                                     :models [{:name "m1"}]
+                                     :base-url "https://gateway.example.com/v1"})]
 
         (expect (= "tok-1" (:api-key built)))
         (expect (config/command-backed? :sso-seam))
@@ -285,15 +274,14 @@
   ;; independently from Svar's canonical failure verdict.
   (it "an auth rejection is recoverable with NO OAuth hook, by re-running the helper"
       (fresh!)
-      (let
-        [built
-         (config/->svar-provider {:id :sso-401
-                                  :api-key-command (rotating-script)
-                                  :models [{:name "m1"}]
-                                  :base-url "https://gateway.example.com/v1"})
+      (let [built
+            (config/->svar-provider {:id :sso-401
+                                     :api-key-command (rotating-script)
+                                     :models [{:name "m1"}]
+                                     :base-url "https://gateway.example.com/v1"})
 
-         router
-         (router-with built)]
+            router
+            (router-with built)]
 
         ;; Steady state: the request boundary re-reads the CACHE, never forks.
         (expect (= "tok-1"
@@ -317,20 +305,19 @@
         (expect (= 2 (exec-count)))))
   (it "a helper that is failing right now keeps the previous request snapshot"
       (fresh!)
-      (let
-        [av
-         (script! "flaky.sh"
-                  (str "echo x >> "
-                       counter-file
-                       "\n"
-                       "if [ $(wc -l < " counter-file
-                       ") -gt 1 ]; then echo 'not logged in' >&2; exit 1; fi\n" "echo tok-1"))
+      (let [av
+            (script! "flaky.sh"
+                     (str "echo x >> "
+                          counter-file
+                          "\n"
+                          "if [ $(wc -l < " counter-file
+                          ") -gt 1 ]; then echo 'not logged in' >&2; exit 1; fi\n" "echo tok-1"))
 
-         built
-         (config/->svar-provider {:id :sso-flaky :api-key-command av :models [{:name "m1"}]})
+            built
+            (config/->svar-provider {:id :sso-flaky :api-key-command av :models [{:name "m1"}]})
 
-         router
-         (router-with built)]
+            router
+            (router-with built)]
 
         (expect (= "tok-1" (:api-key built)))
         (config/invalidate-credential-command! :sso-flaky)

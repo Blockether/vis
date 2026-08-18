@@ -23,17 +23,15 @@
 
 (defdescribe session-creation-root-test
              (it "pins a new TUI session to the client invocation root"
-                 (let
-                   [request
-                    (atom nil)
+                 (let [request
+                       (atom nil)
 
-                    sid
-                    (java.util.UUID/randomUUID)]
+                       sid
+                       (java.util.UUID/randomUUID)]
 
-                   (with-redefs
-                     [vis/gateway-create-session! (fn [opts]
-                                                    (reset! request opts)
-                                                    {"id" (str sid)})]
+                   (with-redefs [vis/gateway-create-session! (fn [opts]
+                                                               (reset! request opts)
+                                                               {"id" (str sid)})]
                      (expect (= sid (:id (chat/make-session nil))))
                      (expect (= (vis/workspace-normalize-root (System/getProperty "user.dir"))
                                 (:root @request)))))))
@@ -49,165 +47,163 @@
       ;;
       ;; Normal persisted answers are Nippy-frozen canonical IR; the
       ;; legacy/string terminal-answer fallback is covered below.
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+      (with-redefs [vis/db-info
+                    (fn []
+                      :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-1
-             :user-request "siema"
-             :content [{"id" "b1" "type" "prose" "markdown" "Siema! 👋 What can I do for you?"}]}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-1
+                        :user-request "siema"
+                        :content [{"id" "b1"
+                                   "type" "prose"
+                                   "markdown" "Siema! 👋 What can I do for you?"}]}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           assistant
-           (second history)
+              assistant
+              (second history)
 
-           blocks
-           (:content assistant)
+              blocks
+              (:content assistant)
 
-           text
-           (:text assistant)]
+              text
+              (:text assistant)]
 
           (expect (= "prose" (get-in blocks [0 "type"])))
           (expect (str/includes? text "Siema!")))))
   (it "rebuild-history preserves canonical content blocks"
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+      (with-redefs [vis/db-info
+                    (fn []
+                      :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-cancelled
-             :user-request "siema"
-             :content
-             [{"id" "b1" "type" "notice" "code" "turn_cancelled" "message" "Cancelled by user."}]}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-cancelled
+                        :user-request "siema"
+                        :content [{"id" "b1"
+                                   "type" "notice"
+                                   "code" "turn_cancelled"
+                                   "message" "Cancelled by user."}]}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           assistant
-           (second history)
+              assistant
+              (second history)
 
-           blocks
-           (:content assistant)]
+              blocks
+              (:content assistant)]
 
           (expect (= 2 (count history)))
           (expect (= "notice" (get-in blocks [0 "type"])))
           (expect (str/includes? (:text assistant) "Cancelled by user")))))
   (it "rebuild-history shows cancelled status text when persisted answer is blank"
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+      (with-redefs [vis/db-info
+                    (fn []
+                      :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-cancelled :user-request "no live" :prior-outcome :cancelled :content []}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-cancelled
+                        :user-request "no live"
+                        :prior-outcome :cancelled
+                        :content []}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           assistant
-           (second history)
+              assistant
+              (second history)
 
-           blocks
-           (:content assistant)]
+              blocks
+              (:content assistant)]
 
           (expect (= :cancelled (:status assistant)))
           (expect (= "notice" (get-in blocks [0 "type"])))
           (expect (str/includes? (:text assistant) "Cancelled by user")))))
-  (it "rebuild-history marks persisted silent engine calls for the TUI visibility toggle"
-      ;; Python engine: an engine-only form (set_session_title) is silent UI chrome,
-      ;; detected by `ctx-engine/engine-form-src?` reading the Python call head.
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+  (it
+    "rebuild-history marks persisted silent engine calls for the TUI visibility toggle"
+    ;; Python engine: an engine-only form (set_session_title) is silent UI chrome,
+    ;; detected by `ctx-engine/engine-form-src?` reading the Python call head.
+    (with-redefs [vis/db-info
+                  (fn []
+                    :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                  vis/gateway-transcript
+                  compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-1 :user-request "siema" :answer-markdown "Siema!"}])
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1 :user-request "siema" :answer-markdown "Siema!"}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [{:id :iter-1 :code "set_session_title(\"Greeting\")" :result "vis_silent"}])]
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1 :code "set_session_title(\"Greeting\")" :result "vis_silent"}])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+      (let [history
+            ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           trace
-           (-> history
-               second
-               :traces
-               first)
+            trace
+            (-> history
+                second
+                :traces
+                first)
 
-           form
-           (-> trace
-               :forms
-               first)]
+            form
+            (-> trace
+                :forms
+                first)]
 
-          (expect (= 1 (count (:forms trace))))
-          (expect (true? (:silent? form)))
-          (expect (str/includes? (str (:code form)) "set_session_title")))))
+        (expect (= 1 (count (:forms trace))))
+        (expect (true? (:silent? form)))
+        (expect (str/includes? (str (:code form)) "set_session_title")))))
   (it "rebuild-history elides synthetic preflight blocks so they don't render as success"
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+      (with-redefs [vis/db-info
+                    (fn []
+                      :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-1 :user-request "preflight loop" :answer-markdown ""}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-1 :user-request "preflight loop" :answer-markdown ""}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [{:id :iter-1 :code "(vis/preflight-error :raw-markdown-fence-leak)"}])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [{:id :iter-1 :code "(vis/preflight-error :raw-markdown-fence-leak)"}])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           trace
-           (-> history
-               second
-               :traces
-               first)]
+              trace
+              (-> history
+                  second
+                  :traces
+                  first)]
 
           (expect (= [] (:forms trace))))))
   (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
@@ -215,42 +211,41 @@
       ;; Each envelope has :src :tag :result :error :channel; the rebuild
       ;; iterates them rather than treating the whole iteration as one
       ;; opaque block.
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+      (with-redefs [vis/db-info
+                    (fn []
+                      :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-1 :user-request "mixed" :answer-markdown "Done"}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-1 :user-request "mixed" :answer-markdown "Done"}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [{:id :iter-1
-             :code
-             (str "(def x 1)\n" "(set-session-title! \"Mixed\")\n" "(done [:ast [:p \"Done\"]])")
-             :forms [{:scope "t1/i1/f1" :tag :host :src "(def x 1)" :result nil}
-                     {:scope "t1/i1/f2"
-                      :tag :host
-                      :src "(set-session-title! \"Mixed\")"
-                      :result "vis_silent"}
-                     {:scope "t1/i1/f3"
-                      :tag :host
-                      :src "(done [:ast [:p \"Done\"]])"
-                      :result "vis_answer"}]}])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [{:id :iter-1
+                        :code (str "(def x 1)\n"
+                                   "(set-session-title! \"Mixed\")\n"
+                                   "(done [:ast [:p \"Done\"]])")
+                        :forms [{:scope "t1/i1/f1" :tag :host :src "(def x 1)" :result nil}
+                                {:scope "t1/i1/f2"
+                                 :tag :host
+                                 :src "(set-session-title! \"Mixed\")"
+                                 :result "vis_silent"}
+                                {:scope "t1/i1/f3"
+                                 :tag :host
+                                 :src "(done [:ast [:p \"Done\"]])"
+                                 :result "vis_answer"}]}])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           trace
-           (-> history
-               second
-               :traces
-               first)]
+              trace
+              (-> history
+                  second
+                  :traces
+                  first)]
 
           ;; Resume keeps ONE restored block PER persisted form envelope —
           ;; parity with the live tracker (the old regroup collapsed every
@@ -261,98 +256,96 @@
           (expect (some (fn [f]
                           (some #(re-find #"Mixed" (str %)) (:render-segments f)))
                         (:forms trace))))))
-  (it "rebuild-history recovers single visible form duration from old iteration rows"
-      ;; Historical envelopes lacked per-form :duration-ms. The row-level
-      ;; eval duration is still available; if only one form remains after
-      ;; answer elision, preserve it on the form for transcript/debug use.
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+  (it
+    "rebuild-history recovers single visible form duration from old iteration rows"
+    ;; Historical envelopes lacked per-form :duration-ms. The row-level
+    ;; eval duration is still available; if only one form remains after
+    ;; answer elision, preserve it on the form for transcript/debug use.
+    (with-redefs [vis/db-info
+                  (fn []
+                    :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                  vis/gateway-transcript
+                  compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-1 :user-request "patch" :answer-markdown ""}])
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1 :user-request "patch" :answer-markdown ""}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [{:id :iter-1
-             :duration_ms 12
-             :code "(patch [])"
-             :forms [{:scope "t24/i1/f1"
-                      :tag :mutation
-                      :src "(patch [])"
-                      :result :ok
-                      :channel
-                      [{:position 0 :form "(patch [])" :success? true :result "PATCH ok"}]}]}])]
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :duration_ms 12
+                      :code "(patch [])"
+                      :forms
+                      [{:scope "t24/i1/f1"
+                        :tag :mutation
+                        :src "(patch [])"
+                        :result :ok
+                        :channel
+                        [{:position 0 :form "(patch [])" :success? true :result "PATCH ok"}]}]}])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+      (let [history
+            ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           form
-           (-> history
-               second
-               :traces
-               first
-               :forms
-               first)]
+            form
+            (-> history
+                second
+                :traces
+                first
+                :forms
+                first)]
 
-          (expect (= "t24/i1/f1" (:scope form)))
-          (expect (= 12 (:duration-ms form))))))
+        (expect (= "t24/i1/f1" (:scope form)))
+        (expect (= 12 (:duration-ms form))))))
   (it "rebuild-history keeps per-form envelopes and preserves errors"
       ;; Persisted `:forms` are proof-granularity envelopes. Resume keeps
       ;; one restored block PER envelope (parity with the live tracker's
       ;; one chunk per top-level form); `iteration/canonicalize` derives
       ;; the block-level `:error`/`:status` from the errored form so the
       ;; iteration does not render as success.
-      (with-redefs
-        [vis/db-info
-         (fn []
-           :db)
+      (with-redefs [vis/db-info
+                    (fn []
+                      :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-1 :user-request "two forms" :answer-markdown ""}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-1 :user-request "two forms" :answer-markdown ""}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [{:id :iter-1
-             :code "(cat \"src/foo.clj\")\n(cat \"ghost.clj\")"
-             :forms [{:scope "t1/i1/f1"
-                      :tag :observation
-                      :src "(cat \"src/foo.clj\")"
-                      :result {:op :cat :path "src/foo.clj"}
-                      :channel [{:position 0
-                                 :form "(cat \"src/foo.clj\")"
-                                 :success? true
-                                 :result "CAT src/foo.clj"}]}
-                     {:scope "t1/i1/f2"
-                      :tag :observation
-                      :src "(cat \"ghost.clj\")"
-                      :error {:message "file not found: ghost.clj"}}]}])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [{:id :iter-1
+                        :code "(cat \"src/foo.clj\")\n(cat \"ghost.clj\")"
+                        :forms [{:scope "t1/i1/f1"
+                                 :tag :observation
+                                 :src "(cat \"src/foo.clj\")"
+                                 :result {:op :cat :path "src/foo.clj"}
+                                 :channel [{:position 0
+                                            :form "(cat \"src/foo.clj\")"
+                                            :success? true
+                                            :result "CAT src/foo.clj"}]}
+                                {:scope "t1/i1/f2"
+                                 :tag :observation
+                                 :src "(cat \"ghost.clj\")"
+                                 :error {:message "file not found: ghost.clj"}}]}])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           trace
-           (-> history
-               second
-               :traces
-               first)
+              trace
+              (-> history
+                  second
+                  :traces
+                  first)
 
-           forms
-           (:forms trace)
+              forms
+              (:forms trace)
 
-           [ok-form err-form]
-           forms]
+              [ok-form err-form]
+              forms]
 
           (expect (= 2 (count forms)))
           (expect (str/includes? (:code ok-form) "src/foo.clj"))
@@ -378,44 +371,42 @@
       ;; closed on unregistered ops by design (`op-tag`), so stub it to the
       ;; tag `:cat` carries in production — the envelope is built lazily inside
       ;; the iteration redef, i.e. while the stub is active.
-      (with-redefs
-        [extension/op-tag
-         (fn [_op]
-           :observation)
+      (with-redefs [extension/op-tag
+                    (fn [_op]
+                      :observation)
 
-         vis/db-info
-         (fn []
-           :db)
+                    vis/db-info
+                    (fn []
+                      :db)
 
-         vis/gateway-transcript
-         compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-         vis/db-list-session-turns
-         (fn [_db _cid]
-           [{:id :turn-1 :user-request "run" :answer-markdown ""}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-1 :user-request "run" :answer-markdown ""}])
 
-         vis/db-list-session-turn-iterations
-         (fn [_db _turn-id]
-           [{:id :iter-1
-             :code "(cat \"x.txt\")"
-             :result (extension/success {:op :cat
-                                         :result {:path "x.txt" :lines ["ok"]}
-                                         :metadata {:target {:path "x.txt"}}})}])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [{:id :iter-1
+                        :code "(cat \"x.txt\")"
+                        :result (extension/success {:op :cat
+                                                    :result {:path "x.txt" :lines ["ok"]}
+                                                    :metadata {:target {:path "x.txt"}}})}])]
 
-        (let
-          [history
-           ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-           trace
-           (-> history
-               second
-               :traces
-               first)
+              trace
+              (-> history
+                  second
+                  :traces
+                  first)
 
-           form
-           (-> trace
-               :forms
-               first)]
+              form
+              (-> trace
+                  :forms
+                  first)]
 
           (expect (= :tool (:result-kind form)))
           (expect (= {:symbol "cat" :tag "observation" :target {"path" "x.txt"}}
@@ -425,15 +416,15 @@
   turn-options-test
   (it "submits through the gateway sync facade without changing content shape"
       (let [seen (atom nil)]
-        (with-redefs
-          [vis/gateway-submit-turn-sync! (fn [sid opts]
-                                           (reset! seen [sid opts])
-                                           {"content" [{"id" "b1" "type" "prose" "markdown" "ok"}]
-                                            "iteration_count" 1})]
-          (let
-            [result (chat/turn! {:id "c1"}
-                                "hello"
-                                {:reasoning-default :deep :extra-body {:text {:verbosity "high"}}})]
+        (with-redefs [vis/gateway-submit-turn-sync! (fn [sid opts]
+                                                      (reset! seen [sid opts])
+                                                      {"content"
+                                                       [{"id" "b1" "type" "prose" "markdown" "ok"}]
+                                                       "iteration_count" 1})]
+          (let [result (chat/turn! {:id "c1"}
+                                   "hello"
+                                   {:reasoning-default :deep
+                                    :extra-body {:text {:verbosity "high"}}})]
             (expect (= "prose" (get-in result ["content" 0 "type"])))
             (expect (= "ok" (get-in result ["content" 0 "markdown"])))
             (expect (= 1 (get result "iteration_count")))
@@ -446,10 +437,9 @@
       ;; expanded agent text. A pasted image expands to a bare temp path, which every
       ;; channel then painted verbatim instead of the `vis-image` fence the user wrote.
       (let [seen (atom nil)]
-        (with-redefs
-          [vis/gateway-submit-turn-sync! (fn [_ opts]
-                                           (reset! seen opts)
-                                           {"content" []})]
+        (with-redefs [vis/gateway-submit-turn-sync! (fn [_ opts]
+                                                      (reset! seen opts)
+                                                      {"content" []})]
           (chat/turn! {:id "c1"}
                       "look \n/tmp/shot.png\n"
                       {:display-text
@@ -458,32 +448,30 @@
           (expect (str/includes? (:display-request @seen) "````vis-image")))))
   (it "omits :display-request when there is no separate display copy"
       (let [seen (atom nil)]
-        (with-redefs
-          [vis/gateway-submit-turn-sync! (fn [_ opts]
-                                           (reset! seen opts)
-                                           {"content" []})]
+        (with-redefs [vis/gateway-submit-turn-sync! (fn [_ opts]
+                                                      (reset! seen opts)
+                                                      {"content" []})]
           (chat/turn! {:id "c1"} "plain")
           (expect (not (contains? @seen :display-request))))))
   (it "returns canonical notice content when cancellation is raised"
-      (with-redefs
-        [vis/gateway-submit-turn-sync!
-         (fn [& _]
-           (throw (InterruptedException. "cancel")))
+      (with-redefs [vis/gateway-submit-turn-sync!
+                    (fn [& _]
+                      (throw (InterruptedException. "cancel")))
 
-         vis/cancellation?
-         (fn [_]
-           true)]
+                    vis/cancellation?
+                    (fn [_]
+                      true)]
 
         (let [result (chat/turn! {:id "c1"} "hello")]
           (expect (= "cancelled" (get result "status")))
           (expect (= "notice" (get-in result ["content" 0 "type"]))))))
   (it "preserves gateway cancellation content"
-      (with-redefs
-        [vis/gateway-submit-turn-sync!
-         (fn [& _]
-           {"content"
-            [{"id" "b1" "type" "notice" "code" "turn_cancelled" "message" "Cancelled by user."}]
-            "status" "cancelled"})]
+      (with-redefs [vis/gateway-submit-turn-sync! (fn [& _]
+                                                    {"content" [{"id" "b1"
+                                                                 "type" "notice"
+                                                                 "code" "turn_cancelled"
+                                                                 "message" "Cancelled by user."}]
+                                                     "status" "cancelled"})]
         (let [result (chat/turn! {:id "c1"} "hello")]
           (expect (= "cancelled" (get result "status")))
           (expect (= "notice" (get-in result ["content" 0 "type"])))
@@ -519,51 +507,48 @@
                "code" "provider_unroutable"
                "message" "No provider could take this request\n\nWHAT HAPPENED: ..."}])))))
 
-(defdescribe
-  gateway-event-chunk-test
-  ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
-  ;; (the canonical web `block-code` contract), so the projection just carries
-  ;; `:code` straight through — no `:render-segments` reconstruction.
-  (let [g->c @#'chat/gateway-event->chunk]
-    (it "block.started carries the raw code straight through"
-        (let
-          [chunk
-           (g->c
-             {"type" "block.started" "iteration" 1 "block_id" 0 "code" "git_status()\nprint(42)"})]
-          (expect (= :form-start (:phase chunk)))
-          (expect (= "git_status()\nprint(42)" (:code chunk)))))
-    (it
-      "block.output carries the raw code + stdout straight through"
-      (let
-        [chunk
-         (g->c
-           {"type" "block.output" "iteration" 1 "block_id" 0 "code" "git_status()" "stdout" "ok"})]
-        (expect (= :form-result (:phase chunk)))
-        (expect (= "git_status()" (:code chunk)))
-        (expect (= "ok" (:stdout chunk)))))
-    (it "typed reasoning block delta projects onto :thinking"
-        (let
-          [chunk (g->c {"type" "content.block.delta"
-                        "iteration" 2
-                        "block_id" "t1:reasoning:2"
-                        "field" "text"
-                        "text" "pondering"})]
-          (expect (= :reasoning (:phase chunk)))
-          (expect (= 2 (:iteration chunk)))
-          (expect (= "pondering" (:thinking chunk)))))
-    (it "block.preview remains a block preview rather than reasoning/content"
-        (let
-          [chunk (g->c {"type" "block.preview"
-                        "iteration" 1
-                        "block_id" 0
-                        "code" "print(4"
-                        "op" "grep"
-                        "result_summary" "12 results"
-                        "tool_call_id" "call_1"})]
-          (expect (= :tool-preview (:phase chunk)))
-          (expect (= "print(4" (:code chunk)))
-          (expect (= "grep" (:op chunk)))
-          (expect (= "call_1" (:svar/tool-call-id chunk)))))))
+(defdescribe gateway-event-chunk-test
+             ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
+             ;; (the canonical web `block-code` contract), so the projection just carries
+             ;; `:code` straight through — no `:render-segments` reconstruction.
+             (let [g->c @#'chat/gateway-event->chunk]
+               (it "block.started carries the raw code straight through"
+                   (let [chunk (g->c {"type" "block.started"
+                                      "iteration" 1
+                                      "block_id" 0
+                                      "code" "git_status()\nprint(42)"})]
+                     (expect (= :form-start (:phase chunk)))
+                     (expect (= "git_status()\nprint(42)" (:code chunk)))))
+               (it "block.output carries the raw code + stdout straight through"
+                   (let [chunk (g->c {"type" "block.output"
+                                      "iteration" 1
+                                      "block_id" 0
+                                      "code" "git_status()"
+                                      "stdout" "ok"})]
+                     (expect (= :form-result (:phase chunk)))
+                     (expect (= "git_status()" (:code chunk)))
+                     (expect (= "ok" (:stdout chunk)))))
+               (it "typed reasoning block delta projects onto :thinking"
+                   (let [chunk (g->c {"type" "content.block.delta"
+                                      "iteration" 2
+                                      "block_id" "t1:reasoning:2"
+                                      "field" "text"
+                                      "text" "pondering"})]
+                     (expect (= :reasoning (:phase chunk)))
+                     (expect (= 2 (:iteration chunk)))
+                     (expect (= "pondering" (:thinking chunk)))))
+               (it "block.preview remains a block preview rather than reasoning/content"
+                   (let [chunk (g->c {"type" "block.preview"
+                                      "iteration" 1
+                                      "block_id" 0
+                                      "code" "print(4"
+                                      "op" "grep"
+                                      "result_summary" "12 results"
+                                      "tool_call_id" "call_1"})]
+                     (expect (= :tool-preview (:phase chunk)))
+                     (expect (= "print(4" (:code chunk)))
+                     (expect (= "grep" (:op chunk)))
+                     (expect (= "call_1" (:svar/tool-call-id chunk)))))))
 
 (defdescribe
   activity-event-chunk-test
@@ -599,19 +584,18 @@
 (defdescribe provider-retry-event-chunk-test
              (let [g->c @#'chat/gateway-event->chunk]
                (it "rehydrates structured retry metadata from the canonical wire event"
-                   (let
-                     [event (wire/canonical {:type "provider.retry"
-                                             :iteration 2
-                                             :attempt 1
-                                             :max-retries 3
-                                             :delay-ms 1000
-                                             :error {:type :svar.llm/provider-unavailable
-                                                     :message "Provider unavailable"}
-                                             :event {:event/type :llm.routing/provider-retry
-                                                     :reason :provider-unavailable
-                                                     :provider "openai"
-                                                     :model "gpt-x"}})
-                      chunk (g->c event)]
+                   (let [event (wire/canonical {:type "provider.retry"
+                                                :iteration 2
+                                                :attempt 1
+                                                :max-retries 3
+                                                :delay-ms 1000
+                                                :error {:type :svar.llm/provider-unavailable
+                                                        :message "Provider unavailable"}
+                                                :event {:event/type :llm.routing/provider-retry
+                                                        :reason :provider-unavailable
+                                                        :provider "openai"
+                                                        :model "gpt-x"}})
+                         chunk (g->c event)]
 
                      (expect (= :provider-retry-reset (:phase chunk)))
                      (expect (= 2 (:iteration chunk)))
@@ -632,29 +616,27 @@
              ;; builders now project through `vis/form->display` (the ONE display-key
              ;; projection). This guard drives a PERSISTED-SHAPED envelope through the REAL
              ;; restore entry (`it->iteration-entry`) so a drop anywhere in the chain fails.
-             (let
-               [it->ie
-                @#'chat/it->iteration-entry
+             (let [it->ie
+                   @#'chat/it->iteration-entry
 
-                restore
-                (fn [env]
-                  (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
-                              (wire/canonical {:id :iter-1 :code (:src env) :forms [env]}))
-                      :forms
-                      first))]
+                   restore
+                   (fn [env]
+                     (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
+                                 (wire/canonical {:id :iter-1 :code (:src env) :forms [env]}))
+                         :forms
+                         first))]
 
                (it "a restored single-result envelope keeps its card identity"
-                   (let
-                     [rec
-                      (restore {:scope "t1/i1"
-                                :tag :host
-                                :src "print(await grep(query='defn', paths=['src']))"
-                                :op "grep"
-                                :result-render "a.clj:1: x"
-                                :result-summary "8 hits in 1 file"})
+                   (let [rec
+                         (restore {:scope "t1/i1"
+                                   :tag :host
+                                   :src "print(await grep(query='defn', paths=['src']))"
+                                   :op "grep"
+                                   :result-render "a.clj:1: x"
+                                   :result-summary "8 hits in 1 file"})
 
-                      card
-                      (vis/result-card rec)]
+                         card
+                         (vis/result-card rec)]
 
                      (expect (= "grep" (:op card)))
                      (expect (= "8 hits in 1 file" (:summary card)))))))
@@ -665,12 +647,11 @@
 ;; flatten `:error` into plain text on a fresh conversation.
 (defdescribe error-content-test
              (it "preserves canonical provider error blocks"
-                 (let
-                   [blocks [{"id" "e1"
-                             "type" "error"
-                             "code" "provider_unavailable"
-                             "message" "Provider unavailable"
-                             "retryable" true}]]
+                 (let [blocks [{"id" "e1"
+                                "type" "error"
+                                "code" "provider_unavailable"
+                                "message" "Provider unavailable"
+                                "retryable" true}]]
                    (expect (= blocks (chat/error-content {"content" blocks "error" "boom"})))))
              (it "creates a canonical error block when content is absent"
                  (let [out (chat/error-content {"error" "boom"})]
@@ -687,16 +668,14 @@
   gateway-disconnect-propagation-test
   (let [disconnect (ex-info "SSE disconnected" {:gateway-disconnected true :turn-id "turn-1"})]
     (it "preserves submit disconnect metadata for the TUI reattach path"
-        (with-redefs
-          [vis/gateway-submit-turn-sync! (fn [& _]
-                                           (throw disconnect))]
+        (with-redefs [vis/gateway-submit-turn-sync! (fn [& _]
+                                                      (throw disconnect))]
           (try (chat/turn! {:id "session-1"} "hello")
                (expect false)
                (catch clojure.lang.ExceptionInfo e (expect (identical? disconnect e))))))
     (it "preserves attach disconnect metadata for the TUI reattach path"
-        (with-redefs
-          [vis/gateway-attach-turn-sync! (fn [& _]
-                                           (throw disconnect))]
+        (with-redefs [vis/gateway-attach-turn-sync! (fn [& _]
+                                                      (throw disconnect))]
           (try (chat/attach! {:id "session-1"} "turn-1")
                (expect false)
                (catch clojure.lang.ExceptionInfo e (expect (identical? disconnect e))))))))
@@ -819,16 +798,16 @@
                                {"type" "turn.cancelled" "turn_id" "t3"}]))))))
 
 (it "rehydrates a structured iteration error for the transient retry row"
-    (let
-      [g->c
-       @#'chat/gateway-event->chunk
+    (let [g->c
+          @#'chat/gateway-event->chunk
 
-       chunk
-       (g->c (wire/canonical
-               {:type "iteration.error"
-                :iteration 3
-                :error "upstream reset"
-                :error-data {:type :svar.core/http-error :message "upstream reset" :status 503}}))]
+          chunk
+          (g->c (wire/canonical {:type "iteration.error"
+                                 :iteration 3
+                                 :error "upstream reset"
+                                 :error-data {:type :svar.core/http-error
+                                              :message "upstream reset"
+                                              :status 503}}))]
 
       (expect (= :iteration-error (:phase chunk)))
       (expect (= {:type :svar.core/http-error :message "upstream reset" :status 503}

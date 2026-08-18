@@ -35,12 +35,11 @@
   ^long [^String s]
   (if (or (nil? s) (zero? (.length s)))
     0
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       n
-       0]
+           n
+           0]
 
       (cond (>= i (.length s)) n
             (= \\ (.charAt s i)) (recur (+ i 2) n)
@@ -55,15 +54,13 @@
    error reports a row far below."
   [^String code]
   (let [lines (str/split-lines (or code ""))]
-    (loop
-      [i 0
-       running 0]
+    (loop [i 0
+           running 0]
 
       (when (< i (count lines))
-        (let
-          [line (nth lines i)
-           cnt (count-unescaped-quotes line)
-           total (+ running cnt)]
+        (let [line (nth lines i)
+              cnt (count-unescaped-quotes line)
+              total (+ running cnt)]
 
           (if (odd? total) (inc i) (recur (inc i) total)))))))
 
@@ -74,9 +71,8 @@
   [^String code]
   (let [total (count-unescaped-quotes code)]
     (when (odd? total)
-      (let
-        [line (first-odd-quote-line code)
-         line-str (or (str line) "?")]
+      (let [line (first-odd-quote-line code)
+            line-str (or (str line) "?")]
 
         {:reason :unbalanced-quote
          :total total
@@ -108,57 +104,55 @@
    parinfer (Clojure indent-mode) cannot be reused; this just pinpoints the
    first place the nesting goes wrong so the model can repair it."
   [^String code]
-  (let
-    [^String s
-     (or code "")
+  (let [^String s
+        (or code "")
 
-     n
-     (.length s)
+        n
+        (.length s)
 
-     closer->opener
-     {\) \( \] \[ \} \{}
+        closer->opener
+        {\) \( \] \[ \} \{}
 
-     opener->closer
-     {\( \) \[ \] \{ \}}
+        opener->closer
+        {\( \) \[ \] \{ \}}
 
-     openers
-     #{\( \[ \{}
+        openers
+        #{\( \[ \{}
 
-     closers
-     #{\) \] \}}
+        closers
+        #{\) \] \}}
 
-     triple-at?
-     (fn [^long i ch]
-       (let [ch (char ch)]
-         (and (< (+ i 2) n)
-              (= ch (.charAt s i))
-              (= ch (.charAt s (inc i)))
-              (= ch (.charAt s (+ i 2))))))]
+        triple-at?
+        (fn [^long i ch]
+          (let [ch (char ch)]
+            (and (< (+ i 2) n)
+                 (= ch (.charAt s i))
+                 (= ch (.charAt s (inc i)))
+                 (= ch (.charAt s (+ i 2))))))]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       line
-       1
+           line
+           1
 
-       col
-       1
+           col
+           1
 
-       stack
-       []
+           stack
+           []
 
-       mode
-       :code
+           mode
+           :code
 
-       sdelim
-       nil
+           sdelim
+           nil
 
-       striple?
-       false
+           striple?
+           false
 
-       escaped?
-       false]
+           escaped?
+           false]
 
       (if (>= i n)
         (when-let [top (peek stack)]
@@ -176,18 +170,17 @@
                       " - it never closes. Add the matching `"
                       (opener->closer (:ch top))
                       "`.")})
-        (let
-          [c
-           (.charAt s i)
+        (let [c
+              (.charAt s i)
 
-           nl?
-           (= c \newline)
+              nl?
+              (= c \newline)
 
-           nline
-           (if nl? (inc line) line)
+              nline
+              (if nl? (inc line) line)
 
-           ncol
-           (if nl? 1 (inc col))]
+              ncol
+              (if nl? 1 (inc col))]
 
           (case mode
             :comment
@@ -258,15 +251,14 @@
   "Convert a 1-based (line, col) position into a 0-based char index in `s`.
    Clamps to the end when the position runs past the source."
   ^long [^String s line col]
-  (loop
-    [i
-     0
+  (loop [i
+         0
 
-     ln
-     1
+         ln
+         1
 
-     cl
-     1]
+         cl
+         1]
 
     (cond (>= i (.length s)) i
           (and (= ln line) (= cl col)) i
@@ -287,45 +279,43 @@
    single candidate edit will NOT fully rebalance, so we return nil rather than
    silently close the wrong container."
   [^String code]
-  (let
-    [s
-     (or code "")
+  (let [s
+        (or code "")
 
-     d
-     (diagnose-bracket-balance s)]
+        d
+        (diagnose-bracket-balance s)]
 
     (when d
-      (let
-        [{:keys [open close line col]}
-         d
+      (let [{:keys [open close line col]}
+            d
 
-         opener->closer
-         {\( \) \[ \] \{ \}}
+            opener->closer
+            {\( \) \[ \] \{ \}}
 
-         idx
-         (line-col->index s line col)
+            idx
+            (line-col->index s line col)
 
-         candidate
-         (cond (and open close) {:fixed
-                                 (str (subs s 0 idx) (opener->closer open) (subs s (inc idx)))
-                                 :change (str "replaced `"
-                                              close
-                                              "` at line "
-                                              line
-                                              ", col "
-                                              col
-                                              " with `"
-                                              (opener->closer open)
-                                              "`")}
-               (and (nil? open) close)
-               {:fixed (str (subs s 0 idx) (subs s (inc idx)))
-                :change (str "removed unexpected `" close "` at line " line ", col " col)}
-               (and open (nil? close)) {:fixed (str s (opener->closer open))
-                                        :change (str "appended `" (opener->closer open)
-                                                     "` to close `" open
-                                                     "` opened at line " line
-                                                     ", col " col)}
-               :else nil)]
+            candidate
+            (cond (and open close) {:fixed
+                                    (str (subs s 0 idx) (opener->closer open) (subs s (inc idx)))
+                                    :change (str "replaced `"
+                                                 close
+                                                 "` at line "
+                                                 line
+                                                 ", col "
+                                                 col
+                                                 " with `"
+                                                 (opener->closer open)
+                                                 "`")}
+                  (and (nil? open) close)
+                  {:fixed (str (subs s 0 idx) (subs s (inc idx)))
+                   :change (str "removed unexpected `" close "` at line " line ", col " col)}
+                  (and open (nil? close)) {:fixed (str s (opener->closer open))
+                                           :change (str "appended `" (opener->closer open)
+                                                        "` to close `" open
+                                                        "` opened at line " line
+                                                        ", col " col)}
+                  :else nil)]
 
         (when (and candidate (nil? (diagnose-bracket-balance (:fixed candidate)))) candidate)))))
 
@@ -334,12 +324,11 @@
 (defn- levenshtein
   "Simple Levenshtein distance. Capped at 100-char input pair."
   ^long [^String a ^String b]
-  (let
-    [la
-     (count a)
+  (let [la
+        (count a)
 
-     lb
-     (count b)]
+        lb
+        (count b)]
 
     (cond (or (> la 100) (> lb 100)) Long/MAX_VALUE
           (zero? la) lb
@@ -347,26 +336,23 @@
           :else (let [row0 (long-array (inc lb))]
                   (dotimes [j (inc lb)]
                     (aset row0 j j))
-                  (loop
-                    [i 1
-                     prev row0]
+                  (loop [i 1
+                         prev row0]
 
                     (if (> i la)
                       (aget prev lb)
-                      (let
-                        [curr (long-array (inc lb))
-                         ai (.charAt a (dec i))]
+                      (let [curr (long-array (inc lb))
+                            ai (.charAt a (dec i))]
 
                         (aset curr 0 i)
                         (loop [j 1]
                           (when (<= j lb)
-                            (let
-                              [bj (.charAt b (dec j))
-                               cost (if (= ai bj) 0 1)
-                               a-val (+ (aget prev j) 1)
-                               b-val (+ (aget curr (dec j)) 1)
-                               c-val (+ (aget prev (dec j)) cost)
-                               m (min a-val b-val c-val)]
+                            (let [bj (.charAt b (dec j))
+                                  cost (if (= ai bj) 0 1)
+                                  a-val (+ (aget prev j) 1)
+                                  b-val (+ (aget curr (dec j)) 1)
+                                  c-val (+ (aget prev (dec j)) cost)
+                                  m (min a-val b-val c-val)]
 
                               (aset curr j m)
                               (recur (inc j)))))
@@ -381,18 +367,17 @@
   [error-message candidates]
   (when (string? error-message)
     (when-let [[_ missing] (re-find #"Unable to resolve symbol[:\s]+([^\s,]+)" error-message)]
-      (let
-        [missing-str (str missing)
-         scored (->> (or candidates [])
-                     (map str)
-                     (remove str/blank?)
-                     (map (fn [c]
-                            [c (levenshtein missing-str c)]))
-                     (filter (fn [[_ d]]
-                               (<= (long d) 3)))
-                     (sort-by second)
-                     (take 3)
-                     (map first))]
+      (let [missing-str (str missing)
+            scored (->> (or candidates [])
+                        (map str)
+                        (remove str/blank?)
+                        (map (fn [c]
+                               [c (levenshtein missing-str c)]))
+                        (filter (fn [[_ d]]
+                                  (<= (long d) 3)))
+                        (sort-by second)
+                        (take 3)
+                        (map first))]
 
         (when (seq scored)
           (str "Unresolved `"

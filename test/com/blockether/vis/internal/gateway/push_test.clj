@@ -32,12 +32,11 @@
 (defmacro with-push-home
   "Run `body` against a throwaway push home with an empty device registry."
   [binding & body]
-  `(let
-     [~(first binding)
-      (temp-home)
+  `(let [~(first binding)
+         (temp-home)
 
-      prev#
-      (System/getProperty "vis.push.home")]
+         prev#
+         (System/getProperty "vis.push.home")]
 
      (try (System/setProperty "vis.push.home" (.getAbsolutePath ~(first binding)))
           (push/reload-devices!)
@@ -51,16 +50,15 @@
   "Generate a real P-256 key, write it as Apple's `AuthKey_<kid>.p8` PKCS#8 PEM,
    and return the public key the JWT can be verified against."
   [home kid]
-  (let
-    [kp
-     (.generateKeyPair (doto (KeyPairGenerator/getInstance "EC")
-                         (.initialize (ECGenParameterSpec. "secp256r1"))))
+  (let [kp
+        (.generateKeyPair (doto (KeyPairGenerator/getInstance "EC")
+                            (.initialize (ECGenParameterSpec. "secp256r1"))))
 
-     pem
-     (str "-----BEGIN PRIVATE KEY-----\n"
-          (.encodeToString (Base64/getMimeEncoder 64 (.getBytes "\n"))
-                           (.getEncoded (.getPrivate kp)))
-          "\n-----END PRIVATE KEY-----\n")]
+        pem
+        (str "-----BEGIN PRIVATE KEY-----\n"
+             (.encodeToString (Base64/getMimeEncoder 64 (.getBytes "\n"))
+                              (.getEncoded (.getPrivate kp)))
+             "\n-----END PRIVATE KEY-----\n")]
 
     (spit (io/file home "apns" (str "AuthKey_" kid ".p8")) pem)
     (.getPublic kp)))
@@ -75,16 +73,15 @@
    component is short, the JCA's strict DER parser threw `Invalid encoding for
    signature`, and the test went red on roughly one signature in a hundred."
   [^bytes raw]
-  (let
-    [der-int
-     (fn [^bytes b]
-       (.toByteArray (BigInteger. 1 b)))
+  (let [der-int
+        (fn [^bytes b]
+          (.toByteArray (BigInteger. 1 b)))
 
-     r
-     (der-int (Arrays/copyOfRange raw 0 32))
+        r
+        (der-int (Arrays/copyOfRange raw 0 32))
 
-     s
-     (der-int (Arrays/copyOfRange raw 32 64))]
+        s
+        (der-int (Arrays/copyOfRange raw 32 64))]
 
     (byte-array
       (concat [0x30 (+ 4 (count r) (count s)) 0x02 (count r)] (seq r) [0x02 (count s)] (seq s)))))
@@ -115,28 +112,27 @@
 (deftest provider-token-is-a-verifiable-es256-jwt-test
   (with-push-home
     [home]
-    (let
-      [pub
-       (write-key! home "KID1234567")
+    (let [pub
+          (write-key! home "KID1234567")
 
-       _
-       (spit (io/file home "apns" "apns.edn")
-             (pr-str {:team-id "TEAM123456" :topic "com.example.app"}))
+          _
+          (spit (io/file home "apns" "apns.edn")
+                (pr-str {:team-id "TEAM123456" :topic "com.example.app"}))
 
-       sign
-       (ns-resolve 'com.blockether.vis.internal.gateway.push 'sign-jwt)
+          sign
+          (ns-resolve 'com.blockether.vis.internal.gateway.push 'sign-jwt)
 
-       jwt
-       (sign (push/config))
+          jwt
+          (sign (push/config))
 
-       [h p s]
-       (str/split jwt #"\.")
+          [h p s]
+          (str/split jwt #"\.")
 
-       decode
-       #(String. (.decode (Base64/getUrlDecoder) ^String %) "UTF-8")
+          decode
+          #(String. (.decode (Base64/getUrlDecoder) ^String %) "UTF-8")
 
-       raw
-       (.decode (Base64/getUrlDecoder) ^String s)]
+          raw
+          (.decode (Base64/getUrlDecoder) ^String s)]
 
       (testing "header and claims are exactly what Apple requires"
         (is (= "{\"alg\":\"ES256\",\"kid\":\"KID1234567\"}" (decode h)))
@@ -190,17 +186,15 @@
 
 (deftest web-device-dispatches-through-its-gateway-test
   (with-push-home [_home]
-                  (let
-                    [token
-                     "{\"endpoint\":\"https://push.example.test/sub\",\"keys\":{}}"
+                  (let [token
+                        "{\"endpoint\":\"https://push.example.test/sub\",\"keys\":{}}"
 
-                     device
-                     (push/register-device! {:token token :platform "web"})]
+                        device
+                        (push/register-device! {:token token :platform "web"})]
 
-                    (with-redefs
-                      [web-push/send! (fn [sent-token _notification]
-                                        (is (= token sent-token))
-                                        {:status 201 :reason "accepted"})]
+                    (with-redefs [web-push/send! (fn [sent-token _notification]
+                                                   (is (= token sent-token))
+                                                   {:status 201 :reason "accepted"})]
                       (let [result (push/send-to-device! device {:title "t" :body "b"})]
                         (is (= 201 (:status result)))
                         (is (true? (:is-delivered result))))))))
@@ -208,12 +202,11 @@
 (deftest turn-finished-trigger-test
   (with-push-home
     [_home]
-    (let
-      [sid
-       (random-uuid)
+    (let [sid
+          (random-uuid)
 
-       sent
-       (atom [])]
+          sent
+          (atom [])]
 
       (push/register-device! {:token (apply str (repeat 64 "b")) :environment "sandbox"})
       (push/set-session-describer!
@@ -223,15 +216,14 @@
            (get {"t1" "**Fixed** the gateway: the QR encoded a dead host.\n\n```clj\n(inc 1)\n```"
                  "t2" "Compile failed: unable to resolve symbol `foo`."}
                 tid)}))
-      (with-redefs
-        [push/configured?
-         (fn []
-           true)
+      (with-redefs [push/configured?
+                    (fn []
+                      true)
 
-         push/broadcast!
-         (fn [n]
-           (swap! sent conj n)
-           [])]
+                    push/broadcast!
+                    (fn [n]
+                      (swap! sent conj n)
+                      [])]
 
         (testing "a non-terminal event pushes nothing"
           (push/on-event! sid {"type" "content.block.delta" "turn_id" "t1"})
@@ -262,15 +254,14 @@
       (testing "with no device registered nothing is sent at all"
         (push/unregister-device! (apply str (repeat 64 "b")))
         (reset! sent [])
-        (with-redefs
-          [push/configured?
-           (fn []
-             true)
+        (with-redefs [push/configured?
+                      (fn []
+                        true)
 
-           push/broadcast!
-           (fn [n]
-             (swap! sent conj n)
-             [])]
+                      push/broadcast!
+                      (fn [n]
+                        (swap! sent conj n)
+                        [])]
 
           (push/on-event! sid {"type" "turn.completed" "turn_id" "t3" "status" "completed"})
           (Thread/sleep 50)
@@ -280,23 +271,21 @@
 (deftest alerts-name-the-sending-gateway-test
   (with-push-home
     [_home]
-    (let
-      [sid
-       (random-uuid)
+    (let [sid
+          (random-uuid)
 
-       sent
-       (atom [])]
+          sent
+          (atom [])]
 
       (push/register-device! {:token (apply str (repeat 64 "c")) :environment "sandbox"})
-      (with-redefs
-        [push/configured?
-         (fn []
-           true)
+      (with-redefs [push/configured?
+                    (fn []
+                      true)
 
-         push/broadcast!
-         (fn [n]
-           (swap! sent conj n)
-           [])]
+                    push/broadcast!
+                    (fn [n]
+                      (swap! sent conj n)
+                      [])]
 
         (testing "with no gateway id installed the payload simply omits the key"
           (push/set-gateway-id! nil)
@@ -333,12 +322,11 @@
       (is (nil? (body nil)))
       (is (nil? (body "   \n\n  ")))))
   (testing "a long answer is clipped on a word boundary with an ellipsis"
-    (let
-      [long-answer
-       (str/join " " (repeat 80 "word"))
+    (let [long-answer
+          (str/join " " (repeat 80 "word"))
 
-       out
-       (@#'push/answer-body long-answer)]
+          out
+          (@#'push/answer-body long-answer)]
 
       (is (<= (count out) 181))
       (is (str/ends-with? out "\u2026"))
@@ -346,19 +334,18 @@
 
 (deftest alert-payload-speaks-apns-kebab-case-test
   (testing "aps keys are APNs' literal kebab-case, not the wire encoder's snake_case"
-    (let
-      [payload
-       (@#'push/alert-payload
-        {:title "Fix the gateway"
-         :body "Turn finished."
-         :thread-id "sess-1"
-         :data {:session_id "sess-1" :type "turn.end"}})
+    (let [payload
+          (@#'push/alert-payload
+           {:title "Fix the gateway"
+            :body "Turn finished."
+            :thread-id "sess-1"
+            :data {:session_id "sess-1" :type "turn.end"}})
 
-       parsed
-       (wire/parse-json payload)
+          parsed
+          (wire/parse-json payload)
 
-       aps
-       (get parsed "aps")]
+          aps
+          (get parsed "aps")]
 
       ;; APNs ignores unknown `aps` keys silently, so a snake_case slip costs
       ;; grouping and interruption level with no error anywhere to notice.
@@ -379,12 +366,11 @@
 
 (deftest event-tap-runs-on-append-test
   (testing "state/append-event! runs registered taps and survives a throwing one"
-    (let
-      [seen
-       (atom [])
+    (let [seen
+          (atom [])
 
-       sid
-       (random-uuid)]
+          sid
+          (random-uuid)]
 
       (try (state/add-event-tap! ::boom
                                  (fn [_ _]
@@ -398,12 +384,11 @@
 
 (deftest keychain-credentials
   (testing "`security -w` hex output is decoded back to the PEM"
-    (let
-      [pem
-       "-----BEGIN PRIVATE KEY-----\nMIGHAg\n-----END PRIVATE KEY-----\n"
+    (let [pem
+          "-----BEGIN PRIVATE KEY-----\nMIGHAg\n-----END PRIVATE KEY-----\n"
 
-       hex
-       (str/join (map #(format "%02x" (int %)) pem))]
+          hex
+          (str/join (map #(format "%02x" (int %)) pem))]
 
       (is (= pem (#'push/unhex hex)))
       (is (= "ABCD123456" (#'push/unhex "ABCD123456")) "plain values pass through")))

@@ -87,12 +87,11 @@
 (defn- head-text
   "Input text up to the caret — the region the trigger looks back over."
   [{:keys [lines crow ccol]}]
-  (let
-    [lines
-     (vec lines)
+  (let [lines
+        (vec lines)
 
-     crow
-     (long crow)]
+        crow
+        (long crow)]
 
     (str/join "\n" (conj (subvec lines 0 crow) (subs (nth lines crow) 0 (long ccol))))))
 
@@ -114,20 +113,18 @@
   [input-state selected-index]
   (when-let [{:keys [query]} (mention-at (head-text input-state))]
     (when (warm-or-kick!)
-      (let
-        [rows (try (picker/fuzzy-file-rows query {:limit max-rows}) (catch Throwable _ nil))
-         n (count rows)
-         sel (max 0 (min (dec n) (long (or selected-index 0))))]
+      (let [rows (try (picker/fuzzy-file-rows query {:limit max-rows}) (catch Throwable _ nil))
+            n (count rows)
+            sel (max 0 (min (dec n) (long (or selected-index 0))))]
 
         (when (seq rows)
           (map-indexed (fn [idx it]
-                         (let
-                           [status (:status-label it)
-                            meta (->> [(:size-label it) (:age-label it)
-                                       (when (and status (not= "clean" status))
-                                         (status-glyph status))]
-                                      (remove str/blank?)
-                                      (str/join " · "))]
+                         (let [status (:status-label it)
+                               meta (->> [(:size-label it) (:age-label it)
+                                          (when (and status (not= "clean" status))
+                                            (status-glyph status))]
+                                         (remove str/blank?)
+                                         (str/join " · "))]
 
                            {:file/mention? true
                             :file/path (:path it)
@@ -144,17 +141,16 @@
   [{:keys [lines crow ccol] :as st} path]
   (let [head (head-text st)]
     (if-let [{:keys [at]} (mention-at head)]
-      (let
-        [lines (vec lines)
-         crow (long crow)
-         ccol (long ccol)
-         line (nth lines crow)
-         line-start (- (count head) ccol) ; head offset where the current line begins
-         col (max 0 (- (long at) line-start)) ; column of the `@` on the current line
-         before (subs line 0 col)
-         after (subs line ccol)
-         mention (str (input/format-file-mention path) " ")
-         new-line (str before mention after)]
+      (let [lines (vec lines)
+            crow (long crow)
+            ccol (long ccol)
+            line (nth lines crow)
+            line-start (- (count head) ccol) ; head offset where the current line begins
+            col (max 0 (- (long at) line-start)) ; column of the `@` on the current line
+            before (subs line 0 col)
+            after (subs line ccol)
+            mention (str (input/format-file-mention path) " ")
+            new-line (str before mention after)]
 
         {:lines (assoc lines crow new-line) :crow crow :ccol (+ (count before) (count mention))})
       st)))

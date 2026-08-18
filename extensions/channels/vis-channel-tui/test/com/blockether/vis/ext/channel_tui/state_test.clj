@@ -36,13 +36,12 @@
   ;; a field its endpoint accepts, while the chip stayed hidden. The gate is
   ;; now svar's `:verbosity-style` on the model the SESSION routes to.
   (it "omits verbosity when the session's model rides a wire that rejects it"
-      (with-redefs
-        [vis/get-router
-         (constantly :router)
+      (with-redefs [vis/get-router
+                    (constantly :router)
 
-         vis/resolve-model-info
-         (fn [_ _provider _model]
-           {:provider :github-copilot :name "claude-sonnet-4-6"})]
+                    vis/resolve-model-info
+                    (fn [_ _provider _model]
+                      {:provider :github-copilot :name "claude-sonnet-4-6"})]
 
         (expect (nil? (#'state/turn-extra-body
                        {:session {:id "s1"}
@@ -50,11 +49,10 @@
                         :settings {:verbosity "high"}})))))
   (it "includes verbosity for every model svar stamped with a verbosity style"
       (doseq [provider [:openai-codex :github-copilot]]
-        (with-redefs
-          [vis/get-router (constantly :router)
-           vis/resolve-model-info
-           (fn [_ _provider _model]
-             {:provider provider :name "gpt-5.6-sol" :verbosity-style :openai-text})]
+        (with-redefs [vis/get-router (constantly :router)
+                      vis/resolve-model-info
+                      (fn [_ _provider _model]
+                        {:provider provider :name "gpt-5.6-sol" :verbosity-style :openai-text})]
 
           (expect (= {:text {:verbosity "high"}}
                      (#'state/turn-extra-body
@@ -63,15 +61,14 @@
                        :settings {:verbosity "high"}}))))))
   (it "adds priority only for Codex while Fast mode is enabled"
       (try (vis/toggle-set-value! "codex_fast_mode" true)
-           (doseq
-             [[provider expected] [[:openai-codex
-                                    {:text {:verbosity "high"} :service_tier "priority"}]
-                                   [:github-copilot {:text {:verbosity "high"}}]]]
-             (with-redefs
-               [vis/get-router (constantly :router)
-                vis/resolve-model-info
-                (fn [_ _provider _model]
-                  {:provider provider :name "gpt-5.6-sol" :verbosity-style :openai-text})]
+           (doseq [[provider expected] [[:openai-codex
+                                         {:text {:verbosity "high"} :service_tier "priority"}]
+                                        [:github-copilot {:text {:verbosity "high"}}]]]
+             (with-redefs [vis/get-router (constantly :router)
+                           vis/resolve-model-info (fn [_ _provider _model]
+                                                    {:provider provider
+                                                     :name "gpt-5.6-sol"
+                                                     :verbosity-style :openai-text})]
 
                (expect (= expected
                           (#'state/turn-extra-body
@@ -81,13 +78,12 @@
            (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
   (it "omits priority when Fast mode is disabled"
       (try (vis/toggle-set-value! "codex_fast_mode" false)
-           (with-redefs
-             [vis/get-router
-              (constantly :router)
+           (with-redefs [vis/get-router
+                         (constantly :router)
 
-              vis/resolve-model-info
-              (fn [& _]
-                {:provider :openai-codex :name "gpt-5.6-sol"})]
+                         vis/resolve-model-info
+                         (fn [& _]
+                           {:provider :openai-codex :name "gpt-5.6-sol"})]
 
              (expect (nil? (#'state/turn-extra-body
                             {:session {:id "s1"}
@@ -95,16 +91,14 @@
                              :settings {}}))))
            (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
   (it "toggles Fast for Codex and refuses other providers"
-      (let
-        [handler (-> #'state/event-registry
-                     deref
-                     deref
-                     (get :toggle-codex-fast-mode)
-                     :fn)]
-        (with-redefs
-          [vis/get-router (constantly :router)
-           vis/resolve-model-info (fn [_ provider _model]
-                                    {:provider (keyword provider)})]
+      (let [handler (-> #'state/event-registry
+                        deref
+                        deref
+                        (get :toggle-codex-fast-mode)
+                        :fn)]
+        (with-redefs [vis/get-router (constantly :router)
+                      vis/resolve-model-info (fn [_ provider _model]
+                                               {:provider (keyword provider)})]
 
           (expect (= [[:toggle-boolean "codex_fast_mode" "Fast mode"]]
                      (:fx (handler {:session-model-pref {:provider "openai-codex" :model "gpt"}}
@@ -129,21 +123,19 @@
 (defdescribe
   detail-toggle-test
   (it "does not cold-clear render and height caches on disclosure click"
-      (let
-        [render-invalidations
-         (atom 0)
+      (let [render-invalidations
+            (atom 0)
 
-         height-invalidations
-         (atom 0)]
+            height-invalidations
+            (atom 0)]
 
-        (with-redefs
-          [render/invalidate-cache!
-           (fn []
-             (swap! render-invalidations inc))
+        (with-redefs [render/invalidate-cache!
+                      (fn []
+                        (swap! render-invalidations inc))
 
-           virtual/invalidate-heights!
-           (fn []
-             (swap! height-invalidations inc))]
+                      virtual/invalidate-heights!
+                      (fn []
+                        (swap! height-invalidations inc))]
 
           (reset! state/app-db {:detail-expansions {} :render-version 0})
           (state/dispatch [:toggle-detail "cid" "answer:t11111111:details:d1"])
@@ -176,34 +168,33 @@
                  (:detail-expansions @state/app-db))))
   (it
     "applies external input to an inactive recording-origin workspace"
-    (let
-      [external-input-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :external-input)
-           :fn)
+    (let [external-input-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :external-input)
+              :fn)
 
-       input-state
-       (fn [text]
-         {:lines [text] :crow 0 :ccol (count text)})
+          input-state
+          (fn [text]
+            {:lines [text] :crow 0 :ccol (count text)})
 
-       db
-       {:active-tab-id :second
-        :tabs [{:id :first :label "First"} {:id :second :label "Second" :active? true}]
-        :input (input-state "second draft")
-        :input-history-index :second-index
-        :input-history-draft "second-draft"
-        :slash-command-index 7
-        :slash-command-hidden? true
-        :tab-locals {:first {:input (input-state "first draft")
-                             :input-history-index :first-index
-                             :input-history-draft "first-draft"
-                             :slash-command-index 3
-                             :slash-command-hidden? true}}}
+          db
+          {:active-tab-id :second
+           :tabs [{:id :first :label "First"} {:id :second :label "Second" :active? true}]
+           :input (input-state "second draft")
+           :input-history-index :second-index
+           :input-history-draft "second-draft"
+           :slash-command-index 7
+           :slash-command-hidden? true
+           :tab-locals {:first {:input (input-state "first draft")
+                                :input-history-index :first-index
+                                :input-history-draft "first-draft"
+                                :slash-command-index 3
+                                :slash-command-hidden? true}}}
 
-       next-db
-       (:db (external-input-fn db [:external-input :append "rewrite" :first]))]
+          next-db
+          (:db (external-input-fn db [:external-input :append "rewrite" :first]))]
 
       (expect (= "second draft" (input/input->text (:input next-db))))
       (expect (= :second-index (:input-history-index next-db)))
@@ -235,21 +226,19 @@
       ;; new value only showed after a process restart cleared the caches.
       ;; The toggles-registry listener dispatches `:resync-toggle-settings`,
       ;; which must now drop both caches.
-      (let
-        [render-invalidations
-         (atom 0)
+      (let [render-invalidations
+            (atom 0)
 
-         height-invalidations
-         (atom 0)]
+            height-invalidations
+            (atom 0)]
 
-        (with-redefs
-          [render/invalidate-cache!
-           (fn []
-             (swap! render-invalidations inc))
+        (with-redefs [render/invalidate-cache!
+                      (fn []
+                        (swap! render-invalidations inc))
 
-           virtual/invalidate-heights!
-           (fn []
-             (swap! height-invalidations inc))]
+                      virtual/invalidate-heights!
+                      (fn []
+                        (swap! height-invalidations inc))]
 
           (reset! state/app-db {:settings {} :render-version 0})
           (state/dispatch [:resync-toggle-settings])
@@ -326,9 +315,8 @@
                  (:tabs @state/app-db)))
       (expect (= :tab-2 (:active-tab-id @state/app-db))))
   (it "attaches workspace root to the new workspace and active snapshot"
-      (let
-        [workspace
-         {:workspace/id "ws-1" :workspace/root "/tmp/vis-ws" :main {:branch "feature/ws"}}]
+      (let [workspace
+            {:workspace/id "ws-1" :workspace/root "/tmp/vis-ws" :main {:branch "feature/ws"}}]
         (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
                               :active-tab-id :main
                               :tab-locals {}
@@ -385,12 +373,11 @@
   ;; coming back used to slam the transcript to the bottom, losing the place the
   ;; reader had scrolled up to.
   (it "drops a tab's cached layout but keeps where its reader was parked"
-      (let
-        [main-layout
-         {:cols 120 :rows 40 :total-h 5000 :inner-h 30 :offsets [0 100 900]}
+      (let [main-layout
+            {:cols 120 :rows 40 :total-h 5000 :inner-h 30 :offsets [0 100 900]}
 
-         tab-layout
-         {:cols 120 :rows 40 :total-h 7000 :inner-h 30 :offsets [0 200 1200]}]
+            tab-layout
+            {:cols 120 :rows 40 :total-h 7000 :inner-h 30 :offsets [0 200 1200]}]
 
         (reset! state/app-db {:session {:id "main-c"}
                               :messages [{:role :user :text "main prompt"}]
@@ -584,9 +571,8 @@
 
 (defdescribe init-settings-test
              (it "loads the default balanced reasoning level when config has none"
-                 (with-redefs
-                   [vis/load-config-raw (fn []
-                                          {})]
+                 (with-redefs [vis/load-config-raw (fn []
+                                                     {})]
                    (state/init!)
                    (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
                    (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
@@ -601,9 +587,8 @@
                  ;; hydration AFTER `init!` and then dispatches
                  ;; `:resync-toggle-settings` — see the regression test below.)
                  (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :deep}})
-                 (try (with-redefs
-                        [vis/load-config-raw (fn []
-                                               {})]
+                 (try (with-redefs [vis/load-config-raw (fn []
+                                                          {})]
                         (state/init!)
                         (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level]))))
                       (finally (vis/toggle-reset-to-default! "reasoning_level"))))
@@ -615,9 +600,8 @@
                  ;; real toggle holds the persisted value, so the first Ctrl+X r cycle
                  ;; advances the toggle only up to the already-displayed level and appears
                  ;; to do nothing.
-                 (try (with-redefs
-                        [vis/load-config-raw (fn []
-                                               {})]
+                 (try (with-redefs [vis/load-config-raw (fn []
+                                                          {})]
                         (state/init!)                     ;; projects default :balanced
                         (vis/toggles-hydrate-from-config! ;; toggle -> persisted :quick
                           {:toggles {"reasoning_level" :quick}})
@@ -628,9 +612,8 @@
                       (finally (vis/toggle-reset-to-default! "reasoning_level"))))
              (it "hydrates verbosity from the toggles registry"
                  (vis/toggles-hydrate-from-config! {:toggles {"verbosity" :medium}})
-                 (try (with-redefs
-                        [vis/load-config-raw (fn []
-                                               {})]
+                 (try (with-redefs [vis/load-config-raw (fn []
+                                                          {})]
                         (state/init!)
                         (expect (= "medium" (get-in @state/app-db [:settings :verbosity]))))
                       (finally (vis/toggle-reset-to-default! "verbosity"))))
@@ -640,9 +623,8 @@
                  ;; skipped — the registered default stands.
                  (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo
                                                               "verbosity" :loud}})
-                 (try (with-redefs
-                        [vis/load-config-raw (fn []
-                                               {})]
+                 (try (with-redefs [vis/load-config-raw (fn []
+                                                          {})]
                         (state/init!)
                         (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
                         (expect (= "low" (get-in @state/app-db [:settings :verbosity]))))
@@ -657,35 +639,35 @@
       ;; FX :db so notification listeners observe the new value the
       ;; moment they fire.
       (vis/toggle-set-value! "reasoning_level" "deep")
-      (try (with-redefs
-             [vis/load-config-raw
-              (fn []
-                {})
+      (try
+        (with-redefs [vis/load-config-raw
+                      (fn []
+                        {})
 
-              vis/save-config!
-              (fn [_])
+                      vis/save-config!
+                      (fn [_])
 
-              vis/update-machine-config!
-              (fn [& _])
+                      vis/update-machine-config!
+                      (fn [& _])
 
-              vis/get-router
-              (constantly :router)
+                      vis/get-router
+                      (constantly :router)
 
-              vis/resolve-effective-model
-              (fn [_]
-                {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
+                      vis/resolve-effective-model
+                      (fn [_]
+                        {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
 
-              vis/notify!
-              (fn [& _]
-                (state/dispatch [:bump-render-version]))]
+                      vis/notify!
+                      (fn [& _]
+                        (state/dispatch [:bump-render-version]))]
 
-             (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
-                                   :render-version 0})
-             (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
-               (expect (= :done (deref result 1000 :timeout)))
-               (expect (= "quick" (vis/toggle-value "reasoning_level")))
-               (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level])))))
-           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+          (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
+                                :render-version 0})
+          (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
+            (expect (= :done (deref result 1000 :timeout)))
+            (expect (= "quick" (vis/toggle-value "reasoning_level")))
+            (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level])))))
+        (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "advances reasoning exactly one step when the registry listener dispatches back"
       ;; REGRESSION (Ctrl+X r cycled forever): `dispatch` runs an :fx handler's
       ;; FUNCTION inside `swap! app-db` and only its returned effects after the
@@ -696,20 +678,20 @@
       ;; the next. The flip now lives in the :cycle-toggle EFFECT, so one
       ;; keystroke advances exactly one step.
       (vis/toggle-set-value! "reasoning_level" "quick")
-      (let
-        [dispose (vis/toggle-add-listener! (fn [event]
-                                             (state/dispatch [:resync-toggle-settings
-                                                              (:id event)])))]
-        (try (with-redefs
-               [vis/load-config-raw (fn []
-                                      {})
-                vis/save-config! (fn [_])
-                vis/update-machine-config! (fn [& _])
-                vis/get-router (constantly :router)
-                vis/resolve-effective-model
-                (fn [_]
-                  {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
-                vis/notify! (fn [& _])]
+      (let [dispose (vis/toggle-add-listener! (fn [event]
+                                                (state/dispatch [:resync-toggle-settings
+                                                                 (:id event)])))]
+        (try (with-redefs [vis/load-config-raw (fn []
+                                                 {})
+                           vis/save-config! (fn [_])
+                           vis/update-machine-config! (fn [& _])
+                           vis/get-router (constantly :router)
+                           vis/resolve-effective-model (fn [_]
+                                                         {:provider :openai
+                                                          :name "gpt-5"
+                                                          :reasoning? true
+                                                          :reasoning-effort? true})
+                           vis/notify! (fn [& _])]
 
                (reset! state/app-db {:settings {:reasoning-level "quick"} :render-version 0})
                (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
@@ -719,45 +701,44 @@
              (finally (dispose) (vis/toggle-reset-to-default! "reasoning_level")))))
   (it "wraps reasoning level from deep back to quick"
       (vis/toggle-set-value! "reasoning_level" "deep")
-      (try (with-redefs
-             [vis/load-config-raw
-              (fn []
-                {})
+      (try
+        (with-redefs [vis/load-config-raw
+                      (fn []
+                        {})
 
-              vis/save-config!
-              (fn [_])
+                      vis/save-config!
+                      (fn [_])
 
-              vis/update-machine-config!
-              (fn [& _])
+                      vis/update-machine-config!
+                      (fn [& _])
 
-              vis/get-router
-              (constantly :router)
+                      vis/get-router
+                      (constantly :router)
 
-              vis/resolve-effective-model
-              (fn [_]
-                {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
+                      vis/resolve-effective-model
+                      (fn [_]
+                        {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
 
-              vis/notify!
-              (fn [& _])]
+                      vis/notify!
+                      (fn [& _])]
 
-             (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
-                                   :render-version 0})
-             (state/dispatch [:cycle-reasoning-level])
-             (expect (= "quick" (vis/toggle-value "reasoning_level")))
-             (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
-           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+          (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
+                                :render-version 0})
+          (state/dispatch [:cycle-reasoning-level])
+          (expect (= "quick" (vis/toggle-value "reasoning_level")))
+          (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
+        (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
       (let [notified (atom nil)]
-        (with-redefs
-          [vis/get-router (constantly :router)
-           vis/resolve-effective-model (fn [_]
-                                         {:provider :zai
-                                          :name "glm-4.7"
-                                          :reasoning? true
-                                          :reasoning-style :zai-thinking
-                                          :reasoning-effort? false})
-           vis/notify! (fn [text & kvs]
-                         (reset! notified [text kvs]))]
+        (with-redefs [vis/get-router (constantly :router)
+                      vis/resolve-effective-model (fn [_]
+                                                    {:provider :zai
+                                                     :name "glm-4.7"
+                                                     :reasoning? true
+                                                     :reasoning-style :zai-thinking
+                                                     :reasoning-effort? false})
+                      vis/notify! (fn [text & kvs]
+                                    (reset! notified [text kvs]))]
 
           (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
                                 :render-version 0})
@@ -768,12 +749,11 @@
                      @notified)))))
   (it "leaves verbosity unchanged when the session's model rejects the field"
       (let [notified (atom nil)]
-        (with-redefs
-          [vis/get-router (constantly :router)
-           vis/resolve-model-info (fn [_ _provider _model]
-                                    {:provider :zai :name "glm-4.7"})
-           vis/notify! (fn [text & kvs]
-                         (reset! notified [text kvs]))]
+        (with-redefs [vis/get-router (constantly :router)
+                      vis/resolve-model-info (fn [_ _provider _model]
+                                               {:provider :zai :name "glm-4.7"})
+                      vis/notify! (fn [text & kvs]
+                                    (reset! notified [text kvs]))]
 
           (reset! state/app-db {:settings {:reasoning-level "balanced" :verbosity "high"}
                                 :render-version 0})
@@ -785,38 +765,37 @@
   (it "cycles verbosity low -> medium -> high -> low on a GitHub Copilot GPT session"
       ;; The reported gap: Copilot rides `/v1/responses` exactly as Codex does, so
       ;; the cycle must work there without the provider being named anywhere.
-      (with-redefs
-        [vis/load-config-raw
-         (fn []
-           {})
+      (with-redefs [vis/load-config-raw
+                    (fn []
+                      {})
 
-         vis/save-config!
-         (fn [_])
+                    vis/save-config!
+                    (fn [_])
 
-         vis/update-machine-config!
-         (fn [& _])
+                    vis/update-machine-config!
+                    (fn [& _])
 
-         vis/get-router
-         (constantly :router)
+                    vis/get-router
+                    (constantly :router)
 
-         vis/resolve-model-info
-         (fn [_ _provider _model]
-           {:provider :github-copilot
-            :name "gpt-5.6-sol"
-            :reasoning? true
-            :reasoning-effort? true
-            :verbosity-style :openai-text})
+                    vis/resolve-model-info
+                    (fn [_ _provider _model]
+                      {:provider :github-copilot
+                       :name "gpt-5.6-sol"
+                       :reasoning? true
+                       :reasoning-effort? true
+                       :verbosity-style :openai-text})
 
-         vis/resolve-effective-model
-         (fn [_]
-           {:provider :github-copilot
-            :name "gpt-5.6-sol"
-            :reasoning? true
-            :reasoning-effort? true
-            :verbosity-style :openai-text})
+                    vis/resolve-effective-model
+                    (fn [_]
+                      {:provider :github-copilot
+                       :name "gpt-5.6-sol"
+                       :reasoning? true
+                       :reasoning-effort? true
+                       :verbosity-style :openai-text})
 
-         vis/notify!
-         (fn [& _])]
+                    vis/notify!
+                    (fn [& _])]
 
         ;; The cycle advances the GLOBAL toggles registry, not app-db — pin it
         ;; to its :low default so a value another test left in the shared
@@ -832,37 +811,35 @@
              (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
              (finally (vis/toggle-reset-to-default! "verbosity"))))))
 
-(defdescribe session-model-pref-scope-test
-             ;; The footer chip PREFERS the optimistic `:session-model-pref` over the
-             ;; gateway's stored value. That value belongs to ONE session, so it must not
-             ;; outlive it: leaving it behind made the chip advertise the previous
-             ;; session's model while turns ran on the newly opened session's real
-             ;; preference — "changing the model in the footer didn't reach the session".
-             (it "opening another session in the tab drops the previous session's optimistic pick"
-                 (with-redefs
-                   [vis/notify! (fn [& _]
+(defdescribe
+  session-model-pref-scope-test
+  ;; The footer chip PREFERS the optimistic `:session-model-pref` over the
+  ;; gateway's stored value. That value belongs to ONE session, so it must not
+  ;; outlive it: leaving it behind made the chip advertise the previous
+  ;; session's model while turns ran on the newly opened session's real
+  ;; preference — "changing the model in the footer didn't reach the session".
+  (it "opening another session in the tab drops the previous session's optimistic pick"
+      (with-redefs [vis/notify! (fn [& _]
                                   nil)]
-                   (reset! state/app-db {:session {:id "sess-1"}
-                                         :session-model-pref {:provider "zai" :model "glm-4.6"}
-                                         :render-version 0})
-                   (state/dispatch [:init-session {:id "sess-2"} [] {}])
-                   (expect (= "sess-2" (get-in @state/app-db [:session :id])))
-                   (expect (nil? (:session-model-pref @state/app-db)))))
-             (it "a REFUSED switch rolls the optimistic pick back instead of leaving the chip lying"
-                 (let [notified (atom [])]
-                   (with-redefs
-                     [vis/gateway-set-session-model! (fn [_sid _provider _model]
+        (reset! state/app-db {:session {:id "sess-1"}
+                              :session-model-pref {:provider "zai" :model "glm-4.6"}
+                              :render-version 0})
+        (state/dispatch [:init-session {:id "sess-2"} [] {}])
+        (expect (= "sess-2" (get-in @state/app-db [:session :id])))
+        (expect (nil? (:session-model-pref @state/app-db)))))
+  (it "a REFUSED switch rolls the optimistic pick back instead of leaving the chip lying"
+      (let [notified (atom [])]
+        (with-redefs [vis/gateway-set-session-model! (fn [_sid _provider _model]
                                                        (throw (ex-info "unknown provider" {})))
                       vis/notify! (fn [text & _]
                                     (swap! notified conj text))]
 
-                     (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
-                     (state/dispatch [:set-model "openai" "gpt-5"])
-                     (expect (nil? (:session-model-pref @state/app-db)))
-                     (expect (some #(re-find #"Model switch failed" (str %)) @notified)))))
-             (it "a switch that SUCCEEDS keeps the pick on the chip"
-                 (with-redefs
-                   [vis/gateway-set-session-model!
+          (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+          (state/dispatch [:set-model "openai" "gpt-5"])
+          (expect (nil? (:session-model-pref @state/app-db)))
+          (expect (some #(re-find #"Model switch failed" (str %)) @notified)))))
+  (it "a switch that SUCCEEDS keeps the pick on the chip"
+      (with-redefs [vis/gateway-set-session-model!
                     (fn [_sid provider model]
                       {:provider provider :model model})
 
@@ -870,10 +847,9 @@
                     (fn [& _]
                       nil)]
 
-                   (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
-                   (state/dispatch [:set-model "openai" "gpt-5"])
-                   (expect (= {:provider "openai" :model "gpt-5"}
-                              (:session-model-pref @state/app-db))))))
+        (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+        (state/dispatch [:set-model "openai" "gpt-5"])
+        (expect (= {:provider "openai" :model "gpt-5"} (:session-model-pref @state/app-db))))))
 
 (defdescribe
   sync-session-model-test
@@ -899,85 +875,80 @@
   ;; channel-neutral store the web + engine read) instead of reordering global
   ;; config. Fresh sessions start with no explicit pref, so the first press
   ;; advances from the displayed router default to the next configured entry.
-  (it
-    "fresh session advances from displayed router default to the next configured model"
-    (let
-      [set-calls
-       (atom [])
+  (it "fresh session advances from displayed router default to the next configured model"
+      (let [set-calls
+            (atom [])
 
-       notified
-       (atom nil)]
+            notified
+            (atom nil)]
 
-      (with-redefs
-        [vis/configured-providers
-         (fn []
-           [{:id :openai :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
-            {:id :zai :models [{:name "glm-4.6"}]}])
+        (with-redefs [vis/configured-providers
+                      (fn []
+                        [{:id :openai :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                         {:id :zai :models [{:name "glm-4.6"}]}])
 
-         vis/gateway-session-model
-         (fn [_sid]
-           nil)
+                      vis/gateway-session-model
+                      (fn [_sid]
+                        nil)
 
-         vis/gateway-set-session-model!
-         (fn [sid provider model]
-           (swap! set-calls conj [sid provider model])
-           {:provider provider :model model})
+                      vis/gateway-set-session-model!
+                      (fn [sid provider model]
+                        (swap! set-calls conj [sid provider model])
+                        {:provider provider :model model})
 
-         state/current-model-info
-         (fn []
-           {:provider :openai :name "gpt-5"})
+                      state/current-model-info
+                      (fn []
+                        {:provider :openai :name "gpt-5"})
 
-         vis/notify!
-         (fn [text & kvs]
-           (reset! notified [text kvs]))]
+                      vis/notify!
+                      (fn [text & kvs]
+                        (reset! notified [text kvs]))]
 
-        (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
-        (state/dispatch [:cycle-model])
-        (expect (= [["sess-1" "openai" "gpt-5-mini"]] @set-calls))
-        (expect (= ["Model: openai/gpt-5-mini" [:level :info :ttl-ms 1500]] @notified)))))
+          (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+          (state/dispatch [:cycle-model])
+          (expect (= [["sess-1" "openai" "gpt-5-mini"]] @set-calls))
+          (expect (= ["Model: openai/gpt-5-mini" [:level :info :ttl-ms 1500]] @notified)))))
   (it "advances from the current pref (matched by provider+model) to the next, wrapping"
       (let [set-calls (atom [])]
-        (with-redefs
-          [vis/configured-providers (fn []
-                                      [{:id :openai :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
-                                       {:id :zai :models [{:name "glm-4.6"}]}])
-           vis/gateway-session-model (fn [_sid]
-                                       {:provider "zai" :model "glm-4.6"}) ; last -> wraps
-           vis/gateway-set-session-model! (fn [sid provider model]
-                                            (swap! set-calls conj [sid provider model])
-                                            {:provider provider :model model})
-           state/current-model-info (fn []
-                                      {:provider :openai :name "gpt-5"})
-           vis/notify! (fn [_ & _])]
+        (with-redefs [vis/configured-providers (fn []
+                                                 [{:id :openai
+                                                   :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                                                  {:id :zai :models [{:name "glm-4.6"}]}])
+                      vis/gateway-session-model (fn [_sid]
+                                                  {:provider "zai" :model "glm-4.6"}) ; last -> wraps
+                      vis/gateway-set-session-model! (fn [sid provider model]
+                                                       (swap! set-calls conj [sid provider model])
+                                                       {:provider provider :model model})
+                      state/current-model-info (fn []
+                                                 {:provider :openai :name "gpt-5"})
+                      vis/notify! (fn [_ & _])]
 
           (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
           (state/dispatch [:cycle-model])
           (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls)))))
   (it "with no active session, asks to open one and sets nothing"
-      (let
-        [set-calls
-         (atom [])
+      (let [set-calls
+            (atom [])
 
-         notified
-         (atom nil)]
+            notified
+            (atom nil)]
 
-        (with-redefs
-          [vis/db-info
-           (fn []
-             :db)
+        (with-redefs [vis/db-info
+                      (fn []
+                        :db)
 
-           vis/session-model-of
-           (fn [_db _sid]
-             nil)
+                      vis/session-model-of
+                      (fn [_db _sid]
+                        nil)
 
-           vis/set-session-model!
-           (fn [_db sid provider model]
-             (swap! set-calls conj [sid provider model])
-             model)
+                      vis/set-session-model!
+                      (fn [_db sid provider model]
+                        (swap! set-calls conj [sid provider model])
+                        model)
 
-           vis/notify!
-           (fn [text & kvs]
-             (reset! notified [text kvs]))]
+                      vis/notify!
+                      (fn [text & kvs]
+                        (reset! notified [text kvs]))]
 
           (reset! state/app-db {:config {:providers [{:id :openai :models [{:name "gpt-5"}]}]}
                                 :render-version 0})
@@ -986,12 +957,11 @@
           (expect (= "Open a session first to choose its model" (first @notified)))))))
 
 (defdescribe scrollbar-state-test
-             (let
-               [scroll-to-y-fn (-> #'state/event-registry
-                                   deref
-                                   deref
-                                   (get :scroll-to-y)
-                                   :fn)]
+             (let [scroll-to-y-fn (-> #'state/event-registry
+                                      deref
+                                      deref
+                                      (get :scroll-to-y)
+                                      :fn)]
                (it "a scrollbar drag above the bottom parks at the mapped offset (mode :at)"
                    ;; total-h 360, inner-h 56 -> max-s 304; track-h 56, denom 55;
                    ;; mouse-y 28 -> fraction 28/55 -> offset round(.509*304)=155.
@@ -1009,13 +979,12 @@
 ;; REPLACES `:scroll`, so no animation target can dangle across frames.
 (defdescribe
   scroll-model-test
-  (let
-    [ev (fn [k]
-          (-> #'state/event-registry
-              deref
-              deref
-              (get k)
-              :fn))]
+  (let [ev (fn [k]
+             (-> #'state/event-registry
+                 deref
+                 deref
+                 (get k)
+                 :fn))]
     (it "scroll-up parks (mode :at) so streaming follow hands off"
         ;; :scroll-up is an fx event now (it can kick the older-history fetch),
         ;; so the new db hides under :db.
@@ -1026,10 +995,9 @@
     (it "scroll-up near the top of a PAGED session asks for one older page"
         ;; The session opened on its newest turns only, so reaching the top of
         ;; :messages is not reaching the top of the session.
-        (let
-          [db {:scroll (scroll/parked 300)
-               :session {:id "s1" :history-cursor {:offset 40 :total 100 :has-more true}}}
-           r ((ev :scroll-up) db [:scroll-up 290 1000 30])]
+        (let [db {:scroll (scroll/parked 300)
+                  :session {:id "s1" :history-cursor {:offset 40 :total 100 :has-more true}}}
+              r ((ev :scroll-up) db [:scroll-up 290 1000 30])]
 
           (expect (= [[:load-older-history "s1" 40]] (:fx r)))
           ;; latched, so a fast wheel cannot queue a second identical fetch
@@ -1044,14 +1012,13 @@
           ;; still far from the top -> no request
           (expect (nil? (:fx ((ev :scroll-up) db [:scroll-up 10 1000 30]))))))
     (it "prepend-history splices older turns in and holds the viewport still"
-        (let
-          [db {:scroll (scroll/parked 10)
-               :messages [:m1 :m2]
-               :session {:id "s1"
-                         :history-loading? true
-                         :history-cursor {:offset 40 :total 100 :has-more true}}}
-           page {:messages [:o1 :o2] :offset 30 :total 100 :has-more true}
-           r ((ev :prepend-history) db [:prepend-history "s1" page 120])]
+        (let [db {:scroll (scroll/parked 10)
+                  :messages [:m1 :m2]
+                  :session {:id "s1"
+                            :history-loading? true
+                            :history-cursor {:offset 40 :total 100 :has-more true}}}
+              page {:messages [:o1 :o2] :offset 30 :total 100 :has-more true}
+              r ((ev :prepend-history) db [:prepend-history "s1" page 120])]
 
           (expect (= [:o1 :o2 :m1 :m2] (:messages r)))
           ;; the read bubble stays put: offset grows by the measured page height
@@ -1076,18 +1043,16 @@
     (it "ease-scroll never STARTS an animation for a growing bottom"
         ;; Also pins the render fast path: nothing moved ⇒ db returned UNTOUCHED,
         ;; so `identical?`-keyed partial repaints are not demoted to FULL frames.
-        (let
-          [db {:scroll scroll/follow :progress {:iterations []}}
-           r ((ev :ease-scroll) db [:ease-scroll 300 100])]
+        (let [db {:scroll scroll/follow :progress {:iterations []}}
+              r ((ev :ease-scroll) db [:ease-scroll 300 100])]
 
           (expect (= scroll/follow (:scroll r)))
           (expect (identical? r db))))
     (it "ease-scroll still FINISHES a deliberate move back to the bottom"
         ;; `scroll/down` landing inside the slack band re-arms FOLLOW carrying the
         ;; row it started from; that ease runs out and then snaps clean.
-        (let
-          [stepped
-           ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)} [:ease-scroll 300 100])]
+        (let [stepped
+              ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)} [:ease-scroll 300 100])]
           (expect (= {:mode :follow :pos 135} (:scroll stepped)))
           (expect (= scroll/follow
                      (:scroll ((ev :ease-scroll)
@@ -1102,10 +1067,9 @@
     (it "reanchor-scroll shifts the parked offset + pos by the same delta"
         ;; Content above the anchor shrank by 450 rows as estimates resolved;
         ;; the anchored message must stay visually put.
-        (let
-          [r ((ev :reanchor-scroll)
-               {:scroll {:mode :at :offset 1840 :pos 1849}}
-               [:reanchor-scroll 1399 -450])]
+        (let [r ((ev :reanchor-scroll)
+                  {:scroll {:mode :at :offset 1840 :pos 1849}}
+                  [:reanchor-scroll 1399 -450])]
           (expect (= {:mode :at :offset 1390 :pos 1399} (:scroll r)))))
     ;; Regression (TUI "resizing the terminal during a live turn reflows the
     ;; whole turn, as if it scrolled down"): a resize re-wraps every bubble, so
@@ -1135,23 +1099,22 @@
         ;; plus a reveal marker, so the following frames eased down to the newly
         ;; measured bottom — a few frames of self-scroll after every turn — and a
         ;; reader parked in history was dragged along to the live edge.
-        (let
-          [message-received-fn (ev :message-received)
-           pending-id "turn-1"
-           landed (fn [sc]
-                    (:scroll (:db
-                               (message-received-fn
-                                 {:active-tab-id :main
-                                  :session {:id "c1"}
-                                  :loading? true
-                                  :layout {:total-h 120 :inner-h 20}
-                                  :messages
-                                  [{:role :user :text "/workspace list" :client-turn-id pending-id}
-                                   {:role :assistant :pending? true :client-turn-id pending-id}]
-                                  :progress {:iterations []}
-                                  :scroll sc}
-                                 [:message-received :main [:ast {} [:p {} [:span {} "a big table"]]]
-                                  {:client-turn-id pending-id}]))))]
+        (let [message-received-fn (ev :message-received)
+              pending-id "turn-1"
+              landed (fn [sc]
+                       (:scroll
+                         (:db (message-received-fn
+                                {:active-tab-id :main
+                                 :session {:id "c1"}
+                                 :loading? true
+                                 :layout {:total-h 120 :inner-h 20}
+                                 :messages
+                                 [{:role :user :text "/workspace list" :client-turn-id pending-id}
+                                  {:role :assistant :pending? true :client-turn-id pending-id}]
+                                 :progress {:iterations []}
+                                 :scroll sc}
+                                [:message-received :main [:ast {} [:p {} [:span {} "a big table"]]]
+                                 {:client-turn-id pending-id}]))))]
 
           ;; an ease was in flight from the prior frame
           (expect (= scroll/follow (landed {:mode :follow :pos 80})))
@@ -1164,32 +1127,32 @@
         ;; path — the gateway's terminal sync and the daemon's cancel ACK — still
         ;; left FOLLOW pinned to the OLD tail row, and the next frames eased down
         ;; to the taller settled bubble.
-        (let
-          [cancelling (fn [sc extra]
-                        (merge {:active-tab-id :main
-                                :session {:id "s1"}
-                                :loading? true
-                                :cancelling? true
-                                :cancelling-at-ms 1000
-                                :cancel-token :token
-                                :gateway-turn-id "turn-1"
-                                :live-turn-client-id "c1"
-                                :input {}
-                                :messages [{:role :user :text "hi" :client-turn-id "c1"}
-                                           {:role :assistant :pending? true :client-turn-id "c1"}]
-                                :progress {:iterations [{:id :i1 :forms [{:id :f1}]}]}
-                                :scroll sc}
-                               extra))
-           synced (fn [sc]
-                    (:scroll (:db ((ev :sync-turn-terminal)
-                                    (cancelling sc nil)
-                                    [:sync-turn-terminal :main
-                                     {:turn-id "turn-1" :client-id "c1" :status "cancelled"}]))))
-           acked (fn [sc extra]
-                   (:scroll (:db ((ev :gateway-cancel-result)
-                                   (cancelling sc extra)
-                                   [:gateway-cancel-result 1000 {:status "cancelling"}]))))
-           submitted {:submitted-input {:text "hi" :pastes {} :paste-counter 0}}]
+        (let [cancelling (fn [sc extra]
+                           (merge {:active-tab-id :main
+                                   :session {:id "s1"}
+                                   :loading? true
+                                   :cancelling? true
+                                   :cancelling-at-ms 1000
+                                   :cancel-token :token
+                                   :gateway-turn-id "turn-1"
+                                   :live-turn-client-id "c1"
+                                   :input {}
+                                   :messages
+                                   [{:role :user :text "hi" :client-turn-id "c1"}
+                                    {:role :assistant :pending? true :client-turn-id "c1"}]
+                                   :progress {:iterations [{:id :i1 :forms [{:id :f1}]}]}
+                                   :scroll sc}
+                                  extra))
+              synced (fn [sc]
+                       (:scroll (:db ((ev :sync-turn-terminal)
+                                       (cancelling sc nil)
+                                       [:sync-turn-terminal :main
+                                        {:turn-id "turn-1" :client-id "c1" :status "cancelled"}]))))
+              acked (fn [sc extra]
+                      (:scroll (:db ((ev :gateway-cancel-result)
+                                      (cancelling sc extra)
+                                      [:gateway-cancel-result 1000 {:status "cancelling"}]))))
+              submitted {:submitted-input {:text "hi" :pastes {} :paste-counter 0}}]
 
           ;; an ease was in flight when the user hit Esc
           (expect (= scroll/follow (synced {:mode :follow :pos 100})))
@@ -1200,22 +1163,20 @@
           (expect (= (scroll/parked 30) (synced (scroll/parked 30))))
           (expect (= (scroll/parked 30) (acked (scroll/parked 30) submitted)))))
     (it "send-message re-pins to a CLEAN FOLLOW"
-        (let
-          [send-message-fn (ev :send-message)
-           db {:session {:id "c1"}
-               :active-tab-id :main
-               :messages []
-               :input-history []
-               :scroll {:mode :at :offset 80 :pos 80}
-               :settings {:reasoning-level "balanced" :verbosity "low"}
-               :pastes {}}]
+        (let [send-message-fn (ev :send-message)
+              db {:session {:id "c1"}
+                  :active-tab-id :main
+                  :messages []
+                  :input-history []
+                  :scroll {:mode :at :offset 80 :pos 80}
+                  :settings {:reasoning-level "balanced" :verbosity "low"}
+                  :pastes {}}]
 
-          (with-redefs
-            [input/expand-paste-placeholders (fn [text _]
-                                               text)
-             input/expand-file-mentions identity
-             vis/cancellation-token (fn []
-                                      :token)]
+          (with-redefs [input/expand-paste-placeholders (fn [text _]
+                                                          text)
+                        input/expand-file-mentions identity
+                        vis/cancellation-token (fn []
+                                                 :token)]
 
             (let [{db' :db} (send-message-fn db [:send-message "hello"])]
               (expect (= scroll/follow (:scroll db')))))))))
@@ -1224,33 +1185,31 @@
   cancel-turn-test
   (it
     "notifies cancelling instead of relying on footer status"
-    (let
-      [cancelled
-       (atom nil)
+    (let [cancelled
+          (atom nil)
 
-       notified
-       (atom nil)
+          notified
+          (atom nil)
 
-       gateway-started
-       (promise)
+          gateway-started
+          (promise)
 
-       release-gateway
-       (promise)]
+          release-gateway
+          (promise)]
 
-      (with-redefs
-        [vis/cancel!
-         (fn [token]
-           (reset! cancelled token))
+      (with-redefs [vis/cancel!
+                    (fn [token]
+                      (reset! cancelled token))
 
-         vis/gateway-cancel-current-turn!
-         (fn [_ _]
-           (deliver gateway-started true)
-           @release-gateway
-           {:status "cancelling"})
+                    vis/gateway-cancel-current-turn!
+                    (fn [_ _]
+                      (deliver gateway-started true)
+                      @release-gateway
+                      {:status "cancelling"})
 
-         vis/notify!
-         (fn [text & kvs]
-           (reset! notified [text kvs]))]
+                    vis/notify!
+                    (fn [text & kvs]
+                      (reset! notified [text kvs]))]
 
         (reset! state/app-db {:session {:id "s1"}
                               :loading? true
@@ -1274,27 +1233,26 @@
 (defdescribe
   cancel-detached-turn-test
   (it "cancels the turn the DAEMON is running when this tab paints none"
-      (let
-        [cancelled
-         (promise)
+      (let [cancelled
+            (promise)
 
-         notified
-         (promise)]
+            notified
+            (promise)]
 
-        (with-redefs
-          [vis/gateway-list-turns
-           (fn [sid]
-             (expect (= "s1" sid))
-             [{"turn_id" "gw-old" "status" "completed"} {"turn_id" "gw-live" "status" "running"}])
+        (with-redefs [vis/gateway-list-turns
+                      (fn [sid]
+                        (expect (= "s1" sid))
+                        [{"turn_id" "gw-old" "status" "completed"}
+                         {"turn_id" "gw-live" "status" "running"}])
 
-           vis/gateway-cancel-turn!
-           (fn [sid tid]
-             (deliver cancelled [sid tid])
-             {:status "cancelling"})
+                      vis/gateway-cancel-turn!
+                      (fn [sid tid]
+                        (deliver cancelled [sid tid])
+                        {:status "cancelling"})
 
-           vis/notify!
-           (fn [text & kvs]
-             (deliver notified [text kvs]))]
+                      vis/notify!
+                      (fn [text & kvs]
+                        (deliver notified [text kvs]))]
 
           (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
           (state/dispatch [:cancel-turn])
@@ -1302,25 +1260,23 @@
           (expect (= ["Cancelling the turn this session is running..." [:level :info :ttl-ms 2500]]
                      (deref notified 1000 :timeout))))))
   (it "answers an idle session out loud instead of swallowing the cancel"
-      (let
-        [cancelled
-         (atom nil)
+      (let [cancelled
+            (atom nil)
 
-         notified
-         (promise)]
+            notified
+            (promise)]
 
-        (with-redefs
-          [vis/gateway-list-turns
-           (fn [_]
-             [{"turn_id" "gw-old" "status" "completed"}])
+        (with-redefs [vis/gateway-list-turns
+                      (fn [_]
+                        [{"turn_id" "gw-old" "status" "completed"}])
 
-           vis/gateway-cancel-turn!
-           (fn [sid tid]
-             (reset! cancelled [sid tid]))
+                      vis/gateway-cancel-turn!
+                      (fn [sid tid]
+                        (reset! cancelled [sid tid]))
 
-           vis/notify!
-           (fn [text & kvs]
-             (deliver notified [text kvs]))]
+                      vis/notify!
+                      (fn [text & kvs]
+                        (deliver notified [text kvs]))]
 
           (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
           (state/dispatch [:cancel-turn])
@@ -1336,32 +1292,30 @@
   cancel-never-blind-test
   (it
     "sends a tid-less cancel only for a submission of its own, naming it"
-    (let
-      [calls
-       (atom [])
+    (let [calls
+          (atom [])
 
-       seen-mine
-       (promise)]
+          seen-mine
+          (promise)]
 
-      (with-redefs
-        [vis/cancel!
-         (fn [_]
-           nil)
+      (with-redefs [vis/cancel!
+                    (fn [_]
+                      nil)
 
-         vis/notify!
-         (fn [_ & _]
-           nil)
+                    vis/notify!
+                    (fn [_ & _]
+                      nil)
 
-         vis/gateway-cancel-turn!
-         (fn [sid tid]
-           (swap! calls conj [:by-id sid tid])
-           {:status "cancelling"})
+                    vis/gateway-cancel-turn!
+                    (fn [sid tid]
+                      (swap! calls conj [:by-id sid tid])
+                      {:status "cancelling"})
 
-         vis/gateway-cancel-current-turn!
-         (fn [sid owner-key]
-           (swap! calls conj [:current sid owner-key])
-           (when (= "cid-mine" owner-key) (deliver seen-mine true))
-           {:status "cancelling"})]
+                    vis/gateway-cancel-current-turn!
+                    (fn [sid owner-key]
+                      (swap! calls conj [:current sid owner-key])
+                      (when (= "cid-mine" owner-key) (deliver seen-mine true))
+                      {:status "cancelling"})]
 
         ;; Attached to a turn ANOTHER channel started: this tab paints it as live,
         ;; but owns neither its turn id nor a correlation id of its own.
@@ -1394,14 +1348,13 @@
 (defdescribe cancel-reaches-gateway-after-send-test
              (it "binds the matching send-message turn so Esc reaches the gateway"
                  (let [cancelled-gateway (promise)]
-                   (with-redefs
-                     [vis/cancel! (fn [_]
-                                    nil)
-                      vis/notify! (fn [_ & _]
-                                    nil)
-                      vis/gateway-cancel-turn! (fn [sid tid]
-                                                 (deliver cancelled-gateway [sid tid])
-                                                 {:status "cancelling"})]
+                   (with-redefs [vis/cancel! (fn [_]
+                                               nil)
+                                 vis/notify! (fn [_ & _]
+                                               nil)
+                                 vis/gateway-cancel-turn! (fn [sid tid]
+                                                            (deliver cancelled-gateway [sid tid])
+                                                            {:status "cancelling"})]
 
                      ;; State after :send-message submitted a fresh turn: its client id is
                      ;; known locally, while its server-minted turn id is not.
@@ -1420,25 +1373,24 @@
                      (state/dispatch [:cancel-turn])
                      (expect (= ["s1" "gw-turn-1"] (deref cancelled-gateway 1000 :timeout)))))))
 
-(defdescribe cancel-auto-fires-on-late-bind-test
-             ;; REGRESSION: Esc can beat the submit POST, receive `no-running-turn`, and
-             ;; clear locally. An immediate identical resend then races the OLD POST's
-             ;; delayed turn.started. Correlate starts by client id so the old ghost is
-             ;; cancelled, never rebound as the new visible turn.
-             (it
-               "quick cancel plus identical resend cancels only the delayed old start"
-               (let
-                 [cancelled-gateway
-                  (promise)
+(defdescribe
+  cancel-auto-fires-on-late-bind-test
+  ;; REGRESSION: Esc can beat the submit POST, receive `no-running-turn`, and
+  ;; clear locally. An immediate identical resend then races the OLD POST's
+  ;; delayed turn.started. Correlate starts by client id so the old ghost is
+  ;; cancelled, never rebound as the new visible turn.
+  (it
+    "quick cancel plus identical resend cancels only the delayed old start"
+    (let [cancelled-gateway
+          (promise)
 
-                  terminal-cleared
-                  (promise)
+          terminal-cleared
+          (promise)
 
-                  send-message-fn
-                  (:fn (get @@#'state/event-registry :send-message))]
+          send-message-fn
+          (:fn (get @@#'state/event-registry :send-message))]
 
-                 (with-redefs
-                   [vis/cancel!
+      (with-redefs [vis/cancel!
                     (fn [_]
                       nil)
 
@@ -1456,85 +1408,81 @@
                       (deliver cancelled-gateway [sid tid])
                       {:status "cancelling"})]
 
-                   (reset! state/app-db {:session {:id "s1"}
-                                         :active-tab-id "s1"
-                                         :render-version 0
-                                         :workspace {:workspace/root "."}
-                                         :messages []
-                                         :input-history []
-                                         :pastes {}
-                                         :paste-counter 0
-                                         :loading? true
-                                         :cancel-token :old-token
-                                         :cancelling? false
-                                         :live-turn-client-id "cid-old"
-                                         :gateway-turn-id nil
-                                         :turn-start-ms 10})
-                   ;; Esc won before the old POST registered. The terminal-looking gateway
-                   ;; response clears the visible turn, but its exact identity survives.
-                   (state/dispatch [:cancel-turn])
-                   (expect (= true (deref terminal-cleared 1000 :timeout)))
-                   (expect (false? (:loading? @state/app-db)))
-                   (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
-                   ;; The user immediately sends the exact same text again. The normal send
-                   ;; path must preserve the old marker while assigning a fresh identity.
-                   (let
-                     [{resent-db :db}
-                      (send-message-fn @state/app-db [:send-message "same text" nil])
+        (reset! state/app-db {:session {:id "s1"}
+                              :active-tab-id "s1"
+                              :render-version 0
+                              :workspace {:workspace/root "."}
+                              :messages []
+                              :input-history []
+                              :pastes {}
+                              :paste-counter 0
+                              :loading? true
+                              :cancel-token :old-token
+                              :cancelling? false
+                              :live-turn-client-id "cid-old"
+                              :gateway-turn-id nil
+                              :turn-start-ms 10})
+        ;; Esc won before the old POST registered. The terminal-looking gateway
+        ;; response clears the visible turn, but its exact identity survives.
+        (state/dispatch [:cancel-turn])
+        (expect (= true (deref terminal-cleared 1000 :timeout)))
+        (expect (false? (:loading? @state/app-db)))
+        (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
+        ;; The user immediately sends the exact same text again. The normal send
+        ;; path must preserve the old marker while assigning a fresh identity.
+        (let [{resent-db :db}
+              (send-message-fn @state/app-db [:send-message "same text" nil])
 
-                      new-client-id
-                      (:live-turn-client-id resent-db)]
+              new-client-id
+              (:live-turn-client-id resent-db)]
 
-                     (reset! state/app-db resent-db)
-                     (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
-                     (expect (not= "cid-old" new-client-id))
-                     ;; The old POST starts late. Cancel that gateway turn, but do not bind
-                     ;; its id or clock onto the new optimistic request.
-                     (state/dispatch [:sync-turn-clock nil
-                                      {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
-                     (expect (= ["s1" "gw-old"] (deref cancelled-gateway 1000 :timeout)))
-                     (expect (nil? (:gateway-turn-id @state/app-db)))
-                     (expect (true? (:loading? @state/app-db)))
-                     (expect (nil? (:cancel-awaiting-client-id @state/app-db)))
-                     ;; Once the queued resend starts, only its matching id may bind.
-                     (state/dispatch
-                       [:sync-turn-clock nil
-                        {:turn-id "gw-new" :client-id new-client-id :started-at-ms 456}])
-                     (expect (= "gw-new" (:gateway-turn-id @state/app-db)))
-                     (expect (= 456 (:turn-start-ms @state/app-db))))))))
+          (reset! state/app-db resent-db)
+          (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
+          (expect (not= "cid-old" new-client-id))
+          ;; The old POST starts late. Cancel that gateway turn, but do not bind
+          ;; its id or clock onto the new optimistic request.
+          (state/dispatch [:sync-turn-clock nil
+                           {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
+          (expect (= ["s1" "gw-old"] (deref cancelled-gateway 1000 :timeout)))
+          (expect (nil? (:gateway-turn-id @state/app-db)))
+          (expect (true? (:loading? @state/app-db)))
+          (expect (nil? (:cancel-awaiting-client-id @state/app-db)))
+          ;; Once the queued resend starts, only its matching id may bind.
+          (state/dispatch [:sync-turn-clock nil
+                           {:turn-id "gw-new" :client-id new-client-id :started-at-ms 456}])
+          (expect (= "gw-new" (:gateway-turn-id @state/app-db)))
+          (expect (= 456 (:turn-start-ms @state/app-db))))))))
 
 (defdescribe
   cancel-turn-stale-gateway-test
   (it
     "clears stale cancelling state when gateway turn is already terminal"
-    (let
-      [cancelled
-       (atom nil)
+    (let [cancelled
+          (atom nil)
 
-       cancelled-gateway
-       (atom nil)
+          cancelled-gateway
+          (atom nil)
 
-       notified
-       (atom nil)
+          notified
+          (atom nil)
 
-       terminal-cleared
-       (promise)]
+          terminal-cleared
+          (promise)]
 
-      (with-redefs
-        [vis/cancel!
-         (fn [token]
-           (reset! cancelled token))
+      (with-redefs [vis/cancel!
+                    (fn [token]
+                      (reset! cancelled token))
 
-         vis/gateway-cancel-turn!
-         (fn [sid tid]
-           (reset! cancelled-gateway [sid tid])
-           {:error :not-running :status "interrupted"})
+                    vis/gateway-cancel-turn!
+                    (fn [sid tid]
+                      (reset! cancelled-gateway [sid tid])
+                      {:error :not-running :status "interrupted"})
 
-         vis/notify!
-         (fn [text & kvs]
-           (reset! notified [text kvs])
-           (when (= "Turn is no longer running; cleared local cancelling state." text)
-             (deliver terminal-cleared true)))]
+                    vis/notify!
+                    (fn [text & kvs]
+                      (reset! notified [text kvs])
+                      (when (= "Turn is no longer running; cleared local cancelling state." text)
+                        (deliver terminal-cleared true)))]
 
         (reset! state/app-db {:session {:id "s1"}
                               :loading? true
@@ -1563,63 +1511,61 @@
   cancel-gateway-confirmation-test
   (it "retries a transient gateway failure instead of dropping the cancel"
       (let [attempts (atom 0)]
-        (with-redefs
-          [vis/gateway-cancel-turn! (fn [sid tid]
-                                      (expect (= ["s1" "turn-1"] [sid tid]))
-                                      (if (= 1 (swap! attempts inc))
-                                        (throw (ex-info "connection reset" {}))
-                                        {:status "cancelling"}))]
+        (with-redefs [vis/gateway-cancel-turn! (fn [sid tid]
+                                                 (expect (= ["s1" "turn-1"] [sid tid]))
+                                                 (if (= 1 (swap! attempts inc))
+                                                   (throw (ex-info "connection reset" {}))
+                                                   {:status "cancelling"}))]
           (expect (= {:status "cancelling"}
                      (#'state/gateway-cancel-turn-or-current! "s1" "turn-1" nil)))
           (expect (= 2 @attempts)))))
   (it
     "does not unlock resending on a local cancel before the gateway ACK"
-    (let
-      [message-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :message-received)
-           :fn)
+    (let [message-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :message-received)
+              :fn)
 
-       cancel-result-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :gateway-cancel-result)
-           :fn)
+          cancel-result-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :gateway-cancel-result)
+              :fn)
 
-       cancel-key
-       1000
+          cancel-key
+          1000
 
-       pending-id
-       "client-1"
+          pending-id
+          "client-1"
 
-       initial-db
-       {:active-tab-id :main
-        :session {:id "s1"}
-        :input (input/empty-input)
-        :loading? true
-        :cancelling? true
-        :cancelling-at-ms cancel-key
-        :cancel-token :token
-        :gateway-turn-id "turn-1"
-        :messages [{:role :user :text "first" :client-turn-id pending-id}
-                   {:role :assistant :pending? true :client-turn-id pending-id}]
-        :progress {:iterations []}
-        :submitted-input {:text "first" :pastes {} :paste-counter 0}
-        :pending-sends [{:text "correction" :client-id "queued-1" :mine? true}]}
+          initial-db
+          {:active-tab-id :main
+           :session {:id "s1"}
+           :input (input/empty-input)
+           :loading? true
+           :cancelling? true
+           :cancelling-at-ms cancel-key
+           :cancel-token :token
+           :gateway-turn-id "turn-1"
+           :messages [{:role :user :text "first" :client-turn-id pending-id}
+                      {:role :assistant :pending? true :client-turn-id pending-id}]
+           :progress {:iterations []}
+           :submitted-input {:text "first" :pastes {} :paste-counter 0}
+           :pending-sends [{:text "correction" :client-id "queued-1" :mine? true}]}
 
-       local-result
-       (message-fn initial-db
-                   [:message-received :main [:ast {} [:p {} [:span {} "Cancelled by user."]]]
-                    {:status :cancelled :client-turn-id pending-id}])
+          local-result
+          (message-fn initial-db
+                      [:message-received :main [:ast {} [:p {} [:span {} "Cancelled by user."]]]
+                       {:status :cancelled :client-turn-id pending-id}])
 
-       local-db
-       (:db local-result)
+          local-db
+          (:db local-result)
 
-       ack-result
-       (cancel-result-fn local-db [:gateway-cancel-result cancel-key {:status "cancelling"}])]
+          ack-result
+          (cancel-result-fn local-db [:gateway-cancel-result cancel-key {:status "cancelling"}])]
 
       (expect (true? (:loading? local-db)))
       (expect (true? (:cancelling? local-db)))
@@ -1650,53 +1596,51 @@
              ;; prompt sat unreachable in `:submitted-input` and a pending assistant
              ;; placeholder no event would resolve stayed in the transcript. Either half
              ;; must now produce the same settled frame.
-             (let
-               [handler
-                (fn [id]
-                  (-> #'state/event-registry
-                      deref
-                      deref
-                      (get id)
-                      :fn))
+             (let [handler
+                   (fn [id]
+                     (-> #'state/event-registry
+                         deref
+                         deref
+                         (get id)
+                         :fn))
 
-                pending-id
-                "client-1"
+                   pending-id
+                   "client-1"
 
-                cancel-key
-                1000
+                   cancel-key
+                   1000
 
-                cancelling-db
-                (fn [iterations]
-                  {:active-tab-id :main
-                   :session {:id "s1"}
-                   :loading? true
-                   :cancelling? true
-                   :cancelling-at-ms cancel-key
-                   :cancel-token :token
-                   :gateway-turn-id "turn-1"
-                   :live-turn-client-id pending-id
-                   :turn-start-ms 1000
-                   :input (input/empty-input)
-                   :messages [{:role :user :text "first" :client-turn-id pending-id}
-                              {:role :assistant :pending? true :client-turn-id pending-id}]
-                   :progress {:iterations iterations}
-                   :submitted-input {:text "first" :pastes {} :paste-counter 0}
-                   :pending-sends []})]
+                   cancelling-db
+                   (fn [iterations]
+                     {:active-tab-id :main
+                      :session {:id "s1"}
+                      :loading? true
+                      :cancelling? true
+                      :cancelling-at-ms cancel-key
+                      :cancel-token :token
+                      :gateway-turn-id "turn-1"
+                      :live-turn-client-id pending-id
+                      :turn-start-ms 1000
+                      :input (input/empty-input)
+                      :messages [{:role :user :text "first" :client-turn-id pending-id}
+                                 {:role :assistant :pending? true :client-turn-id pending-id}]
+                      :progress {:iterations iterations}
+                      :submitted-input {:text "first" :pastes {} :paste-counter 0}
+                      :pending-sends []})]
 
                (it "hands the prompt back when the gateway ACK beats the local result"
-                   (let
-                     [acked
-                      (:db ((handler :gateway-cancel-result)
-                             (cancelling-db [])
-                             [:gateway-cancel-result cancel-key {:status "cancelling"}]))
+                   (let [acked
+                         (:db ((handler :gateway-cancel-result)
+                                (cancelling-db [])
+                                [:gateway-cancel-result cancel-key {:status "cancelling"}]))
 
-                      ;; The late local result must find nothing left to settle.
-                      settled
-                      (:db ((handler :message-received)
-                             acked
-                             [:message-received :main
-                              [:ast {} [:p {} [:span {} "Cancelled by user."]]]
-                              {:status :cancelled :client-turn-id pending-id}]))]
+                         ;; The late local result must find nothing left to settle.
+                         settled
+                         (:db ((handler :message-received)
+                                acked
+                                [:message-received :main
+                                 [:ast {} [:p {} [:span {} "Cancelled by user."]]]
+                                 {:status :cancelled :client-turn-id pending-id}]))]
 
                      (expect (= "first" (input/input->text (:input acked))))
                      (expect (empty? (:messages acked)))
@@ -1706,33 +1650,30 @@
                      (expect (= "first" (input/input->text (:input settled))))
                      (expect (empty? (:messages settled)))))
                (it "keeps the bubble and only refills the editor when the cancel had work"
-                   (let
-                     [acked (:db ((handler :gateway-cancel-result)
-                                   (cancelling-db [{:n 1 :blocks [{:kind :tool}]}])
-                                   [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
+                   (let [acked (:db ((handler :gateway-cancel-result)
+                                      (cancelling-db [{:n 1 :blocks [{:kind :tool}]}])
+                                      [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
                      (expect (= 2 (count (:messages acked))))
                      (expect (= [{:n 1 :blocks [{:kind :tool}]}]
                                 (get-in acked [:messages 1 :terminal-pending :trace])))
                      (expect (= "first" (input/input->text (:input acked))))
                      (expect (nil? (:submitted-input acked)))))
                (it "hands the prompt back when the cancel self-heals"
-                   (let
-                     [healed (:db ((handler :cancel-self-heal-tick)
-                                    (cancelling-db [])
-                                    [:cancel-self-heal-tick (+ cancel-key 60000)]))]
+                   (let [healed (:db ((handler :cancel-self-heal-tick)
+                                       (cancelling-db [])
+                                       [:cancel-self-heal-tick (+ cancel-key 60000)]))]
                      (expect (= "first" (input/input->text (:input healed))))
                      (expect (empty? (:messages healed)))
                      (expect (nil? (:submitted-input healed)))
                      (expect (false? (:cancelling? healed)))))
                (it "never overwrites a newer draft typed while the cancel settles"
-                   (let
-                     [typed
-                      (assoc (cancelling-db []) :input (#'state/text->input-state "new idea"))
+                   (let [typed
+                         (assoc (cancelling-db []) :input (#'state/text->input-state "new idea"))
 
-                      acked
-                      (:db ((handler :gateway-cancel-result)
-                             typed
-                             [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
+                         acked
+                         (:db ((handler :gateway-cancel-result)
+                                typed
+                                [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
 
                      (expect (= "new idea" (input/input->text (:input acked))))
                      (expect (nil? (:submitted-input acked)))))))
@@ -1746,35 +1687,34 @@
   ;; to read. Before this, a failed turn dropped :submitted-input and
   ;; the text was lost, so recovery meant retyping. The failed turn is
   ;; never auto-replayed by the gateway; the refill IS the retry.
-  (let
-    [handler
-     (fn [id]
-       (-> #'state/event-registry
-           deref
-           deref
-           (get id)
-           :fn))
+  (let [handler
+        (fn [id]
+          (-> #'state/event-registry
+              deref
+              deref
+              (get id)
+              :fn))
 
-     pending-id
-     "client-1"
+        pending-id
+        "client-1"
 
-     running-db
-     {:active-tab-id :main
-      :session {:id "s1"}
-      :loading? true
-      :turn-start-ms 1000
-      :input (input/empty-input)
-      :messages [{:role :user :text "first" :client-turn-id pending-id}
-                 {:role :assistant :pending? true :client-turn-id pending-id}]
-      :progress {:iterations [{:n 1 :blocks [{:kind :tool}]}]}
-      :submitted-input {:text "first" :pastes {} :paste-counter 0}
-      :pending-sends []}
+        running-db
+        {:active-tab-id :main
+         :session {:id "s1"}
+         :loading? true
+         :turn-start-ms 1000
+         :input (input/empty-input)
+         :messages [{:role :user :text "first" :client-turn-id pending-id}
+                    {:role :assistant :pending? true :client-turn-id pending-id}]
+         :progress {:iterations [{:n 1 :blocks [{:kind :tool}]}]}
+         :submitted-input {:text "first" :pastes {} :paste-counter 0}
+         :pending-sends []}
 
-     failed
-     (:db ((handler :message-received)
-            running-db
-            [:message-received :main [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
-             {:status :failed :client-turn-id pending-id}]))]
+        failed
+        (:db ((handler :message-received)
+               running-db
+               [:message-received :main [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
+                {:status :failed :client-turn-id pending-id}]))]
 
     (it "hands the failed prompt back to the composer"
         (expect (= "first" (input/input->text (:input failed)))))
@@ -1783,108 +1723,98 @@
     (it "keeps the failure bubble instead of dropping it" (expect (seq (:messages failed))))
     (it "settles the turn (no longer loading)" (expect (false? (:loading? failed))))
     (it "never overwrites a newer draft typed while the failure settles"
-        (let
-          [typed
-           (assoc running-db :input (#'state/text->input-state "new idea"))
+        (let [typed
+              (assoc running-db :input (#'state/text->input-state "new idea"))
 
-           out
-           (:db ((handler :message-received)
-                  typed
-                  [:message-received :main
-                   [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
-                   {:status :failed :client-turn-id pending-id}]))]
+              out
+              (:db ((handler :message-received)
+                     typed
+                     [:message-received :main
+                      [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
+                      {:status :failed :client-turn-id pending-id}]))]
 
           (expect (= "new idea" (input/input->text (:input out))))))))
 
 
-(defdescribe cancel-self-heal-test
-             ;; REGRESSION (design edge): `:cancel-turn` flips `:cancelling?` and
-             ;; waits for the daemon's terminal `turn.completed` (cancelled) event
-             ;; to release it. If that event NEVER lands — an SSE reconnect gap
-             ;; right at cancel, or the daemon dying mid-unwind — the flag sticks
-             ;; true, every send parks purely local (the enqueue race guard), and
-             ;; input is wedged until the daemon's ~6-minute stall watchdog fires:
-             ;; a freeze, to a human. The render-loop heartbeat pokes
-             ;; `:cancel-self-heal-tick`, which self-heals once the pending flag
-             ;; outlives `cancel-self-heal-timeout-ms` (8s). Pure over an injected
-             ;; `now-ms`, so the dropped-event scenario is deterministic here.
-             (let
-               [heal-fn (-> #'state/event-registry
-                            deref
-                            deref
-                            (get :cancel-self-heal-tick)
-                            :fn)]
-               (it "no-ops while the pending cancel is younger than the timeout"
-                   (with-redefs
-                     [vis/cancel! (fn [_]
+(defdescribe
+  cancel-self-heal-test
+  ;; REGRESSION (design edge): `:cancel-turn` flips `:cancelling?` and
+  ;; waits for the daemon's terminal `turn.completed` (cancelled) event
+  ;; to release it. If that event NEVER lands — an SSE reconnect gap
+  ;; right at cancel, or the daemon dying mid-unwind — the flag sticks
+  ;; true, every send parks purely local (the enqueue race guard), and
+  ;; input is wedged until the daemon's ~6-minute stall watchdog fires:
+  ;; a freeze, to a human. The render-loop heartbeat pokes
+  ;; `:cancel-self-heal-tick`, which self-heals once the pending flag
+  ;; outlives `cancel-self-heal-timeout-ms` (8s). Pure over an injected
+  ;; `now-ms`, so the dropped-event scenario is deterministic here.
+  (let [heal-fn (-> #'state/event-registry
+                    deref
+                    deref
+                    (get :cancel-self-heal-tick)
+                    :fn)]
+    (it "no-ops while the pending cancel is younger than the timeout"
+        (with-redefs [vis/cancel! (fn [_]
                                     (throw (ex-info "self-heal must not fire early" {})))]
-                     (let
-                       [db {:active-tab-id :main
-                            :session {:id "s1"}
-                            :loading? true
-                            :cancel-token :token
-                            :cancelling? true
-                            :cancelling-at-ms 1000}
-                        ;; 1s elapsed ≪ 8s timeout
-                        {db' :db} (heal-fn db [:cancel-self-heal-tick 2000])]
+          (let [db {:active-tab-id :main
+                    :session {:id "s1"}
+                    :loading? true
+                    :cancel-token :token
+                    :cancelling? true
+                    :cancelling-at-ms 1000}
+                ;; 1s elapsed ≪ 8s timeout
+                {db' :db} (heal-fn db [:cancel-self-heal-tick 2000])]
 
-                       (expect (true? (:cancelling? db')))
-                       (expect (true? (:loading? db'))))))
-               (it "clears the stuck cancel once it outlives the timeout"
-                   (let [cancelled (atom nil)]
-                     (with-redefs
-                       [vis/cancel! (fn [tok]
+            (expect (true? (:cancelling? db')))
+            (expect (true? (:loading? db'))))))
+    (it "clears the stuck cancel once it outlives the timeout"
+        (let [cancelled (atom nil)]
+          (with-redefs [vis/cancel! (fn [tok]
                                       (reset! cancelled tok))]
-                       (let
-                         [db {:active-tab-id :main
-                              :session {:id "s1"}
-                              :loading? true
-                              :cancel-token :token
-                              :cancelling? true
-                              :progress {:iterations []}
-                              :turn-start-ms 10
-                              :cancelling-at-ms 1000}
-                          ;; 8.5s elapsed > 8s timeout
-                          {db' :db fx :fx} (heal-fn db [:cancel-self-heal-tick 9500])]
+            (let [db {:active-tab-id :main
+                      :session {:id "s1"}
+                      :loading? true
+                      :cancel-token :token
+                      :cancelling? true
+                      :progress {:iterations []}
+                      :turn-start-ms 10
+                      :cancelling-at-ms 1000}
+                  ;; 8.5s elapsed > 8s timeout
+                  {db' :db fx :fx} (heal-fn db [:cancel-self-heal-tick 9500])]
 
-                         ;; The pure handler schedules the local interrupt before network I/O.
-                         (expect (= [:cancel-local-turn :token] (first fx)))
-                         ;; Turn state fully cleared → input flows again.
-                         (expect (false? (:cancelling? db')))
-                         (expect (false? (:loading? db')))
-                         (expect (nil? (:cancel-token db')))
-                         (expect (nil? (:cancelling-at-ms db')))
-                         ;; The user is told, and with no authored backlog nothing is restored.
-                         (expect (some #(= :notify (first %)) fx))
-                         (expect (not-any? #(= :dispatch (first %)) fx))))))
-               (it "restores the authored backlog to the editor when it self-heals"
-                   (with-redefs
-                     [vis/cancel! (fn [_]
+              ;; The pure handler schedules the local interrupt before network I/O.
+              (expect (= [:cancel-local-turn :token] (first fx)))
+              ;; Turn state fully cleared → input flows again.
+              (expect (false? (:cancelling? db')))
+              (expect (false? (:loading? db')))
+              (expect (nil? (:cancel-token db')))
+              (expect (nil? (:cancelling-at-ms db')))
+              ;; The user is told, and with no authored backlog nothing is restored.
+              (expect (some #(= :notify (first %)) fx))
+              (expect (not-any? #(= :dispatch (first %)) fx))))))
+    (it "restores the authored backlog to the editor when it self-heals"
+        (with-redefs [vis/cancel! (fn [_]
                                     nil)]
-                     (let
-                       [db {:active-tab-id :main
-                            :session {:id "s1"}
-                            :loading? true
-                            :cancel-token :token
-                            :cancelling? true
-                            :cancelling-at-ms 0
-                            :pending-sends [{:text "my correction" :client-id "c1" :mine? true}]}
-                        {fx :fx} (heal-fn db [:cancel-self-heal-tick 20000])]
+          (let [db {:active-tab-id :main
+                    :session {:id "s1"}
+                    :loading? true
+                    :cancel-token :token
+                    :cancelling? true
+                    :cancelling-at-ms 0
+                    :pending-sends [{:text "my correction" :client-id "c1" :mine? true}]}
+                {fx :fx} (heal-fn db [:cancel-self-heal-tick 20000])]
 
-                       ;; The correction the user typed during the cancel comes back
-                       ;; to the editor rather than being silently dropped.
-                       (expect (some #{[:dispatch [:restore-pending-to-input :main]]} fx)))))
-               (it "never fires when no cancel is pending, even with a stale timestamp"
-                   (with-redefs
-                     [vis/cancel! (fn [_]
+            ;; The correction the user typed during the cancel comes back
+            ;; to the editor rather than being silently dropped.
+            (expect (some #{[:dispatch [:restore-pending-to-input :main]]} fx)))))
+    (it "never fires when no cancel is pending, even with a stale timestamp"
+        (with-redefs [vis/cancel! (fn [_]
                                     (throw (ex-info "self-heal must not fire when idle" {})))]
-                     (let
-                       [db
-                        {:active-tab-id :main :loading? true :cancelling? false :cancelling-at-ms 0}
-                        {db' :db} (heal-fn db [:cancel-self-heal-tick 999999])]
+          (let [db {:active-tab-id :main :loading? true :cancelling? false :cancelling-at-ms 0}
+                {db' :db} (heal-fn db [:cancel-self-heal-tick 999999])]
 
-                       (expect (false? (:cancelling? db')))
-                       (expect (true? (:loading? db'))))))))
+            (expect (false? (:cancelling? db')))
+            (expect (true? (:loading? db'))))))))
 
 (defdescribe session-refresh-reconciles-in-flight-state-test
              (it "clears stale cancelling state when refreshed session is terminal"
@@ -1931,14 +1861,13 @@
 (defdescribe
   attach-running-turn-canonical-clock-test
   (it "seeds turn-start-ms from the gateway's started_at, not local attach time"
-      (with-redefs
-        [vis/worker-future
-         (fn [_ _]
-           (future nil))
+      (with-redefs [vis/worker-future
+                    (fn [_ _]
+                      (future nil))
 
-         vis/cancellation-set-future!
-         (fn [_ _]
-           nil)]
+                    vis/cancellation-set-future!
+                    (fn [_ _]
+                      nil)]
 
         (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
         (state/dispatch [:attach-running-turn nil
@@ -1954,14 +1883,13 @@
           ;; TUIs attached to the same running turn show the SAME elapsed.
           (expect (= 12345 (:turn-start-ms db))))))
   (it "falls back to the local clock when the gateway timestamp is missing"
-      (with-redefs
-        [vis/worker-future
-         (fn [_ _]
-           (future nil))
+      (with-redefs [vis/worker-future
+                    (fn [_ _]
+                      (future nil))
 
-         vis/cancellation-set-future!
-         (fn [_ _]
-           nil)]
+                    vis/cancellation-set-future!
+                    (fn [_ _]
+                      nil)]
 
         (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
         (let [before (System/currentTimeMillis)]
@@ -1975,14 +1903,13 @@
       ;; started. Attaching that turn as running must strip it from the queue so
       ;; it paints once (live) and not a second time as "Queued"; the genuinely
       ;; queued sibling turn stays.
-      (with-redefs
-        [vis/worker-future
-         (fn [_ _]
-           (future nil))
+      (with-redefs [vis/worker-future
+                    (fn [_ _]
+                      (future nil))
 
-         vis/cancellation-set-future!
-         (fn [_ _]
-           nil)]
+                    vis/cancellation-set-future!
+                    (fn [_ _]
+                      nil)]
 
         (reset! state/app-db {:session {:id "s1"}
                               :active-tab-id "s1"
@@ -2034,9 +1961,8 @@
   ;; :drain-idle-queue fx — not leave it sitting invisibly queued.
   (it "fires :drain-idle-queue for an idle session with a queued backlog"
       (let [drained (atom nil)]
-        (with-redefs
-          [vis/gateway-drain-idle! (fn [sid]
-                                     (reset! drained sid))]
+        (with-redefs [vis/gateway-drain-idle! (fn [sid]
+                                                (reset! drained sid))]
           (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
           (state/dispatch
             [:attach-running-turn "s1"
@@ -2045,9 +1971,8 @@
           (expect (= "s1" @drained)))))
   (it "does not drain when the idle session has no queued backlog"
       (let [drained (atom :unset)]
-        (with-redefs
-          [vis/gateway-drain-idle! (fn [sid]
-                                     (reset! drained sid))]
+        (with-redefs [vis/gateway-drain-idle! (fn [sid]
+                                                (reset! drained sid))]
           (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
           (state/dispatch [:attach-running-turn "s1" {:id "s1" :status "idle" :queued-turns []}])
           (expect (= :unset @drained))))))
@@ -2071,18 +1996,17 @@
 (defdescribe
   live-progress-rate-test
   (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
-      (let
-        [make-progress-render-updater
-         @#'state/make-progress-render-updater
+      (let [make-progress-render-updater
+            @#'state/make-progress-render-updater
 
-         events
-         (atom [])
+            events
+            (atom [])
 
-         now-ms
-         (atom 0)
+            now-ms
+            (atom 0)
 
-         update!
-         (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
+            update!
+            (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
 
         (update! [:t0] {:phase :reasoning})
         (reset! now-ms 79)
@@ -2100,18 +2024,17 @@
       ;; reset the shared throttle, so after the first reasoning
       ;; frame landed the bubble froze on "I" / "The" until the
       ;; terminal `:iteration-final` chunk.
-      (let
-        [make-progress-render-updater
-         @#'state/make-progress-render-updater
+      (let [make-progress-render-updater
+            @#'state/make-progress-render-updater
 
-         events
-         (atom [])
+            events
+            (atom [])
 
-         now-ms
-         (atom 0)
+            now-ms
+            (atom 0)
 
-         update!
-         (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
+            update!
+            (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
 
         ;; First reasoning frame lands.
         (update! [:r 0] {:phase :reasoning})
@@ -2128,41 +2051,38 @@
           (expect (= [[:set-progress-iterations [:r 0]] [:set-progress-iterations [:r 80]]]
                      reasoning-events)))))
   (it "content stream is throttled on its own clock and never blocks reasoning"
-      (let
-        [make-progress-render-updater
-         @#'state/make-progress-render-updater
+      (let [make-progress-render-updater
+            @#'state/make-progress-render-updater
 
-         events
-         (atom [])
+            events
+            (atom [])
 
-         now-ms
-         (atom 0)
+            now-ms
+            (atom 0)
 
-         update!
-         (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
+            update!
+            (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
 
         ;; Hammer both streams in lockstep for 200ms.
         (doseq [t (range 0 201 10)]
           (reset! now-ms t)
           (update! [:r (long t)] {:phase :reasoning})
           (update! [:c (long t)] {:phase :content}))
-        (let
-          [tag-counts (reduce (fn [m [_ tag]]
-                                (update m (first tag) (fnil inc 0)))
-                              {}
-                              @events)]
+        (let [tag-counts (reduce (fn [m [_ tag]]
+                                   (update m (first tag) (fnil inc 0)))
+                                 {}
+                                 @events)]
           ;; 200ms / 80ms cadence → frames at t ∈ {0, 80, 160}.
           (expect (= 3 (get tag-counts :r)))
           (expect (= 3 (get tag-counts :c)))))))
 
 (defdescribe
   reasoning-sentence-buffer-test
-  (let
-    [clip
-     #'state/clip-reasoning-to-sentence
+  (let [clip
+        #'state/clip-reasoning-to-sentence
 
-     clip-live
-     #'state/clip-live-reasoning]
+        clip-live
+        #'state/clip-live-reasoning]
 
     (it "holds a short boundary-less partial back (no 1-2 char leading stub)"
         (expect (= "" (clip "I" 200)))
@@ -2180,15 +2100,14 @@
           (expect (= s (clip s 200)))))
     (it "empty / nil stays empty" (expect (= "" (clip "" 200))) (expect (= "" (clip nil 200))))
     (it "clip-live only touches entries still streaming reasoning"
-        (let
-          [streaming
-           {:iteration 0 :thinking "I think so. And mo" :forms [] :done? false :final nil}
+        (let [streaming
+              {:iteration 0 :thinking "I think so. And mo" :forms [] :done? false :final nil}
 
-           with-form
-           {:iteration 0 :thinking "I think so. And mo" :forms [{:code "x"}] :done? false}
+              with-form
+              {:iteration 0 :thinking "I think so. And mo" :forms [{:code "x"}] :done? false}
 
-           done
-           {:iteration 0 :thinking "I think so. And mo" :forms [] :done? true :final :ok}]
+              done
+              {:iteration 0 :thinking "I think so. And mo" :forms [] :done? true :final :ok}]
 
           ;; live streaming entry → clipped to the last sentence
           (expect (= "I think so." (:thinking (first (clip-live [streaming])))))
@@ -2214,27 +2133,26 @@
   ;; throttle interval even when the stream goes quiet.
   (it
     "flushes the latest dropped timeline within the throttle window when the stream stalls"
-    (let
-      [make-progress-render-updater
-       @#'state/make-progress-render-updater
+    (let [make-progress-render-updater
+          @#'state/make-progress-render-updater
 
-       events
-       (atom [])
+          events
+          (atom [])
 
-       now-ms
-       (atom 0)
+          now-ms
+          (atom 0)
 
-       scheduled
-       (atom [])
+          scheduled
+          (atom [])
 
-       schedule-fn
-       (fn [^Runnable f ^long delay-ms]
-         (let [token (gensym "sched")]
-           (swap! scheduled conj {:token token :run f :delay-ms delay-ms})
-           token))
+          schedule-fn
+          (fn [^Runnable f ^long delay-ms]
+            (let [token (gensym "sched")]
+              (swap! scheduled conj {:token token :run f :delay-ms delay-ms})
+              token))
 
-       update!
-       (make-progress-render-updater #(swap! events conj %) #(long @now-ms) schedule-fn)]
+          update!
+          (make-progress-render-updater #(swap! events conj %) #(long @now-ms) schedule-fn)]
 
       ;; First reasoning chunk lands and dispatches.
       (update! [:t 0] {:phase :reasoning})
@@ -2259,37 +2177,35 @@
       (expect (= [[:set-progress-iterations [:t 0]] [:set-progress-iterations [:t 40]]] @events))))
   (it
     "a fresh chunk arriving on the trailing edge cancels the scheduled flush"
-    (let
-      [make-progress-render-updater
-       @#'state/make-progress-render-updater
+    (let [make-progress-render-updater
+          @#'state/make-progress-render-updater
 
-       events
-       (atom [])
+          events
+          (atom [])
 
-       now-ms
-       (atom 0)
+          now-ms
+          (atom 0)
 
-       scheduled
-       (atom [])
+          scheduled
+          (atom [])
 
-       cancelled
-       (atom 0)
+          cancelled
+          (atom 0)
 
-       schedule-fn
-       (fn [^Runnable f ^long delay-ms]
-         (let
-           [fut (reify
-                  java.util.concurrent.Future
-                    (cancel [_ _] (swap! cancelled inc) true)
-                    (isCancelled [_] false)
-                    (isDone [_] false)
-                    (get [_] nil)
-                    (get [_ _ _] nil))]
-           (swap! scheduled conj {:run f :delay-ms delay-ms :fut fut})
-           fut))
+          schedule-fn
+          (fn [^Runnable f ^long delay-ms]
+            (let [fut (reify
+                        java.util.concurrent.Future
+                          (cancel [_ _] (swap! cancelled inc) true)
+                          (isCancelled [_] false)
+                          (isDone [_] false)
+                          (get [_] nil)
+                          (get [_ _ _] nil))]
+              (swap! scheduled conj {:run f :delay-ms delay-ms :fut fut})
+              fut))
 
-       update!
-       (make-progress-render-updater #(swap! events conj %) #(long @now-ms) schedule-fn)]
+          update!
+          (make-progress-render-updater #(swap! events conj %) #(long @now-ms) schedule-fn)]
 
       (update! [:t 0] {:phase :reasoning})
       (reset! now-ms 30)
@@ -2311,27 +2227,26 @@
       ;; still no-op because the latest pending state was published.
       ;; This test pins the desired behavior: the pending slot is
       ;; cleared the moment the dispatched lifecycle delivers it.
-      (let
-        [make-progress-render-updater
-         @#'state/make-progress-render-updater
+      (let [make-progress-render-updater
+            @#'state/make-progress-render-updater
 
-         events
-         (atom [])
+            events
+            (atom [])
 
-         now-ms
-         (atom 0)
+            now-ms
+            (atom 0)
 
-         scheduled
-         (atom [])
+            scheduled
+            (atom [])
 
-         schedule-fn
-         (fn [^Runnable f ^long delay-ms]
-           (let [t (gensym)]
-             (swap! scheduled conj {:token t :run f :delay-ms delay-ms})
-             t))
+            schedule-fn
+            (fn [^Runnable f ^long delay-ms]
+              (let [t (gensym)]
+                (swap! scheduled conj {:token t :run f :delay-ms delay-ms})
+                t))
 
-         update!
-         (make-progress-render-updater #(swap! events conj %) #(long @now-ms) schedule-fn)]
+            update!
+            (make-progress-render-updater #(swap! events conj %) #(long @now-ms) schedule-fn)]
 
         (update! [:r 0] {:phase :reasoning})
         (reset! now-ms 20)
@@ -2352,103 +2267,98 @@
   send-message-test
   (it
     "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
-    (let
-      [send-message-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :send-message)
-           :fn)
+    (let [send-message-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :send-message)
+              :fn)
 
-       db
-       {:session {:id "c1"}
-        :active-tab-id :main
-        :messages []
-        :messages-scroll 0
-        :input-history []
-        :settings {:reasoning-level "deep" :verbosity "high"}
-        :pastes {}}]
+          db
+          {:session {:id "c1"}
+           :active-tab-id :main
+           :messages []
+           :messages-scroll 0
+           :input-history []
+           :settings {:reasoning-level "deep" :verbosity "high"}
+           :pastes {}}]
 
-      (with-redefs
-        [input/expand-paste-placeholders
-         (fn [text _]
-           text)
+      (with-redefs [input/expand-paste-placeholders
+                    (fn [text _]
+                      text)
 
-         input/expand-file-mentions
-         identity
+                    input/expand-file-mentions
+                    identity
 
-         vis/cancellation-token
-         (fn []
-           :token)
+                    vis/cancellation-token
+                    (fn []
+                      :token)
 
-         vis/get-router
-         (fn []
-           :router)
+                    vis/get-router
+                    (fn []
+                      :router)
 
-         vis/resolve-effective-model
-         (fn [_]
-           {:provider :zai
-            :name "glm-4.7"
-            :reasoning? true
-            :reasoning-style :zai-thinking
-            :reasoning-effort? false})]
+                    vis/resolve-effective-model
+                    (fn [_]
+                      {:provider :zai
+                       :name "glm-4.7"
+                       :reasoning? true
+                       :reasoning-style :zai-thinking
+                       :reasoning-effort? false})]
 
-        (let
-          [{:keys [fx]}
-           (send-message-fn db [:send-message "hello"])
+        (let [{:keys [fx]}
+              (send-message-fn db [:send-message "hello"])
 
-           [event]
-           fx]
+              [event]
+              fx]
 
           (expect (= [:session-turn :main {:id "c1"} "hello" :token nil nil {}] (subvec event 0 8)))
           (expect (nil? (nth event 8)))
           (expect (string? (nth event 9)))))))
   (it
     "forwards routing trace from turn result to message metadata"
-    (let
-      [session-turn-fx
-       (-> #'state/fx-registry
-           deref
-           deref
-           (get :session-turn))
+    (let [session-turn-fx
+          (-> #'state/fx-registry
+              deref
+              deref
+              (get :session-turn))
 
-       received
-       (atom [])
+          received
+          (atom [])
 
-       trace
-       [{"provider_id" "p1" "model" "m1" "status" 429 "reason" "transient_error"}]]
+          trace
+          [{"provider_id" "p1" "model" "m1" "status" 429 "reason" "transient_error"}]]
 
-      (with-redefs
-        [vis/worker-future
-         (fn [_label thunk]
-           (thunk)
-           :future)
+      (with-redefs [vis/worker-future
+                    (fn [_label thunk]
+                      (thunk)
+                      :future)
 
-         vis/cancellation-set-future!
-         (fn [_token _future])
+                    vis/cancellation-set-future!
+                    (fn [_token _future])
 
-         state/dispatch
-         (fn [event]
-           (swap! received conj event))
+                    state/dispatch
+                    (fn [event]
+                      (swap! received conj event))
 
-         chat/turn!
-         (fn [_session _text _opts]
-           {"content" [{"id" "b1" "type" "prose" "markdown" "ok"}]
-            "model" "m2"
-            "provider" "p2"
-            "llm_selected" {"provider" "p1" "model" "m1"}
-            "llm_actual" {"provider" "p2" "model" "m2"}
-            "is_llm_fallback" true
-            "llm_routing_trace" trace})]
+                    chat/turn!
+                    (fn [_session _text _opts]
+                      {"content" [{"id" "b1" "type" "prose" "markdown" "ok"}]
+                       "model" "m2"
+                       "provider" "p2"
+                       "llm_selected" {"provider" "p1" "model" "m1"}
+                       "llm_actual" {"provider" "p2" "model" "m2"}
+                       "is_llm_fallback" true
+                       "llm_routing_trace" trace})]
 
         (session-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
         ;; The turn also dispatches workspace re-sync + live F2 ctx-panel
         ;; refreshes after the answer commits, so don't assume
         ;; :message-received is the *last* event — select it explicitly.
-        (let
-          [[event-id workspace-id _answer metadata] (->> @received
-                                                         (filter #(= :message-received (first %)))
-                                                         last)]
+        (let [[event-id workspace-id _answer metadata] (->> @received
+                                                            (filter #(= :message-received
+                                                                        (first %)))
+                                                            last)]
           (expect (= :message-received event-id))
           (expect (= :main workspace-id))
           (expect (= "m2" (:model metadata)))
@@ -2459,58 +2369,56 @@
           (expect (= trace (:llm-routing-trace metadata)))))))
   (it
     "restores a cancelled prompt to the input instead of rendering a cancelled answer"
-    (let
-      [send-message-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :send-message)
-           :fn)
+    (let [send-message-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :send-message)
+              :fn)
 
-       reset-input-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :reset-input)
-           :fn)
+          reset-input-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :reset-input)
+              :fn)
 
-       message-received-fn
-       (-> #'state/event-registry
-           deref
-           deref
-           (get :message-received)
-           :fn)
+          message-received-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :message-received)
+              :fn)
 
-       token
-       (input/format-paste-placeholder {:id 1 :content "hello"})
+          token
+          (input/format-paste-placeholder {:id 1 :content "hello"})
 
-       text
-       (str "edit me " token)
+          text
+          (str "edit me " token)
 
-       initial-messages
-       [{:role :assistant :text "previous"}]
+          initial-messages
+          [{:role :assistant :text "previous"}]
 
-       db
-       {:session {:id "c1"}
-        :messages initial-messages
-        :messages-scroll 9
-        :input-history ["prior"]
-        :input-history-index nil
-        :input-history-draft nil
-        :settings {:reasoning-level "balanced" :verbosity "low"}
-        :pastes {1 {:id 1 :content "hello"}}
-        :paste-counter 1}]
+          db
+          {:session {:id "c1"}
+           :messages initial-messages
+           :messages-scroll 9
+           :input-history ["prior"]
+           :input-history-index nil
+           :input-history-draft nil
+           :settings {:reasoning-level "balanced" :verbosity "low"}
+           :pastes {1 {:id 1 :content "hello"}}
+           :paste-counter 1}]
 
-      (with-redefs
-        [vis/cancellation-token (fn []
-                                  :token)]
-        (let
-          [sent-db (:db (send-message-fn db [:send-message text]))
-           reset-db (reset-input-fn sent-db [:reset-input])
-           restored-db (:db (message-received-fn reset-db
-                                                 [:message-received
-                                                  [:ast {} [:p {} [:span {} "Cancelled by user."]]]
-                                                  {:status :cancelled}]))]
+      (with-redefs [vis/cancellation-token (fn []
+                                             :token)]
+        (let [sent-db (:db (send-message-fn db [:send-message text]))
+              reset-db (reset-input-fn sent-db [:reset-input])
+              restored-db (:db (message-received-fn reset-db
+                                                    [:message-received
+                                                     [:ast {}
+                                                      [:p {} [:span {} "Cancelled by user."]]]
+                                                     {:status :cancelled}]))]
 
           (expect (= initial-messages (:messages restored-db)))
           (expect (= text (input/input->text (:input restored-db))))
@@ -2522,68 +2430,65 @@
 
 (defdescribe
   gateway-disconnect-reattach-test
-  (let
-    [session-turn-fx
-     (get @@#'state/fx-registry :session-turn)
+  (let [session-turn-fx
+        (get @@#'state/fx-registry :session-turn)
 
-     session-attach-fx
-     (get @@#'state/fx-registry :session-attach)
+        session-attach-fx
+        (get @@#'state/fx-registry :session-attach)
 
-     reattach-fn
-     (:fn (get @@#'state/event-registry :reattach-disconnected-turn))
+        reattach-fn
+        (:fn (get @@#'state/event-registry :reattach-disconnected-turn))
 
-     session
-     {:id "session-1"}
+        session
+        {:id "session-1"}
 
-     token
-     (Object.)
+        token
+        (Object.)
 
-     disconnect
-     (ex-info "SSE disconnected" {:gateway-disconnected true :turn-id "turn-1"})]
+        disconnect
+        (ex-info "SSE disconnected" {:gateway-disconnected true :turn-id "turn-1"})]
 
     (it "reattaches a submitted turn instead of rendering a false terminal error"
         (let [events (atom [])]
-          (with-redefs
-            [vis/worker-future (fn [_ thunk]
-                                 (thunk)
-                                 :future)
-             vis/cancellation-set-future! (fn [_ _])
-             state/dispatch #(swap! events conj %)
-             chat/turn! (fn [& _]
-                          (throw disconnect))]
+          (with-redefs [vis/worker-future (fn [_ thunk]
+                                            (thunk)
+                                            :future)
+                        vis/cancellation-set-future! (fn [_ _])
+                        state/dispatch #(swap! events conj %)
+                        chat/turn! (fn [& _]
+                                     (throw disconnect))]
 
             (session-turn-fx :main session "hello" token nil nil {} {} "client-1")
             (expect (= [[:reattach-disconnected-turn :main session "turn-1" token "client-1"]]
                        @events)))))
     (it "reattaches again when an attach stream disconnects"
         (let [events (atom [])]
-          (with-redefs
-            [vis/worker-future (fn [_ thunk]
-                                 (thunk)
-                                 :future)
-             vis/cancellation-set-future! (fn [_ _])
-             state/dispatch #(swap! events conj %)
-             chat/attach! (fn [& _]
-                            (throw disconnect))]
+          (with-redefs [vis/worker-future (fn [_ thunk]
+                                            (thunk)
+                                            :future)
+                        vis/cancellation-set-future! (fn [_ _])
+                        state/dispatch #(swap! events conj %)
+                        chat/attach! (fn [& _]
+                                       (throw disconnect))]
 
             (session-attach-fx :main session "turn-1" token "client-1")
             (expect (= [[:reattach-disconnected-turn :main session "turn-1" token "client-1"]]
                        @events)))))
-    (it
-      "reattaches only while the same tab turn is still live"
-      (let [db {:active-tab-id :main :loading? true :cancel-token token :gateway-turn-id "turn-1"}]
-        (with-redefs [vis/cancellation-token (constantly :next-token)]
-          (let
-            [accepted
-             (reattach-fn db [:reattach-disconnected-turn :main session "turn-1" token "client-1"])
-             stale (reattach-fn db
-                                [:reattach-disconnected-turn :main session "turn-1" (Object.)
-                                 "client-1"])]
+    (it "reattaches only while the same tab turn is still live"
+        (let [db
+              {:active-tab-id :main :loading? true :cancel-token token :gateway-turn-id "turn-1"}]
+          (with-redefs [vis/cancellation-token (constantly :next-token)]
+            (let [accepted (reattach-fn db
+                                        [:reattach-disconnected-turn :main session "turn-1" token
+                                         "client-1"])
+                  stale (reattach-fn db
+                                     [:reattach-disconnected-turn :main session "turn-1" (Object.)
+                                      "client-1"])]
 
-            (expect (= [[:session-attach :main session "turn-1" :next-token "client-1"]]
-                       (:fx accepted)))
-            (expect (= :next-token (:cancel-token (:db accepted))))
-            (expect (nil? (:fx stale)))))))))
+              (expect (= [[:session-attach :main session "turn-1" :next-token "client-1"]]
+                         (:fx accepted)))
+              (expect (= :next-token (:cancel-token (:db accepted))))
+              (expect (nil? (:fx stale)))))))))
 
 (defdescribe
   pending-send-queue-test
@@ -2592,41 +2497,39 @@
       ;; queued turn, with its paste snapshot — while the row is painted locally at
       ;; once, and reconciled from gateway truth (ack / broadcast, both through
       ;; `:sync-queued-turn`) into the SAME row.
-      (let
-        [enqueue-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :enqueue-message)
-             :fn)
+      (let [enqueue-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :enqueue-message)
+                :fn)
 
-         db
-         {:active-tab-id :b
-          :input-history []
-          :pastes {}
-          :paste-counter 0
-          :tab-locals {:a {:session {:id "a"}
-                           :loading? true
-                           :pending-sends []
-                           :input-history []
-                           :pastes {1 {:id 1 :content "payload"}}
-                           :paste-counter 1}}}
+            db
+            {:active-tab-id :b
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :tab-locals {:a {:session {:id "a"}
+                              :loading? true
+                              :pending-sends []
+                              :input-history []
+                              :pastes {1 {:id 1 :content "payload"}}
+                              :paste-counter 1}}}
 
-         result
-         (enqueue-fn db [:enqueue-message "queued" :a])
+            result
+            (enqueue-fn db [:enqueue-message "queued" :a])
 
-         queued
-         (get-in result [:db :tab-locals :a :pending-sends])]
+            queued
+            (get-in result [:db :tab-locals :a :pending-sends])]
 
         (expect (= ["queued"] (mapv :text queued)))
         ;; It belongs to tab :a, not to the ACTIVE tab's root state.
         (expect (empty? (:pending-sends (:db result))))
-        (let
-          [gw
-           (first (filter #(= :gateway-enqueue (first %)) (:fx result)))
+        (let [gw
+              (first (filter #(= :gateway-enqueue (first %)) (:fx result)))
 
-           entry
-           (nth gw 3)]
+              entry
+              (nth gw 3)]
 
           ;; The submission (with its paste snapshot) travels to the gateway, not
           ;; into a local queue.
@@ -2640,52 +2543,51 @@
       ;; pressed Enter again and the SAME text landed as TWO queued gateway turns 7 ms
       ;; apart, both drained, both answered, the second one paid for. So the row is
       ;; painted on Enter and gateway truth is merged INTO it, by correlation id.
-      (let
-        [registry
-         (-> #'state/event-registry
-             deref
-             deref)
+      (let [registry
+            (-> #'state/event-registry
+                deref
+                deref)
 
-         enqueue-fn
-         (:fn (get registry :enqueue-message))
+            enqueue-fn
+            (:fn (get registry :enqueue-message))
 
-         sync-fn
-         (:fn (get registry :sync-queued-turn))
+            sync-fn
+            (:fn (get registry :sync-queued-turn))
 
-         drain-fn
-         (:fn (get registry :drain-pending))
+            drain-fn
+            (:fn (get registry :drain-pending))
 
-         gw-fx
-         (fn [result]
-           (filterv #(= :gateway-enqueue (first %)) (:fx result)))
+            gw-fx
+            (fn [result]
+              (filterv #(= :gateway-enqueue (first %)) (:fx result)))
 
-         rows
-         (fn [db]
-           (get-in db [:tab-locals :a :pending-sends]))
+            rows
+            (fn [db]
+              (get-in db [:tab-locals :a :pending-sends]))
 
-         db
-         {:active-tab-id :b
-          :input-history []
-          :pastes {}
-          :paste-counter 0
-          :tab-locals {:a {:session {:id "a"}
-                           :loading? true
-                           :pending-sends []
-                           :input-history []
-                           :pastes {}
-                           :paste-counter 0}}}
+            db
+            {:active-tab-id :b
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :tab-locals {:a {:session {:id "a"}
+                              :loading? true
+                              :pending-sends []
+                              :input-history []
+                              :pastes {}
+                              :paste-counter 0}}}
 
-         first-result
-         (enqueue-fn db [:enqueue-message "double tap" :a])
+            first-result
+            (enqueue-fn db [:enqueue-message "double tap" :a])
 
-         second-result
-         (enqueue-fn (:db first-result) [:enqueue-message "double tap" :a])
+            second-result
+            (enqueue-fn (:db first-result) [:enqueue-message "double tap" :a])
 
-         row
-         (first (rows (:db first-result)))
+            row
+            (first (rows (:db first-result)))
 
-         client-id
-         (:client-id (nth (first (gw-fx first-result)) 3))]
+            client-id
+            (:client-id (nth (first (gw-fx first-result)) 3))]
 
         ;; VISIBLE the instant Enter is pressed: one queued row, ours, still awaiting
         ;; the gateway ack (so it carries no turn id yet).
@@ -2705,14 +2607,13 @@
           (expect (empty? (:fx (drain-fn idle [:drain-pending :a])))))
         ;; The ack carries the correlation id we sent as the idempotency key, so it
         ;; upgrades THAT row rather than appending a second one.
-        (let
-          [acked
-           (:db (sync-fn (:db first-result)
-                         [:sync-queued-turn :a
-                          {:op :add :turn-id "t-9" :client-id client-id :text "double tap"}]))
+        (let [acked
+              (:db (sync-fn (:db first-result)
+                            [:sync-queued-turn :a
+                             {:op :add :turn-id "t-9" :client-id client-id :text "double tap"}]))
 
-           acked-row
-           (first (rows acked))]
+              acked-row
+              (first (rows acked))]
 
           (expect (string? client-id))
           (expect (= 1 (count (rows acked))))
@@ -2724,33 +2625,32 @@
       ;; on screen to explain it — the same invisibility that caused the double queue,
       ;; pointed the other way. Repeating yourself ("continue", "yes", the same nudge) is
       ;; ordinary once the first row is visible and acked, and must go out.
-      (let
-        [enqueue-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :enqueue-message)
-             :fn)
+      (let [enqueue-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :enqueue-message)
+                :fn)
 
-         db
-         {:active-tab-id :b
-          :input-history []
-          :pastes {}
-          :paste-counter 0
-          :tab-locals {:a {:session {:id "a"}
-                           :loading? true
-                           ;; acked long ago: turn id bound, nothing in flight
-                           :pending-sends [{:text "continue"
-                                            :client-id "c-1"
-                                            :turn-id "t-1"
-                                            :mine? true
-                                            :queued-at-ms (- (System/currentTimeMillis) 60000)}]
-                           :input-history []
-                           :pastes {}
-                           :paste-counter 0}}}
+            db
+            {:active-tab-id :b
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :tab-locals {:a {:session {:id "a"}
+                              :loading? true
+                              ;; acked long ago: turn id bound, nothing in flight
+                              :pending-sends [{:text "continue"
+                                               :client-id "c-1"
+                                               :turn-id "t-1"
+                                               :mine? true
+                                               :queued-at-ms (- (System/currentTimeMillis) 60000)}]
+                              :input-history []
+                              :pastes {}
+                              :paste-counter 0}}}
 
-         result
-         (enqueue-fn db [:enqueue-message "continue" :a])]
+            result
+            (enqueue-fn db [:enqueue-message "continue" :a])]
 
         (expect (= 1 (count (filterv #(= :gateway-enqueue (first %)) (:fx result)))))
         (expect (= ["continue" "continue"]
@@ -2758,20 +2658,20 @@
   (it "SAYS so when it drops an identical keypress"
       ;; A silent drop is indistinguishable from a swallowed message — exactly the bug
       ;; this whole path exists to prevent. Suppression must be visible.
-      (let
-        [enqueue-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :enqueue-message)
-             :fn)
+      (let [enqueue-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :enqueue-message)
+                :fn)
 
-         db
-         {:active-tab-id :b
-          :input-history []
-          :pastes {}
-          :paste-counter 0
-          :tab-locals {:a {:session {:id "a"}
+            db
+            {:active-tab-id :b
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :tab-locals {:a
+                          {:session {:id "a"}
                            :loading? true
                            :pending-sends
                            [{:text "double tap" :client-id "c-1" :mine? true :awaiting-ack? true}]
@@ -2779,8 +2679,8 @@
                            :pastes {}
                            :paste-counter 0}}}
 
-         result
-         (enqueue-fn db [:enqueue-message "double tap" :a])]
+            result
+            (enqueue-fn db [:enqueue-message "double tap" :a])]
 
         (expect (empty? (filterv #(= :gateway-enqueue (first %)) (:fx result))))
         (expect (= 1 (count (get-in result [:db :tab-locals :a :pending-sends]))))
@@ -2792,16 +2692,15 @@
       ;; for it. Absence alone must never count as retraction: a row also vanishes when
       ;; its TAB closes, and that path deliberately re-submits the text under the same
       ;; idempotency key, so deleting there would destroy a message the user still wants.
-      (let
-        [retracted?
-         #'state/submission-retracted?
+      (let [retracted?
+            #'state/submission-retracted?
 
-         mark
-         #'state/mark-retracted
+            mark
+            #'state/mark-retracted
 
-         db
-         (fn [w]
-           {:active-tab-id :b :tab-locals {:a w}})]
+            db
+            (fn [w]
+              {:active-tab-id :b :tab-locals {:a w}})]
 
         (expect (false? (retracted? (db {:pending-sends []}) :a "c-1")))
         (expect (true?
@@ -2812,65 +2711,61 @@
         (expect (false? (retracted? (db (mark {} [{:client-id "c-2"}])) :a "c-1")))
         ;; no db proves nothing — never delete on a guess
         (expect (false? (retracted? nil :a "c-1")))))
-  (it
-    "a cancel and an explicit clear both record their un-named rows as retracted"
-    ;; Through the real events: the row leaves the queue AND its correlation id is left
-    ;; behind, so the enqueue ack can delete the turn the gateway is about to name.
-    (let
-      [registry
-       (-> #'state/event-registry
-           deref
-           deref)
+  (it "a cancel and an explicit clear both record their un-named rows as retracted"
+      ;; Through the real events: the row leaves the queue AND its correlation id is left
+      ;; behind, so the enqueue ack can delete the turn the gateway is about to name.
+      (let [registry
+            (-> #'state/event-registry
+                deref
+                deref)
 
-       run
-       (fn [event-id db]
-         ((:fn (get registry event-id)) db [event-id :a]))
+            run
+            (fn [event-id db]
+              ((:fn (get registry event-id)) db [event-id :a]))
 
-       db
-       {:active-tab-id :a
-        :session {:id "s"}
-        :input (input/empty-input)
-        :input-history []
-        :pastes {}
-        :paste-counter 0
-        :pending-sends [{:text "take it back" :client-id "c-1" :mine? true :awaiting-ack? true}]}]
+            db
+            {:active-tab-id :a
+             :session {:id "s"}
+             :input (input/empty-input)
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :pending-sends
+             [{:text "take it back" :client-id "c-1" :mine? true :awaiting-ack? true}]}]
 
-      (doseq [event-id [:restore-pending-to-input :clear-pending-sends]]
-        (let [{db' :db} (run event-id db)]
-          (expect (= [] (vec (:pending-sends db'))))
-          (expect (= ["c-1"] (vec (:retracted-sends db'))))))))
+        (doseq [event-id [:restore-pending-to-input :clear-pending-sends]]
+          (let [{db' :db} (run event-id db)]
+            (expect (= [] (vec (:pending-sends db'))))
+            (expect (= ["c-1"] (vec (:retracted-sends db'))))))))
   (it "never mirrors a retracted submission, whichever source names its turn"
       ;; The ack of our own enqueue is not the only thing that names a turn taken back
       ;; mid-flight: the gateway broadcasts `turn.queued` for it too, and that broadcast
       ;; appended the cancelled message straight back as a "Queued" row whose turn then
       ;; ran. The rule lives in the ONE writer, so BOTH sources obey it.
-      (let
-        [sync-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :sync-queued-turn)
-             :fn)
+      (let [sync-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :sync-queued-turn)
+                :fn)
 
-         db
-         {:active-tab-id :b
-          :tab-locals {:a {:session {:id "s1"} :pending-sends [] :retracted-sends ["c-1"]}}}]
+            db
+            {:active-tab-id :b
+             :tab-locals {:a {:session {:id "s1"} :pending-sends [] :retracted-sends ["c-1"]}}}]
 
         (doseq [op [:add :update]]
-          (let
-            [{db' :db :keys [fx]}
-             (sync-fn db
-                      [:sync-queued-turn :a
-                       {:op op :turn-id "t-1" :client-id "c-1" :text "take it back"}])]
+          (let [{db' :db :keys [fx]}
+                (sync-fn db
+                         [:sync-queued-turn :a
+                          {:op op :turn-id "t-1" :client-id "c-1" :text "take it back"}])]
             (expect (= [] (vec (get-in db' [:tab-locals :a :pending-sends]))))
             ;; …and the record it stood for goes with it
             (expect (= [[:gateway-retract-queued "s1" "t-1"]] (vec fx)))))
         ;; a submission nobody retracted still mirrors normally
-        (let
-          [{db' :db :keys [fx]} (sync-fn
-                                  db
-                                  [:sync-queued-turn :a
-                                   {:op :add :turn-id "t-2" :client-id "c-2" :text "keep me"}])]
+        (let [{db' :db :keys [fx]} (sync-fn
+                                     db
+                                     [:sync-queued-turn :a
+                                      {:op :add :turn-id "t-2" :client-id "c-2" :text "keep me"}])]
           (expect (= ["keep me"] (mapv :text (get-in db' [:tab-locals :a :pending-sends]))))
           (expect (empty? fx)))))
   (it "never stages a retracted submission as an unsent row"
@@ -2878,16 +2773,15 @@
       ;; Nothing was ever registered server-side, so there is nothing to keep — staging it
       ;; resurrected a cancelled message as an `unsent` row that the local drain then SENT,
       ;; with the same text still sitting in the composer.
-      (let
-        [stage-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :stage-queued-locally)
-             :fn)
+      (let [stage-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :stage-queued-locally)
+                :fn)
 
-         db
-         {:active-tab-id :main :session {:id "c1"} :pending-sends [] :retracted-sends ["c-1"]}]
+            db
+            {:active-tab-id :main :session {:id "c1"} :pending-sends [] :retracted-sends ["c-1"]}]
 
         (expect (= []
                    (vec (:pending-sends (stage-fn db
@@ -2897,32 +2791,32 @@
       ;; `:queued-at-ms` can carry the GATEWAY's clock (a mirrored backlog row does), and a
       ;; NEGATIVE age is not "just now": reading it as inside the duplicate window swallowed
       ;; every deliberate repeat — the editor is cleared on Enter — until the clocks agreed.
-      (let
-        [enqueue-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :enqueue-message)
-             :fn)
+      (let [enqueue-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :enqueue-message)
+                :fn)
 
-         db
-         {:active-tab-id :b
-          :input-history []
-          :pastes {}
-          :paste-counter 0
-          :tab-locals {:a {:session {:id "a"}
-                           :loading? true
-                           :pending-sends [{:text "continue"
-                                            :client-id "c-1"
-                                            :turn-id "t-1"
-                                            :mine? true
-                                            :queued-at-ms (+ (System/currentTimeMillis) 3600000)}]
-                           :input-history []
-                           :pastes {}
-                           :paste-counter 0}}}
+            db
+            {:active-tab-id :b
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :tab-locals {:a {:session {:id "a"}
+                              :loading? true
+                              :pending-sends [{:text "continue"
+                                               :client-id "c-1"
+                                               :turn-id "t-1"
+                                               :mine? true
+                                               :queued-at-ms (+ (System/currentTimeMillis)
+                                                                3600000)}]
+                              :input-history []
+                              :pastes {}
+                              :paste-counter 0}}}
 
-         result
-         (enqueue-fn db [:enqueue-message "continue" :a])]
+            result
+            (enqueue-fn db [:enqueue-message "continue" :a])]
 
         (expect (= 1 (count (filterv #(= :gateway-enqueue (first %)) (:fx result)))))
         (expect (= ["continue" "continue"]
@@ -2931,21 +2825,20 @@
       ;; Deleting cannot help once the record left the queue — the daemon drained it into a
       ;; RUNNING turn while the retraction was on its way. Cancel is the only thing that
       ;; still means stop; a clean delete (or a record already gone) needs neither.
-      (let
-        [cancelled
-         (atom nil)
+      (let [cancelled
+            (atom nil)
 
-         retract!
-         #'state/retract-queued-turn!
+            retract!
+            #'state/retract-queued-turn!
 
-         with-delete
-         (fn [delete!]
-           (reset! cancelled nil)
-           (with-redefs-fn {#'vis/gateway-delete-queued-turn! delete!
-                            #'vis/gateway-cancel-turn! (fn [sid tid]
-                                                         (reset! cancelled [sid tid]))}
-             #(retract! "s1" "t-1"))
-           @cancelled)]
+            with-delete
+            (fn [delete!]
+              (reset! cancelled nil)
+              (with-redefs-fn {#'vis/gateway-delete-queued-turn! delete!
+                               #'vis/gateway-cancel-turn! (fn [sid tid]
+                                                            (reset! cancelled [sid tid]))}
+                #(retract! "s1" "t-1"))
+              @cancelled)]
 
         (expect (= ["s1" "t-1"]
                    (with-delete (fn [_ _]
@@ -2960,29 +2853,28 @@
       ;; "I cancel and write something else and I get it in the queue". A submission
       ;; during the cancel window is a FRESH intent: it must NOT be queued (and must
       ;; never fire :gateway-enqueue). The submit path keeps the text in the editor.
-      (let
-        [enqueue-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :enqueue-message)
-             :fn)
+      (let [enqueue-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :enqueue-message)
+                :fn)
 
-         db
-         {:active-tab-id :a
-          :input-history []
-          :pastes {}
-          :paste-counter 0
-          :tab-locals {:a {:session {:id "a"}
-                           :loading? true
-                           :cancelling? true
-                           :pending-sends []
-                           :input-history []
-                           :pastes {}
-                           :paste-counter 0}}}
+            db
+            {:active-tab-id :a
+             :input-history []
+             :pastes {}
+             :paste-counter 0
+             :tab-locals {:a {:session {:id "a"}
+                              :loading? true
+                              :cancelling? true
+                              :pending-sends []
+                              :input-history []
+                              :pastes {}
+                              :paste-counter 0}}}
 
-         result
-         (enqueue-fn db [:enqueue-message "typed during cancel" :a])]
+            result
+            (enqueue-fn db [:enqueue-message "typed during cancel" :a])]
 
         ;; Nothing lands in the queue …
         (expect (empty? (get-in result [:db :tab-locals :a :pending-sends])))
@@ -2990,50 +2882,48 @@
         (expect (not-any? #(= :gateway-enqueue (first %)) (:fx result)))
         (expect (some #(= :notify (first %)) (:fx result)))))
   (it "schedules queue drain as an effect after message commit"
-      (let
-        [message-received-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :message-received)
-             :fn)
+      (let [message-received-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :message-received)
+                :fn)
 
-         pending-id
-         "turn-1"
+            pending-id
+            "turn-1"
 
-         db
-         {:active-tab-id :main
-          :session {:id "c1"}
-          :loading? true
-          :messages [{:role :user :text "first" :client-turn-id pending-id}
-                     {:role :assistant :pending? true :client-turn-id pending-id}]
-          :progress {:iterations []}
-          :pending-sends [{:text "second" :pastes {} :paste-counter 0}]}
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :loading? true
+             :messages [{:role :user :text "first" :client-turn-id pending-id}
+                        {:role :assistant :pending? true :client-turn-id pending-id}]
+             :progress {:iterations []}
+             :pending-sends [{:text "second" :pastes {} :paste-counter 0}]}
 
-         {:keys [db fx]}
-         (message-received-fn db
-                              [:message-received :main [:ast {} [:p {} [:span {} "ok"]]]
-                               {:client-turn-id pending-id}])]
+            {:keys [db fx]}
+            (message-received-fn db
+                                 [:message-received :main [:ast {} [:p {} [:span {} "ok"]]]
+                                  {:client-turn-id pending-id}])]
 
         (expect (= [[:dispatch [:drain-pending :main]]] fx))
         (expect (false? (:loading? db)))
         (expect (= ["second"] (mapv :text (:pending-sends db))))))
   (it "drains one queued item without nested provider dispatch"
-      (let
-        [drain-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :drain-pending)
-             :fn)
+      (let [drain-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :drain-pending)
+                :fn)
 
-         db
-         {:active-tab-id :main
-          :pending-sends [{:text "second" :pastes {2 {:id 2 :content "p"}} :paste-counter 2}
-                          {:text "third" :pastes {} :paste-counter 0}]}
+            db
+            {:active-tab-id :main
+             :pending-sends [{:text "second" :pastes {2 {:id 2 :content "p"}} :paste-counter 2}
+                             {:text "third" :pastes {} :paste-counter 0}]}
 
-         {:keys [db fx]}
-         (drain-fn db [:drain-pending :main])]
+            {:keys [db fx]}
+            (drain-fn db [:drain-pending :main])]
 
         (expect (= [[:dispatch [:send-message "second" :main]]] fx))
         (expect (= ["third"] (mapv :text (:pending-sends db))))
@@ -3042,66 +2932,63 @@
 
 (defdescribe edit-queued-via-history-up-test
              (it "ArrowUp on an empty box pulls the newest queued message back for editing"
-                 (let
-                   [history-up-fn
-                    (-> #'state/event-registry
-                        deref
-                        deref
-                        (get :history-up)
-                        :fn)
+                 (let [history-up-fn
+                       (-> #'state/event-registry
+                           deref
+                           deref
+                           (get :history-up)
+                           :fn)
 
-                    db
-                    {:input-history ["prev-sent"]
-                     :input-history-index nil
-                     :input (input/empty-input)
-                     :pending-sends
-                     [{:text "first" :pastes {} :paste-counter 0}
-                      {:text "queued msg" :pastes {1 {:id 1 :content "p"}} :paste-counter 1}]}
+                       db
+                       {:input-history ["prev-sent"]
+                        :input-history-index nil
+                        :input (input/empty-input)
+                        :pending-sends
+                        [{:text "first" :pastes {} :paste-counter 0}
+                         {:text "queued msg" :pastes {1 {:id 1 :content "p"}} :paste-counter 1}]}
 
-                    result
-                    (:db (history-up-fn db [:history-up]))]
+                       result
+                       (:db (history-up-fn db [:history-up]))]
 
                    (expect (= "queued msg" (input/input->text (:input result))))
                    (expect (= ["first"] (mapv :text (:pending-sends result))))
                    (expect (= {1 {:id 1 :content "p"}} (:pastes result)))
                    (expect (= 1 (:paste-counter result)))))
              (it "ArrowUp with a non-empty box browses input-history, leaving the queue intact"
-                 (let
-                   [history-up-fn
-                    (-> #'state/event-registry
-                        deref
-                        deref
-                        (get :history-up)
-                        :fn)
+                 (let [history-up-fn
+                       (-> #'state/event-registry
+                           deref
+                           deref
+                           (get :history-up)
+                           :fn)
 
-                    db
-                    {:input-history ["prev-sent"]
-                     :input-history-index nil
-                     :input {:lines ["typing…"] :crow 0 :ccol 6}
-                     :pending-sends [{:text "queued msg" :pastes {} :paste-counter 0}]}
+                       db
+                       {:input-history ["prev-sent"]
+                        :input-history-index nil
+                        :input {:lines ["typing…"] :crow 0 :ccol 6}
+                        :pending-sends [{:text "queued msg" :pastes {} :paste-counter 0}]}
 
-                    result
-                    (:db (history-up-fn db [:history-up]))]
+                       result
+                       (:db (history-up-fn db [:history-up]))]
 
                    (expect (= "prev-sent" (input/input->text (:input result))))
                    (expect (= ["queued msg"] (mapv :text (:pending-sends result))))))
              (it "ArrowUp with an empty box and empty queue browses input-history"
-                 (let
-                   [history-up-fn
-                    (-> #'state/event-registry
-                        deref
-                        deref
-                        (get :history-up)
-                        :fn)
+                 (let [history-up-fn
+                       (-> #'state/event-registry
+                           deref
+                           deref
+                           (get :history-up)
+                           :fn)
 
-                    db
-                    {:input-history ["prev-sent"]
-                     :input-history-index nil
-                     :input (input/empty-input)
-                     :pending-sends []}
+                       db
+                       {:input-history ["prev-sent"]
+                        :input-history-index nil
+                        :input (input/empty-input)
+                        :pending-sends []}
 
-                    result
-                    (:db (history-up-fn db [:history-up]))]
+                       result
+                       (:db (history-up-fn db [:history-up]))]
 
                    (expect (= "prev-sent" (input/input->text (:input result)))))))
 
@@ -3126,18 +3013,17 @@
                   [{:role :user :text "first prompt"} {:role :assistant :text "answer"}
                    {:role :user :text "/reload"} {:role :user :text "second prompt"}]))))
   (it "a recalled line keeps the slash overlay shut"
-      (let
-        [event-fn
-         (fn [id]
-           (:fn (get @@#'state/event-registry id)))
+      (let [event-fn
+            (fn [id]
+              (:fn (get @@#'state/event-registry id)))
 
-         recalled
-         (:db ((event-fn :history-up)
-                {:input-history ["/reload"]
-                 :input-history-index nil
-                 :input (input/empty-input)
-                 :pending-sends []}
-                [:history-up]))]
+            recalled
+            (:db ((event-fn :history-up)
+                   {:input-history ["/reload"]
+                    :input-history-index nil
+                    :input (input/empty-input)
+                    :pending-sends []}
+                   [:history-up]))]
 
         (expect (= "/reload" (input/input->text (:input recalled))))
         (expect (true? (:slash-command-hidden? recalled)))
@@ -3156,19 +3042,18 @@
         (expect (false? (:slash-command-hidden?
                           ((event-fn :history-down) recalled [:history-down]))))))
   (it "ArrowUp keeps walking the ring past a recalled command"
-      (let
-        [history-up
-         (:fn (get @@#'state/event-registry :history-up))
+      (let [history-up
+            (:fn (get @@#'state/event-registry :history-up))
 
-         first-up
-         (:db (history-up {:input-history ["older prompt" "/reload"]
-                           :input-history-index nil
-                           :input (input/empty-input)
-                           :pending-sends []}
-                          [:history-up]))
+            first-up
+            (:db (history-up {:input-history ["older prompt" "/reload"]
+                              :input-history-index nil
+                              :input (input/empty-input)
+                              :pending-sends []}
+                             [:history-up]))
 
-         second-up
-         (:db (history-up first-up [:history-up]))]
+            second-up
+            (:db (history-up first-up [:history-up]))]
 
         (expect (= "/reload" (input/input->text (:input first-up))))
         (expect (= "older prompt" (input/input->text (:input second-up)))))))
@@ -3178,111 +3063,105 @@
       ;; Regression: cancelling a turn with a queued backlog used to
       ;; auto-send (drain) the next message — and that auto-sent turn
       ;; couldn't be cancelled. A cancel must instead restore the queue.
-      (let
-        [message-received-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :message-received)
-             :fn)
+      (let [message-received-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :message-received)
+                :fn)
 
-         pending-id
-         "turn-1"
+            pending-id
+            "turn-1"
 
-         db
-         {:active-tab-id :main
-          :session {:id "c1"}
-          :loading? true
-          :messages [{:role :user :text "first" :client-turn-id pending-id}
-                     {:role :assistant :pending? true :client-turn-id pending-id}]
-          :progress {:iterations []}
-          :submitted-input {:text "first" :pastes {} :paste-counter 0}
-          :pending-sends [{:text "second" :pastes {} :paste-counter 0 :client-id "c1" :mine? true}]}
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :loading? true
+             :messages [{:role :user :text "first" :client-turn-id pending-id}
+                        {:role :assistant :pending? true :client-turn-id pending-id}]
+             :progress {:iterations []}
+             :submitted-input {:text "first" :pastes {} :paste-counter 0}
+             :pending-sends
+             [{:text "second" :pastes {} :paste-counter 0 :client-id "c1" :mine? true}]}
 
-         {:keys [db fx]}
-         (message-received-fn db
-                              [:message-received :main
-                               [:ast {} [:p {} [:span {} "Cancelled by user."]]]
-                               {:status :cancelled :client-turn-id pending-id}])]
+            {:keys [db fx]}
+            (message-received-fn db
+                                 [:message-received :main
+                                  [:ast {} [:p {} [:span {} "Cancelled by user."]]]
+                                  {:status :cancelled :client-turn-id pending-id}])]
 
         (expect (= [[:dispatch [:restore-pending-to-input :main]]] fx))
         (expect (false? (:loading? db)))
         ;; queue survives the commit; the follow-up fx clears + restores it.
         (expect (= ["second"] (mapv :text (:pending-sends db))))))
-  (it
-    "restores every pristine editor shape without losing submitted metadata"
-    (let
-      [restore-fns
-       [#'state/restore-submitted-input #'state/restore-editor-only]
+  (it "restores every pristine editor shape without losing submitted metadata"
+      (let [restore-fns
+            [#'state/restore-submitted-input #'state/restore-editor-only]
 
-       submissions
-       [{:text "first" :pastes {1 "old paste"} :paste-counter 1}
-        {:text "line one\nline two" :pastes {2 "multi"} :paste-counter 7} {:text "defaults"}]]
+            submissions
+            [{:text "first" :pastes {1 "old paste"} :paste-counter 1}
+             {:text "line one\nline two" :pastes {2 "multi"} :paste-counter 7} {:text "defaults"}]]
 
-      (doseq
-        [restore
-         restore-fns
+        (doseq [restore
+                restore-fns
 
-         submitted
-         submissions]
+                submitted
+                submissions]
 
-        (let
-          [db (restore {:input (input/empty-input)
-                        :pastes {99 "stale"}
-                        :paste-counter 99
-                        :input-history-index 4
-                        :input-history-draft "stale draft"
-                        :slash-command-index 3
-                        :slash-command-hidden? true
-                        :submitted-input submitted}
-                       submitted)]
-          (expect (= (:text submitted) (input/input->text (:input db))))
-          (expect (= (or (:pastes submitted) {}) (:pastes db)))
-          (expect (= (or (:paste-counter submitted) 0) (:paste-counter db)))
-          (expect (nil? (:input-history-index db)))
-          (expect (nil? (:input-history-draft db)))
-          (expect (= 0 (:slash-command-index db)))
-          (expect (false? (:slash-command-hidden? db)))
-          (expect (nil? (:submitted-input db)))))))
+          (let [db (restore {:input (input/empty-input)
+                             :pastes {99 "stale"}
+                             :paste-counter 99
+                             :input-history-index 4
+                             :input-history-draft "stale draft"
+                             :slash-command-index 3
+                             :slash-command-hidden? true
+                             :submitted-input submitted}
+                            submitted)]
+            (expect (= (:text submitted) (input/input->text (:input db))))
+            (expect (= (or (:pastes submitted) {}) (:pastes db)))
+            (expect (= (or (:paste-counter submitted) 0) (:paste-counter db)))
+            (expect (nil? (:input-history-index db)))
+            (expect (nil? (:input-history-draft db)))
+            (expect (= 0 (:slash-command-index db)))
+            (expect (false? (:slash-command-hidden? db)))
+            (expect (nil? (:submitted-input db)))))))
   (it
     "never overwrites any non-pristine draft while cancellation settles"
-    (let
-      [submitted
-       {:text "old prompt" :pastes {1 "old paste"} :paste-counter 1}
+    (let [submitted
+          {:text "old prompt" :pastes {1 "old paste"} :paste-counter 1}
 
-       visible-submitted
-       (input/expand-paste-placeholders (:text submitted) (:pastes submitted))
+          visible-submitted
+          (input/expand-paste-placeholders (:text submitted) (:pastes submitted))
 
-       messages
-       [{:role :user :text "old prompt"} {:role :assistant :pending? true}]
+          messages
+          [{:role :user :text "old prompt"} {:role :assistant :pending? true}]
 
-       drafts
-       [(reduce input/insert-char (input/empty-input) "x")
-        (reduce input/insert-char (input/empty-input) "   ") {:lines ["" ""] :crow 1 :ccol 0}
-        {:lines ["new" "draft"] :crow 0 :ccol 1}
-        (reduce input/insert-char (input/empty-input) "[Paste #9]")]
+          drafts
+          [(reduce input/insert-char (input/empty-input) "x")
+           (reduce input/insert-char (input/empty-input) "   ") {:lines ["" ""] :crow 1 :ccol 0}
+           {:lines ["new" "draft"] :crow 0 :ccol 1}
+           (reduce input/insert-char (input/empty-input) "[Paste #9]")]
 
-       editor-meta
-       {:pastes {9 "fresh paste"}
-        :paste-counter 9
-        :input-history-index 2
-        :input-history-draft "new history draft"
-        :slash-command-index 5
-        :slash-command-hidden? true}
+          editor-meta
+          {:pastes {9 "fresh paste"}
+           :paste-counter 9
+           :input-history-index 2
+           :input-history-draft "new history draft"
+           :slash-command-index 5
+           :slash-command-hidden? true}
 
-       editor-keys
-       [:input :pastes :paste-counter :input-history-index :input-history-draft :slash-command-index
-        :slash-command-hidden?]]
+          editor-keys
+          [:input :pastes :paste-counter :input-history-index :input-history-draft
+           :slash-command-index :slash-command-hidden?]]
 
       (doseq [draft drafts]
-        (let
-          [base (merge {:input draft
-                        :messages messages
-                        :input-history ["older" visible-submitted]
-                        :submitted-input submitted}
-                       editor-meta)
-           dropped (#'state/restore-submitted-input base submitted)
-           retained (#'state/restore-editor-only base submitted)]
+        (let [base (merge {:input draft
+                           :messages messages
+                           :input-history ["older" visible-submitted]
+                           :submitted-input submitted}
+                          editor-meta)
+              dropped (#'state/restore-submitted-input base submitted)
+              retained (#'state/restore-editor-only base submitted)]
 
           (expect (= (select-keys base editor-keys) (select-keys dropped editor-keys)))
           (expect (= (select-keys base editor-keys) (select-keys retained editor-keys)))
@@ -3293,20 +3172,19 @@
           (expect (= ["older"] (:input-history dropped)))
           (expect (= ["older" visible-submitted] (:input-history retained)))))))
   (it "restoration cleanup is independent from whether a newer draft wins"
-      (let
-        [submitted
-         {:text "old" :pastes {} :paste-counter 0}
+      (let [submitted
+            {:text "old" :pastes {} :paste-counter 0}
 
-         messages
-         [{:role :user :text "old"} {:role :assistant :pending? true}]
+            messages
+            [{:role :user :text "old"} {:role :assistant :pending? true}]
 
-         base
-         {:messages messages
-          :loading? true
-          :cancelling? true
-          :turn-start-ms 123
-          :input-history ["keep" "old"]
-          :submitted-input submitted}]
+            base
+            {:messages messages
+             :loading? true
+             :cancelling? true
+             :turn-start-ms 123
+             :input-history ["keep" "old"]
+             :submitted-input submitted}]
 
         (doseq [draft [(input/empty-input) (reduce input/insert-char (input/empty-input) "new")]]
           (let [db (#'state/restore-submitted-input (assoc base :input draft) submitted)]
@@ -3320,36 +3198,35 @@
                        (input/input->text (:input db))))))))
   (it
     "an async FX ACK retries against and preserves many concurrent editor updates"
-    (let
-      [ack-id
-       ::blocking-ack-many-edits
+    (let [ack-id
+          ::blocking-ack-many-edits
 
-       edit-id
-       ::concurrent-edit-many
+          edit-id
+          ::concurrent-edit-many
 
-       effect-id
-       ::record-winning-edit-state
+          effect-id
+          ::record-winning-edit-state
 
-       entered
-       (promise)
+          entered
+          (promise)
 
-       release
-       (promise)
+          release
+          (promise)
 
-       attempts
-       (atom 0)
+          attempts
+          (atom 0)
 
-       effects
-       (atom [])
+          effects
+          (atom [])
 
-       old-db
-       @state/app-db
+          old-db
+          @state/app-db
 
-       registry
-       @#'state/event-registry
+          registry
+          @#'state/event-registry
 
-       fx-registry
-       @#'state/fx-registry]
+          fx-registry
+          @#'state/fx-registry]
 
       (swap! registry assoc
         ack-id
@@ -3383,36 +3260,35 @@
                       (reset! state/app-db old-db))))))
   (it
     "a pure-effect FX retries without reverting a concurrent edit and runs once"
-    (let
-      [fx-event-id
-       ::blocking-pure-effect
+    (let [fx-event-id
+          ::blocking-pure-effect
 
-       edit-id
-       ::edit-during-pure-effect
+          edit-id
+          ::edit-during-pure-effect
 
-       effect-id
-       ::record-pure-effect
+          effect-id
+          ::record-pure-effect
 
-       entered
-       (promise)
+          entered
+          (promise)
 
-       release
-       (promise)
+          release
+          (promise)
 
-       attempts
-       (atom 0)
+          attempts
+          (atom 0)
 
-       effects
-       (atom [])
+          effects
+          (atom [])
 
-       old-db
-       @state/app-db
+          old-db
+          @state/app-db
 
-       registry
-       @#'state/event-registry
+          registry
+          @#'state/event-registry
 
-       fx-registry
-       @#'state/fx-registry]
+          fx-registry
+          @#'state/fx-registry]
 
       (swap! registry assoc
         fx-event-id
@@ -3442,52 +3318,51 @@
                       (reset! state/app-db old-db))))))
   (it
     "two simultaneous cancellation ACKs merge with intervening typing"
-    (let
-      [ack-a
-       ::simultaneous-ack-a
+    (let [ack-a
+          ::simultaneous-ack-a
 
-       ack-b
-       ::simultaneous-ack-b
+          ack-b
+          ::simultaneous-ack-b
 
-       edit-id
-       ::edit-between-acks
+          edit-id
+          ::edit-between-acks
 
-       effect-id
-       ::record-simultaneous-ack
+          effect-id
+          ::record-simultaneous-ack
 
-       entered-a
-       (promise)
+          entered-a
+          (promise)
 
-       entered-b
-       (promise)
+          entered-b
+          (promise)
 
-       release
-       (promise)
+          release
+          (promise)
 
-       attempts-a
-       (atom 0)
+          attempts-a
+          (atom 0)
 
-       attempts-b
-       (atom 0)
+          attempts-b
+          (atom 0)
 
-       effects
-       (atom [])
+          effects
+          (atom [])
 
-       old-db
-       @state/app-db
+          old-db
+          @state/app-db
 
-       registry
-       @#'state/event-registry
+          registry
+          @#'state/event-registry
 
-       fx-registry
-       @#'state/fx-registry
+          fx-registry
+          @#'state/fx-registry
 
-       handler
-       (fn [ack-key entered attempts]
-         {:type :fx
-          :fn (fn [db _]
-                (when (= 1 (swap! attempts inc)) (deliver entered true) @release)
-                {:db (assoc db ack-key true) :fx [[effect-id ack-key]]})})]
+          handler
+          (fn [ack-key entered attempts]
+            {:type :fx
+             :fn (fn [db _]
+                   (when (= 1 (swap! attempts inc)) (deliver entered true) @release)
+                   {:db (assoc db ack-key true) :fx [[effect-id ack-key]]})})]
 
       (swap! registry assoc
         ack-a
@@ -3500,12 +3375,11 @@
                (assoc db :draft "third prompt"))})
       (swap! fx-registry assoc effect-id #(swap! effects conj %))
       (reset! state/app-db {})
-      (let
-        [worker-a
-         (future (state/dispatch [ack-a]))
+      (let [worker-a
+            (future (state/dispatch [ack-a]))
 
-         worker-b
-         (future (state/dispatch [ack-b]))]
+            worker-b
+            (future (state/dispatch [ack-b]))]
 
         (try (expect (= true (deref entered-a 1000 ::timeout)))
              (expect (= true (deref entered-b 1000 ::timeout)))
@@ -3526,25 +3400,25 @@
                       (swap! fx-registry dissoc effect-id)
                       (reset! state/app-db old-db))))))
   (it "restore-pending-to-input appends queued prompts and deletes gateway records"
-      (let
-        [restore-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :restore-pending-to-input)
-             :fn)
+      (let [restore-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :restore-pending-to-input)
+                :fn)
 
-         db
-         {:active-tab-id :main
-          :session {:id "c1"}
-          :input (input/empty-input)
-          :pastes {}
-          :paste-counter 0
-          :pending-sends [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2" :mine? true}
-                          {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3" :mine? true}]}
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :input (input/empty-input)
+             :pastes {}
+             :paste-counter 0
+             :pending-sends
+             [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2" :mine? true}
+              {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3" :mine? true}]}
 
-         {:keys [db fx]}
-         (restore-fn db [:restore-pending-to-input :main])]
+            {:keys [db fx]}
+            (restore-fn db [:restore-pending-to-input :main])]
 
         (expect (= "second\n\nthird" (input/input->text (:input db))))
         (expect (empty? (:pending-sends db)))
@@ -3560,31 +3434,30 @@
       ;; during a cancel is a FRESH intent — it stays purely in the EDITOR (nothing
       ;; queued locally, nothing registered server-side) so the user re-sends it
       ;; cleanly once the cancel settles.
-      (let
-        [send-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :send-message)
-             :fn)
+      (let [send-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :send-message)
+                :fn)
 
-         db
-         {:active-tab-id :main
-          :session {:id "c1"}
-          :workspace {:workspace/root "."}
-          :loading? true
-          :cancelling? true
-          :input (input/empty-input)
-          :pastes {}
-          :paste-counter 0
-          :pending-sends []
-          :input-history []}
+            db
+            {:active-tab-id :main
+             :session {:id "c1"}
+             :workspace {:workspace/root "."}
+             :loading? true
+             :cancelling? true
+             :input (input/empty-input)
+             :pastes {}
+             :paste-counter 0
+             :pending-sends []
+             :input-history []}
 
-         {:keys [fx] cancelling-db :db}
-         (send-fn db [:send-message "second" :main])
+            {:keys [fx] cancelling-db :db}
+            (send-fn db [:send-message "second" :main])
 
-         {normal-fx :fx}
-         (send-fn (assoc db :cancelling? false) [:send-message "second" :main])]
+            {normal-fx :fx}
+            (send-fn (assoc db :cancelling? false) [:send-message "second" :main])]
 
         ;; cancel window: kept in the editor — NOTHING queued locally, NOTHING
         ;; registered server-side, and the user is told to resend.
@@ -3598,22 +3471,21 @@
       ;; never accepted the submission, so there is no server record to mirror and
       ;; nothing else would ever show the text again. Such a row has NO turn id -
       ;; that is what marks it locally owned.
-      (let
-        [stage-fn
-         (-> #'state/event-registry
-             deref
-             deref
-             (get :stage-queued-locally)
-             :fn)
+      (let [stage-fn
+            (-> #'state/event-registry
+                deref
+                deref
+                (get :stage-queued-locally)
+                :fn)
 
-         db
-         {:active-tab-id :main :session {:id "c1"} :pending-sends []}
+            db
+            {:active-tab-id :main :session {:id "c1"} :pending-sends []}
 
-         db'
-         (stage-fn db [:stage-queued-locally :main {:text "second" :client-id "c1c"}])
+            db'
+            (stage-fn db [:stage-queued-locally :main {:text "second" :client-id "c1c"}])
 
-         row
-         (first (:pending-sends db'))]
+            row
+            (first (:pending-sends db'))]
 
         (expect (= "second" (:text row)))
         (expect (nil? (:turn-id row)))
@@ -3626,17 +3498,15 @@
       ;; broadcast feeds, keyed by the same gateway turn id: whichever lands first
       ;; wins and the other changes nothing. An accepted-but-already-RUNNING turn
       ;; is not a queue row at all.
-      (with-redefs
-        [vis/gateway-submit-turn! (fn [_ opts]
-                                    {:turn {"turn_id" "t-7"
-                                            "status" "queued"
-                                            "request" (:request opts)
-                                            "idempotency_key" (:idempotency-key opts)}})]
+      (with-redefs [vis/gateway-submit-turn! (fn [_ opts]
+                                               {:turn {"turn_id" "t-7"
+                                                       "status" "queued"
+                                                       "request" (:request opts)
+                                                       "idempotency_key" (:idempotency-key opts)}})]
         (reset! state/app-db
           {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
-        (let
-          [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)
-           client-id (#'state/mint-client-id :main)]
+        (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)
+              client-id (#'state/mint-client-id :main)]
 
           (await-enqueue! (enqueue-fx
                             :main
@@ -3653,46 +3523,44 @@
           (state/dispatch [:sync-queued-turn :main
                            {:op :add :turn-id "t-7" :client-id client-id :text "second"}])
           (expect (= 1 (count (:pending-sends @state/app-db)))))))
-  (it "a queued image submit sends the COLLAPSED display copy, not the raw temp path"
-      ;; Regression: `:gateway-enqueue` sent only `:agent-text` (paste placeholders
-      ;; EXPANDED, so a pasted screenshot is a bare `/var/folders/…/clipboard-….png`).
-      ;; The gateway then stored that as the turn's request and every channel — this
-      ;; TUI's own transcript and the companion — painted the raw path. The collapsed
-      ;; `vis-image` copy must ride along as `:display-request`.
-      (let
-        [sent
-         (atom nil)
+  (it
+    "a queued image submit sends the COLLAPSED display copy, not the raw temp path"
+    ;; Regression: `:gateway-enqueue` sent only `:agent-text` (paste placeholders
+    ;; EXPANDED, so a pasted screenshot is a bare `/var/folders/…/clipboard-….png`).
+    ;; The gateway then stored that as the turn's request and every channel — this
+    ;; TUI's own transcript and the companion — painted the raw path. The collapsed
+    ;; `vis-image` copy must ride along as `:display-request`.
+    (let [sent
+          (atom nil)
 
-         preview
-         "\n````vis-image\n[Image #1: shot.png, 44KB]\n/tmp/shot.png\nimage/png\n\n44KB\n````\n"]
+          preview
+          "\n````vis-image\n[Image #1: shot.png, 44KB]\n/tmp/shot.png\nimage/png\n\n44KB\n````\n"]
 
-        (with-redefs
-          [vis/gateway-submit-turn!
-           (fn [_ opts]
-             (reset! sent opts)
-             {:turn {"turn_id" "t-9" "status" "queued" "request" (:request opts)}})]
-          (reset! state/app-db
-            {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
-          (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)]
-            (await-enqueue! (enqueue-fx :main
-                                        {:id "c1"}
-                                        {:text "look [Image #1: shot.png, 44KB]"
-                                         :preview-text preview
-                                         :agent-text "look \n/tmp/shot.png\n"
-                                         :client-id "x"
-                                         :mine? true}
-                                        nil
-                                        nil
-                                        {}
-                                        nil))
-            (expect (= preview (:display-request @sent)))
-            (expect (= "look \n/tmp/shot.png\n" (:request @sent)))
-            ;; and the queue row itself shows the collapsed copy
-            (expect (= preview (:preview-text (first (:pending-sends @state/app-db)))))))))
+      (with-redefs [vis/gateway-submit-turn!
+                    (fn [_ opts]
+                      (reset! sent opts)
+                      {:turn {"turn_id" "t-9" "status" "queued" "request" (:request opts)}})]
+        (reset! state/app-db
+          {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
+        (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)]
+          (await-enqueue! (enqueue-fx :main
+                                      {:id "c1"}
+                                      {:text "look [Image #1: shot.png, 44KB]"
+                                       :preview-text preview
+                                       :agent-text "look \n/tmp/shot.png\n"
+                                       :client-id "x"
+                                       :mine? true}
+                                      nil
+                                      nil
+                                      {}
+                                      nil))
+          (expect (= preview (:display-request @sent)))
+          (expect (= "look \n/tmp/shot.png\n" (:request @sent)))
+          ;; and the queue row itself shows the collapsed copy
+          (expect (= preview (:preview-text (first (:pending-sends @state/app-db)))))))))
   (it "an accepted turn the gateway STARTED is never mirrored as queued"
-      (with-redefs
-        [vis/gateway-submit-turn! (fn [_ _]
-                                    {:turn {"turn_id" "t-8" "status" "running"}})]
+      (with-redefs [vis/gateway-submit-turn! (fn [_ _]
+                                               {:turn {"turn_id" "t-8" "status" "running"}})]
         (reset! state/app-db
           {:session {:id "c1"} :active-tab-id :main :render-version 0 :pending-sends []})
         (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)]
@@ -3719,28 +3587,26 @@
       ;; while the request is still parked IS the contract, and a wall-clock budget for
       ;; it goes red on a loaded runner over a GC pause with nothing wrong.
       (flush-queue-io!)
-      (let
-        [release
-         (promise)
+      (let [release
+            (promise)
 
-         post-thread
-         (promise)
+            post-thread
+            (promise)
 
-         finished
-         (promise)]
+            finished
+            (promise)]
 
-        (with-redefs
-          [vis/gateway-submit-turn!
-           (fn [_ _]
-             (deliver post-thread (.getName (Thread/currentThread)))
-             ;; Bounded: an inline POST must fail the expectation below, never hang CI.
-             (deref release 10000 :timeout)
-             (deliver finished true)
-             {:turn {"turn_id" "t-slow" "status" "queued"}})
+        (with-redefs [vis/gateway-submit-turn!
+                      (fn [_ _]
+                        (deliver post-thread (.getName (Thread/currentThread)))
+                        ;; Bounded: an inline POST must fail the expectation below, never hang CI.
+                        (deref release 10000 :timeout)
+                        (deliver finished true)
+                        {:turn {"turn_id" "t-slow" "status" "queued"}})
 
-           vis/notify!
-           (fn [& _]
-             nil)]
+                      vis/notify!
+                      (fn [& _]
+                        nil)]
 
           (reset! state/app-db {:session {:id "c1"}
                                 :active-tab-id :main
@@ -3769,19 +3635,19 @@
       ;; left on the lane would otherwise spend an attempt against this stub.
       (flush-queue-io!)
       (let [calls (atom 0)]
-        (with-redefs
-          [vis/gateway-submit-turn! (fn [_ opts]
-                                      (if (= "cid" (:idempotency-key opts))
-                                        (if (= 1 (swap! calls inc))
-                                          (throw (java.net.ConnectException. "Connection refused"))
-                                          {:turn {"turn_id" "t-same"
-                                                  "status" "queued"
-                                                  "idempotency_key" (:idempotency-key opts)}})
-                                        ;; Someone else's submission: answer it as already RUNNING
-                                        ;; so the stray job mirrors no queue row of its own.
-                                        {:turn {"turn_id" "t-other" "status" "running"}}))
-           vis/notify! (fn [& _]
-                         nil)]
+        (with-redefs [vis/gateway-submit-turn!
+                      (fn [_ opts]
+                        (if (= "cid" (:idempotency-key opts))
+                          (if (= 1 (swap! calls inc))
+                            (throw (java.net.ConnectException. "Connection refused"))
+                            {:turn {"turn_id" "t-same"
+                                    "status" "queued"
+                                    "idempotency_key" (:idempotency-key opts)}})
+                          ;; Someone else's submission: answer it as already RUNNING
+                          ;; so the stray job mirrors no queue row of its own.
+                          {:turn {"turn_id" "t-other" "status" "running"}}))
+                      vis/notify! (fn [& _]
+                                    nil)]
 
           (reset! state/app-db {:session {:id "c1"}
                                 :active-tab-id :main
@@ -3804,9 +3670,8 @@
       ;; fx just returned when there is no session to POST to, that flag would stay set
       ;; forever: a row that says "Queued", never sends, and wedges every message queued
       ;; behind it. Staging locally is the only exit that keeps the queue alive.
-      (with-redefs
-        [vis/notify! (fn [& _]
-                       nil)]
+      (with-redefs [vis/notify! (fn [& _]
+                                  nil)]
         (reset! state/app-db
           {:session {}
            :active-tab-id :main
@@ -3830,30 +3695,28 @@
       ;; it — but neither can delete a gateway record whose turn id did not exist yet, so
       ;; the turn used to run anyway with nothing on screen that ever said it would. The
       ;; ack settles it through the ONE writer: no row, no turn.
-      (let
-        [deleted
-         (atom nil)
+      (let [deleted
+            (atom nil)
 
-         cancelled
-         (atom nil)]
+            cancelled
+            (atom nil)]
 
-        (with-redefs
-          [vis/gateway-submit-turn!
-           (fn [_ _]
-             {:turn {"turn_id" "t-gone" "status" "queued"}})
+        (with-redefs [vis/gateway-submit-turn!
+                      (fn [_ _]
+                        {:turn {"turn_id" "t-gone" "status" "queued"}})
 
-           vis/gateway-delete-queued-turn!
-           (fn [sid tid]
-             (reset! deleted [sid tid])
-             {"status" "deleted"})
+                      vis/gateway-delete-queued-turn!
+                      (fn [sid tid]
+                        (reset! deleted [sid tid])
+                        {"status" "deleted"})
 
-           vis/gateway-cancel-turn!
-           (fn [sid tid]
-             (reset! cancelled [sid tid]))
+                      vis/gateway-cancel-turn!
+                      (fn [sid tid]
+                        (reset! cancelled [sid tid]))
 
-           vis/notify!
-           (fn [& _]
-             nil)]
+                      vis/notify!
+                      (fn [& _]
+                        nil)]
 
           ;; the row is already gone: the user took the message back mid-round-trip
           (reset! state/app-db {:session {:id "c1"}
@@ -3884,15 +3747,14 @@
       ;; of queueing it. There is no queued record left to delete, and without the cancel
       ;; the message the user took back runs to completion anyway.
       (let [cancelled (atom nil)]
-        (with-redefs
-          [vis/gateway-submit-turn! (fn [_ _]
-                                      {:turn {"turn_id" "t-run" "status" "running"}})
-           vis/gateway-delete-queued-turn! (fn [_ _]
-                                             {"status" "not_found"})
-           vis/gateway-cancel-turn! (fn [sid tid]
-                                      (reset! cancelled [sid tid]))
-           vis/notify! (fn [& _]
-                         nil)]
+        (with-redefs [vis/gateway-submit-turn! (fn [_ _]
+                                                 {:turn {"turn_id" "t-run" "status" "running"}})
+                      vis/gateway-delete-queued-turn! (fn [_ _]
+                                                        {"status" "not_found"})
+                      vis/gateway-cancel-turn! (fn [sid tid]
+                                                 (reset! cancelled [sid tid]))
+                      vis/notify! (fn [& _]
+                                    nil)]
 
           (reset! state/app-db {:session {:id "c1"}
                                 :active-tab-id :main
@@ -3917,24 +3779,22 @@
       ;; server has it), and the drain is nudged: the turn we queued behind may have
       ;; finished DURING the failing round-trip, and its terminal — the only other
       ;; thing that pops the queue — has already passed, so nothing would ever send it.
-      (let
-        [sent
-         (atom [])
+      (let [sent
+            (atom [])
 
-         prev
-         (get @@#'state/fx-registry :session-turn)]
+            prev
+            (get @@#'state/fx-registry :session-turn)]
 
         (state/reg-fx :session-turn
                       (fn [_ _ text & _]
                         (swap! sent conj text)))
-        (try (with-redefs
-               [vis/gateway-submit-turn!
-                (fn [_ _]
-                  (throw (java.net.ConnectException. "refused")))
+        (try (with-redefs [vis/gateway-submit-turn!
+                           (fn [_ _]
+                             (throw (java.net.ConnectException. "refused")))
 
-                vis/notify!
-                (fn [& _]
-                  nil)]
+                           vis/notify!
+                           (fn [& _]
+                             nil)]
 
                (reset! state/app-db {:session {:id "c1"}
                                      :active-tab-id :main
@@ -3957,31 +3817,29 @@
       ;; One FIFO thread, not a thread per submit: an add and its delete may never
       ;; invert, so ordering is part of the fix — not a side effect of it.
       (let [seen (atom [])]
-        (with-redefs
-          [vis/gateway-submit-turn! (fn [_ opts]
-                                      (Thread/sleep 60)
-                                      (swap! seen conj (:request opts))
-                                      {:turn {"turn_id" (str "t-" (:request opts))
-                                              "status" "running"}})
-           vis/notify! (fn [& _]
-                         nil)]
+        (with-redefs [vis/gateway-submit-turn! (fn [_ opts]
+                                                 (Thread/sleep 60)
+                                                 (swap! seen conj (:request opts))
+                                                 {:turn {"turn_id" (str "t-" (:request opts))
+                                                         "status" "running"}})
+                      vis/notify! (fn [& _]
+                                    nil)]
 
           (reset! state/app-db {:session {:id "c1"}
                                 :active-tab-id :main
                                 :render-version 0
                                 :loading? true
                                 :pending-sends []})
-          (let
-            [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)
-             futs (mapv (fn [n]
-                          (enqueue-fx :main
-                                      {:id "c1"}
-                                      {:text n :agent-text n :client-id n :mine? true}
-                                      nil
-                                      nil
-                                      {}
-                                      nil))
-                        ["1" "2" "3"])]
+          (let [enqueue-fx (get @@#'state/fx-registry :gateway-enqueue)
+                futs (mapv (fn [n]
+                             (enqueue-fx :main
+                                         {:id "c1"}
+                                         {:text n :agent-text n :client-id n :mine? true}
+                                         nil
+                                         nil
+                                         {}
+                                         nil))
+                           ["1" "2" "3"])]
 
             (doseq [f futs]
               (await-enqueue! f))
@@ -4056,45 +3914,45 @@
              ;; pending throttled flushes so the freshest timeline wins.
              (it
                "a form-result dispatch cancels the stale reasoning flush; code is not wiped"
-               (let
-                 [make
-                  @#'state/make-progress-render-updater
+               (let [make
+                     @#'state/make-progress-render-updater
 
-                  dispatched
-                  (atom [])
+                     dispatched
+                     (atom [])
 
-                  scheduled
-                  (atom nil)
+                     scheduled
+                     (atom nil)
 
-                  now
-                  (atom 0)
+                     now
+                     (atom 0)
 
-                  fake-future
-                  (reify
-                    java.util.concurrent.Future
-                      (cancel [_ _] true)
-                      (isCancelled [_] false)
-                      (isDone [_] false)
-                      (get [_] nil)
-                      (get [_ _ _] nil))
+                     fake-future
+                     (reify
+                       java.util.concurrent.Future
+                         (cancel [_ _] true)
+                         (isCancelled [_] false)
+                         (isDone [_] false)
+                         (get [_] nil)
+                         (get [_ _ _] nil))
 
-                  schedule-fn
-                  (fn [task _delay]
-                    (reset! scheduled task)
-                    fake-future)
+                     schedule-fn
+                     (fn [task _delay]
+                       (reset! scheduled task)
+                       fake-future)
 
-                  update!
-                  (make (fn [[_ tl]]
-                          (swap! dispatched conj tl))
-                        (fn []
-                          @now)
-                        schedule-fn)
+                     update!
+                     (make (fn [[_ tl]]
+                             (swap! dispatched conj tl))
+                           (fn []
+                             @now)
+                           schedule-fn)
 
-                  thinking-only
-                  {:iterations [{:thinking "hm" :forms []}]}
+                     thinking-only
+                     {:iterations [{:thinking "hm" :forms []}]}
 
-                  with-code
-                  {:iterations [{:thinking "hm" :forms [{:code "git_status()" :success? true}]}]}]
+                     with-code
+                     {:iterations [{:thinking "hm"
+                                    :forms [{:code "git_status()" :success? true}]}]}]
 
                  ;; 1) reasoning fires immediately (first chunk, due)
                  (reset! now 0)
@@ -4304,14 +4162,13 @@
              ;; :attach-running-turn); a tab already mid-turn (its own submit, or an
              ;; earlier drain/attach) no-ops so nothing double-attaches.
              (it "attaches an idle tab to a sibling-started turn"
-                 (with-redefs
-                   [vis/worker-future
-                    (fn [_ _]
-                      (future nil))
+                 (with-redefs [vis/worker-future
+                               (fn [_ _]
+                                 (future nil))
 
-                    vis/cancellation-set-future!
-                    (fn [_ _]
-                      nil)]
+                               vis/cancellation-set-future!
+                               (fn [_ _]
+                                 nil)]
 
                    (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
                    (state/dispatch [:sibling-turn-started nil
@@ -4353,17 +4210,15 @@
 
 (defn- sync-terminal-without-timer!
   [chunk]
-  (with-redefs
-    [vis/worker-future (fn [_ _]
-                         (future nil))]
+  (with-redefs [vis/worker-future (fn [_ _]
+                                    (future nil))]
     (state/dispatch [:sync-turn-terminal nil chunk])))
 
 (defn- settle-marked-terminal!
   []
-  (let
-    [terminal (->> (:messages @state/app-db)
-                   (keep :terminal-pending)
-                   first)]
+  (let [terminal (->> (:messages @state/app-db)
+                      (keep :terminal-pending)
+                      first)]
     (state/dispatch [:settle-turn-terminal nil terminal])))
 
 (defdescribe
@@ -4373,12 +4228,11 @@
       (sync-terminal-without-timer! {:turn-id "other" :status "completed"})
       (expect (true? (:loading? @state/app-db)))
       (sync-terminal-without-timer! {:turn-id "t1" :status "completed"})
-      (let
-        [db
-         @state/app-db
+      (let [db
+            @state/app-db
 
-         marker
-         (get-in db [:messages 1 :terminal-pending])]
+            marker
+            (get-in db [:messages 1 :terminal-pending])]
 
         (expect (false? (:loading? db)))
         (expect (false? (:cancelling? db)))
@@ -4411,14 +4265,13 @@
       ;; :drain-pending has nothing left to fire) -> turn.started. That start
       ;; arrives while the tab is still busy, so it must be PARKED and replayed
       ;; once the terminal settles; dropping it loses the message entirely.
-      (with-redefs
-        [vis/worker-future
-         (fn [_ _]
-           (future nil))
+      (with-redefs [vis/worker-future
+                    (fn [_ _]
+                      (future nil))
 
-         vis/cancellation-set-future!
-         (fn [_ _]
-           nil)]
+                    vis/cancellation-set-future!
+                    (fn [_ _]
+                      nil)]
 
         (reset! state/app-db (terminal-test-db))
         (state/dispatch [:sibling-turn-started nil
@@ -4467,9 +4320,8 @@
       ;; `turn.completed` is deliberately LEAN (no :content), so the independent
       ;; terminal path used to fabricate a "Turn completed." notice and drop the
       ;; answer the user just watched stream. The live trace already carries it.
-      (let
-        [trace [{:id :iter-1 :assistant-prose "first pass"}
-                {:id :iter-2 :assistant-prose "final answer"}]]
+      (let [trace [{:id :iter-1 :assistant-prose "first pass"}
+                   {:id :iter-2 :assistant-prose "final answer"}]]
         (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
         (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
         (settle-marked-terminal!)
@@ -4478,9 +4330,8 @@
           (expect (= "prose" (get (first blocks) "type")))
           (expect (= "final answer" (get (first blocks) "markdown"))))))
   (it "a cross-channel completed turn keeps streamed content outside reasoning"
-      (let
-        [trace
-         [{:id :iter-1 :thinking "hidden reasoning" :content-stream "visible streamed answer"}]]
+      (let [trace
+            [{:id :iter-1 :thinking "hidden reasoning" :content-stream "visible streamed answer"}]]
         (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
         (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
         (settle-marked-terminal!)
@@ -4636,26 +4487,23 @@
 (defdescribe
   settled-answer-prose-dedupe-test
   (it "drops the trace copy of prose the settled answer already carries"
-      (let
-        [message (settle-worker-answer!
-                   (prose-only-trace)
-                   [{"id" "block_b879da55" "type" "prose" "markdown" answered-prose}])]
+      (let [message (settle-worker-answer!
+                      (prose-only-trace)
+                      [{"id" "block_b879da55" "type" "prose" "markdown" answered-prose}])]
         (expect (= answered-prose (get (first (:content message)) "markdown")))
         (expect (nil? (:content-stream (second (:traces message)))))))
   (it "paints that answer exactly once"
-      (let
-        [message (settle-worker-answer!
-                   (prose-only-trace)
-                   [{"id" "block_b879da55" "type" "prose" "markdown" answered-prose}])]
+      (let [message (settle-worker-answer!
+                      (prose-only-trace)
+                      [{"id" "block_b879da55" "type" "prose" "markdown" answered-prose}])]
         (expect (= 1 (answer-rows message answered-prose)))))
   (it "keeps iteration commentary that is not the answer"
-      (let
-        [trace
-         [{:id :iter-1 :assistant-prose "Checking the failing test first."}
-          {:id :iter-2 :forms [] :content-stream answered-prose}]
+      (let [trace
+            [{:id :iter-1 :assistant-prose "Checking the failing test first."}
+             {:id :iter-2 :forms [] :content-stream answered-prose}]
 
-         message
-         (settle-worker-answer! trace [{"id" "b1" "type" "prose" "markdown" answered-prose}])]
+            message
+            (settle-worker-answer! trace [{"id" "b1" "type" "prose" "markdown" answered-prose}])]
 
         (expect (= "Checking the failing test first." (:assistant-prose (first (:traces message)))))
         (expect (= 1 (answer-rows message answered-prose)))))
@@ -4700,11 +4548,10 @@
         (expect (nil? (:gateway-turn-id db)))
         (expect (= :completed (get-in db [:messages 1 :terminal-pending :status])))))
   (it "replays failed turn content from the liveness registry probe"
-      (let
-        [content [{"type" "error"
-                   "code" "provider_unavailable"
-                   "message" "Provider unavailable."
-                   "is_retryable" true}]]
+      (let [content [{"type" "error"
+                      "code" "provider_unavailable"
+                      "message" "Provider unavailable."
+                      "is_retryable" true}]]
         (reset! state/app-db (terminal-test-db))
         (liveness-tick!
           [{"turn_id" "t1" "status" "failed" "idempotency_key" "c1" "content" content}]
@@ -4783,11 +4630,10 @@
                                  100)
                  (expect (false? (:loading? @state/app-db))))
              (it "replays canonical content for a turn that failed while disconnected"
-                 (let
-                   [content [{"type" "error"
-                              "code" "provider_unavailable"
-                              "message" "Provider unavailable."
-                              "is_retryable" true}]]
+                 (let [content [{"type" "error"
+                                 "code" "provider_unavailable"
+                                 "message" "Provider unavailable."
+                                 "is_retryable" true}]]
                    (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
                    (gateway-ready!
                      (ready-chunk nil)
@@ -4849,9 +4695,8 @@
              ;; them fired turn.queued.deleted at the sibling still blocked on its own
              ;; queued turn, which synthesized a spurious CANCELLED terminal there.
              (it "restores authored entries, keeps sibling mirrors queued"
-                 (with-redefs
-                   [vis/gateway-delete-queued-turn! (fn [_ _]
-                                                      nil)]
+                 (with-redefs [vis/gateway-delete-queued-turn! (fn [_ _]
+                                                                 nil)]
                    (reset! state/app-db {:session {:id "s1"}
                                          :render-version 0
                                          :pending-sends
@@ -4924,24 +4769,23 @@
   ;; emits — no global app-db mutation. Closing the LAST idle view of a
   ;; session must release its daemon runtime + SSE listener; a session that
   ;; is still open elsewhere, or has a running/queued turn, is left alone.
-  (let
-    [close-tab
-     (fn [db tab-id]
-       ((-> #'state/event-registry
-            deref
-            deref
-            (get :close-tab)
-            :fn)
-         db
-         [:close-tab tab-id]))
+  (let [close-tab
+        (fn [db tab-id]
+          ((-> #'state/event-registry
+               deref
+               deref
+               (get :close-tab)
+               :fn)
+            db
+            [:close-tab tab-id]))
 
-     base
-     (fn [extra]
-       (merge {:tabs [{:id :main :label "Main" :active? true} {:id :tab-1 :label "T1"}]
-               :active-tab-id :main
-               :tab-locals {:tab-1 {:session {:id "other"}}}
-               :render-version 0}
-              extra))]
+        base
+        (fn [extra]
+          (merge {:tabs [{:id :main :label "Main" :active? true} {:id :tab-1 :label "T1"}]
+                  :active-tab-id :main
+                  :tab-locals {:tab-1 {:session {:id "other"}}}
+                  :render-version 0}
+                 extra))]
 
     (it "closing the last idle view releases its runtime + SSE listener"
         (let [{:keys [db fx]} (close-tab (base {:session {:id "sid-main"}}) :main)]
@@ -4951,20 +4795,18 @@
           ;; tab is really gone; the still-open sibling stays
           (expect (= [:tab-1] (mapv :id (:tabs db))))))
     (it "a session still open in another tab is NOT released"
-        (let
-          [{:keys [fx]} (close-tab (base {:session {:id "shared"}
-                                          :tab-locals {:tab-1 {:session {:id "shared"}}}})
-                                   :main)]
+        (let [{:keys [fx]} (close-tab (base {:session {:id "shared"}
+                                             :tab-locals {:tab-1 {:session {:id "shared"}}}})
+                                      :main)]
           (expect (= [] fx))))
     (it "a session with a running turn is left alone (option b)"
         (let [{:keys [fx]} (close-tab (base {:session {:id "busy"} :loading? true}) :main)]
           ;; Closing disowns the project membership, but a busy runtime stays alive.
           (expect (= [[:unassign-session-project "busy"]] fx))))
     (it "a session with queued/pending sends is left alone"
-        (let
-          [{:keys [fx]} (close-tab (base {:session {:id "queued"}
-                                          :pending-sends [{:text "later" :client-id "c-later"}]})
-                                   :main)]
+        (let [{:keys [fx]} (close-tab (base {:session {:id "queued"}
+                                             :pending-sends [{:text "later" :client-id "c-later"}]})
+                                      :main)]
           ;; Queued work prevents runtime/listener release; the authored-but-
           ;; unsubmitted sends are handed to the gateway (:submit-orphan-sends)
           ;; instead of being dropped with the closing tab's :tab-locals — carrying
@@ -4974,108 +4816,103 @@
                       [:submit-orphan-sends "queued" [{:text "later" :client-id "c-later"}]]]
                      fx))))
     (it "closing the last remaining tab is a no-op (no release)"
-        (let
-          [{:keys [db fx]} (close-tab {:tabs [{:id :main :active? true}]
-                                       :active-tab-id :main
-                                       :session {:id "solo"}
-                                       :tab-locals {}
-                                       :render-version 0}
-                                      :main)]
+        (let [{:keys [db fx]} (close-tab {:tabs [{:id :main :active? true}]
+                                          :active-tab-id :main
+                                          :session {:id "solo"}
+                                          :tab-locals {}
+                                          :render-version 0}
+                                         :main)]
           (expect (nil? fx))
           (expect (= [:main] (mapv :id (:tabs db))))))))
 
-(defdescribe
-  shell-bang-pending-test
-  ;; A `!`/`!&` shell-sugar turn runs LOCALLY with no provider round-trip, so its
-  ;; live placeholder must not claim "Sending request to provider…", and its
-  ;; settled bubble must not carry a model/provider footer. The TUI knows the
-  ;; submission is a bang at submit time, so it flavors the placeholder and marks
-  ;; the message `:slash?` (the same command marker a resumed `:tag :user-shell`
-  ;; turn gets), which `render/draw-*` uses to drop the footer.
-  (let
-    [shell-bang-command?
-     (deref #'state/shell-bang-command?)
+(defdescribe shell-bang-pending-test
+             ;; A `!`/`!&` shell-sugar turn runs LOCALLY with no provider round-trip, so its
+             ;; live placeholder must not claim "Sending request to provider…", and its
+             ;; settled bubble must not carry a model/provider footer. The TUI knows the
+             ;; submission is a bang at submit time, so it flavors the placeholder and marks
+             ;; the message `:slash?` (the same command marker a resumed `:tag :user-shell`
+             ;; turn gets), which `render/draw-*` uses to drop the footer.
+             (let [shell-bang-command?
+                   (deref #'state/shell-bang-command?)
 
-     pending-assistant-for
-     (deref #'state/pending-assistant-for)
+                   pending-assistant-for
+                   (deref #'state/pending-assistant-for)
 
-     replace-pending-assistant
-     (deref #'state/replace-pending-assistant)]
+                   replace-pending-assistant
+                   (deref #'state/replace-pending-assistant)]
 
-    (it "detects `!`/`!&` commands the same way the engine's parse-bang does"
-        (expect (true? (shell-bang-command? "!ls -la")))
-        (expect (true? (shell-bang-command? "!&tail -f x")))
-        (expect (true? (shell-bang-command? "   !grep foo")))
-        ;; A bare marker is ordinary prose (normal LLM turn), NOT a command.
-        (expect (false? (shell-bang-command? "!")))
-        (expect (false? (shell-bang-command? "!& ")))
-        (expect (false? (shell-bang-command? "hello world")))
-        (expect (false? (shell-bang-command? nil))))
-    (it "gives a bang submission a shell placeholder + the :slash? command marker"
-        (let [m (pending-assistant-for "!echo hi")]
-          (expect (true? (:pending? m)))
-          (expect (true? (:slash? m)))
-          (expect (= "Running shell command..." (get-in m [:content 0 "message"])))
-          ;; The zero-iteration live spinner reads this label instead of
-          ;; "Vis is calling the provider" — a bang turn makes NO provider call.
-          (expect (= "Running shell command" (:command-phase-label m)))))
-    (it "gives a REGISTERED slash command a command placeholder + the :slash? marker"
-        ;; A registered `/draft …` slash dispatches LOCALLY (no provider call), so its
-        ;; bubble must drop the model/provider footer exactly like a `!` shell turn.
-        ;; An UNKNOWN `/foo` (no registered root) falls through to template expansion
-        ;; or a normal LLM turn and legitimately keeps its footer; a pasted absolute
-        ;; path (`/var/…/shot.png …`) is prose, never a slash.
-        (with-redefs
-          [com.blockether.vis.core/registered-slashes
-           (fn []
-             [{:slash/name "draft-blank" :slash/parent []} {:slash/name "draft" :slash/parent []}
-              {:slash/name "abandon" :slash/parent ["draft"]}])]
-          (let
-            [blank (pending-assistant-for "/draft-blank empty-provider-list")
-             sub (pending-assistant-for "/draft abandon")
-             unk (pending-assistant-for "/nope do a thing")
-             path (pending-assistant-for "/var/folders/67/x/shot.png what is this")]
+               (it "detects `!`/`!&` commands the same way the engine's parse-bang does"
+                   (expect (true? (shell-bang-command? "!ls -la")))
+                   (expect (true? (shell-bang-command? "!&tail -f x")))
+                   (expect (true? (shell-bang-command? "   !grep foo")))
+                   ;; A bare marker is ordinary prose (normal LLM turn), NOT a command.
+                   (expect (false? (shell-bang-command? "!")))
+                   (expect (false? (shell-bang-command? "!& ")))
+                   (expect (false? (shell-bang-command? "hello world")))
+                   (expect (false? (shell-bang-command? nil))))
+               (it "gives a bang submission a shell placeholder + the :slash? command marker"
+                   (let [m (pending-assistant-for "!echo hi")]
+                     (expect (true? (:pending? m)))
+                     (expect (true? (:slash? m)))
+                     (expect (= "Running shell command..." (get-in m [:content 0 "message"])))
+                     ;; The zero-iteration live spinner reads this label instead of
+                     ;; "Vis is calling the provider" — a bang turn makes NO provider call.
+                     (expect (= "Running shell command" (:command-phase-label m)))))
+               (it "gives a REGISTERED slash command a command placeholder + the :slash? marker"
+                   ;; A registered `/draft …` slash dispatches LOCALLY (no provider call), so its
+                   ;; bubble must drop the model/provider footer exactly like a `!` shell turn.
+                   ;; An UNKNOWN `/foo` (no registered root) falls through to template expansion
+                   ;; or a normal LLM turn and legitimately keeps its footer; a pasted absolute
+                   ;; path (`/var/…/shot.png …`) is prose, never a slash.
+                   (with-redefs [com.blockether.vis.core/registered-slashes
+                                 (fn []
+                                   [{:slash/name "draft-blank" :slash/parent []}
+                                    {:slash/name "draft" :slash/parent []}
+                                    {:slash/name "abandon" :slash/parent ["draft"]}])]
+                     (let [blank (pending-assistant-for "/draft-blank empty-provider-list")
+                           sub (pending-assistant-for "/draft abandon")
+                           unk (pending-assistant-for "/nope do a thing")
+                           path (pending-assistant-for "/var/folders/67/x/shot.png what is this")]
 
-            (expect (true? (:slash? blank)))
-            (expect (= "Running command..." (get-in blank [:content 0 "message"])))
-            (expect (= "Running command" (:command-phase-label blank)))
-            (expect (true? (:slash? sub)))
-            (expect (nil? (:slash? unk)))
-            (expect (nil? (:slash? path))))))
-    (it "leaves a normal submission on the provider placeholder, no command marker"
-        (let [m (pending-assistant-for "summarize the repo")]
-          (expect (true? (:pending? m)))
-          (expect (nil? (:slash? m)))
-          (expect (= "Sending request to provider..." (get-in m [:content 0 "message"])))
-          ;; A normal turn DOES call the provider, so no override label.
-          (expect (nil? (:command-phase-label m)))))
-    (it "carries the :slash? command marker from the pending slot onto the settled bubble"
-        ;; The settled wire result carries no "slash" flag (dead live-path
-        ;; plumbing), so the command marker must survive the pending->settled swap
-        ;; or the live footer would reappear until the session is reopened.
-        (let
-          [msgs
-           [{:role :assistant :pending? true :slash? true :client-turn-id "t1"}]
+                       (expect (true? (:slash? blank)))
+                       (expect (= "Running command..." (get-in blank [:content 0 "message"])))
+                       (expect (= "Running command" (:command-phase-label blank)))
+                       (expect (true? (:slash? sub)))
+                       (expect (nil? (:slash? unk)))
+                       (expect (nil? (:slash? path))))))
+               (it "leaves a normal submission on the provider placeholder, no command marker"
+                   (let [m (pending-assistant-for "summarize the repo")]
+                     (expect (true? (:pending? m)))
+                     (expect (nil? (:slash? m)))
+                     (expect (= "Sending request to provider..." (get-in m [:content 0 "message"])))
+                     ;; A normal turn DOES call the provider, so no override label.
+                     (expect (nil? (:command-phase-label m)))))
+               (it
+                 "carries the :slash? command marker from the pending slot onto the settled bubble"
+                 ;; The settled wire result carries no "slash" flag (dead live-path
+                 ;; plumbing), so the command marker must survive the pending->settled swap
+                 ;; or the live footer would reappear until the session is reopened.
+                 (let [msgs
+                       [{:role :assistant :pending? true :slash? true :client-turn-id "t1"}]
 
-           settled
-           {:role :assistant :client-turn-id "t1" :text "done"}
+                       settled
+                       {:role :assistant :client-turn-id "t1" :text "done"}
 
-           out
-           (replace-pending-assistant msgs settled)]
+                       out
+                       (replace-pending-assistant msgs settled)]
 
-          (expect (true? (:slash? (first out)))))
-        ;; A normal turn's settled bubble is untouched (no marker leaks in).
-        (let
-          [msgs
-           [{:role :assistant :pending? true :client-turn-id "t2"}]
+                   (expect (true? (:slash? (first out)))))
+                 ;; A normal turn's settled bubble is untouched (no marker leaks in).
+                 (let [msgs
+                       [{:role :assistant :pending? true :client-turn-id "t2"}]
 
-           settled
-           {:role :assistant :client-turn-id "t2" :text "done"}
+                       settled
+                       {:role :assistant :client-turn-id "t2" :text "done"}
 
-           out
-           (replace-pending-assistant msgs settled)]
+                       out
+                       (replace-pending-assistant msgs settled)]
 
-          (expect (nil? (:slash? (first out))))))))
+                   (expect (nil? (:slash? (first out))))))))
 
 (defdescribe
   queue-mirror-gateway-owned-test
@@ -5122,9 +4959,8 @@
                        {:op :add :turn-id "t9" :client-id "c9" :text "anything"}])
       (expect (= [] (:pending-sends @state/app-db))))
   (it "seeds the attach backlog once, marking OUR rows by the echoed id"
-      (with-redefs
-        [vis/gateway-drain-idle! (fn [_]
-                                   nil)]
+      (with-redefs [vis/gateway-drain-idle! (fn [_]
+                                              nil)]
         (let [mine (#'state/mint-client-id "s1")]
           (reset! state/app-db {:session {:id "s1"}
                                 :active-tab-id "s1"
@@ -5148,9 +4984,8 @@
    word: when the delete does not land, the row is written back through the one
    `:sync-queued-turn` writer instead of hiding a turn that still auto-drains."
   (it "writes the row back when the delete never reached the gateway"
-      (with-redefs
-        [vis/gateway-delete-queued-turn! (fn [_ _]
-                                           (throw (ex-info "connection refused" {})))]
+      (with-redefs [vis/gateway-delete-queued-turn! (fn [_ _]
+                                                      (throw (ex-info "connection refused" {})))]
         (reset! state/app-db
           {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
         (await-enqueue! ((get @@#'state/fx-registry :gateway-delete-queued)
@@ -5165,9 +5000,9 @@
           (expect (true? (:mine? row))))))
   (it "keeps the row removed when the gateway says it is gone or already started"
       (doseq [status [404 409]]
-        (with-redefs
-          [vis/gateway-delete-queued-turn! (fn [_ _]
-                                             (throw (ex-info "nope" {:http-status status})))]
+        (with-redefs [vis/gateway-delete-queued-turn! (fn [_ _]
+                                                        (throw (ex-info "nope"
+                                                                        {:http-status status})))]
           (reset! state/app-db
             {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
           (await-enqueue! ((get @@#'state/fx-registry :gateway-delete-queued)
@@ -5177,9 +5012,8 @@
                             {:text "gone" :mine? true}))
           (expect (= [] (:pending-sends @state/app-db))))))
   (it "does nothing more when the delete succeeds"
-      (with-redefs
-        [vis/gateway-delete-queued-turn! (fn [_ _]
-                                           {"status" "deleted"})]
+      (with-redefs [vis/gateway-delete-queued-turn! (fn [_ _]
+                                                      {"status" "deleted"})]
         (reset! state/app-db
           {:session {:id "s1"} :active-tab-id "s1" :render-version 0 :pending-sends []})
         (await-enqueue! ((get @@#'state/fx-registry :gateway-delete-queued)
@@ -5393,15 +5227,14 @@
              (it "falls back to the resting prompt box when the frame has not published a layout"
                  (expect (= {:content-top 1 :prompt-h tr/prompt-rows} (state/band-anchor {}))))
              (it "keeps the band ABOVE the prompt however tall the prompt grew"
-                 (let
-                   [rows
-                    40
+                 (let [rows
+                       40
 
-                    {:keys [content-top prompt-h]}
-                    (state/band-anchor {:layout {:messages-top 4 :input-h 7}})
+                       {:keys [content-top prompt-h]}
+                       (state/band-anchor {:layout {:messages-top 4 :input-h 7}})
 
-                    {:keys [hint-row min-row]}
-                    (tr/band-region 80 rows content-top prompt-h)]
+                       {:keys [hint-row min-row]}
+                       (tr/band-region 80 rows content-top prompt-h)]
 
                    ;; the band's LAST row (its hint bar) still sits above the input box
                    (expect (< (long hint-row) (- rows (long prompt-h))))
@@ -5415,13 +5248,11 @@
 ;; all. The toggle is deleted; what follows pins the MODE that replaced it.
 (defdescribe
   voice-conversation-test
-  (let
-    [ev (fn [id]
-          (:fn (get @@#'state/event-registry id)))]
+  (let [ev (fn [id]
+             (:fn (get @@#'state/event-registry id)))]
     (it "arms the tab it was pressed on, and the banner says so"
-        (with-redefs
-          [vis/notify! (fn [& _]
-                         nil)]
+        (with-redefs [vis/notify! (fn [& _]
+                                    nil)]
           (reset! state/app-db {:active-tab-id :main
                                 :tabs [{:id :main :active? true}]
                                 :channel-status {}
@@ -5433,42 +5264,41 @@
           (state/dispatch [:toggle-voice-conversation])
           (expect (false? (:voice-conversation? @state/app-db)))
           (expect (nil? (get-in @state/app-db [:channel-status :voice/conversation])))))
-    (it
-      "silences the answer being spoken the moment the mode is switched off"
-      (let
-        [toggle-fn (ev :toggle-voice-conversation)
-         armed {:active-tab-id :main :tabs [{:id :main :active? true}] :voice-conversation? true}]
+    (it "silences the answer being spoken the moment the mode is switched off"
+        (let [toggle-fn (ev :toggle-voice-conversation)
+              armed
+              {:active-tab-id :main :tabs [{:id :main :active? true}] :voice-conversation? true}]
 
-        (expect (some #(= [:stop-speaking] %) (:fx (toggle-fn armed [:toggle-voice-conversation]))))
-        (expect (not-any? #(= [:stop-speaking] %)
-                          (:fx (toggle-fn (assoc armed :voice-conversation? false)
-                                          [:toggle-voice-conversation]))))))
+          (expect (some #(= [:stop-speaking] %)
+                        (:fx (toggle-fn armed [:toggle-voice-conversation]))))
+          (expect (not-any? #(= [:stop-speaking] %)
+                            (:fx (toggle-fn (assoc armed :voice-conversation? false)
+                                            [:toggle-voice-conversation]))))))
     (it "belongs to ONE conversation: a background tab never inherits it"
         ;; `empty-tab-state` must carry the key. `db-for-tab` only MERGES a snapshot
         ;; over the root, so a key missing there hands the ACTIVE tab's arming to
         ;; every other tab - and every tab would speak.
-        (let
-          [db {:active-tab-id :main
-               :tabs [{:id :main :active? true} {:id :other}]
-               :voice-conversation? true
-               :tab-locals {:other {:session {:id "s2"}}}}]
+        (let [db {:active-tab-id :main
+                  :tabs [{:id :main :active? true} {:id :other}]
+                  :voice-conversation? true
+                  :tab-locals {:other {:session {:id "s2"}}}}]
           (expect (false? (boolean (:voice-conversation? (#'state/db-for-tab db :other)))))))
     (it "speaks a finished answer on an armed tab, and only a real answer"
-        (let
-          [message-fn (ev :message-received)
-           armed {:active-tab-id :main
-                  :tabs [{:id :main :active? true}]
-                  :session {:id "s1"}
-                  :input (input/empty-input)
-                  :loading? true
-                  :messages [{:role :user :text "read me the plan"}
-                             {:role :assistant :pending? true}]
-                  :progress {:iterations []}
-                  :voice-conversation? true}
-           answer [:ast {} [:p {} [:span {} "the plan is two phases"]]]
-           fx-ids (fn [db completion]
-                    (set (map first
-                              (:fx (message-fn db [:message-received :main answer completion])))))]
+        (let [message-fn (ev :message-received)
+              armed {:active-tab-id :main
+                     :tabs [{:id :main :active? true}]
+                     :session {:id "s1"}
+                     :input (input/empty-input)
+                     :loading? true
+                     :messages [{:role :user :text "read me the plan"}
+                                {:role :assistant :pending? true}]
+                     :progress {:iterations []}
+                     :voice-conversation? true}
+              answer [:ast {} [:p {} [:span {} "the plan is two phases"]]]
+              fx-ids (fn [db completion]
+                       (set (map first
+                                 (:fx (message-fn db
+                                                  [:message-received :main answer completion])))))]
 
           (expect (contains? (fx-ids armed {:status :completed}) :speak-reply))
           ;; A cancel or a failure is a VERDICT for the eye, not an answer to what was
@@ -5479,15 +5309,14 @@
                                           {:status :completed})
                                   :speak-reply)))))
     (it "sends what the microphone heard instead of waiting for Enter"
-        (let
-          [external-fn (ev :external-input)
-           armed {:active-tab-id :main
-                  :tabs [{:id :main :active? true}]
-                  :session {:id "s1"}
-                  :input (input/empty-input)
-                  :voice-conversation? true}
-           fx (fn [db source]
-                (:fx (external-fn db [:external-input :append "read me the plan" nil source])))]
+        (let [external-fn (ev :external-input)
+              armed {:active-tab-id :main
+                     :tabs [{:id :main :active? true}]
+                     :session {:id "s1"}
+                     :input (input/empty-input)
+                     :voice-conversation? true}
+              fx (fn [db source]
+                   (:fx (external-fn db [:external-input :append "read me the plan" nil source])))]
 
           (expect (= [[:dispatch [:send-message "read me the plan" :main]]
                       [:dispatch [:reset-input]]]

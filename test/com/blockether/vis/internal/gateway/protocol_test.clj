@@ -27,18 +27,16 @@
     (is (= 2 protocol/min-client-protocol))
     (is (= 2 protocol/min-gateway-protocol)))
   (testing "a gateway rejects an explicitly too-old client"
-    (let
-      [verdict
-       (protocol/verdict
-         {:gateway-protocol 2 :gateway-min-client 2 :client-protocol 1 :client-min-gateway 1})]
+    (let [verdict
+          (protocol/verdict
+            {:gateway-protocol 2 :gateway-min-client 2 :client-protocol 1 :client-min-gateway 1})]
       (is (false? (:is-compatible verdict)))
       (is (= "client-too-old" (:reason verdict)))
       (is (= "client" (:upgrade verdict)))))
   (testing "a client rejects an explicitly too-old gateway"
-    (let
-      [verdict
-       (protocol/verdict
-         {:gateway-protocol 1 :gateway-min-client 1 :client-protocol 2 :client-min-gateway 2})]
+    (let [verdict
+          (protocol/verdict
+            {:gateway-protocol 1 :gateway-min-client 1 :client-protocol 2 :client-min-gateway 2})]
       (is (false? (:is-compatible verdict)))
       (is (= "gateway-too-old" (:reason verdict)))
       (is (= "gateway" (:upgrade verdict)))))
@@ -55,9 +53,8 @@
                                        :client-min-gateway 2}))))))
 
 (deftest client-records-the-nested-health-handshake-test
-  (let
-    [handshake-atom
-     @(client-var 'gateway-handshake*)
+  (let [handshake-atom
+        @(client-var 'gateway-handshake*)
 
         previous
         @handshake-atom

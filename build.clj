@@ -84,12 +84,11 @@
    and no reader takes a version from here. `<commit>` carries a `-dirty` suffix
    for a worktree with uncommitted changes and is `unknown` where history is
    unavailable. `<track>` is one of `release-tracks`, which owns that vocabulary."
-  (delay (let
-           [commit
-            (or (git-line "rev-parse HEAD") (System/getenv "VIS_BUILD_COMMIT") "unknown")
+  (delay (let [commit
+               (or (git-line "rev-parse HEAD") (System/getenv "VIS_BUILD_COMMIT") "unknown")
 
-            dirty?
-            (some? (git-line "status --porcelain"))]
+               dirty?
+               (some? (git-line "status --porcelain"))]
 
            (str/join " "
                      [version (if dirty? (str commit "-dirty") commit) (release-track)
@@ -159,15 +158,14 @@
   "All build artifacts for a single package live under
    `target/<short-name>/`."
   [{:keys [lib]}]
-  (let
-    [short
-     (name lib)
+  (let [short
+        (name lib)
 
-     cls-dir
-     (str "target/" short "/classes")
+        cls-dir
+        (str "target/" short "/classes")
 
-     jar-file
-     (format "target/%s/%s-%s.jar" short short version)]
+        jar-file
+        (format "target/%s/%s-%s.jar" short short version)]
 
     {:class-dir cls-dir :jar-file jar-file}))
 
@@ -219,10 +217,9 @@
 
 (defn- read-package-deps
   [dir & {:keys [publish?] :or {publish? false}}]
-  (let
-    [edn (-> (str dir "/deps.edn")
-             slurp
-             read-string)]
+  (let [edn (-> (str dir "/deps.edn")
+                slurp
+                read-string)]
     (cond-> edn
       (:deps edn)
       (update :deps #(prepare-package-deps dir publish? %))
@@ -244,12 +241,11 @@
 
 (defn- src-dirs
   [{:keys [dir]}]
-  (let
-    [src
-     (str dir "/src")
+  (let [src
+        (str dir "/src")
 
-     res
-     (str dir "/resources")]
+        res
+        (str dir "/resources")]
 
     (cond-> [src]
       (.exists (io/file res))
@@ -271,15 +267,14 @@
 
 (defn- build-one!
   [{:keys [lib] :as pkg}]
-  (let
-    [{:keys [class-dir jar-file]}
-     (target-paths pkg)
+  (let [{:keys [class-dir jar-file]}
+        (target-paths pkg)
 
-     basis
-     (package-basis pkg)
+        basis
+        (package-basis pkg)
 
-     srcs
-     (src-dirs pkg)]
+        srcs
+        (src-dirs pkg)]
 
     (b/delete {:path (str "target/" (name lib))})
     (write-package-pom! pkg class-dir basis)
@@ -329,9 +324,8 @@
   has been installed locally so a fresh release can resolve same-version sibling
   artifacts before they exist on Clojars."
   [opts]
-  (let
-    [built (doall (for [pkg (deploy-build-order (selected-packages opts))]
-                    (do (println "[" (name (:lib pkg)) "] build") (build-one! pkg))))]
+  (let [built (doall (for [pkg (deploy-build-order (selected-packages opts))]
+                       (do (println "[" (name (:lib pkg)) "] build") (build-one! pkg))))]
     (doseq [{:keys [pkg lib class-dir jar-file]} built]
       (println "[" (name lib) "] deploy")
       (write-package-pom! pkg class-dir (package-publish-basis pkg))
@@ -385,12 +379,11 @@
    Resolve the concrete launcher from GRAALVM_HOME / JAVA_HOME
    (…/bin/native-image); fall back to the bare name on PATH."
   []
-  (let
-    [home
-     (or (System/getenv "GRAALVM_HOME") (System/getenv "JAVA_HOME"))
+  (let [home
+        (or (System/getenv "GRAALVM_HOME") (System/getenv "JAVA_HOME"))
 
-     launcher
-     (when home (io/file home "bin" "native-image"))]
+        launcher
+        (when home (io/file home "bin" "native-image"))]
 
     (if (and launcher (.isFile launcher)) (.getAbsolutePath launcher) "native-image")))
 
@@ -402,8 +395,8 @@
            (when (.isFile f)
              (into {}
                    (keep (fn [line]
-                           (when-let
-                             [[_ k v] (re-matches #"\s*([A-Z0-9_]+)=\"?([^\"#]*)\"?\s*" line)]
+                           (when-let [[_ k v] (re-matches #"\s*([A-Z0-9_]+)=\"?([^\"#]*)\"?\s*"
+                                                          line)]
                              [k (str/trim v)])))
                    (str/split-lines (slurp f)))))))
 
@@ -426,19 +419,17 @@
                            ".\n  Move GRAAL_MAX_VERSION deliberately, or set "
                            "GRAAL_PIN_LOCKED=\"false\" — see .graalvm-version.")
                       {:locked GRAAL_MAX_VERSION :got GRAAL_VERSION})))
-    (let
-      [bad (into []
-                 (comp (filter #(str/includes? (str %) "org.graalvm."))
-                       (keep (fn [form]
-                               (let
-                                 [sym (first form)
-                                  v (-> form
-                                        second
-                                        :mvn/version)]
+    (let [bad (into []
+                    (comp (filter #(str/includes? (str %) "org.graalvm."))
+                          (keep (fn [form]
+                                  (let [sym (first form)
+                                        v (-> form
+                                              second
+                                              :mvn/version)]
 
-                                 (when (and v (not= v GRAAL_VERSION)) [sym v])))))
-                 (->> (edn/read-string (slurp (io/file "deps.edn")))
-                      :deps))]
+                                    (when (and v (not= v GRAAL_VERSION)) [sym v])))))
+                    (->> (edn/read-string (slurp (io/file "deps.edn")))
+                         :deps))]
       (when (seq bad)
         (throw (ex-info (str "deps.edn org.graalvm.* pins do not match .graalvm-version "
                              GRAAL_VERSION
@@ -469,11 +460,11 @@
   [home]
   (let [script (io/file graalvm-script)]
     (when (and (.isFile script) (or (System/getenv "VIS_CA_CERT") (System/getenv "VIS_TRUSTSTORE")))
-      (let
-        [{:keys [exit out]}
-         (b/process (cond-> {:command-args ["bash" (.getPath script) "--truststore"] :out :capture}
-                      home
-                      (assoc :env {"JAVA_HOME" home})))]
+      (let [{:keys [exit out]} (b/process (cond-> {:command-args ["bash" (.getPath script)
+                                                                  "--truststore"]
+                                                   :out :capture}
+                                            home
+                                            (assoc :env {"JAVA_HOME" home})))]
         (when (zero? exit) (not-empty (str/trim (or out ""))))))))
 
 (defn- truststore-properties
@@ -497,11 +488,10 @@
   [install?]
   (let [script (io/file graalvm-script)]
     (when (.isFile script)
-      (let
-        [{:keys [exit out]} (b/process {:command-args (cond-> ["bash" (.getPath script)]
-                                                        install?
-                                                        (conj "--install"))
-                                        :out :capture})]
+      (let [{:keys [exit out]} (b/process {:command-args (cond-> ["bash" (.getPath script)]
+                                                           install?
+                                                           (conj "--install"))
+                                           :out :capture})]
         (when (zero? exit) (not-empty (str/trim (or out ""))))))))
 
 (defn- auto-install-graalvm?
@@ -513,10 +503,9 @@
    Opt OUT with `:auto-install-graalvm false` or VIS_AUTO_INSTALL_GRAALVM=0
    (also `false`/`no`), which turns the missing JDK back into a hard refusal."
   [opts]
-  (let
-    [env (some-> (System/getenv "VIS_AUTO_INSTALL_GRAALVM")
-                 str/trim
-                 str/lower-case)]
+  (let [env (some-> (System/getenv "VIS_AUTO_INSTALL_GRAALVM")
+                    str/trim
+                    str/lower-case)]
     (cond (contains? opts :auto-install-graalvm) (boolean (:auto-install-graalvm opts))
           (contains? #{"0" "false" "no"} env) false
           :else true)))
@@ -530,38 +519,37 @@
   [home task opts]
   (println (str "· " home))
   (println (str "· re-running :" (name task) " under the pinned GraalVM CE"))
-  (let
-    [args
-     (into ["clojure" "-T:build" (name task)]
-           (mapcat (fn [[k v]]
-                     [(str k) (pr-str v)]))
-           (dissoc opts :auto-install-graalvm))
+  (let [args
+        (into ["clojure" "-T:build" (name task)]
+              (mapcat (fn [[k v]]
+                        [(str k) (pr-str v)]))
+              (dissoc opts :auto-install-graalvm))
 
-     trust
-     (truststore-properties home)
+        trust
+        (truststore-properties home)
 
-     {:keys [exit]}
-     (b/process
-       {:command-args args
-        :env (cond->
-               {"JAVA_HOME" home
-                "GRAALVM_HOME" home
-                ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
-                ;; `bin/vis-agent` exports it — without pinning it here the child
-                ;; silently starts on the INHERITED JDK and dies on the
-                ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
-                "JAVA_CMD" (str home "/bin/java")
-                "PATH" (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
-                "VIS_GRAALVM_SWITCHED" "1"}
-               ;; Corporate CA: the child resolves dependencies over TLS under a
-               ;; JDK that trusts only the public roots. JAVA_TOOL_OPTIONS (not
-               ;; JDK_JAVA_OPTIONS) because every JVM the child forks — clojure,
-               ;; native-image, its builder — must inherit the same trust.
-               (seq trust)
-               (assoc "JAVA_TOOL_OPTIONS"
-                 (str/join " "
-                           (remove nil?
-                             (cons (not-empty (System/getenv "JAVA_TOOL_OPTIONS")) trust)))))})]
+        {:keys [exit]}
+        (b/process
+          {:command-args args
+           :env (cond-> {"JAVA_HOME" home
+                         "GRAALVM_HOME" home
+                         ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
+                         ;; `bin/vis-agent` exports it — without pinning it here the child
+                         ;; silently starts on the INHERITED JDK and dies on the
+                         ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
+                         "JAVA_CMD" (str home "/bin/java")
+                         "PATH"
+                         (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
+                         "VIS_GRAALVM_SWITCHED" "1"}
+                  ;; Corporate CA: the child resolves dependencies over TLS under a
+                  ;; JDK that trusts only the public roots. JAVA_TOOL_OPTIONS (not
+                  ;; JDK_JAVA_OPTIONS) because every JVM the child forks — clojure,
+                  ;; native-image, its builder — must inherit the same trust.
+                  (seq trust)
+                  (assoc "JAVA_TOOL_OPTIONS"
+                    (str/join " "
+                              (remove nil?
+                                (cons (not-empty (System/getenv "JAVA_TOOL_OPTIONS")) trust)))))})]
 
     (System/exit (or exit 1))))
 
@@ -583,18 +571,17 @@
    VIS_AUTO_INSTALL_GRAALVM=0) or failed → the hard refusal."
   [task opts]
   (assert-graal-pins!)
-  (when-let
-    [{want "GRAAL_VENDOR_VERSION" edition "GRAAL_EDITION" version "GRAAL_VERSION"} @graal-pin]
+  (when-let [{want "GRAAL_VENDOR_VERSION" edition "GRAAL_EDITION" version "GRAAL_VERSION"}
+             @graal-pin]
     (let [got (or (System/getProperty "java.vendor.version") "unknown JDK")]
       (if (= got want)
         (println (str "· " edition " " version " (" got ")"))
-        (let
-          [switched? (= "1" (System/getenv "VIS_GRAALVM_SWITCHED"))
-           installed (when-not switched? (resolve-pinned-graalvm false))
-           home (or installed
-                    (when (and (not switched?) (auto-install-graalvm? opts))
-                      (println (str "· " edition " " version " is missing — installing it"))
-                      (resolve-pinned-graalvm true)))]
+        (let [switched? (= "1" (System/getenv "VIS_GRAALVM_SWITCHED"))
+              installed (when-not switched? (resolve-pinned-graalvm false))
+              home (or installed
+                       (when (and (not switched?) (auto-install-graalvm? opts))
+                         (println (str "· " edition " " version " is missing — installing it"))
+                         (resolve-pinned-graalvm true)))]
 
           (if home
             (rerun-under-graalvm! home task opts)
@@ -666,20 +653,19 @@
    engine slurps as `vis/__init__.py`), and a hardcoded `[\"src\" \"resources\"]`
    silently left it out of every image."
   []
-  (let
-    [deps
-     (root-deps-edn)
+  (let [deps
+        (root-deps-edn)
 
-     roots
-     (->> (:deps deps)
-          vals
-          (keep :local/root))
+        roots
+        (->> (:deps deps)
+             vals
+             (keep :local/root))
 
-     dirs
-     (into (vec (:paths deps))
-           (mapcat (fn [r]
-                     [(str r "/src") (str r "/resources")])
-                   roots))]
+        dirs
+        (into (vec (:paths deps))
+              (mapcat (fn [r]
+                        [(str r "/src") (str r "/resources")])
+                      roots))]
 
     (filterv #(.exists (io/file %)) dirs)))
 
@@ -692,24 +678,23 @@
    `manifest.clj` already iterates a multi-id map, so a single merged resource
    carries every extension id with no runtime change."
   [class-dir]
-  (let
-    [files
-     (->> (file-seq (io/file "extensions"))
-          (filter (fn [^java.io.File f]
-                    ;; normalize separators so a forward-slash substring check
-                    ;; can never silently merge zero manifests.
-                    (let [p (str/replace (str f) "\\" "/")]
-                      (and (= "vis.edn" (.getName f))
-                           (str/includes? p "META-INF/vis-extension"))))))
+  (let [files
+        (->> (file-seq (io/file "extensions"))
+             (filter (fn [^java.io.File f]
+                       ;; normalize separators so a forward-slash substring check
+                       ;; can never silently merge zero manifests.
+                       (let [p (str/replace (str f) "\\" "/")]
+                         (and (= "vis.edn" (.getName f))
+                              (str/includes? p "META-INF/vis-extension"))))))
 
-     merged
-     (reduce (fn [m f]
-               (merge m (read-string (slurp f))))
-             {}
-             files)
+        merged
+        (reduce (fn [m f]
+                  (merge m (read-string (slurp f))))
+                {}
+                files)
 
-     out
-     (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
+        out
+        (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
 
     (io/make-parents out)
     (spit out (pr-str merged))
@@ -740,26 +725,25 @@
    The native-image Feature reads this list and requires each one. See
    native-image handling (com.blockether.vis.internal.nativeimage)."
   [basis]
-  (let
-    [cljc?
-     #(re-matches #".*\.cljc?$" %)
+  (let [cljc?
+        #(re-matches #".*\.cljc?$" %)
 
-     from-dir
-     (fn [d]
-       (->> (file-seq (io/file d))
-            (filter #(and (.isFile ^java.io.File %) (cljc? (.getName ^java.io.File %))))
-            (keep (fn [f]
-                    (let [c (slurp f)]
-                      (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))
+        from-dir
+        (fn [d]
+          (->> (file-seq (io/file d))
+               (filter #(and (.isFile ^java.io.File %) (cljc? (.getName ^java.io.File %))))
+               (keep (fn [f]
+                       (let [c (slurp f)]
+                         (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))
 
-     from-jar
-     (fn [jar]
-       (with-open [zf (java.util.zip.ZipFile. ^String jar)]
-         (doall (->> (enumeration-seq (.entries zf))
-                     (filter #(cljc? (.getName ^java.util.zip.ZipEntry %)))
-                     (keep (fn [e]
-                             (let [c (slurp (.getInputStream zf ^java.util.zip.ZipEntry e))]
-                               (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))))]
+        from-jar
+        (fn [jar]
+          (with-open [zf (java.util.zip.ZipFile. ^String jar)]
+            (doall (->> (enumeration-seq (.entries zf))
+                        (filter #(cljc? (.getName ^java.util.zip.ZipEntry %)))
+                        (keep (fn [e]
+                                (let [c (slurp (.getInputStream zf ^java.util.zip.ZipEntry e))]
+                                  (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))))]
 
     (->> (:classpath-roots basis)
          (mapcat (fn [r]
@@ -851,21 +835,20 @@
   ;; implicit @default-client) got persisted and aborted the points-to analysis.
   ;; An extension entry ns pulls its own transitive requires with it, so the
   ;; reachable graph is covered without loading the unreachable one.
-  (let
-    [warn
-     (map str (preload-namespaces basis))
+  (let [warn
+        (map str (preload-namespaces basis))
 
-     exts
-     (concat builtin-extension-nses (manifest-entry-namespaces class-dir))
+        exts
+        (concat builtin-extension-nses (manifest-entry-namespaces class-dir))
 
-     nses
-     (->> (concat warn exts)
-          distinct
-          sort
-          vec)
+        nses
+        (->> (concat warn exts)
+             distinct
+             sort
+             vec)
 
-     out
-     (io/file class-dir "META-INF" "vis-native-image" "preload.edn")]
+        out
+        (io/file class-dir "META-INF" "vis-native-image" "preload.edn")]
 
     (io/make-parents out)
     (spit out (pr-str nses))
@@ -878,15 +861,14 @@
    write an `_index.edn` of filenames so the SQLite backend's `migrate!` can
    serve them by exact path via a ResourceProvider. JVM builds ignore the index."
   [class-dir]
-  (let
-    [sql
-     (->> (file-seq (io/file class-dir))
-          (filter #(and (.isFile ^java.io.File %)
-                        (str/ends-with? (.getName ^java.io.File %) ".sql")
-                        (str/includes? (str %) "/migration/"))))
+  (let [sql
+        (->> (file-seq (io/file class-dir))
+             (filter #(and (.isFile ^java.io.File %)
+                           (str/ends-with? (.getName ^java.io.File %) ".sql")
+                           (str/includes? (str %) "/migration/"))))
 
-     by-dir
-     (group-by #(.getParentFile ^java.io.File %) sql)]
+        by-dir
+        (group-by #(.getParentFile ^java.io.File %) sql)]
 
     (doseq [[^java.io.File dir files] by-dir]
       (let [names (vec (sort (map #(.getName ^java.io.File %) files)))]
@@ -900,12 +882,11 @@
    Returns the `:native`-alias basis."
   []
   (b/delete {:path native-class-dir})
-  (let
-    [basis
-     (b/create-basis {:project (root-deps-edn) :aliases [:native]})
+  (let [basis
+        (b/create-basis {:project (root-deps-edn) :aliases [:native]})
 
-     srcs
-     (all-source-roots)]
+        srcs
+        (all-source-roots)]
 
     (println "AOT compiling every ns across" (count srcs) "source roots… (profile community)")
     ;; copy resources (incl. META-INF/vis-extension + META-INF/native-image)
@@ -914,11 +895,10 @@
     ;; an agent runs with its cwd there — copy-dir happily copies it, and it
     ;; once shipped agent-replay transcripts in the uberjar. Deleted here so
     ;; neither the jar nor the image can ever carry it.
-    (doseq
-      [^java.io.File f
-       (file-seq (io/file native-class-dir))
+    (doseq [^java.io.File f
+            (file-seq (io/file native-class-dir))
 
-       :when (and (.isDirectory f) (= ".omc" (.getName f)))]
+            :when (and (.isDirectory f) (= ".omc" (.getName f)))]
 
       (b/delete {:path (.getPath f)})
       (println "Swept agent-state dir from class-dir:" (.getPath f)))
@@ -966,21 +946,20 @@
   "Host-platform suffix for the blockether FFM native artifacts
    (`<lib>-native-<token>`): darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64."
   []
-  (let
-    [os
-     (str/lower-case (System/getProperty "os.name"))
+  (let [os
+        (str/lower-case (System/getProperty "os.name"))
 
-     arch
-     (str/lower-case (System/getProperty "os.arch"))
+        arch
+        (str/lower-case (System/getProperty "os.arch"))
 
-     a
-     (cond (#{"aarch64" "arm64"} arch) "arm64"
-           (#{"x86_64" "amd64" "x64"} arch) "x64"
-           :else arch)
+        a
+        (cond (#{"aarch64" "arm64"} arch) "arm64"
+              (#{"x86_64" "amd64" "x64"} arch) "x64"
+              :else arch)
 
-     o
-     (cond (str/includes? os "mac") "darwin"
-           :else "linux")]
+        o
+        (cond (str/includes? os "mac") "darwin"
+              :else "linux")]
 
     (str o "-" a)))
 
@@ -990,15 +969,14 @@
    linux-aarch64 / linux-x86_64) — NOT the fff/rift/ruff darwin-arm64 style;
    both verified against the Clojars artifact list."
   []
-  (let
-    [os
-     (str/lower-case (System/getProperty "os.name"))
+  (let [os
+        (str/lower-case (System/getProperty "os.name"))
 
-     arch
-     (str/lower-case (System/getProperty "os.arch"))
+        arch
+        (str/lower-case (System/getProperty "os.arch"))
 
-     arm?
-     (boolean (#{"aarch64" "arm64"} arch))]
+        arm?
+        (boolean (#{"aarch64" "arm64"} arch))]
 
     (cond (str/includes? os "mac") (str "macos-" (if arm? "arm64" "x86_64"))
           :else (str "linux-" (if arm? "aarch64" "x86_64")))))
@@ -1008,17 +986,16 @@
    `linux-x64`) — the directory name inside `sherpa-onnx-native-lib-<platform>`
    that sherpa's own LibraryUtils resolves its two dylibs from."
   []
-  (let
-    [os
-     (str/lower-case (System/getProperty "os.name"))
+  (let [os
+        (str/lower-case (System/getProperty "os.name"))
 
-     arch
-     (str/lower-case (System/getProperty "os.arch"))
+        arch
+        (str/lower-case (System/getProperty "os.arch"))
 
-     a
-     (cond (#{"aarch64" "arm64"} arch) "aarch64"
-           (#{"x86_64" "amd64" "x64"} arch) "x64"
-           :else arch)]
+        a
+        (cond (#{"aarch64" "arm64"} arch) "aarch64"
+              (#{"x86_64" "amd64" "x64"} arch) "x64"
+              :else arch)]
 
     (cond (str/includes? os "mac") (str "osx-" a)
           :else (str "linux-" a))))
@@ -1032,50 +1009,48 @@
    dependency, failed resolution, or missing direct native jar is therefore a
    hard build failure, never a warning."
   [basis]
-  (let
-    [tok
-     (native-lib-token)
+  (let [tok
+        (native-lib-token)
 
-     native-artifacts
-     {'com.blockether/fff (str "fff-native-" tok)
-      'com.blockether/rift (str "rift-native-" tok)
-      'com.blockether/ruff (str "ruff-native-" tok)
-      'com.blockether/imaging (str "imaging-native-" tok)
-      'com.blockether/tree-sitter-language-pack (str "tree-sitter-language-pack-native-"
-                                                     (pack-native-token))}
+        native-artifacts
+        {'com.blockether/fff (str "fff-native-" tok)
+         'com.blockether/rift (str "rift-native-" tok)
+         'com.blockether/ruff (str "ruff-native-" tok)
+         'com.blockether/imaging (str "imaging-native-" tok)
+         'com.blockether/tree-sitter-language-pack (str "tree-sitter-language-pack-native-"
+                                                        (pack-native-token))}
 
-     missing-mains
-     (->> (keys native-artifacts)
-          (remove #(get-in basis [:libs % :mvn/version]))
-          vec)]
+        missing-mains
+        (->> (keys native-artifacts)
+             (remove #(get-in basis [:libs % :mvn/version]))
+             vec)]
 
     (when (seq missing-mains)
       (throw (ex-info "Native build requires every FFM main artifact." {:artifacts missing-mains})))
-    (let
-      [deps
-       (into {}
-             (map (fn [[main artifact]]
-                    [(symbol "com.blockether" artifact)
-                     {:mvn/version (get-in basis [:libs main :mvn/version])}]))
-             native-artifacts)
+    (let [deps
+          (into {}
+                (map (fn [[main artifact]]
+                       [(symbol "com.blockether" artifact)
+                        {:mvn/version (get-in basis [:libs main :mvn/version])}]))
+                native-artifacts)
 
-       native-basis
-       (b/create-basis {:project nil :extra {:deps deps}})
+          native-basis
+          (b/create-basis {:project nil :extra {:deps deps}})
 
-       jars-by-artifact
-       (into {}
-             (map (fn [artifact]
-                    [artifact
-                     (->> (get-in native-basis [:libs artifact :paths])
-                          (filter #(str/ends-with? % ".jar"))
-                          vec)]))
-             (keys deps))
+          jars-by-artifact
+          (into {}
+                (map (fn [artifact]
+                       [artifact
+                        (->> (get-in native-basis [:libs artifact :paths])
+                             (filter #(str/ends-with? % ".jar"))
+                             vec)]))
+                (keys deps))
 
-       missing-natives
-       (->> jars-by-artifact
-            (keep (fn [[artifact jars]]
-                    (when (empty? jars) artifact)))
-            vec)]
+          missing-natives
+          (->> jars-by-artifact
+               (keep (fn [[artifact jars]]
+                       (when (empty? jars) artifact)))
+               vec)]
 
       (when (seq missing-natives)
         (throw (ex-info "Native build requires every FFM native artifact for its target platform."
@@ -1097,29 +1072,27 @@
    Native images cannot use the runtime tools.deps downloader, so a missing
    artifact is a hard build failure, never a warning."
   [basis]
-  (let
-    [version
-     (get-in basis [:libs 'com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm :mvn/version])
+  (let [version
+        (get-in basis [:libs 'com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm :mvn/version])
 
-     platform
-     (native-platform-token)
+        platform
+        (native-platform-token)
 
-     artifact
-     (symbol "com.github.k2-fsa.sherpa-onnx" (str "sherpa-onnx-native-lib-" platform))]
+        artifact
+        (symbol "com.github.k2-fsa.sherpa-onnx" (str "sherpa-onnx-native-lib-" platform))]
 
     (when-not version
       (throw (ex-info "Native build requires the sherpa-onnx API jar."
                       {:artifact 'com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm})))
-    (let
-      [native-basis
-       (b/create-basis {:project nil
-                        :extra {:mvn/repos {"jitpack" {:url "https://jitpack.io"}}
-                                :deps {artifact {:mvn/version version}}}})
+    (let [native-basis
+          (b/create-basis {:project nil
+                           :extra {:mvn/repos {"jitpack" {:url "https://jitpack.io"}}
+                                   :deps {artifact {:mvn/version version}}}})
 
-       jars
-       (->> (get-in native-basis [:libs artifact :paths])
-            (filter #(str/ends-with? % ".jar"))
-            vec)]
+          jars
+          (->> (get-in native-basis [:libs artifact :paths])
+               (filter #(str/ends-with? % ".jar"))
+               vec)]
 
       (when (empty? jars)
         (throw (ex-info "Native build requires sherpa-onnx's native jar for its target platform."
@@ -1172,12 +1145,11 @@
    META-INF/resources/ (verified against python-resources jar layout):
    darwin|linux / aarch64|amd64."
   []
-  (let
-    [os
-     (str/lower-case (System/getProperty "os.name"))
+  (let [os
+        (str/lower-case (System/getProperty "os.name"))
 
-     arch
-     (str/lower-case (System/getProperty "os.arch"))]
+        arch
+        (str/lower-case (System/getProperty "os.arch"))]
 
     [(cond (str/includes? os "mac") "darwin"
            :else "linux") (if (#{"aarch64" "arm64"} arch) "aarch64" "amd64")]))
@@ -1202,184 +1174,186 @@
    (sherpa-onnx's JNI plus the ONNX Runtime it links) so voice ASR works in the binary.
    The ~465 MB parakeet model is NEVER embedded — it ships separately."
   [basis jit?]
-  (let
-    [tok
-     (native-platform-token)
+  (let [tok
+        (native-platform-token)
 
-     [t-os t-arch]
-     (truffle-platform-tokens)
+        [t-os t-arch]
+        (truffle-platform-tokens)
 
-     ;; ── Builder JVM heap ────────────────────────────────────────────────
-     ;; WHO sizes the builder JVM is one env var, VIS_NATIVE_BUILDER_HEAP:
-     ;;   unset       this machine's RAM decides (75%, clamped 6-26 GiB), half
-     ;;               of it committed up front as -Xms.
-     ;;   "natural"   NEITHER -J flag is passed and native-image sizes its own
-     ;;               builder heap. This is the only way to measure the tool's
-     ;;               untuned configuration: every CI run so far recorded as
-     ;;               "no extra args" still carried the computed pair below,
-     ;;               so nothing has ever actually built on the defaults.
-     ;;   "<n>g"      exactly that ceiling (half of it as -Xms), for a runner
-     ;;               whose RAM is not the constraint its build is.
-     ;; The points-to analysis live set for this image peaks around 12 GiB, and a
-     ;; ceiling only a little above the live set is what kills the build: the old
-     ;; generation fills, full GCs take over and native-image dies with "GC
-     ;; overhead limit exceeded" after ~20 wasted minutes. native-image's own
-     ;; default derives the ceiling from physical RAM, which on a big machine
-     ;; lets the builder page instead; GraalVM 25.2.x makes both failure modes
-     ;; dramatically worse (see .graalvm-version). So the default here is a
-     ;; deterministic, RAM-clamped ceiling with real headroom over the live set,
-     ;; started high enough that the builder is not growing the heap while the
-     ;; analysis is already hot.
-     ;; VIS_NATIVE_EXTRA_ARGS is spliced LAST and overrides both.
-     total-ram
-     (try (.getTotalMemorySize ^com.sun.management.OperatingSystemMXBean
-                               (java.lang.management.ManagementFactory/getOperatingSystemMXBean))
-          (catch Throwable _ 0))
+        ;; ── Builder JVM heap ────────────────────────────────────────────────
+        ;; WHO sizes the builder JVM is one env var, VIS_NATIVE_BUILDER_HEAP:
+        ;;   unset       this machine's RAM decides (75%, clamped 6-26 GiB), half
+        ;;               of it committed up front as -Xms.
+        ;;   "natural"   NEITHER -J flag is passed and native-image sizes its own
+        ;;               builder heap. This is the only way to measure the tool's
+        ;;               untuned configuration: every CI run so far recorded as
+        ;;               "no extra args" still carried the computed pair below,
+        ;;               so nothing has ever actually built on the defaults.
+        ;;   "<n>g"      exactly that ceiling (half of it as -Xms), for a runner
+        ;;               whose RAM is not the constraint its build is.
+        ;; The points-to analysis live set for this image peaks around 12 GiB, and a
+        ;; ceiling only a little above the live set is what kills the build: the old
+        ;; generation fills, full GCs take over and native-image dies with "GC
+        ;; overhead limit exceeded" after ~20 wasted minutes. native-image's own
+        ;; default derives the ceiling from physical RAM, which on a big machine
+        ;; lets the builder page instead; GraalVM 25.2.x makes both failure modes
+        ;; dramatically worse (see .graalvm-version). So the default here is a
+        ;; deterministic, RAM-clamped ceiling with real headroom over the live set,
+        ;; started high enough that the builder is not growing the heap while the
+        ;; analysis is already hot.
+        ;; VIS_NATIVE_EXTRA_ARGS is spliced LAST and overrides both.
+        total-ram
+        (try (.getTotalMemorySize ^com.sun.management.OperatingSystemMXBean
+                                  (java.lang.management.ManagementFactory/getOperatingSystemMXBean))
+             (catch Throwable _ 0))
 
-     builder-heap
-     (some-> (System/getenv "VIS_NATIVE_BUILDER_HEAP")
-             str/trim
-             not-empty
-             str/lower-case)
+        builder-heap
+        (some-> (System/getenv "VIS_NATIVE_BUILDER_HEAP")
+                str/trim
+                not-empty
+                str/lower-case)
 
-     natural-heap?
-     (= "natural" builder-heap)
+        natural-heap?
+        (= "natural" builder-heap)
 
-     heap-gib
-     (long (or (some-> builder-heap
-                       (->> (re-find #"^(\d+)g?$"))
-                       second
-                       parse-long)
-               (max 6 (min 26 (long (/ (* 0.75 (double total-ram)) 1073741824.0))))))
+        heap-gib
+        (long (or (some-> builder-heap
+                          (->> (re-find #"^(\d+)g?$"))
+                          second
+                          parse-long)
+                  (max 6 (min 26 (long (/ (* 0.75 (double total-ram)) 1073741824.0))))))
 
-     init-gib
-     (max 2 (quot heap-gib 2))
+        init-gib
+        (max 2 (quot heap-gib 2))
 
-     ;; Extra native-image args spliced from the environment (space-separated).
-     ;; Lets CI tune the builder JVM per-runner (e.g. -J-Xmx6g -J-Xms2g to fit a
-     ;; RAM-constrained free macOS runner, overriding GraalPy's bundled -Xms14g
-     ;; since command-line -J args are applied AFTER the classpath properties).
-     extra
-     (some-> (System/getenv "VIS_NATIVE_EXTRA_ARGS")
-             str/trim
-             not-empty
-             (str/split #"\s+"))
+        ;; Extra native-image args spliced from the environment (space-separated).
+        ;; Lets CI tune the builder JVM per-runner (e.g. -J-Xmx6g -J-Xms2g to fit a
+        ;; RAM-constrained free macOS runner, overriding GraalPy's bundled -Xms14g
+        ;; since command-line -J args are applied AFTER the classpath properties).
+        extra
+        (some-> (System/getenv "VIS_NATIVE_EXTRA_ARGS")
+                str/trim
+                not-empty
+                (str/split #"\s+"))
 
-     ;; Corporate CA (VIS_CA_CERT / VIS_TRUSTSTORE): the builder JVM and every
-     ;; JVM it forks must trust the same roots as the rest of the build, or a
-     ;; TLS-intercepting proxy turns a 20-minute image build into a
-     ;; SunCertPathBuilderException. `-J` passes them to the builder JVM.
-     trust
-     (mapv #(str "-J" %) (truststore-properties nil))]
+        ;; Corporate CA (VIS_CA_CERT / VIS_TRUSTSTORE): the builder JVM and every
+        ;; JVM it forks must trust the same roots as the rest of the build, or a
+        ;; TLS-intercepting proxy turns a 20-minute image build into a
+        ;; SunCertPathBuilderException. `-J` passes them to the builder JVM.
+        trust
+        (mapv #(str "-J" %) (truststore-properties nil))]
 
-    (cond->
-      ["-cp" (native-classpath basis) "-o" native-bin
-       ;; Restricted native access (java.lang.foreign): lanterna's TTYDeviceControl
-       ;; drives the TTY with termios/ioctl downcalls instead of forking /bin/stty.
-       ;; Without this the JDK prints a 4-line "restricted method" warning on the
-       ;; first paint — and a future JDK blocks the call outright. The downcall
-       ;; DESCRIPTORS themselves are registered in the build Feature
-       ;; (com.blockether.vis.internal.nativeimage/-duringSetup).
-       "--enable-native-access=ALL-UNNAMED"
-       ;; …and that class must decide IN THE BINARY. Its <clinit> builds the
-       ;; termios/ioctl MethodHandles; graal-build-time initializes it inside the
-       ;; BUILDER JVM, where java.lang.foreign simply works, so the image
-       ;; inherited SUPPORTED=true together with handles whose downcall stubs the
-       ;; image never generated. The Linux binary then SIGSEGV'd inside
-       ;; `DowncallStubsHolder` the first time the TUI opened /dev/tty — measured
-       ;; on v0.1.33-v0.1.35 and again on the 2026-08-13 dry run, in
-       ;; `native-binary-paints-the-tui-test`, on x64 and arm64 alike. Initialized
-       ;; at RUN time it decides for itself: the termios fast path where the
-       ;; descriptors were registered (macOS), and lanterna's own catch-and-degrade
-       ;; to forking /bin/stty where they were not.
-       "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl"
-       "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
-       ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
-       "-H:IncludeResources=vis/VERSION"
-       ;; the build-written `vis/BUILD` (version, commit, track, timestamp)
-       "-H:IncludeResources=vis/BUILD"
-       ;; Flyway migration SQL (not in the agent-traced metadata)
-       "-H:IncludeResources=db/.*"
-       ;; The WHOLE embedded docs corpus (markdown pages + manifest +
-       ;; woff2 fonts/logos) — ALL read at RUNTIME via io/resource
-       ;; (gateway /docs site AND the `doc-corpus` documents `apropos`/`doc`
-       ;; search), and NONE of it in the agent-traced metadata (the trace never
-       ;; read a page), so without this pattern the corpus holds zero pages in
-       ;; the native binary.
-       "-H:IncludeResources=vis-docs/.*"
-       ;; Python SHIM sources (resources/vis-shims/*.py), slurped at sandbox
-       ;; context creation via io/resource. Without this pattern EVERY shim
-       ;; (numpy, pandas, yaml, ...) is missing in the native binary.
-       "-H:IncludeResources=vis-shims/.*"
-       ;; Python helper sources (resources/vis-python/*.py) slurped at RUNTIME
-       ;; via io/resource -- e.g. the packaging-metadata reader `vis-agent python`
-       ;; uses to discover a project's import roots.
-       "-H:IncludeResources=vis-python/.*"
-       ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
-       ;; :paths as a resource root): the body every extension context execs, and
-       ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
-       ;; exact resource, so the module needs its own pattern. The Python host
-       ;; contract beside it rides in on the `.*\\.edn$` pattern.
-       "-H:IncludeResources=vis/.*\\.py$"
-       ;; vendored Prism highlighter, inlined into standalone HTML
-       ;; transcript exports at RUNTIME via io/resource.
-       "-H:IncludeResources=vis-transcript/.*"
-       ;; tree-sitter pack FFI lib for THIS platform. The pack's own
-       ;; metadata ships NO resource glob (unlike fff/rift/ruff's
-       ;; prebuilds/**), so without this the shipped binary embeds no
-       ;; tree-sitter native at all and the runtime resolver-download
-       ;; path — which a native image cannot take — is the only hope.
-       (str "-H:IncludeResources=natives/" (pack-native-token) "/.*")
-       ;; GraalPy/Truffle per-platform internal-resource manifests.
-       ;; These used to ride in via the macOS agent trace with
-       ;; darwin/aarch64 HARDCODED — which embedded the Mac entries
-       ;; into Linux images (python-resources ships every
-       ;; platform's dirs in one jar) and left the build host's own
-       ;; manifests out everywhere else. Host-parameterized instead.
-       (str "-H:IncludeResources=META-INF/resources/" t-os "/" t-arch "/native.sha256")
-       (str "-H:IncludeResources=META-INF/resources/engine/libtruffleattach/" t-os "/" t-arch "/.*")
-       ;; ── GraalPy native-image bring-up ──────────────────────────────
-       ;; `org.graalvm.python/python-resources` ships its config at the
-       ;; NON-standard `META-INF/resources/native-image.properties`, which
-       ;; native-image does NOT auto-discover. Apply it explicitly:
-       ;;   • embed the Python stdlib VirtualFileSystem (org.graalvm.python.vfs)
-       ;;     — without it GraalPy scans the real FS for a home that isn't
-       ;;     there and the first Context.create() hangs (readdir + cond_wait).
-       ;;   • PreinitializeContexts=python snapshots an initialized Python
-       ;;     context INTO the image, so runtime `Context.create("python")`
-       ;;     resumes the snapshot instead of doing full (hanging) init.
-       ;;   • Python needs a big charset set + a deep C stack.
-       "-H:+UnlockExperimentalVMOptions" "-H:IncludeResources=org.graalvm.python.vfs/.*"
-       "-J-Dpolyglot.image-build-time.PreinitializeContexts=python" "-R:StackSize=16777216"
-       "-H:+AddAllCharsets"
-       ;; ── Locales ─────────────────────────────────────────────────────
-       ;; native-image ships ONE locale: whichever one the BUILD HOST
-       ;; happened to default to (`-H:DefaultLocale` defaults to the
-       ;; builder's). So the binary was non-deterministic — built here it
-       ;; carried `en-PL`, on a CI runner `en-US` — and every other locale
-       ;; silently degraded to root-ish formatting at runtime, even though
-       ;; `-H:+UseSystemLocale` (default on) makes the RUNTIME honor the
-       ;; user's `LANG`: honoring a locale that was never embedded is how
-       ;; you get English month names and `1,234.5` on a `de_DE` machine.
-       ;; Pin the default and embed the set vis actually renders for:
-       ;; English (US/GB/IN), Polish, German, Chinese (Simplified/Taiwan)
-       ;; and Hindi. Full tags on purpose — the option resolves each entry
-       ;; with `Locale/forLanguageTag`, so a bare `zh` is NOT `zh-TW`.
-       ;; ~1 MB of CLDR data, not `-H:+IncludeAllLocales` (~20 MB).
-       "-H:DefaultLocale=en-US"
-       (str "-H:IncludeLocales="
-            (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))
-       ;; ── Binary-size + build-time reduction ──────────────────────────
-       ;; A GraalPy image is huge (~558 MB): ~115 MB machine code +
-       ;; ~465 MB SVM image heap (embedded CPython interpreter/stdlib +
-       ;; icu4j locale data + charsets). Two levers, both from GraalPy's
-       ;; own "Reducing Binary Size" guide — they ALSO slash native-image
-       ;; BUILD time (the full :voice image otherwise stalls the runner
-       ;; building/compiling ~18k Truffle runtime-compiled methods):
-       ;;   • -Os optimizes the COMPILED CODE for size instead of -O2
-       ;;     speed — trims the ~115 MB __text with negligible impact on
-       ;;     an I/O-bound agent, and cuts compile time.
-       "-Os"]
+    (cond-> ["-cp" (native-classpath basis) "-o" native-bin
+             ;; Restricted native access (java.lang.foreign): lanterna's TTYDeviceControl
+             ;; drives the TTY with termios/ioctl downcalls instead of forking /bin/stty.
+             ;; Without this the JDK prints a 4-line "restricted method" warning on the
+             ;; first paint — and a future JDK blocks the call outright. The downcall
+             ;; DESCRIPTORS themselves are registered in the build Feature
+             ;; (com.blockether.vis.internal.nativeimage/-duringSetup).
+             "--enable-native-access=ALL-UNNAMED"
+             ;; …and that class must decide IN THE BINARY. Its <clinit> builds the
+             ;; termios/ioctl MethodHandles; graal-build-time initializes it inside the
+             ;; BUILDER JVM, where java.lang.foreign simply works, so the image
+             ;; inherited SUPPORTED=true together with handles whose downcall stubs the
+             ;; image never generated. The Linux binary then SIGSEGV'd inside
+             ;; `DowncallStubsHolder` the first time the TUI opened /dev/tty — measured
+             ;; on v0.1.33-v0.1.35 and again on the 2026-08-13 dry run, in
+             ;; `native-binary-paints-the-tui-test`, on x64 and arm64 alike. Initialized
+             ;; at RUN time it decides for itself: the termios fast path where the
+             ;; descriptors were registered (macOS), and lanterna's own catch-and-degrade
+             ;; to forking /bin/stty where they were not.
+             "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl"
+             "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
+             ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
+             "-H:IncludeResources=vis/VERSION"
+             ;; the build-written `vis/BUILD` (version, commit, track, timestamp)
+             "-H:IncludeResources=vis/BUILD"
+             ;; Flyway migration SQL (not in the agent-traced metadata)
+             "-H:IncludeResources=db/.*"
+             ;; The WHOLE embedded docs corpus (markdown pages + manifest +
+             ;; woff2 fonts/logos) — ALL read at RUNTIME via io/resource
+             ;; (gateway /docs site AND the `doc-corpus` documents `apropos`/`doc`
+             ;; search), and NONE of it in the agent-traced metadata (the trace never
+             ;; read a page), so without this pattern the corpus holds zero pages in
+             ;; the native binary.
+             "-H:IncludeResources=vis-docs/.*"
+             ;; Python SHIM sources (resources/vis-shims/*.py), slurped at sandbox
+             ;; context creation via io/resource. Without this pattern EVERY shim
+             ;; (numpy, pandas, yaml, ...) is missing in the native binary.
+             "-H:IncludeResources=vis-shims/.*"
+             ;; Python helper sources (resources/vis-python/*.py) slurped at RUNTIME
+             ;; via io/resource -- e.g. the packaging-metadata reader `vis-agent python`
+             ;; uses to discover a project's import roots.
+             "-H:IncludeResources=vis-python/.*"
+             ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
+             ;; :paths as a resource root): the body every extension context execs, and
+             ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
+             ;; exact resource, so the module needs its own pattern. The Python host
+             ;; contract beside it rides in on the `.*\\.edn$` pattern.
+             "-H:IncludeResources=vis/.*\\.py$"
+             ;; vendored Prism highlighter, inlined into standalone HTML
+             ;; transcript exports at RUNTIME via io/resource.
+             "-H:IncludeResources=vis-transcript/.*"
+             ;; tree-sitter pack FFI lib for THIS platform. The pack's own
+             ;; metadata ships NO resource glob (unlike fff/rift/ruff's
+             ;; prebuilds/**), so without this the shipped binary embeds no
+             ;; tree-sitter native at all and the runtime resolver-download
+             ;; path — which a native image cannot take — is the only hope.
+             (str "-H:IncludeResources=natives/" (pack-native-token) "/.*")
+             ;; GraalPy/Truffle per-platform internal-resource manifests.
+             ;; These used to ride in via the macOS agent trace with
+             ;; darwin/aarch64 HARDCODED — which embedded the Mac entries
+             ;; into Linux images (python-resources ships every
+             ;; platform's dirs in one jar) and left the build host's own
+             ;; manifests out everywhere else. Host-parameterized instead.
+             (str "-H:IncludeResources=META-INF/resources/" t-os "/" t-arch "/native.sha256")
+             (str "-H:IncludeResources=META-INF/resources/engine/libtruffleattach/"
+                  t-os
+                  "/"
+                  t-arch
+                  "/.*")
+             ;; ── GraalPy native-image bring-up ──────────────────────────────
+             ;; `org.graalvm.python/python-resources` ships its config at the
+             ;; NON-standard `META-INF/resources/native-image.properties`, which
+             ;; native-image does NOT auto-discover. Apply it explicitly:
+             ;;   • embed the Python stdlib VirtualFileSystem (org.graalvm.python.vfs)
+             ;;     — without it GraalPy scans the real FS for a home that isn't
+             ;;     there and the first Context.create() hangs (readdir + cond_wait).
+             ;;   • PreinitializeContexts=python snapshots an initialized Python
+             ;;     context INTO the image, so runtime `Context.create("python")`
+             ;;     resumes the snapshot instead of doing full (hanging) init.
+             ;;   • Python needs a big charset set + a deep C stack.
+             "-H:+UnlockExperimentalVMOptions" "-H:IncludeResources=org.graalvm.python.vfs/.*"
+             "-J-Dpolyglot.image-build-time.PreinitializeContexts=python" "-R:StackSize=16777216"
+             "-H:+AddAllCharsets"
+             ;; ── Locales ─────────────────────────────────────────────────────
+             ;; native-image ships ONE locale: whichever one the BUILD HOST
+             ;; happened to default to (`-H:DefaultLocale` defaults to the
+             ;; builder's). So the binary was non-deterministic — built here it
+             ;; carried `en-PL`, on a CI runner `en-US` — and every other locale
+             ;; silently degraded to root-ish formatting at runtime, even though
+             ;; `-H:+UseSystemLocale` (default on) makes the RUNTIME honor the
+             ;; user's `LANG`: honoring a locale that was never embedded is how
+             ;; you get English month names and `1,234.5` on a `de_DE` machine.
+             ;; Pin the default and embed the set vis actually renders for:
+             ;; English (US/GB/IN), Polish, German, Chinese (Simplified/Taiwan)
+             ;; and Hindi. Full tags on purpose — the option resolves each entry
+             ;; with `Locale/forLanguageTag`, so a bare `zh` is NOT `zh-TW`.
+             ;; ~1 MB of CLDR data, not `-H:+IncludeAllLocales` (~20 MB).
+             "-H:DefaultLocale=en-US"
+             (str "-H:IncludeLocales="
+                  (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))
+             ;; ── Binary-size + build-time reduction ──────────────────────────
+             ;; A GraalPy image is huge (~558 MB): ~115 MB machine code +
+             ;; ~465 MB SVM image heap (embedded CPython interpreter/stdlib +
+             ;; icu4j locale data + charsets). Two levers, both from GraalPy's
+             ;; own "Reducing Binary Size" guide — they ALSO slash native-image
+             ;; BUILD time (the full :voice image otherwise stalls the runner
+             ;; building/compiling ~18k Truffle runtime-compiled methods):
+             ;;   • -Os optimizes the COMPILED CODE for size instead of -O2
+             ;;     speed — trims the ~115 MB __text with negligible impact on
+             ;;     an I/O-bound agent, and cuts compile time.
+             "-Os"]
       ;; ── Embedded-Python JIT vs interpreter — the single biggest size lever ──
       ;; DEFAULT (`:oracle-native-image` false): run GraalPy INTERPRETED by forcing Truffle's
       ;; fallback runtime, dropping the Graal JIT from the image. GraalPy documents
@@ -1439,10 +1413,9 @@
     ;; builder then dies at [8/8] Creating image with "Path exists as directory".
     (b/delete {:path native-bin})
     (println "native-image (reusing target/native-classes)…")
-    (let
-      [{:keys [exit]} (b/process {:command-args
-                                  (into [(native-image-command)]
-                                        (native-image-args basis (oracle-native-image? opts)))})]
+    (let [{:keys [exit]} (b/process {:command-args
+                                     (into [(native-image-command)]
+                                           (native-image-args basis (oracle-native-image? opts)))})]
       (if (zero? exit)
         (do (write-build-stamp!) (println "-> built" native-bin))
         (throw (ex-info "native-image build failed" {:exit exit}))))))
@@ -1483,10 +1456,9 @@
     ;; (2) Private native runtime. Built from a classpath of real jars (NOT the
     ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
     (println "native-image:" native-bin "(community)" "(this takes several minutes)…")
-    (let
-      [{:keys [exit]} (b/process {:command-args
-                                  (into [(native-image-command)]
-                                        (native-image-args basis (oracle-native-image? opts)))})]
+    (let [{:keys [exit]} (b/process {:command-args
+                                     (into [(native-image-command)]
+                                           (native-image-args basis (oracle-native-image? opts)))})]
       (if (zero? exit)
         (do (write-build-stamp!) (println "-> built" native-bin))
         (throw (ex-info "native-image build failed" {:exit exit}))))))

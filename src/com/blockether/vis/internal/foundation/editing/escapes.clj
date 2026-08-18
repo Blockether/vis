@@ -46,9 +46,8 @@
           (not (== (int \u0075) (int (.charAt s (inc i))))))
     -1
     (let [end (+ i 6)]
-      (loop
-        [k (+ i 2)
-         acc 0]
+      (loop [k (+ i 2)
+             acc 0]
 
         (if (== k end)
           acc
@@ -108,39 +107,37 @@
   [s]
   (if-not (and (string? s) (str/includes? s "\\u"))
     s
-    (let
-      [^String text
-       s
+    (let [^String text
+          s
 
-       n
-       (.length text)
+          n
+          (.length text)
 
-       sb
-       (StringBuilder. n)]
+          sb
+          (StringBuilder. n)]
 
       (loop [i 0]
         (let [b (.indexOf text (int \\) i)]
           (if (neg? b)
             ;; No backslash left in the tail: copy it whole and stop.
             (do (.append sb text i n) (.toString sb))
-            (let
-              [_ (.append sb text i b)
-               run-end
-               (long (loop [j b]
-                       (if (and (< j n) (== (int \\) (int (.charAt text j)))) (recur (inc j)) j)))]
+            (let [_ (.append sb text i b)
+                  run-end (long (loop [j b]
+                                  (if (and (< j n) (== (int \\) (int (.charAt text j))))
+                                    (recur (inc j))
+                                    j)))]
 
               (if (even? (- run-end b))
                 ;; Every backslash is itself escaped: this is text ABOUT an escape.
                 (do (.append sb text b run-end) (recur run-end))
-                (let
-                  [start (dec run-end)
-                   unit (unicode-escape-unit text start)
-                   low (if (and (<= 0xD800 unit) (<= unit 0xDBFF))
-                         (unicode-escape-unit text (+ start 6))
-                         -1)
-                   pair (if (and (<= 0xDC00 low) (<= low 0xDFFF))
-                          (long (Character/toCodePoint (char unit) (char low)))
-                          -1)]
+                (let [start (dec run-end)
+                      unit (unicode-escape-unit text start)
+                      low (if (and (<= 0xD800 unit) (<= unit 0xDBFF))
+                            (unicode-escape-unit text (+ start 6))
+                            -1)
+                      pair (if (and (<= 0xDC00 low) (<= low 0xDFFF))
+                             (long (Character/toCodePoint (char unit) (char low)))
+                             -1)]
 
                   (.append sb text b start)
                   (cond (and (not (neg? pair)) (decodable-code-point? pair))

@@ -45,18 +45,17 @@
 (defdescribe
   form-gateway-roundtrip-test
   (it "every display key survives loop chunk -> gateway block.output -> wire -> <-wire"
-      (let
-        [chunk
-         (into {:phase :form-result :iteration 1 :position 0}
-               (map (fn [k]
-                      [k (sentinel k)]))
-               form/display-keys)
+      (let [chunk
+            (into {:phase :form-result :iteration 1 :position 0}
+                  (map (fn [k]
+                         [k (sentinel k)]))
+                  form/display-keys)
 
-         [type _store payload]
-         (chunk->event chunk)
+            [type _store payload]
+            (chunk->event chunk)
 
-         back
-         (form/<-wire (simulate-wire payload))]
+            back
+            (form/<-wire (simulate-wire payload))]
 
         (expect (= "block.output" type))
         ;; The gateway carried, and <-wire recovered, EVERY canonical display key.
@@ -83,10 +82,9 @@
              (it "keeps an authored display instead of re-deriving it from the source"
                  ;; A form that already carries the surface a channel must paint keeps it;
                  ;; `with-display` must not overwrite it with its own formatting.
-                 (let
-                   [form (form/with-display {:code "shell({\"commands\": [\"sleep 30\"]})"
-                                             :display-code "sleep 30"
-                                             :display-language "bash"})]
+                 (let [form (form/with-display {:code "shell({\"commands\": [\"sleep 30\"]})"
+                                                :display-code "sleep 30"
+                                                :display-language "bash"})]
                    (expect (= "sleep 30" (:display-code form)))
                    (expect (= "bash" (:display-language form)))
                    ;; the raw invocation is still carried for the model-facing surfaces
@@ -132,31 +130,29 @@
                                                   :type :vis/eval-timeout
                                                   :data {:timeout-ms 30000}}}))))
   (it "keeps what a timed-out block printed as its ordinary stdout body"
-      (let
-        [card (form/result-display {:src "time.sleep(99)"
-                                    :timeout? true
-                                    :stdout "partial"
-                                    :error {:message "Timeout (30s)" :data {:timeout-ms 30000}}})]
+      (let [card (form/result-display {:src "time.sleep(99)"
+                                       :timeout? true
+                                       :stdout "partial"
+                                       :error {:message "Timeout (30s)"
+                                               :data {:timeout-ms 30000}}})]
         (expect (nil? (:summary card)))
         (expect (str/includes? (:body card) "partial"))
         (expect (not (str/includes? (:body card) "time.sleep(99)"))))))
 
 (defdescribe with-display-derives-the-body-test
              (it "fills the body a restored envelope no longer carries"
-                 (let
-                   [restored
-                    {:src "grep({})" :code "grep({})" :result {"files" ["a.clj"]}}
+                 (let [restored
+                       {:src "grep({})" :code "grep({})" :result {"files" ["a.clj"]}}
 
-                    form
-                    (form/with-display restored)]
+                       form
+                       (form/with-display restored)]
 
                    (expect (= (form/result-render restored) (:result-render form)))
                    (expect (str/includes? (:result-render form) "a.clj"))))
              (it "never overwrites a render no projection reproduces"
                  ;; A `!cmd` bubble: the body is the shell layer's own card markdown,
                  ;; not a rendering of `:result`, so it is authored and kept verbatim.
-                 (let
-                   [form (form/with-display {:code "await shell({\"command\": \"ls\"})"
-                                             :result {"ok" true}
-                                             :result-render "**SHELL**\nls"})]
+                 (let [form (form/with-display {:code "await shell({\"command\": \"ls\"})"
+                                                :result {"ok" true}
+                                                :result-render "**SHELL**\nls"})]
                    (expect (= "**SHELL**\nls" (:result-render form))))))

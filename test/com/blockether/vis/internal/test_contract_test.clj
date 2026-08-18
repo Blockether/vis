@@ -177,7 +177,6 @@
         (let [sel (contract/normalize-selectors {:include ["slow"] :exclude ["slow"]})]
           (expect (not (contract/selected? sel {:ns "a-test" :name "x" :tags #{"slow"}})))))
     (it "exclude OVERRIDES a node id that named the var outright"
-        (let
-          [sel (assoc (contract/normalize-selectors {:exclude ["slow"]})
-                 :vars [{:ns nil :name "x"}])]
+        (let [sel (assoc (contract/normalize-selectors {:exclude ["slow"]})
+                    :vars [{:ns nil :name "x"}])]
           (expect (not (contract/selected? sel {:ns "a-test" :name "x" :tags #{"slow"}})))))))

@@ -40,9 +40,8 @@
       probe missed; some Clojure repos have no manifest at the
       workspace root (e.g. polylith sub-project pinned via channels)."
   [env]
-  (let
-    [root (some-> (:workspace/root env)
-                  io/file)]
+  (let [root (some-> (:workspace/root env)
+                     io/file)]
     (when (and root (.isDirectory root))
       (or
         ;; (1) pre-populated env hint
@@ -87,14 +86,13 @@
    as-is. Returns a canonical path string — the SAME value for a given target no
    matter how it was spelled, so start, stop, and eval-by-id all agree on one id."
   ^String [root dir]
-  (let
-    [d
-     (expand-home (str dir))
+  (let [d
+        (expand-home (str dir))
 
-     f
-     (cond (= "" d) (io/file root)
-           (.isAbsolute (io/file d)) (io/file d)
-           :else (io/file root d))]
+        f
+        (cond (= "" d) (io/file root)
+              (.isAbsolute (io/file d)) (io/file d)
+              :else (io/file root d))]
 
     (.getCanonicalPath f)))
 
@@ -130,32 +128,31 @@
              (#{"started" "starting" "already-running" "connected" "reconnected"}
               (get result "result"))
              (or (get result "pid") (get result "port")))
-    (let
-      [;; Prefer the aliases start! actually booted with (STRING names) so the
-       ;; label/detail reflect the real [:dev :test] classpath even when the
-       ;; caller passed none.
-       aliases
-       (or (seq (get result "aliases")) (map name (or aliases [])))
+    (let [;; Prefer the aliases start! actually booted with (STRING names) so the
+          ;; label/detail reflect the real [:dev :test] classpath even when the
+          ;; caller passed none.
+          aliases
+          (or (seq (get result "aliases")) (map name (or aliases [])))
 
-       ;; An ATTACHMENT carries its OWN id (`nrepl:~/proj#app`) so it can sit in
-       ;; the registry BESIDE the managed REPL for the same dir.
-       id
-       (or (get result "id") (repl-resource-id dir))
+          ;; An ATTACHMENT carries its OWN id (`nrepl:~/proj#app`) so it can sit in
+          ;; the registry BESIDE the managed REPL for the same dir.
+          id
+          (or (get result "id") (repl-resource-id dir))
 
-       log-path
-       (get result "log")
+          log-path
+          (get result "log")
 
-       status
-       (or (get result "status") :up)
+          status
+          (or (get result "status") :up)
 
-       external?
-       (boolean (get result "external"))
+          external?
+          (boolean (get result "external"))
 
-       ext-host
-       (get result "host")
+          ext-host
+          (get result "host")
 
-       build
-       (get result "build")]
+          build
+          (get result "build")]
 
       (vis/register-resource!
         session-id
@@ -192,26 +189,25 @@
          :pid (get result "pid")
          :owner :ext/language-clojure
          :language :clojure}
-        (cond->
-          {:stop-fn (fn []
-                      ;; vis kills only what it spawned: an attachment is dropped,
-                      ;; never destroyed.
-                      (if external?
-                        (repl-manager/detach! session-id dir)
-                        (repl-manager/stop! session-id dir)))
-           ;; Keep a FAILED REPL visible (alive while a failure is on
-           ;; record) instead of letting the registry prune it the moment
-           ;; the pid dies — the failure + its log tail stay inspectable
-           ;; in F4 until an explicit stop.
-           :alive-fn (fn []
-                       (boolean (or (repl-manager/repl-by-id session-id id)
-                                    (repl-manager/last-failure session-id dir))))
-           ;; "alive, but is it WORKING?" — the registry probes this on
-           ;; every list/render and flips `status` to reality.
-           :health-fn (fn []
-                        (if external?
-                          (repl-manager/attachment-health session-id dir)
-                          (repl-manager/health session-id dir)))}
+        (cond-> {:stop-fn (fn []
+                            ;; vis kills only what it spawned: an attachment is dropped,
+                            ;; never destroyed.
+                            (if external?
+                              (repl-manager/detach! session-id dir)
+                              (repl-manager/stop! session-id dir)))
+                 ;; Keep a FAILED REPL visible (alive while a failure is on
+                 ;; record) instead of letting the registry prune it the moment
+                 ;; the pid dies — the failure + its log tail stay inspectable
+                 ;; in F4 until an explicit stop.
+                 :alive-fn (fn []
+                             (boolean (or (repl-manager/repl-by-id session-id id)
+                                          (repl-manager/last-failure session-id dir))))
+                 ;; "alive, but is it WORKING?" — the registry probes this on
+                 ;; every list/render and flips `status` to reality.
+                 :health-fn (fn []
+                              (if external?
+                                (repl-manager/attachment-health session-id dir)
+                                (repl-manager/health session-id dir)))}
           log-path
           (assoc :logs-fn
             (fn []
@@ -255,47 +251,45 @@
   ([env] (repl-start-fn env "status" nil))
   ([env op] (repl-start-fn env op nil))
   ([env op opts]
-   (let
-     [root
-      (env-root env)
+   (let [root
+         (env-root env)
 
-      sid
-      (:session-id env)
+         sid
+         (:session-id env)
 
-      ;; Positional op arrives as a STRING from the model (strings-only
-      ;; boundary); dispatch on it directly, no keyword minting. Default
-      ;; "status".
-      op
-      (if (string? op) op "status")
+         ;; Positional op arrives as a STRING from the model (strings-only
+         ;; boundary); dispatch on it directly, no keyword minting. Default
+         ;; "status".
+         op
+         (if (string? op) op "status")
 
-      opts
-      (when (map? opts) opts)
+         opts
+         (when (map? opts) opts)
 
-      dir
-      (resolve-repl-dir root (get opts "cwd"))
+         dir
+         (resolve-repl-dir root (get opts "cwd"))
 
-      aliases
-      (coerce-aliases (get opts "aliases"))
+         aliases
+         (coerce-aliases (get opts "aliases"))
 
-      ;; THIS start's own environment, over the project's. An ARGUMENT of the
-      ;; call, so the record of the call says what the REPL was started with.
-      repl-env
-      (get opts "env")]
+         ;; THIS start's own environment, over the project's. An ARGUMENT of the
+         ;; call, so the record of the call says what the REPL was started with.
+         repl-env
+         (get opts "env")]
 
      (case op
        "status"
        (extension/success {:result (repl-manager/status sid dir)})
 
        "connect"
-       (let
-         [port
-          (get opts "port")
+       (let [port
+             (get opts "port")
 
-          host
-          (get opts "host")
+             host
+             (get opts "host")
 
-          build
-          (get opts "build")]
+             build
+             (get opts "build")]
 
          (when-not (or port build)
            (throw (ex-info (str "repl_connect needs {\"port\": <the external nREPL's port>}"
@@ -305,13 +299,13 @@
                                 " repl_connect(\"clojure\", {\"port\": 7888}) /"
                                 " repl_connect(\"clojure\", {\"build\": \"app\"})")
                            {:type :clj/bad-args :got opts})))
-         (let
-           [r (repl-manager/connect!
-                sid
-                dir
-                {:host host
-                 :port (when port (if (string? port) (Long/parseLong (str/trim port)) (long port)))
-                 :build build})]
+         (let [r (repl-manager/connect!
+                   sid
+                   dir
+                   {:host host
+                    :port (when port
+                            (if (string? port) (Long/parseLong (str/trim port)) (long port)))
+                    :build build})]
            (register-repl-resource! sid dir aliases r)
            (extension/success {:result r})))
 
@@ -331,11 +325,11 @@
            ;; No "restart": start! REUSES a healthy REPL ("already-running") and
            ;; a REPL you actually want replaced is stopped explicitly first, so a
            ;; hung relaunch can never leave the caller with nothing.
-            (let [result (repl-manager/start! sid dir {:aliases aliases :env repl-env})]
-              ;; Mirror the live REPL into the session resource registry → ctx +
-              ;; footer + stoppable by id.
-              (register-repl-resource! sid dir aliases result)
-              (extension/success {:result result})))
+           (let [result (repl-manager/start! sid dir {:aliases aliases :env repl-env})]
+             ;; Mirror the live REPL into the session resource registry → ctx +
+             ;; footer + stoppable by id.
+             (register-repl-resource! sid dir aliases result)
+             (extension/success {:result result})))
 
        (throw
          (ex-info
@@ -354,15 +348,14 @@
    sorted vec of strings WITHOUT the leading colon; empty on any read/parse
    failure or a non-deps project."
   [env]
-  (try (let
-         [root
-          (env-root env)
+  (try (let [root
+             (env-root env)
 
-          dir
-          (resolve-repl-dir root nil)
+             dir
+             (resolve-repl-dir root nil)
 
-          f
-          (io/file dir "deps.edn")]
+             f
+             (io/file dir "deps.edn")]
 
          (if (.isFile f)
            (->> (:aliases (edn/read-string (slurp f)))
@@ -417,65 +410,67 @@
      - no id, 0 REPLs  → error (:clj/no-repl): no running nREPL to hit.
    A connect failure surfaces as DATA so the model can repl / wait."
   ([env arg]
-   (let
-     [m
-      (coerce-eval-arg arg)
+   (let [m
+         (coerce-eval-arg arg)
 
-      code
-      (get m "code")
+         code
+         (get m "code")
 
-      port
-      (get m "port")
+         port
+         (get m "port")
 
-      host
-      (or (get m "host") "localhost")
+         host
+         (or (get m "host") "localhost")
 
-      ns
-      (get m "ns")
+         ns
+         (get m "ns")
 
-      timeout_ms
-      (get m "timeout_ms")
+         timeout_ms
+         (get m "timeout_ms")
 
-      root
-      (env-root env)
+         root
+         (env-root env)
 
-      sid
-      (:session-id env)
+         sid
+         (:session-id env)
 
-      requested-dir?
-      (contains? m "cwd")
+         requested-dir?
+         (contains? m "cwd")
 
-      requested-rid
-      (some-> (or (get m "id") (get m "repl_id"))
-              str
-              str/trim
-              not-empty)
+         requested-rid
+         (some-> (or (get m "id") (get m "repl_id"))
+                 str
+                 str/trim
+                 not-empty)
 
-      rid
-      ;; A model may carry a stale/previous ctx resource id while also passing
-      ;; an explicit `cwd`. If that id is not live in THIS session, let `cwd`
-      ;; drive the default resolution instead of failing on the unknown id.
-      ;; With no explicit cwd, keep the strict id contract and surface the error.
-      (when-not (and requested-dir? requested-rid (not (repl-manager/repl-by-id sid requested-rid)))
-        requested-rid)
+         rid
+         ;; A model may carry a stale/previous ctx resource id while also passing
+         ;; an explicit `cwd`. If that id is not live in THIS session, let `cwd`
+         ;; drive the default resolution instead of failing on the unknown id.
+         ;; With no explicit cwd, keep the strict id contract and surface the error.
+         (when-not (and requested-dir?
+                        requested-rid
+                        (not (repl-manager/repl-by-id sid requested-rid)))
+           requested-rid)
 
-      default-dir
-      (resolve-repl-dir root (get m "cwd"))
+         default-dir
+         (resolve-repl-dir root (get m "cwd"))
 
-      run
-      (fn [target repl-label]
-        ;; Carry the evaluated FORM back on the result (string key, crosses the
-        ;; strings-only boundary) so the repl_eval op-card can show it in the
-        ;; collapsed chip / expanded FORM section. `repl` names WHICH nREPL
-        ;; actually ran it, so a multi-REPL session reports the target used.
-        ;; The eval goes through repl-manager, not straight to the client: a
-        ;; target attached to a shadow-cljs BUILD has to have that build selected
-        ;; in the nREPL session first, or the same code answers as JVM Clojure.
-        (-> (repl-manager/eval! (assoc target :host (or (:host target) host))
-                                {:code code :ns ns :pretty? true :timeout-ms (or timeout_ms 30000)})
-            strip-blank-repl-fields
-            (assoc "code" code
-                   "repl" repl-label)))]
+         run
+         (fn [target repl-label]
+           ;; Carry the evaluated FORM back on the result (string key, crosses the
+           ;; strings-only boundary) so the repl_eval op-card can show it in the
+           ;; collapsed chip / expanded FORM section. `repl` names WHICH nREPL
+           ;; actually ran it, so a multi-REPL session reports the target used.
+           ;; The eval goes through repl-manager, not straight to the client: a
+           ;; target attached to a shadow-cljs BUILD has to have that build selected
+           ;; in the nREPL session first, or the same code answers as JVM Clojure.
+           (-> (repl-manager/eval!
+                 (assoc target :host (or (:host target) host))
+                 {:code code :ns ns :pretty? true :timeout-ms (or timeout_ms 30000)})
+               strip-blank-repl-fields
+               (assoc "code" code
+                      "repl" repl-label)))]
 
      (if port
        ;; Explicit port: the escape hatch — dial exactly what was asked.
@@ -503,11 +498,11 @@
                                             :hint "then retry the eval"}})
 
                 :clj/unknown-repl-id
-                (extension/failure
-                  {:error {:message (str "no REPL under id '"
-                                         (:id (ex-data e))
-                                         "' — check repl_status(\"clojure\")")
-                           :hint "pass a live id, or omit it to use the default REPL"}})
+                (extension/failure {:error {:message (str "no REPL under id '"
+                                                          (:id (ex-data e))
+                                                          "' — check repl_status(\"clojure\")")
+                                            :hint
+                                            "pass a live id, or omit it to use the default REPL"}})
 
                 (throw e))))))))
 
@@ -528,12 +523,11 @@
   [^String code]
   (if-not (repair/delimiter-error? code)
     {:code code :repaired? false}
-    (let
-      [verdict (balance/rebalance {:balancer repair/fix-delimiters
-                                   :parses-clean? repair/reads-clean?
-                                   :source code
-                                   :spans [[1 (max 1 (count (str/split-lines code)))]]
-                                   :subject "this file has"})]
+    (let [verdict (balance/rebalance {:balancer repair/fix-delimiters
+                                      :parses-clean? repair/reads-clean?
+                                      :source code
+                                      :spans [[1 (max 1 (count (str/split-lines code)))]]
+                                      :subject "this file has"})]
       (if (:ok? verdict)
         {:code (:content verdict) :repaired? true :repairs (:notes verdict)}
         {:code code :repaired? false :why (:why verdict)}))))
@@ -555,10 +549,9 @@
   [^java.io.File root file]
   (let [s (str file)]
     (if (and root (seq s) (not= s "<stdin>"))
-      (try (let
-             [rp (.toPath (.getCanonicalFile root))
-              fp (.toPath (.getCanonicalFile (io/file s)))
-              rel (when (.startsWith fp rp) (str (.relativize rp fp)))]
+      (try (let [rp (.toPath (.getCanonicalFile root))
+                 fp (.toPath (.getCanonicalFile (io/file s)))
+                 rel (when (.startsWith fp rp) (str (.relativize rp fp)))]
 
              ;; Under root -> `src/foo.clj`. Otherwise (outside root, or the root
              ;; itself, whose relativization is "") fall back to a home-homogenized
@@ -606,12 +599,11 @@
   [^java.io.File root paths]
   (->> paths
        (mapcat (fn [p]
-                 (let
-                   [g
-                    (io/file (str p))
+                 (let [g
+                       (io/file (str p))
 
-                    f
-                    (if (.isAbsolute g) g (io/file root (str p)))]
+                       f
+                       (if (.isAbsolute g) g (io/file root (str p)))]
 
                    (cond (.isDirectory f) (->> (file-seq f)
                                                (filter #(.isFile ^java.io.File %))
@@ -654,53 +646,49 @@
    naturally excludes vendored code and test fixtures (nothing points at them).
    Falls back to `src`+`test`, then the workspace root, when no deps.edn is found."
   [^java.io.File root]
-  (let
-    [root-deps
-     (read-edn-safe (io/file root "deps.edn"))
+  (let [root-deps
+        (read-edn-safe (io/file root "deps.edn"))
 
-     modules
-     (loop
-       [queue
-        (map #(io/file root (str %)) (deps-local-roots root-deps))
+        modules
+        (loop [queue
+               (map #(io/file root (str %)) (deps-local-roots root-deps))
 
-        seen
-        #{}
+               seen
+               #{}
 
-        acc
-        []]
+               acc
+               []]
 
-       (if-let [dir (first queue)]
-         (let [canon (try (.getCanonicalPath ^java.io.File dir) (catch Throwable _ (str dir)))]
-           (if (contains? seen canon)
-             (recur (rest queue) seen acc)
-             (let
-               [md (read-edn-safe (io/file dir "deps.edn"))
-                subs (map #(io/file dir (str %)) (deps-local-roots md))]
+          (if-let [dir (first queue)]
+            (let [canon (try (.getCanonicalPath ^java.io.File dir) (catch Throwable _ (str dir)))]
+              (if (contains? seen canon)
+                (recur (rest queue) seen acc)
+                (let [md (read-edn-safe (io/file dir "deps.edn"))
+                      subs (map #(io/file dir (str %)) (deps-local-roots md))]
 
-               (recur (concat (rest queue) subs) (conj seen canon) (conj acc [dir md])))))
-         acc))
+                  (recur (concat (rest queue) subs) (conj seen canon) (conj acc [dir md])))))
+            acc))
 
-     candidates
-     (concat (map #(io/file root (str %)) (deps-source-paths root-deps))
-             (mapcat (fn [[dir md]]
-                       (map #(io/file dir (str %))
-                            (or (seq (deps-source-paths md)) ["src" "test"])))
-                     modules))
+        candidates
+        (concat (map #(io/file root (str %)) (deps-source-paths root-deps))
+                (mapcat (fn [[dir md]]
+                          (map #(io/file dir (str %))
+                               (or (seq (deps-source-paths md)) ["src" "test"])))
+                        modules))
 
-     dirs
-     (->> candidates
-          (filter #(.isDirectory ^java.io.File %))
-          (map #(try (.getCanonicalPath ^java.io.File %) (catch Throwable _ (str %))))
-          (distinct)
-          (sort)
-          (vec))]
+        dirs
+        (->> candidates
+             (filter #(.isDirectory ^java.io.File %))
+             (map #(try (.getCanonicalPath ^java.io.File %) (catch Throwable _ (str %))))
+             (distinct)
+             (sort)
+             (vec))]
 
     (cond (seq dirs) dirs
-          :else (let
-                  [d (->> ["src" "test"]
-                          (map #(io/file root %))
-                          (filter #(.exists ^java.io.File %))
-                          (mapv str))]
+          :else (let [d (->> ["src" "test"]
+                             (map #(io/file root %))
+                             (filter #(.exists ^java.io.File %))
+                             (mapv str))]
                   (if (seq d) d [(str root)])))))
 
 (defn- clj-format-one-file!
@@ -713,26 +701,24 @@
    existed but would have DELETED a delimiter this file already has, so the file is
    left exactly as it is and the reason is reported instead."
   [env path]
-  (let
-    [code
-     (slurp (str path))
+  (let [code
+        (slurp (str path))
 
-     for-path
-     (or path (:workspace/root env))
+        for-path
+        (or path (:workspace/root env))
 
-     {:keys [repaired? repairs why] fixed :code}
-     (clj-repair-source code)
+        {:keys [repaired? repairs why] fixed :code}
+        (clj-repair-source code)
 
-     out
-     (fmt/format-source fixed for-path)]
+        out
+        (fmt/format-source fixed for-path)]
 
     (when (not= out code) (spit (str path) out))
-    (cond->
-      {"path" (relativize-path (io/file (or (:workspace/root env) ".")) path)
-       "changed" (not= out code)
-       "repaired" repaired?
-       "wrote" (not= out code)
-       "formatter" (name (fmt/formatter-for for-path))}
+    (cond-> {"path" (relativize-path (io/file (or (:workspace/root env) ".")) path)
+             "changed" (not= out code)
+             "repaired" repaired?
+             "wrote" (not= out code)
+             "formatter" (name (fmt/formatter-for for-path))}
       (seq repairs)
       (assoc "repairs" repairs)
 
@@ -747,15 +733,14 @@
    `\"path\"`. Mirrors `lint/group-by-cwd` so format and lint share one shape."
   [files]
   (reduce (fn [m f]
-            (let
-              [jf
-               (java.io.File. ^String (get f "path"))
+            (let [jf
+                  (java.io.File. ^String (get f "path"))
 
-               dir
-               (or (.getParent jf) ".")
+                  dir
+                  (or (.getParent jf) ".")
 
-               base
-               (.getName jf)]
+                  base
+                  (.getName jf)]
 
               (assoc-in m [dir base] (dissoc f "path"))))
           {}
@@ -776,32 +761,30 @@
    single file / code string, and the distinct `\"formatters\"` set on a batch."
   ([arg] (clj-format-fn nil arg))
   ([env arg]
-   (let
-     [root
-      (io/file (or (:workspace/root env) "."))
+   (let [root
+         (io/file (or (:workspace/root env) "."))
 
-      paths
-      (when (map? arg) (get arg "paths"))
+         paths
+         (when (map? arg) (get arg "paths"))
 
-      path
-      (when-let
-        [p (and (map? arg)
-                (let [p (get arg "path")]
-                  (when-not (str/blank? (str p)) p)))]
-        (let [f (io/file (str p))]
-          (str (if (.isAbsolute f) f (io/file root (str p))))))
+         path
+         (when-let [p (and (map? arg)
+                           (let [p (get arg "path")]
+                             (when-not (str/blank? (str p)) p)))]
+           (let [f (io/file (str p))]
+             (str (if (.isAbsolute f) f (io/file root (str p))))))
 
-      has-code?
-      ;; A blank `"code": ""` default must not shadow a real `path`/`paths`
-      ;; (otherwise we'd format an empty snippet instead of the file).
-      (and (map? arg) (not (str/blank? (str (get arg "code")))))
+         has-code?
+         ;; A blank `"code": ""` default must not shadow a real `path`/`paths`
+         ;; (otherwise we'd format an empty snippet instead of the file).
+         (and (map? arg) (not (str/blank? (str (get arg "code")))))
 
-      default?
-      (or (nil? arg) (and (map? arg) (not (seq paths)) (not path) (not has-code?)))
+         default?
+         (or (nil? arg) (and (map? arg) (not (seq paths)) (not path) (not has-code?)))
 
-      batch
-      (cond (seq paths) (expand-clj-source-files root paths)
-            default? (expand-clj-source-files root (discover-project-source-paths root)))]
+         batch
+         (cond (seq paths) (expand-clj-source-files root paths)
+               default? (expand-clj-source-files root (discover-project-source-paths root)))]
 
      (if batch
        (let [files (mapv #(clj-format-one-file! env %) batch)]
@@ -844,12 +827,11 @@
          (extension/success
            {:result (contract/check
                       :format-fn
-                      (cond->
-                        {"op" "clj-format"
-                         "changed" (not= out code)
-                         "chars" (- (count out) (count code))
-                         "repaired" repaired?
-                         "formatter" (name (fmt/formatter-for for-path))}
+                      (cond-> {"op" "clj-format"
+                               "changed" (not= out code)
+                               "chars" (- (count out) (count code))
+                               "repaired" repaired?
+                               "formatter" (name (fmt/formatter-for for-path))}
                         (seq repairs)
                         (assoc "repairs" repairs)
 
@@ -910,43 +892,42 @@
    directory to write each path prefix once:
    `{<dir> {<basename> {\"error\"/\"warning\"/\"info\" [...]}}}`."
   [env arg]
-  (let
-    [root
-     (io/file (or (:workspace/root env) "."))
+  (let [root
+        (io/file (or (:workspace/root env) "."))
 
-     path
-     (when (map? arg)
-       (let [p (get arg "path")]
-         (when-not (str/blank? (str p)) p)))
+        path
+        (when (map? arg)
+          (let [p (get arg "path")]
+            (when-not (str/blank? (str p)) p)))
 
-     paths
-     (when (map? arg) (get arg "paths"))
+        paths
+        (when (map? arg) (get arg "paths"))
 
-     code
-     ;; Models routinely emit EVERY schema key with an empty default
-     ;; (`"code": ""` alongside a real `"path"`); a blank `code` must NOT
-     ;; shadow the path (that would lint an empty snippet and falsely
-     ;; report `snippet — clean` while the file goes unlinted).
-     (cond (string? arg) (when-not (str/blank? arg) arg)
-           (and (map? arg) (not (str/blank? (str (get arg "code"))))) (str (get arg "code"))
-           :else nil)
+        code
+        ;; Models routinely emit EVERY schema key with an empty default
+        ;; (`"code": ""` alongside a real `"path"`); a blank `code` must NOT
+        ;; shadow the path (that would lint an empty snippet and falsely
+        ;; report `snippet — clean` while the file goes unlinted).
+        (cond (string? arg) (when-not (str/blank? arg) arg)
+              (and (map? arg) (not (str/blank? (str (get arg "code"))))) (str (get arg "code"))
+              :else nil)
 
-     under
-     (fn [p]
-       (let [f (io/file (str p))]
-         (str (if (.isAbsolute f) f (io/file root (str p))))))
+        under
+        (fn [p]
+          (let [f (io/file (str p))]
+            (str (if (.isAbsolute f) f (io/file root (str p))))))
 
-     ;; `path` and `paths` are UNIONED, not shadowing — a model that emits BOTH
-     ;; (e.g. a junk `path` beside a real `paths`) lints/validates every named
-     ;; target instead of silently dropping one.
-     requested
-     (when-not code (into [] (distinct (concat (when path [path]) (when (seq paths) paths)))))
+        ;; `path` and `paths` are UNIONED, not shadowing — a model that emits BOTH
+        ;; (e.g. a junk `path` beside a real `paths`) lints/validates every named
+        ;; target instead of silently dropping one.
+        requested
+        (when-not code (into [] (distinct (concat (when path [path]) (when (seq paths) paths)))))
 
-     ;; A named target that resolves to nothing must be an ERROR, not a silent
-     ;; `clean`: a non-existent path expands to zero files → 0 findings, so the
-     ;; model gets meaningless `clean` feedback with nothing to correct and spins.
-     missing
-     (into [] (remove #(.exists (io/file (under %))) requested))]
+        ;; A named target that resolves to nothing must be an ERROR, not a silent
+        ;; `clean`: a non-existent path expands to zero files → 0 findings, so the
+        ;; model gets meaningless `clean` feedback with nothing to correct and spins.
+        missing
+        (into [] (remove #(.exists (io/file (under %))) requested))]
 
     (if (seq missing)
       (extension/failure
@@ -954,48 +935,44 @@
                                (str/join ", " missing)
                                " — relative paths resolve against the workspace root")
                  :hint "pass an existing file/dir, or omit path/paths to lint the whole project"}})
-      (let
-        [targets
-         (when (seq requested) (mapv #(relativize-path root (under %)) requested))
+      (let [targets
+            (when (seq requested) (mapv #(relativize-path root (under %)) requested))
 
-         base
-         ;; clj-kondo is the STATIC provider (all branches). The :general provider
-         ;; (reflection + boxed-math) is a COMPILER pass — the warnings only exist
-         ;; while the code is compiled — so it runs over whatever we're TARGETING:
-         ;; the `code` snippet, or each source file being linted (compiled in a
-         ;; throwaway namespace that is torn down afterwards, so nothing leaks).
-         ;; Its warnings merge into the flat findings and the warning count.
-         (let
-           [merge-general (fn [k g]
-                            (-> k
-                                (update "findings" into g)
-                                (update "warning" (fnil + 0) (count g))))]
-           (if code
-             (merge-general (lint/lint-code code) (reflection/compile-warnings code "<stdin>"))
-             (let
-               [src-files (expand-clj-source-files root
-                                                   (if (seq requested)
-                                                     (mapv under requested)
-                                                     (discover-project-source-paths root)))]
-               (merge-general (lint-grouped src-files)
-                              (into []
-                                    (mapcat #(reflection/compile-warnings (slurp (io/file %))
-                                                                          (str %)))
-                                    src-files)))))
+            base
+            ;; clj-kondo is the STATIC provider (all branches). The :general provider
+            ;; (reflection + boxed-math) is a COMPILER pass — the warnings only exist
+            ;; while the code is compiled — so it runs over whatever we're TARGETING:
+            ;; the `code` snippet, or each source file being linted (compiled in a
+            ;; throwaway namespace that is torn down afterwards, so nothing leaks).
+            ;; Its warnings merge into the flat findings and the warning count.
+            (let [merge-general (fn [k g]
+                                  (-> k
+                                      (update "findings" into g)
+                                      (update "warning" (fnil + 0) (count g))))]
+              (if code
+                (merge-general (lint/lint-code code) (reflection/compile-warnings code "<stdin>"))
+                (let [src-files (expand-clj-source-files root
+                                                         (if (seq requested)
+                                                           (mapv under requested)
+                                                           (discover-project-source-paths root)))]
+                  (merge-general (lint-grouped src-files)
+                                 (into []
+                                       (mapcat #(reflection/compile-warnings (slurp (io/file %))
+                                                                             (str %)))
+                                       src-files)))))
 
-         providers
-         ["clj-kondo" "general"]
+            providers
+            ["clj-kondo" "general"]
 
-         findings
-         (mapv #(update % "file" (partial relativize-path root)) (get base "findings"))]
+            findings
+            (mapv #(update % "file" (partial relativize-path root)) (get base "findings"))]
 
         (extension/success {:result (contract/check :lint-fn
-                                                    (cond->
-                                                      (assoc base
-                                                        "findings" findings
-                                                        "language" "clojure"
-                                                        "providers" providers
-                                                        "by-cwd" (lint/group-by-cwd findings))
+                                                    (cond-> (assoc base
+                                                              "findings" findings
+                                                              "language" "clojure"
+                                                              "providers" providers
+                                                              "by-cwd" (lint/group-by-cwd findings))
                                                       code
                                                       (assoc "snippet" code)
 

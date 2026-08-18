@@ -23,14 +23,13 @@
       (binding [guard/*allow-network* true]
         (expect (not (guard/refused? "api.openai.com")))))
   (it "throws with the refused host instead of dialing it"
-      (let
-        [wrapped
-         (guard/guard (fn [_]
-                        :dialed))
+      (let [wrapped
+            (guard/guard (fn [_]
+                           :dialed))
 
-         thrown
-         (try (wrapped {:uri "https://api.openai.com/v1/models"})
-              (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+            thrown
+            (try (wrapped {:uri "https://api.openai.com/v1/models"})
+                 (catch clojure.lang.ExceptionInfo e (ex-data e)))]
 
         (expect (= :vis.test/network-refused (:type thrown)))
         (expect (= "api.openai.com" (:host thrown)))

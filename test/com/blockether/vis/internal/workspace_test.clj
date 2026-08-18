@@ -50,10 +50,9 @@
   (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
     (.directory pb root)
     (.redirectErrorStream pb true)
-    (let
-      [p (.start pb)
-       out (slurp (.getInputStream p))
-       exit (.waitFor p)]
+    (let [p (.start pb)
+          out (slurp (.getInputStream p))
+          exit (.waitFor p)]
 
       (when-not (zero? exit)
         (throw (ex-info "git command failed" {:args args :exit exit :out out})))
@@ -85,15 +84,14 @@
   "Redef rift-fork! so `create!` reports `mechanism` (nil = a native library
    older than kind reporting, exactly like the bare-path case)."
   [mechanism f]
-  (with-redefs
-    [ws/rift-fork!
-     (fn [{:keys [store-root name]}]
-       (let [root (io/file store-root name)]
-         (.mkdirs root)
-         {:root (.getCanonicalPath root) :mechanism mechanism}))
+  (with-redefs [ws/rift-fork!
+                (fn [{:keys [store-root name]}]
+                  (let [root (io/file store-root name)]
+                    (.mkdirs root)
+                    {:root (.getCanonicalPath root) :mechanism mechanism}))
 
-     ws/rift-available?
-     (constantly {:available? true})]
+                ws/rift-available?
+                (constantly {:available? true})]
 
     (f)))
 
@@ -101,12 +99,11 @@
   "Insert a session_soul + session_state pinned 1:1 to `workspace-id`, so
    `discard-session-clones!` can resolve soul → state → workspace."
   [store soul-id workspace-id]
-  (let
-    [ds
-     (:datasource store)
+  (let [ds
+        (:datasource store)
 
-     st
-     (str (random-uuid))]
+        st
+        (str (random-uuid))]
 
     (jdbc/execute! ds
                    ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" soul-id
@@ -229,10 +226,9 @@
              (do (spit (io/file base "a.txt") "original\n")
                  (with-store
                    (fn [store]
-                     (let
-                       [seed (seed-workspace! store base)
-                        draft (ws/create! store {:from seed})
-                        draft-id (:id draft)]
+                     (let [seed (seed-workspace! store base)
+                           draft (ws/create! store {:from seed})
+                           draft-id (:id draft)]
 
                        (try
                          ;; a real, distinct clone carrying the parent's tree
@@ -270,11 +266,10 @@
               (spit (io/file base "sub" "nested.txt") "NESTED\n")
               (with-store
                 (fn [store]
-                  (let
-                    [seed (seed-workspace! store base)
-                     state-id (pin-session! store (str (random-uuid)) (:id seed))
-                     draft (ws/create! store {:session-state-id state-id :from seed})
-                     draft-id (:id draft)]
+                  (let [seed (seed-workspace! store base)
+                        state-id (pin-session! store (str (random-uuid)) (:id seed))
+                        draft (ws/create! store {:session-state-id state-id :from seed})
+                        draft-id (:id draft)]
 
                     (try
                       ;; the clone carries trunk's whole tree, nested dirs included
@@ -343,11 +338,10 @@
                 (git! (io/file base) "add" "staged.txt")
                 (with-store
                   (fn [store]
-                    (let
-                      [seed (seed-workspace! store base)
-                       draft (ws/create! store {:from seed :clean? true})
-                       draft-id (:id draft)
-                       root (:root draft)]
+                    (let [seed (seed-workspace! store base)
+                          draft (ws/create! store {:from seed :clean? true})
+                          draft-id (:id draft)
+                          root (:root draft)]
 
                       (try (expect (some? root))
                            (expect (not= base root))
@@ -399,12 +393,11 @@
   linked-worktree-source-test
   (it
     "refuses linked Git worktrees before entering the native rift clone path"
-    (let
-      [base
-       (temp-dir "vis-ws-worktree-base")
+    (let [base
+          (temp-dir "vis-ws-worktree-base")
 
-       linked
-       (temp-dir "vis-ws-worktree-linked")]
+          linked
+          (temp-dir "vis-ws-worktree-linked")]
 
       (try
         ;; Real base repo via the git binary. A linked worktree's working dir
@@ -418,14 +411,13 @@
           (spit (io/file linked ".git") (str "gitdir: " (.getCanonicalPath admin) "\n")))
         (with-store
           (fn [store]
-            (let
-              [seed
-               (seed-workspace! store linked)
+            (let [seed
+                  (seed-workspace! store linked)
 
-               data
-               (try (ws/create! store {:from seed})
-                    nil
-                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                  data
+                  (try (ws/create! store {:from seed})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
 
               ;; The capability flow probes backends first: rift reports the
               ;; linked-worktree source UNAVAILABLE, so no backend covers the
@@ -442,12 +434,11 @@
   cow-readonly-source-test
   (it
     "clones a tree containing a mode-444 file and restores its perms (rift CoW EACCES workaround)"
-    (let
-      [base
-       (temp-dir "vis-ws-ro")
+    (let [base
+          (temp-dir "vis-ws-ro")
 
-       ro
-       (io/file base "readonly.txt")]
+          ro
+          (io/file base "readonly.txt")]
 
       (try
         (if-not (ws/isolated-workspaces-supported? base)
@@ -461,15 +452,14 @@
                 (java.nio.file.attribute.PosixFilePermissions/fromString "r--r--r--"))
               (with-store
                 (fn [store]
-                  (let
-                    [seed
-                     (seed-workspace! store base)
+                  (let [seed
+                        (seed-workspace! store base)
 
-                     draft
-                     (ws/create! store {:from seed})
+                        draft
+                        (ws/create! store {:from seed})
 
-                     draft-id
-                     (:id draft)]
+                        draft-id
+                        (:id draft)]
 
                     (try
                       ;; the clone succeeded despite the read-only source file
@@ -510,23 +500,21 @@
 (defdescribe
   change-root-test
   (it "repoints the session to a trunk at the new path"
-      (let
-        [a
-         (temp-dir "vis-root-a")
+      (let [a
+            (temp-dir "vis-root-a")
 
-         b
-         (temp-dir "vis-root-b")]
+            b
+            (temp-dir "vis-root-b")]
 
         (try (with-store (fn [store]
-                           (let
-                             [trunk
-                              (ws/create-trunk-at! store a)
+                           (let [trunk
+                                 (ws/create-trunk-at! store a)
 
-                              state-id
-                              (pin-session! store (str (random-uuid)) (:id trunk))
+                                 state-id
+                                 (pin-session! store (str (random-uuid)) (:id trunk))
 
-                              ws2
-                              (ws/change-root! store state-id b)]
+                                 ws2
+                                 (ws/change-root! store state-id b)]
 
                              (expect (= (ws/normalize-root b) (:root ws2)))
                              (expect (= (:id ws2) (:id (ws/for-session store state-id))))
@@ -535,43 +523,40 @@
   (it "is a no-op returning the SAME workspace when the path already is the root"
       (let [a (temp-dir "vis-root-same")]
         (try (with-store (fn [store]
-                           (let
-                             [trunk (ws/create-trunk-at! store a)
-                              state-id (pin-session! store (str (random-uuid)) (:id trunk))
-                              ws2 (ws/change-root! store state-id a)]
+                           (let [trunk (ws/create-trunk-at! store a)
+                                 state-id (pin-session! store (str (random-uuid)) (:id trunk))
+                                 ws2 (ws/change-root! store state-id a)]
 
                              (expect (= (:id trunk) (:id ws2))))))
              (finally (delete-tree! a)))))
   (it "refuses while the session is in a draft"
-      (let
-        [a
-         (temp-dir "vis-root-draft")
+      (let [a
+            (temp-dir "vis-root-draft")
 
-         b
-         (temp-dir "vis-root-draft-b")]
+            b
+            (temp-dir "vis-root-draft-b")]
 
-        (try (with-store (fn [store]
-                           (let
-                             [seed
-                              (seed-workspace! store a)
+        (try (with-store
+               (fn [store]
+                 (let [seed
+                       (seed-workspace! store a)
 
-                              state-id
-                              (pin-session! store (str (random-uuid)) (:id seed))
+                       state-id
+                       (pin-session! store (str (random-uuid)) (:id seed))
 
-                              thrown
-                              (try (ws/change-root! store state-id b) nil (catch Exception t t))]
+                       thrown
+                       (try (ws/change-root! store state-id b) nil (catch Exception t t))]
 
-                             (expect (some? thrown))
-                             (expect (= :workspace/root-change-in-draft
-                                        (:type (ex-data thrown)))))))
+                   (expect (some? thrown))
+                   (expect (= :workspace/root-change-in-draft (:type (ex-data thrown)))))))
              (finally (delete-tree! a) (delete-tree! b)))))
   (it "throws on a non-directory path"
       (let [a (temp-dir "vis-root-nodir")]
         (try (with-store (fn [store]
-                           (let
-                             [trunk (ws/create-trunk-at! store a)
-                              state-id (pin-session! store (str (random-uuid)) (:id trunk))
-                              thrown (try (ws/change-root! store state-id (str a "/nope-missing"))
+                           (let [trunk (ws/create-trunk-at! store a)
+                                 state-id (pin-session! store (str (random-uuid)) (:id trunk))
+                                 thrown (try
+                                          (ws/change-root! store state-id (str a "/nope-missing"))
                                           nil
                                           (catch Exception t t))]
 
@@ -582,12 +567,11 @@
 (defdescribe
   deleted-paths-guard-test
   (it "a positive baseline reports trunk files missing from the clone as deletions"
-      (let
-        [trunk
-         (temp-dir "vis-delguard-t")
+      (let [trunk
+            (temp-dir "vis-delguard-t")
 
-         clone
-         (temp-dir "vis-delguard-c")]
+            clone
+            (temp-dir "vis-delguard-c")]
 
         (try (spit (io/file trunk "gone.txt") "x\n")
              (Thread/sleep 8)
@@ -595,12 +579,11 @@
              (expect (= ["gone.txt"] (ws/deleted-paths clone trunk (System/currentTimeMillis))))
              (finally (delete-tree! trunk) (delete-tree! clone)))))
   (it "a non-positive (FRESH) baseline can NEVER infer a deletion, whatever the trees hold"
-      (let
-        [trunk
-         (temp-dir "vis-freshguard-t")
+      (let [trunk
+            (temp-dir "vis-freshguard-t")
 
-         clone
-         (temp-dir "vis-freshguard-c")]
+            clone
+            (temp-dir "vis-freshguard-c")]
 
         (try (spit (io/file trunk "head.txt") "REAL WORK\n")
              ;; pathological pre-baseline mtime (epoch, e.g. from a tarball):
@@ -613,12 +596,11 @@
              (expect (= [] (ws/deleted-paths clone trunk -5)))
              (finally (delete-tree! trunk) (delete-tree! clone)))))
   (it "a Rift-recorded ignored trunk tree is NEVER an agent deletion"
-      (let
-        [trunk
-         (temp-dir "vis-ignguard-t")
+      (let [trunk
+            (temp-dir "vis-ignguard-t")
 
-         clone
-         (temp-dir "vis-ignguard-c")]
+            clone
+            (temp-dir "vis-ignguard-c")]
 
         (try (git! (io/file trunk) "init" "-q")
              (spit (io/file trunk ".gitignore") "generated/\nsecret.env\n")
@@ -639,12 +621,11 @@
              (finally (delete-tree! trunk) (delete-tree! clone)))))
   (it
     "a regenerable artifact tree the fork filters out is NEVER an agent deletion, even when git tracks it"
-    (let
-      [trunk
-       (temp-dir "vis-artguard-t")
+    (let [trunk
+          (temp-dir "vis-artguard-t")
 
-       clone
-       (temp-dir "vis-artguard-c")]
+          clone
+          (temp-dir "vis-artguard-c")]
 
       (try (git! (io/file trunk) "init" "-q")
            (.mkdirs (io/file trunk "dist"))
@@ -665,12 +646,11 @@
            (finally (delete-tree! trunk) (delete-tree! clone)))))
   (it
     "a filtered `.yarn` artifact PAIR the fork drops is NEVER an agent deletion, even when git tracks it"
-    (let
-      [trunk
-       (temp-dir "vis-yarnguard-t")
+    (let [trunk
+          (temp-dir "vis-yarnguard-t")
 
-       clone
-       (temp-dir "vis-yarnguard-c")]
+          clone
+          (temp-dir "vis-yarnguard-c")]
 
       (try (git! (io/file trunk) "init" "-q")
            (.mkdirs (io/file trunk ".yarn/cache"))
@@ -695,49 +675,47 @@
   draft-isolation-test
   (it
     "per-root draft policy: isolates copy roots, withholds not-allowed, and fails CLOSED when no clone was minted"
-    (let
-      [trunk
-       (temp-dir "vis-di-trunk")
+    (let [trunk
+          (temp-dir "vis-di-trunk")
 
-       draft
-       (temp-dir "vis-di-draft")
+          draft
+          (temp-dir "vis-di-draft")
 
-       shared
-       (temp-dir "vis-di-shared")
+          shared
+          (temp-dir "vis-di-shared")
 
-       copy
-       (temp-dir "vis-di-copy")
+          copy
+          (temp-dir "vis-di-copy")
 
-       copy-clone
-       (temp-dir "vis-di-clone")
+          copy-clone
+          (temp-dir "vis-di-clone")
 
-       secret
-       (temp-dir "vis-di-secret")
+          secret
+          (temp-dir "vis-di-secret")
 
-       pending
-       (temp-dir "vis-di-pending")
+          pending
+          (temp-dir "vis-di-pending")
 
-       policy
-       {:jail-enabled true
-        :draft-policies {copy :copy-and-apply secret :not-allowed pending :copy-only}}
+          policy
+          {:jail-enabled true
+           :draft-policies {copy :copy-and-apply secret :not-allowed pending :copy-only}}
 
-       configured
-       [shared copy secret pending]]
+          configured
+          [shared copy secret pending]]
 
-      (try (let
-             [entries
-              (ws/env-filesystem-roots {:security-policy policy
-                                        :workspace {:repo-root trunk
-                                                    :root draft
-                                                    :filesystem-roots [{:trunk copy
-                                                                        :clone copy-clone
-                                                                        :policy "copy-and-apply"
-                                                                        :backend "rift"}]}
-                                        :security/filesystem-roots configured
-                                        :security/no-search-roots []})
+      (try (let [entries
+                 (ws/env-filesystem-roots {:security-policy policy
+                                           :workspace {:repo-root trunk
+                                                       :root draft
+                                                       :filesystem-roots [{:trunk copy
+                                                                           :clone copy-clone
+                                                                           :policy "copy-and-apply"
+                                                                           :backend "rift"}]}
+                                           :security/filesystem-roots configured
+                                           :security/no-search-roots []})
 
-              by-trunk
-              (into {} (map (juxt :trunk identity)) entries)]
+                 by-trunk
+                 (into {} (map (juxt :trunk identity)) entries)]
 
              ;; The session's OWN trunk↔clone pair comes FIRST, so an absolute trunk
              ;; path remaps into the clone before any broad root can accept it verbatim.
@@ -750,36 +728,33 @@
              (expect (true? (:denied? (by-trunk secret))))
              ;; copy policy + NO clone for this draft ⇒ withheld, never written through
              (expect (true? (:denied? (by-trunk pending))))
-             (binding
-               [ws/*workspace-root*
-                draft
+             (binding [ws/*workspace-root*
+                       draft
 
-                ws/*filesystem-roots*
-                entries]
+                       ws/*filesystem-roots*
+                       entries]
 
                (expect (= #{secret pending} (ws/denied-roots)))
                (expect (contains? (set (ws/allowed-roots)) copy-clone))
                (expect (not-any? #{secret pending} (ws/allowed-roots)))
                (expect (not-any? #{secret pending} (map :trunk (ws/filesystem-root-mappings))))))
            ;; A TRUNK session isolates nothing, but plans what a new draft must copy.
-           (binding
-             [ws/*filesystem-roots* (ws/env-filesystem-roots {:security-policy policy
-                                                              :workspace {:repo-root trunk
-                                                                          :root trunk}
-                                                              :security/filesystem-roots configured
-                                                              :security/no-search-roots []})]
+           (binding [ws/*filesystem-roots* (ws/env-filesystem-roots
+                                             {:security-policy policy
+                                              :workspace {:repo-root trunk :root trunk}
+                                              :security/filesystem-roots configured
+                                              :security/no-search-roots []})]
              (expect (empty? (ws/denied-roots)))
              (expect (= [{:trunk copy :policy :copy-and-apply} {:trunk pending :policy :copy-only}]
                         (ws/draft-isolation-plan))))
            (finally (run! delete-tree! [trunk draft shared copy copy-clone secret pending])))))
   (it
     "create! mints a private clone per copy-policy root, apply! lands copy-and-apply, abandon! releases it"
-    (let
-      [base
-       (temp-dir "vis-di-base")
+    (let [base
+          (temp-dir "vis-di-base")
 
-       extra
-       (temp-dir "vis-di-extra")]
+          extra
+          (temp-dir "vis-di-extra")]
 
       (try
         (if-not (ws/isolated-workspaces-supported? base)
@@ -789,23 +764,22 @@
               (spit (io/file extra "e.txt") "extra original\n")
               (with-store
                 (fn [store]
-                  (let
-                    [seed
-                     (seed-workspace! store base)
+                  (let [seed
+                        (seed-workspace! store base)
 
-                     draft
-                     (ws/create! store
-                                 {:from seed
-                                  :filesystem-roots [{:trunk extra :policy :copy-and-apply}]})
+                        draft
+                        (ws/create! store
+                                    {:from seed
+                                     :filesystem-roots [{:trunk extra :policy :copy-and-apply}]})
 
-                     draft-id
-                     (:id draft)
+                        draft-id
+                        (:id draft)
 
-                     entry
-                     (first (ws/extra-root-entries draft))
+                        entry
+                        (first (ws/extra-root-entries draft))
 
-                     clone
-                     (:clone entry)]
+                        clone
+                        (:clone entry)]
 
                     (try (expect (= extra (:trunk entry)))
                          (expect (= :copy-and-apply (:policy entry)))
@@ -854,40 +828,36 @@
         (expect (= (ws/cow-platform-hint (System/getProperty "os.name"))
                    (ws/isolation-unavailable-hint "/tmp")))))
   (it "reports an unforkable linked git worktree from the capability matrix"
-      (with-redefs
-        [ws/workspace-capability-matrix
-         (constantly [{:backend :rift :available? false :reason :linked-git-worktree}])]
+      (with-redefs [ws/workspace-capability-matrix
+                    (constantly [{:backend :rift :available? false :reason :linked-git-worktree}])]
         (expect (re-find #"(?i)worktree" (ws/isolation-unavailable-hint "/tmp")))))
   (it "falls back to the platform requirement when a registered backend cannot clone"
-      (with-redefs
-        [ws/workspace-capability-matrix
-         (constantly [{:backend :rift :available? false :reason :probe-failed}])]
+      (with-redefs [ws/workspace-capability-matrix
+                    (constantly [{:backend :rift :available? false :reason :probe-failed}])]
         (expect (= (ws/cow-platform-hint (System/getProperty "os.name"))
                    (ws/isolation-unavailable-hint "/tmp"))))))
 
 (defdescribe
   workspace-mechanism-test
   (it "persists the mechanism the backend reports, and nil when it reports none"
-      (let
-        [base
-         (temp-dir "vis-ws-mech")
+      (let [base
+            (temp-dir "vis-ws-mech")
 
-         drafts
-         (temp-dir "vis-ws-mech-drafts")]
+            drafts
+            (temp-dir "vis-ws-mech-drafts")]
 
         (try (spit (io/file base "a.txt") "x\n")
              (binding [ws/*drafts-home* (io/file drafts)]
                (with-store
                  (fn [store]
-                   (let
-                     [seed (seed-workspace! store base)
-                      reported (with-fork-mechanism :worktree
-                                                    (fn []
-                                                      (ws/create! store {:from seed})))
-                      ;; a backend from before mechanism reporting returns a BARE path
-                      legacy (with-fork-mechanism nil
-                                                  (fn []
-                                                    (ws/create! store {:from seed})))]
+                   (let [seed (seed-workspace! store base)
+                         reported (with-fork-mechanism :worktree
+                                                       (fn []
+                                                         (ws/create! store {:from seed})))
+                         ;; a backend from before mechanism reporting returns a BARE path
+                         legacy (with-fork-mechanism nil
+                                                     (fn []
+                                                       (ws/create! store {:from seed})))]
 
                      (expect (= :worktree (:workspace-mechanism reported)))
                      ;; and it survives the sqlite column, not just the in-memory return
@@ -903,10 +873,9 @@
                (do (spit (io/file base "a.txt") "x\n")
                    (with-store
                      (fn [store]
-                       (let
-                         [seed (seed-workspace! store base)
-                          draft (ws/create! store {:from seed})
-                          mech (:workspace-mechanism draft)]
+                       (let [seed (seed-workspace! store base)
+                             draft (ws/create! store {:from seed})
+                             mech (:workspace-mechanism draft)]
 
                          (try
                            ;; rift always names the mechanism it actually used

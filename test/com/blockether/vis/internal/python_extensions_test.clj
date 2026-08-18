@@ -70,15 +70,14 @@
    A body that loads, reloads or edits extensions itself moves the loader's own
    fingerprint; that invalidates the cache, so the next test reloads."
   [sources f]
-  (let
-    [{:keys [ext-dir result fingerprint]}
-     (let [cached @live-load]
-       (if (and (= sources (:sources cached)) (= (:fingerprint cached) @@#'pyx/last-fingerprint))
-         cached
-         (load-sources! sources)))
+  (let [{:keys [ext-dir result fingerprint]}
+        (let [cached @live-load]
+          (if (and (= sources (:sources cached)) (= (:fingerprint cached) @@#'pyx/last-fingerprint))
+            cached
+            (load-sources! sources)))
 
-     store
-     (ps/db-create-connection! :memory)]
+        store
+        (ps/db-create-connection! :memory)]
 
     (binding [extension/*current-environment* {:db-info store}]
       (try (f result {:ext-dir ext-dir :store store})
@@ -96,12 +95,11 @@
    on purpose — closing its `Context` — or that asserts on the unload itself."
   [sources f]
   (reset! live-load nil)
-  (let
-    [{:keys [ext-dir result]}
-     (load-sources! sources)
+  (let [{:keys [ext-dir result]}
+        (load-sources! sources)
 
-     store
-     (ps/db-create-connection! :memory)]
+        store
+        (ps/db-create-connection! :memory)]
 
     (binding [extension/*current-environment* {:db-info store}]
       (try (f result {:ext-dir ext-dir :store store})
@@ -197,24 +195,22 @@ vis.extension(
              (it "return value = success payload"
                  (with-loaded {"counter.py" counter-py}
                               (fn [_ _]
-                                (let
-                                  [bump
-                                   (symbol-fn (registered "counter") 'bump)
+                                (let [bump
+                                      (symbol-fn (registered "counter") 'bump)
 
-                                   result
-                                   (bump 5)]
+                                      result
+                                      (bump 5)]
 
                                   (expect (extension/envelope-success? result))
                                   (expect (= 5 (get-in result [:result "count"])))))))
              (it "a raised Python exception = failure envelope with the Python message"
                  (with-loaded {"counter.py" counter-py}
                               (fn [_ _]
-                                (let
-                                  [boom
-                                   (symbol-fn (registered "counter") 'boom)
+                                (let [boom
+                                      (symbol-fn (registered "counter") 'boom)
 
-                                   result
-                                   (boom)]
+                                      result
+                                      (boom)]
 
                                   (expect (extension/envelope-failure? result))
                                   (expect (str/includes? (get-in result [:error :message])
@@ -253,13 +249,12 @@ vis.extension(
   (it "keyword args folded into ONE trailing map are re-expanded onto the signature — #83"
       (with-loaded {"kwargs.py" kwargs-py}
                    (fn [_ _]
-                     (let
-                       [probe
-                        (symbol-fn (registered "kwargs") 'probe)
+                     (let [probe
+                           (symbol-fn (registered "kwargs") 'probe)
 
-                        result
-                        ;; how the sandbox delivers probe(g, mode=deep, is_deep=True)
-                        (probe "g" {"mode" "deep" "is_deep" true})]
+                           result
+                           ;; how the sandbox delivers probe(g, mode=deep, is_deep=True)
+                           (probe "g" {"mode" "deep" "is_deep" true})]
 
                        (expect (extension/envelope-success? result))
                        (expect (= "g" (get-in result [:result "name"])))
@@ -346,9 +341,8 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
                        (expect (= [{:name "PATH" :required? true}
                                    {:name "VIS_TEST_NEVER_SET_129" :required? true}]
                                   (:ext/env ext)))
-                       (let
-                         [probe (symbol-fn ext 'probe)
-                          out (get-in (probe) [:result])]
+                       (let [probe (symbol-fn ext 'probe)
+                             out (get-in (probe) [:result])]
 
                          (expect (true? (get out "has_path")))
                          (expect (false? (get out "has_unset")))
@@ -420,12 +414,11 @@ vis.extension(
              (it "vis.state drives the whole mapping surface across the host boundary"
                  (with-loaded {"state_mapping.py" state-mapping-py}
                               (fn [_ _]
-                                (let
-                                  [probe
-                                   (symbol-fn (registered "state-mapping") 'probe)
+                                (let [probe
+                                      (symbol-fn (registered "state-mapping") 'probe)
 
-                                   out
-                                   (:result (probe))]
+                                      out
+                                      (:result (probe))]
 
                                   ;; a key written as None is no key: no host tells a
                                   ;; stored null from one nobody ever wrote
@@ -448,13 +441,12 @@ vis.extension(
                  (with-loaded
                    {"counter.py" counter-py}
                    (fn [_ _]
-                     (let
-                       [spec
-                        (first (:ext/slash-commands (registered "counter")))
+                     (let [spec
+                           (first (:ext/slash-commands (registered "counter")))
 
-                        res
-                        ((:slash/run-fn spec)
-                          {:channel/id :tui :command/argv ["a" "b"] :command/raw "/count a b"})]
+                           res
+                           ((:slash/run-fn spec)
+                             {:channel/id :tui :command/argv ["a" "b"] :command/raw "/count a b"})]
 
                        (expect (= "count" (:slash/name spec)))
                        (expect (= :ok (:slash/status res)))
@@ -534,12 +526,11 @@ vis.extension(
   (it "vis.extension(ctx=...) registers an :ext/ctx-fn that folds into the session bag"
       (with-loaded {"ctxer.py" ctxer-py}
                    (fn [_ _]
-                     (let
-                       [ext
-                        (registered "ctxer")
+                     (let [ext
+                           (registered "ctxer")
 
-                        contribution
-                        ((:ext/ctx-fn ext) {:workspace/root "/p" :session-id "s1"})]
+                           contribution
+                           ((:ext/ctx-fn ext) {:workspace/root "/p" :session-id "s1"})]
 
                        ;; STRING-keyed all the way down, ready to deep-merge into `session`
                        (expect (= 0 (get-in contribution ["session_env" "demo" "hits"])))
@@ -588,28 +579,26 @@ vis.extension(
     (with-loaded
       {"guard.py" guard-py}
       (fn [_ _]
-        (let
-          [hooks
-           (:ext/op-hooks (registered "guard"))
+        (let [hooks
+              (:ext/op-hooks (registered "guard"))
 
-           fs-hook
-           (some #(when (= :fs (:op %)) %) hooks)]
+              fs-hook
+              (some #(when (= :fs (:op %)) %) hooks)]
 
           (expect (= #{:fs :patch} (set (map :op hooks))))
           (expect (every? #(= :around (:phase %)) hooks))
           ;; blocked: guard returns vis.block -> failure envelope, next never runs
-          (let
-            [ran?
-             (atom false)
+          (let [ran?
+                (atom false)
 
-             res
-             ((:fn fs-hook)
-               {}
-               :fs
-               ["/x/.env" "data"]
-               (fn [_]
-                 (reset! ran? true)
-                 :ran))]
+                res
+                ((:fn fs-hook)
+                  {}
+                  :fs
+                  ["/x/.env" "data"]
+                  (fn [_]
+                    (reset! ran? true)
+                    :ran))]
 
             (expect (extension/envelope-failure? res))
             (expect (str/includes? (get-in res [:error :message]) "protected"))
@@ -671,12 +660,11 @@ vis.extension(
       (with-loaded
         {"vault.py" fs-gate-py}
         (fn [_ _]
-          (let
-            [hooks
-             (:ext/op-hooks (registered "vault"))
+          (let [hooks
+                (:ext/op-hooks (registered "vault"))
 
-             gate
-             (first hooks)]
+                gate
+                (first hooks)]
 
             (expect (= 1 (count hooks)))
             (expect (= :fs/access (:op gate)))
@@ -692,12 +680,11 @@ vis.extension(
   (it "fails CLOSED when the Python guard raises"
       (with-loaded {"broken_vault.py" broken-fs-gate-py}
                    (fn [_ _]
-                     (let
-                       [gate
-                        (first (:ext/op-hooks (registered "broken-vault")))
+                     (let [gate
+                           (first (:ext/op-hooks (registered "broken-vault")))
 
-                        refusal
-                        ((:fn gate) {} :fs/access {:operation "file-read" :path "/w/notes.txt"})]
+                           refusal
+                           ((:fn gate) {} :fs/access {:operation "file-read" :path "/w/notes.txt"})]
 
                        ;; The opposite of an ordinary hook, which logs and runs on: a
                        ;; boundary that opens when its guard breaks is not a boundary.
@@ -752,15 +739,14 @@ vis.extension(
       (with-loaded
         {"filt.py" filter-py}
         (fn [_ _]
-          (let
-            [ext
-             (registered "filt")
+          (let [ext
+                (registered "filt")
 
-             rf
-             (first (:ext/network-filters ext))
+                rf
+                (first (:ext/network-filters ext))
 
-             pf
-             (second (:ext/network-filters ext))]
+                pf
+                (second (:ext/network-filters ext))]
 
             (expect (some? rf))
             (expect (some? pf))
@@ -855,15 +841,14 @@ vis.extension(
                (expect (= ["counter"] removed)))
              (finally (pyx/remove-change-listener! ::test)))))
   (it "a later dir (project) wins over an earlier one (global) for the same extension name"
-      (let
-        [global
-         (temp-dir)
+      (let [global
+            (temp-dir)
 
-         project
-         (temp-dir)
+            project
+            (temp-dir)
 
-         store
-         (ps/db-create-connection! :memory)]
+            store
+            (ps/db-create-connection! :memory)]
 
         (write-ext! global "counter.py" counter-py)
         (write-ext! project
@@ -912,9 +897,8 @@ vis.extension(
                      (expect (= {:loaded 1 :failed 0 :changed? true} result))
                      (let [ext (registered "pkgext")]
                        (expect (some? ext))
-                       (let
-                         [add (symbol-fn ext 'add)
-                          res (add 2 3)]
+                       (let [add (symbol-fn ext 'add)
+                             res (add 2 3)]
 
                          (expect (extension/envelope-success? res))
                          (expect (= 5 (get-in res [:result "sum"])))
@@ -952,12 +936,11 @@ vis.extension(
   python-self-test-test
   (it
     "runs test_*.py / *_test.py through the pytest shim, imports the sibling package, reports pass/fail"
-    (let
-      [ext-dir
-       (temp-dir)
+    (let [ext-dir
+          (temp-dir)
 
-       store
-       (ps/db-create-connection! :memory)]
+          store
+          (ps/db-create-connection! :memory)]
 
       (write-ext! ext-dir "my_ext/mypkg/__init__.py" "VERSION = \"1.0\"\n")
       (write-ext! ext-dir "my_ext/mypkg/core.py" "def add(a, b):\n    return a + b\n")
@@ -983,9 +966,8 @@ vis.extension(
                (expect (= 2 (:passed res)))
                (expect (= 1 (:failed res)))
                (expect (false? (:ok? res)))
-               (let
-                 [by-name
-                  (into {} (map (juxt #(last (str/split (:file %) #"/")) :ok?)) (:results res))]
+               (let [by-name
+                     (into {} (map (juxt #(last (str/split (:file %) #"/")) :ok?)) (:results res))]
                  ;; the package test resolves `from mypkg.core import add`
                  (expect (true? (get by-name "test_core.py")))
                  (expect (false? (get by-name "foo_test.py")))))
@@ -996,12 +978,11 @@ vis.extension(
 (defdescribe
   structured-counts-test
   (it "a failure whose assertion message contains '9 passed' must NOT inflate the pass count"
-      (let
-        [ext-dir
-         (temp-dir)
+      (let [ext-dir
+            (temp-dir)
 
-         store
-         (ps/db-create-connection! :memory)]
+            store
+            (ps/db-create-connection! :memory)]
 
         ;; the failure detail literally says \"9 passed\" — a stdout regex would
         ;; miscount it as nine passes; the shim's structured outcomes cannot lie
@@ -1029,15 +1010,14 @@ vis.extension(
                      ;; `loader-registered?` defonce guard blocks re-runs).
                      (reset! @#'pyx/loader-registered? false)
                      (#'pyx/register-loader-extension!)
-                     (let
-                       [loader
-                        (registered "python-extensions")
+                     (let [loader
+                           (registered "python-extensions")
 
-                        slash
-                        (some #(when (= "test" (:slash/name %)) %) (:ext/slash-commands loader))
+                           slash
+                           (some #(when (= "test" (:slash/name %)) %) (:ext/slash-commands loader))
 
-                        cli
-                        (some #(when (= "test" (:cmd/name %)) %) (:ext/cli loader))]
+                           cli
+                           (some #(when (= "test" (:cmd/name %)) %) (:ext/cli loader))]
 
                        (expect (some? loader))
                        (expect (some? slash))
@@ -1052,12 +1032,11 @@ vis.extension(
       (expect (str/includes? (#'runner/render-test-report {:files 0 :ok? true :results []})
                              "No Python extension tests")))
   (it "the shared /test + `vis-agent extension test` code path runs tests and renders a report"
-      (let
-        [ext-dir
-         (temp-dir)
+      (let [ext-dir
+            (temp-dir)
 
-         store
-         (ps/db-create-connection! :memory)]
+            store
+            (ps/db-create-connection! :memory)]
 
         (write-ext! ext-dir
                     "foo_test.py"
@@ -1078,21 +1057,19 @@ vis.extension(
 (defdescribe
   per-test-granularity-test
   (it "reports each test's nodeid + outcome (tagged with its file), not just a per-file aggregate"
-      (let
-        [ext-dir
-         (temp-dir)
+      (let [ext-dir
+            (temp-dir)
 
-         store
-         (ps/db-create-connection! :memory)]
+            store
+            (ps/db-create-connection! :memory)]
 
         (write-ext! ext-dir
                     "foo_test.py"
                     (str "def test_alpha():\n    assert 1 + 1 == 2\n"
                          "def test_beta():\n    assert 2 + 2 == 5\n"))
         (binding [extension/*current-environment* {:db-info store}]
-          (try (let
-                 [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})
-                  by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
+          (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})
+                     by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
 
                  (expect (= 2 (count (:tests res))))
                  (expect (= :passed (get by-id "test_alpha")))
@@ -1237,18 +1214,17 @@ vis.extension(
     (with-loaded
       {"acme.py" provider-py}
       (fn [_ _]
-        (let
-          [ext
-           (registered "provider-acme")
+        (let [ext
+              (registered "provider-acme")
 
-           entries
-           (:ext/providers ext)
+              entries
+              (:ext/providers ext)
 
-           p
-           (registry/provider-by-id :acme)
+              p
+              (registry/provider-by-id :acme)
 
-           oauth
-           (registry/provider-by-id :acme-oauth)]
+              oauth
+              (registry/provider-by-id :acme-oauth)]
 
           (expect (= 2 (count entries)))
           (expect (some? p))
@@ -1295,15 +1271,14 @@ vis.extension(
                      ((:provider/refresh-token-fn p))))
           ;; auth-fn: host hands in a print! collector; the Python fn calls it to
           ;; emit instruction lines, and its string return coerces to a keyword.
-          (let
-            [lines
-             (atom [])
+          (let [lines
+                (atom [])
 
-             collect
-             #(swap! lines conj %)
+                collect
+                #(swap! lines conj %)
 
-             result
-             ((:provider/auth-fn oauth) collect)]
+                result
+                ((:provider/auth-fn oauth) collect)]
 
             (expect (= :ok result))
             (expect (= ["  Visit https://acme.test/device and enter code ABCD." "  Then re-run."]
@@ -1370,18 +1345,17 @@ vis.extension(
       (with-loaded
         {"popen_probe.py" popen-probe-py}
         (fn [_ _]
-          (let
-            [result
-             ((symbol-fn (registered "popen-probe") 'probe))
+          (let [result
+                ((symbol-fn (registered "popen-probe") 'probe))
 
-             pid
-             (long (get-in result [:result "pid"]))
+                pid
+                (long (get-in result [:result "pid"]))
 
-             slot
-             (long (get-in result [:result "slot"]))
+                slot
+                (long (get-in result [:result "slot"]))
 
-             found
-             (ProcessHandle/of pid)]
+                found
+                (ProcessHandle/of pid)]
 
             (try (expect (extension/envelope-success? result))
                  (expect (= 1 slot) "the child still lands in the context's first slot")
@@ -1395,22 +1369,22 @@ vis.extension(
                          "and it is the child the extension started")
                  (finally (when (.isPresent found) (.destroy ^ProcessHandle (.get found)))))))))
   (it "keeps vis.shell unrestricted even while the invoking session jail is enabled"
-      (with-loaded {"shell_provider.py" shell-provider-py}
-                   (fn [_ _]
-                     (let
-                       [detect
-                        (:provider/detect-fn (registry/provider-by-id :shell-provider))
+      (with-loaded
+        {"shell_provider.py" shell-provider-py}
+        (fn [_ _]
+          (let [detect
+                (:provider/detect-fn (registry/provider-by-id :shell-provider))
 
-                        env
-                        {:session-id "jailed-session"
-                         :security-policy {:jail-enabled true}
-                         :jail-policy-fn
-                         (fn []
-                           (throw (ex-info "the regular extension shell touched the jail" {})))}]
+                env
+                {:session-id "jailed-session"
+                 :security-policy {:jail-enabled true}
+                 :jail-policy-fn (fn []
+                                   (throw (ex-info "the regular extension shell touched the jail"
+                                                   {})))}]
 
-                       (expect (= {:token "regular-shell" :source :shell} (detect)))
-                       (binding [extension/*current-environment* env]
-                         (expect (= {:token "regular-shell" :source :shell} (detect))))))))
+            (expect (= {:token "regular-shell" :source :shell} (detect)))
+            (binding [extension/*current-environment* env]
+              (expect (= {:token "regular-shell" :source :shell} (detect))))))))
   ;; Regression, toggle audit: the user-owned `shell` toggle unbinds the MODEL's
   ;; `shell` tool in the sandbox. An installed extension is a separate trust
   ;; layer with its own process door (`vis.shell`, and plain `subprocess` in its
@@ -1419,12 +1393,11 @@ vis.extension(
   (it "keeps an extension's vis.shell working while the user's shell toggle is OFF"
       (with-loaded {"shell_provider.py" shell-provider-py}
                    (fn [_ _]
-                     (let
-                       [detect
-                        (:provider/detect-fn (registry/provider-by-id :shell-provider))
+                     (let [detect
+                           (:provider/detect-fn (registry/provider-by-id :shell-provider))
 
-                        before
-                        (toggles/enabled? "shell")]
+                           before
+                           (toggles/enabled? "shell")]
 
                        (try (toggles/set-enabled! "shell" false)
                             (expect (false? (toggles/enabled? "shell")))
@@ -1432,37 +1405,34 @@ vis.extension(
                             (finally (toggles/set-enabled! "shell" before)))))))
   (it
     "reads and validates the latest merged config for every jailed_shell spawn"
-    (let
-      [latest-root
-       (temp-dir)
+    (let [latest-root
+          (temp-dir)
 
-       _
-       (spit (io/file latest-root "latest.txt") "latest")
+          _
+          (spit (io/file latest-root "latest.txt") "latest")
 
-       configs
-       (atom [{"workspace" {"filesystem" [{"id" "latest-root"
-                                           "path" (.getCanonicalPath latest-root)}]}
-               "jail" {"enabled" true "filesystem" {"allow" ["latest-root"]}}}
-              {"this_key_is_invalid" true}])
+          configs
+          (atom [{"workspace" {"filesystem" [{"id" "latest-root"
+                                              "path" (.getCanonicalPath latest-root)}]}
+                  "jail" {"enabled" true "filesystem" {"allow" ["latest-root"]}}}
+                 {"this_key_is_invalid" true}])
 
-       loads
-       (atom 0)]
+          loads
+          (atom 0)]
 
-      (with-redefs
-        [config/load-config-raw (fn []
-                                  (swap! loads inc)
-                                  (let [value (first @configs)]
-                                    (swap! configs subvec 1)
-                                    value))]
-        (let
-          [first-run (:result (shell/jailed-shell nil
-                                                  {"cwd" (.getCanonicalPath latest-root)
-                                                   "command"
-                                                   "test -r latest.txt && printf latest-policy"}))
-           second-run (try (:result (shell/jailed-shell nil
-                                                        {"cwd" (.getCanonicalPath latest-root)
-                                                         "command" "printf must-not-run"}))
-                           (catch Throwable t {"note" (ex-message t)}))]
+      (with-redefs [config/load-config-raw (fn []
+                                             (swap! loads inc)
+                                             (let [value (first @configs)]
+                                               (swap! configs subvec 1)
+                                               value))]
+        (let [first-run (:result (shell/jailed-shell
+                                   nil
+                                   {"cwd" (.getCanonicalPath latest-root)
+                                    "command" "test -r latest.txt && printf latest-policy"}))
+              second-run (try (:result (shell/jailed-shell nil
+                                                           {"cwd" (.getCanonicalPath latest-root)
+                                                            "command" "printf must-not-run"}))
+                              (catch Throwable t {"note" (ex-message t)}))]
 
           ;; ENDS with: on a Linux host whose kernel has IPv6 off, pasta announces
           ;; itself on the child's stdio before exec'ing it ("No routable interface
@@ -1480,26 +1450,24 @@ vis.extension(
       {"jail.py"
        "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['stdout']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'}).wait(20)['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
       (fn [_ _]
-        (let
-          [ext
-           (registered "jail")
+        (let [ext
+              (registered "jail")
 
-           latest
-           (symbol-fn ext 'latest)
+              latest
+              (symbol-fn ext 'latest)
 
-           session
-           (symbol-fn ext 'session)
+              session
+              (symbol-fn ext 'session)
 
-           seen
-           (atom [])
+              seen
+              (atom [])
 
-           env
-           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+              env
+              {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
-          (with-redefs
-            [shell/jailed-shell (fn [actual-env opts]
-                                  (swap! seen conj [actual-env opts])
-                                  {"stdout" "latest"})]
+          (with-redefs [shell/jailed-shell (fn [actual-env opts]
+                                             (swap! seen conj [actual-env opts])
+                                             {"stdout" "latest"})]
             (expect (= "latest" (:result (latest))))
             (expect (try (shell/session-jailed-shell nil {"command" "echo refused"})
                          false
@@ -1521,19 +1489,17 @@ vis.extension(
       {"jail.py"
        "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'command': 'echo hi'})\n    return [r['stdout'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
-        (let
-          [run
-           (symbol-fn (registered "jail") 'run)
+        (let [run
+              (symbol-fn (registered "jail") 'run)
 
-           env
-           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+              env
+              {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
-          (with-redefs
-            [shell/jailed-shell (fn [_env opts]
-                                  (extension/success {:result {"stdout" (get opts "command")
-                                                               "stage" :run}
-                                                      :op :shell
-                                                      :metadata {:duration-ms 1}}))]
+          (with-redefs [shell/jailed-shell (fn [_env opts]
+                                             (extension/success
+                                               {:result {"stdout" (get opts "command") "stage" :run}
+                                                :op :shell
+                                                :metadata {:duration-ms 1}}))]
             (binding [extension/*current-environment* env]
               ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
               (expect (= ["echo hi" "run" ["stage" "stdout"]] (:result (run))))))))))
@@ -1546,19 +1512,18 @@ vis.extension(
       {"jail.py"
        "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
-        (let
-          [run
-           (symbol-fn (registered "jail") 'run)
+        (let [run
+              (symbol-fn (registered "jail") 'run)
 
-           env
-           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+              env
+              {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
-          (with-redefs
-            [shell/jailed-shell (fn [_env opts]
-                                  (extension/success {:result {"id" (get opts "id")
-                                                               "stage" (or (get opts "op") "run")}
-                                                      :op :shell
-                                                      :metadata {:duration-ms 1}}))]
+          (with-redefs [shell/jailed-shell (fn [_env opts]
+                                             (extension/success
+                                               {:result {"id" (get opts "id")
+                                                         "stage" (or (get opts "op") "run")}
+                                                :op :shell
+                                                :metadata {:duration-ms 1}}))]
             (binding [extension/*current-environment* env]
               ;; Every op reaches the ONE dispatch grammar, and every answer is
               ;; itself a handle.
@@ -1569,17 +1534,16 @@ vis.extension(
       {"jail.py"
        "import vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell({'command': 'nope'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
-        (let
-          [run
-           (symbol-fn (registered "jail") 'run)
+        (let [run
+              (symbol-fn (registered "jail") 'run)
 
-           env
-           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+              env
+              {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
-          (with-redefs
-            [shell/jailed-shell (fn [_env _opts]
-                                  (extension/failure {:error {:message "jail refused the command"}
-                                                      :op :shell}))]
+          (with-redefs [shell/jailed-shell (fn [_env _opts]
+                                             (extension/failure {:error {:message
+                                                                         "jail refused the command"}
+                                                                 :op :shell}))]
             (binding [extension/*current-environment* env]
               ;; The failure raises in the extension frame, so the symbol call
               ;; fails with the host's reason — never a bogus success carrying a
@@ -1594,12 +1558,11 @@ vis.extension(
     {"jail.py"
      "import vis\ndef run():\n    return vis.jailed_shell({'echo first', 'echo second'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
     (fn [_ _]
-      (let
-        [run
-         (symbol-fn (registered "jail") 'run)
+      (let [run
+            (symbol-fn (registered "jail") 'run)
 
-         env
-         {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+            env
+            {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
         (expect (try (binding [extension/*current-environment* env]
                        (run))
@@ -1610,18 +1573,17 @@ vis.extension(
   net-probe-report-test
   "The in-sandbox `network_probe` host callback: guard-only report over the
    gateway policy + registered filters. Pure — no socket, no egress."
-  (let
-    [pol
-     (egress/compile-policy {:allowed-domains ["example.com"]
-                             :rules [{:host "example.com" :access "read-only"}]})
+  (let [pol
+        (egress/compile-policy {:allowed-domains ["example.com"]
+                                :rules [{:host "example.com" :access "read-only"}]})
 
-     report
-     (fn [method target & [headers-json body]]
-       ;; redef INSIDE the thunk — lazytest runs `it` bodies after
-       ;; the surrounding form, so a `with-redefs` wrapping the `it`s
-       ;; would already be unwound.
-       (with-redefs [pyx/session-network-policy (constantly pol)]
-         (pyx/net-probe-report method target (or headers-json "") (or body ""))))]
+        report
+        (fn [method target & [headers-json body]]
+          ;; redef INSIDE the thunk — lazytest runs `it` bodies after
+          ;; the surrounding form, so a `with-redefs` wrapping the `it`s
+          ;; would already be unwound.
+          (with-redefs [pyx/session-network-policy (constantly pol)]
+            (pyx/net-probe-report method target (or headers-json "") (or body ""))))]
 
     (it "allows a GET to an allowed host and sees a registered gateway filter"
         (try (egress/register-network-filter! ::npr
@@ -1651,9 +1613,8 @@ vis.extension(
                        (and (:body ctx) (clojure.string/includes? (:body ctx) "SECRET"))
                        {:allow? false :reason "secret in body"}
                        :else nil)))
-             (let
-               [s (report "GET" "https://example.com/data"
-                          "{\"authorization\":\"Bearer leaked\"}" "")]
+             (let [s (report "GET" "https://example.com/data"
+                             "{\"authorization\":\"Bearer leaked\"}" "")]
                (expect (re-find #"\"authorization\":\"Bearer leaked\"" s)) ; echoed back
                (expect (re-find #"token exfil in header" s)))
              (let [s (report "GET" "https://example.com/data" "{}" "has a SECRET inside")]
@@ -1676,37 +1637,35 @@ vis.extension(
    restart while `/reload` reported success."
   (it
     "the shell toggle edited in vis.yml applies after /reload — #64"
-    (let
-      [_
-       shell/vis-extension
+    (let [_
+          shell/vis-extension
 
-       before
-       (toggles/enabled? "shell")]
+          before
+          (toggles/enabled? "shell")]
 
       (toggles/set-value! "shell" true)
       (expect (true? (toggles/enabled? "shell")))
-      (try (with-redefs
-             [pyx/reload-python-extensions!
-              (fn [& _]
-                {:loaded 0 :failed 0})
+      (try (with-redefs [pyx/reload-python-extensions!
+                         (fn [& _]
+                           {:loaded 0 :failed 0})
 
-              config/reload-config!
-              (constantly {})
+                         config/reload-config!
+                         (constantly {})
 
-              config/current-config
-              (constantly {})
+                         config/current-config
+                         (constantly {})
 
-              config/load-config-raw
-              (constantly {"toggles" {"shell" false}})
+                         config/load-config-raw
+                         (constantly {"toggles" {"shell" false}})
 
-              extension/run-reload-hooks!
-              (constantly {})
+                         extension/run-reload-hooks!
+                         (constantly {})
 
-              agents/reload!
-              (constantly nil)
+                         agents/reload!
+                         (constantly nil)
 
-              prompt-templates/reload!
-              (constantly [])]
+                         prompt-templates/reload!
+                         (constantly [])]
 
              (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
                (expect (= :ok (:slash/status res)))))
@@ -1798,22 +1757,21 @@ vis.extension(name='asker', description='asker', alias='a',
     (with-loaded
       {"asker.py" asker-py}
       (fn [_ _]
-        (let
-          [ask-key
-           (symbol-fn (registered "asker") 'ask_key)
+        (let [ask-key
+              (symbol-fn (registered "asker") 'ask_key)
 
-           drawn
-           (atom nil)
+              drawn
+              (atom nil)
 
-           answered
-           (answer-pending! "Deploy"
-                            (fn [id]
-                              (reset! drawn (human-input/pending-request id))
-                              (human-input/submit! id {"env" "prod" "token" "hunter2"})))
+              answered
+              (answer-pending! "Deploy"
+                               (fn [id]
+                                 (reset! drawn (human-input/pending-request id))
+                                 (human-input/submit! id {"env" "prod" "token" "hunter2"})))
 
-           result
-           (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
-                      (ask-key)))]
+              result
+              (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
+                         (ask-key)))]
 
           (expect (= {:is-accepted true} @answered))
           ;; The snake_case string spec a Python extension writes is
@@ -1837,29 +1795,28 @@ vis.extension(name='asker', description='asker', alias='a',
     (with-loaded
       {"asker.py" asker-py}
       (fn [_ _]
-        (let
-          [ask-validated
-           (symbol-fn (registered "asker") 'ask_validated)
+        (let [ask-validated
+              (symbol-fn (registered "asker") 'ask_validated)
 
-           drawn
-           (atom nil)
+              drawn
+              (atom nil)
 
-           refused
-           (atom nil)
+              refused
+              (atom nil)
 
-           answered
-           (answer-pending! "Sign up"
-                            (fn [id]
-                              (reset! drawn (human-input/pending-request id))
-                              ;; Both fields agree, so only the one-argument
-                              ;; validator refuses this answer.
-                              (reset! refused (human-input/submit! id
-                                                                   {"email" "nope" "again" "nope"}))
-                              (human-input/submit! id {"email" "a@b.c" "again" "a@b.c"})))
+              answered
+              (answer-pending!
+                "Sign up"
+                (fn [id]
+                  (reset! drawn (human-input/pending-request id))
+                  ;; Both fields agree, so only the one-argument
+                  ;; validator refuses this answer.
+                  (reset! refused (human-input/submit! id {"email" "nope" "again" "nope"}))
+                  (human-input/submit! id {"email" "a@b.c" "again" "a@b.c"})))
 
-           result
-           (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
-                      (ask-validated)))]
+              result
+              (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
+                         (ask-validated)))]
 
           ;; The validator is a Python callable, invoked by the engine from the
           ;; submitting thread while `vis.ask` parks the extension's own thread
@@ -1885,21 +1842,19 @@ vis.extension(name='asker', description='asker', alias='a',
     (with-loaded
       {"asker.py" asker-py}
       (fn [_ {:keys [store]}]
-        (let
-          [seen
-           (atom [])
+        (let [seen
+              (atom [])
 
-           ask-key
-           (get (extension/wrap-extension (registered "asker")
-                                          {:session-id "sid-104" :db-info store})
-                'ask_key)]
+              ask-key
+              (get (extension/wrap-extension (registered "asker")
+                                             {:session-id "sid-104" :db-info store})
+                   'ask_key)]
 
           (channel-events/add-channel-event-listener! :tui ::issue-104 #(swap! seen conj [:tui %]))
           (channel-events/add-channel-event-listener! :app ::issue-104 #(swap! seen conj [:app %]))
-          (try (let
-                 [answered (answer-pending!
-                             "Deploy"
-                             #(human-input/submit! % {"env" "prod" "token" "hunter2"}))]
+          (try (let [answered (answer-pending!
+                                "Deploy"
+                                #(human-input/submit! % {"env" "prod" "token" "hunter2"}))]
                  (ask-key)
                  (expect (= {:is-accepted true} (deref answered 10000 ::never))))
                (let [opened (filterv #(= :human-input/request (:op (second %))) @seen)]
@@ -1911,16 +1866,16 @@ vis.extension(name='asker', description='asker', alias='a',
   (it "a cancelled request returns a falsey answer instead of raising"
       (with-loaded {"asker.py" asker-py}
                    (fn [_ _]
-                     (let
-                       [ask-cancelled
-                        (symbol-fn (registered "asker") 'ask_cancelled)
+                     (let [ask-cancelled
+                           (symbol-fn (registered "asker") 'ask_cancelled)
 
-                        answered
-                        (answer-pending! "Confirm" #(human-input/cancel! % "dismissed"))
+                           answered
+                           (answer-pending! "Confirm" #(human-input/cancel! % "dismissed"))
 
-                        result
-                        (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
-                                   (ask-cancelled)))]
+                           result
+                           (:result (binding [extension/*current-environment* {:session-id
+                                                                               "sess-ask"}]
+                                      (ask-cancelled)))]
 
                        (expect (true? @answered))
                        (expect (= {"ok" false "reason" "dismissed" "values" {}} result))))))
@@ -1959,22 +1914,21 @@ vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook
                  ;; at all. The env has to reach the callable.
                  (with-loaded {"hookasker.py" hook-asker-py}
                               (fn [_ _]
-                                (let
-                                  [prompt-fn
-                                   (:ext/prompt-fn (registered "hookasker"))
+                                (let [prompt-fn
+                                      (:ext/prompt-fn (registered "hookasker"))
 
-                                   drawn
-                                   (atom nil)
+                                      drawn
+                                      (atom nil)
 
-                                   _
-                                   (answer-pending! "HookAsk"
-                                                    (fn [id]
-                                                      (reset! drawn (human-input/pending-request
-                                                                      id))
-                                                      (human-input/submit! id {"go" true})))
+                                      _
+                                      (answer-pending! "HookAsk"
+                                                       (fn [id]
+                                                         (reset! drawn (human-input/pending-request
+                                                                         id))
+                                                         (human-input/submit! id {"go" true})))
 
-                                   result
-                                   (prompt-fn {:session-id "sess-hook"})]
+                                      result
+                                      (prompt-fn {:session-id "sess-hook"})]
 
                                   (expect (= "hook:submitted" result))
                                   (expect (= "sess-hook" (:session-id @drawn)))
@@ -2016,12 +1970,11 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                  (with-fresh-loaded
                    {"rebuilder.py" rebuilder-py}
                    (fn [_ _]
-                     (let
-                       [captured
-                        (symbol-fn (registered "rebuilder") 'ping)
+                     (let [captured
+                           (symbol-fn (registered "rebuilder") 'ping)
 
-                        ^Context dead
-                        (:context (first (vals @@#'pyx/loaded)))]
+                           ^Context dead
+                           (:context (first (vals @@#'pyx/loaded)))]
 
                        (.close dead true)
                        (expect (= "pong" (:result (captured))))
@@ -2048,12 +2001,11 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                  (with-fresh-loaded
                    {"rebuilder.py" rebuilder-py}
                    (fn [_ _]
-                     (let
-                       [before
-                        (:context (first (vals @@#'pyx/loaded)))
+                     (let [before
+                           (:context (first (vals @@#'pyx/loaded)))
 
-                        res
-                        ((symbol-fn (registered "rebuilder") 'boom))]
+                           res
+                           ((symbol-fn (registered "rebuilder") 'boom))]
 
                        (expect (false? (:success? res)))
                        (expect (str/includes? (get-in res [:error :message]) "kaboom"))
@@ -2133,12 +2085,11 @@ vis.extension(
     "gives Python extensions the same form builders, and lets the engine refuse a bad one"
     (with-loaded {"forms.py" forms-py}
                  (fn [_ _]
-                   (let
-                     [ext
-                      (registered "forms")
+                   (let [ext
+                         (registered "forms")
 
-                      res
-                      (:result ((symbol-fn ext 'report)))]
+                         res
+                         (:result ((symbol-fn ext 'report)))]
 
                      ;; the builders compose plain wire data: a group, and nameless ink
                      (expect (= "group:column" (get res "kind")))
@@ -2173,12 +2124,11 @@ vis.extension(
                  (with-loaded {"acme.py" provider-py}
                               (fn [_ _]
                                 (provider-limits/flush-limits-cache!)
-                                (let
-                                  [report
-                                   (provider-limits/provider-limits :acme)
+                                (let [report
+                                      (provider-limits/provider-limits :acme)
 
-                                   row
-                                   (first (get-in report [:dynamic :limits]))]
+                                      row
+                                      (first (get-in report [:dynamic :limits]))]
 
                                   (expect (= :ok (:status report)))
                                   (expect (nil? (:error report)))
@@ -2226,12 +2176,11 @@ vis.extension(
              (it "every `is_*` key crosses as `:is-*` — one mechanical inverse, no allow-list"
                  (with-loaded {"iskeys.py" provider-is-keys-py}
                               (fn [_ _]
-                                (let
-                                  [p
-                                   (registry/provider-by-id :iskeys)
+                                (let [p
+                                      (registry/provider-by-id :iskeys)
 
-                                   status
-                                   ((:provider/status-fn p))]
+                                      status
+                                      ((:provider/status-fn p))]
 
                                   (expect (true? (:is-authenticated status)))
                                   ;; the key no allow-list ever named
@@ -2276,12 +2225,11 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
           (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
           (expect (= "Counter v2." (:ext/description (registered "counter")))))))
   (it "a process that has loaded nothing yet loads what is on disk"
-      (let
-        [ext-dir
-         (temp-dir)
+      (let [ext-dir
+            (temp-dir)
 
-         store
-         (ps/db-create-connection! :memory)]
+            store
+            (ps/db-create-connection! :memory)]
 
         (write-ext! ext-dir "counter.py" counter-py)
         (reset! live-load nil)
@@ -2301,12 +2249,11 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
       (with-fresh-loaded
         {"rebuilder.py" rebuilder-py}
         (fn [_ {:keys [ext-dir]}]
-          (let
-            [captured
-             (symbol-fn (registered "rebuilder") 'ping)
+          (let [captured
+                (symbol-fn (registered "rebuilder") 'ping)
 
-             ^Context dead
-             (:context (first (vals @@#'pyx/loaded)))]
+                ^Context dead
+                (:context (first (vals @@#'pyx/loaded)))]
 
             (write-ext! ext-dir "rebuilder.py" (str/replace rebuilder-py "'pong'" "'edited'"))
             (.close dead true)
@@ -2337,12 +2284,11 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
       (with-fresh-loaded
         {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
         (fn [_ {:keys [ext-dir]}]
-          (let
-            [captured
-             (symbol-fn (registered "sidecar") 'peek)
+          (let [captured
+                (symbol-fn (registered "sidecar") 'peek)
 
-             ^Context dead
-             (:context (first (vals @@#'pyx/loaded)))]
+                ^Context dead
+                (:context (first (vals @@#'pyx/loaded)))]
 
             (write-ext! ext-dir "sidecar/sidecar_impl.py" (str/replace sidecar-impl-py "v1" "v2"))
             (.close dead true)
@@ -2352,12 +2298,11 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
       (with-fresh-loaded
         {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
         (fn [_ _]
-          (let
-            [captured
-             (symbol-fn (registered "sidecar") 'peek)
+          (let [captured
+                (symbol-fn (registered "sidecar") 'peek)
 
-             ^Context dead
-             (:context (first (vals @@#'pyx/loaded)))]
+                ^Context dead
+                (:context (first (vals @@#'pyx/loaded)))]
 
             (.close dead true)
             (expect (= "v1" (:result (captured))))
@@ -2372,18 +2317,17 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
       ;; landed on) and the module the extension imports was missing from the
       ;; tree the load handed to `sys.path`. Linking a package one is working on
       ;; into `~/.vis/extensions` is ordinary extension development.
-      (let
-        [ext-dir
-         (temp-dir)
+      (let [ext-dir
+            (temp-dir)
 
-         away
-         (temp-dir)
+            away
+            (temp-dir)
 
-         impl
-         (io/file away "sidecar_impl.py")
+            impl
+            (io/file away "sidecar_impl.py")
 
-         store
-         (ps/db-create-connection! :memory)]
+            store
+            (ps/db-create-connection! :memory)]
 
         (write-ext! ext-dir "sidecar/extension.py" sidecar-py)
         (spit impl sidecar-impl-py)

@@ -5,14 +5,13 @@
 (defdescribe
   voice-config-test
   (it "mounts voice model and voice-import commands under vis-agent extension voice"
-      (let
-        [cli
-         (-> voice/voice-extension
-             :ext/cli
-             first)
+      (let [cli
+            (-> voice/voice-extension
+                :ext/cli
+                first)
 
-         by-name
-         (into {} (map (juxt :cmd/name identity)) (:cmd/subcommands cli))]
+            by-name
+            (into {} (map (juxt :cmd/name identity)) (:cmd/subcommands cli))]
 
         (expect (= "voice" (:cmd/name cli)))
         (expect (= ["models" "voices" "import" "forget" "say" "transcribe"]
@@ -41,20 +40,19 @@
       (expect (= [:pocket-tts] (#'voice/download-families {"pocket-tts" true})))
       (expect (= [:parakeet :piper] (#'voice/download-families {"parakeet" true "piper" true}))))
   (it "contributes voice-specific doctor diagnostics"
-      (with-redefs
-        [voice/model-status
-         (constantly {:parakeet {:installed? true}
-                      :espeak {:is-installed true}
-                      :speech {:piper {:state :ready} :pocket-tts {:state :ready}}})
+      (with-redefs [voice/model-status
+                    (constantly {:parakeet {:installed? true}
+                                 :espeak {:is-installed true}
+                                 :speech {:piper {:state :ready} :pocket-tts {:state :ready}}})
 
-         com.blockether.vis.ext.foundation-voice.core/executable?
-         (constantly true)
+                    com.blockether.vis.ext.foundation-voice.core/executable?
+                    (constantly true)
 
-         clojure.core/requiring-resolve
-         (fn [sym]
-           (case sym
-             com.blockether.vis.ext.foundation-voice.asr/transcribe-file!
-             identity))]
+                    clojure.core/requiring-resolve
+                    (fn [sym]
+                      (case sym
+                        com.blockether.vis.ext.foundation-voice.asr/transcribe-file!
+                        identity))]
 
         (let [msgs ((:ext/doctor-fn voice/voice-extension) {})]
           (expect (= [::voice/runtime ::voice/ffmpeg ::voice/parakeet ::voice/espeak ::voice/speech
@@ -64,24 +62,22 @@
   (it "warns about every speech family that is not on the machine"
       ;; `models download` fetches both families, so an absent pocket-tts is a state
       ;; to act on and its warning carries the flag that installs it.
-      (with-redefs
-        [voice/model-status
-         (constantly {:parakeet {:installed? true}
-                      :espeak {:is-installed true}
-                      :speech {:piper {:state :absent} :pocket-tts {:state :absent}}})
+      (with-redefs [voice/model-status
+                    (constantly {:parakeet {:installed? true}
+                                 :espeak {:is-installed true}
+                                 :speech {:piper {:state :absent} :pocket-tts {:state :absent}}})
 
-         com.blockether.vis.ext.foundation-voice.core/executable?
-         (constantly true)
+                    com.blockether.vis.ext.foundation-voice.core/executable?
+                    (constantly true)
 
-         clojure.core/requiring-resolve
-         (fn [sym]
-           (case sym
-             com.blockether.vis.ext.foundation-voice.asr/transcribe-file!
-             identity))]
+                    clojure.core/requiring-resolve
+                    (fn [sym]
+                      (case sym
+                        com.blockether.vis.ext.foundation-voice.asr/transcribe-file!
+                        identity))]
 
-        (let
-          [by-id
-           (into {} (map (juxt :check-id identity)) ((:ext/doctor-fn voice/voice-extension) {}))]
+        (let [by-id
+              (into {} (map (juxt :check-id identity)) ((:ext/doctor-fn voice/voice-extension) {}))]
           (expect (= :warn (:level (::voice/speech by-id))))
           (expect (re-find #"--piper" (:remediation (::voice/speech by-id))))
           (expect (= :warn (:level (::voice/pocket-speech by-id))))
@@ -115,21 +111,21 @@
       ;; The declarative `/voice` slash spec lazily requiring-resolves
       ;; `toggle-recording!` from the input ns so the host doesn't pay
       ;; the audio stack cost until the user actually toggles voice.
-      (let
-        [voice-slash
-         (first (filter #(= "voice" (:slash/name %)) (:ext/slash-commands voice/voice-extension)))
+      (let [voice-slash
+            (first (filter #(= "voice" (:slash/name %))
+                           (:ext/slash-commands voice/voice-extension)))
 
-         calls
-         (atom [])]
+            calls
+            (atom [])]
 
-        (with-redefs
-          [clojure.core/requiring-resolve
-           (fn [sym]
-             (swap! calls conj sym)
-             (expect (= 'com.blockether.vis.ext.foundation-voice.input/toggle-recording! sym))
-             (fn [ctx]
-               (swap! calls conj [:invoked ctx])
-               :toggled))]
+        (with-redefs [clojure.core/requiring-resolve
+                      (fn [sym]
+                        (swap! calls conj sym)
+                        (expect (= 'com.blockether.vis.ext.foundation-voice.input/toggle-recording!
+                                   sym))
+                        (fn [ctx]
+                          (swap! calls conj [:invoked ctx])
+                          :toggled))]
           (let [result ((:slash/run-fn voice-slash) {:source :test})]
             (expect (= :ok (:slash/status result)))
             (expect (= [:invoked {:source :test}] (last @calls)))

@@ -54,21 +54,20 @@
 (defn- problems
   "Every rule this one commit message breaks, as `hash — rule` lines."
   [[hash _email message]]
-  (let
-    [lines
-     (str/split-lines (str/trim message))
+  (let [lines
+        (str/split-lines (str/trim message))
 
-     subject
-     (first lines)
+        subject
+        (first lines)
 
-     non-blank
-     (remove str/blank? (rest lines))
+        non-blank
+        (remove str/blank? (rest lines))
 
-     trailer
-     (str (last non-blank))
+        trailer
+        (str (last non-blank))
 
-     body
-     (butlast non-blank)]
+        body
+        (butlast non-blank)]
 
     (->
       []

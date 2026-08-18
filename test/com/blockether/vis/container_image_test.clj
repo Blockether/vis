@@ -22,12 +22,11 @@
   "The Dockerfile from the runtime stage header down: the only stage the gateway
    image is built from."
   []
-  (let
-    [text
-     (dockerfile)
+  (let [text
+        (dockerfile)
 
-     at
-     (str/index-of text "AS runtime")]
+        at
+        (str/index-of text "AS runtime")]
 
     (expect (some? at) "Dockerfile still declares a runtime stage")
     (subs text at)))
@@ -39,9 +38,8 @@
     (.redirectErrorStream pb true)
     (doseq [[k v] env-extra]
       (.put (.environment pb) (str k) (str v)))
-    (let
-      [process (.start pb)
-       output (slurp (.getInputStream process))]
+    (let [process (.start pb)
+          output (slurp (.getInputStream process))]
 
       {:exit (.waitFor process) :output output})))
 
@@ -126,21 +124,20 @@
       ;; its `vis-agent-native`, /usr/local/bin/vis-agent is a symlink into that
       ;; directory, and nothing at all says which runtime: the one beside the
       ;; wrapper is the one that runs.
-      (let
-        [tmp
-         (.toFile (Files/createTempDirectory "vis-native-launcher" (make-array FileAttribute 0)))
+      (let [tmp
+            (.toFile (Files/createTempDirectory "vis-native-launcher" (make-array FileAttribute 0)))
 
-         bundle
-         (io/file tmp "agent")
+            bundle
+            (io/file tmp "agent")
 
-         wrapper
-         (io/file bundle "vis-agent")
+            wrapper
+            (io/file bundle "vis-agent")
 
-         native
-         (io/file bundle "vis-agent-native")
+            native
+            (io/file bundle "vis-agent-native")
 
-         link
-         (io/file tmp "vis-agent")]
+            link
+            (io/file tmp "vis-agent")]
 
         (try (.mkdirs bundle)
              (io/copy (io/file "bin" "vis-agent") wrapper)
@@ -150,9 +147,8 @@
              (Files/createSymbolicLink (.toPath link)
                                        ^Path (.toPath wrapper)
                                        (make-array FileAttribute 0))
-             (let
-               [{:keys [exit output]}
-                (run-wrapper link {"HOME" (.getAbsolutePath tmp)} ["runtime"])]
+             (let [{:keys [exit output]}
+                   (run-wrapper link {"HOME" (.getAbsolutePath tmp)} ["runtime"])]
                (expect (zero? exit) output)
                (expect (re-find #"(?m)^Runtime: +native$" output) output)
                (expect (re-find (re-pattern (str "(?m)^Native: +"
@@ -171,18 +167,18 @@
       ;; nothing installed under VIS_HOME, running that tree's own live source is
       ;; the only thing it can mean. What the tree BUILT is still not a runtime —
       ;; a `target/vis` of its own never stands in for an installed release.
-      (let
-        [tmp
-         (.toFile (Files/createTempDirectory "vis-checkout-launcher" (make-array FileAttribute 0)))
+      (let [tmp
+            (.toFile (Files/createTempDirectory "vis-checkout-launcher"
+                                                (make-array FileAttribute 0)))
 
-         checkout
-         (io/file tmp "checkout")
+            checkout
+            (io/file tmp "checkout")
 
-         wrapper
-         (io/file checkout "bin" "vis-agent")
+            wrapper
+            (io/file checkout "bin" "vis-agent")
 
-         native
-         (io/file checkout "target" "vis")]
+            native
+            (io/file checkout "target" "vis")]
 
         (try (.mkdirs (io/file checkout "bin"))
              (.mkdirs (io/file checkout "target"))
@@ -191,12 +187,11 @@
              (.setExecutable wrapper true false)
              (spit native "#!/bin/sh\nexit 0\n")
              (.setExecutable native true false)
-             (let
-               [{:keys [exit output]} (run-wrapper wrapper
-                                                   {"HOME" (.getAbsolutePath tmp)
-                                                    "VIS_HOME" (.getAbsolutePath (io/file tmp
-                                                                                          "state"))}
-                                                   ["runtime"])]
+             (let [{:keys [exit output]} (run-wrapper wrapper
+                                                      {"HOME" (.getAbsolutePath tmp)
+                                                       "VIS_HOME" (.getAbsolutePath
+                                                                    (io/file tmp "state"))}
+                                                      ["runtime"])]
                (expect (zero? exit) output)
                (expect (re-find #"(?m)^Runtime: +jvm$" output) output)
                (expect (re-find #"(?m)^Native: +not installed$" output) output)

@@ -92,14 +92,13 @@
    Reported as :info, never :warn: stale state is untidy, not broken, and
    `vis-agent doctor` must not start exiting 1 on a machine that is working fine."
   [environment]
-  (let
-    [{:keys [days bytes drafts journals] :as report}
-     (try (housekeeping/scan {:db-info (:db-info environment)
-                              :days (:housekeeping-days environment)})
-          (catch Throwable _ nil))
+  (let [{:keys [days bytes drafts journals] :as report}
+        (try (housekeeping/scan {:db-info (:db-info environment)
+                                 :days (:housekeeping-days environment)})
+             (catch Throwable _ nil))
 
-     n
-     (long (or (:count report) 0))]
+        n
+        (long (or (:count report) 0))]
 
     (when (pos? n)
       [{:level :info
@@ -147,17 +146,17 @@
    failed to load therefore looks healthy while quietly dropping every
    diagram a user attaches -- exactly what `vis-agent doctor` exists to surface."
   [_environment]
-  (let
-    [started
-     (System/nanoTime)
+  (let [started
+        (System/nanoTime)
 
-     out
-     (try (binding [image-convert/*enabled?* true]
-            (image-convert/rasterize-svg (.getBytes ^String probe-svg StandardCharsets/UTF_8) nil))
-          (catch Throwable _ nil))
+        out
+        (try (binding [image-convert/*enabled?* true]
+               (image-convert/rasterize-svg (.getBytes ^String probe-svg StandardCharsets/UTF_8)
+                                            nil))
+             (catch Throwable _ nil))
 
-     ms
-     (quot (- (System/nanoTime) started) 1000000)]
+        ms
+        (quot (- (System/nanoTime) started) 1000000)]
 
     (if out
       [{:level :info

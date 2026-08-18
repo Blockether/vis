@@ -60,12 +60,11 @@
   (->> (active-extensions env)
        (mapcat :ext/language-tools)
        (keep (fn [entry]
-               (let
-                 [language
-                  (normalize-language (:language entry))
+               (let [language
+                     (normalize-language (:language entry))
 
-                  f
-                  (get entry capability)]
+                     f
+                     (get entry capability)]
 
                  (when f
                    (assoc entry
@@ -91,14 +90,13 @@
    projection. It is NOT shipped in the model's `session` dict — that was a
    verbatim duplicate of the prompt block's LANGUAGE TOOLS lines."
   [env]
-  (let
-    [by-lang (reduce (fn [m cap]
-                       (reduce (fn [m h]
-                                 (update m (:language h) (fnil conj #{}) (capability->tool cap)))
-                               m
-                               (registered-handlers env cap)))
-                     {}
-                     (keys capability->tool))]
+  (let [by-lang (reduce (fn [m cap]
+                          (reduce (fn [m h]
+                                    (update m (:language h) (fnil conj #{}) (capability->tool cap)))
+                                  m
+                                  (registered-handlers env cap)))
+                        {}
+                        (keys capability->tool))]
     (when (seq by-lang)
       (into (sorted-map)
             (for [[lang tools] by-lang]
@@ -185,24 +183,23 @@
 
 (defn- choose-handler
   [env capability opts]
-  (let
-    [handlers
-     (vec (registered-handlers env capability))
+  (let [handlers
+        (vec (registered-handlers env capability))
 
-     by-lang
-     (group-by :language handlers)
+        by-lang
+        (group-by :language handlers)
 
-     explicit
-     (normalize-language (opts-language opts))
+        explicit
+        (normalize-language (opts-language opts))
 
-     ;; First candidate resolving to EXACTLY one handler wins; a candidate
-     ;; matching several is genuinely ambiguous and stops the search there.
-     picked
-     (some (fn [l]
-             (let [ms (get by-lang l)]
-               (cond (= 1 (count ms)) {:handler (first ms)}
-                     (seq ms) {:ambiguous l :matches ms})))
-           (candidate-languages env explicit))]
+        ;; First candidate resolving to EXACTLY one handler wins; a candidate
+        ;; matching several is genuinely ambiguous and stops the search there.
+        picked
+        (some (fn [l]
+                (let [ms (get by-lang l)]
+                  (cond (= 1 (count ms)) {:handler (first ms)}
+                        (seq ms) {:ambiguous l :matches ms})))
+              (candidate-languages env explicit))]
 
     (cond (empty? handlers) (throw (ex-info
                                      (str "No language extension registered for " (name capability))
@@ -266,12 +263,11 @@
               (fn [_handler result]
                 result)))
   ([env capability args post]
-   (let
-     [{:keys [opts payload]}
-      (parse-language-call args)
+   (let [{:keys [opts payload]}
+         (parse-language-call args)
 
-      handler
-      (choose-handler env capability opts)]
+         handler
+         (choose-handler env capability opts)]
 
      ;; A live environment may predate a process-jail namespace reload. Refresh the
      ;; session binding immediately before a handler that may spawn a child: Clojure
@@ -301,55 +297,54 @@
    REFUSED: `repl_start(\"clojure\", \"extensions/foo\")` used to be swallowed and
    start a REPL at the workspace ROOT instead."
   [env args]
-  (let
-    [live-ids
-     (into #{} (map #(str (get % "id"))) (vis/list-resources (:session-id env)))
+  (let [live-ids
+        (into #{} (map #(str (get % "id"))) (vis/list-resources (:session-id env)))
 
-     id?
-     (fn [x] (and (string? x) (or (not (language-like? x)) (contains? live-ids x))))
+        id?
+        (fn [x]
+          (and (string? x) (or (not (language-like? x)) (contains? live-ids x))))
 
-     [lead more]
-     (if (seq args) [(first args) (next args)] [nil nil])
+        [lead more]
+        (if (seq args) [(first args) (next args)] [nil nil])
 
-     lead-id
-     (when (id? lead) lead)
+        lead-id
+        (when (id? lead) lead)
 
-     language
-     (when (and (nil? lead-id) (language-like? lead)) lead)
+        language
+        (when (and (nil? lead-id) (language-like? lead)) lead)
 
-     more
-     (if (or lead-id language) more (seq args))
+        more
+        (if (or lead-id language) more (seq args))
 
-     opts
-     (first more)]
+        opts
+        (first more)]
 
     (when-not (or (nil? opts) (map? opts))
-      (throw (ex-info (str "A REPL lifecycle call is (language?, {options}); "
-                           (pr-str opts)
+      (throw (ex-info (str "A REPL lifecycle call is (language?, {options}); " (pr-str opts)
                            " is not an options map — name what it selects:"
                            " {\"cwd\": ...}, {\"id\": ...}, {\"port\": ...}.")
                       {:type :language-surface/bad-args
                        :got args
                        :examples ["repl_start('clojure', {'cwd': 'extensions/foo'})"
-                                  "repl_status('python')"
-                                  "repl_stop('nrepl:~/proj')"]})))
+                                  "repl_status('python')" "repl_stop('nrepl:~/proj')"]})))
     (when (next more)
       (throw (ex-info "A REPL lifecycle call takes at most (language?, {options})."
                       {:type :language-surface/bad-args :got args})))
     (let [opts (or opts {})]
-      [(or lead-id (let [oid (opts-id opts)] (when (id? oid) oid))) language opts])))
+      [(or lead-id
+           (let [oid (opts-id opts)]
+             (when (id? oid) oid))) language opts])))
 
 (defn- dispatch-repl!
   "Run the active pack's REPL-lifecycle handler for `op` (start/status/stop/connect)."
   [env op language opts]
-  (let
-    [dispatch-opts
-     (cond-> opts
-       language
-       (assoc "language" language))
+  (let [dispatch-opts
+        (cond-> opts
+          language
+          (assoc "language" language))
 
-     handler
-     (choose-handler env :start-repl-fn dispatch-opts)]
+        handler
+        (choose-handler env :start-repl-fn dispatch-opts)]
 
     ;; Refresh from the live env at the process boundary. This also repairs the
     ;; registry after a process-jail namespace reload without weakening
@@ -372,8 +367,9 @@
     ;; `list-resources` returns string-keyed DATA maps with string enum VALUES
     ;; ("kind" "nrepl", "status" "up"), so filter on strings.
     (->> (vis/list-resources (:session-id env))
-         (filter #(let [kind (str (get % "kind"))]
-                    (or (= "repl" kind) (= "nrepl" kind) (str/ends-with? kind "repl"))))
+         (filter #(let [kind (str (get % "kind"))] (or (= "repl" kind)
+                                                       (= "nrepl" kind)
+                                                       (str/ends-with? kind "repl"))))
          (filter #(or (nil? lang) (= lang (normalize-language (get % "language")))))
          vec)))
 
@@ -402,20 +398,21 @@
    project PLUS `resources`, every live REPL of this session whatever directory it
    runs in. A REPL id answers for that one REPL alone."
   [env & args]
-  (let
-    [[id language opts]
-     (repl-call env args)
+  (let [[id language opts]
+        (repl-call env args)
 
-     rows
-     (cond->> (repl-resources env language)
-       id
-       (filterv #(= (str id) (str (get % "id")))))]
+        rows
+        (cond->> (repl-resources env language)
+          id
+          (filterv #(= (str id) (str (get % "id")))))]
 
     (if id
       (extension/success {:result {"id" (str id)
                                    ;; TOTAL: an id nothing answers to reads
                                    ;; "unknown" instead of an absent key.
-                                   "status" (or (some-> (first rows) (get "status")) "unknown")
+                                   "status" (or (some-> (first rows)
+                                                        (get "status"))
+                                                "unknown")
                                    "resources" rows}})
       (update (dispatch-repl! env "status" language opts)
               :result
@@ -431,11 +428,10 @@
    multi-value selection reads on one line. A bare string is ONE entry, never a
    sequence of characters."
   [input k]
-  (let
-    [xs (let [v (get input k)]
-          (cond (nil? v) nil
-                (sequential? v) v
-                :else [v]))]
+  (let [xs (let [v (get input k)]
+             (cond (nil? v) nil
+                   (sequential? v) v
+                   :else [v]))]
     (some->> xs
              (keep #(some-> %
                             str
@@ -476,14 +472,13 @@
 (defn run-tests
   "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the selector every language shares; `::<test-name>` alone finds that test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace name, or `ns/var` for one test) and resolves it the same way, and runs `*_test.cljs` through the project's own shadow-cljs build (`build` names which one when several could); `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
-  (let
-    [started-at
-     (System/nanoTime)
+  (let [started-at
+        (System/nanoTime)
 
-     ;; A pack reports what it RAN; only the CALL knows what was ASKED FOR, so
-     ;; stamp the selection here or the headline cannot tell two runs apart.
-     target
-     (test-target (or (first (filter map? args)) {}))]
+        ;; A pack reports what it RAN; only the CALL knows what was ASKED FOR, so
+        ;; stamp the selection here or the headline cannot tell two runs apart.
+        target
+        (test-target (or (first (filter map? args)) {}))]
 
     (dispatch! env
                :test-fn
@@ -492,16 +487,16 @@
                  ;; Language handlers return extension envelopes. Complete and time
                  ;; the PUBLIC payload; metadata added beside :result gets unwrapped.
                  (if (and (map? envelope) (contains? envelope :result))
-                   (update
-                     envelope
-                     :result
-                     (fn [result]
-                       (let [completed (contract/complete-test-result (:language handler) result)]
-                         (if (map? completed)
-                           (assoc completed
-                             "target" (or (get result "target") target)
-                             "ms" (quot (- (System/nanoTime) started-at) 1000000))
-                           completed))))
+                   (update envelope
+                           :result
+                           (fn [result]
+                             (let [completed (contract/complete-test-result (:language handler)
+                                                                            result)]
+                               (if (map? completed)
+                                 (assoc completed
+                                   "target" (or (get result "target") target)
+                                   "ms" (quot (- (System/nanoTime) started-at) 1000000))
+                                 completed))))
                    envelope)))))
 
 (defn repl-eval
@@ -627,8 +622,8 @@
      (str
        "String-keyed result stamped with `op` — the SAME shape in every language: `result` "
        "(`started` | `already-running` | `starting` | `failed` | `no-launcher`), `id`, `cwd`, "
-        "`status`, plus `running,port,pid,cmd,tool,aliases,env,log,message` when known — a failed "
-        "start adds `exit` and `log_tail`, the same two keys whatever launched it — and "
+       "`status`, plus `running,port,pid,cmd,tool,aliases,env,log,message` when known — a failed "
+       "start adds `exit` and `log_tail`, the same two keys whatever launched it — and "
        "`build,target,dialect,runtime` for a shadow-cljs attachment.")
      :description
      (str
@@ -644,7 +639,8 @@
        "— and that env BELONGS to the REPL: a start naming a different one is refused by the keys "
        "that differ, since there is no restart. `repl_eval` never takes `env`: a live process' "
        "environment is its own.")
-     :params [{:name "language"} {:name "cwd"} {:name "id" :note "a label for THIS REPL, when a project holds several"}
+     :params [{:name "language"} {:name "cwd"}
+              {:name "id" :note "a label for THIS REPL, when a project holds several"}
               {:name "aliases" :note "clojure — deps aliases, default [\"dev\" \"test\"]"}
               {:name "env" :note "THIS REPL's variables, over the project's"}]
      :call {:lead-opt "language" :rest :always}
@@ -679,10 +675,9 @@
   (vis/symbol
     #'connect-repl
     {:symbol 'repl_connect
-     :result (str
-               "String-keyed and stamped with `op`: `result,id,cwd,status` plus "
-               "`running,port,host,external,message` when known, and "
-               "`build,target,dialect,runtime` for a shadow-cljs build.")
+     :result (str "String-keyed and stamped with `op`: `result,id,cwd,status` plus "
+                  "`running,port,host,external,message` when known, and "
+                  "`build,target,dialect,runtime` for a shadow-cljs build.")
      :description
      (str
        "Attach an external running REPL — `repl_connect(\"clojure\", {\"port\": 56428})`. `port` names "

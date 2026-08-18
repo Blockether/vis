@@ -115,70 +115,69 @@
   "Spawn `command`+`args` (with extra `env`), wire newline-delimited JSON-RPC.
    Returns `{:request-fn :notify-fn :close-fn :alive-fn :pid}`."
   [name {:keys [command args env cwd]}]
-  (let
-    [pb
-     ;; DETACHED: a stdio MCP server is third-party code that outlives the call and
-     ;; used to inherit the daemon's process group, so its own `kill 0`/teardown (or
-     ;; a Ctrl-C in the terminal) reached the gateway JVM. The detacher execs in
-     ;; place, so `:pid`, the stdio pipes and `destroy` are unchanged.
-     (ProcessBuilder. ^java.util.List
-                      (process-jail/detached-argv (vec (cons command (map str (or args []))))))
+  (let [pb
+        ;; DETACHED: a stdio MCP server is third-party code that outlives the call and
+        ;; used to inherit the daemon's process group, so its own `kill 0`/teardown (or
+        ;; a Ctrl-C in the terminal) reached the gateway JVM. The detacher execs in
+        ;; place, so `:pid`, the stdio pipes and `destroy` are unchanged.
+        (ProcessBuilder. ^java.util.List
+                         (process-jail/detached-argv (vec (cons command (map str (or args []))))))
 
-     _
-     (when (seq env)
-       (let [m (.environment pb)]
-         (doseq [[k v] env]
-           (.put m (str (clj-name k)) (str v)))))
+        _
+        (when (seq env)
+          (let [m (.environment pb)]
+            (doseq [[k v] env]
+              (.put m (str (clj-name k)) (str v)))))
 
-     _
-     (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) (.directory pb (io/file cwd)))
+        _
+        (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) (.directory pb (io/file cwd)))
 
-     _
-     (.redirectErrorStream pb false)
+        _
+        (.redirectErrorStream pb false)
 
-     proc
-     (.start pb)
+        proc
+        (.start pb)
 
-     out
-     (BufferedReader. (io/reader (.getInputStream proc)))
+        out
+        (BufferedReader. (io/reader (.getInputStream proc)))
 
-     in
-     (.getOutputStream proc)
+        in
+        (.getOutputStream proc)
 
-     pending
-     (ConcurrentHashMap.)
+        pending
+        (ConcurrentHashMap.)
 
-     next-id
-     (atom 0)
+        next-id
+        (atom 0)
 
-     closed?
-     (atom false)
+        closed?
+        (atom false)
 
-     write!
-     (fn [m]
-       (locking in (.write in (.getBytes (str (->json m) "\n") "UTF-8")) (.flush in)))
+        write!
+        (fn [m]
+          (locking in (.write in (.getBytes (str (->json m) "\n") "UTF-8")) (.flush in)))
 
-     read-loop
-     (fn []
-       (try (loop []
+        read-loop
+        (fn []
+          (try (loop []
 
-              (when-let [line (.readLine out)]
-                (when-not (str/blank? line)
-                  (try (let [msg (json-> line)]
-                         (when-let [id (get msg "id")]
-                           (when-let [p (.remove pending id)]
-                             (deliver p msg))))
-                       (catch Throwable t
-                         (tel/log! {:level :debug
-                                    :id ::stdio-parse
-                                    :data {:server name :error (ex-message t)}}
-                                   "MCP stdio: unparseable line dropped"))))
-                (recur)))
-            (catch Throwable _ nil)
-            (finally (reset! closed? true)
-                     (doseq [k (enumeration-seq (.keys pending))]
-                       (when-let [p (.remove pending k)]
-                         (deliver p {"error" {"message" "server stream closed"}}))))))]
+                 (when-let [line (.readLine out)]
+                   (when-not (str/blank? line)
+                     (try (let [msg (json-> line)]
+                            (when-let [id (get msg "id")]
+                              (when-let [p (.remove pending id)]
+                                (deliver p msg))))
+                          (catch Throwable t
+                            (tel/log! {:level :debug
+                                       :id ::stdio-parse
+                                       :data {:server name :error (ex-message t)}}
+                                      "MCP stdio: unparseable line dropped"))))
+                   (recur)))
+               (catch Throwable _ nil)
+               (finally (reset! closed? true)
+                        (doseq [k (enumeration-seq (.keys pending))]
+                          (when-let [p (.remove pending k)]
+                            (deliver p {"error" {"message" "server stream closed"}}))))))]
 
     (start-stderr-drain! name (.getErrorStream proc))
     (doto (Thread. ^Runnable read-loop (str "mcp-stdio-" name)) (.setDaemon true) (.start))
@@ -186,12 +185,11 @@
      :request-fn (fn [method params timeout-ms]
                    (when @closed?
                      (throw (ex-info "MCP server not running" {:type :mcp/closed :server name})))
-                   (let
-                     [id
-                      (str (swap! next-id inc))
+                   (let [id
+                         (str (swap! next-id inc))
 
-                      p
-                      (promise)]
+                         p
+                         (promise)]
 
                      (.put pending id p)
                      (write! (cond-> {"jsonrpc" "2.0" "id" id "method" method}
@@ -218,16 +216,15 @@
                  ;; running — a "stopped" server still holding its port, its files,
                  ;; and its memory. Once the parent is gone the handle no longer
                  ;; lists them, so the list has to be taken first.
-                 (let
-                   [kids
-                    (try (vec (iterator-seq (.iterator (.descendants (.toHandle proc)))))
-                         (catch Throwable _ []))
+                 (let [kids
+                       (try (vec (iterator-seq (.iterator (.descendants (.toHandle proc)))))
+                            (catch Throwable _ []))
 
-                    destroy-kids!
-                    (fn [f]
-                      (run! (fn [^java.lang.ProcessHandle h]
-                              (try (when (.isAlive h) (f h)) (catch Throwable _ nil)))
-                            kids))]
+                       destroy-kids!
+                       (fn [f]
+                         (run! (fn [^java.lang.ProcessHandle h]
+                                 (try (when (.isAlive h) (f h)) (catch Throwable _ nil)))
+                               kids))]
 
                    ;; Closing stdin is the polite stop an MCP server is specified to
                    ;; honor; the signals below are the ones that do not need consent.
@@ -283,18 +280,17 @@
   [server-name url headers session-atom protocol-version-atom bearer-fn on-notify closed?]
   (letfn
     [(build-request []
-       (let
-         [request-headers
-          (cond->
-            (merge (apply-headers headers)
-                   {"Accept" "text/event-stream" "MCP-Protocol-Version" @protocol-version-atom})
-            @session-atom
-            (assoc "Mcp-Session-Id" @session-atom))
+       (let [request-headers
+             (cond-> (merge (apply-headers headers)
+                            {"Accept" "text/event-stream"
+                             "MCP-Protocol-Version" @protocol-version-atom})
+               @session-atom
+               (assoc "Mcp-Session-Id" @session-atom))
 
-          request-headers
-          (if-let [token (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))]
-            (assoc request-headers "Authorization" (str "Bearer " token))
-            request-headers)]
+             request-headers
+             (if-let [token (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))]
+               (assoc request-headers "Authorization" (str "Bearer " token))
+               request-headers)]
 
          {:uri url
           :method :get
@@ -309,9 +305,8 @@
               (let [backoff (atom 1000)]
                 (while (not @closed?)
                   (try
-                    (let
-                      [resp (http/request (build-request))
-                       status (long (:status resp))]
+                    (let [resp (http/request (build-request))
+                          status (long (:status resp))]
 
                       (cond (or (= 404 status) (= 405 status))
                             ;; Server doesn't support the listen channel — quit quietly.
@@ -345,139 +340,131 @@
    an optional `:bearer-fn` OAuth token provider. `:www-auth-atom`, when given, is
    the caller's atom to keep pointed at the latest `WWW-Authenticate` challenge."
   [name {:keys [url headers bearer-fn www-auth-atom listen?]}]
-  (let
-    [session
-     (atom nil)
+  (let [session
+        (atom nil)
 
-     protocol-version*
-     (atom protocol-version)
+        protocol-version*
+        (atom protocol-version)
 
-     ;; The CALLER's atom when it supplied one. A server answering 401 with a
-     ;; Bearer challenge is the only proof it wants OAuth at all: `oauth.clj`
-     ;; discovers from that live header, and the extension tells "sign in" from
-     ;; "it is down" by whether this ever got set.
-     www-auth
-     (or www-auth-atom (atom nil))
+        ;; The CALLER's atom when it supplied one. A server answering 401 with a
+        ;; Bearer challenge is the only proof it wants OAuth at all: `oauth.clj`
+        ;; discovers from that live header, and the extension tells "sign in" from
+        ;; "it is down" by whether this ever got set.
+        www-auth
+        (or www-auth-atom (atom nil))
 
-     closed?
-     (atom false)
+        closed?
+        (atom false)
 
-     post!
-     (fn [body timeout-ms]
-       (let
-         [tok
-          (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))
+        post!
+        (fn [body timeout-ms]
+          (let [tok
+                (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))
 
-          build-req
-          (fn [bearer]
-            {:uri url
-             :method :post
-             :client @mcp-http/client
-             :headers (cond->
-                        (merge (apply-headers headers)
-                               {"Content-Type" "application/json"
-                                "Accept" "application/json, text/event-stream"
-                                "MCP-Protocol-Version" @protocol-version*})
-                        @session
-                        (assoc "Mcp-Session-Id" @session)
+                build-req
+                (fn [bearer]
+                  {:uri url
+                   :method :post
+                   :client @mcp-http/client
+                   :headers (cond-> (merge (apply-headers headers)
+                                           {"Content-Type" "application/json"
+                                            "Accept" "application/json, text/event-stream"
+                                            "MCP-Protocol-Version" @protocol-version*})
+                              @session
+                              (assoc "Mcp-Session-Id" @session)
 
-                        bearer
-                        (assoc "Authorization" (str "Bearer " bearer)))
-             :body body
-             :timeout timeout-ms
-             :throw false
-             :as :string})
+                              bearer
+                              (assoc "Authorization" (str "Bearer " bearer)))
+                   :body body
+                   :timeout timeout-ms
+                   :throw false
+                   :as :string})
 
-          send1
-          (fn [bearer]
-            (let
-              [resp
-               (http/request (build-req bearer))
+                send1
+                (fn [bearer]
+                  (let [resp
+                        (http/request (build-req bearer))
 
-               status
-               (:status resp)]
+                        status
+                        (:status resp)]
 
-              (when-let [sid (response-header resp "mcp-session-id")]
-                (reset! session sid))
-              (when-let [wa (response-header resp "www-authenticate")]
-                (reset! www-auth wa))
-              {:status status :body (:body resp) :bearer bearer}))
+                    (when-let [sid (response-header resp "mcp-session-id")]
+                      (reset! session sid))
+                    (when-let [wa (response-header resp "www-authenticate")]
+                      (reset! www-auth wa))
+                    {:status status :body (:body resp) :bearer bearer}))
 
-          first-resp
-          (send1 tok)]
+                first-resp
+                (send1 tok)]
 
-         (if (and (= 401 (:status first-resp)) bearer-fn)
-           (let [fresh (try (bearer-fn tok) (catch Throwable _ nil))]
-             (if (and fresh (not= fresh tok)) (send1 fresh) first-resp))
-           first-resp)))
+            (if (and (= 401 (:status first-resp)) bearer-fn)
+              (let [fresh (try (bearer-fn tok) (catch Throwable _ nil))]
+                (if (and fresh (not= fresh tok)) (send1 fresh) first-resp))
+              first-resp)))
 
-     parse-reply
-     (fn [name method status body req-id]
-       (when (>= (long status) 400)
-         (throw (ex-info (str "MCP " name " HTTP " status " on " method)
-                         {:type :mcp/http-error :server name :status status :body body})))
-       (let
-         [objs
-          (if (str/includes? (str body) "data:")
-            (sse-data-objects body)
-            (try [(json-> body)] (catch Throwable _ [])))
+        parse-reply
+        (fn [name method status body req-id]
+          (when (>= (long status) 400)
+            (throw (ex-info (str "MCP " name " HTTP " status " on " method)
+                            {:type :mcp/http-error :server name :status status :body body})))
+          (let [objs
+                (if (str/includes? (str body) "data:")
+                  (sse-data-objects body)
+                  (try [(json-> body)] (catch Throwable _ [])))
 
-          msg
-          (or (some #(when (= (get % "id") req-id) %) objs)
-              (first (filter #(contains? % "result") objs))
-              (first objs))]
+                msg
+                (or (some #(when (= (get % "id") req-id) %) objs)
+                    (first (filter #(contains? % "result") objs))
+                    (first objs))]
 
-         (cond (nil? msg) (throw (ex-info (str "MCP " name " empty reply on " method)
-                                          {:type :mcp/protocol :server name}))
-               (get msg "error") (throw (rpc-error->ex name method (get msg "error")))
-               :else (get msg "result"))))]
+            (cond (nil? msg) (throw (ex-info (str "MCP " name " empty reply on " method)
+                                             {:type :mcp/protocol :server name}))
+                  (get msg "error") (throw (rpc-error->ex name method (get msg "error")))
+                  :else (get msg "result"))))]
 
-    (cond->
-      {:request-fn (fn [method params timeout-ms]
-                     (let
-                       [req-id
-                        (str (System/nanoTime))
+    (cond-> {:request-fn (fn [method params timeout-ms]
+                           (let [req-id
+                                 (str (System/nanoTime))
 
-                        body
-                        (->json (cond-> {"jsonrpc" "2.0" "id" req-id "method" method}
-                                  (some? params)
-                                  (assoc "params" params)))
+                                 body
+                                 (->json (cond-> {"jsonrpc" "2.0" "id" req-id "method" method}
+                                           (some? params)
+                                           (assoc "params" params)))
 
-                        {:keys [status body]}
-                        (post! body timeout-ms)]
+                                 {:keys [status body]}
+                                 (post! body timeout-ms)]
 
-                       (parse-reply name method status body req-id)))
-       :notify-fn (fn [method params]
-                    (try (post! (->json (cond-> {"jsonrpc" "2.0" "method" method}
-                                          (some? params)
-                                          (assoc "params" params)))
-                                10000)
-                         (catch Throwable _ nil)))
-       :close-fn (fn []
-                   (reset! closed? true)
-                   (when-let [sid @session]
-                     (try (http/request {:uri url
-                                         :method :delete
-                                         :client @mcp-http/client
-                                         :headers
-                                         (cond->
-                                           (merge (apply-headers headers)
+                             (parse-reply name method status body req-id)))
+             :notify-fn (fn [method params]
+                          (try (post! (->json (cond-> {"jsonrpc" "2.0" "method" method}
+                                                (some? params)
+                                                (assoc "params" params)))
+                                      10000)
+                               (catch Throwable _ nil)))
+             :close-fn (fn []
+                         (reset! closed? true)
+                         (when-let [sid @session]
+                           (try (http/request
+                                  {:uri url
+                                   :method :delete
+                                   :client @mcp-http/client
+                                   :headers
+                                   (cond-> (merge (apply-headers headers)
                                                   {"Mcp-Session-Id" sid
                                                    "MCP-Protocol-Version" @protocol-version*})
-                                           bearer-fn
-                                           (assoc "Authorization"
-                                             (str "Bearer "
-                                                  (try (bearer-fn) (catch Throwable _ nil)))))
-                                         :timeout 5000
-                                         :throw false
-                                         :as :string})
-                          (catch Throwable _ nil)))
-                   (reset! session nil))
-       :alive-fn (fn []
-                   (not @closed?))
-       :www-auth-atom www-auth
-       :session-atom session
-       :protocol-version-atom protocol-version*}
+                                     bearer-fn
+                                     (assoc "Authorization"
+                                       (str "Bearer " (try (bearer-fn) (catch Throwable _ nil)))))
+                                   :timeout 5000
+                                   :throw false
+                                   :as :string})
+                                (catch Throwable _ nil)))
+                         (reset! session nil))
+             :alive-fn (fn []
+                         (not @closed?))
+             :www-auth-atom www-auth
+             :session-atom session
+             :protocol-version-atom protocol-version*}
       listen?
       (assoc :listen-start-fn
         (fn [on-notify]
@@ -496,9 +483,8 @@
 
 (defn- transport-of
   [{:keys [transport url]}]
-  (case
-    (some-> transport
-            name)
+  (case (some-> transport
+                name)
     ("streamable_http" "streamable-http" "http")
     :streamable-http
 
@@ -516,50 +502,47 @@
    Returns an opaque `conn` map (or throws). A failed handshake always closes the
    transport it already opened, so failed stdio starts cannot orphan processes."
   [name spec]
-  (let
-    [transport
-     (transport-of spec)
+  (let [transport
+        (transport-of spec)
 
-     t
-     (case transport
-       :stdio
-       (start-stdio! name spec)
+        t
+        (case transport
+          :stdio
+          (start-stdio! name spec)
 
-       :streamable-http
-       (start-http! name spec)
+          :streamable-http
+          (start-http! name spec)
 
-       (throw (ex-info (str "MCP: unknown transport " (pr-str transport))
-                       {:type :mcp/config :server name})))
+          (throw (ex-info (str "MCP: unknown transport " (pr-str transport))
+                          {:type :mcp/config :server name})))
 
-     timeout-ms
-     (or (:timeout-ms spec) default-timeout-ms)
+        timeout-ms
+        (or (:timeout-ms spec) default-timeout-ms)
 
-     conn
-     (merge t
-            {:name name
-             :transport transport
-             :spec spec
-             :connected-at (now-ms)
-             :tools (atom nil)
-             :timeout-ms timeout-ms})]
+        conn
+        (merge t
+               {:name name
+                :transport transport
+                :spec spec
+                :connected-at (now-ms)
+                :tools (atom nil)
+                :timeout-ms timeout-ms})]
 
-    (try (let
-           [init ((:request-fn conn)
-                   "initialize"
-                   {"protocolVersion" protocol-version
-                    "capabilities" {}
-                    "clientInfo" {"name" "vis" "version" "0.1.0"}}
-                   timeout-ms)]
+    (try (let [init ((:request-fn conn)
+                      "initialize"
+                      {"protocolVersion" protocol-version
+                       "capabilities" {}
+                       "clientInfo" {"name" "vis" "version" "0.1.0"}}
+                      timeout-ms)]
            ;; Per spec, acknowledge before issuing further requests.
            ((:notify-fn conn) "notifications/initialized" nil)
-           (let
-             [negotiated-protocol-version (or (get init "protocolVersion") protocol-version)
-              _ (when-let [version-atom (:protocol-version-atom t)]
-                  (reset! version-atom negotiated-protocol-version))
-              conn (assoc conn
-                     :server-info (get init "serverInfo")
-                     :server-capabilities (get init "capabilities")
-                     :protocol-version negotiated-protocol-version)]
+           (let [negotiated-protocol-version (or (get init "protocolVersion") protocol-version)
+                 _ (when-let [version-atom (:protocol-version-atom t)]
+                     (reset! version-atom negotiated-protocol-version))
+                 conn (assoc conn
+                        :server-info (get init "serverInfo")
+                        :server-capabilities (get init "capabilities")
+                        :protocol-version negotiated-protocol-version)]
 
              ;; Wire the optional HTTP listen channel: server-pushed
              ;; `notifications/tools/list_changed` invalidates the tools cache so a
@@ -580,12 +563,11 @@
    `notifications/tools/list_changed` from the listen channel."
   [conn]
   (or @(:tools conn)
-      (let
-        [result
-         ((:request-fn conn) "tools/list" {} (or (:timeout-ms conn) default-timeout-ms))
+      (let [result
+            ((:request-fn conn) "tools/list" {} (or (:timeout-ms conn) default-timeout-ms))
 
-         tools
-         (vec (get result "tools"))]
+            tools
+            (vec (get result "tools"))]
 
         (reset! (:tools conn) tools)
         tools)))

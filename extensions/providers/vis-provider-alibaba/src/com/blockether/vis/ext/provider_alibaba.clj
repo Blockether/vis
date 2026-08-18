@@ -117,12 +117,11 @@
   "Merge `slice` into the existing auth file under `plan-tag`. When
    `slice` is nil, REMOVE the plan entry. Returns the new map."
   [plan-tag slice]
-  (let
-    [current
-     (or (load-auth-file) {})
+  (let [current
+        (or (load-auth-file) {})
 
-     next-state
-     (if (nil? slice) (dissoc current plan-tag) (assoc current plan-tag slice))]
+        next-state
+        (if (nil? slice) (dissoc current plan-tag) (assoc current plan-tag slice))]
 
     (if (seq next-state)
       (save-auth-file! next-state)
@@ -224,12 +223,11 @@
 (defn- make-status-fn
   [plan-tag]
   (fn []
-    (let
-      [{:keys [provider-id label]}
-       (get PLANS plan-tag)
+    (let [{:keys [provider-id label]}
+          (get PLANS plan-tag)
 
-       detected
-       (detect-key plan-tag)]
+          detected
+          (detect-key plan-tag)]
 
       (cond-> {:is-authenticated (some? detected) :provider-id provider-id :label label}
         detected
@@ -254,12 +252,11 @@
    at the Model Studio console instead of inventing numbers."
   [plan-tag]
   (fn []
-    (let
-      [{:keys [provider-id label]}
-       (get PLANS plan-tag)
+    (let [{:keys [provider-id label]}
+          (get PLANS plan-tag)
 
-       detected
-       (detect-key plan-tag)]
+          detected
+          (detect-key plan-tag)]
 
       {:provider-id provider-id
        :status (if detected :ok :unauthenticated)
@@ -298,15 +295,14 @@
    just persist it; otherwise we instruct the user to set it and re-run."
   [plan-tag]
   (fn [printer-fn]
-    (let
-      [print!
-       (or printer-fn (constantly nil))
+    (let [print!
+          (or printer-fn (constantly nil))
 
-       {:keys [provider-id label env-keys base-url]}
-       (get PLANS plan-tag)
+          {:keys [provider-id label env-keys base-url]}
+          (get PLANS plan-tag)
 
-       existing
-       (detect-key plan-tag)]
+          existing
+          (detect-key plan-tag)]
 
       (cond
         ;; Configured or already on disk -> no-op so re-running auth doesn't

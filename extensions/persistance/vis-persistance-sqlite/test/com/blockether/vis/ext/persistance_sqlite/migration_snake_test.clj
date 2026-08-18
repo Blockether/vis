@@ -46,12 +46,11 @@
                    (expect (not (str/includes? sql "?")))
                    (expect (nil? (re-find #"(?m)^\s*[a-z0-9_]+-[a-z0-9-]+\s" sql)))))
              (it "projects are cross-channel: the project table has NO channel column"
-                 (let
-                   [sql
-                    (v1-sql)
+                 (let [sql
+                       (v1-sql)
 
-                    project-ddl
-                    (re-find #"(?s)CREATE TABLE project\s*\((.*?)\);" sql)]
+                       project-ddl
+                       (re-find #"(?s)CREATE TABLE project\s*\((.*?)\);" sql)]
 
                    (expect (some? project-ddl))
                    (expect (not (str/includes? (str/lower-case (second project-ddl)) "channel"))))))
@@ -65,75 +64,70 @@
 
 (defn- exec!
   [^javax.sql.DataSource ds ^String sql]
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     st
-     (.createStatement conn)]
+              st
+              (.createStatement conn)]
 
     (.executeUpdate st sql)))
 
 (defn- columns-of
   [^javax.sql.DataSource ds ^String table]
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     st
-     (.createStatement conn)
+              st
+              (.createStatement conn)
 
-     rs
-     (.executeQuery st (str "PRAGMA table_info(" table ")"))]
+              rs
+              (.executeQuery st (str "PRAGMA table_info(" table ")"))]
 
     (loop [acc #{}]
       (if (.next rs) (recur (conj acc (str/lower-case (.getString rs "name")))) acc))))
 
 (defn- row-count
   [^javax.sql.DataSource ds ^String table]
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     st
-     (.createStatement conn)
+              st
+              (.createStatement conn)
 
-     rs
-     (.executeQuery st (str "SELECT count(*) FROM " table))]
+              rs
+              (.executeQuery st (str "SELECT count(*) FROM " table))]
 
     (when (.next rs) (.getLong rs 1))))
 
 (defn- master-sql
   "`name -> DDL` for every object in the store's schema."
   [^javax.sql.DataSource ds]
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     st
-     (.createStatement conn)
+              st
+              (.createStatement conn)
 
-     rs
-     (.executeQuery st "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL")]
+              rs
+              (.executeQuery st "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL")]
 
     (loop [acc {}]
       (if (.next rs) (recur (assoc acc (.getString rs "name") (.getString rs "sql"))) acc))))
 
 (defn- fts-count
   [^javax.sql.DataSource ds ^String term]
-  (with-open
-    [conn
-     (.getConnection ds)
+  (with-open [conn
+              (.getConnection ds)
 
-     st
-     (.createStatement conn)
+              st
+              (.createStatement conn)
 
-     rs
-     (.executeQuery st
-                    (str "SELECT count(*) FROM transcript_reply_fts"
-                         " WHERE transcript_reply_fts MATCH '"
-                         term
-                         "'"))]
+              rs
+              (.executeQuery st
+                             (str "SELECT count(*) FROM transcript_reply_fts"
+                                  " WHERE transcript_reply_fts MATCH '"
+                                  term
+                                  "'"))]
 
     (when (.next rs) (.getLong rs 1))))
 
@@ -188,12 +182,11 @@
   retired-column-test
   (it
     "drops a retired column an existing store still carries, keeping its rows"
-    (let
-      [[^java.io.File file ds]
-       (temp-ds)
+    (let [[^java.io.File file ds]
+          (temp-ds)
 
-       [table column]
-       (first @#'migration/retired-columns)]
+          [table column]
+          (first @#'migration/retired-columns)]
 
       (try (migration/migrate! ds [migration-dir])
            ;; the shape an older V1 left behind

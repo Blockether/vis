@@ -45,10 +45,9 @@
              (it "refuses every spawning entry point of the module"
                  (let [ctx (shell-bound-context)]
                    (.eval ctx "python" "import subprocess")
-                   (doseq
-                     [code ["subprocess.call('ls')" "subprocess.check_call('ls')"
-                            "subprocess.check_output('ls')" "subprocess.getoutput('ls')"
-                            "subprocess.getstatusoutput('ls')" "subprocess.Popen('ls')"]]
+                   (doseq [code ["subprocess.call('ls')" "subprocess.check_call('ls')"
+                                 "subprocess.check_output('ls')" "subprocess.getoutput('ls')"
+                                 "subprocess.getstatusoutput('ls')" "subprocess.Popen('ls')"]]
                      (expect (some? (raised ctx code)) code))))
              (it
                "refuses os.system and os.popen with the same message"
@@ -69,29 +68,28 @@
   ;; that subprocess could not run, which read as "the other door might work".
   (it "says BOTH the shell tool and subprocess are disabled when `shell` is absent"
       (tpc/with-own [ctx {}]
-        (.eval ctx "python" "import subprocess")
-        (let [msg (raised ctx "subprocess.run(['echo','hi'])")]
-          (expect (some? msg))
-          (expect (str/includes? msg "DISABLED"))
-          (expect (str/includes? msg "`shell` is not bound"))
-          (expect (str/includes? msg "Shell commands")))))
+                    (.eval ctx "python" "import subprocess")
+                    (let [msg (raised ctx "subprocess.run(['echo','hi'])")]
+                      (expect (some? msg))
+                      (expect (str/includes? msg "DISABLED"))
+                      (expect (str/includes? msg "`shell` is not bound"))
+                      (expect (str/includes? msg "Shell commands")))))
   ;; Regression, discovery audit: with the toggle off `shell` left the discovery
   ;; corpus entirely, so a shell-shaped query answered nothing — silence the model
   ;; read as "nothing here can start a process at all".
   (it "keeps `shell` in the corpus with the toggle state AND the door it leaves open"
-      (let
-        [^Context ctx
-         (:python-context (ep/create-python-context {}))
+      (let [^Context ctx
+            (:python-context (ep/create-python-context {}))
 
-         hits
-         (fn [q]
-           (str/split (.asString
-                        (.eval ctx "python" ^String (str "','.join(apropos(" (pr-str q) "))")))
-                      #","))
+            hits
+            (fn [q]
+              (str/split (.asString
+                           (.eval ctx "python" ^String (str "','.join(apropos(" (pr-str q) "))")))
+                         #","))
 
-         doc-text
-         (fn [q]
-           (.asString (.eval ctx "python" ^String (str "doc(" (pr-str q) ")"))))]
+            doc-text
+            (fn [q]
+              (.asString (.eval ctx "python" ^String (str "doc(" (pr-str q) ")"))))]
 
         (doseq [q ["shell" "she"]]
           (expect (some #{"shell"} (hits q)) q))
@@ -103,9 +101,9 @@
                                     (get ep/PROCESS_SURFACE "extension"))))))
   (it "does not leak shim internals into the live-vars baseline"
       (tpc/with-own-env [{:keys [initial-ns-keys]} {}]
-        ;; subprocess lives in sys.modules, not globals; the installer is del'd
-        (expect (not (contains? initial-ns-keys "subprocess")))
-        (expect (not (contains? initial-ns-keys "__vis_install_posix_compat__"))))))
+                        ;; subprocess lives in sys.modules, not globals; the installer is del'd
+                        (expect (not (contains? initial-ns-keys "subprocess")))
+                        (expect (not (contains? initial-ns-keys "__vis_install_posix_compat__"))))))
 
 (defdescribe process-surface-is-said-once-test
              ;; Regression, prompt audit: the same fact about this sandbox's process surface
@@ -113,15 +111,14 @@
              ;; toggle-off refusal and the handle refusal each had their own sentence, so
              ;; fixing one left the model reading a different rule from the next.
              (it "gives the prompt, `subprocess` and a live handle the SAME host sentences"
-                 (let
-                   [ban
-                    (get ep/PROCESS_SURFACE "ban")
+                 (let [ban
+                       (get ep/PROCESS_SURFACE "ban")
 
-                    use'
-                    (get ep/PROCESS_SURFACE "use")
+                       use'
+                       (get ep/PROCESS_SURFACE "use")
 
-                    off
-                    (get ep/PROCESS_SURFACE "off")]
+                       off
+                       (get ep/PROCESS_SURFACE "off")]
 
                    ;; The prompt says the rule, never the invocation grammar.
                    (expect (str/includes? (#'prompt/sandbox-shims-prompt-block
@@ -134,9 +131,10 @@
                      (expect (= (str ban " " use') (raised ctx "subprocess.run('ls')"))))
                    ;; No shell tool: one sentence for the tool, `subprocess` and the handle.
                    (tpc/with-own [ctx {}]
-                     (.eval ctx "python" "import subprocess")
-                     (expect (= off (raised ctx "subprocess.run('ls')")))
-                     (expect (= off (raised ctx "__VisShell__({'id': 'p1'}).logs()"))))))
+                                 (.eval ctx "python" "import subprocess")
+                                 (expect (= off (raised ctx "subprocess.run('ls')")))
+                                 (expect (= off
+                                            (raised ctx "__VisShell__({'id': 'p1'}).logs()"))))))
              (it "keeps the wording out of the Python files that say it"
                  ;; All of them read `__vis_process_surface__`; a literal copy in any file is a
                  ;; second source of truth that drifts on the next edit.

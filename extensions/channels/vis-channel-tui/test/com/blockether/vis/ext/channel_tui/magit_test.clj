@@ -71,12 +71,11 @@
 
 (defdescribe status-model-test
              (it "reads head facts of a fresh repo"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    m
-                    (magit/status-model dir)]
+                       m
+                       (magit/status-model dir)]
 
                    (expect (= "main" (:branch m)))
                    (expect (false? (:detached? m)))
@@ -196,25 +195,23 @@
 
 (defdescribe discard-x-alias-test
              (it "discards an unstaged file with x after confirmation"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    row
-                    {:kind :file :area :unstaged :path "a.txt"}]
+                       row
+                       {:kind :file :area :unstaged :path "a.txt"}]
 
                    (spit (str dir "/a.txt") "mangled\n")
-                   (let
-                     [r ((var-get #'dialogs/magit-char-action!)
-                          nil
-                          nil
-                          {:confirm! (constantly true)}
-                          dir
-                          nil
-                          []
-                          0
-                          row
-                          \x)]
+                   (let [r ((var-get #'dialogs/magit-char-action!)
+                             nil
+                             nil
+                             {:confirm! (constantly true)}
+                             dir
+                             nil
+                             []
+                             0
+                             row
+                             \x)]
                      (expect (:ok? r))
                      (expect (= "one\n" (slurp (str dir "/a.txt"))))))))
 
@@ -232,12 +229,11 @@
                  (let [dir (init-repo!)]
                    (expect (false? (:ok? (magit/commit! dir "   " {}))))))
              (it "refuses to commit over a clean index — magit's Nothing-staged guard"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    r
-                    (magit/commit! dir "nope" {})]
+                       r
+                       (magit/commit! dir "nope" {})]
 
                    (expect (false? (:ok? r)))
                    (expect (str/includes? (:msg r) "Nothing staged"))))
@@ -249,12 +245,11 @@
                      (expect (= 1 (count (:commits m)))))
                    (expect (= "initial, reworded" (magit/last-commit-message dir)))))
              (it "routes through the shared semantic commit operation"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    extension-name
-                    "test.magit-commit-gate"]
+                       extension-name
+                       "test.magit-commit-gate"]
 
                    (spit (str dir "/a.txt") "guarded\n")
                    (magit/stage-file! dir "a.txt")
@@ -311,56 +306,53 @@
           (expect (= "initial, reworded" (:head-subject m)))
           (expect (= 1 (count (:commits m)))))))
   (it "the commit transient's -h flag reaches git — c commit with --no-verify"
-      (let
-        [dir
-         (init-repo!)
+      (let [dir
+            (init-repo!)
 
-         mini
-         {:transient!
-          (fn [spec]
-            (expect (= "Commit" (:title spec)))
-            (expect
-              (= {:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}
-                 (tr/item-by-key spec \h)))
-            ;; magit's transients are case-sensitive: `n` is NOT the hooks flag.
-            (expect (nil? (tr/item-by-key spec \n)))
-            (expect (= :commit (:id (tr/item-by-key spec \c))))
-            (expect (= :amend (:id (tr/item-by-key spec \a))))
-            {:action :commit :switches #{:no-verify} :options {}})
-          :read! (fn [_label _opts]
-                   "via transient")}]
+            mini
+            {:transient!
+             (fn [spec]
+               (expect (= "Commit" (:title spec)))
+               (expect
+                 (=
+                   {:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}
+                   (tr/item-by-key spec \h)))
+               ;; magit's transients are case-sensitive: `n` is NOT the hooks flag.
+               (expect (nil? (tr/item-by-key spec \n)))
+               (expect (= :commit (:id (tr/item-by-key spec \c))))
+               (expect (= :amend (:id (tr/item-by-key spec \a))))
+               {:action :commit :switches #{:no-verify} :options {}})
+             :read! (fn [_label _opts]
+                      "via transient")}]
 
         (block-commit-hook! dir)
         (spit (str dir "/a.txt") "one\ntwo\n")
         (magit/stage-file! dir "a.txt")
-        (let
-          [r ((var-get #'dialogs/magit-commit-flow!)
-               (fn [_])
-               mini
-               dir
-               (magit/status-model dir))]
+        (let [r ((var-get #'dialogs/magit-commit-flow!)
+                  (fn [_])
+                  mini
+                  dir
+                  (magit/status-model dir))]
           (expect (:ok? r))
           (expect (= "via transient" (:head-subject (magit/status-model dir)))))))
   (it "the commit transient without the -h flag leaves githooks in force"
-      (let
-        [dir
-         (init-repo!)
+      (let [dir
+            (init-repo!)
 
-         mini
-         {:transient! (fn [_spec]
-                        {:action :commit :switches #{} :options {}})
-          :read! (fn [_label _opts]
-                   "via transient")}]
+            mini
+            {:transient! (fn [_spec]
+                           {:action :commit :switches #{} :options {}})
+             :read! (fn [_label _opts]
+                      "via transient")}]
 
         (block-commit-hook! dir)
         (spit (str dir "/a.txt") "one\ntwo\n")
         (magit/stage-file! dir "a.txt")
-        (let
-          [r ((var-get #'dialogs/magit-commit-flow!)
-               (fn [_])
-               mini
-               dir
-               (magit/status-model dir))]
+        (let [r ((var-get #'dialogs/magit-commit-flow!)
+                  (fn [_])
+                  mini
+                  dir
+                  (magit/status-model dir))]
           (expect (false? (:ok? r)))
           (expect (= "initial" (:head-subject (magit/status-model dir))))))))
 
@@ -391,12 +383,11 @@
 
 (defdescribe stash-test
              (it "reports the no-op stash on a clean tree as a failure"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    r
-                    (magit/stash-push! dir nil)]
+                       r
+                       (magit/stash-push! dir nil)]
 
                    (expect (false? (:ok? r)))
                    (expect (str/includes? (:msg r) "No local changes"))))
@@ -454,9 +445,8 @@
                    (spit (str dir "/b.txt") "b\n")
                    (magit/stage-all! dir)
                    (magit/commit! dir "second" {})
-                   (let
-                     [m (magit/status-model dir)
-                      texts (mapv :text (magit/status-rows m #{}))]
+                   (let [m (magit/status-model dir)
+                         texts (mapv :text (magit/status-rows m #{}))]
 
                      (expect (= ["second"] (mapv :subject (:unpushed m))))
                      (expect (empty? (:unpulled m)))
@@ -465,21 +455,19 @@
                    ;; push, then fall behind → Unpulled from, Recent commits back
                    (magit/push! dir {})
                    (git-run! dir "reset" "--hard" "HEAD~1")
-                   (let
-                     [m (magit/status-model dir)
-                      texts (mapv :text (magit/status-rows m #{}))]
+                   (let [m (magit/status-model dir)
+                         texts (mapv :text (magit/status-rows m #{}))]
 
                      (expect (= ["second"] (mapv :subject (:unpulled m))))
                      (expect (empty? (:unpushed m)))
                      (expect (some #(str/includes? % "Unpulled from origin/main (1)") texts))
                      (expect (some #(= "Recent commits" %) texts)))))
              (it "push without any remote fails with a real git message"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    r
-                    (magit/push! dir {})]
+                       r
+                       (magit/push! dir {})]
 
                    (expect (false? (:ok? r)))
                    (expect (string? (:msg r)))
@@ -524,20 +512,19 @@
                    (expect (true? (magit/gerrit? dir)))
                    (expect (= "origin" (magit/gerrit-remote dir)))))
              (it "gerrit push targets refs/for/<upstream-branch> with a topic"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    remote
-                    (add-bare-remote! dir)]
+                       remote
+                       (add-bare-remote! dir)]
 
                    (git-run! dir "remote" "rename" "origin" "gerrit")
                    (magit/push! dir {:set-upstream? true :remote "gerrit"})
                    (let [r (magit/gerrit-push! dir {:topic "cool-topic"})]
                      (expect (:ok? r))
                      ;; the review ref landed in the bare remote
-                     (let
-                       [refs (git/run-git (io/file remote) ["for-each-ref" "--format=%(refname)"])]
+                     (let [refs (git/run-git (io/file remote)
+                                             ["for-each-ref" "--format=%(refname)"])]
                        (expect (str/includes? (str (:out refs)) "refs/for/main")))))))
 
 ;;; ── push targets & the P transient ──────────────────────────────────────────
@@ -589,12 +576,11 @@
                    (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
                    (expect (= "origin" (magit/push-remote dir)))))
              (it "prefers the branch's own upstream remote once it is set"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    mirror
-                    (bare-repo!)]
+                       mirror
+                       (bare-repo!)]
 
                    (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
                    (git-run! dir "remote" "add" "mirror" mirror)
@@ -607,15 +593,14 @@
 ;; branch, which git refuses outright while the branch has no upstream.
 (defdescribe push-explicit-remote-test
              (it "pushes to the named remote even when the upstream is another one"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    origin
-                    (bare-repo!)
+                       origin
+                       (bare-repo!)
 
-                    mirror
-                    (bare-repo!)]
+                       mirror
+                       (bare-repo!)]
 
                    (git-run! dir "remote" "add" "origin" origin)
                    (git-run! dir "remote" "add" "mirror" mirror)
@@ -624,12 +609,11 @@
                    (expect (:ok? (magit/push! dir {:remote "origin"})))
                    (expect (str/includes? (remote-refs origin) "refs/heads/main"))))
              (it "pushes the current branch to a remote the branch does not track"
-                 (let
-                   [dir
-                    (init-repo!)
+                 (let [dir
+                       (init-repo!)
 
-                    remote
-                    (bare-repo!)]
+                       remote
+                       (bare-repo!)]
 
                    (git-run! dir "remote" "add" "gerrit" remote)
                    (expect (:ok? (magit/push! dir {:remote "gerrit"})))
@@ -651,12 +635,11 @@
           (expect (= "Push for review → refs/for/main" (:label (tr/item-by-key spec \r))))
           (expect (= :topic (:id (tr/item-by-key spec \t)))))))
   (it "keeps p pushing refs/heads when the only remote is the Gerrit one"
-      (let
-        [dir
-         (init-repo!)
+      (let [dir
+            (init-repo!)
 
-         remote
-         (bare-repo!)]
+            remote
+            (bare-repo!)]
 
         (git-run! dir "remote" "add" "gerrit" remote)
         (expect (= "Push to gerrit" (:label (tr/item-by-key (push-transient-spec dir) \p))))
@@ -671,12 +654,11 @@
           (expect (= :remote/gerrit (:id (tr/item-by-key spec \1))))
           (expect (nil? (tr/item-by-key spec \2))))))
   (it "refuses a review push carrying switches a refs/for ref cannot honour"
-      (let
-        [dir
-         (init-repo!)
+      (let [dir
+            (init-repo!)
 
-         remote
-         (bare-repo!)]
+            remote
+            (bare-repo!)]
 
         (git-run! dir "remote" "add" "gerrit" remote)
         (let [r (run-push-transient! dir :review #{:force :set-upstream})]
@@ -701,9 +683,8 @@
                    (spit (str dir "/a.txt") "one\ntwo\n")
                    (git-run! dir "add" "a.txt")
                    (spit (str dir "/a.txt") "one\ntwo\nthree\n")
-                   (let
-                     [staged (magit/file-diff-lines dir {:path "a.txt" :area :staged})
-                      unstaged (magit/file-diff-lines dir {:path "a.txt" :area :unstaged})]
+                   (let [staged (magit/file-diff-lines dir {:path "a.txt" :area :staged})
+                         unstaged (magit/file-diff-lines dir {:path "a.txt" :area :unstaged})]
 
                      (expect (some #(= "+two" %) staged))
                      (expect (not-any? #(= "+three" %) staged))
@@ -719,10 +700,9 @@
 (defdescribe
   hunk-stage-test
   (it "split-diff-hunks separates the shared preamble from each @@ hunk"
-      (let
-        [{:keys [header hunks]} (magit/split-diff-hunks ["diff --git a/f b/f" "--- a/f" "+++ b/f"
-                                                         "@@ -1,2 +1,2 @@" " a" "-b" "+B"
-                                                         "@@ -9,2 +9,2 @@" " x" "-y" "+Y"])]
+      (let [{:keys [header hunks]} (magit/split-diff-hunks ["diff --git a/f b/f" "--- a/f" "+++ b/f"
+                                                            "@@ -1,2 +1,2 @@" " a" "-b" "+B"
+                                                            "@@ -9,2 +9,2 @@" " x" "-y" "+Y"])]
         (expect (= ["diff --git a/f b/f" "--- a/f" "+++ b/f"] header))
         (expect (= 2 (count hunks)))
         (expect (str/starts-with? (ffirst hunks) "@@ -1"))
@@ -743,15 +723,13 @@
         (spit (str dir "/f.txt") (str (str/join "\n" (map str (range 1 11))) "\n"))
         (git-run! dir "add" "-A")
         (git-run! dir "commit" "-m" "ten")
-        (let
-          [ls (-> (vec (str/split-lines (slurp (str dir "/f.txt"))))
-                  (assoc 0 "ONE")
-                  (assoc 9 "TEN"))]
+        (let [ls (-> (vec (str/split-lines (slurp (str dir "/f.txt"))))
+                     (assoc 0 "ONE")
+                     (assoc 9 "TEN"))]
           (spit (str dir "/f.txt") (str (str/join "\n" ls) "\n")))
         (expect (:ok? (magit/stage-hunk! dir {:path "f.txt" :hunk 0})))
-        (let
-          [staged (magit/file-diff-lines dir {:path "f.txt" :area :staged})
-           unstaged (magit/file-diff-lines dir {:path "f.txt" :area :unstaged})]
+        (let [staged (magit/file-diff-lines dir {:path "f.txt" :area :staged})
+              unstaged (magit/file-diff-lines dir {:path "f.txt" :area :unstaged})]
 
           (expect (some #(= "+ONE" %) staged))
           (expect (not-any? #(= "+TEN" %) staged))
@@ -784,15 +762,14 @@
 (defdescribe
   status-rows-test
   (it "renders head facts, sections with counts, stashes and commits in order"
-      (let
-        [rows
-         (magit/status-rows sample-model #{[:section :stashes]})
+      (let [rows
+            (magit/status-rows sample-model #{[:section :stashes]})
 
-         texts
-         (mapv :text rows)
+            texts
+            (mapv :text rows)
 
-         section-texts
-         (mapv :text (filter #(= :section (:kind %)) rows))]
+            section-texts
+            (mapv :text (filter #(= :section (:kind %)) rows))]
 
         (expect (str/includes? (first texts) "Head:"))
         (expect (str/includes? (first texts) "main"))
@@ -827,102 +804,94 @@
     (expect (magit/section-open? #{[:section :unstaged]} :unstaged))
     (expect (not (magit/section-open? #{[:section :commits]} :commits))))
   (it "expands a stash's diff lines directly under its row"
-      (let
-        [diff-fn
-         (fn [{:keys [ref]}]
-           [(str "@@ " ref " @@") "+stashed"])
+      (let [diff-fn
+            (fn [{:keys [ref]}]
+              [(str "@@ " ref " @@") "+stashed"])
 
-         rows
-         (magit/status-rows sample-model #{[:section :stashes] [:stashes "stash@{0}"]} diff-fn)
+            rows
+            (magit/status-rows sample-model #{[:section :stashes] [:stashes "stash@{0}"]} diff-fn)
 
-         idx
-         (first (keep-indexed #(when (= :stash (:kind %2)) %1) rows))
+            idx
+            (first (keep-indexed #(when (= :stash (:kind %2)) %1) rows))
 
-         after
-         (subvec rows (inc idx) (+ idx 3))]
+            after
+            (subvec rows (inc idx) (+ idx 3))]
 
         (expect (= [:diff :diff] (mapv :kind after)))
         (expect (str/includes? (:text (first after)) "stash@{0}"))
         (expect (str/includes? (:text (second after)) "+stashed"))))
   (it "renders unpushed as Unmerged-into and hides Recent commits (magit order)"
-      (let
-        [rows
-         (magit/status-rows (assoc sample-model
-                              :unpushed [{:sha "abc1234" :subject "feat: things"}]
-                              :unpulled [{:sha "def5678" :subject "fix: other"}])
-                            #{})
+      (let [rows
+            (magit/status-rows (assoc sample-model
+                                 :unpushed [{:sha "abc1234" :subject "feat: things"}]
+                                 :unpulled [{:sha "def5678" :subject "fix: other"}])
+                               #{})
 
-         section-texts
-         (mapv :text (filter #(= :section (:kind %)) rows))]
+            section-texts
+            (mapv :text (filter #(= :section (:kind %)) rows))]
 
         (expect (= ["Untracked files (1)" "Unstaged changes (1)" "Staged changes (2)" "Stashes (1)"
                     "Unmerged into origin/main (1)" "Unpulled from origin/main (1)"]
                    section-texts))))
   (it "notes a missing upstream instead of ahead/behind"
-      (let
-        [rows (magit/status-rows (assoc sample-model
-                                   :upstream? false
-                                   :upstream nil)
-                                 #{})]
+      (let [rows (magit/status-rows (assoc sample-model
+                                      :upstream? false
+                                      :upstream nil)
+                                    #{})]
         (expect (some #(str/includes? (:text %) "no upstream") (take 3 rows)))))
   (it "shows the clean-tree line when nothing is pending"
-      (let
-        [rows (magit/status-rows (assoc sample-model
-                                   :untracked []
-                                   :unstaged []
-                                   :staged []
-                                   :unmerged [])
-                                 #{})]
+      (let [rows (magit/status-rows (assoc sample-model
+                                      :untracked []
+                                      :unstaged []
+                                      :staged []
+                                      :unmerged [])
+                                    #{})]
         (expect (some #(str/includes? (:text %) "working tree clean") rows))))
   (it "expands a file's diff lines directly under its row"
-      (let
-        [diff-fn
-         (fn [_row]
-           ["@@ -1 +1,2 @@" "+two"])
+      (let [diff-fn
+            (fn [_row]
+              ["@@ -1 +1,2 @@" "+two"])
 
-         rows
-         (magit/status-rows sample-model #{[:section :unstaged] [:unstaged "a.txt"]} diff-fn)
+            rows
+            (magit/status-rows sample-model #{[:section :unstaged] [:unstaged "a.txt"]} diff-fn)
 
-         idx
-         (first (keep-indexed #(when (= "a.txt" (:path %2)) %1) rows))
+            idx
+            (first (keep-indexed #(when (= "a.txt" (:path %2)) %1) rows))
 
-         after
-         (subvec rows (inc idx) (+ idx 3))]
+            after
+            (subvec rows (inc idx) (+ idx 3))]
 
         (expect (= [:diff :diff] (mapv :kind after)))
         (expect (str/includes? (:text (second after)) "+two"))))
   (it "keeps a collapsed buffer diff-free"
-      (let
-        [rows (magit/status-rows sample-model
-                                 #{}
-                                 (fn [_]
-                                   ["+never"]))]
+      (let [rows (magit/status-rows sample-model
+                                    #{}
+                                    (fn [_]
+                                      ["+never"]))]
         (expect (not-any? #(= :diff (:kind %)) rows))))
   (it "expands a commit's diff lines directly under its row"
-      (let
-        [diff-fn
-         (fn [{:keys [sha]}]
-           [(str "@@ " sha " @@") "+added"])
+      (let [diff-fn
+            (fn [{:keys [sha]}]
+              [(str "@@ " sha " @@") "+added"])
 
-         rows
-         (magit/status-rows sample-model #{[:commits "abc1234"]} diff-fn)
+            rows
+            (magit/status-rows sample-model #{[:commits "abc1234"]} diff-fn)
 
-         idx
-         (first (keep-indexed #(when (= "abc1234" (:sha %2)) %1) rows))
+            idx
+            (first (keep-indexed #(when (= "abc1234" (:sha %2)) %1) rows))
 
-         after
-         (subvec rows (inc idx) (+ idx 3))]
+            after
+            (subvec rows (inc idx) (+ idx 3))]
 
         (expect (= [:diff :diff] (mapv :kind after)))
         (expect (str/includes? (:text (first after)) "abc1234"))
         (expect (str/includes? (:text (second after)) "+added"))))
   (it "cursor helpers: selectable rows, movement bounds, section membership"
-      (let
-        [rows
-         (magit/status-rows sample-model #{})
+      (let [rows
+            (magit/status-rows sample-model #{})
 
-         first-sel
-         (magit/first-selectable rows 0)]
+            first-sel
+            (magit/first-selectable rows 0)]
 
         (expect (magit/selectable? (nth rows first-sel)))
         (expect (not (magit/selectable? {:kind :info :text "x"})))
@@ -934,67 +903,63 @@
           (expect (> nxt first-sel))
           (expect (magit/selectable? (nth rows nxt))))
         ;; section-of collects exactly the staged files under the staged header
-        (let
-          [staged-idx (first (keep-indexed
-                               #(when (and (= :section (:kind %2)) (= :staged (:area %2))) %1)
-                               rows))]
+        (let [staged-idx (first (keep-indexed
+                                  #(when (and (= :section (:kind %2)) (= :staged (:area %2))) %1)
+                                  rows))]
           (expect (= ["b.txt" "c.txt"] (mapv :path (magit/section-of rows staged-idx))))))))
 
 ;;; ── C-x g + footer button wiring ────────────────────────────────────────────
 
-(defdescribe
-  magit-wiring-test
-  (it "C-x g is bound to :open-magit"
-      (expect (= :open-magit (keymap/prefix-action-for \g)))
-      (expect (= "C-x g" (keymap/label-for :open-magit))))
-  (it "the footer git segment is a clickable :footer-git button"
-      (let [spans (#'footer/git-footer-spans {"is_workspace" true "repo" "vis" "branch" "main"})]
-        (expect (= :footer-git (:kind (first spans))))
-        (expect (str/includes? (:text (first spans)) "vis"))
-        ;; the C-x g chord rides on the chip (discoverability gripe)
-        (expect (str/includes? (:text (first spans)) "C-x g"))
-        ;; a real repo chip is tinted green so it reads like the sibling
-        ;; resources/filesystem buttons, not muted decoration
-        (expect (= :git (:tint (first spans))))))
-  (it "the DRAFT footer segment is clickable too"
-      (let
-        [spans (#'footer/git-footer-spans
-                {"is_workspace" true "is_draft" true "draft_root" "/tmp/draft"})]
-        (expect (= :footer-git (:kind (first spans))))
-        (expect (str/includes? (:text (first spans)) "C-x g"))
-        ;; a draft chip is tinted amber (isolated-tree warning colour)
-        (expect (= :draft (:tint (first spans))))))
-  (it "outside a workspace the dead 'No git' label stays a plain span"
-      (let [spans (#'footer/git-footer-spans {"is_workspace" false})]
-        (expect (nil? (:kind (first spans)))))))
+(defdescribe magit-wiring-test
+             (it "C-x g is bound to :open-magit"
+                 (expect (= :open-magit (keymap/prefix-action-for \g)))
+                 (expect (= "C-x g" (keymap/label-for :open-magit))))
+             (it "the footer git segment is a clickable :footer-git button"
+                 (let [spans (#'footer/git-footer-spans
+                              {"is_workspace" true "repo" "vis" "branch" "main"})]
+                   (expect (= :footer-git (:kind (first spans))))
+                   (expect (str/includes? (:text (first spans)) "vis"))
+                   ;; the C-x g chord rides on the chip (discoverability gripe)
+                   (expect (str/includes? (:text (first spans)) "C-x g"))
+                   ;; a real repo chip is tinted green so it reads like the sibling
+                   ;; resources/filesystem buttons, not muted decoration
+                   (expect (= :git (:tint (first spans))))))
+             (it "the DRAFT footer segment is clickable too"
+                 (let [spans (#'footer/git-footer-spans
+                              {"is_workspace" true "is_draft" true "draft_root" "/tmp/draft"})]
+                   (expect (= :footer-git (:kind (first spans))))
+                   (expect (str/includes? (:text (first spans)) "C-x g"))
+                   ;; a draft chip is tinted amber (isolated-tree warning colour)
+                   (expect (= :draft (:tint (first spans))))))
+             (it "outside a workspace the dead 'No git' label stays a plain span"
+                 (let [spans (#'footer/git-footer-spans {"is_workspace" false})]
+                   (expect (nil? (:kind (first spans)))))))
 
 ;;; ── async network verbs (push/pull/fetch never freeze the modal) ─────────────
 
 (defdescribe async-network-run-test
              (it "runs the thunk off-thread and returns its result, ticking while it works"
-                 (let
-                   [ticks
-                    (atom 0)
+                 (let [ticks
+                       (atom 0)
 
-                    result
-                    (#'dialogs/run-async-with-ticker!
-                     (fn []
-                       (Thread/sleep 120)
-                       {:ok? true :msg "done"})
-                     (fn []
-                       (swap! ticks inc))
-                     20)]
+                       result
+                       (#'dialogs/run-async-with-ticker!
+                        (fn []
+                          (Thread/sleep 120)
+                          {:ok? true :msg "done"})
+                        (fn []
+                          (swap! ticks inc))
+                        20)]
 
                    (expect (= {:ok? true :msg "done"} result))
                    ;; the spinner ticked at least once — the UI thread was NOT blocked
                    (expect (pos? @ticks))))
              (it "turns a thrown thunk into an :ok? false result instead of escaping"
-                 (let
-                   [result (#'dialogs/run-async-with-ticker!
-                            (fn []
-                              (throw (ex-info "boom" {})))
-                            (fn [])
-                            10)]
+                 (let [result (#'dialogs/run-async-with-ticker!
+                               (fn []
+                                 (throw (ex-info "boom" {})))
+                               (fn [])
+                               10)]
                    (expect (false? (:ok? result)))
                    (expect (str/includes? (str (:msg result)) "boom"))))
              (it "a fast thunk settles immediately"
@@ -1009,39 +974,37 @@
   async-commit-run-test
   (it
     "keeps the UI thread repainting while the commit gate runs"
-    (let
-      [caller
-       (Thread/currentThread)
+    (let [caller
+          (Thread/currentThread)
 
-       commit-thread
-       (atom nil)
+          commit-thread
+          (atom nil)
 
-       labels
-       (atom [])
+          labels
+          (atom [])
 
-       mini
-       {:transient! (fn [_]
-                      {:action :commit :switches #{}})
-        :read! (fn [_ _]
-                 "Commit without freezing")}
-
-       result
-       (with-redefs
-         [magit/commit! (fn [_ _ _]
-                          (reset! commit-thread (Thread/currentThread))
-                          (Thread/sleep 120)
-                          {:ok? true :msg "committed"})]
-         (#'dialogs/magit-char-action!
-          nil
-          (fn [label]
-            (swap! labels conj label))
           mini
-          "/repo"
-          {:staged [{:path "changed.clj"}]}
-          []
-          0
-          nil
-          \c))]
+          {:transient! (fn [_]
+                         {:action :commit :switches #{}})
+           :read! (fn [_ _]
+                    "Commit without freezing")}
+
+          result
+          (with-redefs [magit/commit! (fn [_ _ _]
+                                        (reset! commit-thread (Thread/currentThread))
+                                        (Thread/sleep 120)
+                                        {:ok? true :msg "committed"})]
+            (#'dialogs/magit-char-action!
+             nil
+             (fn [label]
+               (swap! labels conj label))
+             mini
+             "/repo"
+             {:staged [{:path "changed.clj"}]}
+             []
+             0
+             nil
+             \c))]
 
       (expect (= {:ok? true :msg "committed"} result))
       (expect (not= caller @commit-thread))
@@ -1072,136 +1035,128 @@
   (it "ONE root renders exactly like status-rows (tagged with its root)"
       (let [dir (init-repo!)]
         (spit (str dir "/new.txt") "x\n")
-        (let
-          [repos (magit/load-repos (magit/workspace-roots nil dir))
-           multi (magit/multi-status-rows repos #{} nil)
-           plain (magit/status-rows (magit/status-model dir) #{})]
+        (let [repos (magit/load-repos (magit/workspace-roots nil dir))
+              multi (magit/multi-status-rows repos #{} nil)
+              plain (magit/status-rows (magit/status-model dir) #{})]
 
           (expect (not-any? #(= :repo (:kind %)) multi))
           (expect (= (mapv :text plain) (mapv :text multi)))
           (expect (every? #(= dir (:root %)) multi)))))
-  (it
-    "several roots each get a repo header and their own full section stack"
-    (let
-      [a
-       (init-repo!)
+  (it "several roots each get a repo header and their own full section stack"
+      (let [a
+            (init-repo!)
 
-       b
-       (init-repo!)]
+            b
+            (init-repo!)]
 
-      (spit (str a "/left.txt") "l\n")
-      (spit (str b "/right.txt") "r\n")
-      (let
-        [repos
-         (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
-                            {:root b :trunk b :label "beta" :draft? true}])
+        (spit (str a "/left.txt") "l\n")
+        (spit (str b "/right.txt") "r\n")
+        (let [repos
+              (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
+                                 {:root b :trunk b :label "beta" :draft? true}])
 
-         rows
-         (magit/multi-status-rows repos #{} nil)
+              rows
+              (magit/multi-status-rows repos #{} nil)
 
-         headers
-         (filterv #(= :repo (:kind %)) rows)]
+              headers
+              (filterv #(= :repo (:kind %)) rows)]
 
-        (expect (= 2 (count headers)))
-        (expect (str/includes? (:text (first headers)) "alpha"))
-        (expect (str/includes? (:text (second headers)) "beta (draft)"))
-        ;; every row is root-tagged, and each repo's file shows under it only
-        (expect (every? (comp some? :root) rows))
-        (expect (= [a]
-                   (->> rows
-                        (filter #(= "left.txt" (:path %)))
-                        (mapv :root))))
-        (expect (= [b]
-                   (->> rows
-                        (filter #(= "right.txt" (:path %)))
-                        (mapv :root)))))))
+          (expect (= 2 (count headers)))
+          (expect (str/includes? (:text (first headers)) "alpha"))
+          (expect (str/includes? (:text (second headers)) "beta (draft)"))
+          ;; every row is root-tagged, and each repo's file shows under it only
+          (expect (every? (comp some? :root) rows))
+          (expect (= [a]
+                     (->> rows
+                          (filter #(= "left.txt" (:path %)))
+                          (mapv :root))))
+          (expect (= [b]
+                     (->> rows
+                          (filter #(= "right.txt" (:path %)))
+                          (mapv :root)))))))
   (it "a non-repo root is dropped — never shown as its own header"
-      (let
-        [a
-         (init-repo!)
+      (let [a
+            (init-repo!)
 
-         plain
-         (temp-dir!)
+            plain
+            (temp-dir!)
 
-         repos
-         (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
-                            {:root plain :trunk plain :label "plain" :draft? false}])
+            repos
+            (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
+                               {:root plain :trunk plain :label "plain" :draft? false}])
 
-         rows
-         (magit/multi-status-rows repos #{} nil)]
+            rows
+            (magit/multi-status-rows repos #{} nil)]
 
         ;; only the real repo survives, so ONE root → no headers, no placeholder
         (expect (= [a] (mapv :root repos)))
         (expect (not-any? #(= :repo (:kind %)) rows))
         (expect (not-any? #(= "Not a git repository" (:text %)) rows))))
   (it "when NO root is a git repo the primary is kept as the empty-state fallback"
-      (let
-        [plain
-         (temp-dir!)
+      (let [plain
+            (temp-dir!)
 
-         repos
-         (magit/load-repos [{:root plain :trunk plain :label "plain" :draft? false}])
+            repos
+            (magit/load-repos [{:root plain :trunk plain :label "plain" :draft? false}])
 
-         rows
-         (magit/multi-status-rows repos #{} nil)]
+            rows
+            (magit/multi-status-rows repos #{} nil)]
 
         (expect (= [plain] (mapv :root repos)))
         (expect (= "Not a git repository" (:text (first rows))))))
-  (it "expanded diffs are scoped per repo even for identical relative paths"
-      (let
-        [a
-         (init-repo!)
+  (it
+    "expanded diffs are scoped per repo even for identical relative paths"
+    (let [a
+          (init-repo!)
 
-         b
-         (init-repo!)]
+          b
+          (init-repo!)]
 
-        (spit (str a "/a.txt") "one\nA-EDIT\n")
-        (spit (str b "/a.txt") "one\nB-EDIT\n")
-        (let
-          [repos
-           (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
-                              {:root b :trunk b :label "beta" :draft? false}])
+      (spit (str a "/a.txt") "one\nA-EDIT\n")
+      (spit (str b "/a.txt") "one\nB-EDIT\n")
+      (let [repos
+            (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
+                               {:root b :trunk b :label "beta" :draft? false}])
 
-           diff-fn
-           (fn [row]
-             (magit/file-diff-lines (:root row) row))
+            diff-fn
+            (fn [row]
+              (magit/file-diff-lines (:root row) row))
 
-           rows
-           (magit/multi-status-rows repos #{[a :section :unstaged] [a :unstaged "a.txt"]} diff-fn)
+            rows
+            (magit/multi-status-rows repos #{[a :section :unstaged] [a :unstaged "a.txt"]} diff-fn)
 
-           diffs
-           (filterv #(= :diff (:kind %)) rows)]
+            diffs
+            (filterv #(= :diff (:kind %)) rows)]
 
-          (expect (seq diffs))
-          (expect (every? #(= a (:root %)) diffs))
-          (expect (some #(str/includes? (:text %) "A-EDIT") diffs))
-          (expect (not-any? #(str/includes? (:text %) "B-EDIT") diffs)))))
-  (it "section-of never bleeds one repo's files into another's section"
-      (let
-        [a
-         (init-repo!)
+        (expect (seq diffs))
+        (expect (every? #(= a (:root %)) diffs))
+        (expect (some #(str/includes? (:text %) "A-EDIT") diffs))
+        (expect (not-any? #(str/includes? (:text %) "B-EDIT") diffs)))))
+  (it
+    "section-of never bleeds one repo's files into another's section"
+    (let [a
+          (init-repo!)
 
-         b
-         (init-repo!)]
+          b
+          (init-repo!)]
 
-        (spit (str a "/a.txt") "one\nA\n")
-        (spit (str b "/a.txt") "one\nB\n")
-        (let
-          [repos
-           (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
-                              {:root b :trunk b :label "beta" :draft? false}])
+      (spit (str a "/a.txt") "one\nA\n")
+      (spit (str b "/a.txt") "one\nB\n")
+      (let [repos
+            (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
+                               {:root b :trunk b :label "beta" :draft? false}])
 
-           rows
-           (magit/multi-status-rows repos #{[a :section :unstaged] [b :section :unstaged]} nil)
+            rows
+            (magit/multi-status-rows repos #{[a :section :unstaged] [b :section :unstaged]} nil)
 
-           section-idxs
-           (keep-indexed #(when (and (= :section (:kind %2)) (= :unstaged (:area %2))) %1) rows)]
+            section-idxs
+            (keep-indexed #(when (and (= :section (:kind %2)) (= :unstaged (:area %2))) %1) rows)]
 
-          (expect (= 2 (count section-idxs)))
-          (doseq [idx section-idxs]
-            (let [files (magit/section-of rows idx)]
-              (expect (= 1 (count files)))
-              (expect (= (:root (nth rows idx)) (:root (first files)))))))))
+        (expect (= 2 (count section-idxs)))
+        (doseq [idx section-idxs]
+          (let [files (magit/section-of rows idx)]
+            (expect (= 1 (count files)))
+            (expect (= (:root (nth rows idx)) (:root (first files)))))))))
   (it "repo header rows are selectable so whole-repo verbs can target them"
       (expect (magit/selectable? (magit/repo-row {:label "x" :root "/x" :draft? false})))))
 
@@ -1209,32 +1164,30 @@
   draft-workspace-magit-test
   (it
     "a draft session's buffer shows CLONE state and verbs never touch the trunk"
-    (let
-      [trunk
-       (init-repo!)
+    (let [trunk
+          (init-repo!)
 
-       store
-       (temp-dir!)
+          store
+          (temp-dir!)
 
-       clone
-       (str store "/proj")]
+          clone
+          (str store "/proj")]
 
       (git-run! store "clone" "-q" trunk clone)
       (git-run! clone "config" "user.email" "test@vis.dev")
       (git-run! clone "config" "user.name" "Vis Test")
       (spit (str clone "/a.txt") "one\nDRAFT\n")
-      (let
-        [ws
-         {:root clone :repo_root trunk :draft? true :fork_ms 1}
+      (let [ws
+            {:root clone :repo_root trunk :draft? true :fork_ms 1}
 
-         roots
-         (magit/workspace-roots ws nil)
+            roots
+            (magit/workspace-roots ws nil)
 
-         repos
-         (magit/load-repos roots)
+            repos
+            (magit/load-repos roots)
 
-         rows
-         (magit/multi-status-rows repos #{[clone :section :unstaged]} nil)]
+            rows
+            (magit/multi-status-rows repos #{[clone :section :unstaged]} nil)]
 
         (expect (= [clone] (mapv :root roots)))
         (expect (true? (:draft? (first roots))))
@@ -1250,12 +1203,11 @@
 (defdescribe
   session-roots-test
   (it "a mega-repo lists every nested repository after its own root"
-      (let
-        [root
-         (mega-repo!)
+      (let [root
+            (mega-repo!)
 
-         roots
-         (magit/session-roots nil root [])]
+            roots
+            (magit/session-roots nil root [])]
 
         (expect (= root (:root (first roots))))
         (expect (= 3 (count roots)))
@@ -1267,16 +1219,15 @@
       (let [root (init-repo!)]
         (expect (= [root] (mapv :root (magit/session-roots nil root []))))))
   (it "the primary root is never listed twice"
-      (let
-        [root
-         (mega-repo!)
+      (let [root
+            (mega-repo!)
 
-         canonical
-         (fn [p]
-           (.getCanonicalPath (io/file (str p))))
+            canonical
+            (fn [p]
+              (.getCanonicalPath (io/file (str p))))
 
-         roots
-         (magit/session-roots {:root root} nil [])]
+            roots
+            (magit/session-roots {:root root} nil [])]
 
         (expect (= (count roots) (count (distinct (mapv (comp canonical :root) roots)))))))
   ;; Regression: the buffer took only the first 12 nested repositories, so a
@@ -1284,27 +1235,25 @@
   ;; rest could not be staged, committed or pushed from the buffer at all —
   ;; silently, since nothing on screen said any were missing.
   (it "a mega-repo of more than a dozen clones lists every one of them"
-      (let
-        [names
-         (mapv #(format "repo-%02d" (long %)) (range 14))
+      (let [names
+            (mapv #(format "repo-%02d" (long %)) (range 14))
 
-         root
-         (mega-repo-of! names)
+            root
+            (mega-repo-of! names)
 
-         roots
-         (magit/session-roots nil root [])]
+            roots
+            (magit/session-roots nil root [])]
 
         (expect (= 15 (count roots)))
         (expect (= (mapv #(str "repositories/" %) names) (mapv :label (rest roots))))
         (expect (false? (magit/nested-scan-truncated? root)))))
   (it "a walk that stops on its budget SAYS so instead of hiding repositories"
-      (let
-        [root
-         (mega-repo-of! ["alpha" "beta" "gamma"])
+      (let [root
+            (mega-repo-of! ["alpha" "beta" "gamma"])
 
-         ;; the root itself is one of the three the walk may find
-         bounded
-         {:max-repos 3}]
+            ;; the root itself is one of the three the walk may find
+            bounded
+            {:max-repos 3}]
 
         (expect (= 3 (count (magit/nested-roots root))))
         (expect (false? (magit/nested-scan-truncated? root)))
@@ -1341,37 +1290,34 @@
                            nil
                            [{"id" "reference" "path" reference "access" "read-write"}]))))))
   (it "a drafted session withholds a not-allowed root, an ordinary one shows it"
-      (let
-        [secret
-         (init-repo!)
+      (let [secret
+            (init-repo!)
 
-         entry
-         {"id" "secret" "path" secret "draft" "not-allowed"}]
+            entry
+            {"id" "secret" "path" secret "draft" "not-allowed"}]
 
         (expect (= []
                    (magit/configured-roots {:root "/clones/proj" :repo-root "/real/proj"} [entry])))
         (expect (= [(real-path secret)] (mapv :root (magit/configured-roots nil [entry]))))))
   (it "a drafted session shows the CLONE of an isolated root, never the trunk"
-      (let
-        [trunk
-         (init-repo!)
+      (let [trunk
+            (init-repo!)
 
-         store
-         (temp-dir!)
+            store
+            (temp-dir!)
 
-         clone
-         (str store "/sibling")]
+            clone
+            (str store "/sibling")]
 
         (git-run! store "clone" "-q" trunk clone)
-        (let
-          [entry
-           {"id" "sibling" "path" trunk "draft" "copy-and-apply"}
+        (let [entry
+              {"id" "sibling" "path" trunk "draft" "copy-and-apply"}
 
-           roots
-           (magit/configured-roots {:root "/clones/proj"
-                                    :repo_root "/real/proj"
-                                    :filesystem_roots [{"trunk" trunk "clone" clone}]}
-                                   [entry])]
+              roots
+              (magit/configured-roots {:root "/clones/proj"
+                                       :repo_root "/real/proj"
+                                       :filesystem_roots [{"trunk" trunk "clone" clone}]}
+                                      [entry])]
 
           (expect (= [(real-path clone)] (mapv :root roots)))
           (expect (= [(real-path trunk)] (mapv :trunk roots)))
@@ -1381,30 +1327,28 @@
                      (magit/configured-roots {:root "/clones/proj" :repo_root "/real/proj"}
                                              [entry]))))))
   (it "session-roots lists the primary root, its nested repos, then the declared ones"
-      (let
-        [root
-         (mega-repo!)
+      (let [root
+            (mega-repo!)
 
-         sibling
-         (init-repo!)
+            sibling
+            (init-repo!)
 
-         roots
-         (magit/session-roots nil root [{"id" "sibling" "path" sibling}])]
+            roots
+            (magit/session-roots nil root [{"id" "sibling" "path" sibling}])]
 
         (expect (= 4 (count roots)))
         (expect (= root (:root (first roots))))
         (expect (= ["repositories/alpha" "repositories/beta" "sibling"] (mapv :label (rest roots))))
         (expect (= (real-path sibling) (:root (last roots))))))
   (it "a declared root that is the project itself, or nested in it, is listed once"
-      (let
-        [root
-         (mega-repo!)
+      (let [root
+            (mega-repo!)
 
-         roots
-         (magit/session-roots nil
-                              root
-                              [{"id" "self" "path" root}
-                               {"id" "alpha" "path" (str root "/repositories/alpha")}])]
+            roots
+            (magit/session-roots nil
+                                 root
+                                 [{"id" "self" "path" root}
+                                  {"id" "alpha" "path" (str root "/repositories/alpha")}])]
 
         (expect (= 3 (count roots)))
         (expect (= (count roots) (count (distinct (mapv (comp real-path :root) roots)))))))
@@ -1416,106 +1360,100 @@
 (defdescribe
   repo-dedup-test
   (it "one directory reached four ways earns exactly one header"
-      (let
-        [root
-         (init-repo!)
+      (let [root
+            (init-repo!)
 
-         link
-         (str (temp-dir!) "/link")]
+            link
+            (str (temp-dir!) "/link")]
 
         (Files/createSymbolicLink (.toPath (io/file link))
                                   (.toPath (io/file root))
                                   (make-array FileAttribute 0))
-        (let
-          [roots (magit/session-roots {:root root}
-                                      nil
-                                      [{"id" "by-symlink" "path" link}
-                                       {"id" "by-slash" "path" (str root "/")}
-                                       {"id" "by-dot-dot" "path" (str root "/.git/..")}
-                                       {"id" "declared-again" "path" root}])]
+        (let [roots (magit/session-roots {:root root}
+                                         nil
+                                         [{"id" "by-symlink" "path" link}
+                                          {"id" "by-slash" "path" (str root "/")}
+                                          {"id" "by-dot-dot" "path" (str root "/.git/..")}
+                                          {"id" "declared-again" "path" root}])]
           (expect (= 1 (count roots)))
           (expect (= root (:root (first roots)))))))
   (it "a drafted session shows the clone, never the trunk it isolated"
-      (let
-        [trunk
-         (init-repo!)
+      (let [trunk
+            (init-repo!)
 
-         clone
-         (init-repo-at! (str (temp-dir!) "/clone"))
+            clone
+            (init-repo-at! (str (temp-dir!) "/clone"))
 
-         ;; `draft: shared` is the catalog default, so the trunk is NOT withheld
-         ;; — only deduplication keeps the buffer from offering that second door
-         roots
-         (magit/session-roots {:root clone :repo-root trunk :draft? true}
-                              nil
-                              [{"id" "vis" "path" trunk}])]
+            ;; `draft: shared` is the catalog default, so the trunk is NOT withheld
+            ;; — only deduplication keeps the buffer from offering that second door
+            roots
+            (magit/session-roots {:root clone :repo-root trunk :draft? true}
+                                 nil
+                                 [{"id" "vis" "path" trunk}])]
 
         (expect (= 1 (count roots)))
         (expect (= clone (:root (first roots))))
         (expect (= (real-path trunk) (real-path (:trunk (first roots)))))))
   (it "two repositories that would wear one name are told apart by their paths"
-      (let
-        [primary
-         (init-repo-at! (str (temp-dir!) "/work/vis"))
+      (let [primary
+            (init-repo-at! (str (temp-dir!) "/work/vis"))
 
-         sibling
-         (init-repo-at! (str (temp-dir!) "/src/vis"))
+            sibling
+            (init-repo-at! (str (temp-dir!) "/src/vis"))
 
-         other
-         (init-repo!)
+            other
+            (init-repo!)
 
-         roots
-         (magit/session-roots {:root primary}
-                              nil
-                              [{"id" "vis" "path" sibling} {"id" "spel" "path" other}])
+            roots
+            (magit/session-roots {:root primary}
+                                 nil
+                                 [{"id" "vis" "path" sibling} {"id" "spel" "path" other}])
 
-         labels
-         (mapv :label roots)]
+            labels
+            (mapv :label roots)]
 
         (expect (= 3 (count roots)))
         (expect (= (count labels) (count (distinct labels))))
         (expect (= ["work/vis" "src/vis"] (subvec labels 0 2)))
         ;; a label nothing collides with is left exactly as it was
         (expect (= "spel" (peek labels)))))
-  (it
-    "two catalog entries that repeat one id stay two readable headers"
-    (let
-      [root
-       (init-repo!)
+  (it "two catalog entries that repeat one id stay two readable headers"
+      (let [root
+            (init-repo!)
 
-       one
-       (init-repo-at! (str (temp-dir!) "/alpha/spel"))
+            one
+            (init-repo-at! (str (temp-dir!) "/alpha/spel"))
 
-       two
-       (init-repo-at! (str (temp-dir!) "/beta/spel"))
+            two
+            (init-repo-at! (str (temp-dir!) "/beta/spel"))
 
-       roots
-       (magit/session-roots {:root root} nil [{"id" "spel" "path" one} {"id" "spel" "path" two}])]
+            roots
+            (magit/session-roots {:root root}
+                                 nil
+                                 [{"id" "spel" "path" one} {"id" "spel" "path" two}])]
 
-      (expect (= 3 (count roots)))
-      (expect (= ["alpha/spel" "beta/spel"] (mapv :label (rest roots)))))))
+        (expect (= 3 (count roots)))
+        (expect (= ["alpha/spel" "beta/spel"] (mapv :label (rest roots)))))))
 
 (defdescribe
   repo-fold-test
   (it "a clean repo folds to its header line while a dirty one stays open"
-      (let
-        [clean
-         (init-repo!)
+      (let [clean
+            (init-repo!)
 
-         dirty
-         (init-repo!)]
+            dirty
+            (init-repo!)]
 
         (spit (str dirty "/new.txt") "x\n")
-        (let
-          [repos
-           (magit/load-repos [{:root clean :trunk clean :label "clean" :draft? false}
-                              {:root dirty :trunk dirty :label "dirty" :draft? false}])
+        (let [repos
+              (magit/load-repos [{:root clean :trunk clean :label "clean" :draft? false}
+                                 {:root dirty :trunk dirty :label "dirty" :draft? false}])
 
-           rows
-           (magit/multi-status-rows repos #{} nil)
+              rows
+              (magit/multi-status-rows repos #{} nil)
 
-           by-root
-           (group-by :root rows)]
+              by-root
+              (group-by :root rows)]
 
           ;; the clean repo IS its header row — nothing else is rendered for it
           (expect (= 1 (count (by-root clean))))
@@ -1524,24 +1462,22 @@
           (expect (false? (:collapsed? (first (by-root dirty)))))
           (expect (some #(= "new.txt" (:path %)) (by-root dirty))))))
   (it "TAB's `[root :repo nil]` flip opens a clean repo and folds a dirty one"
-      (let
-        [clean
-         (init-repo!)
+      (let [clean
+            (init-repo!)
 
-         dirty
-         (init-repo!)]
+            dirty
+            (init-repo!)]
 
         (spit (str dirty "/new.txt") "x\n")
-        (let
-          [repos
-           (magit/load-repos [{:root clean :trunk clean :label "clean" :draft? false}
-                              {:root dirty :trunk dirty :label "dirty" :draft? false}])
+        (let [repos
+              (magit/load-repos [{:root clean :trunk clean :label "clean" :draft? false}
+                                 {:root dirty :trunk dirty :label "dirty" :draft? false}])
 
-           rows
-           (magit/multi-status-rows repos #{[clean :repo nil] [dirty :repo nil]} nil)
+              rows
+              (magit/multi-status-rows repos #{[clean :repo nil] [dirty :repo nil]} nil)
 
-           by-root
-           (group-by :root rows)]
+              by-root
+              (group-by :root rows)]
 
           (expect (some #(str/starts-with? (str (:text %)) "Head:") (by-root clean)))
           (expect (= 1 (count (by-root dirty))))
@@ -1551,9 +1487,8 @@
         (spit (str dir "/new.txt") "x\n")
         (spit (str dir "/a.txt") "one\ntwo\n")
         (git-run! dir "add" "a.txt")
-        (let
-          [model (magit/status-model dir)
-           text (:text (magit/repo-row {:label "proj" :root dir :draft? false :model model}))]
+        (let [model (magit/status-model dir)
+              text (:text (magit/repo-row {:label "proj" :root dir :draft? false :model model}))]
 
           (expect (str/includes? text "proj"))
           (expect (str/includes? text "main"))
@@ -1564,12 +1499,11 @@
         (expect (str/includes? (magit/repo-summary (magit/status-model dir)) "clean"))
         (expect (false? (magit/repo-dirty? (magit/status-model dir))))))
   (it "ONE repo is never folded — the single-root buffer has no header at all"
-      (let
-        [dir
-         (init-repo!)
+      (let [dir
+            (init-repo!)
 
-         rows
-         (magit/multi-status-rows (magit/load-repos (magit/session-roots nil dir [])) #{} nil)]
+            rows
+            (magit/multi-status-rows (magit/load-repos (magit/session-roots nil dir [])) #{} nil)]
 
         (expect (not-any? #(= :repo (:kind %)) rows))
         (expect (some #(str/starts-with? (str (:text %)) "Head:") rows)))))
@@ -1578,40 +1512,38 @@
   multi-repo-verb-routing-test
   (it
     "a whole-repo verb on a repo header acts on THAT repo and no other"
-    (let
-      [a
-       (init-repo!)
+    (let [a
+          (init-repo!)
 
-       b
-       (init-repo!)]
+          b
+          (init-repo!)]
 
       (spit (str a "/new.txt") "a\n")
       (spit (str b "/new.txt") "b\n")
-      (let
-        [repos
-         (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
-                            {:root b :trunk b :label "beta" :draft? false}])
+      (let [repos
+            (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
+                               {:root b :trunk b :label "beta" :draft? false}])
 
-         rows
-         (magit/multi-status-rows repos #{} nil)
+            rows
+            (magit/multi-status-rows repos #{} nil)
 
-         idx
-         (first (keep-indexed #(when (and (= :repo (:kind %2)) (= b (:root %2))) %1) rows))
+            idx
+            (first (keep-indexed #(when (and (= :repo (:kind %2)) (= b (:root %2))) %1) rows))
 
-         row
-         (nth rows idx)
+            row
+            (nth rows idx)
 
-         r
-         ((var-get #'dialogs/magit-char-action!)
-           nil
-           nil
-           nil
-           (:root row)
-           (magit/status-model b)
-           rows
-           idx
-           row
-           \S)]
+            r
+            ((var-get #'dialogs/magit-char-action!)
+              nil
+              nil
+              nil
+              (:root row)
+              (magit/status-model b)
+              rows
+              idx
+              row
+              \S)]
 
         (expect (:ok? r))
         (expect (= ["new.txt"] (mapv :path (:staged (magit/status-model b)))))
@@ -1624,36 +1556,35 @@
   magit-dialog-scrollbar-test
   (it
     "CLICK_DOWN on the scrollbar track jumps the status buffer viewport"
-    (let
-      [dir
-       (init-repo!)
+    (let [dir
+          (init-repo!)
 
-       _
-       (doseq [i (range 60)]
-         (spit (format "%s/pad-%03d.txt" dir i) "x\n"))
+          _
+          (doseq [i (range 60)]
+            (spit (format "%s/pad-%03d.txt" dir i) "x\n"))
 
-       {:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-       (term/virtual-screen)
+          {:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+          (term/virtual-screen)
 
-       ;; The same geometry the dialog itself derives on an 80×30 terminal.
-       content-w
-       (max (dialogs/footer-content-width 80 (var-get #'dialogs/magit-hints)) (- 80 4))
+          ;; The same geometry the dialog itself derives on an 80×30 terminal.
+          content-w
+          (max (dialogs/footer-content-width 80 (var-get #'dialogs/magit-hints)) (- 80 4))
 
-       bounds
-       (dialogs/dialog-bounds 80 29 content-w 25)
+          bounds
+          (dialogs/dialog-bounds 80 29 content-w 25)
 
-       {:keys [left inner-w content-top content-h]}
-       (merge bounds (dialogs/dialog-layout bounds))
+          {:keys [left inner-w content-top content-h]}
+          (merge bounds (dialogs/dialog-layout bounds))
 
-       click-x
-       (long (+ left inner-w))
+          click-x
+          (long (+ left inner-w))
 
-       click-y
-       (long (+ content-top content-h -1))
+          click-y
+          (long (+ content-top content-h -1))
 
-       text
-       (fn []
-         (apply str (map :text (term/painted-rows terminal))))]
+          text
+          (fn []
+            (apply str (map :text (term/painted-rows terminal))))]
 
       (try (.addInput terminal (KeyStroke. KeyType/Escape))
            (dialogs/magit-dialog! screen dir)

@@ -86,34 +86,32 @@
   "An index is an immutable value over arrays and `rank` allocates only its own
    accumulator, so any number of threads may rank against one index at once."
   (it "answers identically from many threads"
-      (let
-        [ix
-         (bm25/cached-index (docs))
+      (let [ix
+            (bm25/cached-index (docs))
 
-         qs
-         ["patch" "how do I replace lines in a file" "run tests for one clojure var" "pathc"]
+            qs
+            ["patch" "how do I replace lines in a file" "run tests for one clojure var" "pathc"]
 
-         expected
-         (mapv #(names (bm25/rank ix %)) qs)
+            expected
+            (mapv #(names (bm25/rank ix %)) qs)
 
-         answers
-         (mapv deref
-               (mapv (fn [_]
-                       (future (mapv #(names (bm25/rank ix %)) qs)))
-                     (range 16)))]
+            answers
+            (mapv deref
+                  (mapv (fn [_]
+                          (future (mapv #(names (bm25/rank ix %)) qs)))
+                        (range 16)))]
 
         (expect (= 1 (count (distinct answers))))
         (expect (= expected (first answers)))))
   (it "builds one index under concurrent first callers"
-      (let
-        [ds
-         (conj (docs) {:name "race" :gist "r" :body "r" :value {:name "race"}})
+      (let [ds
+            (conj (docs) {:name "race" :gist "r" :body "r" :value {:name "race"}})
 
-         built
-         (mapv deref
-               (mapv (fn [_]
-                       (future (bm25/cached-index ds)))
-                     (range 16)))]
+            built
+            (mapv deref
+                  (mapv (fn [_]
+                          (future (bm25/cached-index ds)))
+                        (range 16)))]
 
         (expect (= 1 (count (distinct (map #(System/identityHashCode %) built))))))))
 
@@ -129,19 +127,18 @@
    code` shared none with a page that says `format`, until the fold covered
    TENSE as well as number."
   (it "answers the same document for a plural and a singular ask"
-      (let
-        [ds [(doc* "run_tests" "Run the test suite." "Select tests by paths only.")
-             (doc* "shell" "Run a program." "Start a process and read its logs.")]]
+      (let [ds [(doc* "run_tests" "Run the test suite." "Select tests by paths only.")
+                (doc* "shell" "Run a program." "Start a process and read its logs.")]]
         (expect (= "run_tests" (:name (first (bm25/search ds "run tests")))))
         (expect (= "run_tests" (:name (first (bm25/search ds "run test")))))))
   ;; A gerund or a past tense shared no term with a page written in the present:
   ;; `formatting the source code` and `format_code` had nothing in common, and 10
   ;; of 14 such asks answered the wrong tool.
   (it "answers the same document for a gerund, a past tense and a plain ask"
-      (let
-        [ds
-         [(doc* "format_code" "Format source code." "Formats a file or a whole project in place.")
-          (doc* "list_sessions" "List past sessions." "Lists every session, newest first.")]]
+      (let [ds [(doc* "format_code"
+                      "Format source code."
+                      "Formats a file or a whole project in place.")
+                (doc* "list_sessions" "List past sessions." "Lists every session, newest first.")]]
         (expect (= "format_code" (:name (first (bm25/search ds "formatting the source code")))))
         (expect (= "format_code" (:name (first (bm25/search ds "formatted a file")))))
         (expect (= "list_sessions" (:name (first (bm25/search ds "listing my past sessions")))))))
@@ -164,9 +161,8 @@
   "Tokens were `[A-Za-z0-9]+`, so an accented or non-Latin ask tokenized to
    NOTHING and fell into the typo rescue, which answered confident noise."
   (it "reads a non-ASCII word as a word"
-      (let
-        [ds [(doc* "zapytanie" "Wyszukiwanie dokumentów po treści.")
-             (doc* "patch" "Edit a file by address.")]]
+      (let [ds [(doc* "zapytanie" "Wyszukiwanie dokumentów po treści.")
+                (doc* "patch" "Edit a file by address.")]]
         (expect (= "zapytanie" (:name (first (bm25/search ds "dokumentów")))))
         (expect (= "zapytanie" (:name (first (bm25/search ds "wyszukiwanie")))))))
   (it "answers nothing for a non-Latin ask no document covers"
@@ -193,9 +189,8 @@
       (expect (= "patch" (:name (first (bm25/search (docs) "patch anchors")))))
       (expect (= "run_tests" (:name (first (bm25/search (docs) "run_tests for a var"))))))
   (it "does not hand the bonus to a document the ask only mentions"
-      (let
-        [ds [(doc* "prose" "Everything" (str/join " " (repeat 200 "patch tests file")))
-             (doc* "patch" "Edit a file by address.")]]
+      (let [ds [(doc* "prose" "Everything" (str/join " " (repeat 200 "patch tests file")))
+                (doc* "patch" "Edit a file by address.")]]
         (expect (= "patch" (:name (first (bm25/search ds "patch"))))))))
 
 (defdescribe
@@ -215,9 +210,8 @@
   "Weights were private constants, so a second consumer could not retune the
    ranker without editing it."
   (it "scores with the caller's weights"
-      (let
-        [ds [(doc* "zeta" "A short contract." "It takes one argument.")
-             (doc* "alpha" "Mentions zeta a lot." "zeta zeta zeta zeta zeta")]]
+      (let [ds [(doc* "zeta" "A short contract." "It takes one argument.")
+                (doc* "alpha" "Mentions zeta a lot." "zeta zeta zeta zeta zeta")]]
         (expect (= "zeta" (:name (first (bm25/search ds "zeta")))))
         (expect
           (= "alpha"
@@ -233,16 +227,15 @@
   "The cache cleared WHOLESALE at capacity, so one odd corpus threw away every
    warm index."
   (it "evicts the least recently used index and keeps the newest"
-      (let
-        [ds-n
-         (fn [n]
-           [(doc* (str "doc" n) (str "Document number " n))])
+      (let [ds-n
+            (fn [n]
+              [(doc* (str "doc" n) (str "Document number " n))])
 
-         first-ix
-         (bm25/cached-index (ds-n 0))
+            first-ix
+            (bm25/cached-index (ds-n 0))
 
-         newer
-         (mapv #(bm25/cached-index (ds-n (inc %))) (range 8))]
+            newer
+            (mapv #(bm25/cached-index (ds-n (inc %))) (range 8))]
 
         (expect (identical? (last newer) (bm25/cached-index (ds-n 8))))
         (expect (not (identical? first-ix (bm25/cached-index (ds-n 0))))))))
@@ -269,8 +262,8 @@
    prose never changes, so what a ranking loses is one line's worth of evidence."
   ([] (patch-page nil))
   ([lead]
-   (let
-     [prose (str "Edit a file by ADDRESS. Every edit for one file goes in one call: from_anchor, "
+   (let [prose (str
+                 "Edit a file by ADDRESS. Every edit for one file goes in one call: from_anchor, "
                  "to_anchor and replace. An empty replace deletes the addressed lines. The call "
                  "answers a status line with the path, the edit count and the lines before and "
                  "after. Address a region by the anchor a read printed, never by retyping the "
@@ -291,36 +284,36 @@
   "The three fields saturate TOGETHER, over one weighted pseudo-frequency, so an
    opening line is evidence and never the verdict."
   (it "keeps a document's score when a structural line takes over its first line"
-      (let
-        [q
-         "edit one file by address in a single call"
+      (let [q
+            "edit one file by address in a single call"
 
-         score-of
-         (fn [ds]
-           (double (:score (first (filter #(= "patch" (:name %)) (bm25/search ds q))))))]
+            score-of
+            (fn [ds]
+              (double (:score (first (filter #(= "patch" (:name %)) (bm25/search ds q))))))]
 
         (expect (= "patch"
                    (:name (first (bm25/search (patch-page "patch(path, edits) -> status") q)))))
         (expect (> (/ (score-of (patch-page "patch(path, edits) -> status"))
                       (score-of (patch-page)))
                    0.9))))
-  (it
-    "answers the body that covers the ask over the line that mentions it once"
-    (let
-      [ds
-       [{:name "one-liner"
-         :gist "Replace lines in a file."
-         :body (str "Replace lines in a file. "
-                    (apply str
-                      (repeat
-                        24
-                        "It is about something else entirely and never returns to the subject. ")))
-         :value {:name "one-liner"}}
-        {:name "worker"
-         :gist "A tool page."
-         :body
-         (str "A tool page. "
-              (apply str
-                (repeat 12 "Replace the lines of a file, then replace more lines in that file. ")))
-         :value {:name "worker"}}]]
-      (expect (= "worker" (:name (first (bm25/search ds "replace lines in a file"))))))))
+  (it "answers the body that covers the ask over the line that mentions it once"
+      (let [ds [{:name "one-liner"
+                 :gist "Replace lines in a file."
+                 :body
+                 (str
+                   "Replace lines in a file. "
+                   (apply str
+                     (repeat
+                       24
+                       "It is about something else entirely and never returns to the subject. ")))
+                 :value {:name "one-liner"}}
+                {:name "worker"
+                 :gist "A tool page."
+                 :body
+                 (str "A tool page. "
+                      (apply str
+                        (repeat
+                          12
+                          "Replace the lines of a file, then replace more lines in that file. ")))
+                 :value {:name "worker"}}]]
+        (expect (= "worker" (:name (first (bm25/search ds "replace lines in a file"))))))))

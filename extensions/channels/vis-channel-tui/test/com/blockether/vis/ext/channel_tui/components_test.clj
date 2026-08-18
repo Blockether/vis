@@ -50,29 +50,27 @@
                 (expect (nil? (comps/find-bar-cursor 120 5 {:active? false :query "ab"})))
                 (expect (nil? (comps/find-bar-cursor 120 5 nil))))
             (it "sits on the bar's content row; typing advances it cell by cell"
-                (let
-                  [s0
-                   {:active? true :query "" :hits [] :index 0 :case? false :total 0}
+                (let [s0
+                      {:active? true :query "" :hits [] :index 0 :case? false :total 0}
 
-                   [cx0 cy0]
-                   (comps/find-bar-cursor 120 5 s0)
+                      [cx0 cy0]
+                      (comps/find-bar-cursor 120 5 s0)
 
-                   [cx2 cy2]
-                   (comps/find-bar-cursor 120 5 (assoc s0 :query "ab"))]
+                      [cx2 cy2]
+                      (comps/find-bar-cursor 120 5 (assoc s0 :query "ab"))]
 
                   (expect (= 6 cy0))           ;; text-top+1 — the row between the borders
                   (expect (= cy0 cy2))
                   (expect (= (+ cx0 2) cx2)))) ;; "ab" → 2 cells right of the empty-query start
             (it "caps at the field's right edge once the query overflows into ellipsis"
-                (let
-                  [s0
-                   {:active? true :query "" :hits [] :index 0 :case? false :total 0}
+                (let [s0
+                      {:active? true :query "" :hits [] :index 0 :case? false :total 0}
 
-                   [cx0 _]
-                   (comps/find-bar-cursor 120 5 s0)
+                      [cx0 _]
+                      (comps/find-bar-cursor 120 5 s0)
 
-                   [cxl _]
-                   (comps/find-bar-cursor 120 5 (assoc s0 :query (apply str (repeat 80 \x))))]
+                      [cxl _]
+                      (comps/find-bar-cursor 120 5 (assoc s0 :query (apply str (repeat 80 \x))))]
 
                   (expect (<= (- cxl cx0) 22)))))) ;; never escapes the 22-cell white field
 
@@ -91,60 +89,57 @@
   [line]
   (number? (reduce + 0 (map (comp p/display-width first) line))))
 
-(defdescribe context-overlay-lines-test
-             (describe
-               "task-overlay-lines emits well-formed LINES (regression: TUI freeze)"
-               ;; The acceptance sub-line was spliced with `into`, leaking a bare
-               ;; [text color bold] SEG where a LINE (vec-of-segs) belongs. The F2 panel's
-               ;; line-w then mapped display-width over (first seg) = a Character →
-               ;; ClassCastException every render frame → frozen TUI. Every element must
-               ;; be a vec of segs so line-w only ever sees strings.
-               ;; Cards are now MULTI-ROW (wrapped title + meta row + optional
-               ;; acceptance/deps sub-lines + blank spacer). Exact counts are an
-               ;; implementation detail of the layout; the load-bearing invariants are
-               ;; that EVERY row stays a well-formed vec-of-segs and line-w never sees a
-               ;; bare Character — that is what guards against the freeze regression.
-               (it "a task WITH :acceptance yields a well-formed multi-row card"
-                   (let
-                     [lines (#'comps/task-overlay-lines
+(defdescribe
+  context-overlay-lines-test
+  (describe "task-overlay-lines emits well-formed LINES (regression: TUI freeze)"
+            ;; The acceptance sub-line was spliced with `into`, leaking a bare
+            ;; [text color bold] SEG where a LINE (vec-of-segs) belongs. The F2 panel's
+            ;; line-w then mapped display-width over (first seg) = a Character →
+            ;; ClassCastException every render frame → frozen TUI. Every element must
+            ;; be a vec of segs so line-w only ever sees strings.
+            ;; Cards are now MULTI-ROW (wrapped title + meta row + optional
+            ;; acceptance/deps sub-lines + blank spacer). Exact counts are an
+            ;; implementation detail of the layout; the load-bearing invariants are
+            ;; that EVERY row stays a well-formed vec-of-segs and line-w never sees a
+            ;; bare Character — that is what guards against the freeze regression.
+            (it "a task WITH :acceptance yields a well-formed multi-row card"
+                (let [lines (#'comps/task-overlay-lines
                              {:work
                               {:title "do x" :status :doing :acceptance "x compiles; tests pass"}}
                              60)]
-                     (expect (>= (count lines) 3))
-                     (expect (every? well-formed-line? lines))
-                     (expect (every? line-w-survives? lines))))
-               (it "a task WITHOUT :acceptance yields a well-formed multi-row card"
-                   (let [lines (#'comps/task-overlay-lines {:work {:title "y" :status :done}} 60)]
-                     (expect (>= (count lines) 2))
-                     (expect (every? well-formed-line? lines))
-                     (expect (every? line-w-survives? lines))))
-               (it "empty tasks yields a well-formed placeholder line"
-                   (let [lines (#'comps/task-overlay-lines {} 60)]
-                     (expect (every? well-formed-line? lines))
-                     (expect (every? line-w-survives? lines)))))
-             (describe "fact-overlay-lines emits well-formed LINES"
-                       (it "facts (with + without :files) and the empty case stay well-formed"
-                           (let
-                             [lines
-                              (#'comps/fact-overlay-lines
-                               {:a {:content "alpha" :status :active :files [{:path "x.clj"}]}
-                                :b {:content "beta" :status :superseded}}
-                               60
-                               #{})
+                  (expect (>= (count lines) 3))
+                  (expect (every? well-formed-line? lines))
+                  (expect (every? line-w-survives? lines))))
+            (it "a task WITHOUT :acceptance yields a well-formed multi-row card"
+                (let [lines (#'comps/task-overlay-lines {:work {:title "y" :status :done}} 60)]
+                  (expect (>= (count lines) 2))
+                  (expect (every? well-formed-line? lines))
+                  (expect (every? line-w-survives? lines))))
+            (it "empty tasks yields a well-formed placeholder line"
+                (let [lines (#'comps/task-overlay-lines {} 60)]
+                  (expect (every? well-formed-line? lines))
+                  (expect (every? line-w-survives? lines)))))
+  (describe "fact-overlay-lines emits well-formed LINES"
+            (it "facts (with + without :files) and the empty case stay well-formed"
+                (let [lines
+                      (#'comps/fact-overlay-lines
+                       {:a {:content "alpha" :status :active :files [{:path "x.clj"}]}
+                        :b {:content "beta" :status :superseded}}
+                       60
+                       #{})
 
-                              empty-lines
-                              (#'comps/fact-overlay-lines {} 60 #{})]
+                      empty-lines
+                      (#'comps/fact-overlay-lines {} 60 #{})]
 
-                             (expect (every? well-formed-line? lines))
-                             (expect (every? line-w-survives? lines))
-                             (expect (every? well-formed-line? empty-lines))))))
+                  (expect (every? well-formed-line? lines))
+                  (expect (every? line-w-survives? lines))
+                  (expect (every? well-formed-line? empty-lines))))))
 
 (defdescribe tab-cell-running-border-test
              (it "keeps the running animation out of the close button"
                  (let [underlined (atom [])]
-                   (with-redefs
-                     [p/underline-cell! (fn [_ col row & _]
-                                          (swap! underlined conj [col row]))]
+                   (with-redefs [p/underline-cell! (fn [_ col row & _]
+                                                     (swap! underlined conj [col row]))]
                      (comps/tab-cell! (noop-graphics)
                                       {:left 10
                                        :row 1
@@ -165,13 +160,12 @@
 ;; stretch a row lanterna would have left alone. Both paths now route through
 ;; `layout/justify-line-runs`.
 (defdescribe overlay-justification-uses-shared-engine-test
-             (let
-               [justify-line
-                (deref (ns-resolve 'com.blockether.vis.ext.channel-tui.components 'justify-line))
+             (let [justify-line
+                   (deref (ns-resolve 'com.blockether.vis.ext.channel-tui.components 'justify-line))
 
-                md-rows
-                (deref (ns-resolve 'com.blockether.vis.ext.channel-tui.components
-                                   'md-wrapped-rows))]
+                   md-rows
+                   (deref (ns-resolve 'com.blockether.vis.ext.channel-tui.components
+                                      'md-wrapped-rows))]
 
                (it "plain rows justify exactly like the shared run justifier"
                    (let [line "alpha beta gamma delta"]
@@ -183,14 +177,13 @@
                    (let [line "alpha beta"]
                      (expect (= line (justify-line line 40)))))
                (it "a bulleted overlay row keeps a single space after its marker"
-                   (let
-                     [rows
-                      (md-rows [] 0 "- lorem ipsum dolor sit amet consectetur" 22 nil false)
+                   (let [rows
+                         (md-rows [] 0 "- lorem ipsum dolor sit amet consectetur" 22 nil false)
 
-                      texts
-                      (mapv (fn [row]
-                              (apply str (map first row)))
-                            rows)]
+                         texts
+                         (mapv (fn [row]
+                                 (apply str (map first row)))
+                               rows)]
 
                      (expect (some (fn [t]
                                      (re-find #"^- \S" t))

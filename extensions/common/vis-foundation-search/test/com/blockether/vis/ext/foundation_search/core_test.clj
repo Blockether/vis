@@ -55,13 +55,11 @@
   papers-test
   (describe
     "happy path: arxiv Atom → envelope with citations vec"
-    (with-redefs
-      [http/get (fn [_url _opts]
-                  {:status 200 :body SAMPLE_ATOM})]
-      (let
-        [env (search/search-papers "reflexion")
-         r (envelope-result env)
-         cs (get r "citations")]
+    (with-redefs [http/get (fn [_url _opts]
+                             {:status 200 :body SAMPLE_ATOM})]
+      (let [env (search/search-papers "reflexion")
+            r (envelope-result env)
+            cs (get r "citations")]
 
         (it "envelope is a successful tool result"
             (expect (extension/envelope-success? env))
@@ -82,12 +80,10 @@
             (expect (string? (get r "endpoint")))
             (expect (str/includes? (get r "endpoint") "arxiv.org/api/query"))))))
   (describe "http throws → failure envelope with single error citation"
-            (with-redefs
-              [http/get (fn [_url _opts]
-                          (throw (ex-info "503" {})))]
-              (let
-                [env (search/search-papers "anything")
-                 r (envelope-result env)]
+            (with-redefs [http/get (fn [_url _opts]
+                                     (throw (ex-info "503" {})))]
+              (let [env (search/search-papers "anything")
+                    r (envelope-result env)]
 
                 (it "envelope is a failure" (expect (extension/envelope-failure? env)))
                 (it "structured :error map carried on the envelope"
@@ -131,12 +127,11 @@ The spec library specifies the structure of data.")
   web-shape-test
   (describe
     "search/web returns a tool envelope wrapping a structured citation map"
-    (with-redefs
-      [com.blockether.vis.ext.foundation-search.core/call-mcp-tool! (mock-mcp SAMPLE_EXA_TEXT)]
-      (let
-        [env (search/search-web "clojure malli" {"num_results" 2})
-         r (envelope-result env)
-         cs (get r "citations")]
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool! (mock-mcp
+                                                                                 SAMPLE_EXA_TEXT)]
+      (let [env (search/search-web "clojure malli" {"num_results" 2})
+            r (envelope-result env)
+            cs (get r "citations")]
 
         (it "envelope is a successful tool result keyed :search-web"
             (expect (extension/envelope-success? env))
@@ -169,13 +164,11 @@ The spec library specifies the structure of data.")
 
 (defdescribe code-shape-test
              (describe "search/code mirrors search/web with :type :code"
-                       (with-redefs
-                         [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-                          (mock-mcp SAMPLE_EXA_TEXT)]
-                         (let
-                           [env (search/search-code "clojure spec" {"tokens_num" 200})
-                            r (envelope-result env)
-                            cs (get r "citations")]
+                       (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                                     (mock-mcp SAMPLE_EXA_TEXT)]
+                         (let [env (search/search-code "clojure spec" {"tokens_num" 200})
+                               r (envelope-result env)
+                               cs (get r "citations")]
 
                            (it "envelope op = search_code" (expect (= "search_code" (get r "op"))))
                            (it "type code on every entry"
@@ -234,12 +227,11 @@ def handler():
   excerpt-truncation-marker-test
   (describe
     "Exa `[...]` truncation markers never sit on their own line"
-    (with-redefs
-      [com.blockether.vis.ext.foundation-search.core/call-mcp-tool! (mock-mcp SAMPLE_EXA_TRUNCATED)]
-      (let
-        [e (first (get (envelope-result (search/search-code "core.async" {})) "citations"))
-         excerpt (get e "excerpt")
-         lines (str/split-lines excerpt)]
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_TRUNCATED)]
+      (let [e (first (get (envelope-result (search/search-code "core.async" {})) "citations"))
+            excerpt (get e "excerpt")
+            lines (str/split-lines excerpt)]
 
         (it "no line in the excerpt is a bare truncation marker"
             (expect (string? excerpt))
@@ -249,13 +241,11 @@ def handler():
         (it "a code fence's own body is left intact"
             (expect (str/includes? excerpt "(require '[clojure.core.async :as async])"))))))
   (describe "spurious fences + bare lead markers + genuine code placeholders"
-            (with-redefs
-              [com.blockether.vis.ext.foundation-search.core/call-mcp-tool! (mock-mcp
-                                                                              SAMPLE_EXA_FENCED)]
-              (let
-                [e (first (get (envelope-result (search/search-code "asyncio" {})) "citations"))
-                 excerpt (get e "excerpt")
-                 lines (str/split-lines excerpt)]
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                          (mock-mcp SAMPLE_EXA_FENCED)]
+              (let [e (first (get (envelope-result (search/search-code "asyncio" {})) "citations"))
+                    excerpt (get e "excerpt")
+                    lines (str/split-lines excerpt)]
 
                 (it "no `[...]` bracket marker survives on its own line anywhere"
                     (expect (not-any? #(re-matches #"\s*\[\.\.\.\]\s*" %) lines)))
@@ -322,12 +312,10 @@ const total = add(1, 2);")
 (defdescribe
   spurious-doc-fence-test
   (describe "a dangling bare ``` wrapping documentation prose is unwrapped"
-            (with-redefs
-              [com.blockether.vis.ext.foundation-search.core/call-mcp-tool! (mock-mcp
-                                                                              SAMPLE_EXA_DOC_WRAP)]
-              (let
-                [e (first (get (envelope-result (search/search-web "k8s" {})) "citations"))
-                 {:keys [code headings]} (ir-nodes (get e "excerpt"))]
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                          (mock-mcp SAMPLE_EXA_DOC_WRAP)]
+              (let [e (first (get (envelope-result (search/search-web "k8s" {})) "citations"))
+                    {:keys [code headings]} (ir-nodes (get e "excerpt"))]
 
                 (it "the real ```yaml manifest survives as a code block"
                     (expect (some #(str/includes? % "apiVersion: apps/v1") code)))
@@ -337,12 +325,10 @@ const total = add(1, 2);")
                 (it "no code block contains the unwrapped prose"
                     (expect (not-any? #(str/includes? % "Common Mistakes") code))))))
   (describe "a dangling bare ``` wrapping real code is left ALONE"
-            (with-redefs
-              [com.blockether.vis.ext.foundation-search.core/call-mcp-tool! (mock-mcp
-                                                                              SAMPLE_EXA_CODE_WRAP)]
-              (let
-                [e (first (get (envelope-result (search/search-web "js" {})) "citations"))
-                 {:keys [code]} (ir-nodes (get e "excerpt"))]
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                          (mock-mcp SAMPLE_EXA_CODE_WRAP)]
+              (let [e (first (get (envelope-result (search/search-web "js" {})) "citations"))
+                    {:keys [code]} (ir-nodes (get e "excerpt"))]
 
                 (it "the code stays inside a code block (no false unwrap)"
                     (expect (some #(str/includes? % "function add(a, b)") code)))))))
@@ -351,29 +337,27 @@ const total = add(1, 2);")
   shape-parity-test
   (describe
     "all three search/* fns return the same envelope+citation shape"
-    (with-redefs
-      [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-       (mock-mcp SAMPLE_EXA_TEXT)
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_TEXT)
 
-       http/get
-       (fn [_url _opts]
-         {:status 200 :body SAMPLE_ATOM})]
+                  http/get
+                  (fn [_url _opts]
+                    {:status 200 :body SAMPLE_ATOM})]
 
-      (let
-        [w
-         (envelope-result (search/search-web "x" {}))
+      (let [w
+            (envelope-result (search/search-web "x" {}))
 
-         c
-         (envelope-result (search/search-code "x" {}))
+            c
+            (envelope-result (search/search-code "x" {}))
 
-         p
-         (envelope-result (search/search-papers "x" {}))
+            p
+            (envelope-result (search/search-papers "x" {}))
 
-         base-result-keys
-         #{"op" "query" "citations" "citation_count" "truncated" "source"}
+            base-result-keys
+            #{"op" "query" "citations" "citation_count" "truncated" "source"}
 
-         base-citation-keys
-         #{"type" "title" "url" "excerpt" "source"}]
+            base-citation-keys
+            #{"type" "title" "url" "excerpt" "source"}]
 
         (it "every envelope payload has the canonical envelope keys"
             (doseq [r [w c p]]
@@ -383,9 +367,8 @@ const total = add(1, 2);")
             (expect (= "search_code" (get c "op")))
             (expect (= "search_papers" (get p "op"))))
         (it "every citation has the canonical citation key set"
-            (doseq
-              [e [(first (get w "citations")) (first (get c "citations"))
-                  (first (get p "citations"))]]
+            (doseq [e [(first (get w "citations")) (first (get c "citations"))
+                       (first (get p "citations"))]]
               (expect (every? #(contains? e %) base-citation-keys))))
         (it "source is `exa` for web/code, `arxiv` for papers"
             (expect (= "exa" (get w "source")))
@@ -411,15 +394,14 @@ const total = add(1, 2);")
           :body
           "{\"items\":[{\"name\":\"core.clj\",\"path\":\"src/core.clj\",\"html_url\":\"https://github.com/acme/demo/blob/main/src/core.clj\",\"repository\":{\"full_name\":\"acme/demo\"},\"text_matches\":[{\"fragment\":\"(defn hello [] :world)\"}]}]}"})]
 
-      (let
-        [env
-         (search/search-code "hello" {"num_results" 3})
+      (let [env
+            (search/search-code "hello" {"num_results" 3})
 
-         r
-         (envelope-result env)
+            r
+            (envelope-result env)
 
-         citation
-         (first (get r "citations"))]
+            citation
+            (first (get r "citations"))]
 
         (it "returns a successful GitHub-sourced envelope"
             (expect (extension/envelope-success? env)))
@@ -432,14 +414,14 @@ const total = add(1, 2);")
             (expect (= "acme/demo/src/core.clj" (get citation "title")))
             (expect (str/includes? (get citation "excerpt") "defn hello"))))))
   (describe "auth and malformed Exa failures do not silently fail over"
-            (with-redefs
-              [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-               (fn [_ _]
-                 (throw (ex-info "MCP HTTP 401" {:type :search/mcp-http-error :status 401})))
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                          (fn [_ _]
+                            (throw (ex-info "MCP HTTP 401"
+                                            {:type :search/mcp-http-error :status 401})))
 
-               com.blockether.vis.ext.foundation-search.core/*github-get-fn*
-               (fn [& _]
-                 (throw (ex-info "GitHub must not be called" {})))]
+                          com.blockether.vis.ext.foundation-search.core/*github-get-fn*
+                          (fn [& _]
+                            (throw (ex-info "GitHub must not be called" {})))]
 
               (let [env (search/search-code "hello" {})]
                 (it "keeps the original Exa error" (expect (extension/envelope-failure? env)))
@@ -465,32 +447,29 @@ const total = add(1, 2);")
           :body
           "{\"items\":[{\"name\":\"readme.md\",\"path\":\"README.md\",\"html_url\":\"https://github.com/acme/demo/blob/main/README.md\",\"repository\":{\"full_name\":\"acme/demo\"}}]}"})]
 
-      (let
-        [env
-         (search/search-code "hello" {"provider" "github"})
+      (let [env
+            (search/search-code "hello" {"provider" "github"})
 
-         r
-         (envelope-result env)]
+            r
+            (envelope-result env)]
 
         (it "does not call Exa and does not claim a fallback"
             (expect (extension/envelope-success? env))
             (expect (= "github" (get r "source")))
             (expect (nil? (get r "fallback_from")))))))
   (describe "an unauthenticated GitHub CLI gives an actionable failure"
-            (with-redefs
-              [com.blockether.vis.ext.foundation-search.core/*github-token-fn*
-               (constantly nil)
+            (with-redefs [com.blockether.vis.ext.foundation-search.core/*github-token-fn*
+                          (constantly nil)
 
-               com.blockether.vis.ext.foundation-search.core/*github-get-fn*
-               (fn [& _]
-                 (throw (ex-info "GitHub HTTP must not be called" {})))]
+                          com.blockether.vis.ext.foundation-search.core/*github-get-fn*
+                          (fn [& _]
+                            (throw (ex-info "GitHub HTTP must not be called" {})))]
 
-              (let
-                [env
-                 (search/search-code "hello" {"provider" "github"})
+              (let [env
+                    (search/search-code "hello" {"provider" "github"})
 
-                 c
-                 (first (get (envelope-result env) "citations"))]
+                    c
+                    (first (get (envelope-result env) "citations"))]
 
                 (it "asks the user to authenticate with gh instead of searching anonymously"
                     (expect (extension/envelope-failure? env))
@@ -499,10 +478,10 @@ const total = add(1, 2);")
 
 (defdescribe engine-scope-test
              (describe "no search/* symbol declares an engine-scope (single agent surface)"
-                       (doseq
-                         [[label sym-entry] [[:web search/web-symbol] [:code search/code-symbol]
-                                             [:download-code search/download-code-symbol]
-                                             [:papers search/papers-symbol]]]
+                       (doseq [[label sym-entry] [[:web search/web-symbol]
+                                                  [:code search/code-symbol]
+                                                  [:download-code search/download-code-symbol]
+                                                  [:papers search/papers-symbol]]]
                          (it (str (name label) " omits :ext.symbol/engine-scope")
                              (expect (nil? (:ext.symbol/engine-scope sym-entry))))
                          (it (str (name label) " no longer ships as a :raw? helper")
@@ -525,12 +504,11 @@ const total = add(1, 2);")
 
 (describe "the web_search toggle"
           (it "is persisted, enabled by default, and gates the extension"
-              (let
-                [spec
-                 (vis/toggle-spec "web_search")
+              (let [spec
+                    (vis/toggle-spec "web_search")
 
-                 active?
-                 (:ext/activation-fn search/vis-extension)]
+                    active?
+                    (:ext/activation-fn search/vis-extension)]
 
                 (expect (= "Web search" (:label spec)))
                 (expect (true? (:default spec)))
@@ -544,18 +522,17 @@ const total = add(1, 2);")
    the dispatch decision. Redefs live INSIDE the call (lazytest defers `it`
    bodies, so a `with-redefs` wrapping `describe` would already be unwound)."
   [& args]
-  (with-redefs
-    [search/search-web
-     (fn [q opts]
-       {:hit :web :q q :opts opts})
+  (with-redefs [search/search-web
+                (fn [q opts]
+                  {:hit :web :q q :opts opts})
 
-     search/search-code
-     (fn [q opts]
-       {:hit :code :q q :opts opts})
+                search/search-code
+                (fn [q opts]
+                  {:hit :code :q q :opts opts})
 
-     search/search-papers
-     (fn [q opts]
-       {:hit :papers :q q :opts opts})]
+                search/search-papers
+                (fn [q opts]
+                  {:hit :papers :q q :opts opts})]
 
     (apply search/search args)))
 
@@ -570,18 +547,17 @@ const total = add(1, 2);")
         (expect (= :papers (:hit (routed "x" {"kind" "papers"})))))
     (it "`kind` is stripped before per-kind opts are forwarded"
         (expect (= {"num_results" 3} (:opts (routed "x" {"kind" "web" "num_results" 3}))))))
-  (describe
-    "unknown kind fails loudly instead of silently searching the web"
-    (it "returns an error citation naming the valid kinds"
-        (let [c (first (get (envelope-result (search/search "x" {"kind" "moon"})) "citations"))]
-          (expect (true? (get c "error")))
-          (expect (str/includes? (get c "excerpt") "web | code | papers")))))
+  (describe "unknown kind fails loudly instead of silently searching the web"
+            (it "returns an error citation naming the valid kinds"
+                (let [c (first (get (envelope-result (search/search "x" {"kind" "moon"}))
+                                    "citations"))]
+                  (expect (true? (get c "error")))
+                  (expect (str/includes? (get c "excerpt") "web | code | papers")))))
   (describe "sandbox surface"
             (it "`search` is the one routing verb, and every kind is its own function too"
                 (expect (= "search" (:ext.symbol/name search/search-symbol)))
-                (doseq
-                  [sym-entry [search/web-symbol search/code-symbol search/download-code-symbol
-                              search/papers-symbol]]
+                (doseq [sym-entry [search/web-symbol search/code-symbol search/download-code-symbol
+                                   search/papers-symbol]]
                   (expect (some? (:ext.symbol/symbol sym-entry)))))
             (it "`search`'s own documentation names the three kinds"
                 (let [text (str (:ext.symbol/description search/search-symbol))]
@@ -591,14 +567,12 @@ const total = add(1, 2);")
 (defn- tar-gzip-fixture
   [entries]
   (let [out (ByteArrayOutputStream.)]
-    (with-open
-      [gzip (GZIPOutputStream. out)
-       tar (TarArchiveOutputStream. gzip)]
+    (with-open [gzip (GZIPOutputStream. out)
+                tar (TarArchiveOutputStream. gzip)]
 
       (doseq [[path content] entries]
-        (let
-          [data (.getBytes ^String content StandardCharsets/UTF_8)
-           entry (TarArchiveEntry. path)]
+        (let [data (.getBytes ^String content StandardCharsets/UTF_8)
+              entry (TarArchiveEntry. path)]
 
           (.setSize entry (alength data))
           (.putArchiveEntry tar entry)
@@ -608,20 +582,17 @@ const total = add(1, 2);")
 
 (defdescribe download-archive-test
              (it "downloads and extracts the complete codeload archive below the supplied workspace"
-                 (let
-                   [workspace (.toFile (Files/createTempDirectory
-                                         "vis-download-archive-test"
-                                         (make-array java.nio.file.attribute.FileAttribute 0)))]
-                   (try (let
-                          [archive (tar-gzip-fixture {"demo-main/README.md" "hello archive\n"
-                                                      "demo-main/src/app.clj" "(println :ok)\n"})]
-                          (with-redefs
-                            [search/*github-get-fn* (fn [_ _]
-                                                      {:status 200 :body archive})]
-                            (let
-                              [env (search/download-archive workspace "acme/demo" {"ref" "main"})
-                               result (envelope-result env)
-                               path (get result "path")]
+                 (let [workspace (.toFile (Files/createTempDirectory
+                                            "vis-download-archive-test"
+                                            (make-array java.nio.file.attribute.FileAttribute 0)))]
+                   (try (let [archive (tar-gzip-fixture {"demo-main/README.md" "hello archive\n"
+                                                         "demo-main/src/app.clj"
+                                                         "(println :ok)\n"})]
+                          (with-redefs [search/*github-get-fn* (fn [_ _]
+                                                                 {:status 200 :body archive})]
+                            (let [env (search/download-archive workspace "acme/demo" {"ref" "main"})
+                                  result (envelope-result env)
+                                  path (get result "path")]
 
                               (expect (extension/envelope-success? env))
                               (expect (= "download_archive" (get result "op")))
@@ -649,12 +620,11 @@ const total = add(1, 2);")
                   (expect (string? (extension/symbol-signature entry))
                           (str (:ext.symbol/symbol entry) " renders no call signature"))))
             (it "carries a model-facing description and a result contract"
-                (doseq
-                  [entry
-                   search/search-symbols
+                (doseq [entry
+                        search/search-symbols
 
-                   :let [{:ext.symbol/keys [description result symbol]}
-                         entry]]
+                        :let [{:ext.symbol/keys [description result symbol]}
+                              entry]]
 
                   (expect (not (str/blank? description)) (str symbol " has no :description"))
                   (expect (not (str/blank? result)) (str symbol " has no :result"))
@@ -662,15 +632,14 @@ const total = add(1, 2);")
                   (expect (not (str/includes? description "await "))
                           (str symbol " hand-writes its call"))))
             (it "names every option key it reads, with a note"
-                (doseq
-                  [entry
-                   search/search-symbols
+                (doseq [entry
+                        search/search-symbols
 
-                   :let [params
-                         (:ext.symbol/params entry)
+                        :let [params
+                              (:ext.symbol/params entry)
 
-                         line
-                         (extension/symbol-keys-line entry)]]
+                              line
+                              (extension/symbol-keys-line entry)]]
 
                   (expect (seq params) (str (:ext.symbol/symbol entry) " declares no :params"))
                   (doseq [{param-name :name param-note :note} params]

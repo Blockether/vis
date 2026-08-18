@@ -137,14 +137,12 @@
    exact sub-pass that blew up (e.g. `messages` for the copy-region storm in
    issue #24) instead of hiding it in one opaque `paint` number."
   [data]
-  (let
-    [phases (for
-              [[k label] [[:messages-ms "messages"] [:chrome-ms "chrome"] [:capture-ms "capture"]
-                          [:post-ms "post"]]
-               :let [v (get data k)]
-               :when (some? v)]
+  (let [phases (for [[k label] [[:messages-ms "messages"] [:chrome-ms "chrome"]
+                                [:capture-ms "capture"] [:post-ms "post"]]
+                     :let [v (get data k)]
+                     :when (some? v)]
 
-              (format "%s %.1f" label (double v)))]
+                 (format "%s %.1f" label (double v)))]
     (if (seq phases) (str " [" (str/join ", " phases) "]") "")))
 
 (defn- log-slow-frame!
@@ -158,21 +156,20 @@
    `:data` map carries the rest). Only slow frames log, so the default file
    handler stays quiet during smooth playback."
   [data]
-  (let
-    [total-ms
-     (double (:total-ms data 0.0))
+  (let [total-ms
+        (double (:total-ms data 0.0))
 
-     refresh-ms
-     (double (:refresh-ms data 0.0))
+        refresh-ms
+        (double (:refresh-ms data 0.0))
 
-     layout-ms
-     (double (:layout-ms data 0.0))
+        layout-ms
+        (double (:layout-ms data 0.0))
 
-     paint-ms
-     (double (:paint-ms data 0.0))
+        paint-ms
+        (double (:paint-ms data 0.0))
 
-     path
-     (:path data "live")]
+        path
+        (:path data "live")]
 
     (when (or (>= total-ms (long slow-live-frame-threshold-ms))
               (>= refresh-ms (long slow-refresh-threshold-ms)))
@@ -207,39 +204,37 @@
    which is the regression the one-shot slow-frame warning misses. Runs on the
    single render thread, so the swap is uncontended."
   [path total-ms]
-  (let
-    [now
-     (System/currentTimeMillis)
+  (let [now
+        (System/currentTimeMillis)
 
-     ms
-     (double total-ms)
+        ms
+        (double total-ms)
 
-     st
-     (swap! frame-trend-state (fn [s]
-                                (if (and s
-                                         (< (- now (long (:since-ms s)))
-                                            (long frame-trend-interval-ms)))
-                                  ;; window still open - fold this frame in, clear any
-                                  ;; already-drained emit snapshot.
-                                  (-> s
-                                      (update :frames inc)
-                                      (update :sum-ms + ms)
-                                      (update :max-ms max ms)
-                                      (update-in [:by-path path] (fnil inc 0))
-                                      (dissoc :emit))
-                                  ;; first frame OR window elapsed - carry the closed window
-                                  ;; out via :emit and open a fresh one seeded with THIS frame.
-                                  {:since-ms now
-                                   :frames 1
-                                   :sum-ms ms
-                                   :max-ms ms
-                                   :by-path {path 1}
-                                   :emit (when s (dissoc s :emit))})))]
+        st
+        (swap! frame-trend-state (fn [s]
+                                   (if (and s
+                                            (< (- now (long (:since-ms s)))
+                                               (long frame-trend-interval-ms)))
+                                     ;; window still open - fold this frame in, clear any
+                                     ;; already-drained emit snapshot.
+                                     (-> s
+                                         (update :frames inc)
+                                         (update :sum-ms + ms)
+                                         (update :max-ms max ms)
+                                         (update-in [:by-path path] (fnil inc 0))
+                                         (dissoc :emit))
+                                     ;; first frame OR window elapsed - carry the closed window
+                                     ;; out via :emit and open a fresh one seeded with THIS frame.
+                                     {:since-ms now
+                                      :frames 1
+                                      :sum-ms ms
+                                      :max-ms ms
+                                      :by-path {path 1}
+                                      :emit (when s (dissoc s :emit))})))]
 
     (when-let [w (:emit st)]
-      (let
-        [frames (long (:frames w))
-         avg-ms (/ (double (:sum-ms w)) (max 1 frames))]
+      (let [frames (long (:frames w))
+            avg-ms (/ (double (:sum-ms w)) (max 1 frames))]
 
         (tel/log! {:level :info
                    :id ::frame-trend
@@ -309,12 +304,11 @@
    dispatch instead of flooding the reducer/render loop."
   [key poll-next]
   (if (drag-action? key)
-    (loop
-      [last-key
-       key
+    (loop [last-key
+           key
 
-       n
-       1]
+           n
+           1]
 
       (if-let [next-key (poll-next)]
         (if (drag-action? next-key)
@@ -325,15 +319,14 @@
 
 (defn- coalesced-drag-scroll-amount
   [amount drag-events]
-  (let
-    [amount
-     (long (or amount 0))
+  (let [amount
+        (long (or amount 0))
 
-     drag-events
-     (long (or drag-events 1))
+        drag-events
+        (long (or drag-events 1))
 
-     factor
-     (long (max 1 (min (long drag-autoscroll-max-coalesce-factor) drag-events)))]
+        factor
+        (long (max 1 (min (long drag-autoscroll-max-coalesce-factor) drag-events)))]
 
     (long (* amount factor))))
 
@@ -348,8 +341,8 @@
    event drained is stashed back at the FRONT of `pending-keys` (it is older
    than anything still queued behind it)."
   [first-key poll-next pending-keys]
-  (let
-    [{:keys [key wheel-delta next-key] :as wheel-pass} (coalesce-wheel-input first-key poll-next)]
+  (let [{:keys [key wheel-delta next-key] :as wheel-pass} (coalesce-wheel-input first-key
+                                                                                poll-next)]
     (if wheel-delta
       (do (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
           {:key key :wheel-delta wheel-delta :drag-events 1})
@@ -411,15 +404,18 @@
    clears that registry. Resetting first sends the cosmetic
    `[Pasted #N: ...]` token to the provider instead of the payload."
   [db input-state]
-  (let [text (input/input->text input-state)
+  (let [text
+        (input/input->text input-state)
+
         ;; Pin the SUBMITTING tab from this snapshot. `:send-message` /
         ;; `:enqueue-message` otherwise resolve `current-tab-id` at swap! time,
         ;; and gateway ACKs / a tab switch on another thread can move the active
         ;; tab between this Enter and that reduce — routing the message (or the
         ;; queued send) into whatever session is focused THEN. Capturing it here
         ;; keeps the submission on the tab the user actually typed into.
-        wid (or (:active-tab-id db)
-                (:id (some #(when (:active? %) %) (:tabs db))))]
+        wid
+        (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))))]
+
     ;; T-003: never silently drop a non-empty submission while a turn
     ;; is in flight. Idle -> send-message. Busy -> enqueue with visible
     ;; feedback; drained from `:message-received` once :loading? clears.
@@ -432,7 +428,8 @@
         (:cancelling? db) (vis/notify! "Cancelling current turn — press Enter again once it stops"
                                        :level :warn
                                        :ttl-ms 2500)
-        (:loading? db) (do (state/dispatch [:enqueue-message text wid]) (state/dispatch [:reset-input]))
+        (:loading? db) (do (state/dispatch [:enqueue-message text wid])
+                           (state/dispatch [:reset-input]))
         :else (do (state/dispatch [:send-message text wid]) (state/dispatch [:reset-input]))))))
 
 (def ^:private copy-success-ttl-ms 1500)
@@ -443,14 +440,10 @@
   [worker-name text success-message]
   (vis/worker-future
     worker-name
-    #(let [copied? (try (true? (input/clipboard-copy! (or text "")))
-                        (catch Throwable _ false))]
-       (vis/notify! (if copied?
-                      success-message
-                      "Copy failed — terminal clipboard unavailable")
+    #(let [copied? (try (true? (input/clipboard-copy! (or text ""))) (catch Throwable _ false))]
+       (vis/notify! (if copied? success-message "Copy failed — terminal clipboard unavailable")
                     :level (if copied? :success :error)
-                    :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms))
-       copied?)))
+                    :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms)) copied?)))
 
 (defn- copy-session-id!
   "Copy the session id in its MARKED form (`vis_session_id#<uuid>`, see
@@ -467,15 +460,11 @@
   ([text source]
    (copy-text-async! "vis-tui-copy-selection"
                      text
-                     (if (= source :input)
-                       "✓ Copied input selection"
-                       "✓ Copied selection"))))
+                     (if (= source :input) "✓ Copied input selection" "✓ Copied selection"))))
 
 (defn- copy-bubble!
   [text]
-  (copy-text-async! "vis-tui-copy-bubble"
-                    (selection/clean-copied-text text)
-                    "✓ Copied bubble"))
+  (copy-text-async! "vis-tui-copy-bubble" (selection/clean-copied-text text) "✓ Copied bubble"))
 
 (defn- copy-bubble-hit!
   "Copy a whole-bubble copy-region hit. The region's `:text` is a DELAY
@@ -501,9 +490,7 @@
    Only the transcript source has the two-path split; other sources already
    extract straight from screen cells, so `doc-text` is returned as-is."
   [source doc-text screen-cell-text-fn]
-  (if (and (= source :transcript) (str/blank? doc-text))
-    (screen-cell-text-fn)
-    doc-text))
+  (if (and (= source :transcript) (str/blank? doc-text)) (screen-cell-text-fn) doc-text))
 
 (defn- handle-channel-event!
   [{:keys [op id text level ttl-ms] :as event}]
@@ -580,23 +567,25 @@
    release the parked run (issue #122). That one is answered over the gateway
    that owns its session, through exactly the same engine validation."
   [form op values]
-  (let
-    [request-id
-     (hi/request-id form)
+  (let [request-id
+        (hi/request-id form)
 
-     session-id
-     (hi/session-id form)
+        session-id
+        (hi/session-id form)
 
-     local?
-     (or (nil? session-id) (some? (vis/pending-human-input-request request-id)))]
+        local?
+        (or (nil? session-id) (some? (vis/pending-human-input-request request-id)))]
 
     (case op
-      :submit (if local?
-                (vis/submit-human-input! request-id values)
-                (vis/gateway-submit-human-input! session-id request-id values))
-      :cancel (if local?
-                (vis/cancel-human-input! request-id)
-                (vis/gateway-cancel-human-input! session-id request-id)))))
+      :submit
+      (if local?
+        (vis/submit-human-input! request-id values)
+        (vis/gateway-submit-human-input! session-id request-id values))
+
+      :cancel
+      (if local?
+        (vis/cancel-human-input! request-id)
+        (vis/gateway-cancel-human-input! session-id request-id)))))
 
 (defn- live-band-pane
   "The live view the pointer at terminal row `my` is over — the one the band is
@@ -608,13 +597,13 @@
   [db my]
   (when-let [panes (seq (:live-views db))]
     (when-not (:human-input db)
-      (let
-        [ly (:layout db)
-
-         {:keys [content-top prompt-h]} (state/band-anchor db)
-
-         span (lv/band-rows (long (or (:cols ly) 0)) (long (or (:rows ly) 0)) panes content-top
-                            prompt-h)]
+      (let [ly (:layout db)
+            {:keys [content-top prompt-h]} (state/band-anchor db)
+            span (lv/band-rows (long (or (:cols ly) 0))
+                               (long (or (:rows ly) 0))
+                               panes
+                               content-top
+                               prompt-h)]
 
         (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
@@ -632,12 +621,9 @@
    exactly what the model reads."
   [db note]
   (when-let [pane (lv/interruptible (:live-views db))]
-    (let
-      [view-id (lv/view-id pane)
-
-       session-id (get-in pane [:view :session-id])
-
-       local? (or (nil? session-id) (some #(= view-id (:id %)) (vis/live-views)))]
+    (let [view-id (lv/view-id pane)
+          session-id (get-in pane [:view :session-id])
+          local? (or (nil? session-id) (some #(= view-id (:id %)) (vis/live-views)))]
 
       (try (if local?
              (vis/interrupt-live-view! view-id note)
@@ -667,8 +653,7 @@
   (when-let [pane (lv/interruptible (:live-views db))]
     (let [{next-pane :pane :keys [action note]} (lv/typed pane (hi/key->event key))]
       (state/dispatch [:live-view-note (lv/view-id pane) next-pane])
-      (when (= :stop action)
-        (interrupt-front-live-view! db note)))))
+      (when (= :stop action) (interrupt-front-live-view! db note)))))
 
 (defn- replay-human-input!
   "Open EVERY request `session-id` is blocked on right now, oldest first.
@@ -695,13 +680,14 @@
    the dialog open with per-field errors, an accepted one closes it and
    releases the waiting extension."
   [db ^KeyStroke key]
-  (let
-    [open-form (:human-input db)
+  (let [open-form
+        (:human-input db)
 
-     {:keys [form action]}
-     (hi/handle-event open-form (hi/key->event key))
+        {:keys [form action]}
+        (hi/handle-event open-form (hi/key->event key))
 
-     request-id (hi/request-id form)]
+        request-id
+        (hi/request-id form)]
 
     (case action
       :submit
@@ -727,18 +713,17 @@
    get palette entries. The engine's `slash/dispatch` does longest-prefix
    resolution regardless of palette discoverability."
   [spec]
-  (let
-    [name
-     (:slash/name spec)
+  (let [name
+        (:slash/name spec)
 
-     parent
-     (vec (:slash/parent spec))
+        parent
+        (vec (:slash/parent spec))
 
-     path
-     (into parent [name])
+        path
+        (into parent [name])
 
-     path-s
-     (str/join " " path)]
+        path-s
+        (str/join " " path)]
 
     {:id (keyword (str/join "." path))
      :label (or (:slash/doc spec)
@@ -786,27 +771,25 @@
    first `/` is already warm."
   []
   (or @registry-slash-commands-cache
-      (let
-        [v (try (let
-                  [specs (filter slash-available-in-tui? (vis/registered-slashes))
-                   ;; A spec is a "group root" when some other visible spec
-                   ;; names its path as `:slash/parent`. Its own `:slash/run-fn`
-                   ;; only prints the subcommand list the palette already shows
-                   ;; inline, so suppress the redundant root entry. The engine
-                   ;; `slash/dispatch` still resolves a typed `/workspace`
-                   ;; (handled as a raw message submission), so the root stays
-                   ;; reachable — it just isn't a palette suggestion.
-                   parent-paths (into #{}
-                                      (keep (fn [s]
-                                              (let [p (vec (:slash/parent s))]
-                                                (when (seq p) p))))
-                                      specs)
-                   leaf? (fn [s]
-                           (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
-                             (not (contains? parent-paths path))))]
+      (let [v (try (let [specs (filter slash-available-in-tui? (vis/registered-slashes))
+                         ;; A spec is a "group root" when some other visible spec
+                         ;; names its path as `:slash/parent`. Its own `:slash/run-fn`
+                         ;; only prints the subcommand list the palette already shows
+                         ;; inline, so suppress the redundant root entry. The engine
+                         ;; `slash/dispatch` still resolves a typed `/workspace`
+                         ;; (handled as a raw message submission), so the root stays
+                         ;; reachable — it just isn't a palette suggestion.
+                         parent-paths (into #{}
+                                            (keep (fn [s]
+                                                    (let [p (vec (:slash/parent s))]
+                                                      (when (seq p) p))))
+                                            specs)
+                         leaf? (fn [s]
+                                 (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
+                                   (not (contains? parent-paths path))))]
 
-                  (mapv slash-spec->menu-command (filter leaf? specs)))
-                (catch Throwable _t []))]
+                     (mapv slash-spec->menu-command (filter leaf? specs)))
+                   (catch Throwable _t []))]
         (when (seq v) (reset! registry-slash-commands-cache v))
         v)))
 
@@ -850,14 +833,13 @@
    discovers `/workspace`, `/voice`, etc. Ctrl+K itself uses
    `command-palette-extra-commands` and remains minimal."
   [_screen]
-  (let
-    [base
-     (vec (concat dlg/palette-commands (registry-slash-commands)))
+  (let [base
+        (vec (concat dlg/palette-commands (registry-slash-commands)))
 
-     ;; A registered slash shadows a same-named template (engine
-     ;; precedence) — drop the duplicate suggestion.
-     taken
-     (into #{} (keep :slash/text) base)]
+        ;; A registered slash shadows a same-named template (engine
+        ;; precedence) — drop the duplicate suggestion.
+        taken
+        (into #{} (keep :slash/text) base)]
 
     (into base (remove #(contains? taken (:slash/text %)) (template-slash-commands)))))
 
@@ -879,11 +861,10 @@
    first token, so nested commands like `workspace list` never match it."
   [input-state]
   (when-let [{:keys [path]} (vis/slash-parse (input/input->text input-state))]
-    (let
-      [target (vec path)
-       spec (some (fn [s]
-                    (when (= target (vec (concat (:slash/parent s) [(:slash/name s)]))) s))
-                  (vis/registered-slashes))]
+    (let [target (vec path)
+          spec (some (fn [s]
+                       (when (= target (vec (concat (:slash/parent s) [(:slash/name s)]))) s))
+                     (vis/registered-slashes))]
 
       (when (#{:navigator :clear-session} (get-in spec [:slash/ui :kind])) spec))))
 
@@ -914,21 +895,20 @@
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
-   (let
-     [text
-      (input/input->text input-state)
+   (let [text
+         (input/input->text input-state)
 
-      ;; `slash/suggestions` returns nil unless the text is a slash query
-      ;; (`slash-query` ⇒ starts with a single `/`). Guard on that FIRST so
-      ;; non-slash input — the overwhelmingly common case, every streaming
-      ;; tick and every plain keystroke — never pays `(menu-commands screen)`,
-      ;; which rebuilds `template-slash-commands` (prompt-template scan +
-      ;; dedup) unconditionally. That eager arg was a per-tick hot-path cost.
-      slash
-      (when (slash/slash-query text)
-        (slash/suggestions text
-                           (menu-commands screen)
-                           {:limit Integer/MAX_VALUE :selected-index selected-index}))]
+         ;; `slash/suggestions` returns nil unless the text is a slash query
+         ;; (`slash-query` ⇒ starts with a single `/`). Guard on that FIRST so
+         ;; non-slash input — the overwhelmingly common case, every streaming
+         ;; tick and every plain keystroke — never pays `(menu-commands screen)`,
+         ;; which rebuilds `template-slash-commands` (prompt-template scan +
+         ;; dedup) unconditionally. That eager arg was a per-tick hot-path cost.
+         slash
+         (when (slash/slash-query text)
+           (slash/suggestions text
+                              (menu-commands screen)
+                              {:limit Integer/MAX_VALUE :selected-index selected-index}))]
 
      ;; When no slash command matches, the same overlay + key handling drive
      ;; the inline `@` file picker (shared with the web; see file-suggest).
@@ -973,10 +953,9 @@
   "Overlay reverse-video on the selected back-buffer cells."
   [^TerminalScreen screen selection cols rows selectable-ranges viewport]
   (let [screen-selection (selection/document->screen-selection selection viewport)]
-    (doseq
-      [{:keys [row col width]}
-       (selection/selected-ranges screen-selection cols rows selectable-ranges)
-       x (range col (+ (long col) (long width)))]
+    (doseq [{:keys [row col width]}
+            (selection/selected-ranges screen-selection cols rows selectable-ranges)
+            x (range col (+ (long col) (long width)))]
 
       (when-let [tc (.getBackCharacter screen (int x) (int row))]
         (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
@@ -1019,69 +998,65 @@
   [^TerminalScreen screen layout text-top inner-h cols db]
   (when-let [{:keys [active? query hits index case?]} (:search db)]
     (when (and active? (not (str/blank? (str query))))
-      (let
-        [needle (cond-> (str query)
-                  (not case?)
-                  str/lower-case)
-         n-len (count needle)
-         top-y (long text-top)
-         bot-y (+ top-y (long inner-h))
-         visible (:visible layout)
-         label-rows (into #{}
-                          (map (fn [{:keys [top]}]
-                                 (+ top-y (long top))))
-                          visible)
-         active-msg (when (seq hits) (nth hits (mod (long (or index 0)) (count hits))))
-         active-band (when active-msg
-                       (some (fn [{:keys [idx top height]}]
-                               (when (= idx active-msg)
-                                 [(+ top-y (long top)) (+ top-y (long top) (long height))]))
-                             visible))
-         cache-key [needle case? (:eff-scroll layout) top-y bot-y cols (:render-version db)
-                    active-band]
-         spans (if (= cache-key (:key @search-hits-cache))
-                 (:spans @search-hits-cache)
-                 (let
-                   [computed
-                    (persistent!
-                      (reduce
-                        (fn [acc row]
-                          (if (contains? label-rows row)
-                            acc
-                            (let
-                              [sb (StringBuilder.)
-                               _ (dotimes [c cols]
-                                   (let
-                                     [tc (.getBackCharacter screen (int c) (int row))
-                                      s (or (some-> tc
-                                                    .getCharacterString)
-                                            " ")]
+      (let [needle (cond-> (str query)
+                     (not case?)
+                     str/lower-case)
+            n-len (count needle)
+            top-y (long text-top)
+            bot-y (+ top-y (long inner-h))
+            visible (:visible layout)
+            label-rows (into #{}
+                             (map (fn [{:keys [top]}]
+                                    (+ top-y (long top))))
+                             visible)
+            active-msg (when (seq hits) (nth hits (mod (long (or index 0)) (count hits))))
+            active-band (when active-msg
+                          (some (fn [{:keys [idx top height]}]
+                                  (when (= idx active-msg)
+                                    [(+ top-y (long top)) (+ top-y (long top) (long height))]))
+                                visible))
+            cache-key [needle case? (:eff-scroll layout) top-y bot-y cols (:render-version db)
+                       active-band]
+            spans (if (= cache-key (:key @search-hits-cache))
+                    (:spans @search-hits-cache)
+                    (let [computed
+                          (persistent!
+                            (reduce
+                              (fn [acc row]
+                                (if (contains? label-rows row)
+                                  acc
+                                  (let [sb (StringBuilder.)
+                                        _ (dotimes [c cols]
+                                            (let [tc (.getBackCharacter screen (int c) (int row))
+                                                  s (or (some-> tc
+                                                                .getCharacterString)
+                                                        " ")]
 
-                                     (.append sb ^String s)))
-                               lower (cond-> (.toString sb)
-                                       (not case?)
-                                       str/lower-case)
-                               current? (boolean (and active-band
+                                              (.append sb ^String s)))
+                                        lower (cond-> (.toString sb)
+                                                (not case?)
+                                                str/lower-case)
+                                        current?
+                                        (boolean (and active-band
                                                       (<= (long (first active-band)) (long row))
                                                       (< (long row) (long (second active-band)))))]
 
-                              (loop
-                                [from 0
-                                 acc acc]
+                                    (loop [from 0
+                                           acc acc]
 
-                                (let [pos (.indexOf ^String lower ^String needle (int from))]
-                                  (if (>= pos 0)
-                                    (recur (+ pos n-len)
-                                           (conj! acc {:row row :start pos :current? current?}))
-                                    acc))))))
-                        (transient [])
-                        (range (max top-y 0) bot-y)))]
-                   (reset! search-hits-cache {:key cache-key :spans computed})
-                   computed))]
+                                      (let [pos (.indexOf ^String lower ^String needle (int from))]
+                                        (if (>= pos 0)
+                                          (recur (+ pos n-len)
+                                                 (conj! acc
+                                                        {:row row :start pos :current? current?}))
+                                          acc))))))
+                              (transient [])
+                              (range (max top-y 0) bot-y)))]
+                      (reset! search-hits-cache {:key cache-key :spans computed})
+                      computed))]
 
-        (doseq
-          [{:keys [row start current?]} spans
-           x (range start (+ (long start) n-len))]
+        (doseq [{:keys [row start current?]} spans
+                x (range start (+ (long start) n-len))]
 
           (when-let [tc (.getBackCharacter screen (int x) (int row))]
             (.setCharacter screen
@@ -1145,12 +1120,10 @@
   [message bubble-left line]
   (cond (or (= :user (:role message)) (error-card-row-geometry? message))
         (+ (long bubble-left) (long bubble-content-h-pad))
-
         (assistant-code-text-row? line)
         (+ (long bubble-left)
            1
            (if (output-indented-row? line) (p/display-width selection-output-indent) 0))
-
         :else bubble-left))
 
 (def ^:private transcript-copy-skip-markers
@@ -1159,9 +1132,9 @@
    Mouse-selection copy operates on rendered screen cells, so clipping these
    rows before extraction keeps copied transcript text free of role banners,
    answer dividers, padding bands, iteration labels, and provider/model footers."
-  #{p/MARKER_ITERATION_HDR p/MARKER_SEP p/MARKER_ANSWER_SEP p/MARKER_ANSWER_HDR
-    p/MARKER_ANSWER_PAD p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD
-    p/MARKER_ITERATION_PAD p/MARKER_QUEUE_HDR})
+  #{p/MARKER_ITERATION_HDR p/MARKER_SEP p/MARKER_ANSWER_SEP p/MARKER_ANSWER_HDR p/MARKER_ANSWER_PAD
+    p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD p/MARKER_ITERATION_PAD
+    p/MARKER_QUEUE_HDR})
 
 (defn- copyable-transcript-line?
   [line]
@@ -1185,12 +1158,11 @@
 (defn- line-first-token-width
   "Display width of the first whitespace-delimited token of `s`."
   [s]
-  (let
-    [s
-     (or s "")
+  (let [s
+        (or s "")
 
-     i
-     (str/index-of s " ")]
+        i
+        (str/index-of s " ")]
 
     (p/display-width (if i (subs s 0 i) s))))
 
@@ -1247,43 +1219,41 @@
    Each range also carries a `:line-id` shared by the soft-wrap fragments of one
    logical source line, so a double-click can expand to the whole wrapped line."
   [layout text-top inner-h cols]
-  (let
-    [bubble-left
-     (long render/MESSAGE_MARGIN_LEFT)
+  (let [bubble-left
+        (long render/MESSAGE_MARGIN_LEFT)
 
-     bubble-w
-     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        bubble-w
+        (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
 
-     content-w
-     (long (max 0 (- bubble-w (* 2 (long bubble-content-h-pad)))))
+        content-w
+        (long (max 0 (- bubble-w (* 2 (long bubble-content-h-pad)))))
 
-     indent-cols
-     (p/display-width selection-output-indent)
+        indent-cols
+        (p/display-width selection-output-indent)
 
-     top-limit
-     (long text-top)
+        top-limit
+        (long text-top)
 
-     bottom-limit
-     (+ top-limit (long (max 0 (long inner-h))))]
+        bottom-limit
+        (+ top-limit (long (max 0 (long inner-h))))]
 
     (if (or (not (pos? content-w)) (<= bottom-limit top-limit))
       []
       (assign-selectable-line-ids
-        (for
-          [{:keys [top projected]}
-           (:visible layout)
+        (for [{:keys [top projected]}
+              (:visible layout)
 
-           :let [message
-                 (or projected {})
+              :let [message
+                    (or projected {})
 
-                 content-top
-                 (bubble-content-top message top-limit top)]
-           [idx line]
-           (map-indexed vector (projected-content-lines message content-w))
+                    content-top
+                    (bubble-content-top message top-limit top)]
+              [idx line]
+              (map-indexed vector (projected-content-lines message content-w))
 
-           :let [row
-                 (+ content-top (long idx))]
-           :when (and (<= top-limit row) (< row bottom-limit) (copyable-transcript-line? line))]
+              :let [row
+                    (+ content-top (long idx))]
+              :when (and (<= top-limit row) (< row bottom-limit) (copyable-transcript-line? line))]
 
           {:row row
            :col (bubble-line-text-col message bubble-left line)
@@ -1300,103 +1270,102 @@
    current screen cells, losing rows that had scrolled off-screen before
    release. This builds the selected document rows from messages/layout instead."
   [messages layout cols settings copy-opts selection]
-  (let
-    [bubble-left
-     (long render/MESSAGE_MARGIN_LEFT)
+  (let [bubble-left
+        (long render/MESSAGE_MARGIN_LEFT)
 
-     bubble-w
-     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        bubble-w
+        (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
 
-     content-w
-     (long (max 0 (- bubble-w (* 2 (long bubble-content-h-pad)))))
+        content-w
+        (long (max 0 (- bubble-w (* 2 (long bubble-content-h-pad)))))
 
-     offsets
-     (vec (:offsets layout))
+        offsets
+        (vec (:offsets layout))
 
-     heights
-     (vec (:heights layout))
+        heights
+        (vec (:heights layout))
 
-     visible-entry-by-idx
-     (into {}
-           (keep (fn [{:keys [idx] :as entry}]
-                   (when (some? idx) [idx entry]))
-                 (:visible layout)))
+        visible-entry-by-idx
+        (into {}
+              (keep (fn [{:keys [idx] :as entry}]
+                      (when (some? idx) [idx entry]))
+                    (:visible layout)))
 
-     {:keys [start end]}
-     (selection/normalize selection)
+        {:keys [start end]}
+        (selection/normalize selection)
 
-     start-row
-     (long (:row start))
+        start-row
+        (long (:row start))
 
-     end-row
-     (long (:row end))]
+        end-row
+        (long (:row end))]
 
     (if (or (not (pos? content-w)) (empty? offsets))
       []
       (vec
-        (for
-          [[idx message]
-           (map-indexed vector messages)
+        (for [[idx message]
+              (map-indexed vector messages)
 
-           :let [top
-                 (long (or (get offsets idx) 0))
+              :let [top
+                    (long (or (get offsets idx) 0))
 
-                 bottom
-                 (long (or (get offsets (inc (long idx))) (+ top (long (or (get heights idx) 0)))))]
-           :when (and (<= top end-row) (>= (dec bottom) start-row))
-           :let [visible-entry
-                 (get visible-entry-by-idx idx)
+                    bottom
+                    (long (or (get offsets (inc (long idx)))
+                              (+ top (long (or (get heights idx) 0)))))]
+              :when (and (<= top end-row) (>= (dec bottom) start-row))
+              :let [visible-entry
+                    (get visible-entry-by-idx idx)
 
-                 visible-projected
-                 (:projected visible-entry)
+                    visible-projected
+                    (:projected visible-entry)
 
-                 projected
-                 (cond
-                   ;; A VISIBLE bubble's live paint (`:projected` from the layout)
-                   ;; is the authoritative on-screen content, and its line count
-                   ;; is exactly what sized this bubble's document row span — so
-                   ;; `content-top + line-idx` aligns perfectly. Use it directly.
-                   ;; This is the ONLY correct source for the LIVE / loading bubble:
-                   ;; while a turn streams, `layout` renders the compact progress
-                   ;; view (spinner + current activity), which is SHORTER than the
-                   ;; message's full transcript projection. Re-projecting the full
-                   ;; body here would overflow the compressed span and copy
-                   ;; misaligned head rows instead of what the user actually sees.
-                   ;; Streaming and completed trace bubbles keep `:lines-window`
-                   ;; nil, so their full-body paint is used verbatim too.
-                   (and visible-projected (nil? (:lines-window visible-projected)))
-                   visible-projected
-                   ;; A WINDOWED paint holds only a mid-scroll slice of a taller
-                   ;; plain-markdown bubble; the document allocates the FULL height,
-                   ;; so re-project the whole body to map every selected row.
-                   visible-projected (virtual/project-message message bubble-w settings copy-opts)
-                   (:prewrapped-lines message) message
-                   :else (virtual/project-message message bubble-w settings copy-opts))
+                    projected
+                    (cond
+                      ;; A VISIBLE bubble's live paint (`:projected` from the layout)
+                      ;; is the authoritative on-screen content, and its line count
+                      ;; is exactly what sized this bubble's document row span — so
+                      ;; `content-top + line-idx` aligns perfectly. Use it directly.
+                      ;; This is the ONLY correct source for the LIVE / loading bubble:
+                      ;; while a turn streams, `layout` renders the compact progress
+                      ;; view (spinner + current activity), which is SHORTER than the
+                      ;; message's full transcript projection. Re-projecting the full
+                      ;; body here would overflow the compressed span and copy
+                      ;; misaligned head rows instead of what the user actually sees.
+                      ;; Streaming and completed trace bubbles keep `:lines-window`
+                      ;; nil, so their full-body paint is used verbatim too.
+                      (and visible-projected (nil? (:lines-window visible-projected)))
+                      visible-projected
+                      ;; A WINDOWED paint holds only a mid-scroll slice of a taller
+                      ;; plain-markdown bubble; the document allocates the FULL height,
+                      ;; so re-project the whole body to map every selected row.
+                      visible-projected
+                      (virtual/project-message message bubble-w settings copy-opts)
+                      (:prewrapped-lines message) message
+                      :else (virtual/project-message message bubble-w settings copy-opts))
 
-                 message
-                 (or projected message {})
+                    message
+                    (or projected message {})
 
-                 top-pad
-                 (if (= :user (:role message)) 1 0)
+                    top-pad
+                    (if (= :user (:role message)) 1 0)
 
-                 content-top
-                 (+ top 1 top-pad)]
-           [line-idx line]
-           (map-indexed vector (projected-content-lines message content-w))
+                    content-top
+                    (+ top 1 top-pad)]
+              [line-idx line]
+              (map-indexed vector (projected-content-lines message content-w))
 
-           :let [row
-                 (+ content-top (long line-idx))]
-           :when (and (<= start-row row) (<= row end-row) (copyable-transcript-line? line))]
+              :let [row
+                    (+ content-top (long line-idx))]
+              :when (and (<= start-row row) (<= row end-row) (copyable-transcript-line? line))]
 
-          (let
-            [visible
-             (selection/clean-copied-text line)
+          (let [visible
+                (selection/clean-copied-text line)
 
-             visible
-             (if (and (output-indented-row? line)
-                      (str/starts-with? visible selection-output-indent))
-               (subs visible (count selection-output-indent))
-               visible)]
+                visible
+                (if (and (output-indented-row? line)
+                         (str/starts-with? visible selection-output-indent))
+                  (subs visible (count selection-output-indent))
+                  visible)]
 
             {:row row
              :col (bubble-line-text-col message bubble-left line)
@@ -1408,36 +1377,35 @@
    current screen cells. Used when mouse selection auto-scroll moves earlier
    selected rows off-screen before release."
   [messages layout cols settings copy-opts selection]
-  (let
-    [doc-lines
-     (transcript-document-copy-lines messages layout cols settings copy-opts selection)
+  (let [doc-lines
+        (transcript-document-copy-lines messages layout cols settings copy-opts selection)
 
-     total-h
-     (long (or (:total-h layout) (peek (vec (:offsets layout))) 0))
+        total-h
+        (long (or (:total-h layout) (peek (vec (:offsets layout))) 0))
 
-     by-row
-     (into {} (map (juxt :row identity) doc-lines))
+        by-row
+        (into {} (map (juxt :row identity) doc-lines))
 
-     ranges
-     (selection/selected-ranges selection
-                                cols
-                                total-h
-                                (mapv #(select-keys % [:row :col :width]) doc-lines))]
+        ranges
+        (selection/selected-ranges selection
+                                   cols
+                                   total-h
+                                   (mapv #(select-keys % [:row :col :width]) doc-lines))]
 
     (selection/clean-copied-text (str/join "\n"
                                            (map (fn [{:keys [row col width]}]
-                                                  (let
-                                                    [{line-col :col text :text}
-                                                     (get by-row row)
+                                                  (let [{line-col :col text :text}
+                                                        (get by-row row)
 
-                                                     text
-                                                     (or text "")
+                                                        text
+                                                        (or text "")
 
-                                                     from
-                                                     (max 0 (- (long col) (long (or line-col 0))))
+                                                        from
+                                                        (max 0
+                                                             (- (long col) (long (or line-col 0))))
 
-                                                     to
-                                                     (min (count text) (+ from (long width)))]
+                                                        to
+                                                        (min (count text) (+ from (long width)))]
 
                                                     (if (< from to) (subs text from to) "")))
                                                 ranges)))))
@@ -1463,11 +1431,10 @@
    streaming, where the raw message can still be a placeholder."
   [message bubble-w settings {:keys [session-id detail-expansions]}]
   (if (and (= :assistant (:role message)) (:traces message))
-    (let
-      [opts {:session-id session-id
-             :session-turn-id (or (:turn-id message) (:session-turn-id message) (:id message))
-             :detail-expansions (assoc (or detail-expansions {})
-                                  :vis.channel-tui/expand-all-details? true)}]
+    (let [opts {:session-id session-id
+                :session-turn-id (or (:turn-id message) (:session-turn-id message) (:id message))
+                :detail-expansions (assoc (or detail-expansions {})
+                                     :vis.channel-tui/expand-all-details? true)}]
       (:text (render/format-answer-with-thinking-data (:text message)
                                                       (:traces message)
                                                       bubble-w
@@ -1494,68 +1461,66 @@
    of issue #24). The frame now only pays for geometry; the click handler
    forces the payload via `copy-bubble-hit!`."
   [layout messages text-top inner-h cols settings copy-opts]
-  (let
-    [bubble-left
-     (long render/MESSAGE_MARGIN_LEFT)
+  (let [bubble-left
+        (long render/MESSAGE_MARGIN_LEFT)
 
-     bubble-w
-     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        bubble-w
+        (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
 
-     top-limit
-     (long text-top)
+        top-limit
+        (long text-top)
 
-     bottom-limit
-     (+ top-limit (long (max 0 (long inner-h))))]
+        bottom-limit
+        (+ top-limit (long (max 0 (long inner-h))))]
 
     (if (or (not (pos? bubble-w)) (<= bottom-limit top-limit))
       []
       (vec
-        (for
-          [{:keys [idx top height projected]}
-           (:visible layout)
+        (for [{:keys [idx top height projected]}
+              (:visible layout)
 
-           :let [;; Use the projected message for live text, but prefer the raw
-                 ;; persisted message when expanding trace details.
-                 raw-message
-                 (nth messages idx nil)
+              :let [;; Use the projected message for live text, but prefer the raw
+                    ;; persisted message when expanding trace details.
+                    raw-message
+                    (nth messages idx nil)
 
-                 ;; Prefer the raw persisted message for trace bubbles so
-                 ;; clipboard can expand hidden blocks. Keep projected text
-                 ;; for live streaming/plain bubbles; it may carry fresher
-                 ;; visible content than the raw placeholder.
-                 message
-                 (if (:traces raw-message) raw-message (or projected raw-message))
+                    ;; Prefer the raw persisted message for trace bubbles so
+                    ;; clipboard can expand hidden blocks. Keep projected text
+                    ;; for live streaming/plain bubbles; it may carry fresher
+                    ;; visible content than the raw placeholder.
+                    message
+                    (if (:traces raw-message) raw-message (or projected raw-message))
 
-                 ;; Cheap content check — the old eager
-                 ;; `(str/blank? text)` guard forced the full clipboard
-                 ;; formatting per bubble per frame just to decide the
-                 ;; region exists.
-                 has-copyable-content?
-                 (boolean (or (:traces message)
-                              (seq (:content message))
-                              (not (str/blank? (:text message)))))
+                    ;; Cheap content check — the old eager
+                    ;; `(str/blank? text)` guard forced the full clipboard
+                    ;; formatting per bubble per frame just to decide the
+                    ;; region exists.
+                    has-copyable-content?
+                    (boolean (or (:traces message)
+                                 (seq (:content message))
+                                 (not (str/blank? (:text message)))))
 
-                 text
-                 (delay (copyable-bubble-text message bubble-w settings copy-opts))
+                    text
+                    (delay (copyable-bubble-text message bubble-w settings copy-opts))
 
-                 sep-pad
-                 0
+                    sep-pad
+                    0
 
-                 bubble-top
-                 (+ top-limit (long top) sep-pad)
+                    bubble-top
+                    (+ top-limit (long top) sep-pad)
 
-                 copy-height
-                 (max 1 (- (long height) sep-pad 1))
+                    copy-height
+                    (max 1 (- (long height) sep-pad 1))
 
-                 copy-bottom
-                 (min bottom-limit (+ bubble-top copy-height))
+                    copy-bottom
+                    (min bottom-limit (+ bubble-top copy-height))
 
-                 row
-                 (max top-limit bubble-top)
+                    row
+                    (max top-limit bubble-top)
 
-                 clipped-height
-                 (- copy-bottom row)]
-           :when (and (pos? clipped-height) has-copyable-content?)]
+                    clipped-height
+                    (- copy-bottom row)]
+              :when (and (pos? clipped-height) has-copyable-content?)]
 
           {:row row :col bubble-left :width bubble-w :height clipped-height :text text})))))
 
@@ -1568,45 +1533,43 @@
    block's body, not the entire assistant message. Drag selection is
    unaffected - it operates on screen cells via `selectable-ranges`."
   [layout text-top inner-h cols]
-  (let
-    [bubble-left
-     (long render/MESSAGE_MARGIN_LEFT)
+  (let [bubble-left
+        (long render/MESSAGE_MARGIN_LEFT)
 
-     bubble-w
-     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        bubble-w
+        (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
 
-     top-limit
-     (long text-top)
+        top-limit
+        (long text-top)
 
-     bottom-limit
-     (+ top-limit (long (max 0 (long inner-h))))]
+        bottom-limit
+        (+ top-limit (long (max 0 (long inner-h))))]
 
     (if (or (not (pos? bubble-w)) (<= bottom-limit top-limit))
       []
       (vec
-        (for
-          [{:keys [top projected]}
-           (:visible layout)
+        (for [{:keys [top projected]}
+              (:visible layout)
 
-           :let [line-meta
-                 (:line-meta projected)
+              :let [line-meta
+                    (:line-meta projected)
 
-                 content-top
-                 (bubble-content-top projected top-limit top)]
-           :when (sequential? line-meta)
-           i
-           (range (count line-meta))
+                    content-top
+                    (bubble-content-top projected top-limit top)]
+              :when (sequential? line-meta)
+              i
+              (range (count line-meta))
 
-           :let [m
-                 (nth line-meta i nil)
+              :let [m
+                    (nth line-meta i nil)
 
-                 abs-row
-                 (+ content-top (long i))]
-           :when (and (map? m)
-                      (= :copy-block-body (:kind m))
-                      (not (str/blank? (str (:text m))))
-                      (>= abs-row top-limit)
-                      (< abs-row bottom-limit))]
+                    abs-row
+                    (+ content-top (long i))]
+              :when (and (map? m)
+                         (= :copy-block-body (:kind m))
+                         (not (str/blank? (str (:text m))))
+                         (>= abs-row top-limit)
+                         (< abs-row bottom-limit))]
 
           {:row abs-row
            :col bubble-left
@@ -1629,15 +1592,14 @@
    inside the band and only the bottom edge can overflow. `placements` are the
    exact painted positions recorded via `render/*image-placements*`."
   [placements messages-top messages-bottom]
-  (let
-    [top
-     (long messages-top)
+  (let [top
+        (long messages-top)
 
-     bottom
-     (long messages-bottom)
+        bottom
+        (long messages-bottom)
 
-     kitty?
-     (= :kitty (timg/images-protocol))]
+        kitty?
+        (= :kitty (timg/images-protocol))]
 
     (->> placements
          ;; Only rows actually painted inside the band.
@@ -1651,30 +1613,29 @@
          vals
          (keep
            (fn [rows-of-img]
-             (let
-               [sorted
-                (sort-by (comp long :img-idx) rows-of-img)
+             (let [sorted
+                   (sort-by (comp long :img-idx) rows-of-img)
 
-                topmost
-                (first sorted)
+                   topmost
+                   (first sorted)
 
-                img
-                (:img topmost)
+                   img
+                   (:img topmost)
 
-                full-rows
-                (long (:rows img))
+                   full-rows
+                   (long (:rows img))
 
-                cols
-                (long (or (:cols img) 1))
+                   cols
+                   (long (or (:cols img) 1))
 
-                crop-top
-                (long (or (:img-idx topmost) 0))
+                   crop-top
+                   (long (or (:img-idx topmost) 0))
 
-                visible
-                (count sorted)
+                   visible
+                   (count sorted)
 
-                crop-bot
-                (max 0 (- full-rows crop-top visible))]
+                   crop-bot
+                   (max 0 (- full-rows crop-top visible))]
 
                (cond
                  ;; Fully on screen — unchanged.
@@ -1682,11 +1643,10 @@
                  ;; Kitty, scrolled INTO the picture (its top edge is above the
                  ;; band): show that vertical slice at native scale via the
                  ;; protocol's source rectangle.
-                 (and kitty? (pos? crop-top))
-                 (assoc topmost
-                   :img (assoc img
-                          :crop-top crop-top
-                          :crop-bottom crop-bot))
+                 (and kitty? (pos? crop-top)) (assoc topmost
+                                                :img (assoc img
+                                                       :crop-top crop-top
+                                                       :crop-bottom crop-bot))
                  ;; Kitty can source-crop an image the user scrolled INTO, keeping
                  ;; its visible slice at the original scale. iTerm2 cannot, so every
                  ;; other partial placement scales the whole image into the visible
@@ -1762,54 +1722,55 @@
            order (:order st)
            placed #{}
            next-id (long (:next-id st))]
+
       (if-let [{:keys [row col img]} (first rs)]
         (let [tkey [(:path img) (:cols img) (:rows img)]
               [transmits order next-id entry]
               (if-let [e (get transmits tkey)]
                 [transmits order next-id e]
-                (if-let [{:keys [data w h]}
-                         (timg/kitty-png (:path img)
-                                         (:mime img)
-                                         {:cols (:cols img)
-                                          :rows (:rows img)
-                                          :width (:width img)
-                                          :height (:height img)})]
+                (if-let [{:keys [data w h]} (timg/kitty-png (:path img)
+                                                            (:mime img)
+                                                            {:cols (:cols img)
+                                                             :rows (:rows img)
+                                                             :width (:width img)
+                                                             :height (:height img)})]
                   (let [id next-id
                         e {:id id :img-w w :img-h h}]
+
                     (.append sb ^String (timg/kitty-transmit data id))
                     [(assoc transmits tkey e) (conj order tkey) (inc (long next-id)) e])
                   [transmits order next-id nil]))]
+
           (if entry
-            (do
-              (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
-              (.append sb ^String (timg/kitty-place {:id (:id entry)
-                                                     :cols (:cols img)
-                                                     :rows (:rows img)
-                                                     :crop-top (:crop-top img)
-                                                     :crop-bottom (:crop-bottom img)
-                                                     :img-w (:img-w entry)
-                                                     :img-h (:img-h entry)}))
-              (recur (rest rs) transmits order (conj placed (long (:id entry))) (long next-id)))
+            (do (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
+                (.append sb
+                         ^String
+                         (timg/kitty-place {:id (:id entry)
+                                            :cols (:cols img)
+                                            :rows (:rows img)
+                                            :crop-top (:crop-top img)
+                                            :crop-bottom (:crop-bottom img)
+                                            :img-w (:img-w entry)
+                                            :img-h (:img-h entry)}))
+                (recur (rest rs) transmits order (conj placed (long (:id entry))) (long next-id)))
             (recur (rest rs) transmits order placed (long next-id))))
         ;; All regions emitted. Delete placements that left the viewport (keep data),
         ;; then evict the oldest off-screen transmits if we're over the cap.
-        (do
-          (doseq [id (:placed st)]
-            (when-not (placed id)
-              (.append sb ^String (timg/kitty-delete-placement id))))
-          (let [[transmits order]
-                (loop [transmits transmits
-                       order order]
-                  (let [victim (when (> (count order) (long kitty-max-transmits))
-                                 (first (remove #(placed (:id (get transmits %))) order)))]
-                    (if victim
-                      (do (.append sb ^String (timg/kitty-free-image (:id (get transmits victim))))
-                          (recur (dissoc transmits victim) (vec (remove #(= % victim) order))))
-                      [transmits order])))]
-            (reset! kitty-image-state {:transmits transmits
-                                       :order order
-                                       :placed placed
-                                       :next-id next-id})))))))
+        (do (doseq [id (:placed st)]
+              (when-not (placed id) (.append sb ^String (timg/kitty-delete-placement id))))
+            (let [[transmits order]
+                  (loop [transmits transmits
+                         order order]
+
+                    (let [victim (when (> (count order) (long kitty-max-transmits))
+                                   (first (remove #(placed (:id (get transmits %))) order)))]
+                      (if victim
+                        (do (.append sb
+                                     ^String (timg/kitty-free-image (:id (get transmits victim))))
+                            (recur (dissoc transmits victim) (vec (remove #(= % victim) order))))
+                        [transmits order])))]
+              (reset! kitty-image-state
+                {:transmits transmits :order order :placed placed :next-id next-id})))))))
 
 (defn- paint-terminal-images!
   "Draw every region from `image-regions` onto the terminal's graphics layer,
@@ -1836,9 +1797,7 @@
             (StringBuilder.)]
 
         (.append sb "\u001b7") ;; DECSC save cursor
-        (if (= proto :kitty)
-          (emit-kitty-images! sb regions)
-          (emit-iterm2-images! sb regions))
+        (if (= proto :kitty) (emit-kitty-images! sb regions) (emit-iterm2-images! sb regions))
         (.append sb "\u001b8") ;; DECRC restore cursor
         (try (when out (.write out (.getBytes (.toString sb) "UTF-8")) (.flush out))
              (catch Throwable _ nil)))
@@ -1879,7 +1838,7 @@
   [regions ^long band-top]
   (filterv (fn [{:keys [row img]}]
              (<= (+ (long row) (long (or (:rows img) 1))) band-top))
-           regions))
+    regions))
 
 (defn- clip-terminal-images-to-band!
   "Re-place exactly the images that stay clear of a band starting at `band-top`;
@@ -1890,12 +1849,11 @@
 
 (defn- bubble-copy-hit
   [point regions]
-  (let
-    [col
-     (long (:col point))
+  (let [col
+        (long (:col point))
 
-     row
-     (long (:row point))]
+        row
+        (long (:row point))]
 
     (some (fn [{r :row c :col w :width h :height :as region}]
             (when (and (>= row (long r))
@@ -1912,21 +1870,20 @@
    `render/draw-input-box!`, so selection copies the user's draft text without
    the input box padding or border chrome."
   [input-top text-rows cols]
-  (let
-    [cols
-     (long (max 0 (long cols)))
+  (let [cols
+        (long (max 0 (long cols)))
 
-     text-w
-     (render/input-text-w cols)
+        text-w
+        (render/input-text-w cols)
 
-     left
-     (long (max 0 (quot (- cols text-w) 2)))
+        left
+        (long (max 0 (quot (- cols text-w) 2)))
 
-     text-top
-     (+ (long input-top) 1 (long render/input-pad-y))
+        text-top
+        (+ (long input-top) 1 (long render/input-pad-y))
 
-     n
-     (long (max 0 (long text-rows)))]
+        n
+        (long (max 0 (long text-rows)))]
 
     (if (or (not (pos? text-w)) (not (pos? n)))
       []
@@ -1970,12 +1927,15 @@
    spec stacked — the stacked count made a four-column C-x hydra look tall enough
    to reach the header and no image survived it."
   ^long [db spec]
-  (let [{:keys [content-top prompt-h]} (state/band-anchor db)
-        {:keys [cols rows]} (:layout db)
-        region (tr/band-region (long (or cols 80))
-                               (long (or rows 24))
-                               (long content-top)
-                               (long prompt-h))]
+  (let [{:keys [content-top prompt-h]}
+        (state/band-anchor db)
+
+        {:keys [cols rows]}
+        (:layout db)
+
+        region
+        (tr/band-region (long (or cols 80)) (long (or rows 24)) (long content-top) (long prompt-h))]
+
     (long (:sep-row (tr/band-geometry region (long (:row-count (tr/layout spec region))))))))
 
 (defn- with-band-lock
@@ -2008,41 +1968,39 @@
    refresh the active tab only when it actually changed, persist only when
    a tab was really removed (closing the last tab is a reducer no-op)."
   [screen refresh-active-tab! persist-tabs! tab-id]
-  (let
-    [db
-     @state/app-db
+  (let [db
+        @state/app-db
 
-     active-id
-     (:active-tab-id db)
+        active-id
+        (:active-tab-id db)
 
-     target-id
-     (or tab-id active-id)
+        target-id
+        (or tab-id active-id)
 
-     snap
-     (if (= target-id active-id) db (get-in db [:tab-locals target-id]))
+        snap
+        (if (= target-id active-id) db (get-in db [:tab-locals target-id]))
 
-     busy?
-     (boolean (or (:loading? snap) (seq (:pending-sends snap))))
+        busy?
+        (boolean (or (:loading? snap) (seq (:pending-sends snap))))
 
-     choice
-     (if busy?
-       (some-> (with-dialog-lock #(dlg/list-dialog!
-                                    screen
-                                    "Turn still running"
-                                    [{:id :background
-                                      :label "Keep running in background (reattach later)"}
-                                     {:id :cancel-close :label "Cancel the turn and close"}]
-                                    {:enter-label "choose" :height :content}))
-               :id)
-       :background)]
+        choice
+        (if busy?
+          (some-> (with-dialog-lock #(dlg/list-dialog!
+                                       screen
+                                       "Turn still running"
+                                       [{:id :background
+                                         :label "Keep running in background (reattach later)"}
+                                        {:id :cancel-close :label "Cancel the turn and close"}]
+                                       {:enter-label "choose" :height :content}))
+                  :id)
+          :background)]
 
     (when choice
-      (let
-        [before-active
-         (:active-tab-id @state/app-db)
+      (let [before-active
+            (:active-tab-id @state/app-db)
 
-         before-n
-         (count (:tabs @state/app-db))]
+            before-n
+            (count (:tabs @state/app-db))]
 
         (when (= choice :cancel-close) (state/dispatch [:cancel-tab-turn target-id]))
         (state/dispatch [:close-tab target-id])
@@ -2077,20 +2035,19 @@
    empty/short session where a PageUp parked `:at` offset 0."
   [g cols messages-bottom max-scroll db]
   (when (scroll/jump-chip-visible? (:scroll db) max-scroll)
-    (let
-      [label
-       " ↓ latest (C-x j) "
+    (let [label
+          " ↓ latest (C-x j) "
 
-       w
-       (p/display-width label)
+          w
+          (p/display-width label)
 
-       ;; Horizontally CENTERED, floating just above the echo area — the
-       ;; chat-app convention (a centered pill), not tucked in a corner.
-       col
-       (max 0 (quot (- (long cols) w) 2))
+          ;; Horizontally CENTERED, floating just above the echo area — the
+          ;; chat-app convention (a centered pill), not tucked in a corner.
+          col
+          (max 0 (quot (- (long cols) w) 2))
 
-       row
-       (max 0 (dec (long messages-bottom)))]
+          row
+          (max 0 (dec (long messages-bottom)))]
 
       (components/button! g col row label :jump-bottom))))
 
@@ -2161,12 +2118,11 @@
    stops growing and `draw-input-box!` scrolls vertically to keep
    the cursor visible."
   ^long [{:keys [lines]} cols]
-  (let
-    [text-w
-     (render/input-text-w cols)
+  (let [text-w
+        (render/input-text-w cols)
 
-     n
-     (render/input-visual-row-count lines text-w)]
+        n
+        (render/input-visual-row-count lines text-w)]
 
     (min (long input-max-lines) (max (long input-min-lines) n))))
 
@@ -2196,12 +2152,20 @@
   [^TerminalScreen screen g db
    {:keys [input input-top text-rows cols now-ms echo-row footer-row slash-suggestions
            slash-command-index]}]
-  (let [human-input? (some? (:human-input db))
-        [cx cy] (render/draw-input-box! g input input-top text-rows cols nil)]
+  (let [human-input?
+        (some? (:human-input db))
+
+        [cx cy]
+        (render/draw-input-box! g input input-top text-rows cols nil)]
+
     (footer/draw-echo-area! g db echo-row cols now-ms)
     (footer/draw-footer! g db footer-row cols now-ms)
     (when-not human-input?
-      (render/draw-slash-command-suggestions! g slash-suggestions input-top cols slash-command-index))
+      (render/draw-slash-command-suggestions! g
+                                              slash-suggestions
+                                              input-top
+                                              cols
+                                              slash-command-index))
     (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
       (.setCursorPosition screen nil)
       (.setCursorPosition screen (TerminalPosition. cx cy)))))
@@ -2220,8 +2184,7 @@
        ;; empty transcript rather than a "Loading session…" spinner. Existing
        ;; sessions hydrating on focus (`:pending?`/`:session-id`, no build-id)
        ;; still spin.
-       (let [active-id (or (:active-tab-id db)
-                           (:id (some #(when (:active? %) %) (:tabs db))))]
+       (let [active-id (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))))]
          (not (some #(and (= (:id %) active-id) (:build-id %)) (:tabs db))))))
 
 (defn- paint-content-loading!
@@ -2231,10 +2194,18 @@
    `paint-boot-splash!` but scoped to the messages area. Caller holds
    `draw-lock`."
   [g cols messages-top messages-bottom now-ms]
-  (let [messages-top (long messages-top)
-        messages-bottom (long messages-bottom)
-        row (max messages-top (quot (+ messages-top messages-bottom) 2))
-        label (str (render/spinner-frame (long now-ms)) "  Loading session…")]
+  (let [messages-top
+        (long messages-top)
+
+        messages-bottom
+        (long messages-bottom)
+
+        row
+        (max messages-top (quot (+ messages-top messages-bottom) 2))
+
+        label
+        (str (render/spinner-frame (long now-ms)) "  Loading session…")]
+
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/put-str! g 0 row (p/center-text label (long cols)))))
 
@@ -2250,175 +2221,174 @@
   [^TerminalScreen screen cols rows
    {:keys [messages input progress loading? cancelling? turn-start-ms settings slash-command-index]
     :as db} now-ms]
-  (let
-    [now-ms
-     (long now-ms)
+  (let [now-ms
+        (long now-ms)
 
-     cols
-     (long cols)
+        cols
+        (long cols)
 
-     rows
-     (long rows)
+        rows
+        (long rows)
 
-     frame-start-ns
-     (System/nanoTime)
+        frame-start-ns
+        (System/nanoTime)
 
-     g
-     (.newTextGraphics screen)
+        g
+        (.newTextGraphics screen)
 
-     text-rows
-     (input-text-rows input cols)
+        text-rows
+        (input-text-rows input cols)
 
-     input-box-h
-     (+ text-rows 2 (* 2 (long render/input-pad-y)))
+        input-box-h
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
-     ;; Reserve bottom rows for footer proper (model/status + provider
-     ;; limits). The Emacs echo area is a single flat row directly
-     ;; above the editor, which now draws its own top border.
-     header-top
-     0
+        ;; Reserve bottom rows for footer proper (model/status + provider
+        ;; limits). The Emacs echo area is a single flat row directly
+        ;; above the editor, which now draws its own top border.
+        header-top
+        0
 
-     footer-row
-     (- rows 2)
+        footer-row
+        (- rows 2)
 
-     input-top
-     (- rows input-box-h 2)
+        input-top
+        (- rows input-box-h 2)
 
-     echo-row
-     (- input-top 1)
+        echo-row
+        (- input-top 1)
 
-     ;; Keep one empty terminal row between the header band (`Vis`/workspace
-     ;; strip) and the first transcript bubble. `draw-messages-area!` then
-     ;; applies its own internal MESSAGE_MARGIN_TOP inside this area; without
-     ;; this outer gap the first recap/progress bubble visually hugs the
-     ;; header bottom rule.
-     messages-top
-     (inc (long (header/header-rows db)))
+        ;; Keep one empty terminal row between the header band (`Vis`/workspace
+        ;; strip) and the first transcript bubble. `draw-messages-area!` then
+        ;; applies its own internal MESSAGE_MARGIN_TOP inside this area; without
+        ;; this outer gap the first recap/progress bubble visually hugs the
+        ;; header bottom rule.
+        messages-top
+        (inc (long (header/header-rows db)))
 
-     messages-bottom
-     echo-row
+        messages-bottom
+        echo-row
 
-     ;; Single source of truth for the gutter math lives in `render.clj`
-     ;; (`MESSAGE_SIDE_PAD`). Reference it directly; do
-     ;; NOT inline a literal here. Two layers disagreeing by even
-     ;; one column makes `format-iteration-entry` size labels for
-     ;; one bubble-w while `draw-chat-bubble!` paints into a
-     ;; different bubble-w - right-aligned labels (`BLOCK 3`,
-     ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
-     ;; mismatch. Use the const, never the value.
-     bubble-w
-     (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
+        ;; Single source of truth for the gutter math lives in `render.clj`
+        ;; (`MESSAGE_SIDE_PAD`). Reference it directly; do
+        ;; NOT inline a literal here. Two layers disagreeing by even
+        ;; one column makes `format-iteration-entry` size labels for
+        ;; one bubble-w while `draw-chat-bubble!` paints into a
+        ;; different bubble-w - right-aligned labels (`BLOCK 3`,
+        ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
+        ;; mismatch. Use the const, never the value.
+        bubble-w
+        (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
 
-     inner-h
-     (max 0 (- messages-bottom messages-top 2))
+        inner-h
+        (max 0 (- messages-bottom messages-top 2))
 
-     ;; top + bottom margins
-     ;; Derive the concrete layout offset from the `:scroll` variant. nil
-     ;; = FOLLOW settled at the bottom (auto-bottom, never anchored); a
-     ;; number = parked or mid-ease. `prev-max-s` from the previously
-     ;; published layout is good enough to tell "settled" from "easing".
-     prev-max-s
-     (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
+        ;; top + bottom margins
+        ;; Derive the concrete layout offset from the `:scroll` variant. nil
+        ;; = FOLLOW settled at the bottom (auto-bottom, never anchored); a
+        ;; number = parked or mid-ease. `prev-max-s` from the previously
+        ;; published layout is good enough to tell "settled" from "easing".
+        prev-max-s
+        (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
 
-     messages-scroll
-     (scroll/layout-offset (:scroll db) prev-max-s)
+        messages-scroll
+        (scroll/layout-offset (:scroll db) prev-max-s)
 
-     ;; `:viewport-rows` lets the live progress bubble truncate its
-     ;; iteration trace to what actually fits on screen instead of
-     ;; formatting all 15-of-N iterations every spinner tick. Off-screen
-     ;; iterations collapse under the existing `PROGRESS HISTORY`
-     ;; toggle; clicking it expands the full trace on demand.
-     progress-extra
-     {:now-ms now-ms
-      :turn-start-ms turn-start-ms
-      :cancelling? (boolean cancelling?)
-      :viewport-rows inner-h
-      :pending-sends (:pending-sends db)
-      :queue-paused (:queue-paused db)}
+        ;; `:viewport-rows` lets the live progress bubble truncate its
+        ;; iteration trace to what actually fits on screen instead of
+        ;; formatting all 15-of-N iterations every spinner tick. Off-screen
+        ;; iterations collapse under the existing `PROGRESS HISTORY`
+        ;; toggle; clicking it expands the full trace on demand.
+        progress-extra
+        {:now-ms now-ms
+         :turn-start-ms turn-start-ms
+         :cancelling? (boolean cancelling?)
+         :viewport-rows inner-h
+         :pending-sends (:pending-sends db)
+         :queue-paused (:queue-paused db)}
 
-     ;; Single virtualized layout pass: cheap height estimate for
-     ;; every message, full projection + real height ONLY for
-     ;; messages whose viewport interval is non-empty. The
-     ;; resulting `:total-h` feeds the scrollbar geometry +
-     ;; gets published into app-db so input-thread scroll handlers
-     ;; have an accurate ceiling.
-     layout
-     (virtual/layout messages
-                     bubble-w
-                     settings
-                     messages-scroll
-                     inner-h
-                     {:progress progress :loading? loading? :progress-extra progress-extra}
-                     {:session-id (get-in db [:session :id])
-                      :detail-expansions (:detail-expansions db)
-                      ;; Previous frame's cumulative offsets let `layout`
-                      ;; anchor the scroll to the message that was at the
-                      ;; top of the viewport, so estimate->real height
-                      ;; corrections (which move `total-h`) don't lurch the
-                      ;; viewport / scrollbar thumb mid-scroll.
-                      :prev-offsets (get-in db [:layout :offsets])})
+        ;; Single virtualized layout pass: cheap height estimate for
+        ;; every message, full projection + real height ONLY for
+        ;; messages whose viewport interval is non-empty. The
+        ;; resulting `:total-h` feeds the scrollbar geometry +
+        ;; gets published into app-db so input-thread scroll handlers
+        ;; have an accurate ceiling.
+        layout
+        (virtual/layout messages
+                        bubble-w
+                        settings
+                        messages-scroll
+                        inner-h
+                        {:progress progress :loading? loading? :progress-extra progress-extra}
+                        {:session-id (get-in db [:session :id])
+                         :detail-expansions (:detail-expansions db)
+                         ;; Previous frame's cumulative offsets let `layout`
+                         ;; anchor the scroll to the message that was at the
+                         ;; top of the viewport, so estimate->real height
+                         ;; corrections (which move `total-h`) don't lurch the
+                         ;; viewport / scrollbar thumb mid-scroll.
+                         :prev-offsets (get-in db [:layout :offsets])})
 
-     layout-end-ns
-     (System/nanoTime)
+        layout-end-ns
+        (System/nanoTime)
 
-     ;; Persist the anchor-corrected scroll so the input thread's
-     ;; wheel/drag math and the next layout share the same offset.
-     ;; nil = auto-bottom (never written back). Skip the dispatch
-     ;; when unchanged to avoid churning render versions. Pass the
-     ;; delta so an in-flight scroll animation's target re-anchors
-     ;; with the offset (otherwise leaving auto-bottom lurches).
-     anchored-scroll
-     (:anchored-scroll layout)
+        ;; Persist the anchor-corrected scroll so the input thread's
+        ;; wheel/drag math and the next layout share the same offset.
+        ;; nil = auto-bottom (never written back). Skip the dispatch
+        ;; when unchanged to avoid churning render versions. Pass the
+        ;; delta so an in-flight scroll animation's target re-anchors
+        ;; with the offset (otherwise leaving auto-bottom lurches).
+        anchored-scroll
+        (:anchored-scroll layout)
 
-     _
-     (when (and (some? anchored-scroll)
-                (some? messages-scroll)
-                (not= anchored-scroll messages-scroll))
-       (state/dispatch [:reanchor-scroll anchored-scroll
-                        (- (long anchored-scroll) (long messages-scroll))]))
+        _
+        (when (and (some? anchored-scroll)
+                   (some? messages-scroll)
+                   (not= anchored-scroll messages-scroll))
+          (state/dispatch [:reanchor-scroll anchored-scroll
+                           (- (long anchored-scroll) (long messages-scroll))]))
 
-     total-h
-     (long (:total-h layout))
+        total-h
+        (long (:total-h layout))
 
-     text-top
-     (+ messages-top (long render/MESSAGE_MARGIN_TOP))
+        text-top
+        (+ messages-top (long render/MESSAGE_MARGIN_TOP))
 
-     transcript-selectable-ranges
-     (bubble-selectable-ranges layout text-top inner-h cols)
+        transcript-selectable-ranges
+        (bubble-selectable-ranges layout text-top inner-h cols)
 
-     transcript-bubble-copy-regions
-     (bubble-copy-regions layout
-                          messages
-                          text-top
-                          inner-h
-                          cols
-                          settings
-                          {:session-id (get-in db [:session :id])
-                           :detail-expansions (:detail-expansions db)})
+        transcript-bubble-copy-regions
+        (bubble-copy-regions layout
+                             messages
+                             text-top
+                             inner-h
+                             cols
+                             settings
+                             {:session-id (get-in db [:session :id])
+                              :detail-expansions (:detail-expansions db)})
 
-     transcript-disclosure-copy-regions
-     (disclosure-copy-regions layout text-top inner-h cols)
+        transcript-disclosure-copy-regions
+        (disclosure-copy-regions layout text-top inner-h cols)
 
-     input-selectable-ranges
-     (input-selectable-ranges input-top text-rows cols)
+        input-selectable-ranges
+        (input-selectable-ranges input-top text-rows cols)
 
-     selectable-ranges
-     (into transcript-selectable-ranges input-selectable-ranges)
+        selectable-ranges
+        (into transcript-selectable-ranges input-selectable-ranges)
 
-     slash-suggestions
-     (slash-suggestions-for-db screen db)
+        slash-suggestions
+        (slash-suggestions-for-db screen db)
 
-     ;; F2 context panel snapshot ({:tasks :facts}) — derived once here (like
-     ;; slash-suggestions) from the active session's cache, refreshed at each
-     ;; turn end. The paint body just reads it; no inline let, no DB hit.
-     ctx-snapshot
-     (get-in db [:ctx-by-session (get-in db [:session :id])] {:tasks {} :facts {} :archived {}})
+        ;; F2 context panel snapshot ({:tasks :facts}) — derived once here (like
+        ;; slash-suggestions) from the active session's cache, refreshed at each
+        ;; turn end. The paint body just reads it; no inline let, no DB hit.
+        ctx-snapshot
+        (get-in db [:ctx-by-session (get-in db [:session :id])] {:tasks {} :facts {} :archived {}})
 
-     ;; Collector for inline-image placements. `draw-messages-area!` conj's
-     ;; the exact painted position of each expanded `vis-image` row here;
-     ;; the post-refresh graphics pass drains it below.
-     image-sink
-     (atom [])]
+        ;; Collector for inline-image placements. `draw-messages-area!` conj's
+        ;; the exact painted position of each expanded `vis-image` row here;
+        ;; the post-refresh graphics pass drains it below.
+        image-sink
+        (atom [])]
 
     (render/fill-background! g cols rows)
     ;; The remaining paint passes live in ONE `let` so each phase-end timestamp
@@ -2426,114 +2396,113 @@
     ;; into `:messages-ms` / `:chrome-ms` / `:capture-ms` / `:post-ms` (see
     ;; `paint-phase-detail`) so a stutter warning names the pass that regressed
     ;; instead of one lumped paint number (issue #24 lived in `messages`).
-    (let
-      [;; Messages area draws FIRST. It opens a new click-region staging
-       ;; pass via `cr/begin-frame!` and registers every painted chrome
-       ;; row (links, image markers, file links). The header then
-       ;; registers its :copy-id region. The published click-region
-       ;; registry is unchanged until `cr/commit-frame!` runs at the end
-       ;; of this fn - so the input thread can `cr/lookup` at any time
-       ;; during the paint and still get a complete previous frame back
-       ;; instead of a half-filled buffer (the bug that made the header
-       ;; copy-id button feel "sometimes broken" when the spinner was
-       ;; ticking).
-       ;;
-       ;; #24's copy-region storm lived in `draw-messages-area!`; bracket it
-       ;; with its own timestamps so a regression there reads `messages`, not
-       ;; `paint`.
-       messages-start-ns
-       (System/nanoTime)
+    (let [;; Messages area draws FIRST. It opens a new click-region staging
+          ;; pass via `cr/begin-frame!` and registers every painted chrome
+          ;; row (links, image markers, file links). The header then
+          ;; registers its :copy-id region. The published click-region
+          ;; registry is unchanged until `cr/commit-frame!` runs at the end
+          ;; of this fn - so the input thread can `cr/lookup` at any time
+          ;; during the paint and still get a complete previous frame back
+          ;; instead of a half-filled buffer (the bug that made the header
+          ;; copy-id button feel "sometimes broken" when the spinner was
+          ;; ticking).
+          ;;
+          ;; #24's copy-region storm lived in `draw-messages-area!`; bracket it
+          ;; with its own timestamps so a regression there reads `messages`, not
+          ;; `paint`.
+          messages-start-ns
+          (System/nanoTime)
 
-       _
-       (binding [render/*image-placements* image-sink]
-         (render/draw-messages-area! g layout messages-top messages-bottom cols))
+          _
+          (binding [render/*image-placements* image-sink]
+            (render/draw-messages-area! g layout messages-top messages-bottom cols))
 
-       messages-end-ns
-       (System/nanoTime)
+          messages-end-ns
+          (System/nanoTime)
 
-       ;; Freshly focused pending/building tab with an empty transcript: paint a
-       ;; centered animated spinner in the messages band so a tab switch shows
-       ;; motion instead of a blank void until its history hydrates.
-       _
-       (when (tab-content-loading? db)
-         (paint-content-loading! g cols messages-top messages-bottom now-ms))
+          ;; Freshly focused pending/building tab with an empty transcript: paint a
+          ;; centered animated spinner in the messages band so a tab switch shows
+          ;; motion instead of a blank void until its history hydrates.
+          _
+          (when (tab-content-loading? db)
+            (paint-content-loading! g cols messages-top messages-bottom now-ms))
 
-       _
-       (header/draw-header! g db header-top cols)
+          _
+          (header/draw-header! g db header-top cols)
 
-       ;; Bottom band (input box + footer + slash suggestions) — always painted so
-       ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
-       _
-       (draw-bottom-chrome! screen
-                            g
-                            db
-                            {:input input
-                             :input-top input-top
-                             :text-rows text-rows
-                             :cols cols
-                             :now-ms now-ms
-                             :echo-row echo-row
-                             :footer-row footer-row
-                             :slash-suggestions slash-suggestions
-                             :slash-command-index slash-command-index})
+          ;; Bottom band (input box + footer + slash suggestions) — always painted so
+          ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
+          _
+          (draw-bottom-chrome! screen
+                               g
+                               db
+                               {:input input
+                                :input-top input-top
+                                :text-rows text-rows
+                                :cols cols
+                                :now-ms now-ms
+                                :echo-row echo-row
+                                :footer-row footer-row
+                                :slash-suggestions slash-suggestions
+                                :slash-command-index slash-command-index})
 
-       ;; Atomically publish every chrome region painted above. Until this swap runs the input
-       ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
-       ;; frame matches what's actually still on the user's screen up to this instant.
-       ;; capture-screen-cells walks cols×rows of the back buffer and allocates a 2D string vec.
-       ;; On a 200×50 terminal that's 10000 .getBackCharacter calls + ~10000 string allocations
-       ;; per frame. The cells are ONLY consumed by the mouse-selection clipboard copy path - we
-       ;; read `(:screen-cells (:layout db))` to extract the text under the user's drag. When no
-       ;; selection is active, nothing reads them. Skip the capture in that case.
-       ;;
-       ;; Safety: when a fresh selection starts (mouse press), the next
-       ;; full render is dispatched (the input handler bumps
-       ;; render-version on every mouse event); :mouse-selection becomes
-       ;; non-nil in db, so we DO capture this frame. Selection content
-       ;; uses these cells. The only edge case is a press+release within
-       ;; the SAME render frame, which can't happen because each event
-       ;; bumps version and the render loop processes one version at a
-       ;; time. See autoresearch A11.
-       overlay-geom
-       (when (:tasks-open? db)
-         (components/context-overlay! g
-                                      cols
-                                      rows
-                                      ctx-snapshot
-                                      (:ctx-scroll db)
-                                      (:expanded-facts db)))
+          ;; Atomically publish every chrome region painted above. Until this swap runs the input
+          ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
+          ;; frame matches what's actually still on the user's screen up to this instant.
+          ;; capture-screen-cells walks cols×rows of the back buffer and allocates a 2D string vec.
+          ;; On a 200×50 terminal that's 10000 .getBackCharacter calls + ~10000 string allocations
+          ;; per frame. The cells are ONLY consumed by the mouse-selection clipboard copy path - we
+          ;; read `(:screen-cells (:layout db))` to extract the text under the user's drag. When no
+          ;; selection is active, nothing reads them. Skip the capture in that case.
+          ;;
+          ;; Safety: when a fresh selection starts (mouse press), the next
+          ;; full render is dispatched (the input handler bumps
+          ;; render-version on every mouse event); :mouse-selection becomes
+          ;; non-nil in db, so we DO capture this frame. Selection content
+          ;; uses these cells. The only edge case is a press+release within
+          ;; the SAME render frame, which can't happen because each event
+          ;; bumps version and the render loop processes one version at a
+          ;; time. See autoresearch A11.
+          overlay-geom
+          (when (:tasks-open? db)
+            (components/context-overlay! g
+                                         cols
+                                         rows
+                                         ctx-snapshot
+                                         (:ctx-scroll db)
+                                         (:expanded-facts db)))
 
-       overlay-selectable-ranges
-       (:selectable-ranges overlay-geom)
+          overlay-selectable-ranges
+          (:selectable-ranges overlay-geom)
 
-       sel
-       (:mouse-selection db)
+          sel
+          (:mouse-selection db)
 
-       overlay-sel?
-       (= :overlay (:source sel))
+          overlay-sel?
+          (= :overlay (:source sel))
 
-       need-cells?
-       (boolean sel)
+          need-cells?
+          (boolean sel)
 
-       ;; F2 context panel (W3) is painted by the `overlay-geom` binding ABOVE
-       ;; this `screen-cells` capture, so its text lands in the back buffer in
-       ;; time to be copyable. The panel used to paint LAST (after capture),
-       ;; which is exactly why its cells were never selectable.
-       ;; The 10k-cell capture is the OTHER known-heavy full-frame pass, so
-       ;; bracket it with its own timestamps for a `:capture-ms` phase.
-       capture-start-ns
-       (System/nanoTime)
+          ;; F2 context panel (W3) is painted by the `overlay-geom` binding ABOVE
+          ;; this `screen-cells` capture, so its text lands in the back buffer in
+          ;; time to be copyable. The panel used to paint LAST (after capture),
+          ;; which is exactly why its cells were never selectable.
+          ;; The 10k-cell capture is the OTHER known-heavy full-frame pass, so
+          ;; bracket it with its own timestamps for a `:capture-ms` phase.
+          capture-start-ns
+          (System/nanoTime)
 
-       screen-cells
-       (when need-cells? (capture-screen-cells screen cols rows))
+          screen-cells
+          (when need-cells? (capture-screen-cells screen cols rows))
 
-       capture-end-ns
-       (System/nanoTime)
+          capture-end-ns
+          (System/nanoTime)
 
-       viewport
-       (if overlay-sel?
-         {:viewport-top 0 :eff-scroll 0}
-         {:viewport-top text-top :eff-scroll (:eff-scroll layout)})]
+          viewport
+          (if overlay-sel?
+            {:viewport-top 0 :eff-scroll 0}
+            {:viewport-top text-top :eff-scroll (:eff-scroll layout)})]
 
       (when overlay-geom
         (when (not= (:max-scroll overlay-geom) (:ctx-scroll-max db))
@@ -2598,9 +2567,8 @@
       (when-not *skip-frame-refresh?*
         (let [refresh-start-ns (System/nanoTime)]
           (.refresh screen Screen$RefreshType/DELTA)
-          (let
-            [frame-end-ns (System/nanoTime)
-             total-ms (nanos->ms frame-start-ns frame-end-ns)]
+          (let [frame-end-ns (System/nanoTime)
+                total-ms (nanos->ms frame-start-ns frame-end-ns)]
 
             (log-slow-frame!
               {:path "full"
@@ -2673,10 +2641,9 @@
    single delta (no flicker). Best-effort — never throws into the modal loop."
   [^TerminalScreen screen]
   (try (binding [*skip-frame-refresh?* true]
-         (let
-           [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)]
+         (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+               cols (.getColumns size)
+               rows (.getRows size)]
 
            (render-frame! screen cols rows @state/app-db (System/currentTimeMillis))))
        (catch Throwable _ nil)))
@@ -2704,33 +2671,25 @@
                   screen
                   (:settings @state/app-db)
                   {:focus-section focus-section
-
-                   :mcp-add
-                   (fn [{:keys [g region]}] (mcp/save-server! screen g region nil))
-
+                   :mcp-add (fn [{:keys [g region]}]
+                              (mcp/save-server! screen g region nil))
                    ;; One verb the server's transient fired — the manager runs
                    ;; it IN THAT SAME BAND (its own frame handle comes back
                    ;; here) and reports its own failures; Settings just reloads.
-                   :mcp-action
-                   (fn [{:keys [server action g region]}]
-                     (mcp/run-action! screen g region server action))
-
+                   :mcp-action (fn [{:keys [server action g region]}]
+                                 (mcp/run-action! screen g region server action))
                    ;; Adding a provider is a BAND inside Settings, not a second
                    ;; manager on top of it: same frame, same hint bar, and the
                    ;; provider list it just changed stays visible behind it.
-                   :provider-add
-                   (fn [{:keys [g region]}] (provider/add-provider-transient! screen g region))
-
+                   :provider-add (fn [{:keys [g region]}]
+                                   (provider/add-provider-transient! screen g region))
                    ;; The provider's transient paints INSIDE the settings frame,
                    ;; so it borrows that frame's graphics and geometry.
-                   :provider-transient
-                   (fn [{:keys [provider-id g region]}]
-                     (provider/provider-transient! screen g region provider-id))
-
-                   :on-change
-                   (fn [settings]
-                     (state/dispatch [:update-settings settings])
-                     (repaint-chat-frame! screen))})]
+                   :provider-transient (fn [{:keys [provider-id g region]}]
+                                         (provider/provider-transient! screen g region provider-id))
+                   :on-change (fn [settings]
+                                (state/dispatch [:update-settings settings])
+                                (repaint-chat-frame! screen))})]
      (state/dispatch [:update-settings s]))
    nil))
 
@@ -2822,12 +2781,11 @@
    in that case the whole input text is the best available head."
   [{:keys [lines crow ccol] :as input-state}]
   (if (and (sequential? lines) (number? crow) (number? ccol))
-    (let
-      [lines
-       (vec lines)
+    (let [lines
+          (vec lines)
 
-       crow
-       (long crow)]
+          crow
+          (long crow)]
 
       (str/join "\n" (conj (subvec lines 0 crow) (subs (nth lines crow "") 0 (long ccol)))))
     (input/input->text input-state)))
@@ -2841,12 +2799,11 @@
    an active `/` command token or `@` file mention, so typing the terminating
    space restores the transcript band instead of leaving the picker ghosted."
   [input-state]
-  (let
-    [head
-     (input-head-text input-state)
+  (let [head
+        (input-head-text input-state)
 
-     s
-     (str/triml (input/input->text input-state))]
+        s
+        (str/triml (input/input->text input-state))]
 
     (boolean (or (file-suggest/mention-at head)
                  (and (str/starts-with? s "/")
@@ -2974,155 +2931,153 @@
   [^TerminalScreen screen cols rows
    {:keys [messages input progress loading? cancelling? turn-start-ms settings slash-command-index]
     :as db} now-ms previous-layout]
-  (let
-    [frame-start-ns
-     (System/nanoTime)
+  (let [frame-start-ns
+        (System/nanoTime)
 
-     g
-     (.newTextGraphics screen)
+        g
+        (.newTextGraphics screen)
 
-     cols
-     (long cols)
+        cols
+        (long cols)
 
-     rows
-     (long rows)
+        rows
+        (long rows)
 
-     text-rows
-     (input-text-rows input cols)
+        text-rows
+        (input-text-rows input cols)
 
-     input-box-h
-     (+ text-rows 2 (* 2 (long render/input-pad-y)))
+        input-box-h
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
-     input-top
-     (- rows input-box-h 2)
+        input-top
+        (- rows input-box-h 2)
 
-     echo-row
-     (- input-top 1)
+        echo-row
+        (- input-top 1)
 
-     ;; Geometry MUST match `render-frame!` exactly. The full path
-     ;; reserves one empty terminal row between the header band and
-     ;; the first transcript bubble via `(inc (header/header-rows db))`.
-     ;; Dropping the `inc` here shifts the live bubble + scrollbar
-     ;; track + inner-h by one row vs the previous full frame, which
-     ;; (a) leaves a stale row of bubble border under the header on
-     ;; every live↔full flip (the `[]` artifacts visible when a turn
-     ;; ends), (b) changes inner-h so the virtual layout clamps
-     ;; `eff-scroll` against a different ceiling — content visibly
-     ;; jumps down when new iterations arrive mid-scroll, and
-     ;; (c) misaligns click regions published by the prior full frame
-     ;; with the partial-live re-paint, so a second click on a
-     ;; collapsible disclosure misses its toggle target.
-     messages-top
-     (inc (long (header/header-rows db)))
+        ;; Geometry MUST match `render-frame!` exactly. The full path
+        ;; reserves one empty terminal row between the header band and
+        ;; the first transcript bubble via `(inc (header/header-rows db))`.
+        ;; Dropping the `inc` here shifts the live bubble + scrollbar
+        ;; track + inner-h by one row vs the previous full frame, which
+        ;; (a) leaves a stale row of bubble border under the header on
+        ;; every live↔full flip (the `[]` artifacts visible when a turn
+        ;; ends), (b) changes inner-h so the virtual layout clamps
+        ;; `eff-scroll` against a different ceiling — content visibly
+        ;; jumps down when new iterations arrive mid-scroll, and
+        ;; (c) misaligns click regions published by the prior full frame
+        ;; with the partial-live re-paint, so a second click on a
+        ;; collapsible disclosure misses its toggle target.
+        messages-top
+        (inc (long (header/header-rows db)))
 
-     messages-bottom
-     echo-row
+        messages-bottom
+        echo-row
 
-     bubble-w
-     (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
+        bubble-w
+        (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
 
-     inner-h
-     (max 0 (- messages-bottom messages-top 2))
+        inner-h
+        (max 0 (- messages-bottom messages-top 2))
 
-     ;; Same `:scroll`-variant → concrete-offset derivation as the
-     ;; full-frame path (see `render-frame!`).
-     prev-max-s
-     (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
+        ;; Same `:scroll`-variant → concrete-offset derivation as the
+        ;; full-frame path (see `render-frame!`).
+        prev-max-s
+        (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
 
-     messages-scroll
-     (scroll/layout-offset (:scroll db) prev-max-s)
+        messages-scroll
+        (scroll/layout-offset (:scroll db) prev-max-s)
 
-     text-top
-     (+ messages-top (long render/MESSAGE_MARGIN_TOP))
+        text-top
+        (+ messages-top (long render/MESSAGE_MARGIN_TOP))
 
-     header-top
-     0
+        header-top
+        0
 
-     ;; Footer is two rows tall (model + limits). Shortcut chrome is a
-     ;; closed helper cell above input; input top border is omitted. Must
-     ;; match full render geometry.
-     footer-row
-     (- rows 2)
+        ;; Footer is two rows tall (model + limits). Shortcut chrome is a
+        ;; closed helper cell above input; input top border is omitted. Must
+        ;; match full render geometry.
+        footer-row
+        (- rows 2)
 
-     progress-extra
-     {:now-ms now-ms
-      :turn-start-ms turn-start-ms
-      :cancelling? (boolean cancelling?)
-      :viewport-rows inner-h
-      :pending-sends (:pending-sends db)
-      :queue-paused (:queue-paused db)}
+        progress-extra
+        {:now-ms now-ms
+         :turn-start-ms turn-start-ms
+         :cancelling? (boolean cancelling?)
+         :viewport-rows inner-h
+         :pending-sends (:pending-sends db)
+         :queue-paused (:queue-paused db)}
 
-     layout
-     (virtual/layout messages
-                     bubble-w
-                     settings
-                     messages-scroll
-                     inner-h
-                     {:progress progress :loading? loading? :progress-extra progress-extra}
-                     {:session-id (get-in db [:session :id])
-                      :detail-expansions (:detail-expansions db)
-                      ;; Anchor for paint parity with the full-frame path:
-                      ;; estimate→real height fixes must keep the scrolled
-                      ;; content visually put instead of lurching.
-                      :prev-offsets (get-in db [:layout :offsets])})
+        layout
+        (virtual/layout messages
+                        bubble-w
+                        settings
+                        messages-scroll
+                        inner-h
+                        {:progress progress :loading? loading? :progress-extra progress-extra}
+                        {:session-id (get-in db [:session :id])
+                         :detail-expansions (:detail-expansions db)
+                         ;; Anchor for paint parity with the full-frame path:
+                         ;; estimate→real height fixes must keep the scrolled
+                         ;; content visually put instead of lurching.
+                         :prev-offsets (get-in db [:layout :offsets])})
 
-     ;; Persist that anchor correction, exactly as `render-frame!` /
-     ;; `render-scroll-frame!` do. This path PAINTS and republishes the
-     ;; corrected `:offsets`/`:eff-scroll`, so leaving `:scroll` at the stale
-     ;; pre-correction value made the NEXT frame's anchor delta 0 and the
-     ;; viewport slid back down — the "scroll up jumps down" bug.
-     anchored-scroll
-     (:anchored-scroll layout)
+        ;; Persist that anchor correction, exactly as `render-frame!` /
+        ;; `render-scroll-frame!` do. This path PAINTS and republishes the
+        ;; corrected `:offsets`/`:eff-scroll`, so leaving `:scroll` at the stale
+        ;; pre-correction value made the NEXT frame's anchor delta 0 and the
+        ;; viewport slid back down — the "scroll up jumps down" bug.
+        anchored-scroll
+        (:anchored-scroll layout)
 
-     _
-     (when (and (some? anchored-scroll)
-                (some? messages-scroll)
-                (not= anchored-scroll messages-scroll))
-       (state/dispatch [:reanchor-scroll anchored-scroll
-                        (- (long anchored-scroll) (long messages-scroll))]))
+        _
+        (when (and (some? anchored-scroll)
+                   (some? messages-scroll)
+                   (not= anchored-scroll messages-scroll))
+          (state/dispatch [:reanchor-scroll anchored-scroll
+                           (- (long anchored-scroll) (long messages-scroll))]))
 
-     layout-end-ns
-     (System/nanoTime)
+        layout-end-ns
+        (System/nanoTime)
 
-     ;; In-session search consumes its pending scroll target
-     ;; here — the layout's `:offsets` vec gives the Y of any
-     ;; message-idx in O(1). One-shot: clear pending so subsequent
-     ;; frames don't re-scroll.
-     _
-     (when-let [target (:scroll-to-message-pending db)]
-       (let
-         [offsets (:offsets layout)
-          total-h (long (:total-h layout))
-          max-s (max 0 (- total-h inner-h))]
+        ;; In-session search consumes its pending scroll target
+        ;; here — the layout's `:offsets` vec gives the Y of any
+        ;; message-idx in O(1). One-shot: clear pending so subsequent
+        ;; frames don't re-scroll.
+        _
+        (when-let [target (:scroll-to-message-pending db)]
+          (let [offsets (:offsets layout)
+                total-h (long (:total-h layout))
+                max-s (max 0 (- total-h inner-h))]
 
-         (when (and (vector? offsets) (< (long target) (count offsets)))
-           (state/dispatch [:set-scroll (max 0 (min max-s (long (nth offsets (long target)))))]))
-         (state/dispatch [:scroll-to-message-resolved])))
+            (when (and (vector? offsets) (< (long target) (count offsets)))
+              (state/dispatch [:set-scroll (max 0 (min max-s (long (nth offsets (long target)))))]))
+            (state/dispatch [:scroll-to-message-resolved])))
 
-     live-idx
-     (live-loading-idx messages loading?)
+        live-idx
+        (live-loading-idx messages loading?)
 
-     live-entry
-     (first (filter #(= live-idx (:idx %)) (:visible layout)))
+        live-entry
+        (first (filter #(= live-idx (:idx %)) (:visible layout)))
 
-     old-entry
-     (first (filter #(= live-idx (:idx %)) (:visible previous-layout)))
+        old-entry
+        (first (filter #(= live-idx (:idx %)) (:visible previous-layout)))
 
-     ;; Auto-bottom follow moves `eff-scroll` with no db change at all, so a
-     ;; streaming tick slides every stable bubble — and the reserved image
-     ;; boxes with them. The picture itself sits on the terminal's graphics
-     ;; layer, which no cell repaint can move: unless this path re-places it,
-     ;; it stays pinned to the row the last FULL frame put it on while its box
-     ;; scrolls out from under it, so it drifts out of its frame and over the
-     ;; chrome below.
-     transcript-shifted?
-     (boolean (and previous-layout (not= (:eff-scroll layout) (:eff-scroll previous-layout))))
+        ;; Auto-bottom follow moves `eff-scroll` with no db change at all, so a
+        ;; streaming tick slides every stable bubble — and the reserved image
+        ;; boxes with them. The picture itself sits on the terminal's graphics
+        ;; layer, which no cell repaint can move: unless this path re-places it,
+        ;; it stays pinned to the row the last FULL frame put it on while its box
+        ;; scrolls out from under it, so it drifts out of its frame and over the
+        ;; chrome below.
+        transcript-shifted?
+        (boolean (and previous-layout (not= (:eff-scroll layout) (:eff-scroll previous-layout))))
 
-     ;; Collector for inline-image placements, as in the full and scroll paths.
-     ;; Only the shift branch fills it — it is the only one that repaints the
-     ;; whole messages band.
-     image-sink
-     (atom [])]
+        ;; Collector for inline-image placements, as in the full and scroll paths.
+        ;; Only the shift branch fills it — it is the only one that repaints the
+        ;; whole messages band.
+        image-sink
+        (atom [])]
 
     ;; Diagnostic: capture per-tick geometry so we can see whether
     ;; iteration 2/3 actually reach the painter. Fires only when
@@ -3166,10 +3121,7 @@
     ;; regions verbatim ONLY while the view didn't scroll; when auto-bottom
     ;; follow shifts `eff-scroll` the branch below repaints the whole
     ;; messages band so their regions track the new rows.
-    (let
-      [prev-live-entry
-       old-entry]
-
+    (let [prev-live-entry old-entry]
       (if transcript-shifted?
         ;; ── FOLLOW-mode transcript shift ─────────────────────────────
         ;; Auto-bottom follow just moved `eff-scroll`, so EVERY stable
@@ -3195,56 +3147,41 @@
             (footer/draw-footer! g db footer-row cols now-ms)
             (cr/commit-frame!))
         ;; ── Cheap live-band path (transcript did NOT shift) ──────────
-        (let
-          [prev-text-top
-           (long (or (:text-top previous-layout) text-top))
+        (let [prev-text-top (long (or (:text-top previous-layout) text-top))
+              live-row-band (when prev-live-entry
+                              (let [lo (+ prev-text-top (long (:top prev-live-entry)))
+                                    hi (+ lo (long (:height prev-live-entry)))]
 
-           live-row-band
-           (when prev-live-entry
-             (let
-               [lo
-                (+ prev-text-top (long (:top prev-live-entry)))
-
-                hi
-                (+ lo (long (:height prev-live-entry)))]
-
-               [lo hi]))
-
-           header-rows-n
-           (long (header/header-rows db))
-
-           carry-over
-           (vec (remove (fn [{:keys [bounds]}]
-                          (let [row (long (:row bounds))]
-                            (or
-                              ;; header re-registers below
-                              (< row header-rows-n)
-                              ;; live bubble re-registers below
-                              (and live-row-band
-                                   (>= row (long (first live-row-band)))
-                                   (< row (long (second live-row-band))))
-                              ;; footer re-registers below (its button
-                              ;; click-regions: dirs / resources) — drop
-                              ;; stale copies so the fresh ones win.
-                              (>= row (long footer-row)))))
-                  (cr/current)))]
+                                [lo hi]))
+              header-rows-n (long (header/header-rows db))
+              carry-over (vec (remove (fn [{:keys [bounds]}]
+                                        (let [row (long (:row bounds))]
+                                          (or
+                                            ;; header re-registers below
+                                            (< row header-rows-n)
+                                            ;; live bubble re-registers below
+                                            (and live-row-band
+                                                 (>= row (long (first live-row-band)))
+                                                 (< row (long (second live-row-band))))
+                                            ;; footer re-registers below (its button
+                                            ;; click-regions: dirs / resources) — drop
+                                            ;; stale copies so the fresh ones win.
+                                            (>= row (long footer-row)))))
+                                (cr/current)))]
 
           (cr/begin-frame!)
           (doseq [r carry-over]
             (cr/register! r))
           (when live-entry
-            (let
-              [clip
-               (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))
-
-               y0
-               (max 0 (min (long (:top live-entry)) (long (or (:top old-entry) (:top live-entry)))))
-
-               y1
-               (min inner-h
-                    (max (+ (long (:top live-entry)) (long (:height live-entry)))
-                         (+ (long (or (:top old-entry) (:top live-entry)))
-                            (long (or (:height old-entry) (:height live-entry))))))]
+            (let [clip
+                  (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))
+                  y0 (max 0
+                          (min (long (:top live-entry))
+                               (long (or (:top old-entry) (:top live-entry)))))
+                  y1 (min inner-h
+                          (max (+ (long (:top live-entry)) (long (:height live-entry)))
+                               (+ (long (or (:top old-entry) (:top live-entry)))
+                                  (long (or (:height old-entry) (:height live-entry))))))]
 
               (when (< y0 y1)
                 (p/set-colors! clip t/text-fg t/terminal-bg)
@@ -3300,12 +3237,11 @@
     ;; overdraws. Re-paint it here every tick so it stays on top instead of
     ;; flickering / vanishing under the streaming bubble; empty suggestions
     ;; no-op, and non-`/`/`@` input returns empty cheaply (no index crawl).
-    (render/draw-slash-command-suggestions!
-      g
-      (slash-suggestions-for-db screen db)
-      input-top
-      cols
-      slash-command-index)
+    (render/draw-slash-command-suggestions! g
+                                            (slash-suggestions-for-db screen db)
+                                            input-top
+                                            cols
+                                            slash-command-index)
     ;; Search hit highlights: painted on the live path too so they survive
     ;; streaming ticks instead of only appearing on full frames.
     (paint-search-hits! screen layout text-top inner-h cols db)
@@ -3338,8 +3274,7 @@
     ;; emits. The cheap live-band path deliberately does NOT paint: it repaints
     ;; no image row, so its empty sink would delete every live placement.
     (when transcript-shifted?
-      (paint-terminal-images!
-        (fitting-image-placements @image-sink messages-top messages-bottom)))
+      (paint-terminal-images! (fitting-image-placements @image-sink messages-top messages-bottom)))
     (merge previous-layout
            {:cols cols
             :rows rows
@@ -3371,82 +3306,81 @@
    `render-frame!` for this state; force it off with `force-full-frame?`."
   [^TerminalScreen screen cols rows {:keys [messages input progress settings] :as db} now-ms
    previous-layout]
-  (let
-    [cols
-     (long cols)
+  (let [cols
+        (long cols)
 
-     rows
-     (long rows)
+        rows
+        (long rows)
 
-     frame-start-ns
-     (System/nanoTime)
+        frame-start-ns
+        (System/nanoTime)
 
-     g
-     (.newTextGraphics screen)
+        g
+        (.newTextGraphics screen)
 
-     ;; Geometry MUST match render-frame! / render-live-bubble-frame!
-     ;; EXACTLY — a one-row slip shifts the viewport + scrollbar and reads
-     ;; as a jump on the fast↔full flip (see render-live-bubble-frame!).
-     text-rows
-     (input-text-rows input cols)
+        ;; Geometry MUST match render-frame! / render-live-bubble-frame!
+        ;; EXACTLY — a one-row slip shifts the viewport + scrollbar and reads
+        ;; as a jump on the fast↔full flip (see render-live-bubble-frame!).
+        text-rows
+        (input-text-rows input cols)
 
-     input-box-h
-     (+ text-rows 2 (* 2 (long render/input-pad-y)))
+        input-box-h
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
-     input-top
-     (- rows input-box-h 2)
+        input-top
+        (- rows input-box-h 2)
 
-     echo-row
-     (- input-top 1)
+        echo-row
+        (- input-top 1)
 
-     messages-top
-     (inc (long (header/header-rows db)))
+        messages-top
+        (inc (long (header/header-rows db)))
 
-     messages-bottom
-     echo-row
+        messages-bottom
+        echo-row
 
-     bubble-w
-     (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
+        bubble-w
+        (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
 
-     inner-h
-     (max 0 (- messages-bottom messages-top 2))
+        inner-h
+        (max 0 (- messages-bottom messages-top 2))
 
-     prev-max-s
-     (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
+        prev-max-s
+        (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
 
-     messages-scroll
-     (scroll/layout-offset (:scroll db) prev-max-s)
+        messages-scroll
+        (scroll/layout-offset (:scroll db) prev-max-s)
 
-     text-top
-     (+ messages-top (long render/MESSAGE_MARGIN_TOP))
+        text-top
+        (+ messages-top (long render/MESSAGE_MARGIN_TOP))
 
-     progress-extra
-     {:now-ms now-ms
-      :turn-start-ms (:turn-start-ms db)
-      :cancelling? false
-      :viewport-rows inner-h
-      :pending-sends (:pending-sends db)
-      :queue-paused (:queue-paused db)}
+        progress-extra
+        {:now-ms now-ms
+         :turn-start-ms (:turn-start-ms db)
+         :cancelling? false
+         :viewport-rows inner-h
+         :pending-sends (:pending-sends db)
+         :queue-paused (:queue-paused db)}
 
-     layout
-     (virtual/layout messages
-                     bubble-w
-                     settings
-                     messages-scroll
-                     inner-h
-                     {:progress progress :loading? false :progress-extra progress-extra}
-                     {:session-id (get-in db [:session :id])
-                      :detail-expansions (:detail-expansions db)
-                      :prev-offsets (get-in db [:layout :offsets])})
+        layout
+        (virtual/layout messages
+                        bubble-w
+                        settings
+                        messages-scroll
+                        inner-h
+                        {:progress progress :loading? false :progress-extra progress-extra}
+                        {:session-id (get-in db [:session :id])
+                         :detail-expansions (:detail-expansions db)
+                         :prev-offsets (get-in db [:layout :offsets])})
 
-     layout-end-ns
-     (System/nanoTime)
+        layout-end-ns
+        (System/nanoTime)
 
-     anchored-scroll
-     (:anchored-scroll layout)
+        anchored-scroll
+        (:anchored-scroll layout)
 
-     image-sink
-     (atom [])]
+        image-sink
+        (atom [])]
 
     ;; Anchor correction, exactly as render-frame! — estimate→real height fixes
     ;; keep the scrolled content visually put instead of lurching.
@@ -3471,9 +3405,8 @@
     (.setCursorPosition screen nil)
     (let [refresh-start-ns (System/nanoTime)]
       (.refresh screen Screen$RefreshType/DELTA)
-      (let
-        [frame-end-ns (System/nanoTime)
-         total-ms (nanos->ms frame-start-ns frame-end-ns)]
+      (let [frame-end-ns (System/nanoTime)
+            total-ms (nanos->ms frame-start-ns frame-end-ns)]
 
         (log-slow-frame! {:path "scroll"
                           :total-ms total-ms
@@ -3489,8 +3422,7 @@
     ;; Re-anchor inline images to the scrolled rows. Transmit-once + placement means
     ;; this is a handful of tiny `a=p` escapes, not a per-tick re-upload — so image
     ;; sessions get the cheap scroll path instead of a forced full frame.
-    (paint-terminal-images!
-      (fitting-image-placements @image-sink messages-top messages-bottom))
+    (paint-terminal-images! (fitting-image-placements @image-sink messages-top messages-bottom))
     (merge previous-layout
            {:cols cols
             :rows rows
@@ -3522,33 +3454,32 @@
    The caller reuses `previous-layout` verbatim (returned as `[last-layout
    false]`), so no layout is republished."
   [^TerminalScreen screen cols rows {:keys [input slash-command-index] :as db} now-ms]
-  (let
-    [cols
-     (long cols)
+  (let [cols
+        (long cols)
 
-     rows
-     (long rows)
+        rows
+        (long rows)
 
-     g
-     (.newTextGraphics screen)
+        g
+        (.newTextGraphics screen)
 
-     text-rows
-     (input-text-rows input cols)
+        text-rows
+        (input-text-rows input cols)
 
-     input-box-h
-     (+ text-rows 2 (* 2 (long render/input-pad-y)))
+        input-box-h
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
-     input-top
-     (- rows input-box-h 2)
+        input-top
+        (- rows input-box-h 2)
 
-     echo-row
-     (- input-top 1)
+        echo-row
+        (- input-top 1)
 
-     footer-row
-     (- rows 2)
+        footer-row
+        (- rows 2)
 
-     slash-suggestions
-     (slash-suggestions-for-db screen db)]
+        slash-suggestions
+        (slash-suggestions-for-db screen db)]
 
     (draw-bottom-chrome! screen
                          g
@@ -3586,18 +3517,17 @@
    the previously published layout's max-scroll. Drives the fast tick
    cadence; settles to false so an idle view stops repainting."
   [db]
-  (let
-    [ly
-     (:layout db)
+  (let [ly
+        (:layout db)
 
-     total-h
-     (long (or (:total-h ly) 0))
+        total-h
+        (long (or (:total-h ly) 0))
 
-     inner-h
-     (long (or (:inner-h ly) 0))
+        inner-h
+        (long (or (:inner-h ly) 0))
 
-     max-s
-     (max 0 (- total-h inner-h))]
+        max-s
+        (max 0 (- total-h inner-h))]
 
     (scroll/animating? (:scroll db) max-s)))
 
@@ -3627,16 +3557,15 @@
    while a turn streams — chasing the growing bottom flat-out — and pegs a core.
    Returns the new last-ease timestamp (unchanged when nothing was dispatched)."
   [db now-top last-ease-ms]
-  (let
-    [ly
-     (:layout db)
+  (let [ly
+        (:layout db)
 
-     ease?
-     (and ly
-          (:total-h ly)
-          (:inner-h ly)
-          (or (:loading? db) (scroll-anim-active? db))
-          (>= (- (long now-top) (long last-ease-ms)) (long scroll-anim-tick-ms)))]
+        ease?
+        (and ly
+             (:total-h ly)
+             (:inner-h ly)
+             (or (:loading? db) (scroll-anim-active? db))
+             (>= (- (long now-top) (long last-ease-ms)) (long scroll-anim-tick-ms)))]
 
     (when ease? (state/dispatch [:ease-scroll (:total-h ly) (:inner-h ly)]))
     (if ease? now-top last-ease-ms)))
@@ -3654,8 +3583,12 @@
    FULL path every tick so the centered in-content loading spinner animates."
   [{:keys [last-db db last-layout last-hover current-hover cols same-size? animate? loading?
            scroll-anim? overlay-open? was-blocked?]}]
-  (let [eligible? (and (not @force-full-frame?) (not overlay-open?) (not was-blocked?))
-        with-layout? (and eligible? same-size? last-layout)]
+  (let [eligible?
+        (and (not @force-full-frame?) (not overlay-open?) (not was-blocked?))
+
+        with-layout?
+        (and eligible? same-size? last-layout)]
+
     (if (tab-content-loading? db)
       {:header-hover-only? false
        :partial-live? false
@@ -3739,52 +3672,49 @@
    pick the cheapest repaint path, `paint-frame!` runs it, and
    `park-wait-ms` says how long to sleep."
   [^TerminalScreen screen]
-  (loop
-    [last-v
-     -1
+  (loop [last-v
+         -1
 
-     last-cols
-     -1
+         last-cols
+         -1
 
-     last-rows
-     -1
+         last-rows
+         -1
 
-     last-frame-ms
-     0
+         last-frame-ms
+         0
 
-     last-db
-     nil
+         last-db
+         nil
 
-     last-layout
-     nil
+         last-layout
+         nil
 
-     last-hover
-     nil
+         last-hover
+         nil
 
-     was-blocked?
-     false
+         was-blocked?
+         false
 
-     last-ease-ms
-     0]
+         last-ease-ms
+         0]
 
-    (let
-      [db
-       @state/app-db
+    (let [db
+          @state/app-db
 
-       now-top
-       (System/currentTimeMillis)
+          now-top
+          (System/currentTimeMillis)
 
-       ;; Advance the scroll ease BEFORE acquiring draw-lock so the re-read
-       ;; inside the try/let below paints the freshly stepped offset.
-       new-ease-ms
-       (ease-step! db now-top last-ease-ms)]
+          ;; Advance the scroll ease BEFORE acquiring draw-lock so the re-read
+          ;; inside the try/let below paints the freshly stepped offset.
+          new-ease-ms
+          (ease-step! db now-top last-ease-ms)]
 
       ;; STUCK-cancel self-heal: while a cancel is pending, poke the state layer on
       ;; the heartbeat (this loop wakes every spinner-tick-ms while loading) so a
       ;; dropped terminal `turn.completed` event can't wedge input for minutes.
       ;; The handler no-ops until the pending flag outlives its timeout.
       (when (:cancelling? db) (state/dispatch [:cancel-self-heal-tick]))
-
       ;; STUCK-turn self-heal: same heartbeat, for a turn the GATEWAY already
       ;; settled while this client still paints it live (dropped terminal event,
       ;; wedged attach worker). The handler throttles itself and only probes the
@@ -3792,157 +3722,154 @@
       (when (or (:loading? db) (state/any-background-loading? db))
         (state/dispatch [:turn-liveness-tick]))
       (when-not (:shutdown? db)
-        (let
-          [version
-           (long (or (:render-version @state/app-db) 0))
+        (let [version
+              (long (or (:render-version @state/app-db) 0))
 
-           ;; tryLock so a dialog session (which holds the lock for
-           ;; seconds) doesn't pin us. Time out fast and re-poll.
-           got-lock?
-           (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
+              ;; tryLock so a dialog session (which holds the lock for
+              ;; seconds) doesn't pin us. Time out fast and re-poll.
+              got-lock?
+              (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
 
-           [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout rendered-hover
-            new-was-blocked?]
-           (if-not got-lock?
-             ;; Lock contention while a dialog session paints onto
-             ;; Lanterna's back buffer. Remember it so the next
-             ;; successful render forces a full repaint over the
-             ;; dialog cells - the partial-live / header-hover-only
-             ;; paths only touch a subset of rows and would leave
-             ;; the dialog overlay ghosted on screen.
-             [false last-cols last-rows last-frame-ms last-db last-layout last-hover true]
-             (try
-               ;; Re-read AFTER acquiring the lock - dialog state
-               ;; could have flipped while we were waiting.
-               (let
-                 [size
-                  (screen-size screen)
+              [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout rendered-hover
+               new-was-blocked?]
+              (if-not got-lock?
+                ;; Lock contention while a dialog session paints onto
+                ;; Lanterna's back buffer. Remember it so the next
+                ;; successful render forces a full repaint over the
+                ;; dialog cells - the partial-live / header-hover-only
+                ;; paths only touch a subset of rows and would leave
+                ;; the dialog overlay ghosted on screen.
+                [false last-cols last-rows last-frame-ms last-db last-layout last-hover true]
+                (try
+                  ;; Re-read AFTER acquiring the lock - dialog state
+                  ;; could have flipped while we were waiting.
+                  (let [size
+                        (screen-size screen)
 
-                  cols
-                  (.getColumns size)
+                        cols
+                        (.getColumns size)
 
-                  rows
-                  (.getRows size)
+                        rows
+                        (.getRows size)
 
-                  ;; Geometry changed under a live view: re-wrapping moves the
-                  ;; bottom row in one step, and an ease across that step is the
-                  ;; "whole turn reflows/scrolls by itself after a resize" bug.
-                  ;; Land the scroll on the new geometry BEFORE reading app-db,
-                  ;; so this very frame paints the settled position. Skipped on
-                  ;; the first frame (last-cols -1) — nothing was painted yet.
-                  _
-                  (when (and (pos? (long last-cols)) (or (not= last-cols cols) (not= last-rows rows)))
-                    (state/dispatch [:terminal-resized]))
+                        ;; Geometry changed under a live view: re-wrapping moves the
+                        ;; bottom row in one step, and an ease across that step is the
+                        ;; "whole turn reflows/scrolls by itself after a resize" bug.
+                        ;; Land the scroll on the new geometry BEFORE reading app-db,
+                        ;; so this very frame paints the settled position. Skipped on
+                        ;; the first frame (last-cols -1) — nothing was painted yet.
+                        _
+                        (when (and (pos? (long last-cols))
+                                   (or (not= last-cols cols) (not= last-rows rows)))
+                          (state/dispatch [:terminal-resized]))
 
-                  db
-                  @state/app-db
+                        db
+                        @state/app-db
 
-                  now-ms
-                  (System/currentTimeMillis)
+                        now-ms
+                        (System/currentTimeMillis)
 
-                  loading?
-                  (boolean (:loading? db))
+                        loading?
+                        (boolean (:loading? db))
 
-                  any-loading?
-                  (or loading? (state/any-background-loading? db))
+                        any-loading?
+                        (or loading? (state/any-background-loading? db))
 
-                  scroll-anim?
-                  (scroll-anim-active? db)
+                        scroll-anim?
+                        (scroll-anim-active? db)
 
+                        ;; F1 (help) / F2 (context) overlays LOCK the
+                        ;; background: while one is up we suppress every
+                        ;; incremental repaint path. The overlay paints once
+                        ;; on the version bump that opened it and then sits
+                        ;; still; a real change bumps :render-version and
+                        ;; forces ONE full frame that repaints it cleanly.
+                        overlay-open?
+                        (overlay-locked? db)
 
-                  ;; F1 (help) / F2 (context) overlays LOCK the
-                  ;; background: while one is up we suppress every
-                  ;; incremental repaint path. The overlay paints once
-                  ;; on the version bump that opened it and then sits
-                  ;; still; a real change bumps :render-version and
-                  ;; forces ONE full frame that repaints it cleanly.
-                  overlay-open?
-                  (overlay-locked? db)
+                        animate?
+                        (and (not overlay-open?)
+                             (or (and any-loading?
+                                      (>= (- (long now-ms) (long last-frame-ms))
+                                          (long spinner-tick-ms)))
+                                 (and scroll-anim?
+                                      (>= (- (long now-ms) (long last-frame-ms))
+                                          (long scroll-anim-tick-ms)))))
 
-                  animate?
-                  (and (not overlay-open?)
-                       (or (and any-loading?
-                                (>= (- (long now-ms) (long last-frame-ms)) (long spinner-tick-ms)))
-                           (and scroll-anim?
-                                (>= (- (long now-ms) (long last-frame-ms))
-                                    (long scroll-anim-tick-ms)))))
+                        same-size?
+                        (and (= last-cols cols) (= last-rows rows))
 
-                  same-size?
-                  (and (= last-cols cols) (= last-rows rows))
+                        current-hover
+                        (cr/hovered)
 
-                  current-hover
-                  (cr/hovered)
+                        path
+                        (choose-frame-path (frame-change-flags {:last-db last-db
+                                                                :db db
+                                                                :last-layout last-layout
+                                                                :last-hover last-hover
+                                                                :current-hover current-hover
+                                                                :cols cols
+                                                                :same-size? same-size?
+                                                                :animate? animate?
+                                                                :loading? loading?
+                                                                :scroll-anim? scroll-anim?
+                                                                :overlay-open? overlay-open?
+                                                                :was-blocked? was-blocked?}))]
 
-                  path
-                  (choose-frame-path (frame-change-flags {:last-db last-db
-                                                          :db db
-                                                          :last-layout last-layout
-                                                          :last-hover last-hover
-                                                          :current-hover current-hover
-                                                          :cols cols
-                                                          :same-size? same-size?
-                                                          :animate? animate?
-                                                          :loading? loading?
-                                                          :scroll-anim? scroll-anim?
-                                                          :overlay-open? overlay-open?
-                                                          :was-blocked? was-blocked?}))]
-
-                 (if (and (not (:shutdown? db))
-                          (not (:dialog-open? db))
-                          (or (not= last-v version)
-                              (not= last-cols cols)
-                              (not= last-rows rows)
-                              animate?
-                              was-blocked?))
-                   (let
-                     [[layout publish-layout?]
-                      (paint-frame! screen path cols rows db now-ms last-layout)]
-                     ;; Publish layout back to app-db without bumping the version (see
-                     ;; no-render-bump-events).
-                     (when publish-layout? (state/dispatch [:set-layout layout]))
-                     ;; Terminal WIDTH change: every sticky height is keyed
-                     ;; by the old bubble-w, so the whole transcript just
-                     ;; fell back to estimates. Re-warm in the background so
-                     ;; total-h re-settles while the user is idle instead of
-                     ;; correcting - and jumping the scrollbar thumb - on
-                     ;; their next scroll-up. Skipped on the first frame
-                     ;; (last-cols -1): the startup path already warms.
-                     (when (and (not= last-cols cols) (pos? (long last-cols)))
-                       (virtual/rewarm! (:messages db)
-                                        (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                                        (or (:settings db) {})
-                                        {:session-id (get-in db [:session :id])
-                                         :detail-expansions (:detail-expansions db)
-                                         :on-warm #(state/dispatch [:bump-render-version])}))
-                     ;; Cleared was-blocked? - the dialog overlay has just been painted
-                     ;; over.
-                     [true cols rows now-ms db layout current-hover false])
-                   ;; Dialog still open (or nothing to paint) - keep
-                   ;; the blocked flag sticky until we actually paint.
-                   [false cols rows last-frame-ms last-db last-layout last-hover
-                    (or was-blocked? (boolean (:dialog-open? db)))]))
-               (catch Throwable t
-                 ;; Drawing must never crash the thread - a stray
-                 ;; resize race or null cell will recover next frame.
-                 (tel/log! {:level :warn
-                            :id ::render-frame-failed
-                            :data (throwable-log-data t)
-                            :msg (str "render frame failed: " (or (ex-message t) (str t)))})
-                 [false last-cols last-rows last-frame-ms last-db last-layout last-hover
-                  was-blocked?])
-               (finally (.unlock draw-lock))))]
+                    (if (and (not (:shutdown? db))
+                             (not (:dialog-open? db))
+                             (or (not= last-v version)
+                                 (not= last-cols cols)
+                                 (not= last-rows rows)
+                                 animate?
+                                 was-blocked?))
+                      (let [[layout publish-layout?]
+                            (paint-frame! screen path cols rows db now-ms last-layout)]
+                        ;; Publish layout back to app-db without bumping the version (see
+                        ;; no-render-bump-events).
+                        (when publish-layout? (state/dispatch [:set-layout layout]))
+                        ;; Terminal WIDTH change: every sticky height is keyed
+                        ;; by the old bubble-w, so the whole transcript just
+                        ;; fell back to estimates. Re-warm in the background so
+                        ;; total-h re-settles while the user is idle instead of
+                        ;; correcting - and jumping the scrollbar thumb - on
+                        ;; their next scroll-up. Skipped on the first frame
+                        ;; (last-cols -1): the startup path already warms.
+                        (when (and (not= last-cols cols) (pos? (long last-cols)))
+                          (virtual/rewarm! (:messages db)
+                                           (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                                           (or (:settings db) {})
+                                           {:session-id (get-in db [:session :id])
+                                            :detail-expansions (:detail-expansions db)
+                                            :on-warm #(state/dispatch [:bump-render-version])}))
+                        ;; Cleared was-blocked? - the dialog overlay has just been painted
+                        ;; over.
+                        [true cols rows now-ms db layout current-hover false])
+                      ;; Dialog still open (or nothing to paint) - keep
+                      ;; the blocked flag sticky until we actually paint.
+                      [false cols rows last-frame-ms last-db last-layout last-hover
+                       (or was-blocked? (boolean (:dialog-open? db)))]))
+                  (catch Throwable t
+                    ;; Drawing must never crash the thread - a stray
+                    ;; resize race or null cell will recover next frame.
+                    (tel/log! {:level :warn
+                               :id ::render-frame-failed
+                               :data (throwable-log-data t)
+                               :msg (str "render frame failed: " (or (ex-message t) (str t)))})
+                    [false last-cols last-rows last-frame-ms last-db last-layout last-hover
+                     was-blocked?])
+                  (finally (.unlock draw-lock))))]
 
           (when-not rendered?
             ;; Park until the next dispatch wakes us, or until the
             ;; spinner needs to tick.
             (locking state/render-monitor
-              (let
-                [v-now
-                 (long (or (:render-version @state/app-db) 0))
+              (let [v-now
+                    (long (or (:render-version @state/app-db) 0))
 
-                 loading?
-                 (or (boolean (:loading? @state/app-db))
-                     (state/any-background-loading? @state/app-db))]
+                    loading?
+                    (or (boolean (:loading? @state/app-db))
+                        (state/any-background-loading? @state/app-db))]
 
                 (when (= v-now version)
                   (try (.wait ^Object state/render-monitor
@@ -3962,11 +3889,10 @@
   "Spawn the render thread. Daemon so the JVM can still exit even if a
    bug ever traps it in the loop."
   ^Thread [^TerminalScreen screen]
-  (let
-    [t (Thread. ^Runnable
-                (fn []
-                  (render-loop! screen))
-                "vis-channel-tui-render")]
+  (let [t (Thread. ^Runnable
+                   (fn []
+                     (render-loop! screen))
+                   "vis-channel-tui-render")]
     (.setDaemon t true)
     (.start t)
     t))
@@ -4015,28 +3941,27 @@
    footer reads) moved. Provider changes made OUTSIDE app-db (e.g. a
    router-default edit) are picked up by the 60s stale refresh."
   ^Thread []
-  (let
-    [t (Thread.
-         ^Runnable
-         (fn []
-           (loop
-             [last-provider-id nil
-              last-refresh-ms 0
-              last-signal ::init]
+  (let [t (Thread.
+            ^Runnable
+            (fn []
+              (loop [last-provider-id nil
+                     last-refresh-ms 0
+                     last-signal ::init]
 
-             (when-not (:shutdown? @state/app-db)
-               (let
-                 [db @state/app-db
-                  now-ms (System/currentTimeMillis)
-                  signal [(get-in db [:session :id]) (:session-model-pref db)]
-                  forced? (:provider-limits-force? db)
-                  stale? (>= (- now-ms (long last-refresh-ms)) (long provider-limits-refresh-ms))
-                  due? (or (not= signal last-signal) forced? stale?)
-                  provider-id (if due? (active-provider-id) last-provider-id)
-                  changed? (not= provider-id last-provider-id)
-                  refresh? (and due? (or changed? stale? forced?))]
+                (when-not (:shutdown? @state/app-db)
+                  (let [db @state/app-db
+                        now-ms (System/currentTimeMillis)
+                        signal [(get-in db [:session :id]) (:session-model-pref db)]
+                        forced? (:provider-limits-force? db)
+                        stale? (>= (- now-ms (long last-refresh-ms))
+                                   (long provider-limits-refresh-ms))
+                        due? (or (not= signal last-signal) forced? stale?)
+                        provider-id (if due? (active-provider-id) last-provider-id)
+                        changed? (not= provider-id last-provider-id)
+                        refresh? (and due? (or changed? stale? forced?))]
 
-                 (try (cond (and due? (nil? provider-id))
+                    (try
+                      (cond (and due? (nil? provider-id))
                             (when last-provider-id (state/dispatch [:clear-provider-limits]))
                             refresh? (state/dispatch [:set-provider-limits provider-id
                                                       (vis/gateway-provider-limits provider-id)]))
@@ -4045,9 +3970,9 @@
                                    :id ::provider-limits-refresh-failed
                                    :data {:provider provider-id :error (or (ex-message t) (str t))}
                                    :msg "Provider limits refresh failed"})))
-                 (try (Thread/sleep 1000) (catch InterruptedException _ nil))
-                 (recur provider-id (if refresh? now-ms last-refresh-ms) signal)))))
-         "vis-channel-tui-provider-limits")]
+                    (try (Thread/sleep 1000) (catch InterruptedException _ nil))
+                    (recur provider-id (if refresh? now-ms last-refresh-ms) signal)))))
+            "vis-channel-tui-provider-limits")]
     (.setDaemon t true)
     (.start t)
     t))
@@ -4064,42 +3989,41 @@
    Dispatches only when the `:git` fact actually changes, so an idle session costs
    one cheap gateway read per tick and never churns the render loop."
   ^Thread []
-  (let
-    [t (Thread.
-         ^Runnable
-         (fn []
-           (loop [last-key ::init]
-             (when-not (:shutdown? @state/app-db)
-               (let
-                 [sid (get-in @state/app-db [:session :id])
-                  ws (try (when sid
-                            (when-let [ws (vis/gateway-session-workspace sid)]
-                              (when (get ws "root") ws)))
-                          (catch Throwable t
-                            (tel/log! {:level :warn
-                                       :id ::workspace-refresh-failed
-                                       :data {:error (or (ex-message t) (str t))}
-                                       :msg "Workspace refresh failed"})
-                            nil))
-                  ;; Dedup key includes the session id, NOT just the
-                  ;; `:git` fact. `:set-workspace` (nil workspace-id) writes
-                  ;; the ACTIVE tab, and the active session changes on a tab
-                  ;; switch / background turn. Keying on git alone means a
-                  ;; switch to a session whose changed-file count coincides
-                  ;; with the previously-active one's suppresses the
-                  ;; dispatch, leaving the now-active tab frozen at its
-                  ;; stale turn-start snapshot (two sessions on the SAME dir
-                  ;; then show different counts). Re-dispatch on any sid OR
-                  ;; git change so the footer always tracks the active tab.
-                  next-key (if ws
-                             (let [k [sid (get ws "git")]]
-                               (when (not= k last-key) (state/dispatch [:set-workspace ws]))
-                               k)
-                             last-key)]
+  (let [t (Thread.
+            ^Runnable
+            (fn []
+              (loop [last-key ::init]
+                (when-not (:shutdown? @state/app-db)
+                  (let [sid (get-in @state/app-db [:session :id])
+                        ws (try (when sid
+                                  (when-let [ws (vis/gateway-session-workspace sid)]
+                                    (when (get ws "root") ws)))
+                                (catch Throwable t
+                                  (tel/log! {:level :warn
+                                             :id ::workspace-refresh-failed
+                                             :data {:error (or (ex-message t) (str t))}
+                                             :msg "Workspace refresh failed"})
+                                  nil))
+                        ;; Dedup key includes the session id, NOT just the
+                        ;; `:git` fact. `:set-workspace` (nil workspace-id) writes
+                        ;; the ACTIVE tab, and the active session changes on a tab
+                        ;; switch / background turn. Keying on git alone means a
+                        ;; switch to a session whose changed-file count coincides
+                        ;; with the previously-active one's suppresses the
+                        ;; dispatch, leaving the now-active tab frozen at its
+                        ;; stale turn-start snapshot (two sessions on the SAME dir
+                        ;; then show different counts). Re-dispatch on any sid OR
+                        ;; git change so the footer always tracks the active tab.
+                        next-key (if ws
+                                   (let [k [sid (get ws "git")]]
+                                     (when (not= k last-key) (state/dispatch [:set-workspace ws]))
+                                     k)
+                                   last-key)]
 
-                 (try (Thread/sleep (long workspace-refresh-ms)) (catch InterruptedException _ nil))
-                 (recur next-key)))))
-         "vis-channel-tui-workspace-refresh")]
+                    (try (Thread/sleep (long workspace-refresh-ms))
+                         (catch InterruptedException _ nil))
+                    (recur next-key)))))
+            "vis-channel-tui-workspace-refresh")]
     (.setDaemon t true)
     (.start t)
     t))
@@ -4109,32 +4033,31 @@
    listing the most recent sessions so the user has
    something to copy-paste."
   [cid]
-  (let
-    [available
-     (try (vec (take 10 (vis/gateway-list-sessions :all))) (catch Throwable _ []))
+  (let [available
+        (try (vec (take 10 (vis/gateway-list-sessions :all))) (catch Throwable _ []))
 
-     line
-     (fn [c]
-       (let
-         [id-str
-          (str (get c "id"))
+        line
+        (fn [c]
+          (let [id-str
+                (str (get c "id"))
 
-          id8
-          (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
+                id8
+                (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
 
-          title
-          (let [t (get c "title")]
-            (when-not (str/blank? t) t))]
+                title
+                (let [t (get c "title")]
+                  (when-not (str/blank? t) t))]
 
-         (str "  " id8 "  " (or title "(untitled)"))))]
+            (str "  " id8 "  " (or title "(untitled)"))))]
 
-    (str "Session not found: "
-         cid
-         (if (seq available)
-           (str "\n\nAvailable sessions (most recent first):\n"
-                (str/join "\n" (map line available))
-                "\n\nUse the 8-char prefix or full UUID with --session-id.")
-           "\n\nNo sessions exist yet - run `vis-agent channels tui` without --session-id first."))))
+    (str
+      "Session not found: "
+      cid
+      (if (seq available)
+        (str "\n\nAvailable sessions (most recent first):\n"
+             (str/join "\n" (map line available))
+             "\n\nUse the 8-char prefix or full UUID with --session-id.")
+        "\n\nNo sessions exist yet - run `vis-agent channels tui` without --session-id first."))))
 
 (defn- current-session-id
   []
@@ -4186,15 +4109,14 @@
 
 (defn- register-terminal-signal-handler!
   [signal-name f]
-  (try (let
-         [signal
-          (Signal. signal-name)
+  (try (let [signal
+             (Signal. signal-name)
 
-          previous
-          (Signal/handle signal
-                         (reify
-                           SignalHandler
-                             (handle [_ _signal] (try (f) (catch Throwable _ nil)))))]
+             previous
+             (Signal/handle signal
+                            (reify
+                              SignalHandler
+                                (handle [_ _signal] (try (f) (catch Throwable _ nil)))))]
 
          (fn []
            (try (Signal/handle signal previous) (catch Throwable _ nil))))
@@ -4203,9 +4125,8 @@
 
 (defn- register-terminal-interrupt-handlers!
   []
-  (let
-    [cleanups (keep #(register-terminal-signal-handler! % handle-terminal-interrupt!)
-                    ["INT" "TSTP"])]
+  (let [cleanups (keep #(register-terminal-signal-handler! % handle-terminal-interrupt!)
+                       ["INT" "TSTP"])]
     (fn []
       (doseq [cleanup cleanups]
         (cleanup)))))
@@ -4225,30 +4146,30 @@
       queued/edited/deleted message mirrors instantly, and a turn started
       elsewhere attaches this tab instead of leaving it frozen-idle."
   [session-id]
-  (let
-    [session-id
-     (str session-id)
+  (let [session-id
+        (str session-id)
 
-     listener
-     (vis/add-title-listener! session-id
-                              (fn [new-title]
-                                ;; Dispatch for EVERY session (focused or not), carrying our
-                                ;; session-id so `:set-title` can relabel the owning tab even
-                                ;; when it's in the background.
-                                (state/dispatch [:set-title (or new-title "") session-id])))
+        listener
+        (vis/add-title-listener! session-id
+                                 (fn [new-title]
+                                   ;; Dispatch for EVERY session (focused or not), carrying our
+                                   ;; session-id so `:set-title` can relabel the owning tab even
+                                   ;; when it's in the background.
+                                   (state/dispatch [:set-title (or new-title "") session-id])))
 
-     ;; Host signals when auto-title generation starts/ends so the
-     ;; header can spinner the active tab. Scoped to the active session,
-     ;; same as the value listener — a background generation must not
-     ;; spinner the tab you're looking at.
-     pending-listener
-     (vis/add-title-pending-listener! session-id
-                                      (fn [pending?]
-                                        (when (= session-id (current-session-id))
-                                          (state/dispatch [:title-loading (boolean pending?)]))))
+        ;; Host signals when auto-title generation starts/ends so the
+        ;; header can spinner the active tab. Scoped to the active session,
+        ;; same as the value listener — a background generation must not
+        ;; spinner the tab you're looking at.
+        pending-listener
+        (vis/add-title-pending-listener! session-id
+                                         (fn [pending?]
+                                           (when (= session-id (current-session-id))
+                                             (state/dispatch [:title-loading (boolean pending?)]))))
 
-     events-cleanup
-     (try (chat/subscribe-session-events!
+        events-cleanup
+        (try
+          (chat/subscribe-session-events!
             session-id
             (fn [chunk]
               (when-let [tab-id (state/tab-id-for-session @state/app-db session-id)]
@@ -4309,16 +4230,16 @@
           (catch Throwable _
             (fn [])))
 
-     ;; REPLAY. Ask the gateway what this session is blocked on right now and
-     ;; surface ALL of it, so a form is drawn instead of a turn that never
-     ;; moves. See [[replay-human-input!]].
-     _
-     (vis/worker-future "tui-human-input-replay" #(replay-human-input! session-id))
+        ;; REPLAY. Ask the gateway what this session is blocked on right now and
+        ;; surface ALL of it, so a form is drawn instead of a turn that never
+        ;; moves. See [[replay-human-input!]].
+        _
+        (vis/worker-future "tui-human-input-replay" #(replay-human-input! session-id))
 
-     cleanup
-     #(do (vis/remove-title-listener! session-id listener)
-          (vis/remove-title-pending-listener! session-id pending-listener)
-          (events-cleanup))]
+        cleanup
+        #(do (vis/remove-title-listener! session-id listener)
+             (vis/remove-title-pending-listener! session-id pending-listener)
+             (events-cleanup))]
 
     ;; `run-chat!` owns these cleanups and drains them in its `finally`.
     ;; Do NOT install one JVM shutdown hook per tab: Java runs those hooks
@@ -4351,12 +4272,11 @@
   [session]
   (if (contains? session "turn_count")
     (assoc session "modified_at" (or (get session "modified_at") (get session "created_at")))
-    (let
-      [turns
-       (try (vec (vis/gateway-list-turns (get session "id"))) (catch Throwable _ []))
+    (let [turns
+          (try (vec (vis/gateway-list-turns (get session "id"))) (catch Throwable _ []))
 
-       modified-at
-       (or (latest-turn-created-at turns) (get session "created_at"))]
+          modified-at
+          (or (latest-turn-created-at turns) (get session "created_at"))]
 
       (assoc session
         "turn_count" (count turns)
@@ -4376,15 +4296,14 @@
    then higher turn count. This keeps the latest active session first while
    still pushing empty/new shells behind sessions with history."
   [s]
-  (let
-    [turn-count
-     (get s "turn_count")
+  (let [turn-count
+        (get s "turn_count")
 
-     modified-at
-     (get s "modified_at")
+        modified-at
+        (get s "modified_at")
 
-     created-at
-     (get s "created_at")]
+        created-at
+        (get s "created_at")]
 
     [(if (pos? (long (or turn-count 0))) 1 0)
      (or (date->millis modified-at) (date->millis created-at) 0) (long (or turn-count 0))]))
@@ -4471,12 +4390,11 @@
    `list-sessions` soul (zero extra round-trips); falls back to the
    per-session workspace fetch only against an older daemon."
   [s]
-  (let
-    [ws
-     (or (get s "workspace") (session-workspace (get s "id")))
+  (let [ws
+        (or (get s "workspace") (session-workspace (get s "id")))
 
-     draft?
-     (some? (get ws "fork_ms"))]
+        draft?
+        (some? (get ws "fork_ms"))]
 
     (assoc s
       :draft-label (when draft? (or (not-empty (get ws "label")) "draft"))
@@ -4498,26 +4416,24 @@
    folded `workspace` map first; only an older daemon costs a per-session
    workspace fetch."
   []
-  (try (let
-         [canonical
-          #(try (.getCanonicalPath (java.io.File. (str %))) (catch Throwable _ (str %)))
+  (try (let [canonical
+             #(try (.getCanonicalPath (java.io.File. (str %))) (catch Throwable _ (str %)))
 
-          place
-          (canonical (System/getProperty "user.dir"))]
+             place
+             (canonical (System/getProperty "user.dir"))]
 
          (->> (tui-session-summaries)
               (remove empty-untitled-session?)
               (take project-session-probe-cap)
               (some (fn [s]
-                      (let
-                        [sid
-                         (get s "id")
+                      (let [sid
+                            (get s "id")
 
-                         ws
-                         (or (get s "workspace") (session-workspace sid))
+                            ws
+                            (or (get s "workspace") (session-workspace sid))
 
-                         root
-                         (or (get ws "repo_root") (get ws "root"))]
+                            root
+                            (or (get ws "repo_root") (get ws "root"))]
 
                         (when (and root (= place (canonical root))) sid))))))
        (catch Throwable _ nil)))
@@ -4565,18 +4481,17 @@
    unreachable (persistence then degrades to a no-op, never a crash)."
   []
   (or @active-project-id*
-      (let
-        [root
-         (launch-root)
+      (let [root
+            (launch-root)
 
-         nm
-         (.getName (java.io.File. ^String root))
+            nm
+            (.getName (java.io.File. ^String root))
 
-         pid
-         (try (some-> (vis/gateway-ensure-project-for-root! root nm)
-                      (get "id")
-                      str)
-              (catch Throwable _ nil))]
+            pid
+            (try (some-> (vis/gateway-ensure-project-for-root! root nm)
+                         (get "id")
+                         str)
+                 (catch Throwable _ nil))]
 
         (when pid (reset! active-project-id* pid))
         pid)))
@@ -4663,8 +4578,9 @@
   ;; `:history-cursor` MUST survive this projection: the session opened on its
   ;; newest turns only, and that cursor is the sole record of what is still
   ;; unfetched above. Drop it and scroll-up silently stops at a false top.
-  (state/dispatch [:init-session (select-keys session-result [:id :status :current-turn-id :history-cursor]) history
-                   (session-workspace id)])
+  (state/dispatch [:init-session
+                   (select-keys session-result [:id :status :current-turn-id :history-cursor])
+                   history (session-workspace id)])
   (state/dispatch [:set-title (or (session-db-title id) "")])
   ;; If a turn is IN FLIGHT for this session (e.g. started in the web or a
   ;; sibling process), ATTACH so it streams live into the tab instead of
@@ -4686,10 +4602,9 @@
   [^TerminalScreen screen db r]
   (if-not (:prefix (:state r))
     r
-    (if-let [key (with-band-lock (band-top-row db (keymap/prefix-spec db))
-                                 #(dlg/prefix-band! screen
-                                                    (state/band-anchor db)
-                                                    (keymap/prefix-spec db)))]
+    (if-let [key (with-band-lock
+                   (band-top-row db (keymap/prefix-spec db))
+                   #(dlg/prefix-band! screen (state/band-anchor db) (keymap/prefix-spec db)))]
       (input/resolve-prefix-key key (:state r))
       {:action :continue :state (dissoc (:state r) :prefix)})))
 
@@ -4729,42 +4644,39 @@
    keeps the built-in default. Never throws."
   []
   (when (timg/graphical-terminal?)
-    (try
-      (let
-        [^java.io.OutputStream out
-         @vis/tty-out
+    (try (let [^java.io.OutputStream out
+               @vis/tty-out
 
-         ^java.io.InputStream in
-         @vis/tty-in]
+               ^java.io.InputStream in
+               @vis/tty-in]
 
-        (when (and out in)
-          (.write out (.getBytes "\u001b[16t\u001b[14t\u001b[18t" "UTF-8"))
-          (.flush out)
-          (let
-            [deadline
-             (+ (System/currentTimeMillis) 150)
+           (when (and out in)
+             (.write out (.getBytes "\u001b[16t\u001b[14t\u001b[18t" "UTF-8"))
+             (.flush out)
+             (let [deadline
+                   (+ (System/currentTimeMillis) 150)
 
-             buf
-             (StringBuilder.)
+                   buf
+                   (StringBuilder.)
 
-             tmp
-             (byte-array 512)]
+                   tmp
+                   (byte-array 512)]
 
-            (loop []
+               (loop []
 
-              (when (< (System/currentTimeMillis) deadline)
-                (let [avail (long (try (.available in) (catch Throwable _ 0)))]
-                  (when (pos? avail)
-                    (let [n (.read in tmp 0 (int (min avail 512)))]
-                      (when (pos? n) (.append buf (String. tmp 0 n "UTF-8")))))
-                  (when (nil? (timg/parse-cell-size-report (.toString buf)))
-                    (Thread/sleep 5)
-                    (recur)))))
-            (when-let [{:keys [w h]} (timg/parse-cell-size-report (.toString buf))]
-              (timg/set-cell-dimensions! w h)
-              (tel/log! {:level :debug :id ::cell-size :data {:w w :h h}}
-                        "Detected terminal cell pixel size for inline-image box sizing.")))))
-      (catch Throwable _ nil))))
+                 (when (< (System/currentTimeMillis) deadline)
+                   (let [avail (long (try (.available in) (catch Throwable _ 0)))]
+                     (when (pos? avail)
+                       (let [n (.read in tmp 0 (int (min avail 512)))]
+                         (when (pos? n) (.append buf (String. tmp 0 n "UTF-8")))))
+                     (when (nil? (timg/parse-cell-size-report (.toString buf)))
+                       (Thread/sleep 5)
+                       (recur)))))
+               (when-let [{:keys [w h]} (timg/parse-cell-size-report (.toString buf))]
+                 (timg/set-cell-dimensions! w h)
+                 (tel/log! {:level :debug :id ::cell-size :data {:w w :h h}}
+                           "Detected terminal cell pixel size for inline-image box sizing.")))))
+         (catch Throwable _ nil))))
 
 (defn- enable-terminal-escape-modes!
   [_opts]
@@ -4824,27 +4736,26 @@
    `draw-lock` (this touches `screen-size`/`refresh`). Best-effort — the
    animation loop swallows throws so a paint hiccup can never kill startup."
   [^TerminalScreen screen frame]
-  (let
-    [size
-     (screen-size screen)
+  (let [size
+        (screen-size screen)
 
-     cols
-     (.getColumns size)
+        cols
+        (.getColumns size)
 
-     rows
-     (.getRows size)
+        rows
+        (.getRows size)
 
-     g
-     (.newTextGraphics screen)
+        g
+        (.newTextGraphics screen)
 
-     spin
-     (nth boot-splash-frames (mod (long frame) (count boot-splash-frames)))
+        spin
+        (nth boot-splash-frames (mod (long frame) (count boot-splash-frames)))
 
-     label
-     (str spin "  Starting vis…")
+        label
+        (str spin "  Starting vis…")
 
-     row
-     (max 0 (quot (dec rows) 2))]
+        row
+        (max 0 (quot (dec rows) 2))]
 
     (p/set-colors! g t/terminal-bg t/terminal-bg)
     (p/fill-rect! g 0 0 cols rows)
@@ -4870,31 +4781,30 @@
    the animator + clears the buffer in a `finally` so the first real frame paints
    clean even if the body throws."
   [^TerminalScreen screen thunk]
-  (let
-    [stop?
-     (atom false)
+  (let [stop?
+        (atom false)
 
-     painted?
-     (atom false)
+        painted?
+        (atom false)
 
-     animator
-     (doto (Thread. ^Runnable
-                    (fn []
-                      (let [start (System/currentTimeMillis)]
-                        (loop [frame 0]
-                          (when-not @stop?
-                            (when (and (>= (- (System/currentTimeMillis) start)
-                                           (long boot-splash-grace-ms))
-                                       (not (:dialog-open? @state/app-db))
-                                       (.tryLock ^ReentrantLock draw-lock))
-                              (try (paint-boot-splash! screen frame)
-                                   (reset! painted? true)
-                                   (catch Throwable _ nil)
-                                   (finally (.unlock ^ReentrantLock draw-lock))))
-                            (Thread/sleep 90)
-                            (recur (inc frame))))))
-                    "vis-channel-tui-boot-splash")
-       (.setDaemon true))]
+        animator
+        (doto (Thread. ^Runnable
+                       (fn []
+                         (let [start (System/currentTimeMillis)]
+                           (loop [frame 0]
+                             (when-not @stop?
+                               (when (and (>= (- (System/currentTimeMillis) start)
+                                              (long boot-splash-grace-ms))
+                                          (not (:dialog-open? @state/app-db))
+                                          (.tryLock ^ReentrantLock draw-lock))
+                                 (try (paint-boot-splash! screen frame)
+                                      (reset! painted? true)
+                                      (catch Throwable _ nil)
+                                      (finally (.unlock ^ReentrantLock draw-lock))))
+                               (Thread/sleep 90)
+                               (recur (inc frame))))))
+                       "vis-channel-tui-boot-splash")
+          (.setDaemon true))]
 
     (.start animator)
     (try (thunk)
@@ -4904,12 +4814,11 @@
                   ;; clean buffer (skip entirely when nothing was ever drawn).
                   (when @painted?
                     (.lock ^ReentrantLock draw-lock)
-                    (try (let
-                           [size
-                            (screen-size screen)
+                    (try (let [size
+                               (screen-size screen)
 
-                            g
-                            (.newTextGraphics screen)]
+                               g
+                               (.newTextGraphics screen)]
 
                            (p/set-colors! g t/terminal-bg t/terminal-bg)
                            (p/fill-rect! g 0 0 (.getColumns size) (.getRows size))
@@ -4921,10 +4830,9 @@
   "Return a runtime provider config when OAuth presets are already authenticated.
    Their credentials live outside config, so a missing config file is not a missing provider."
   []
-  (try
-    (when-let [providers (seq (vis/authenticated-preset-providers))]
-      {:providers (vec providers)})
-    (catch Throwable _ nil)))
+  (try (when-let [providers (seq (vis/authenticated-preset-providers))]
+         {:providers (vec providers)})
+       (catch Throwable _ nil)))
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -4975,36 +4883,34 @@
           (catch Throwable t
             (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                       "Toggle hydration from config failed; defaults stand.")))
-     (let
-       [terminal (create-terminal! opts)
-        _ (configure-terminal-input! terminal opts)
-        screen (TerminalScreen. terminal)
-        ;; Render thread handle is held in a volatile so the `finally`
-        ;; clause can join it. (Locals from the `try` body aren't in
-        ;; scope inside `finally`.)
-        render-thread (volatile! nil)
-        session-live-listeners (volatile! {})
-        ;; Background bubble pre-warm is owned by `virtual/rewarm!` -
-        ;; one managed worker process-wide; see its ns comment for the
-        ;; invalidation events that restart it.
-        provider-limits-thread (volatile! nil)
-        workspace-refresh-thread (volatile! nil)
-        terminal-signal-cleanup (volatile! nil)
-        ;; Toggle listeners are process-global. Keep the disposal thunk so a
-        ;; closed TUI cannot keep invalidating the next TUI's transcript.
-        toggle-listener-dispose (volatile! nil)]
+     (let [terminal (create-terminal! opts)
+           _ (configure-terminal-input! terminal opts)
+           screen (TerminalScreen. terminal)
+           ;; Render thread handle is held in a volatile so the `finally`
+           ;; clause can join it. (Locals from the `try` body aren't in
+           ;; scope inside `finally`.)
+           render-thread (volatile! nil)
+           session-live-listeners (volatile! {})
+           ;; Background bubble pre-warm is owned by `virtual/rewarm!` -
+           ;; one managed worker process-wide; see its ns comment for the
+           ;; invalidation events that restart it.
+           provider-limits-thread (volatile! nil)
+           workspace-refresh-thread (volatile! nil)
+           terminal-signal-cleanup (volatile! nil)
+           ;; Toggle listeners are process-global. Keep the disposal thunk so a
+           ;; closed TUI cannot keep invalidating the next TUI's transcript.
+           toggle-listener-dispose (volatile! nil)]
 
        (.startScreen screen)
        (vreset! toggle-listener-dispose
                 (vis/toggle-add-listener!
                   (fn [event]
-                    (try
-                      (vis/save-toggles! (vis/toggles-snapshot))
-                      (catch Throwable t
-                        (tel/log! {:level :warn
-                                   :id ::toggle-persist-failed
-                                   :data {:error (ex-message t)}}
-                                  "Toggle persistence failed; in-memory value still applies.")))
+                    (try (vis/save-toggles! (vis/toggles-snapshot))
+                         (catch Throwable t
+                           (tel/log! {:level :warn
+                                      :id ::toggle-persist-failed
+                                      :data {:error (ex-message t)}}
+                                     "Toggle persistence failed; in-memory value still applies.")))
                     ;; Carry the flipped toggle's id: render-neutral ids (the
                     ;; provider request knobs) must NOT bust the height caches,
                     ;; or every reasoning-effort cycle re-lays out the transcript.
@@ -5023,7 +4929,7 @@
                        (let [sid (str sid)]
                          (when-let [cleanup (get @session-live-listeners sid)]
                            (vswap! session-live-listeners dissoc sid)
-                            (try (cleanup) (catch Throwable _ nil))))))
+                           (try (cleanup) (catch Throwable _ nil))))))
        (state/reg-fx
          :load-older-history
          ;; Lazy scroll-up paging. The session opened on its NEWEST turns only, and
@@ -5039,25 +4945,22 @@
            (vis/worker-future
              "tui-load-older-history"
              (fn []
-               (try
-                 (let [page (chat/older-history sid offset)]
-                   (if (or (nil? page) (:failed page))
-                     (state/dispatch [:older-history-loading sid false])
-                     (let
-                       [size (screen-size screen)
-                        bubble-w (max 1 (- (.getColumns size) render/MESSAGE_SIDE_PAD))
-                        settings (or (:settings @state/app-db) {})
-                        shift (virtual/warm-heights! (:messages page)
-                                                     bubble-w
-                                                     settings
-                                                     {:session-id sid
-                                                      :detail-expansions
-                                                      (:detail-expansions @state/app-db)})]
+               (try (let [page (chat/older-history sid offset)]
+                      (if (or (nil? page) (:failed page))
+                        (state/dispatch [:older-history-loading sid false])
+                        (let [size (screen-size screen)
+                              bubble-w (max 1 (- (.getColumns size) render/MESSAGE_SIDE_PAD))
+                              settings (or (:settings @state/app-db) {})
+                              shift (virtual/warm-heights! (:messages page)
+                                                           bubble-w
+                                                           settings
+                                                           {:session-id sid
+                                                            :detail-expansions (:detail-expansions
+                                                                                 @state/app-db)})]
 
-                       (state/dispatch [:prepend-history sid page shift])
-                       (state/dispatch [:bump-render-version]))))
-                 (catch Throwable _ (state/dispatch [:older-history-loading sid false])))))))
-
+                          (state/dispatch [:prepend-history sid page shift])
+                          (state/dispatch [:bump-render-version]))))
+                    (catch Throwable _ (state/dispatch [:older-history-loading sid false])))))))
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try
            (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))
@@ -5068,80 +4971,83 @@
            (when-not (:config @state/app-db)
              (when-let [c (or (authenticated-provider-config)
                               (when-not (:dialog-open? @state/app-db)
-                                (with-dialog-lock
-                                  #(do
-                                     ;; There is NO welcome screen: a missing provider
-                                     ;; lands DIRECTLY in Settings parked on `Providers`
-                                     ;; — the very dialog C-x o and the palette open. It
-                                     ;; persists what it saves and dispatches
-                                     ;; `:set-config`, so the freshest config is read
-                                     (open-settings-modal! screen "Providers")
-                                     (let [c (or (:config @state/app-db) (vis/load-config))]
-                                       (when (seq (:providers c)) c))))))]
+                                (with-dialog-lock #(do
+                                                     ;; There is NO welcome screen: a missing provider
+                                                     ;; lands DIRECTLY in Settings parked on `Providers`
+                                                     ;; — the very dialog C-x o and the palette open. It
+                                                     ;; persists what it saves and dispatches
+                                                     ;; `:set-config`, so the freshest config is read
+                                                     (open-settings-modal! screen "Providers")
+                                                     (let [c (or (:config @state/app-db)
+                                                                 (vis/load-config))]
+                                                       (when (seq (:providers c)) c))))))]
                (state/dispatch [:set-config c])
                (state/dispatch [:force-provider-limits-refresh])))
            ;; Init session: resume if --session-id given, else fresh. The --session-id case was
            ;; already validated above (before Lanterna started), so here we only need the
            ;; pre-resolved value.
            (when-let [config (:config @state/app-db)]
-             (let
-               [make-startup
-                (fn [config]
-                  (cond (:session-id opts) resumed-from-flag
-                        ;; --continue: reopen the most-recent :tui session
-                        (:continue opts)
-                        (if-let
-                          [latest (first (remove empty-untitled-session? (tui-session-summaries)))]
-                          (or (chat/resume-session (:id latest)) (chat/make-session config))
-                          (chat/make-session config))
-                        ;; --resume: start fresh; the session picker opens
-                        ;; before the main loop (see below), like `pi -r`.
-                        (:resume opts) (chat/make-session config)
-                        ;; Plain launch: a project IS a tab set. Resolve the
-                        ;; launch dir's PROJECT and eagerly resume its
-                        ;; most-recent member as the ONE startup tab (one
-                        ;; transcript fetch); the REST of the set restores as
-                        ;; tabs in the background once the UI is live (see
-                        ;; restore-project-tabs! below). No project / no
-                        ;; members → fall back to the newest non-empty session
-                        ;; pinned to this root, else a fresh session.
-                        :else (let
-                                [members (project-member-sessions (ensure-active-project-id!))
-                                 ;; Remember the ON-DISK member set: a startup tab
-                                 ;; that is already a member must not be persisted
-                                 ;; alone (see below).
-                                 _ (reset! launch-member-ids*
-                                           (into #{} (map #(str (get % "id"))) members))
-                                 ;; Recency picks WHICH member opens eagerly; the
-                                 ;; strip order stays `project_position`.
-                                 preferred (most-recent-session-ids members)]
-                                (or (some chat/resume-session preferred)
-                                    (some-> (latest-project-session-id)
-                                            chat/resume-session)
-                                    (chat/make-session config)))))
-                {:keys [id history] :as startup-session}
-                ;; No provider is usable: either nothing is configured at all,
-                ;; or a config EXISTS and every provider failed to resolve at
-                ;; router-build time (rotated/expired creds). Onboarding is
-                ;; skipped whenever a config is present, and the gateway wraps
-                ;; the verdict on its way back, so classify the whole cause
-                ;; chain AND the wire payload — then surface the provider
-                ;; manager here and retry the build ONCE with the freshest
-                ;; config.
-                (with-boot-splash!
-                  screen
-                  (fn []
-                    (try (make-startup config)
-                         (catch Throwable e
-                           (if (vis-config/no-provider-ex e)
-                             (do (with-dialog-lock #(open-settings-modal! screen "Providers"))
-                                 (when-let [c (vis/load-config)]
-                                   (state/dispatch [:set-config c])
-                                   (state/dispatch [:force-provider-limits-refresh]))
-                                 (make-startup (:config @state/app-db)))
-                             (throw e))))))]
+             (let [make-startup
+                   (fn [config]
+                     (cond (:session-id opts) resumed-from-flag
+                           ;; --continue: reopen the most-recent :tui session
+                           (:continue opts) (if-let [latest (first (remove empty-untitled-session?
+                                                                     (tui-session-summaries)))]
+                                              (or (chat/resume-session (:id latest))
+                                                  (chat/make-session config))
+                                              (chat/make-session config))
+                           ;; --resume: start fresh; the session picker opens
+                           ;; before the main loop (see below), like `pi -r`.
+                           (:resume opts) (chat/make-session config)
+                           ;; Plain launch: a project IS a tab set. Resolve the
+                           ;; launch dir's PROJECT and eagerly resume its
+                           ;; most-recent member as the ONE startup tab (one
+                           ;; transcript fetch); the REST of the set restores as
+                           ;; tabs in the background once the UI is live (see
+                           ;; restore-project-tabs! below). No project / no
+                           ;; members → fall back to the newest non-empty session
+                           ;; pinned to this root, else a fresh session.
+                           :else (let [members (project-member-sessions (ensure-active-project-id!))
+                                       ;; Remember the ON-DISK member set: a startup tab
+                                       ;; that is already a member must not be persisted
+                                       ;; alone (see below).
+                                       _ (reset! launch-member-ids* (into #{}
+                                                                          (map #(str (get % "id")))
+                                                                          members))
+                                       ;; Recency picks WHICH member opens eagerly; the
+                                       ;; strip order stays `project_position`.
+                                       preferred (most-recent-session-ids members)]
 
-               (vswap! session-live-listeners assoc (str id) (init-visible-session! startup-session))
+                                   (or (some chat/resume-session preferred)
+                                       (some-> (latest-project-session-id)
+                                               chat/resume-session)
+                                       (chat/make-session config)))))
+                   {:keys [id history] :as startup-session}
+                   ;; No provider is usable: either nothing is configured at all,
+                   ;; or a config EXISTS and every provider failed to resolve at
+                   ;; router-build time (rotated/expired creds). Onboarding is
+                   ;; skipped whenever a config is present, and the gateway wraps
+                   ;; the verdict on its way back, so classify the whole cause
+                   ;; chain AND the wire payload — then surface the provider
+                   ;; manager here and retry the build ONCE with the freshest
+                   ;; config.
+                   (with-boot-splash!
+                     screen
+                     (fn []
+                       (try (make-startup config)
+                            (catch Throwable e
+                              (if (vis-config/no-provider-ex e)
+                                (do (with-dialog-lock #(open-settings-modal! screen "Providers"))
+                                    (when-let [c (vis/load-config)]
+                                      (state/dispatch [:set-config c])
+                                      (state/dispatch [:force-provider-limits-refresh]))
+                                    (make-startup (:config @state/app-db)))
+                                (throw e))))))]
+
+               (vswap! session-live-listeners
+                       assoc
+                       (str id)
+                       (init-visible-session! startup-session))
                ;; Record this place's tab set (just the single startup tab)
                ;; — otherwise a session never persists and a plain relaunch
                ;; wouldn't restore it. Also self-heals a stale multi-tab
@@ -5160,18 +5066,17 @@
                ;; already hot. Empty sessions skip this entirely.
                ;; Cancelled in the shutdown hook below.
                (when (seq history)
-                 (let
-                   [size (screen-size screen)
-                    cols (.getColumns size)
-                    bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                    settings (or (:settings @state/app-db) {})
-                    warm-opts {:session-id id
-                               :detail-expansions (:detail-expansions @state/app-db)
-                               ;; Re-layout as background warm lands so
-                               ;; total-h SETTLES while idle at auto-bottom
-                               ;; (thumb pinned to bottom = invisible) instead
-                               ;; of snapping ~20% on the first wheel-up.
-                               :on-warm #(state/dispatch [:bump-render-version])}]
+                 (let [size (screen-size screen)
+                       cols (.getColumns size)
+                       bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                       settings (or (:settings @state/app-db) {})
+                       warm-opts {:session-id id
+                                  :detail-expansions (:detail-expansions @state/app-db)
+                                  ;; Re-layout as background warm lands so
+                                  ;; total-h SETTLES while idle at auto-bottom
+                                  ;; (thumb pinned to bottom = invisible) instead
+                                  ;; of snapping ~20% on the first wheel-up.
+                                  :on-warm #(state/dispatch [:bump-render-version])}]
 
                    ;; Head-start warm on the input thread so immediate
                    ;; first-scroll doesn't hit a cold heavy trace bubble.
@@ -5282,18 +5187,17 @@
               (fn [{:keys [id history]}]
                 (virtual/stop-rewarm!)
                 (when (seq history)
-                  (let
-                    [size (screen-size screen)
-                     cols (.getColumns size)
-                     bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                     settings (or (:settings @state/app-db) {})
-                     warm-opts {:session-id id
-                                :detail-expansions (:detail-expansions @state/app-db)
-                                ;; See init-path warm-opts: settle total-h
-                                ;; via render bumps as the background warm
-                                ;; lands, so a session/workspace switch
-                                ;; doesn't jump the thumb on first scroll.
-                                :on-warm #(state/dispatch [:bump-render-version])}]
+                  (let [size (screen-size screen)
+                        cols (.getColumns size)
+                        bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                        settings (or (:settings @state/app-db) {})
+                        warm-opts {:session-id id
+                                   :detail-expansions (:detail-expansions @state/app-db)
+                                   ;; See init-path warm-opts: settle total-h
+                                   ;; via render bumps as the background warm
+                                   ;; lands, so a session/workspace switch
+                                   ;; doesn't jump the thumb on first scroll.
+                                   :on-warm #(state/dispatch [:bump-render-version])}]
 
                     (virtual/pre-warm-recent! history
                                               bubble-w
@@ -5320,18 +5224,17 @@
               ;; session never reaches its idle tab ("not subscribed, turn not live").
               ;; ensure-session-live! is idempotent and the mux shares one socket,
               ;; so subscribing every launch-project member here is cheap.
-              preallocate-project-tabs!
-              (fn [specs]
-                (when (seq specs)
-                  (state/dispatch [:preallocate-project-tabs specs])
-                  (doseq [{:keys [session-id]} specs]
-                    (when session-id (ensure-session-live! session-id)))))
-
+              preallocate-project-tabs! (fn [specs]
+                                          (when (seq specs)
+                                            (state/dispatch [:preallocate-project-tabs specs])
+                                            (doseq [{:keys [session-id]} specs]
+                                              (when session-id (ensure-session-live! session-id)))))
               open-session-tab!
               (fn [{:keys [id history] :as session-result} notify?]
                 (when (and id session-result)
                   (state/dispatch [:open-session-tab
-                                   (select-keys session-result [:id :status :current-turn-id :history-cursor])
+                                   (select-keys session-result
+                                                [:id :status :current-turn-id :history-cursor])
                                    history (session-workspace id)])
                   ;; `:open-session-tab` already reset `:title nil`. Only
                   ;; push a title when the DB actually has one — mirror
@@ -5357,27 +5260,26 @@
               hydrating-tabs* (volatile! #{})
               hydrate-pending-tab!
               (fn []
-                (let
-                  [db @state/app-db
-                   active-id (:active-tab-id db)
-                   entry (when active-id (some #(when (= (:id %) active-id) %) (:tabs db)))
-                   tab-id (:id entry)
-                   sid (:session-id entry)]
+                (let [db @state/app-db
+                      active-id (:active-tab-id db)
+                      entry (when active-id (some #(when (= (:id %) active-id) %) (:tabs db)))
+                      tab-id (:id entry)
+                      sid (:session-id entry)]
 
                   (when (and (:pending? entry) sid (not (contains? @hydrating-tabs* tab-id)))
                     (vswap! hydrating-tabs* conj tab-id)
                     ;; Spinner + Enter-queues-into-:pending-sends while it loads.
                     (state/dispatch [:mark-tab-loading tab-id true])
-                    (vis/worker-future
-                      "tui-hydrate-pending-tab"
-                      (fn []
-                        (try (if-let [sr (try (chat/resume-session sid) (catch Throwable _ nil))]
-                               (open-session-tab! sr false)
-                               (do (state/dispatch [:tab-hydration-failed tab-id])
-                                   (vis/notify! "Session no longer exists"
-                                                :level :warn
-                                                :ttl-ms copy-success-ttl-ms)))
-                             (finally (vswap! hydrating-tabs* disj tab-id))))))))
+                    (vis/worker-future "tui-hydrate-pending-tab"
+                                       (fn []
+                                         (try (if-let [sr (try (chat/resume-session sid)
+                                                               (catch Throwable _ nil))]
+                                                (open-session-tab! sr false)
+                                                (do (state/dispatch [:tab-hydration-failed tab-id])
+                                                    (vis/notify! "Session no longer exists"
+                                                                 :level :warn
+                                                                 :ttl-ms copy-success-ttl-ms)))
+                                              (finally (vswap! hydrating-tabs* disj tab-id))))))))
               start-new-session!
               ;; Ctrl+N / `+` / `/new-session`. NEVER blocks the input thread on
               ;; the cold env/runtime build: a warm pool session opens instantly,
@@ -5386,43 +5288,41 @@
               ;; (chat/make-session-async). Text typed meanwhile queues into the
               ;; tab's `:pending-sends` and drains the moment it is bound.
               (fn [config seed-text draft]
-                (let
-                  [seed (some-> seed-text
-                                str/trim
-                                not-empty)
-                   result (chat/make-session-async config)
-                   build-id (str (java.util.UUID/randomUUID))
-                   fut (:building result)]
+                (let [seed (some-> seed-text
+                                   str/trim
+                                   not-empty)
+                      result (chat/make-session-async config)
+                      build-id (str (java.util.UUID/randomUUID))
+                      fut (:building result)]
 
                   (state/dispatch [:open-building-tab build-id])
                   (when seed (state/dispatch [:send-message seed]))
                   (vis/worker-future
                     "tui-new-session-bind"
                     (fn []
-                      (try (let [{:keys [id history]} @fut]
-                             (ensure-session-live! id)
-                             ;; `draft` = `{:label … :clean? …}`: the user asked this session to
-                             ;; start in an isolated copy, so fork BEFORE the tab binds. The fork
-                             ;; is a SECOND call by construction (the gateway forks THROUGH the
-                             ;; session that will own the draft); when it throws, the catch below
-                             ;; reports it and no tab binds — nobody is silently dropped into
-                             ;; trunk, the one place they said not to work.
-                             (when draft
-                               (vis/gateway-create-draft! id
-                                                          (:label draft)
-                                                          (boolean (:clean? draft))))
-                             (state/dispatch [:bind-built-session build-id {:id id} history
-                                              (session-workspace id)])
-                             (persist-tabs!)
-                             (vis/notify! (if draft
-                                            (str "Opened session in draft '" (:label draft) "'")
-                                            "Opened session")
-                                          :level :success
-                                          :ttl-ms copy-success-ttl-ms))
-                           (catch Throwable e
-                             (vis/notify! (str "Failed to open new session: " (ex-message e))
-                                          :level :error
-                                          :ttl-ms copy-success-ttl-ms)))))))
+                      (try
+                        (let [{:keys [id history]} @fut]
+                          (ensure-session-live! id)
+                          ;; `draft` = `{:label … :clean? …}`: the user asked this session to
+                          ;; start in an isolated copy, so fork BEFORE the tab binds. The fork
+                          ;; is a SECOND call by construction (the gateway forks THROUGH the
+                          ;; session that will own the draft); when it throws, the catch below
+                          ;; reports it and no tab binds — nobody is silently dropped into
+                          ;; trunk, the one place they said not to work.
+                          (when draft
+                            (vis/gateway-create-draft! id (:label draft) (boolean (:clean? draft))))
+                          (state/dispatch [:bind-built-session build-id {:id id} history
+                                           (session-workspace id)])
+                          (persist-tabs!)
+                          (vis/notify! (if draft
+                                         (str "Opened session in draft '" (:label draft) "'")
+                                         "Opened session")
+                                       :level :success
+                                       :ttl-ms copy-success-ttl-ms))
+                        (catch Throwable e
+                          (vis/notify! (str "Failed to open new session: " (ex-message e))
+                                       :level :error
+                                       :ttl-ms copy-success-ttl-ms)))))))
               refresh-active-tab-impl!
               (fn [notify?]
                 (let [db @state/app-db]
@@ -5469,37 +5369,35 @@
                 ;; disturbs a turn running in another tab, so there's
                 ;; nothing to wait for. Every action lands on a tab.
                 (cond
-                  (= :new (:action choice)) (when-let [config (:config @state/app-db)]
-                                              (start-new-session! config
-                                                                  (:seed-text choice)
-                                                                  (:draft choice)))
+                  (= :new (:action choice))
+                  (when-let [config (:config @state/app-db)]
+                    (start-new-session! config (:seed-text choice) (:draft choice)))
                   (= :fork (:action choice))
                   (if-let [current-id (or (:id choice) (current-session-id))]
-                    (let
-                      [db (vis/db-info)
-                       ;; A whole-session fork must become a NEW independent
-                       ;; session (its own soul -> its own tab). db-fork-session!
-                       ;; keeps the SAME soul (a prompt/model branch surfaced in
-                       ;; the fork tree), which can NEVER open as a distinct tab:
-                       ;; resume-session resolves it back to the source soul and
-                       ;; :open-session-tab just refocuses the source tab. So fork
-                       ;; THROUGH the last turn instead - exactly like fork-at-turn
-                       ;; with no picker - which mints a fresh soul + copies every
-                       ;; turn.
-                       turns (try (vis/db-list-session-turns db current-id)
-                                  (catch Throwable _ nil))
-                       through-turn-id (:id (last turns))]
+                    (let [db (vis/db-info)
+                          ;; A whole-session fork must become a NEW independent
+                          ;; session (its own soul -> its own tab). db-fork-session!
+                          ;; keeps the SAME soul (a prompt/model branch surfaced in
+                          ;; the fork tree), which can NEVER open as a distinct tab:
+                          ;; resume-session resolves it back to the source soul and
+                          ;; :open-session-tab just refocuses the source tab. So fork
+                          ;; THROUGH the last turn instead - exactly like fork-at-turn
+                          ;; with no picker - which mints a fresh soul + copies every
+                          ;; turn.
+                          turns (try (vis/db-list-session-turns db current-id)
+                                     (catch Throwable _ nil))
+                          through-turn-id (:id (last turns))]
 
                       (if through-turn-id
-                        (let
-                          [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
-                                      (catch Throwable _ nil))
-                           fork-soul-id (try (vis/db-fork-session-at-turn!
-                                                db
-                                                current-id
-                                                {:workspace-id ws-id
-                                                 :through-turn-id through-turn-id})
-                                              (catch Throwable _ nil))]
+                        (let [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                                         (catch Throwable _ nil))
+                              fork-soul-id (try (vis/db-fork-session-at-turn! db
+                                                                              current-id
+                                                                              {:workspace-id ws-id
+                                                                               :through-turn-id
+                                                                               through-turn-id})
+                                                (catch Throwable _ nil))]
+
                           (if fork-soul-id
                             (if-let [session-result (chat/resume-session fork-soul-id)]
                               (do (open-session-tab! session-result false)
@@ -5520,29 +5418,27 @@
                                  :ttl-ms copy-success-ttl-ms))
                   (= :fork-at-turn (:action choice))
                   (if-let [current-id (or (:id choice) (current-session-id))]
-                    (let
-                      [db (vis/db-info)
-                       turns (try (vis/db-list-session-turns db current-id)
-                                  (catch Throwable _ nil))]
+                    (let [db (vis/db-info)
+                          turns (try (vis/db-list-session-turns db current-id)
+                                     (catch Throwable _ nil))]
 
                       (if (seq turns)
                         ;; Palette + fuzzy filter over the session's turns; the
                         ;; pick is the LAST turn the fork keeps (copies THROUGH).
-                        (when-let
-                          [turn-id (:turn-id (with-dialog-lock #(dlg/searchable-select!
-                                                                  screen
-                                                                  "Fork session at…"
-                                                                  (dlg/fork-turn-items turns)
-                                                                  {:placeholder "Filter turns…"
-                                                                   :enter-label "fork here"})))]
-                          (let
-                            [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
-                                        (catch Throwable _ nil))
-                             fork-soul-id (try (vis/db-fork-session-at-turn!
-                                                  db
-                                                  current-id
-                                                  {:workspace-id ws-id :through-turn-id turn-id})
-                                                (catch Throwable _ nil))]
+                        (when-let [turn-id (:turn-id (with-dialog-lock
+                                                       #(dlg/searchable-select!
+                                                          screen
+                                                          "Fork session at…"
+                                                          (dlg/fork-turn-items turns)
+                                                          {:placeholder "Filter turns…"
+                                                           :enter-label "fork here"})))]
+                          (let [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                                           (catch Throwable _ nil))
+                                fork-soul-id (try (vis/db-fork-session-at-turn!
+                                                    db
+                                                    current-id
+                                                    {:workspace-id ws-id :through-turn-id turn-id})
+                                                  (catch Throwable _ nil))]
 
                             (if fork-soul-id
                               (if-let [session-result (chat/resume-session fork-soul-id)]
@@ -5589,38 +5485,35 @@
                   ;; make a new one, or remove it from its project.
                   (= :project (:action choice))
                   (when-let [target-id (:id choice)]
-                    (let
-                      [projects (try (vis/gateway-list-projects) (catch Throwable _ nil))
-                       items (vec (concat (mapv (fn [pr]
-                                                  {:id (get pr "id")
-                                                   :label (str (get pr "name")
-                                                               "  ("
-                                                               (get pr "session_count")
-                                                               ")")})
-                                                projects)
-                                          [{:id ::new-project :label "＋ New project…"}
-                                           {:id ::remove-project :label "✗ Remove from project"}]))
-                       pick (with-dialog-lock #(dlg/searchable-select! screen
-                                                                       "Move session to project…"
-                                                                       items
-                                                                       {:placeholder
-                                                                        "Type to filter projects…"
-                                                                        :enter-label "move"}))]
+                    (let [projects (try (vis/gateway-list-projects) (catch Throwable _ nil))
+                          items
+                          (vec (concat
+                                 (mapv (fn [pr]
+                                         {:id (get pr "id")
+                                          :label
+                                          (str (get pr "name") "  (" (get pr "session_count") ")")})
+                                       projects)
+                                 [{:id ::new-project :label "＋ New project…"}
+                                  {:id ::remove-project :label "✗ Remove from project"}]))
+                          pick (with-dialog-lock #(dlg/searchable-select!
+                                                    screen
+                                                    "Move session to project…"
+                                                    items
+                                                    {:placeholder "Type to filter projects…"
+                                                     :enter-label "move"}))]
 
                       (when pick
-                        (let
-                          [pid (cond (= ::new-project (:id pick))
-                                     (let
-                                       [nm (with-dialog-lock #(dlg/text-input-dialog!
-                                                                screen
-                                                                "New project"
-                                                                "Project name"))]
-                                       (when-not (str/blank? (str nm))
-                                         (get (try (vis/gateway-create-project! {:name nm})
-                                                   (catch Throwable _ nil))
-                                              "id")))
-                                     (= ::remove-project (:id pick)) nil
-                                     :else (:id pick))]
+                        (let [pid (cond (= ::new-project (:id pick))
+                                        (let [nm (with-dialog-lock #(dlg/text-input-dialog!
+                                                                      screen
+                                                                      "New project"
+                                                                      "Project name"))]
+                                          (when-not (str/blank? (str nm))
+                                            (get (try (vis/gateway-create-project! {:name nm})
+                                                      (catch Throwable _ nil))
+                                                 "id")))
+                                        (= ::remove-project (:id pick)) nil
+                                        :else (:id pick))]
                           (when (or (= ::remove-project (:id pick)) pid)
                             (try (vis/gateway-assign-project! target-id pid)
                                  (catch Throwable _ nil))
@@ -5634,29 +5527,29 @@
                   ;; (movable tabs), persisted cross-channel via the gateway.
                   (= :reorder (:action choice))
                   (when-let [target-id (:id choice)]
-                    (let
-                      [summaries (tui-session-summaries)
-                       target (some #(when (= (str (get % "id")) (str target-id)) %) summaries)
-                       pid (get target "project_id")
-                       ordered (when pid
-                                 (->> summaries
-                                      (filter #(= (str (get % "project_id")) (str pid)))
-                                      (sort-by #(or (get % "project_position") Long/MAX_VALUE))
-                                      (mapv #(str (get % "id")))))
-                       idx (when ordered (.indexOf ^java.util.List ordered (str target-id)))
-                       swap-with (when (and idx (>= (long idx) 0))
-                                   (case (:dir choice)
-                                     :up
-                                     (when (> (long idx) 0) (dec (long idx)))
+                    (let [summaries (tui-session-summaries)
+                          target (some #(when (= (str (get % "id")) (str target-id)) %) summaries)
+                          pid (get target "project_id")
+                          ordered (when pid
+                                    (->> summaries
+                                         (filter #(= (str (get % "project_id")) (str pid)))
+                                         (sort-by #(or (get % "project_position") Long/MAX_VALUE))
+                                         (mapv #(str (get % "id")))))
+                          idx (when ordered (.indexOf ^java.util.List ordered (str target-id)))
+                          swap-with
+                          (when (and idx (>= (long idx) 0))
+                            (case (:dir choice)
+                              :up
+                              (when (> (long idx) 0) (dec (long idx)))
 
-                                     :down
-                                     (when (< (long idx) (dec (count ordered))) (inc (long idx)))
+                              :down
+                              (when (< (long idx) (dec (count ordered))) (inc (long idx)))
 
-                                     nil))
-                       reordered (when swap-with
-                                   (assoc ordered
-                                     idx (nth ordered swap-with)
-                                     swap-with (nth ordered idx)))]
+                              nil))
+                          reordered (when swap-with
+                                      (assoc ordered
+                                        idx (nth ordered swap-with)
+                                        swap-with (nth ordered idx)))]
 
                       (when (and pid reordered)
                         (try (vis/gateway-reorder-project-sessions! pid reordered)
@@ -5684,9 +5577,8 @@
               clear-session! (fn []
                                (when-not (:dialog-open? @state/app-db)
                                  (when-let [config (:config @state/app-db)]
-                                   (let
-                                     [old-id (current-session-id)
-                                      old-tab-id (:active-tab-id @state/app-db)]
+                                   (let [old-id (current-session-id)
+                                         old-tab-id (:active-tab-id @state/app-db)]
 
                                      (open-session-tab! (chat/make-session config) true)
                                      (when old-tab-id (state/dispatch [:close-tab old-tab-id]))
@@ -5701,22 +5593,21 @@
               ;; Same one-dialog-at-a-time discipline as the resources modal;
               ;; on close, re-seed the footer's cached git status so a
               ;; stage/commit/push done inside is reflected immediately.
-              open-magit! (fn open-magit! []
-                            (when-not (:dialog-open? @state/app-db)
-                              (state/dispatch [:close-overlays])
-                              (when (get-in @state/app-db [:search :active?])
-                                (state/dispatch [:search-clear]))
-                              (let
-                                [db @state/app-db
-                                 fallback (or (:workspace/root db) (System/getProperty "user.dir"))
-                                 ;; The primary workspace root plus every git repo
-                                 ;; nested below it (a mega-repo's `repositories/`
-                                 ;; clones). For a DRAFT the primary points at the
-                                 ;; clone, so the buffer shows the draft's git state,
-                                 ;; never the trunk's.
-                                 repos (magit/session-roots (:workspace db) fallback)]
+              open-magit!
+              (fn open-magit! []
+                (when-not (:dialog-open? @state/app-db)
+                  (state/dispatch [:close-overlays])
+                  (when (get-in @state/app-db [:search :active?]) (state/dispatch [:search-clear]))
+                  (let [db @state/app-db
+                        fallback (or (:workspace/root db) (System/getProperty "user.dir"))
+                        ;; The primary workspace root plus every git repo
+                        ;; nested below it (a mega-repo's `repositories/`
+                        ;; clones). For a DRAFT the primary points at the
+                        ;; clone, so the buffer shows the draft's git state,
+                        ;; never the trunk's.
+                        repos (magit/session-roots (:workspace db) fallback)]
 
-                                (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
+                    (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
               ;; Companion parity ("Start the session in"): a new session may begin in an
               ;; isolated COPY of the project instead of the project itself. The dirty copy
               ;; is the interesting one — the clone carries the uncommitted work with it, so
@@ -5725,12 +5616,10 @@
               (fn start-session-in! []
                 (when-not (:dialog-open? @state/app-db)
                   (state/dispatch [:close-overlays])
-                  (when-let
-                    [choice (with-dialog-lock
-                              #(dlg/start-in-transient! screen (state/band-anchor)))]
+                  (when-let [choice (with-dialog-lock
+                                      #(dlg/start-in-transient! screen (state/band-anchor)))]
                     (if (= :trunk (:start-in choice))
-                      (do (state/dispatch [:reset-input])
-                          (switch-session! {:action :new}))
+                      (do (state/dispatch [:reset-input]) (switch-session! {:action :new}))
                       (when-let [draft (:draft choice)]
                         (state/dispatch [:reset-input])
                         (switch-session! {:action :new :draft draft}))))))
@@ -5746,96 +5635,95 @@
                 ([] (show-drafts! nil))
                 ([pressed]
                  (let [db @state/app-db]
-                  (cond
-                    (or (:loading? db) (seq (:pending-sends db)))
-                    (vis/notify!
-                      "Wait for the running or queued turn to finish before managing drafts"
-                      :level :warn
-                      :ttl-ms status-error-ttl-ms)
-                    (:dialog-open? db) nil
-                    :else
-                    (if-let [sid (current-session-id)]
-                      (try
-                        (state/dispatch [:close-overlays])
-                        (when (get-in @state/app-db [:search :active?])
-                          (state/dispatch [:search-clear]))
-                        (let
-                          [drafts
-                           (vis/gateway-list-drafts sid)
+                   (cond
+                     (or (:loading? db) (seq (:pending-sends db)))
+                     (vis/notify!
+                       "Wait for the running or queued turn to finish before managing drafts"
+                       :level :warn
+                       :ttl-ms status-error-ttl-ms)
+                     (:dialog-open? db) nil
+                     :else
+                     (if-let [sid (current-session-id)]
+                       (try
+                         (state/dispatch [:close-overlays])
+                         (when (get-in @state/app-db [:search :active?])
+                           (state/dispatch [:search-clear]))
+                         (let [drafts (vis/gateway-list-drafts sid)
+                               ;; The band lives INSIDE this session's frame, under the
+                               ;; transcript it is about — never over the header, always
+                               ;; above the prompt (`state/band-anchor`).
+                               choice
+                               (with-dialog-lock
+                                 #(dlg/draft-transient! screen (state/band-anchor) drafts pressed))]
 
-                           ;; The band lives INSIDE this session's frame, under the
-                           ;; transcript it is about — never over the header, always
-                           ;; above the prompt (`state/band-anchor`).
-                           choice
-                           (with-dialog-lock #(dlg/draft-transient! screen
-                                                                    (state/band-anchor)
-                                                                    drafts
-                                                                    pressed))]
-
-                          (when choice
-                            ;; A queued or externally-started turn can become active while a
-                            ;; modal is open. Check again immediately before changing roots.
-                            (let [db-now @state/app-db]
-                              (if (or (:loading? db-now) (seq (:pending-sends db-now)))
-                                (vis/notify!
-                                  "A turn started while the draft manager was open; change cancelled"
-                                  :level :warn
-                                  :ttl-ms status-error-ttl-ms)
-                                (let
-                                  [{:keys [changed? message workspace]}
-                                   (apply-draft-picker-choice! sid choice)]
-                                  (when changed?
-                                    (state/dispatch [:set-workspace workspace])
-                                    (state/dispatch [:bump-render-version]))
-                                  (vis/notify! message
-                                               :level (if changed? :success :info)
-                                               :ttl-ms copy-success-ttl-ms))))))
-                        (catch Throwable t
-                          ;; Any gateway race is followed by an authoritative re-read, so the
-                          ;; footer never keeps painting a stale draft root.
-                          (try (when-let [workspace (vis/gateway-session-workspace sid)]
-                                 (state/dispatch [:set-workspace workspace])
-                                 (state/dispatch [:bump-render-version]))
-                               (catch Throwable _ nil))
-                          (vis/notify! (str "Could not manage drafts: " (or (ex-message t) (str t)))
-                                       :level :error
-                                       :ttl-ms status-error-ttl-ms)))
-                      (vis/notify! "No current session for draft management"
+                           (when choice
+                             ;; A queued or externally-started turn can become active while a
+                             ;; modal is open. Check again immediately before changing roots.
+                             (let [db-now @state/app-db]
+                               (if (or (:loading? db-now) (seq (:pending-sends db-now)))
+                                 (vis/notify!
+                                   "A turn started while the draft manager was open; change cancelled"
                                    :level :warn
-                                   :ttl-ms status-error-ttl-ms))))))
+                                   :ttl-ms status-error-ttl-ms)
+                                 (let [{:keys [changed? message workspace]}
+                                       (apply-draft-picker-choice! sid choice)]
+                                   (when changed?
+                                     (state/dispatch [:set-workspace workspace])
+                                     (state/dispatch [:bump-render-version]))
+                                   (vis/notify! message
+                                                :level (if changed? :success :info)
+                                                :ttl-ms copy-success-ttl-ms))))))
+                         (catch Throwable t
+                           ;; Any gateway race is followed by an authoritative re-read, so the
+                           ;; footer never keeps painting a stale draft root.
+                           (try (when-let [workspace (vis/gateway-session-workspace sid)]
+                                  (state/dispatch [:set-workspace workspace])
+                                  (state/dispatch [:bump-render-version]))
+                                (catch Throwable _ nil))
+                           (vis/notify! (str "Could not manage drafts: "
+                                             (or (ex-message t) (str t)))
+                                        :level :error
+                                        :ttl-ms status-error-ttl-ms)))
+                       (vis/notify! "No current session for draft management"
+                                    :level :warn
+                                    :ttl-ms status-error-ttl-ms))))))
               show-sessions!
               (fn show-sessions! []
                 (when-not (:dialog-open? @state/app-db)
                   (let [sessions (mapv enrich-session-row (tui-session-summaries))]
-                    (when-let
-                      [choice (with-dialog-lock #(dlg/navigator-dialog! screen
-                                                                        {:sessions sessions
-                                                                         :active-session-id
-                                                                         (current-session-id)
-                                                                         :db @state/app-db
-                                                                         :search-transcript-ids
-                                                                         (fn [q]
-                                                                           (try
-                                                                             (into {}
-                    (map (fn [{:keys [id rank in-title? in-request? in-reply? in-thinking?
-                                      request-snippet reply-snippet hits]}]
-                           [id {;; The gateway RANKED this row (0 title, 1 request, 2 reply,
-                                ;; 3 thinking) — the picker paints that order and never
-                                ;; invents one of its own.
-                                :rank rank
-                                :kind (cond in-title? :title
-                                            (and in-request? in-reply?) :both
-                                            in-request? :request
-                                            in-reply? :reply
-                                            in-thinking? :thinking
-                                            :else :both)
-                                :request-snippet request-snippet
-                                :reply-snippet reply-snippet
-                                ;; Every hit the server sent, newest first — the
-                                ;; picker previews several per session, not one.
-                                :hits hits}]))
-                                                                                   (vis/gateway-search-session-matches q))
-                                                                             (catch Throwable _ nil)))}))]
+                    (when-let [choice
+                               (with-dialog-lock
+                                 #(dlg/navigator-dialog!
+                                    screen
+                                    {:sessions sessions
+                                     :active-session-id (current-session-id)
+                                     :db @state/app-db
+                                     :search-transcript-ids
+                                     (fn [q]
+                                       (try (into
+                                              {}
+                                              (map
+                                                (fn [{:keys [id rank in-title? in-request? in-reply?
+                                                             in-thinking? request-snippet
+                                                             reply-snippet hits]}]
+                                                  [id
+                                                   {;; The gateway RANKED this row (0 title, 1 request, 2 reply,
+                                                    ;; 3 thinking) — the picker paints that order and never
+                                                    ;; invents one of its own.
+                                                    :rank rank
+                                                    :kind (cond in-title? :title
+                                                                (and in-request? in-reply?) :both
+                                                                in-request? :request
+                                                                in-reply? :reply
+                                                                in-thinking? :thinking
+                                                                :else :both)
+                                                    :request-snippet request-snippet
+                                                    :reply-snippet reply-snippet
+                                                    ;; Every hit the server sent, newest first — the
+                                                    ;; picker previews several per session, not one.
+                                                    :hits hits}]))
+                                              (vis/gateway-search-session-matches q))
+                                            (catch Throwable _ nil)))}))]
                       (switch-session! choice)
                       ;; After a delete, reopen the picker on the
                       ;; refreshed list so pruning can continue.
@@ -5848,10 +5736,9 @@
               show-model-picker!
               (fn show-model-picker! []
                 (when-not (:dialog-open? @state/app-db)
-                  (let
-                    [sid (current-session-id)
-                     current (when sid
-                               (try (vis/gateway-session-model sid) (catch Throwable _ nil)))]
+                  (let [sid (current-session-id)
+                        current (when sid
+                                  (try (vis/gateway-session-model sid) (catch Throwable _ nil)))]
 
                     (when-let [choice (with-dialog-lock #(dlg/model-picker! screen current))]
                       (if (:reset? choice)
@@ -5869,14 +5756,13 @@
                   (vis/worker-future
                     "tui-restore-project-tabs"
                     (fn []
-                      (try (let
-                             [root (launch-root)
-                              specs (mapv (fn [s]
-                                            (let [title (str (get s "title"))]
-                                              {:session-id (str (get s "id"))
-                                               :label (when-not (str/blank? title) title)
-                                               :root root}))
-                                          (project-member-sessions pid))]
+                      (try (let [root (launch-root)
+                                 specs (mapv (fn [s]
+                                               (let [title (str (get s "title"))]
+                                                 {:session-id (str (get s "id"))
+                                                  :label (when-not (str/blank? title) title)
+                                                  :root root}))
+                                             (project-member-sessions pid))]
 
                              (when (seq specs)
                                (preallocate-project-tabs! specs)
@@ -5895,36 +5781,32 @@
               switch-project!
               (fn switch-project! []
                 (when-not (:dialog-open? @state/app-db)
-                  (let
-                    [projects (try (vis/gateway-list-projects) (catch Throwable _ []))
-                     cur (str @active-project-id*)
-                     items (mapv (fn [p]
-                                   (let
-                                     [current? (= cur (str (get p "id")))
-                                      session-count (get p "session_count")
-                                      sessions-label
-                                      (when session-count
-                                        (str session-count
-                                             " "
-                                             (if (= 1 session-count) "session" "sessions")))]
+                  (let [projects (try (vis/gateway-list-projects) (catch Throwable _ []))
+                        cur (str @active-project-id*)
+                        items (mapv (fn [p]
+                                      (let [current? (= cur (str (get p "id")))
+                                            session-count (get p "session_count")
+                                            sessions-label
+                                            (when session-count
+                                              (str session-count
+                                                   " "
+                                                   (if (= 1 session-count) "session" "sessions")))]
 
-                                     {:id (get p "id")
-                                      :label (get p "name")
-                                      :hint (str (when current? "current")
-                                                 (when (and current? sessions-label) " · ")
-                                                 sessions-label)}))
-                                 projects)]
+                                        {:id (get p "id")
+                                         :label (get p "name")
+                                         :hint (str (when current? "current")
+                                                    (when (and current? sessions-label) " · ")
+                                                    sessions-label)}))
+                                    projects)]
 
-                    (when-let
-                      [pick (with-dialog-lock #(dlg/searchable-select! screen
-                                                                       "Switch project…"
-                                                                       items
-                                                                       {:placeholder
-                                                                        "Type to filter projects…"
-                                                                        :enter-label "switch"}))]
-                      (when-let
-                        [pid (some-> (:id pick)
-                                     str)]
+                    (when-let [pick (with-dialog-lock #(dlg/searchable-select!
+                                                         screen
+                                                         "Switch project…"
+                                                         items
+                                                         {:placeholder "Type to filter projects…"
+                                                          :enter-label "switch"}))]
+                      (when-let [pid (some-> (:id pick)
+                                             str)]
                         (when-not (= pid cur)
                           ;; CAPTURE the OUTGOING project's id + tab order NOW with
                           ;; cheap in-memory reads, then reconcile+reorder OFF the
@@ -5934,38 +5816,37 @@
                           ;; so after the reset below it would write the old order
                           ;; under the NEW project. The captured values pin the
                           ;; write to the OLD project.
-                          (let
-                            [out-pid (ensure-active-project-id!)
-                             out-ids (mapv :id
-                                           (:sessions (state/tab-session-snapshot @state/app-db)))]
+                          (let [out-pid (ensure-active-project-id!)
+                                out-ids
+                                (mapv :id (:sessions (state/tab-session-snapshot @state/app-db)))]
 
                             (when (and out-pid (seq out-ids))
                               (vis/worker-future "tui-persist-tabs-switch"
                                                  (fn []
                                                    (persist-tabs-order! out-pid out-ids)))))
                           (reset! active-project-id* pid)
-                          (let
-                            [root (launch-root)
-                             ;; One list-sessions scan — the target project's
-                             ;; members in manual tab order, like startup's
-                             ;; restore-project-tabs!.
-                             members (project-member-sessions pid)
-                             specs (mapv (fn [s]
-                                           (let [title (str (get s "title"))]
-                                             {:session-id (str (get s "id"))
-                                              :label (when-not (str/blank? title) title)
-                                              :root root}))
-                                         members)
-                             db @state/app-db
-                             ;; Member sessions ALREADY open KEEP their tabs —
-                             ;; a switch must never eat a live member view.
-                             keep-ids (into #{}
-                                            (keep #(state/tab-id-for-session db (str (get % "id"))))
+                          (let [root (launch-root)
+                                ;; One list-sessions scan — the target project's
+                                ;; members in manual tab order, like startup's
+                                ;; restore-project-tabs!.
+                                members (project-member-sessions pid)
+                                specs (mapv (fn [s]
+                                              (let [title (str (get s "title"))]
+                                                {:session-id (str (get s "id"))
+                                                 :label (when-not (str/blank? title) title)
+                                                 :root root}))
                                             members)
-                             close-ids (->> (:tabs db)
-                                            (mapv :id)
-                                            (remove keep-ids)
-                                            vec)]
+                                db @state/app-db
+                                ;; Member sessions ALREADY open KEEP their tabs —
+                                ;; a switch must never eat a live member view.
+                                keep-ids (into #{}
+                                               (keep #(state/tab-id-for-session db
+                                                                                (str (get % "id"))))
+                                               members)
+                                close-ids (->> (:tabs db)
+                                               (mapv :id)
+                                               (remove keep-ids)
+                                               vec)]
 
                             ;; NAME-ONLY tabs for members not yet open — no
                             ;; transcript fetch, no focus move; each hydrates
@@ -6011,43 +5892,35 @@
                ;; then, scroll handlers fall back to safe defaults and act as a no-op. Pure
                ;; poll - no rendering on this thread anymore. The
                ;; render thread handles all screen output.
-               (let
-                 [db @state/app-db
-                  {:keys [cols total-h inner-h messages-top]} (:layout db)
-                  cols (or cols 0)
-                  total-h (or total-h 0)
-                  inner-h (or inner-h 0)
-                  messages-top (or messages-top 0)
-                  {:keys [wheel-delta drag-events] :as chat-input}
-                  (read-chat-input! screen pending-input-key)
-
-                  ;; C-g is Emacs `keyboard-quit`, and it is Esc EVERYWHERE: rewriting it
-                  ;; ONCE here hands it to every mode this loop drives - the draft
-                  ;; dispatcher, the find bar, the human-input form, the C-x prefix.
-                  ;; AFTER `read-chat-input!` on purpose, so the post-dialog escape
-                  ;; swallow and the SGR-leak drain only ever see a REAL Esc.
-                  key
-                  (input/normalize-abort-key (:key chat-input))]
+               (let [db @state/app-db
+                     {:keys [cols total-h inner-h messages-top]} (:layout db)
+                     cols (or cols 0)
+                     total-h (or total-h 0)
+                     inner-h (or inner-h 0)
+                     messages-top (or messages-top 0)
+                     {:keys [wheel-delta drag-events] :as chat-input}
+                     (read-chat-input! screen pending-input-key)
+                     ;; C-g is Emacs `keyboard-quit`, and it is Esc EVERYWHERE: rewriting it
+                     ;; ONCE here hands it to every mode this loop drives - the draft
+                     ;; dispatcher, the find bar, the human-input form, the C-x prefix.
+                     ;; AFTER `read-chat-input!` on purpose, so the post-dialog escape
+                     ;; swallow and the SGR-leak drain only ever see a REAL Esc.
+                     key (input/normalize-abort-key (:key chat-input))]
 
                  (cond
                    (:shutdown? db) nil
-
                    ;; An open human-input dialog swallows the keyboard: every
                    ;; stroke belongs to the form until it is answered.
-                   (and (some? key) (:human-input db))
-                   (do (human-input-key! db key) (recur))
-
+                   (and (some? key) (:human-input db)) (do (human-input-key! db key) (recur))
                    ;; An ARMED stop swallows it next: the human is typing the
                    ;; comment that travels with the interrupt, so no stroke of it
                    ;; may reach the chat editor. A form outranks it — the form owns
                    ;; the band, so the form owns the keyboard.
                    (and (some? key) (lv/stopping (lv/interruptible (:live-views db))))
                    (do (live-stop-key! db key) (recur))
-
                    (nil? key)
-                   (do (let
-                         [old-mom (long @scroll-momentum)
-                          idle-ms (- (System/currentTimeMillis) (long @last-wheel-at-ms))]
+                   (do (let [old-mom (long @scroll-momentum)
+                             idle-ms (- (System/currentTimeMillis) (long @last-wheel-at-ms))]
 
                          ;; Decay is TIME-based and computed at USE time in
                          ;; the wheel branch (scroll/decay-wheel-momentum);
@@ -6104,27 +5977,25 @@
                    (input/paste-end? key)
                    (let [^StringBuilder sb @paste-buffer]
                      (when sb
-                       (let
-                         [pasted (.toString sb)
-                          ;; An EMPTY bracketed paste with an image on the
-                          ;; clipboard = the user hit ⌘V on a screenshot /
-                          ;; copied image. The terminal sends no text, so
-                          ;; read the pixels ourselves into a temp PNG and
-                          ;; drive the temp path through the SAME image-paste
-                          ;; flow as a dropped image file below.
-                          text (if (.isEmpty pasted)
-                                 (or (some-> (input/read-clipboard-image!)
-                                             :path)
-                                     "")
-                                 pasted)]
+                       (let [pasted (.toString sb)
+                             ;; An EMPTY bracketed paste with an image on the
+                             ;; clipboard = the user hit ⌘V on a screenshot /
+                             ;; copied image. The terminal sends no text, so
+                             ;; read the pixels ourselves into a temp PNG and
+                             ;; drive the temp path through the SAME image-paste
+                             ;; flow as a dropped image file below.
+                             text (if (.isEmpty pasted)
+                                    (or (some-> (input/read-clipboard-image!)
+                                                :path)
+                                        "")
+                                    pasted)]
 
                          (vreset! paste-buffer nil)
                          (when-not (.isEmpty ^String text)
-                           (if-let
-                             [image (timg/probe-paste-image text
-                                                            {:workspace-root
-                                                             (try (str (workspace/cwd))
-                                                                  (catch Throwable _ nil))})]
+                           (if-let [image (timg/probe-paste-image text
+                                                                  {:workspace-root
+                                                                   (try (str (workspace/cwd))
+                                                                        (catch Throwable _ nil))})]
                              ;; Dropped image file: the terminal pasted its
                              ;; PATH. Always chip it (never inline the raw
                              ;; path) with an `[Image #N: ...]` placeholder
@@ -6132,11 +6003,10 @@
                              ;; path expands it back to the path text so the
                              ;; engine attaches the pixels.
                              (do (state/dispatch [:add-paste text image])
-                                 (let
-                                   [{:keys [paste-counter pastes]} @state/app-db
-                                    entry (get pastes paste-counter)
-                                    token (input/format-paste-placeholder entry)
-                                    db' @state/app-db]
+                                 (let [{:keys [paste-counter pastes]} @state/app-db
+                                       entry (get pastes paste-counter)
+                                       token (input/format-paste-placeholder entry)
+                                       db' @state/app-db]
 
                                    (state/dispatch [:update-input
                                                     (input/paste-text (:input db') token)])))
@@ -6151,11 +6021,10 @@
                                ;; event handler runs on the dispatching
                                ;; thread, so the swap is already visible.
                                (do (state/dispatch [:add-paste text])
-                                   (let
-                                     [{:keys [paste-counter pastes]} @state/app-db
-                                      entry (get pastes paste-counter)
-                                      token (input/format-paste-placeholder entry)
-                                      db' @state/app-db]
+                                   (let [{:keys [paste-counter pastes]} @state/app-db
+                                         entry (get pastes paste-counter)
+                                         token (input/format-paste-placeholder entry)
+                                         db' @state/app-db]
 
                                      (state/dispatch [:update-input
                                                       (input/paste-text (:input db') token)])))
@@ -6174,81 +6043,80 @@
                    ;; and paste are physically disjoint channels -
                    ;; nothing in this branch can mutate paste state).
                    (instance? MouseAction key)
-                   (let
-                     [^MouseAction ma key
-                      atype (.getActionType ma)
-                      pos (.getPosition ma)
-                      mx (.getColumn pos)
-                      my (.getRow pos)
-                      _ (when-not (or (= atype MouseActionType/MOVE) (= atype MouseActionType/DRAG))
-                          ;; MOVE/DRAG fire dozens of times per
-                          ;; second; CLICK_*/SCROLL_* can still
-                          ;; spew tens of events per second
-                          ;; while the user scroll-wheels through
-                          ;; a long bubble — enough to make the
-                          ;; file handler's IO the dominant cost.
-                          ;; Keep the diagnostic ("my click did
-                          ;; nothing" reports), but emit at
-                          ;; `:debug` so the default `:info`-min
-                          ;; file handler drops the line. Flip
-                          ;; min-level to `:debug` (or attach a
-                          ;; console handler) to get it back.
-                          (try (let
-                                 [hit-kind (some-> (cr/lookup mx my)
-                                                   :kind)]
-                                 (tel/log!
-                                   {:level :debug
-                                    :id ::mouse-event
-                                    :data {:type (str atype) :mx mx :my my :cols cols :hit hit-kind}
-                                    :msg (str "tui mouse "
-                                              atype
-                                              " at ("
-                                              mx
-                                              ","
-                                              my
-                                              ")"
-                                              " cols=" cols
-                                              " hit=" hit-kind)}))
-                               (catch Throwable _ nil)))
-                      bar-top messages-top
-                      track-h (+ (long inner-h)
-                                 (long render/MESSAGE_MARGIN_TOP)
-                                 (long render/MESSAGE_MARGIN_BOTTOM))
-                      ;; Single source of truth for thumb geometry
-                      ;; lives in `scrollbar/geometry` so painter
-                      ;; and hit-test cannot drift apart. A nil
-                      ;; return means there is no overflow — no
-                      ;; thumb is painted, and every click below is
-                      ;; correctly classified as off-thumb.
-                      geom (scrollbar/geometry total-h
-                                               inner-h
-                                               track-h
-                                               (scroll/layout-offset
-                                                 (:scroll db)
-                                                 (max 0 (- (long total-h) (long inner-h)))))
-                      thumb-top (when geom (+ (long bar-top) (long (:thumb-top-rel geom))))
-                      thumb-h (long (or (:thumb-h geom) 0))
-                      ;; Hit-zone: the thumb's actual rows, with a
-                      ;; 3-column-wide x-band on the right gutter so
-                      ;; the user doesn't need pixel-perfect aim.
-                      on-thumb? (and (some? geom)
-                                     (>= mx (- (long cols) (long render/MESSAGE_MARGIN_RIGHT)))
-                                     (< mx (long cols))
-                                     (>= my (long thumb-top))
-                                     (< my (+ (long thumb-top) thumb-h)))
-                      selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
-                      transcript-selectable-ranges (get-in db
-                                                           [:layout :transcript-selectable-ranges])
-                      transcript-bubble-copy-regions
-                      (get-in db [:layout :transcript-bubble-copy-regions])
-                      transcript-disclosure-copy-regions
-                      (get-in db [:layout :transcript-disclosure-copy-regions])
-                      input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
-                      selection-viewport {:viewport-top (+ (long messages-top)
-                                                           (long render/MESSAGE_MARGIN_TOP))
-                                          :eff-scroll (get-in db [:layout :eff-scroll])}
-                      slash-suggestions
-                      (slash-suggestions-for-db screen db)]
+                   (let [^MouseAction ma key
+                         atype (.getActionType ma)
+                         pos (.getPosition ma)
+                         mx (.getColumn pos)
+                         my (.getRow pos)
+                         _ (when-not (or (= atype MouseActionType/MOVE)
+                                         (= atype MouseActionType/DRAG))
+                             ;; MOVE/DRAG fire dozens of times per
+                             ;; second; CLICK_*/SCROLL_* can still
+                             ;; spew tens of events per second
+                             ;; while the user scroll-wheels through
+                             ;; a long bubble — enough to make the
+                             ;; file handler's IO the dominant cost.
+                             ;; Keep the diagnostic ("my click did
+                             ;; nothing" reports), but emit at
+                             ;; `:debug` so the default `:info`-min
+                             ;; file handler drops the line. Flip
+                             ;; min-level to `:debug` (or attach a
+                             ;; console handler) to get it back.
+                             (try (let [hit-kind (some-> (cr/lookup mx my)
+                                                         :kind)]
+                                    (tel/log!
+                                      {:level :debug
+                                       :id ::mouse-event
+                                       :data
+                                       {:type (str atype) :mx mx :my my :cols cols :hit hit-kind}
+                                       :msg (str "tui mouse "
+                                                 atype
+                                                 " at ("
+                                                 mx
+                                                 ","
+                                                 my
+                                                 ")"
+                                                 " cols=" cols
+                                                 " hit=" hit-kind)}))
+                                  (catch Throwable _ nil)))
+                         bar-top messages-top
+                         track-h (+ (long inner-h)
+                                    (long render/MESSAGE_MARGIN_TOP)
+                                    (long render/MESSAGE_MARGIN_BOTTOM))
+                         ;; Single source of truth for thumb geometry
+                         ;; lives in `scrollbar/geometry` so painter
+                         ;; and hit-test cannot drift apart. A nil
+                         ;; return means there is no overflow — no
+                         ;; thumb is painted, and every click below is
+                         ;; correctly classified as off-thumb.
+                         geom (scrollbar/geometry total-h
+                                                  inner-h
+                                                  track-h
+                                                  (scroll/layout-offset
+                                                    (:scroll db)
+                                                    (max 0 (- (long total-h) (long inner-h)))))
+                         thumb-top (when geom (+ (long bar-top) (long (:thumb-top-rel geom))))
+                         thumb-h (long (or (:thumb-h geom) 0))
+                         ;; Hit-zone: the thumb's actual rows, with a
+                         ;; 3-column-wide x-band on the right gutter so
+                         ;; the user doesn't need pixel-perfect aim.
+                         on-thumb? (and (some? geom)
+                                        (>= mx (- (long cols) (long render/MESSAGE_MARGIN_RIGHT)))
+                                        (< mx (long cols))
+                                        (>= my (long thumb-top))
+                                        (< my (+ (long thumb-top) thumb-h)))
+                         selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
+                         transcript-selectable-ranges
+                         (get-in db [:layout :transcript-selectable-ranges])
+                         transcript-bubble-copy-regions
+                         (get-in db [:layout :transcript-bubble-copy-regions])
+                         transcript-disclosure-copy-regions
+                         (get-in db [:layout :transcript-disclosure-copy-regions])
+                         input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
+                         selection-viewport {:viewport-top (+ (long messages-top)
+                                                              (long render/MESSAGE_MARGIN_TOP))
+                                             :eff-scroll (get-in db [:layout :eff-scroll])}
+                         slash-suggestions (slash-suggestions-for-db screen db)]
 
                      (cond
                        ;; F1 help / F2 task overlay is open: it LOCKS the
@@ -6258,13 +6126,12 @@
                        ;; or scrollbar painted behind the overlay (which made
                        ;; the dialog feel unfocusable - no scroll, no click).
                        (or (:tasks-open? db) (:help-open? db))
-                       (let
-                         [overlay-ranges (get-in db [:layout :overlay-selectable-ranges])
-                          f2-only? (and (:tasks-open? db) (not (:help-open? db)))
-                          over-panel? (and f2-only?
-                                           selection-copy?
-                                           (selection/point-in-ranges? (selection/point mx my)
-                                                                       overlay-ranges))]
+                       (let [overlay-ranges (get-in db [:layout :overlay-selectable-ranges])
+                             f2-only? (and (:tasks-open? db) (not (:help-open? db)))
+                             over-panel? (and f2-only?
+                                              selection-copy?
+                                              (selection/point-in-ranges? (selection/point mx my)
+                                                                          overlay-ranges))]
 
                          (cond
                            ;; Mouse-wheel scrolls the F2 panel body.
@@ -6304,22 +6171,20 @@
                            ;; Release — finish an F2 selection (copy), else fall back
                            ;; to the dedicated close-button dismissal + hover.
                            (= atype MouseActionType/CLICK_RELEASE)
-                           (let
-                             [anchor @mouse-selection-anchor
-                              focus (or @mouse-selection-focus anchor)
-                              overlay-sel? (= :overlay @mouse-selection-source)
-                              already-handled? @click-action-fired?]
+                           (let [anchor @mouse-selection-anchor
+                                 focus (or @mouse-selection-focus anchor)
+                                 overlay-sel? (= :overlay @mouse-selection-source)
+                                 already-handled? @click-action-fired?]
 
                              (vreset! click-action-fired? false)
                              (vreset! mouse-selection-anchor nil)
                              (vreset! mouse-selection-focus nil)
                              (vreset! mouse-selection-source nil)
                              (if (and overlay-sel? anchor (not= anchor focus))
-                               (let
-                                 [payload (selection/selected-text
-                                            (get-in db [:layout :screen-cells])
-                                            {:anchor anchor :focus focus :source :overlay}
-                                            overlay-ranges)]
+                               (let [payload (selection/selected-text
+                                               (get-in db [:layout :screen-cells])
+                                               {:anchor anchor :focus focus :source :overlay}
+                                               overlay-ranges)]
                                  (state/dispatch [:clear-mouse-selection])
                                  (when-not (str/blank? payload) (copy-selection! payload :overlay)))
                                (do
@@ -6364,7 +6229,6 @@
                                      (do (state/dispatch [:reset-input])
                                          (switch-session! {:action :new}))
 
-
                                      :footer-git
                                      (open-magit!)
 
@@ -6397,37 +6261,34 @@
                        ;; are the pane's rows, and moving the history underneath instead
                        ;; would be moving what the pointer is not on.
                        (and (not (zero? (long (or wheel-delta 0)))) (live-band-pane db my))
-                       (do (state/dispatch [:live-view-scroll
-                                            (lv/view-id (live-band-pane db my))
+                       (do (state/dispatch [:live-view-scroll (lv/view-id (live-band-pane db my))
                                             (* 3 (long wheel-delta))])
                            (state/dispatch [:bump-render-version])
                            (recur))
-
                        ;; Smooth the raw wheel-delta through the running momentum so a
                        ;; sign-flipping inertia tail can't dispatch a reverse tick (the
                        ;; "scroll fighting me" bounce). An absorbed tick (effective nil)
                        ;; just updates momentum and recurs without scrolling.
                        (not (zero? (long (or wheel-delta 0))))
-                       (let
-                         [raw (long wheel-delta)
-                          now-ms (System/currentTimeMillis)
-                          ;; Momentum decays by WALL-CLOCK time since the previous
-                          ;; wheel event, computed HERE at use time. The old
-                          ;; poll-based decay (halving per 16ms idle poll) died
-                          ;; between two events of a slow macOS trackpad inertia
-                          ;; tail (50-100ms apart), so the tail's sign-flipped
-                          ;; ticks always met zero momentum and dispatched as real
-                          ;; reversals — re-arming FOLLOW mid-stream whenever the
-                          ;; user sat within the slack band (the 'scrolling in
-                          ;; place' bounce).
-                          old-mom (long (scroll/decay-wheel-momentum (long @scroll-momentum)
-                                                                     (- now-ms
-                                                                        (long @last-wheel-at-ms))))
-                          [new-mom eff] (scroll/merge-wheel-delta old-mom raw)
-                          ly (:layout db)
-                          pre-offset (long (or (:eff-scroll ly) 0))
-                          pre-mode (-> (:scroll db)
-                                       :mode)]
+                       (let [raw (long wheel-delta)
+                             now-ms (System/currentTimeMillis)
+                             ;; Momentum decays by WALL-CLOCK time since the previous
+                             ;; wheel event, computed HERE at use time. The old
+                             ;; poll-based decay (halving per 16ms idle poll) died
+                             ;; between two events of a slow macOS trackpad inertia
+                             ;; tail (50-100ms apart), so the tail's sign-flipped
+                             ;; ticks always met zero momentum and dispatched as real
+                             ;; reversals — re-arming FOLLOW mid-stream whenever the
+                             ;; user sat within the slack band (the 'scrolling in
+                             ;; place' bounce).
+                             old-mom (long (scroll/decay-wheel-momentum
+                                             (long @scroll-momentum)
+                                             (- now-ms (long @last-wheel-at-ms))))
+                             [new-mom eff] (scroll/merge-wheel-delta old-mom raw)
+                             ly (:layout db)
+                             pre-offset (long (or (:eff-scroll ly) 0))
+                             pre-mode (-> (:scroll db)
+                                          :mode)]
 
                          (vreset! scroll-momentum new-mom)
                          (vreset! last-wheel-at-ms now-ms)
@@ -6521,24 +6382,23 @@
                             ;; the line and copy MORE than the one line the user
                             ;; asked for. Keep the pre-expanded line stable.
                             (not @mouse-selection-line?))
-                       (let
-                         [screen-focus (selection/point mx my)
-                          doc-focus (selection/screen->document-point screen-focus
-                                                                      selection-viewport)
-                          source @mouse-selection-source]
+                       (let [screen-focus (selection/point mx my)
+                             doc-focus (selection/screen->document-point screen-focus
+                                                                         selection-viewport)
+                             source @mouse-selection-source]
 
                          (vreset! mouse-selection-focus doc-focus)
                          (state/dispatch
                            [:set-mouse-selection
                             {:anchor @mouse-selection-anchor :focus doc-focus :source source}])
                          (when-not (= source :input)
-                           (when-let
-                             [{:keys [direction amount]}
-                              (selection/auto-scroll-step screen-focus
-                                                          {:top bar-top
-                                                           :bottom (+ (long bar-top) (long inner-h))
-                                                           :edge-size 6
-                                                           :max-step 6})]
+                           (when-let [{:keys [direction amount]} (selection/auto-scroll-step
+                                                                   screen-focus
+                                                                   {:top bar-top
+                                                                    :bottom (+ (long bar-top)
+                                                                               (long inner-h))
+                                                                    :edge-size 6
+                                                                    :max-step 6})]
                              (let [amount (coalesced-drag-scroll-amount amount drag-events)]
                                (case direction
                                  :up
@@ -6561,18 +6421,17 @@
                        ;; a normal terminal would double-fire (copy
                        ;; the id twice, open the link twice).
                        (= atype MouseActionType/CLICK_RELEASE)
-                       (let
-                         [was-dragging? (some? @scrollbar-drag-offset)
-                          already-handled? @click-action-fired?
-                          anchor @mouse-selection-anchor
-                          line-selection? @mouse-selection-line?
-                          screen-point (selection/point mx my)
-                          focus (release-selection-focus anchor
-                                                         @mouse-selection-focus
-                                                         line-selection?
-                                                         screen-point
-                                                         selection-viewport)
-                          source @mouse-selection-source]
+                       (let [was-dragging? (some? @scrollbar-drag-offset)
+                             already-handled? @click-action-fired?
+                             anchor @mouse-selection-anchor
+                             line-selection? @mouse-selection-line?
+                             screen-point (selection/point mx my)
+                             focus (release-selection-focus anchor
+                                                            @mouse-selection-focus
+                                                            line-selection?
+                                                            screen-point
+                                                            selection-viewport)
+                             source @mouse-selection-source]
 
                          (vreset! scrollbar-drag-offset nil)
                          (vreset! click-action-fired? false)
@@ -6581,59 +6440,57 @@
                          (vreset! mouse-selection-source nil)
                          (vreset! mouse-selection-line? false)
                          (if (and selection-copy? anchor)
-                           (let
-                             [sel {:anchor anchor :focus focus :source source}
-                              simple-click? (= anchor (:focus sel))
-                              ;; A simple click on a disclosure toggle control
-                              ;; must TOGGLE, never copy — the toggle row also
-                              ;; sits inside the whole-bubble copy rectangle, so
-                              ;; resolve it FIRST and gate the copy hits on it.
-                              toggle-detail-hit
-                              (when (and simple-click? (not= source :input))
-                                (let [h (cr/lookup mx my)]
-                                  (when (= :toggle-details (:kind h)) h)))
-                              disclosure-hit (when (and simple-click? (not= source :input)
-                                                        (not toggle-detail-hit))
-                                               (bubble-copy-hit screen-point
-                                                                transcript-disclosure-copy-regions))
-                              bubble-hit
-                              (when (and simple-click? (not= source :input)
-                                         (not toggle-detail-hit) (not disclosure-hit))
-                                (bubble-copy-hit screen-point transcript-bubble-copy-regions))
-                              screen-sel (selection/document->screen-selection sel
-                                                                               selection-viewport)
-                              ;; Transcript copy always rebuilds from the
-                              ;; VIRTUAL DOCUMENT, not the visible screen
-                              ;; cells, so a drag that auto-scrolled earlier
-                              ;; rows off-screen still copies them in full.
-                              ;; `transcript-document-copy-lines` substitutes
-                              ;; the live-painted projection for a pending
-                              ;; bubble's visible rows (see `visible-projected`),
-                              ;; so a streaming bubble inside the range copies
-                              ;; what the user sees instead of the placeholder IR.
-                              screen-cell-text
-                              (fn []
-                                (selection/selected-text (get-in db [:layout :screen-cells])
-                                                         screen-sel
-                                                         (selectable-ranges-for-source
-                                                           source
-                                                           transcript-selectable-ranges
-                                                           input-selectable-ranges)))
-
-                              doc-text
-                              (if (= source :transcript)
-                                (selected-transcript-text
-                                  (:messages db)
-                                  (:layout db)
-                                  cols
-                                  (:settings db)
-                                  {:session-id (get-in db [:session :id])
-                                   :detail-expansions (:detail-expansions db)}
-                                  sel)
-                                (screen-cell-text))
-
-                              payload
-                              (selection-copy-payload source doc-text screen-cell-text)]
+                           (let [sel {:anchor anchor :focus focus :source source}
+                                 simple-click? (= anchor (:focus sel))
+                                 ;; A simple click on a disclosure toggle control
+                                 ;; must TOGGLE, never copy — the toggle row also
+                                 ;; sits inside the whole-bubble copy rectangle, so
+                                 ;; resolve it FIRST and gate the copy hits on it.
+                                 toggle-detail-hit (when (and simple-click? (not= source :input))
+                                                     (let [h (cr/lookup mx my)]
+                                                       (when (= :toggle-details (:kind h)) h)))
+                                 disclosure-hit (when (and simple-click?
+                                                           (not= source :input)
+                                                           (not toggle-detail-hit))
+                                                  (bubble-copy-hit
+                                                    screen-point
+                                                    transcript-disclosure-copy-regions))
+                                 bubble-hit (when (and simple-click?
+                                                       (not= source :input)
+                                                       (not toggle-detail-hit)
+                                                       (not disclosure-hit))
+                                              (bubble-copy-hit screen-point
+                                                               transcript-bubble-copy-regions))
+                                 screen-sel
+                                 (selection/document->screen-selection sel selection-viewport)
+                                 ;; Transcript copy always rebuilds from the
+                                 ;; VIRTUAL DOCUMENT, not the visible screen
+                                 ;; cells, so a drag that auto-scrolled earlier
+                                 ;; rows off-screen still copies them in full.
+                                 ;; `transcript-document-copy-lines` substitutes
+                                 ;; the live-painted projection for a pending
+                                 ;; bubble's visible rows (see `visible-projected`),
+                                 ;; so a streaming bubble inside the range copies
+                                 ;; what the user sees instead of the placeholder IR.
+                                 screen-cell-text (fn []
+                                                    (selection/selected-text
+                                                      (get-in db [:layout :screen-cells])
+                                                      screen-sel
+                                                      (selectable-ranges-for-source
+                                                        source
+                                                        transcript-selectable-ranges
+                                                        input-selectable-ranges)))
+                                 doc-text (if (= source :transcript)
+                                            (selected-transcript-text
+                                              (:messages db)
+                                              (:layout db)
+                                              cols
+                                              (:settings db)
+                                              {:session-id (get-in db [:session :id])
+                                               :detail-expansions (:detail-expansions db)}
+                                              sel)
+                                            (screen-cell-text))
+                                 payload (selection-copy-payload source doc-text screen-cell-text)]
 
                              (state/dispatch [:clear-mouse-selection])
                              (cond toggle-detail-hit
@@ -6684,7 +6541,6 @@
                                  (do (state/dispatch [:reset-input])
                                      (switch-session! {:action :new}))
 
-
                                  :footer-git
                                  (open-magit!)
 
@@ -6716,30 +6572,30 @@
                                  (state/dispatch [:select-preview-mode (:session-id hit)
                                                   (:node-id hit) (:mode hit)])
 
-                                   ;; `+ N more` on a live node: the pane takes no keyboard,
-                                   ;; so opening a node is a click and nothing else.
-                                   :live-expand
-                                   (do (state/dispatch [:live-view-expand (:view-id hit) (:node-id hit)])
-                                       (state/dispatch [:bump-render-version]))
+                                 ;; `+ N more` on a live node: the pane takes no keyboard,
+                                 ;; so opening a node is a click and nothing else.
+                                 :live-expand
+                                 (do (state/dispatch [:live-view-expand (:view-id hit)
+                                                      (:node-id hit)])
+                                     (state/dispatch [:bump-render-version]))
 
-                                   ;; The one line a FINISHED view leaves on the band. It is
-                                   ;; the only way back to the log the human was watching, so
-                                   ;; it opens read-only and the same press puts it away.
-                                   :live-reopen
-                                   (do (state/dispatch [:live-view-reopen (:view-id hit)])
-                                       (state/dispatch [:bump-render-version]))
+                                 ;; The one line a FINISHED view leaves on the band. It is
+                                 ;; the only way back to the log the human was watching, so
+                                 ;; it opens read-only and the same press puts it away.
+                                 :live-reopen
+                                 (do (state/dispatch [:live-view-reopen (:view-id hit)])
+                                     (state/dispatch [:bump-render-version]))
 
-                                  (open-click-target! screen hit))
-                               (let
-                                 [point (selection/point mx my)
-                                  disclosure-hit
-                                  (bubble-copy-hit point transcript-disclosure-copy-regions)]
+                                 (open-click-target! screen hit))
+                               (let [point (selection/point mx my)
+                                     disclosure-hit
+                                     (bubble-copy-hit point transcript-disclosure-copy-regions)]
 
                                  (cond disclosure-hit (copy-bubble! (:text disclosure-hit))
-                                       :else (when-let
-                                               [bubble-hit (bubble-copy-hit
-                                                             point
-                                                             transcript-bubble-copy-regions)]
+                                       :else (when-let [bubble-hit
+                                                        (bubble-copy-hit
+                                                          point
+                                                          transcript-bubble-copy-regions)]
                                                (copy-bubble-hit! bubble-hit)))))))
                          (recur))
                        ;; MOVE - hover. We want the chat link-chrome
@@ -6763,161 +6619,159 @@
                        (= atype MouseActionType/CLICK_DOWN)
                        (do
                          (let [hit (cr/lookup mx my)]
-                          (if (and hit (not= :toggle-details (:kind hit)))
-                           (do
-                             ;; Tell the matching CLICK_RELEASE in
-                             ;; the same gesture pair to skip the
-                             ;; fallback fire - we just handled it.
-                             (vreset! click-action-fired? true)
-                             (vreset! last-selection-click nil)
-                             (vreset! mouse-selection-line? false)
-                             (case (:kind hit)
-                               ;; Header copy-id affordance: drop the
-                               ;; FULL UUID onto the system clipboard,
-                               ;; then push a host notification - the
-                               ;; header band's LEFT slot subscribes to
-                               ;; `vis.core/notifications` and surfaces
-                               ;; `✓ Copied session ID` for ~1.5s
-                               ;; before the entry expires. No
-                               ;; TUI-specific flash state; the
-                               ;; cross-channel notifications system
-                               ;; carries the feedback.
-                               :copy-id
-                               (copy-session-id! (:text hit))
+                           (if (and hit (not= :toggle-details (:kind hit)))
+                             (do
+                               ;; Tell the matching CLICK_RELEASE in
+                               ;; the same gesture pair to skip the
+                               ;; fallback fire - we just handled it.
+                               (vreset! click-action-fired? true)
+                               (vreset! last-selection-click nil)
+                               (vreset! mouse-selection-line? false)
+                               (case (:kind hit)
+                                 ;; Header copy-id affordance: drop the
+                                 ;; FULL UUID onto the system clipboard,
+                                 ;; then push a host notification - the
+                                 ;; header band's LEFT slot subscribes to
+                                 ;; `vis.core/notifications` and surfaces
+                                 ;; `✓ Copied session ID` for ~1.5s
+                                 ;; before the entry expires. No
+                                 ;; TUI-specific flash state; the
+                                 ;; cross-channel notifications system
+                                 ;; carries the feedback.
+                                 :copy-id
+                                 (copy-session-id! (:text hit))
 
-                               :toggle-tasks
-                               (state/dispatch [:toggle-tasks])
+                                 :toggle-tasks
+                                 (state/dispatch [:toggle-tasks])
 
-                               :toggle-help
-                               (state/dispatch [:toggle-help])
+                                 :toggle-help
+                                 (state/dispatch [:toggle-help])
 
-                               ;; F1/F2 header BUTTON chips (`button!`-painted).
-                               ;; CLICK_DOWN sets `click-action-fired?` for ANY
-                               ;; hit, which makes the matching CLICK_RELEASE skip
-                               ;; its own dispatch — so without these two branches
-                               ;; the chips fell through to `open-click-target!`
-                               ;; (a no-op) and never toggled their panel.
-                               :header-help
-                               (state/dispatch [:toggle-help])
+                                 ;; F1/F2 header BUTTON chips (`button!`-painted).
+                                 ;; CLICK_DOWN sets `click-action-fired?` for ANY
+                                 ;; hit, which makes the matching CLICK_RELEASE skip
+                                 ;; its own dispatch — so without these two branches
+                                 ;; the chips fell through to `open-click-target!`
+                                 ;; (a no-op) and never toggled their panel.
+                                 :header-help
+                                 (state/dispatch [:toggle-help])
 
-                               :header-tasks
-                               (state/dispatch [:toggle-tasks])
+                                 :header-tasks
+                                 (state/dispatch [:toggle-tasks])
 
-                               :header-search
-                               (state/dispatch [:search-open])
+                                 :header-search
+                                 (state/dispatch [:search-open])
 
-                               :header-new-session
-                               (do (state/dispatch [:reset-input]) (switch-session! {:action :new}))
+                                 :header-new-session
+                                 (do (state/dispatch [:reset-input])
+                                     (switch-session! {:action :new}))
 
+                                 :footer-git
+                                 (open-magit!)
 
-                               :footer-git
-                               (open-magit!)
+                                 :footer-model
+                                 (show-model-picker!)
 
-                               :footer-model
-                               (show-model-picker!)
+                                 ;; "↓ latest" chip → re-arm FOLLOW + repaint. MUST be
+                                 ;; here on CLICK_DOWN (the gesture's first event swallows
+                                 ;; the click via `click-action-fired?`), else it falls to
+                                 ;; the no-op `open-click-target!` default and feels dead.
+                                 :jump-bottom
+                                 (do (state/dispatch [:scroll-to-bottom])
+                                     (state/dispatch [:bump-render-version]))
 
-                               ;; "↓ latest" chip → re-arm FOLLOW + repaint. MUST be
-                               ;; here on CLICK_DOWN (the gesture's first event swallows
-                               ;; the click via `click-action-fired?`), else it falls to
-                               ;; the no-op `open-click-target!` default and feels dead.
-                               :jump-bottom
-                               (do (state/dispatch [:scroll-to-bottom])
-                                   (state/dispatch [:bump-render-version]))
+                                 ;; Find-bar buttons: same CLICK_DOWN swallow as the
+                                 ;; header chips above - without these the matching
+                                 ;; CLICK_RELEASE skips (already-handled?) and the
+                                 ;; prev/next/close glyphs never fire (dead during a
+                                 ;; live render that keeps the region freshly registered).
+                                 :search-case
+                                 (state/dispatch [:search-toggle-case])
 
-                               ;; Find-bar buttons: same CLICK_DOWN swallow as the
-                               ;; header chips above - without these the matching
-                               ;; CLICK_RELEASE skips (already-handled?) and the
-                               ;; prev/next/close glyphs never fire (dead during a
-                               ;; live render that keeps the region freshly registered).
-                               :search-case
-                               (state/dispatch [:search-toggle-case])
+                                 :search-prev
+                                 (state/dispatch [:search-prev])
 
-                               :search-prev
-                               (state/dispatch [:search-prev])
+                                 :search-next
+                                 (state/dispatch [:search-next])
 
-                               :search-next
-                               (state/dispatch [:search-next])
+                                 :search-close
+                                 (state/dispatch [:search-clear])
 
-                               :search-close
-                               (state/dispatch [:search-clear])
+                                 :switch-session
+                                 (switch-session! {:action :switch :id (:text hit)})
 
-                               :switch-session
-                               (switch-session! {:action :switch :id (:text hit)})
+                                 :workspace-entry
+                                 (activate-tab-entry-hit! refresh-active-tab! hit)
 
-                               :workspace-entry
-                               (activate-tab-entry-hit! refresh-active-tab! hit)
+                                 :close-tab
+                                 (close-tab-with-prompt! screen
+                                                         refresh-active-tab!
+                                                         persist-tabs!
+                                                         (:workspace-id hit))
 
-                               :close-tab
-                               (close-tab-with-prompt! screen
-                                                       refresh-active-tab!
-                                                       persist-tabs!
-                                                       (:workspace-id hit))
+                                 :toggle-details
+                                 (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)
+                                                  (:collapsed? hit)])
 
-                               :toggle-details
-                               (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)
-                                                (:collapsed? hit)])
+                                 :preview-switcher
+                                 (state/dispatch [:select-preview-mode (:session-id hit)
+                                                  (:node-id hit) (:mode hit)])
 
-                               :preview-switcher
-                               (state/dispatch [:select-preview-mode (:session-id hit)
-                                                (:node-id hit) (:mode hit)])
+                                 ;; Default: hand any direct-open hit to
+                                 ;; the OS opener on a side thread - a
+                                 ;; slow `xdg-open` cannot freeze the
+                                 ;; input loop's redraw cadence.
+                                 (open-click-target! screen hit)))
+                             (when selection-copy?
+                               (let [screen-anchor (selection/point mx my)
+                                     source (selection/source-at-point
+                                              screen-anchor
+                                              transcript-selectable-ranges
+                                              input-selectable-ranges
+                                              ;; Column-forgiving START: a press anywhere
+                                              ;; horizontally on a selectable transcript row
+                                              ;; (its left gutter, indent, or right padding)
+                                              ;; begins a selection. Links/copy-ids/scrollbar
+                                              ;; are already intercepted before this branch, and
+                                              ;; the selection itself stays clipped to the
+                                              ;; content band. Without this, dragging from a
+                                              ;; bubble's left margin silently no-ops.
+                                              {:row-padding 2 :col-padding cols})]
 
-                               ;; Default: hand any direct-open hit to
-                               ;; the OS opener on a side thread - a
-                               ;; slow `xdg-open` cannot freeze the
-                               ;; input loop's redraw cadence.
-                               (open-click-target! screen hit)))
-                           (when selection-copy?
-                             (let
-                               [screen-anchor (selection/point mx my)
-                                source (selection/source-at-point
-                                         screen-anchor
-                                         transcript-selectable-ranges
-                                         input-selectable-ranges
-                                         ;; Column-forgiving START: a press anywhere
-                                         ;; horizontally on a selectable transcript row
-                                         ;; (its left gutter, indent, or right padding)
-                                         ;; begins a selection. Links/copy-ids/scrollbar
-                                         ;; are already intercepted before this branch, and
-                                         ;; the selection itself stays clipped to the
-                                         ;; content band. Without this, dragging from a
-                                         ;; bubble's left margin silently no-ops.
-                                         {:row-padding 2 :col-padding cols})]
+                                 (if-not source
+                                   (do (vreset! last-selection-click nil)
+                                       (vreset! mouse-selection-line? false))
+                                   (let [now-ms (System/currentTimeMillis)
+                                         source-ranges (selectable-ranges-for-source
+                                                         source
+                                                         transcript-selectable-ranges
+                                                         input-selectable-ranges)
+                                         line-sel
+                                         (when (selection/double-click? @last-selection-click
+                                                                        now-ms
+                                                                        source
+                                                                        screen-anchor
+                                                                        mouse-double-click-ms)
+                                           (selection/line-selection-at-point screen-anchor
+                                                                              source-ranges
+                                                                              selection-viewport))
+                                         doc-anchor (or (:anchor line-sel)
+                                                        (selection/screen->document-point
+                                                          screen-anchor
+                                                          selection-viewport))
+                                         doc-focus (or (:focus line-sel) doc-anchor)]
 
-                               (if-not source
-                                 (do (vreset! last-selection-click nil)
-                                     (vreset! mouse-selection-line? false))
-                                 (let
-                                   [now-ms (System/currentTimeMillis)
-                                    source-ranges (selectable-ranges-for-source
-                                                    source
-                                                    transcript-selectable-ranges
-                                                    input-selectable-ranges)
-                                    line-sel (when (selection/double-click? @last-selection-click
-                                                                            now-ms
-                                                                            source
-                                                                            screen-anchor
-                                                                            mouse-double-click-ms)
-                                               (selection/line-selection-at-point
-                                                 screen-anchor
-                                                 source-ranges
-                                                 selection-viewport))
-                                    doc-anchor (or (:anchor line-sel)
-                                                   (selection/screen->document-point
-                                                     screen-anchor
-                                                     selection-viewport))
-                                    doc-focus (or (:focus line-sel) doc-anchor)]
-
-                                   (vreset!
-                                     last-selection-click
-                                     (when-not line-sel
-                                       {:source source :point screen-anchor :time-ms now-ms}))
-                                   (vreset! mouse-selection-anchor doc-anchor)
-                                   (vreset! mouse-selection-focus (:focus line-sel))
-                                   (vreset! mouse-selection-source source)
-                                   (vreset! mouse-selection-line? (boolean line-sel))
-                                   (state/dispatch
-                                     [:set-mouse-selection
-                                      {:anchor doc-anchor :focus doc-focus :source source}])))))))
+                                     (vreset!
+                                       last-selection-click
+                                       (when-not line-sel
+                                         {:source source :point screen-anchor :time-ms now-ms}))
+                                     (vreset! mouse-selection-anchor doc-anchor)
+                                     (vreset! mouse-selection-focus (:focus line-sel))
+                                     (vreset! mouse-selection-source source)
+                                     (vreset! mouse-selection-line? (boolean line-sel))
+                                     (state/dispatch
+                                       [:set-mouse-selection
+                                        {:anchor doc-anchor :focus doc-focus :source source}])))))))
                          (recur))
                        ;; Every other click - inside the input box,
                        ;; on the footer, etc. - falls through here.
@@ -6946,11 +6800,10 @@
                    ;; Enter = next, Esc closes. Sits above the placeholder/slash
                    ;; branches so Backspace + chars reach the query, not the draft.
                    (and (instance? KeyStroke key) (get-in db [:search :active?]))
-                   (let
-                     [ks ^KeyStroke key
-                      ktype (.getKeyType ks)
-                      chr (when (= ktype KeyType/Character)
-                            (Character/toLowerCase (.getCharacter ks)))]
+                   (let [ks ^KeyStroke key
+                         ktype (.getKeyType ks)
+                         chr (when (= ktype KeyType/Character)
+                               (Character/toLowerCase (.getCharacter ks)))]
 
                      (cond
                        ;; Esc toggles the find mode OFF (drops query + highlight).
@@ -6985,10 +6838,8 @@
                         (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown
                            KeyType/Enter KeyType/Tab KeyType/ReverseTab}
                          (.getKeyType ^KeyStroke key)))
-                   (let
-                     [suggestions
-                      (slash-suggestions-for-db screen db)
-                      ktype (.getKeyType ^KeyStroke key)]
+                   (let [suggestions (slash-suggestions-for-db screen db)
+                         ktype (.getKeyType ^KeyStroke key)]
 
                      (cond (= ktype KeyType/ArrowUp) (state/dispatch [:move-slash-command-selection
                                                                       -1 (count suggestions)])
@@ -7025,29 +6876,28 @@
                    ;; other key cancels. Sits above the fall-through so the
                    ;; label keys never reach the draft or the app-verb dispatch.
                    (and (instance? KeyStroke key) (:detail-labels-active? db))
-                   (let
-                     [ks ^KeyStroke key
-                      ktype (.getKeyType ks)
-                      chr (when (= ktype KeyType/Character) (.getCharacter ks))
-                      ;; Resolve against the FROZEN assignment the painter
-                      ;; badged (falling back to the live frame only when the
-                      ;; mode opened from a dialog with nothing to freeze), so a
-                      ;; typed letter hits the fold under its badge even as a
-                      ;; live stream repaints beneath it.
-                      frozen (or (seq (:detail-labels db)) (cr/assign-labels (cr/current)))
-                      hit (when (and chr (not (.isCtrlDown ks)) (not (.isAltDown ks)))
-                            (get (into {} frozen) (str (Character/toLowerCase ^char chr))))
-                      ;; Toggle against the fold's CURRENT collapsed state when
-                      ;; it is still on screen (the stream may have re-rendered it
-                      ;; since the freeze); else fall back to the frozen row.
-                      target (when hit
-                               (or (some (fn [r]
-                                           (when (and (= :toggle-details (:kind r))
-                                                      (= (:session-id r) (:session-id hit))
-                                                      (= (:node-id r) (:node-id hit)))
-                                             r))
-                                         (cr/current))
-                                   hit))]
+                   (let [ks ^KeyStroke key
+                         ktype (.getKeyType ks)
+                         chr (when (= ktype KeyType/Character) (.getCharacter ks))
+                         ;; Resolve against the FROZEN assignment the painter
+                         ;; badged (falling back to the live frame only when the
+                         ;; mode opened from a dialog with nothing to freeze), so a
+                         ;; typed letter hits the fold under its badge even as a
+                         ;; live stream repaints beneath it.
+                         frozen (or (seq (:detail-labels db)) (cr/assign-labels (cr/current)))
+                         hit (when (and chr (not (.isCtrlDown ks)) (not (.isAltDown ks)))
+                               (get (into {} frozen) (str (Character/toLowerCase ^char chr))))
+                         ;; Toggle against the fold's CURRENT collapsed state when
+                         ;; it is still on screen (the stream may have re-rendered it
+                         ;; since the freeze); else fall back to the frozen row.
+                         target (when hit
+                                  (or (some (fn [r]
+                                              (when (and (= :toggle-details (:kind r))
+                                                         (= (:session-id r) (:session-id hit))
+                                                         (= (:node-id r) (:node-id hit)))
+                                                r))
+                                            (cr/current))
+                                      hit))]
 
                      (when target
                        (state/dispatch [:toggle-detail (:session-id target) (:node-id target)
@@ -7056,14 +6906,12 @@
                      (state/dispatch [:bump-render-version])
                      (recur))
                    :else
-                   (let [escaped-char (and (:loading? db)
-                                           (input/escaped-typing-character key))
+                   (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
                          {:keys [action state workspace-index character]}
                          (if escaped-char
-                           {:action :escaped-typing
-                            :state (:input db)
-                            :character escaped-char}
+                           {:action :escaped-typing :state (:input db) :character escaped-char}
                            (resolve-prefix! screen db (input/handle-key key (:input db))))]
+
                      ;; Apply the editor state for EVERY action except
                      ;; :clear-input. `handle-key` returns :clear-input with an
                      ;; already-empty buffer whenever the draft is non-empty, but
@@ -7087,10 +6935,9 @@
                         ;; `slash/dispatch`. Ctrl+K no longer includes those
                         ;; slash roots by default.
                         (fn [cmd & [args]]
-                          (let
-                            [cmd-id (if (map? cmd) (:id cmd) cmd)
-                             args (or args (:slash/args cmd) "")
-                             cmd-map (when (map? cmd) cmd)]
+                          (let [cmd-id (if (map? cmd) (:id cmd) cmd)
+                                args (or args (:slash/args cmd) "")
+                                cmd-map (when (map? cmd) cmd)]
 
                             (cond
                               ;; A slash may declare a channel UI intent
@@ -7108,20 +6955,18 @@
                               (clear-session!)
                               (and cmd-map (:slash/text cmd-map))
                               (when-not (:dialog-open? @state/app-db)
-                                (let
-                                  [text (cond-> (:slash/text cmd-map)
-                                          (not (str/blank? args))
-                                          (str " " (str/trim args)))]
+                                (let [text (cond-> (:slash/text cmd-map)
+                                             (not (str/blank? args))
+                                             (str " " (str/trim args)))]
                                   (state/dispatch [:send-message text])
                                   (state/dispatch [:reset-input])))
                               :else
                               (when-not (:dialog-open? @state/app-db)
                                 (case cmd-id
                                   :new-session
-                                  (let
-                                    [seed (some-> (not-empty (str/trim (str args)))
-                                                  (input/expand-paste-placeholders
-                                                    (:pastes @state/app-db)))]
+                                  (let [seed (some-> (not-empty (str/trim (str args)))
+                                                     (input/expand-paste-placeholders
+                                                       (:pastes @state/app-db)))]
                                     ;; Expand `[Pasted #N: ...]` against the ORIGINATING
                                     ;; tab's `:pastes` BEFORE [:reset-input] clears that
                                     ;; registry. The new session's `:pastes` is empty, so
@@ -7175,7 +7020,6 @@
                                   :settings
                                   (with-dialog-lock #(open-settings-modal! screen))
 
-
                                   ;; App verbs reachable from the palette (Ctrl+P)
                                   ;; in addition to their direct keys — the palette
                                   ;; is the reliable, searchable entry point, so it
@@ -7200,7 +7044,6 @@
 
                                   :toggle-help
                                   (state/dispatch [:toggle-help])
-
 
                                   :open-magit
                                   (open-magit!)
@@ -7247,10 +7090,10 @@
                                                  :level :warn
                                                  :ttl-ms status-error-ttl-ms))
 
-                                   :toggle-voice-conversation
-                                   (state/dispatch [:toggle-voice-conversation])
+                                  :toggle-voice-conversation
+                                  (state/dispatch [:toggle-voice-conversation])
 
-                                   :pick-file
+                                  :pick-file
                                   ;; `@` opens the INLINE file picker now (same as the
                                   ;; web); the modal is gone. This palette entry just
                                   ;; seeds an `@` at the caret to start it.
@@ -7267,12 +7110,11 @@
                          ;; cancel synchronously before retaining the swallowed letter.
                          ;; That makes a following Enter observe :cancelling? and prevents
                          ;; it from queueing a resend behind the turn being torn down.
-                         (do
-                           (when-not (:cancelling? @state/app-db)
-                             (state/dispatch [:cancel-turn]))
-                           (state/dispatch
-                             [:update-input (input/insert-char (:input @state/app-db) character)])
-                           (recur))
+                         (do (when-not (:cancelling? @state/app-db) (state/dispatch [:cancel-turn]))
+                             (state/dispatch [:update-input
+                                              (input/insert-char (:input @state/app-db) character)])
+                             (recur))
+
                          :quit
                          ;; Ctrl+C with an empty draft normally exits the
                          ;; TUI. While a turn is in flight that exit path
@@ -7297,17 +7139,16 @@
                              (and (:loading? db) (not (:cancelling? db)))
                              (do (state/dispatch [:cancel-turn]) (recur))
                              (state/any-background-loading? db)
-                             (let
-                               [n (count (state/background-loading-tokens db))
-                                ok? (with-dialog-lock #(dlg/confirm-dialog!
-                                                         screen
-                                                         "Abort running tasks?"
-                                                         [(str n
-                                                               " background task"
-                                                               (when (> n 1) "s")
-                                                               " still running in other tab"
-                                                               (when (> n 1) "s")
-                                                               ".") "Abort them and quit?"]))]
+                             (let [n (count (state/background-loading-tokens db))
+                                   ok? (with-dialog-lock #(dlg/confirm-dialog!
+                                                            screen
+                                                            "Abort running tasks?"
+                                                            [(str n
+                                                                  " background task"
+                                                                  (when (> n 1) "s")
+                                                                  " still running in other tab"
+                                                                  (when (> n 1) "s")
+                                                                  ".") "Abort them and quit?"]))]
 
                                (if ok? (do (state/dispatch [:cancel-all-turns]) nil) (recur)))
                              :else nil))
@@ -7386,7 +7227,6 @@
                          :search-open
                          (do (state/dispatch [:search-open]) (recur))
 
-
                          :open-drafts
                          (do (show-drafts!) (recur))
 
@@ -7405,21 +7245,19 @@
                                ;; Keep extension slash roots out of. Ctrl+K;
                                ;; typed `/` suggestion owns those. The ctx drops
                                ;; turnless-illegal verbs (fork) from the list.
-                               (when-let
-                                 [cmd (with-dialog-lock #(dlg/command-palette!
-                                                           screen
-                                                           (command-palette-extra-commands)
-                                                           {:has-turns? (boolean
-                                                                          (seq (:messages
-                                                                                 @state/app-db)))}))]
+                               (when-let [cmd (with-dialog-lock
+                                                #(dlg/command-palette!
+                                                   screen
+                                                   (command-palette-extra-commands)
+                                                   {:has-turns? (boolean (seq (:messages
+                                                                                @state/app-db)))}))]
                                  (run-command! cmd)))
                              (recur))
 
                          :select-tab-index
-                         (do (let
-                               [tabs (:tabs @state/app-db)
-                                n (count tabs)
-                                before (:active-tab-id @state/app-db)]
+                         (do (let [tabs (:tabs @state/app-db)
+                                   n (count tabs)
+                                   before (:active-tab-id @state/app-db)]
 
                                ;; A numeric jump (C-x N / M-N) to a workspace that
                                ;; isn't open: surface it as a TUI notice instead of
@@ -7540,14 +7378,14 @@
                                                              :ttl-ms status-error-ttl-ms)))))
                            (recur))
 
-                          :toggle-voice-conversation
-                          ;; The MODE (C-x b): while it is armed every answer on this
-                          ;; tab is spoken here and a transcription submits itself, so
-                          ;; the loop closes without a keystroke. Recording (C-x v) is
-                          ;; still one utterance and is unchanged.
-                          (do (state/dispatch [:toggle-voice-conversation]) (recur))
+                         :toggle-voice-conversation
+                         ;; The MODE (C-x b): while it is armed every answer on this
+                         ;; tab is spoken here and a transcription submits itself, so
+                         ;; the loop closes without a keystroke. Recording (C-x v) is
+                         ;; still one utterance and is unchanged.
+                         (do (state/dispatch [:toggle-voice-conversation]) (recur))
 
-                          :show-sessions
+                         :show-sessions
                          (do (show-sessions!) (recur))
 
                          :fork-session
@@ -7599,7 +7437,6 @@
                              (draft-slash-for-input state)
                              (do (show-drafts! (:pressed (draft-slash-for-input state)))
                                  (state/dispatch [:reset-input]))
-
                              ;; A slash that requires an argument typed with
                              ;; none: pop a text-input for it, then run the
                              ;; slash with the value. Cancel (Esc) just clears
@@ -7607,9 +7444,9 @@
                              (prompt-arg-slash-for-input state)
                              (let [{:keys [slash-text prompt]} (prompt-arg-slash-for-input state)]
                                (when-not (:dialog-open? @state/app-db)
-                                 (when-let
-                                   [val (with-dialog-lock
-                                          #(dlg/text-input-dialog! screen slash-text prompt))]
+                                 (when-let [val
+                                            (with-dialog-lock
+                                              #(dlg/text-input-dialog! screen slash-text prompt))]
                                    (when-not (str/blank? val)
                                      (state/dispatch [:send-message
                                                       (str slash-text " " (str/trim val))]))))
@@ -7620,8 +7457,8 @@
                              ;; `exact-command`, so this resolves them by full
                              ;; path against the engine registry.
                              (navigator-slash-for-input state)
-                             (let
-                               [kind (get-in (navigator-slash-for-input state) [:slash/ui :kind])]
+                             (let [kind (get-in (navigator-slash-for-input state)
+                                                [:slash/ui :kind])]
                                (when-not (:dialog-open? @state/app-db)
                                  (case kind
                                    :clear-session
@@ -7641,15 +7478,14 @@
                            (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
                            (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks])
                                                             (recur))
-                            ;; A live view is the newest thing in front of the human and the
-                            ;; finest-grained stop there is: Escape ARMS the VIEW's stop before
-                            ;; it reaches for the turn, because the run may have opened several
-                            ;; and want to keep going after one of them is stopped. Nothing ends
-                            ;; here — the band takes one row for the comment and Enter sends the
-                            ;; stop with it. The footer says which view it will hit.
-                            (arm-front-live-view! @state/app-db) (recur)
-
-                            (:loading? @state/app-db) (do (state/dispatch [:cancel-turn]) (recur))
+                           ;; A live view is the newest thing in front of the human and the
+                           ;; finest-grained stop there is: Escape ARMS the VIEW's stop before
+                           ;; it reaches for the turn, because the run may have opened several
+                           ;; and want to keep going after one of them is stopped. Nothing ends
+                           ;; here — the band takes one row for the comment and Enter sends the
+                           ;; stop with it. The footer says which view it will hit.
+                           (arm-front-live-view! @state/app-db) (recur)
+                           (:loading? @state/app-db) (do (state/dispatch [:cancel-turn]) (recur))
                            ;; Not loading but a queued backlog is draining: Esc
                            ;; drops the whole queue instead of no-op'ing while the
                            ;; queue auto-drains into the gateway.
@@ -7796,21 +7632,19 @@
    so the user sees a clean error instead of the TUI silently swallowing a
    typo (e.g. `--sessions-id`)."
   [args]
-  (loop
-    [args
-     (seq args)
+  (loop [args
+         (seq args)
 
-     opts
-     {}]
+         opts
+         {}]
 
     (if-not args
       opts
-      (let
-        [arg
-         (first args)
+      (let [arg
+            (first args)
 
-         more
-         (next args)]
+            more
+            (next args)]
 
         (case arg
           "--session-id"
@@ -7835,15 +7669,14 @@
   (try (require 'taoensso.telemere)
        ((resolve 'taoensso.telemere/remove-handler!) :default/console)
        (catch Throwable _ nil))
-  (let
-    [log-path
-     (vis-paths/log-file)
+  (let [log-path
+        (vis-paths/log-file)
 
-     log-ps
-     (java.io.PrintStream. (java.io.FileOutputStream. ^String log-path true) true)
+        log-ps
+        (java.io.PrintStream. (java.io.FileOutputStream. ^String log-path true) true)
 
-     log-w
-     (java.io.OutputStreamWriter. log-ps)]
+        log-w
+        (java.io.OutputStreamWriter. log-ps)]
 
     (System/setOut log-ps)
     (System/setErr log-ps)

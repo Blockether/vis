@@ -21,19 +21,17 @@
 
 (defdescribe dimension-sniffing-test
              (it "reads png IHDR width/height from magic bytes"
-                 (let
-                   [png (byte-array (concat [0x89 0x50 0x4e 0x47 0x0d 0x0a 0x1a 0x0a]
-                                            [0 0 0 13]
-                                            (map int "IHDR")
-                                            [0 0 0x04 0x00] ;; width 1024
-                                            [0 0 0x03 0x00] ;; height 768
-                                            [8 6 0 0 0]))]
+                 (let [png (byte-array (concat [0x89 0x50 0x4e 0x47 0x0d 0x0a 0x1a 0x0a]
+                                               [0 0 0 13]
+                                               (map int "IHDR")
+                                               [0 0 0x04 0x00] ;; width 1024
+                                               [0 0 0x03 0x00] ;; height 768
+                                               [8 6 0 0 0]))]
                    (expect (= {:w 1024 :h 768} (timg/image-dimensions png "image/png")))))
              (it "reads gif logical-screen width/height (little-endian)"
-                 (let
-                   [gif (byte-array (concat (map int "GIF89a")
-                                            [0x20 0x03 0x58 0x02] ;; 800 x 600 LE
-                                            [0 0 0 0]))]
+                 (let [gif (byte-array (concat (map int "GIF89a")
+                                               [0x20 0x03 0x58 0x02] ;; 800 x 600 LE
+                                               [0 0 0 0]))]
                    (expect (= {:w 800 :h 600} (timg/image-dimensions gif "image/gif"))))))
 
 (defdescribe cell-box-sizing-test
@@ -50,10 +48,9 @@
                  (let [tmp (java.io.File/createTempFile "vis-timg" ".jpg")]
                    (try (with-open [src (img/blank 400 300 "red")]
                           (img/save! src tmp {:format :jpeg}))
-                        (let
-                          [b64 (timg/transcode->png-base64 (.getAbsolutePath tmp)
-                                                           {:cols 20 :rows 10})
-                           bytes (.decode (java.util.Base64/getDecoder) ^String b64)]
+                        (let [b64 (timg/transcode->png-base64 (.getAbsolutePath tmp)
+                                                              {:cols 20 :rows 10})
+                              bytes (.decode (java.util.Base64/getDecoder) ^String b64)]
 
                           (expect (string? b64))
                           ;; PNG magic 0x89 'P' 'N' 'G'
@@ -73,12 +70,11 @@
                    (expect (str/includes? s "c=10,r=5"))
                    (expect (str/ends-with? s "\u001b\\"))))
              (it "a payload over one chunk is split into m=1 … m=0 chunks"
-                 (let
-                   [big
-                    (apply str (repeat 5000 \A))
+                 (let [big
+                       (apply str (repeat 5000 \A))
 
-                    s
-                    (timg/encode-kitty big {:cols 1 :rows 1})]
+                       s
+                       (timg/encode-kitty big {:cols 1 :rows 1})]
 
                    (expect (str/includes? s "m=1;"))
                    (expect (str/includes? s "m=0;")))))
@@ -91,12 +87,11 @@
       (let [s (timg/kitty-transmit "AAAA" 7)]
         (expect (= "\u001b_Ga=t,i=7,f=100,q=2;AAAA\u001b\\" s))))
   (it "a transmit payload over one chunk splits into m=1 … m=0 chunks"
-      (let
-        [big
-         (apply str (repeat 5000 \A))
+      (let [big
+            (apply str (repeat 5000 \A))
 
-         s
-         (timg/kitty-transmit big 3)]
+            s
+            (timg/kitty-transmit big 3)]
 
         (expect (str/starts-with? s "\u001b_Ga=t,i=3,f=100,q=2,m=1;"))
         (expect (str/includes? s "\u001b_Gm=0;"))))
