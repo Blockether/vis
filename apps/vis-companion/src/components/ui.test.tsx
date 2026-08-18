@@ -1064,9 +1064,9 @@ describe("SectionShelf", () => {
       sessionsListSource,
     )?.[0];
     expect(shelf).toContain(
-      '<HeaderTally count={sessions.length} unit="session" />',
+      '<HeaderTally count={tally.count} unit="session" />',
     );
-    expect(shelf).toContain("<LiveCount count={liveCount} />");
+    expect(shelf).toContain("<LiveCount count={tally.live} />");
     expect(shelf).toContain("<Pager page={shownPage}");
     // ...and it is the ONLY place either of them is rendered on this screen.
     expect(sessionsListSource.match(/<Pager /g)?.length).toBe(1);

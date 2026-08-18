@@ -14,6 +14,8 @@ import {
   projectDelete,
   projectLabel,
   projectPage,
+  projectTally,
+  machineTally,
   reconcileMachines,
   resolveScope,
   SCOPE_ALL,
@@ -38,7 +40,7 @@ import {
   startFlowUnpick,
   type FleetMachine,
 } from './fleet';
-import type { GatewayConn, Session } from './types';
+import type { GatewayConn, GatewayOverview, Session } from './types';
 
 const studio: GatewayConn = { url: 'http://studio.local:7890', label: 'studio' };
 const tower: GatewayConn = { url: 'http://tower.local:7890' };
@@ -878,5 +880,45 @@ describe('StartFlow', () => {
     expect(startFlowPick(START_IDLE, tower)).toBe(START_IDLE);
     const named = startFlowName(studio, true);
     expect(startFlowPick(named, tower)).toBe(named);
+  });
+});
+
+
+// Regression, user report (paraphrased: switching gateways flickered the project
+// list and then the counts inside it): the numbers were a tally of the session
+// windows this device had paged in, so they read low and moved as pages landed.
+describe('projectTally / machineTally', () => {
+  const overview: GatewayOverview = {
+    projects: [
+      {
+        root: '/repo/a',
+        project_id: 'p-a',
+        name: 'Vis',
+        session_count: 400,
+        live_count: 3,
+        awaiting_count: 0,
+        last_activity_ms: 300,
+      },
+    ],
+    project_count: 1,
+    session_count: 412,
+    live_count: 4,
+    awaiting_count: 1,
+  };
+
+  it('says what the GATEWAY holds, not what this device has paged in', () => {
+    const window = [session('s1', { live: true }), session('s2')];
+    expect(projectTally(overview, '/repo/a', window)).toEqual({ count: 400, live: 3 });
+    expect(machineTally(overview, [['/repo/a', window]])).toEqual({ count: 412, live: 4 });
+  });
+
+  it('falls back to the rows on screen for a machine that has not answered one', () => {
+    const window = [session('s1', { live: true }), session('s2')];
+    expect(projectTally(null, '/repo/a', window)).toEqual({ count: 2, live: 1 });
+    expect(machineTally(undefined, [['/repo/a', window]])).toEqual({ count: 2, live: 1 });
+  });
+
+  it('falls back for a project the overview does not carry', () => {
+    expect(projectTally(overview, '/repo/gone', [session('s9')])).toEqual({ count: 1, live: 0 });
   });
 });

@@ -1,7 +1,7 @@
 import type { MenuPosition } from './anchored-menu';
 import { hostOf } from './endpoints';
 import { homeifyPath } from './path';
-import type { GatewayConn, Session } from './types';
+import type { GatewayConn, GatewayOverview, Session } from './types';
 
 /**
  * The fleet model behind the sessions list.
@@ -41,6 +41,18 @@ export interface FleetMachine {
    * it away when the probe finally fails.
    */
   answered: boolean;
+  /**
+   * WHAT THIS GATEWAY SAYS ITS PROJECTS ARE — `GET /v1/projects/overview`, the
+   * counts tallied by the process that holds the sessions.
+   *
+   * `null` until this machine has answered one (a cached overview is seeded on
+   * mount, so a machine returned to paints its header row in the first frame).
+   * The numbers are NOT derived from `sessions`: deriving them meant a project
+   * header could not be drawn before the whole fleet had been downloaded and
+   * re-tallied, so switching gateways repainted the projects and then their
+   * counts, page by page.
+   */
+  overview?: GatewayOverview | null;
 }
 
 /** Identity of a machine in this screen: its transport URL. */
@@ -646,6 +658,63 @@ export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> 
     if (recency !== 0) return recency;
     return leftRoot < rightRoot ? -1 : leftRoot > rightRoot ? 1 : 0;
   });
+}
+
+/**
+ * Do two overviews say the SAME thing? — the clock sample the gateway stamps on
+ * every answer excluded.
+ *
+ * An answer that changed nothing must not become a new fleet array: every memo
+ * the list is built from hangs off that array, so re-patching an identical
+ * overview re-ran the grouping and the sort under a reader who was only reading
+ * (the same rule the session poll keeps).
+ */
+export function sameOverview(left: GatewayOverview, right: GatewayOverview): boolean {
+  const stable = ({ server_time_ms: _clock, ...rest }: GatewayOverview) => JSON.stringify(rest);
+  return stable(left) === stable(right);
+}
+
+/** What a header says a project holds: total sessions and how many are running. */
+export interface Tally {
+  count: number;
+  live: number;
+}
+
+/**
+ * The counts a PROJECT header wears, from the gateway when it has answered one.
+ *
+ * The rows on screen are a WINDOW — this device holds the pages it has walked,
+ * never the project — so counting them said `12` under a project of 400 until
+ * the whole fleet had drained in, and said a different number at every stage of
+ * the drain. The gateway tallies its own store once (`/v1/projects/overview`);
+ * the local tally survives only as the answer for a machine that has not spoken
+ * yet, and for a FILTERED list, where the honest count is what is shown.
+ */
+export function projectTally(
+  overview: GatewayOverview | null | undefined,
+  root: string,
+  sessions: Session[],
+): Tally {
+  const row = overview?.projects?.find((project) => project.root === root);
+  if (row && typeof row.session_count === 'number')
+    return { count: row.session_count, live: row.live_count ?? 0 };
+  return { count: sessions.length, live: sessions.filter(sessionIsLive).length };
+}
+
+/** The same, for the whole MACHINE band: its gateway's own totals. */
+export function machineTally(
+  overview: GatewayOverview | null | undefined,
+  groups: Array<[string, Session[]]>,
+): Tally {
+  if (overview && typeof overview.session_count === 'number')
+    return { count: overview.session_count, live: overview.live_count ?? 0 };
+  return groups.reduce(
+    (total, [, rows]) => ({
+      count: total.count + rows.length,
+      live: total.live + rows.filter(sessionIsLive).length,
+    }),
+    { count: 0, live: 0 },
+  );
 }
 
 /** When a PROJECT last moved: the newest of its sessions. */

@@ -488,6 +488,37 @@ export interface GatewayHealth {
   protocol?: GatewayProtocol;
 }
 
+/**
+ * ONE row of `GET /v1/projects/overview`: a project this gateway holds, with
+ * the counts the gateway itself tallied.
+ *
+ * The app used to derive these by downloading the fleet and grouping it by
+ * working directory, so a header and its numbers only settled once every
+ * session window had landed — switching gateways repainted projects, then their
+ * counts. `root` is the same key a `root=` session window takes, so a header and
+ * its page agree by construction; `name` is "" when nothing named the folder and
+ * the client's own label rule applies.
+ */
+export interface ProjectOverview {
+  root: string;
+  project_id?: string | null;
+  name: string;
+  session_count: number;
+  live_count: number;
+  awaiting_count: number;
+  last_activity_ms: number;
+}
+
+/** `GET /v1/projects/overview` — the projects plus the gateway's own totals. */
+export interface GatewayOverview {
+  projects: ProjectOverview[];
+  project_count: number;
+  session_count: number;
+  live_count: number;
+  awaiting_count: number;
+  server_time_ms?: number;
+}
+
 export interface GatewayCapabilities {
   version: number;
   protocol?: GatewayProtocol;

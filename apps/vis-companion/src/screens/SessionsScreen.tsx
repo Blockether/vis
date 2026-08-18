@@ -91,15 +91,19 @@ import {
   fleetError,
   isFleetLoaded,
   machineCounts,
+  machineTally,
   machineKey,
   machineLabel,
   newSessionTarget,
   projectDelete,
   projectLabel,
   projectPage,
+  projectTally,
+  type Tally,
   reconcileMachines,
   resolveScope,
   SCOPE_ALL,
+  sameOverview,
   scopedMachines,
   SEARCH_UNPLACED,
   searchFanout,
@@ -255,9 +259,13 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
     const outage = fleetOutage.get(machineKey(machine.conn)) ?? null;
     // Cached rows are what to paint WHEN it answers — never a claim that it has.
     if (machine.sessions !== null) return outage ? { ...machine, error: outage } : machine;
-    const cached = clientFor(machine.conn).cachedSessions();
-    if (!cached && !outage) return machine;
-    return { ...machine, sessions: cached ?? null, error: outage };
+    const api = clientFor(machine.conn);
+    // The header row's numbers come back with the machine, in the FIRST frame: a
+    // gateway returned to must not re-tally itself out of session windows.
+    const overview = machine.overview ?? api.cachedProjectsOverview();
+    const cached = api.cachedSessions();
+    if (!cached && !outage) return overview ? { ...machine, overview } : machine;
+    return { ...machine, sessions: cached ?? null, error: outage, overview };
   });
 }
 
@@ -629,6 +637,27 @@ export function SessionsScreen({
             answered: true,
           }));
         };
+        // The header row's numbers, in ONE request, beside the window — never a
+        // tally of the rows that happen to have landed. It rides the same load so
+        // a poll refreshes counts and rows together; an overview that fails is not
+        // a failed load (the list is still the answer), it just leaves the last
+        // numbers standing.
+        //
+        // AN OVERVIEW THAT SAYS NOTHING NEW IS NOT NEWS (the same rule `settle`
+        // keeps): patching regardless handed the list a fresh fleet array every
+        // poll, and with it every memo built from it, for numbers that had not
+        // moved.
+        void api
+          .projectsOverview(signal)
+          .then((overview) => {
+            if (signal?.aborted) return;
+            const held = machinesRef.current.find(
+              (machine) => machineKey(machine.conn) === key,
+            );
+            if (held?.overview && sameOverview(held.overview, overview)) return;
+            patchMachine(key, (machine) => ({ ...machine, overview }));
+          })
+          .catch(() => {});
         // Paint the first page the moment it lands instead of waiting for the whole
         // fleet to drain. Only ever called on a cold load (see `listSessions`).
         const next = await api.listSessions(signal, (partial) => {
@@ -2136,13 +2165,16 @@ export function SessionsScreen({
               const key = machineKey(machine.conn);
               const color = machineColor(machineColors, key);
               const address = hostOf(machine.conn.url);
-              // What this section is SHOWING, which is what a filter leaves of it —
-              // the same rule the project bands under it count by.
-              const shown = groups.reduce((total, [, rows]) => total + rows.length, 0);
-              const shownLive = groups.reduce(
-                (total, [, rows]) => total + rows.filter(sessionIsLive).length,
-                0,
-              );
+              // What this section is SHOWING. Unfiltered that is the GATEWAY's own
+              // total (`/v1/projects/overview`), not a tally of the rows this
+              // device has paged in — the list is a window, so counting it read
+              // low and moved as pages landed. A search or filter narrows the list
+              // on this device, and then the honest number is what is on screen.
+              const band = searching
+                ? machineTally(null, groups)
+                : machineTally(machine.overview, groups);
+              const shown = band.count;
+              const shownLive = band.live;
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
                   {/* Every machine keeps its own named panel and landmark, even when it is
@@ -2231,6 +2263,11 @@ export function SessionsScreen({
                         <ProjectGroup
                           project={projectLabel(projectSessions)}
                           sessions={projectSessions}
+                          tally={
+                            searching
+                              ? projectTally(null, groupRoot, projectSessions)
+                              : projectTally(machine.overview, groupRoot, projectSessions)
+                          }
                           conn={machine.conn}
                           matches={matches}
                           needle={searchNeedle}
@@ -2715,6 +2752,7 @@ const NeedsYou = memo(function NeedsYou({
 const ProjectGroup = memo(function ProjectGroup({
   project,
   sessions,
+  tally,
   conn,
   matches,
   needle,
@@ -2737,6 +2775,12 @@ const ProjectGroup = memo(function ProjectGroup({
 }: {
   project: string;
   sessions: Session[];
+  /**
+   * What this project HOLDS, as its gateway counted it (`projectTally`) — not
+   * the rows this device has paged in, which are a window and read low until the
+   * whole list has drained.
+   */
+  tally: Tally;
   conn: GatewayConn;
   matches: Map<string, SessionMatch> | null;
   needle: string;
@@ -2770,7 +2814,6 @@ const ProjectGroup = memo(function ProjectGroup({
 }) {
   const root = projectRoot(sessions);
   const base = useMemo(() => clientFor(conn).base, [conn]);
-  const liveCount = useMemo(() => sessions.filter(sessionIsLive).length, [sessions]);
   // Row actions must reach the machine that OWNS the row. Bound here so a
   // memoized row does not re-render on every paint of its parent.
   const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
@@ -2923,8 +2966,8 @@ const ProjectGroup = memo(function ProjectGroup({
             the two projects the eye picked. */}
         <SectionShelf>
           <HeaderMeta>
-            <HeaderTally count={sessions.length} unit="session" />
-            <LiveCount count={liveCount} />
+            <HeaderTally count={tally.count} unit="session" />
+            <LiveCount count={tally.live} />
           </HeaderMeta>
           <Pager page={shownPage} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
         </SectionShelf>

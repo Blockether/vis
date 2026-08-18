@@ -8,6 +8,7 @@
 // paint the next test's first frame.
 import { render } from "@testing-library/react";
 
+import { projectPath, sessionIsLive } from "../lib/fleet";
 import { SessionsScreen } from "./SessionsScreen";
 import type { GatewayConn, Session } from "../lib/types";
 
@@ -169,6 +170,35 @@ export function renderSessionsScreen({
       signal: init?.signal,
     });
     if (!machine) return answer({});
+    // The header row's numbers come from the GATEWAY (`/v1/projects/overview`), so a
+    // fake gateway tallies its own fixture rows the way a real one tallies its store.
+    // It is NOT one of this machine's reads: `heals` and `hangs` count the list reads
+    // a test is watching, and an extra request would answer the wrong one.
+    if (url.pathname === "/v1/projects/overview") {
+      if (machine.down || machine.hangs) throw new TypeError("Failed to fetch");
+      // A test that wants to prove the header reads the GATEWAY's numbers, and not
+      // its own rows, states them here (`routes`).
+      if (machine.routes && url.pathname in machine.routes)
+        return answer(machine.routes[url.pathname]);
+      const rows = machine.sessions ?? [];
+      const byRoot = new Map<string, Session[]>();
+      for (const row of rows) byRoot.set(projectPath(row), [...(byRoot.get(projectPath(row)) ?? []), row]);
+      return answer({
+        projects: [...byRoot.entries()].map(([root, group]) => ({
+          root,
+          project_id: null,
+          name: "",
+          session_count: group.length,
+          live_count: group.filter(sessionIsLive).length,
+          awaiting_count: group.filter((row) => row.is_awaiting_input === true).length,
+          last_activity_ms: 0,
+        })),
+        project_count: byRoot.size,
+        session_count: rows.length,
+        live_count: rows.filter(sessionIsLive).length,
+        awaiting_count: rows.filter((row) => row.is_awaiting_input === true).length,
+      });
+    }
     const seen = (reads.get(url.origin) ?? 0) + 1;
     reads.set(url.origin, seen);
     if (machine.hangs && seen > 1) return blackhole(init?.signal);

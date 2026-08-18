@@ -26,6 +26,7 @@ import type {
   GatewayAttachment,
   GatewayCapabilities,
   GatewayHealth,
+  GatewayOverview,
   GatewayConn,
   FileSuggestion,
   GatewayStatus,
@@ -806,6 +807,34 @@ export class GatewayClient {
       signal,
     );
     writeSnapshot(this.snapshotKey("capabilities"), response);
+    return response;
+  }
+
+  // ── Projects overview ───────────────────────────────────────────
+
+  /**
+   * Last projects overview seen for THIS gateway — paint it, then revalidate.
+   *
+   * This is the whole cure for the flicker: coming back to a gateway, the header
+   * row is drawn from the numbers this device last saw for it, in the first
+   * frame, instead of being re-tallied from session windows as they arrive.
+   */
+  cachedProjectsOverview(): GatewayOverview | null {
+    return readSnapshot<GatewayOverview>(this.snapshotKey("projects-overview"));
+  }
+
+  /**
+   * `GET /v1/projects/overview` — every project with its counts and the
+   * gateway's totals, tallied by the process that already holds the facts.
+   */
+  async projectsOverview(signal?: AbortSignal): Promise<GatewayOverview> {
+    const response = await this.request<GatewayOverview>(
+      "GET",
+      "/v1/projects/overview",
+      undefined,
+      signal,
+    );
+    writeSnapshot(this.snapshotKey("projects-overview"), response);
     return response;
   }
 

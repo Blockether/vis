@@ -96,6 +96,18 @@ export function renderApp({
     }
     if (url.pathname === "/v1/sessions/actions/search")
       return answer({ matches: [] });
+    // The sessions list asks its gateway what its projects hold, so a fake gateway
+    // answers it from its own fixture rows (`state/projects-overview`).
+    if (url.pathname === "/v1/projects/overview") {
+      const sessions = machine.sessions ?? [];
+      return answer({
+        projects: [],
+        project_count: 0,
+        session_count: sessions.length,
+        live_count: 0,
+        awaiting_count: 0,
+      });
+    }
     // The handshake every screen waits on: a gateway speaking this build's wire.
     const protocol = {
       protocol: APP_PROTOCOL,
