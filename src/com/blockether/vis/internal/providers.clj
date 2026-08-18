@@ -855,9 +855,16 @@
          [])
 
      extras
-     (try (authenticated-preset-providers) (catch Throwable _ nil))]
+     (try (authenticated-preset-providers) (catch Throwable _ nil))
 
-    (into (vec base) extras)))
+     ;; A deleted provider stays deleted even when its credential is still on the
+     ;; machine. `extras` are synthesized on every read from an env var or a
+     ;; stored credential, so absence from config cannot express "removed" for
+     ;; them — `deleted-provider-ids` is where that decision lives.
+     removed
+     (try (config/deleted-provider-ids) (catch Throwable _ #{}))]
+
+    (into [] (remove #(contains? removed (some-> (:id %) keyword))) (into (vec base) extras))))
 
 (defn- split-model-ref
   "Split a config model reference into `[provider-keyword model-name]`.
@@ -1252,6 +1259,9 @@
   "Append a provider config to the persisted fleet (no-op when its id exists)."
   ([provider-cfg] (add-config-provider! provider-cfg nil))
   ([provider-cfg source]
+   ;; Adding it back must bring it back: a stale deletion would otherwise hide
+   ;; the provider the operator just asked for.
+   (try (config/unsuppress-provider! (:id provider-cfg) source) (catch Throwable _ nil))
    (update-providers!
      (fn [current]
        (if (some #(= (:id provider-cfg) (:id %)) current)
@@ -1320,7 +1330,13 @@
   ([provider-id source]
    (when-let [logout-fn (:provider/logout-fn (registry/provider-by-id provider-id))]
      (try (logout-fn) (catch Throwable _ nil)))
-   (let [changed? (config/remove-config-provider! provider-id source)]
+   (let [;; Both halves, always: drop the config entry when there is one, and
+         ;; record the deletion so a provider that never had one — synthesized
+         ;; from an env var or a credential file — is gone too. Deleting used to
+         ;; be a no-op for those, which the operator could only read as a broken
+         ;; button.
+         changed? (config/remove-config-provider! provider-id source)
+         _ (config/suppress-provider! provider-id source)]
      (try (config/reload-config!) (catch Throwable _ nil))
      (invalidate-configured-providers!)
      (ensure-default-selection! source)

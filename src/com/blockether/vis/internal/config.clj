@@ -1590,6 +1590,55 @@
         (assoc raw "toggles" snapshot)))
     :toggles)))
 
+(def ^:private removed-providers-key
+  "Machine-config key holding provider ids the operator deleted."
+  "removed_providers")
+
+(defn deleted-provider-ids
+  "Provider ids the operator has DELETED, as a set of keywords.
+
+   Distinct from the private `removed-provider-ids` above, which is a fixed set
+   of presets WITHDRAWN FROM VIS. This one is the operator's own decision and
+   lives in their machine store.
+
+   A provider does not have to live in config to be in the fleet: one can be
+   synthesized on every read from an environment variable or a stored
+   credential (`status.source` of `env-var` / `auth-file`). Deleting those by
+   editing config is impossible — there is no entry to edit — so the deletion is
+   recorded here instead, and the fleet honours it. Without this, removing such
+   a provider was a no-op the UI could only report as a failure."
+  []
+  (into #{}
+        (keep #(some-> % str str/trim not-empty keyword))
+        (get (read-yaml-config-map-lenient (state-path)) removed-providers-key)))
+
+(defn suppress-provider!
+  "Record `provider-id` as deleted, so the fleet stops offering it."
+  ([provider-id] (suppress-provider! provider-id nil))
+  ([provider-id source]
+   (let [id (name (keyword provider-id))]
+     (update-machine-config!
+       (fn [raw]
+         (let [current (vec (keep #(some-> % str not-empty) (get raw removed-providers-key)))]
+           (if (some #(= id %) current)
+             raw
+             (assoc raw removed-providers-key (conj current id)))))
+       source))))
+
+(defn unsuppress-provider!
+  "Forget that `provider-id` was deleted — adding it back must bring it back."
+  ([provider-id] (unsuppress-provider! provider-id nil))
+  ([provider-id source]
+   (let [id (name (keyword provider-id))]
+     (update-machine-config!
+       (fn [raw]
+         (let [current (vec (keep #(some-> % str not-empty) (get raw removed-providers-key)))
+               kept (vec (remove #(= id %) current))]
+           (cond (= kept current) raw
+                 (seq kept) (assoc raw removed-providers-key kept)
+                 :else (dissoc raw removed-providers-key))))
+       source))))
+
 (defn remove-config-provider!
   "Remove every persisted provider entry for `provider-id` from the string-keyed
    machine config, preserving unrelated keys.

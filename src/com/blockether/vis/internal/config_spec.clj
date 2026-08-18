@@ -350,9 +350,9 @@
 (def vision-eye-keys #{"provider" "model" "learned_at"})
 (def vision-memory-keys #{"blind_providers" "blind_models" "working_eye"})
 (def config-keys
-  #{"providers" "default_provider" "default_model" "fallback_provider" "fallback_model" "router"
-    "system_prompt" "workspace" "jail" "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp"
-    "python" "titling" "vision_memory"})
+  #{"providers" "removed_providers" "default_provider" "default_model" "fallback_provider"
+    "fallback_model" "router" "system_prompt" "workspace" "jail" "environment" "db_spec" "grep"
+    "toggles" "tui_settings" "mcp" "python" "titling" "vision_memory"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -546,6 +546,11 @@
 
 (def config-schema
   {"providers" (spec-pred ::providers)
+   ;; Provider ids the operator DELETED. A provider can enter the fleet without
+   ;; ever being in `providers` — synthesized from an env var or a stored
+   ;; credential — so "deleted" cannot be expressed by absence and is recorded
+   ;; here instead.
+   "removed_providers" string-list?
    "default_provider" non-blank-string?
    "default_model" non-blank-string?
    "fallback_provider" non-blank-string?

@@ -1313,9 +1313,9 @@
         (some-> (get-in request [:path-params :provider-id])
                 keyword)
 
-        is-removed
-        (boolean (some-> provider-id
-                         (providers/remove-provider! :gateway)))
+        _
+        (some-> provider-id
+                (providers/remove-provider! :gateway))
 
         fleet
         (router-fleet-json)
@@ -1326,28 +1326,18 @@
         ;; deleting again will never work. Saying only `is_removed: false` left
         ;; the UI with nothing to show and the user with a button that silently
         ;; does nothing — name the source and what would actually remove it.
+        ;; A provider that survives its own removal is a bug now, not a
+        ;; documented limitation: `remove-provider!` records the deletion for
+        ;; every source, so the fleet must no longer offer it whether it came
+        ;; from config, an env var or a stored credential.
+        ;; `is_removed` answers the OUTCOME, not which mechanism ran. Reporting
+        ;; whether the config file changed made deleting an env-var or
+        ;; credential-backed provider read as a failure even when it worked:
+        ;; those never had a config entry to change. Gone is gone.
         survivor
-        (when-not is-removed
-          (first (filter #(= provider-id (some-> (:id %) keyword)) (:providers fleet))))
+        (first (filter #(= provider-id (some-> (:id %) keyword)) (:providers fleet)))]
 
-        reason
-        (case (some-> survivor :status :source)
-          :env (str "This provider comes from the environment"
-                    (when-let [v (some-> survivor :status :needs-env)] (str " (" v ")"))
-                    ", not from vis config. Unset it in the shell that starts the"
-                    " gateway and restart to drop it from the fleet.")
-          :env-var (str "This provider comes from an environment variable, not from"
-                        " vis config. Unset it in the shell that starts the gateway"
-                        " and restart to drop it from the fleet.")
-          :auth-file (str "This provider comes from a stored credential, not from vis"
-                          " config. Sign it out to drop it from the fleet.")
-          :command (str "This provider comes from an `api_key_command`, not from a"
-                        " stored entry. Remove that command from vis config to drop it.")
-          nil)]
-
-    (json-response (cond-> (assoc fleet :is-removed is-removed)
-                     reason
-                     (assoc :reason reason)))))
+    (json-response (assoc fleet :is-removed (nil? survivor)))))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
