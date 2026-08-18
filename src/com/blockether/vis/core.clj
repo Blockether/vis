@@ -774,8 +774,8 @@
 ;; Live views — the picture the human WATCHES while an extension works
 ;;
 ;; The same interaction one `:kind` further, and inverted: nothing blocks, the
-;; human only watches (and may stop it), and the model reads the VERDICT — one
-;; markdown rendering of the same materialized state both surfaces painted.
+;; human only watches (and may stop it), and the model reads the VERDICT — the
+;; same materialized picture both surfaces painted, handed over as DATA.
 ;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
 ;; a picture nobody updates on the human's screen and no markdown for the model.
 (def with-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/with-live!))

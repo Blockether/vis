@@ -389,8 +389,23 @@
                           " — a surface paints one of " (str/join ", " (sort (map name tone?))))))
     (str "[" (name tone) "] ")))
 
-(defn- percent "A fraction as whole percent." [value] (long (Math/round (* 100.0 (double value)))))
+(defn percent
+  "A fraction as whole percent — the ONE rounding every surface shows, so the
+   document and a pane never disagree by a point."
+  [value]
+  (long (Math/round (* 100.0 (double value)))))
 
+(defn fraction
+  "How far a progress has come, as a fraction of one — its declared `:value`, or
+   what `:done` of `:total` works out to. `nil` is INDETERMINATE: started, size
+   unknown, which is the honest picture while a job queues.
+
+   ONE definition, because the document, the model's picture and every surface
+   that paints a bar have to stand for the same number."
+  [{:keys [value done total]}]
+  (cond value (double value)
+        (and done total (pos? (long total))) (/ (double done) (double total))
+        :else nil))
 (defn- cell-text
   "One table cell, made safe for a pipe table: a newline would end the row, a
    pipe would invent a column, and padding is the rail's, so it is trimmed off
@@ -486,10 +501,12 @@
     (conj (str "_" detail "_"))))
 
 (defmethod node->markdown :progress
-  [{:keys [value done total]} _]
+  [{:keys [done total] :as node} _]
   (let
     [head
-     (if value (str "**" (percent value) "%**") indeterminate-line)
+     (if-let [f (fraction node)]
+       (str "**" (percent f) "%**")
+       indeterminate-line)
 
      counted
      (when done (str done (when total (str "/" total)) " done"))]

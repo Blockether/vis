@@ -11,6 +11,7 @@
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.mcp :as mcp]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
@@ -553,6 +554,21 @@
     :human-input/close
     (state/dispatch [:human-input-close (:request-id event)])
 
+    ;; A live view is the form INVERTED: nothing is parked, the composer keeps
+    ;; the keyboard, and the terminal never interprets a patch itself — the
+    ;; engine's materialized view is handed to state as it stands, so the phone
+    ;; and the terminal cannot disagree about a row.
+    :human-input/live-open
+    (state/dispatch [:live-view-open (:view event)])
+
+    :human-input/live-patch
+    (state/dispatch [:live-view-patch (:patch event)])
+
+    ;; Close arrives for EVERY ending — done, interrupted, timed out, the run
+    ;; that raised it dying — so a pane can never outlive the work it reports on.
+    :human-input/live-close
+    (state/dispatch [:live-view-close (:view-id event)])
+
     nil))
 
 (defn- human-input-answer!
@@ -581,6 +597,40 @@
       :cancel (if local?
                 (vis/cancel-human-input! request-id)
                 (vis/gateway-cancel-human-input! session-id request-id)))))
+
+(defn- live-band-pane
+  "The live view the pointer at terminal row `my` is over — the one the band is
+   painting right now — or nil when the pointer is on the transcript.
+
+   Measured from the layout the render thread published for the LIVE frame, the
+   same anchor the band was drawn with, so the rows the wheel claims are the rows
+   the human sees. A form takes the band back, and with it the wheel."
+  [db my]
+  (when-let [panes (seq (:live-views db))]
+    (when-not (:human-input db)
+      (let
+        [ly (:layout db)
+
+         {:keys [content-top prompt-h]} (state/band-anchor db)
+
+         span (lv/band-rows (long (or (:cols ly) 0)) (long (or (:rows ly) 0)) panes content-top
+                            prompt-h)]
+
+        (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
+
+(defn- interrupt-front-live-view!
+  "Stop the newest live view this terminal shows that says it may be stopped, and
+   answer true when there was one.
+
+   The verdict still reads `interrupted` and still carries the picture that was
+   on screen when the human stopped it — what they saw is exactly what the model
+   reads — so the run that opened the view keeps its answer."
+  [db]
+  (when-let [pane (lv/interruptible (:live-views db))]
+    (try (vis/interrupt-live-view! (lv/view-id pane))
+         (catch Throwable t
+           (vis/notify! (str "Could not stop the view: " (ex-message t)) :level :error)))
+    true))
 
 (defn- replay-human-input!
   "Open EVERY request `session-id` is blocked on right now, oldest first.
@@ -2493,6 +2543,15 @@
         (if-let [pos (hi/paint! g cols rows human-form messages-top input-box-h)]
           (.setCursorPosition screen ^TerminalPosition pos)
           (.setCursorPosition screen nil)))
+      ;; A live view paints in the SAME band and YIELDS it to a form: an
+      ;; unanswered question has stopped the run, so it outranks a report about
+      ;; one still going. What the frame measured goes back to state, which is
+      ;; what makes the next wheel tick and the next column width agree with what
+      ;; is on screen. Before `commit-frame!`, so the pane's own click regions —
+      ;; its links and its `+ N more` lines — belong to this frame.
+      (when-not (:human-input db)
+        (when-let [geom (lv/paint! g cols rows (:live-views db) messages-top input-box-h)]
+          (state/dispatch [:live-view-painted (:view-id geom) geom])))
       (cr/commit-frame!)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `cr/current` holds this frame's fresh toggle regions and
@@ -6289,6 +6348,17 @@
                        (do (state/dispatch [:move-slash-command-selection (long wheel-delta)
                                             (count slash-suggestions)])
                            (recur))
+                       ;; The wheel over the live-view band scrolls the PANE. The band is
+                       ;; painted ON TOP of the transcript, so the rows under the pointer
+                       ;; are the pane's rows, and moving the history underneath instead
+                       ;; would be moving what the pointer is not on.
+                       (and (not (zero? (long (or wheel-delta 0)))) (live-band-pane db my))
+                       (do (state/dispatch [:live-view-scroll
+                                            (lv/view-id (live-band-pane db my))
+                                            (* 3 (long wheel-delta))])
+                           (state/dispatch [:bump-render-version])
+                           (recur))
+
                        ;; Smooth the raw wheel-delta through the running momentum so a
                        ;; sign-flipping inertia tail can't dispatch a reverse tick (the
                        ;; "scroll fighting me" bounce). An absorbed tick (effective nil)
@@ -6602,7 +6672,13 @@
                                  (state/dispatch [:select-preview-mode (:session-id hit)
                                                   (:node-id hit) (:mode hit)])
 
-                                 (open-click-target! screen hit))
+                                  ;; `+ N more` on a live node: the pane takes no keyboard,
+                                  ;; so opening a node is a click and nothing else.
+                                  :live-expand
+                                  (do (state/dispatch [:live-view-expand (:view-id hit) (:node-id hit)])
+                                      (state/dispatch [:bump-render-version]))
+
+                                  (open-click-target! screen hit))
                                (let
                                  [point (selection/point mx my)
                                   disclosure-hit
@@ -7514,7 +7590,14 @@
                            (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
                            (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks])
                                                             (recur))
-                           (:loading? @state/app-db) (do (state/dispatch [:cancel-turn]) (recur))
+                            ;; A live view is the newest thing in front of the human and the
+                            ;; finest-grained stop there is: Escape ends the VIEW before it
+                            ;; reaches for the turn, because the run may have opened several
+                            ;; and want to keep going after one of them is stopped. The
+                            ;; footer says which one it will hit.
+                            (interrupt-front-live-view! @state/app-db) (recur)
+
+                            (:loading? @state/app-db) (do (state/dispatch [:cancel-turn]) (recur))
                            ;; Not loading but a queued backlog is draining: Esc
                            ;; drops the whole queue instead of no-op'ing while the
                            ;; queue auto-drains into the gateway.

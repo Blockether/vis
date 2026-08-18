@@ -428,7 +428,14 @@
   (it "renders an indeterminate progress as work, not as zero"
       (expect (str/includes? (live/->markdown
                                (view {:id "p" :type :progress :label "Scanning" :done 7}))
-                             "_working_ · 7 done"))))
+                             "_working_ · 7 done")))
+  (it "counts a progress that declared its parts, instead of calling it indeterminate"
+      (let [md (live/->markdown (view {:id "p" :type :progress :label "Jobs" :done 15 :total 18}))]
+        (expect (str/includes? md "**83%** · 15/18 done"))
+        (expect (not (str/includes? md "_working_")))
+        ;; and the law holds for it: a document that says 83% parses back to a
+        ;; view that renders 83% again.
+        (expect (= md (live/->markdown (:view (live/parse-markdown md))))))))
 
 ;; The model's surface is TWO-WAY. Everything below leans on one law: a picture
 ;; that elided nothing renders back exactly, so `->markdown` and

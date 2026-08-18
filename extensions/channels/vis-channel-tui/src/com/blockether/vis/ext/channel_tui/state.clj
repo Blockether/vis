@@ -9,6 +9,7 @@
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
@@ -65,10 +66,11 @@
   (Object.))
 
 (def ^:private no-render-bump-events
-  "Events that update app-db without requesting a redraw. Right now this
-   is just `:set-layout`, which is the render thread itself pushing back
-   computed sizes for the input thread to read."
-  #{:set-layout})
+  "Events that update app-db without requesting a redraw: the render thread
+   itself pushing measurements back for the input thread to read — the computed
+   sizes of the frame it just drew, and the geometry each live-view pane was
+   painted with."
+  #{:set-layout :live-view-painted})
 
 (def ^:private always-bump-events
   "Events that MUST wake the painter even though they change nothing in the
@@ -134,7 +136,7 @@
    :slash-command-hidden? :submitted-input :pending-sends :retracted-sends :queue-paused :pastes
    :paste-counter :loading? :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id
    :gateway-turn-id :live-turn-client-id :progress :turn-start-ms :detail-expansions
-   :mouse-selection :session-model-pref :human-input :human-input-queue
+   :mouse-selection :session-model-pref :human-input :human-input-queue :live-views
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -177,6 +179,9 @@
    ;; tab: session A's form must never take over the tab showing session B.
    :human-input nil
    :human-input-queue []
+   ;; And so does a live view: it reports on ONE session's run, so it paints on
+   ;; that session's tab and gives its rows back when the run ends.
+   :live-views []
    ;; Stated HERE on purpose: `restore-tab` only MERGES, so a tab that never armed
    ;; would otherwise inherit the armed tab's flag from the root db.
    :voice-conversation? false})
@@ -2814,24 +2819,24 @@
                          (not armed?)
                          (conj [:stop-speaking]))})))
 
-(defn- human-input-target-tab
-  "The tab a human-input form is allowed to appear on.
+(defn- session-target-tab
+  "The tab a surface raised for session `sid` is allowed to appear on.
 
-   A request PARKS EXACTLY ONE SESSION, so it is shown on that session's tab and
-   on no other. `:not-here` means the request belongs to a session this terminal
-   is not showing — another tab's daemon run, or a session open somewhere else
-   entirely — and the form is dropped rather than dumped on whatever tab the
-   operator happened to be looking at. A form that names no session at all is a
-   locally built one (a request raised before a session was bound) and stays on
-   the current tab.
+   A human-input request PARKS EXACTLY ONE SESSION and a live view REPORTS ON
+   exactly one, so each is shown on that session's tab and on no other.
+   `:not-here` means the session belongs to a tab this terminal is not showing —
+   another tab's daemon run, or a session open somewhere else entirely — and the
+   surface is dropped rather than dumped on whatever tab the operator happened to
+   be looking at. One that names no session at all was built locally (raised
+   before a session was bound) and stays on the current tab.
 
    The ACTIVE tab is matched against the db root's own `:session` rather than
    through `tab-id-for-session`, because a terminal showing a single session has
    no `:tabs` entry to resolve an id to."
-  [db form]
+  [db sid]
   (let
     [sid
-     (some-> (get-in form [:request :session-id])
+     (some-> sid
              str
              str/trim
              not-empty)
@@ -2846,6 +2851,12 @@
     (cond (nil? sid) (current-tab-id db)
           (= sid root-sid) (current-tab-id db)
           :else (or (tab-id-for-session db sid) :not-here))))
+
+(defn- human-input-target-tab
+  "The tab `form` is allowed to appear on — [[session-target-tab]] for the session
+   the request parks."
+  [db form]
+  (session-target-tab db (get-in form [:request :session-id])))
 
 (defn- open-human-input
   "Install `form` in ONE tab's db half. IDEMPOTENT BY REQUEST ID: one request
@@ -2901,6 +2912,90 @@
                             db
                             (remove #(= % (current-tab-id db)) (map :id (:tabs db))))
                     db))))
+
+;;; ── Live views ──────────────────────────────────────────────────────────────
+;;
+;; A live view is the form's twin and its opposite: the form PARKS the run and
+;; owns the keyboard until it is answered, the view REPORTS while the run keeps
+;; going and takes nothing from the composer but the wheel. Its pane model is
+;; `live-view`'s, and every transition below is one of that namespace's pure
+;; functions applied INSIDE the `swap!` — patches land on the channel thread
+;; while the human scrolls on the input thread, so a read-modify-write outside
+;; the atom would silently drop rows.
+
+(defn- across-tabs
+  "Apply `f` to EVERY tab's db half — the active one at the db root, each
+   background one through its snapshot.
+
+   A live view is addressed by view id alone: the patch that grows it and the
+   close that ends it arrive on the channel with no idea which tab mounted it,
+   and the tab that did may not be the one in front."
+  [db f]
+  (reduce (fn [acc tab-id]
+            (update-tab acc tab-id f))
+          (f db)
+          (remove #(= % (current-tab-id db)) (map :id (:tabs db)))))
+
+(defn- update-live-pane
+  "Apply `f` to the pane `view-id` names, wherever it is mounted. A view id that
+   matches nothing is left alone: a close still arrives for a view this terminal
+   never mounted (another tab's daemon run, a session opened elsewhere)."
+  [db view-id f]
+  (across-tabs db
+               (fn [w]
+                 (cond-> w
+                   (some #(= view-id (lv/view-id %)) (:live-views w))
+                   (update :live-views
+                           (fn [panes]
+                             (mapv #(if (= view-id (lv/view-id %)) (f %) %) panes)))))))
+
+(reg-event-db :live-view-open
+              ;; Mounted on the session's OWN tab, by the same rule a form obeys, and
+              ;; IDEMPOTENT BY VIEW ID: one open reaches a tab twice whenever the run
+              ;; is in this process (in-process channel bus + gateway session event),
+              ;; and re-mounting would throw away the scroll position the human is
+              ;; reading at.
+              (fn [db [_ view]]
+                (let [target (session-target-tab db (:session-id view))]
+                  (if (= :not-here target)
+                    db
+                    (update-tab db
+                                target
+                                (fn [w]
+                                  (if (some #(= (:id view) (lv/view-id %)) (:live-views w))
+                                    w
+                                    (update w :live-views (fnil conj []) (lv/opened view)))))))))
+
+(reg-event-db :live-view-patch
+              (fn [db [_ patch]]
+                (update-live-pane db (:view-id patch) #(lv/patched % patch))))
+
+(reg-event-db :live-view-close
+              ;; The verdict is the RUN's answer, not the pane's: the extension reads
+              ;; it, the record keeps it, and the band gives its rows back to the
+              ;; transcript the moment the view ends.
+              (fn [db [_ view-id]]
+                (across-tabs db
+                             (fn [w]
+                               (cond-> w
+                                 (seq (:live-views w))
+                                 (update :live-views
+                                         (fn [panes]
+                                           (vec (remove #(= view-id (lv/view-id %)) panes)))))))))
+
+(reg-event-db :live-view-scroll
+              (fn [db [_ view-id delta]]
+                (update-live-pane db view-id #(lv/scrolled % (long delta)))))
+
+(reg-event-db :live-view-expand
+              (fn [db [_ view-id node-id]]
+                (update-live-pane db view-id #(lv/expanded % node-id))))
+
+(reg-event-db :live-view-painted
+              ;; Pushed back by the render thread with what the frame measured, the
+              ;; way `:set-layout` is — and like it, deliberately NOT a redraw request.
+              (fn [db [_ view-id geometry]]
+                (update-live-pane db view-id #(lv/painted % geometry))))
 
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by

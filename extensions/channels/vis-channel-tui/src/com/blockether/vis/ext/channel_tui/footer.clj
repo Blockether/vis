@@ -39,6 +39,7 @@
             [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
+            [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -1069,18 +1070,48 @@
     (when (seq c) (draw-spans! g c-col row c separator))
     (when (seq r) (draw-spans! g r-col row r separator))))
 
+(defn- live-view-hint
+  "What an open live view says on the echo row: what it is, where it got to, and
+   — because Escape hits the VIEW before the turn — which one the abort key
+   stops. `lv/footer-text` is the pane's own one-line summary and
+   `lv/interruptible` is the same judge the abort branch uses, so this row and
+   the band can never tell different stories."
+  [panes]
+  (let
+    [front
+     (last panes)
+
+     target
+     (lv/interruptible panes)
+
+     n
+     (count panes)]
+
+    (str/join " · "
+              (remove str/blank?
+                [(when target
+                   (str (keymap/abort-hint)
+                        " stop"
+                        (when-not (= target front) (str " " (get-in target [:view :title])))))
+                 (lv/footer-text front) (when (> n 1) (str n " views open"))]))))
+
 (defn- echo-segments
   "Content for the Emacs echo-area row directly above the input box.
 
    NORMALLY EMPTY — the row lights up only when there is something to say:
      - live turn / cancelling   → the `C-g / Esc cancel` abort hint
+     - an open live view        → what it is doing and that Esc stops IT first
      - a transient `:echo` msg  → a one-shot message (the caller clears it)
 
    No idle keybinding nags, and no which-key strip: C-x opens the HYDRA band
    itself (`keymap/prefix-spec` → `dialogs/prefix-band!`), which lists the next
    keys where they belong — over the transcript, not in a one-row strip."
-  [{:keys [loading? cancelling? echo]}]
+  [{:keys [loading? cancelling? echo live-views]}]
   (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
+        ;; A live view outranks the turn's own abort hint because ESCAPE DOES:
+        ;; while one is open the abort key stops the VIEW (screen.clj's `:cancel`
+        ;; branch), so the row advertising that key has to name what it will hit.
+        (seq live-views) [(hint-segment (live-view-hint live-views) 1)]
         loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
         (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
         :else []))

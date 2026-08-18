@@ -449,8 +449,9 @@ process.
 - Same file — a view is a STACK of labelled nodes in declaration order on ONE scroll surface, so
   three tables and two logs read as sections rather than as competing panes. A node paints a WINDOW,
   never its record: a table shows a window of its declared order plus a `+N more` line that expands,
-  and a log paints what fits and pulls older lines from the sink's range reader when the human
-  scrolls past what memory holds. `add-node` / `remove-node` reflow without moving what the human is
+  and a log paints its TAIL — the newest lines are why anybody is watching — and says how many
+  earlier lines the view's own record still keeps. `add-node` / `remove-node` reflow without moving
+  what the human is
   reading — the scroll anchor is the node id under the viewport, never a line offset.
 - Same file — a table under mutation repaints WITHOUT MOVING THE EYE, which is the whole difficulty:
   the anchor inside a table is the ROW ID at the top of the viewport, so rows arriving above it (or
@@ -480,9 +481,9 @@ process.
   viewport pinned at the end follows new rows, a wider cell grows a column and never shrinks it
   while open, and the screenshot gate pins a before/after pair across one interleaved script.
 
-**Unknowns.** Where does the pane live when several views are open at once — stacked above the
-composer, or one pane with a switcher? The plan assumes stacked, newest last, capped at three
-visible with the rest collapsed to one line each.
+**Unknowns.** None left. Several open views stack as ONE band: the newest is painted in full and
+every older one collapses to a single line carrying its title and where it got to, and the band
+takes at most half the rows between the transcript and the prompt.
 
 ## Phase 3 — Give Python the same primitive through one host op
 
@@ -737,7 +738,7 @@ payload (assumed yes) or its own view.
 
 ## State of the plan
 
-**IN FLIGHT** — Phase 1 is DONE and green; Phases 2-6 are written and not yet started.
+**IN FLIGHT** — Phases 1 and 2 are DONE and green; Phases 3-6 are written and not yet started.
 
 Done:
 
@@ -768,18 +769,29 @@ Done:
   `:view` and refuses `:markdown`: markdown is the HUMAN's document — what an artifact stores, what a
   transcript embeds, what a hand-written picture is authored as — never the model's contract. 314
   green across the human-input, gateway, contract, python-extensions and core test files.
+- Phase 2 COMPLETE — the terminal paints it.
+  `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/live_view.clj` plans a
+  view as ONE scroll surface of labelled nodes in declaration order, windows every node to twelve
+  items behind a `+ N more` line that expands on a CLICK (the pane never takes the keyboard), anchors
+  the eye on `[node-id item-id]` so rows arriving above it move the scrollbar and not the reading
+  position, grows column widths and never shrinks them while a view is open, and emphasises exactly
+  what the last patch upserted. `state.clj` keeps the panes per tab, `screen.clj` dispatches the three
+  events, scrolls the band under the wheel and gives Escape to the newest cancellable view before the
+  turn, `footer.clj` keeps a scrolled-away view legible. Its ink is DATA and not prose: a counter
+  wears its own tone, and a progress that declared `:done` of `:total` paints the bar that fraction
+  earned — `live/fraction` and `live/percent` are the ONE definition the document and the pane share.
+  10 tests in `live_view_test.clj` including the screenshot gate, 586 green across the eight
+  neighbouring TUI suites.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.
 
 TODO, in order:
 
-1. Phase 2 — TUI pane: labelled nodes stacked on one scroll surface, wheel scroll, Escape precedence,
-   screenshot gate.
-2. Phase 3 — `live` host op (contract version 3), `vis.live` with per-node handles and batched
+1. Phase 3 — `live` host op (contract version 3), `vis.live` with per-node handles and batched
    flushing, checker parity.
-3. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
+2. Phase 4 — gateway bridge (all three events stored, patches coalesced on a tick, snapshot and
    log-range resync, interrupt route), companion reducer keyed by node id, component and drift test.
-4. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
-5. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
+3. Phase 5 — the sink becomes the artifact on close, reopened by range in both surfaces.
+4. Phase 6 — the `gh` extension: the first live view a person actually watches, and the end-to-end
    proof of the chain.
