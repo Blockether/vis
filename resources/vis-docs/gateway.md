@@ -85,12 +85,12 @@ gateway, re-pair the remote client, or restart the gateway on loopback
 
 ## Driving a gateway on another machine (`--gateway`)
 
-Every command — `tui` included — talks to whichever gateway two **root flags**
-name, in front of the command itself:
+Every gateway call of an invocation — the TUI's whole session included — goes to
+whichever gateway two **root flags** name, in front of the command itself:
 
 ```sh
 vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
-vis-agent --gateway 10.0.0.5:7899 --gateway-token "$TOKEN" sessions list
+vis-agent --gateway 10.0.0.5:7899 --gateway-token "$TOKEN" providers status
 vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
 ```
 
@@ -115,8 +115,11 @@ What a remote target changes:
   that runs it), and the `/ui` self-heal force-restart is never attempted.
 - **The client claims no pid.** Lease reaping judges pids on the gateway's own
   machine, so a remote client sends none and is never reaped as "dead".
-- Your local registry and database are not consulted at all, so `--db` means
-  nothing next to `--gateway`.
+- Your local registry is never consulted and `--db` means nothing next to
+  `--gateway`. The `sessions` commands are the exception: `list`, `show`,
+  `export` and `fork` read THIS machine's database directly instead of asking
+  a gateway, so they keep reporting local sessions whatever `--gateway` says.
+  A remote gateway's sessions are browsed from its TUI.
 - An unreachable host, or a value that names no host, is an error — never a
   silent fall back to your own daemon, which would run the work on the wrong
   machine.
