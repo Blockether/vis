@@ -21,9 +21,21 @@
    urllib can reach the proxy even under a restrictive allowlist."
   (:require [com.blockether.vis.internal.env-python :as env]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]))
+  (:import [org.graalvm.polyglot Context Engine]))
 
 (defn- pctx ^Context [ctx] (get ctx :python-context))
+
+(defn- dispose!
+  "Close a sandbox AND the Engine it owns.
+
+   This file already tore its sandboxes down per test — it just did half of it.
+   Every Context now carries its own Engine (`env-python/new-engine!`), and an
+   Engine retains everything ever built on it, so closing only the Context left
+   seven Python heaps pinned for the rest of the run."
+  [env]
+  (try (.close ^Context (:python-context env) true) (catch Throwable _ nil))
+  (when-let [engine (:python-engine env)]
+    (try (.close ^Engine engine true) (catch Throwable _ nil))))
 
 (defn- outcome
   "Eval a DNS resolution for `host` in `ctx` and classify: `:ok`, `:blocked`
@@ -59,7 +71,7 @@
   network-guard-test
   (it "OFF ⇒ no sockets at all (DNS denied)"
       (let [off (env/create-python-context {} nil nil)]
-        (try (expect (= :no-socket (outcome off "localhost"))) (finally (.close (pctx off) true)))))
+        (try (expect (= :no-socket (outcome off "localhost"))) (finally (dispose! off)))))
   (it "`*` allowlist ⇒ unrestricted EXCEPT the always-on metadata denylist"
       (let
         [star (env/create-python-context
@@ -69,7 +81,7 @@
         (try (expect (= :ok (outcome star "localhost")))
              ;; cloud-metadata SSRF endpoint is denied by default even under `*`
              (expect (= :blocked (outcome star "169.254.169.254")))
-             (finally (.close (pctx star) true)))))
+             (finally (dispose! star)))))
   (it "allowlist ⇒ confines to listed hosts (subdomain ok, others blocked)"
       (let
         [conf (env/create-python-context
@@ -78,7 +90,7 @@
                 {:enabled? true :jail-enabled? true :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome conf "www.example.com")))
              (expect (= :blocked (outcome conf "evil.com")))
-             (finally (.close (pctx conf) true)))))
+             (finally (dispose! conf)))))
   (it "denied `*` + allow some ⇒ deny everything EXCEPT the allowlist"
       (let
         [d (env/create-python-context {}
@@ -89,7 +101,7 @@
                                        :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome d "www.example.com"))) ; specific allow beats deny `*`
              (expect (= :blocked (outcome d "evil.com"))) ; deny `*` blocks the rest
-             (finally (.close (pctx d) true)))))
+             (finally (dispose! d)))))
   (it "allow `*` + deny some ⇒ allow everything EXCEPT the denylist"
       (let
         [a (env/create-python-context {}
@@ -100,7 +112,7 @@
                                        :denied-domains ["example.com"]})]
         (try (expect (= :blocked (outcome a "example.com"))) ; specific deny beats allow `*`
              (expect (= :ok (outcome a "localhost")))
-             (finally (.close (pctx a) true)))))
+             (finally (dispose! a)))))
   (it "enforces at connect() too — a raw-IP socket can't skip DNS to a denied IP"
       ;; The default denylist's headline target (the metadata IP 169.254.169.254) is
       ;; an IP literal; a raw `socket.connect((ip, port))` never hits DNS, so guarding
@@ -114,7 +126,7 @@
                                        :denied-domains ["127.0.0.1"]})]
         (try (expect (= :blocked (raw-connect-outcome c "127.0.0.1")))
              (expect (= :blocked (raw-connect-outcome c "169.254.169.254"))) ; default SSRF denylist
-             (finally (.close (pctx c) true)))))
+             (finally (dispose! c)))))
   (it "egress routing ⇒ proxy + CA env wired, loopback reachable even under a strict allowlist"
       ;; With :proxy-port + :ca-file the interpreter's HTTP stack is pointed at the
       ;; gateway proxy (verb/path enforced there, not by an in-interpreter method
@@ -135,4 +147,4 @@
              (expect (= :ok (outcome p "127.0.0.1")))
              ;; the raw host floor still blocks a non-allowlisted host for raw sockets
              (expect (= :blocked (outcome p "evil.com")))
-             (finally (.close (pctx p) true))))))
+             (finally (dispose! p))))))
