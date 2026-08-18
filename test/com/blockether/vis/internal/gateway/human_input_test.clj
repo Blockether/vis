@@ -602,6 +602,16 @@
              (and (= type (get event "type")) (= view-id (get event "view_id"))))
     @seen))
 
+(def ^:private live-flush-ms
+  "The bridge's own tick. Redefined per test through [[unhurried]], so what a view
+   HOLDS stays held until something asks for it."
+  (requiring-resolve 'com.blockether.vis.internal.gateway.human-input/live-flush-ms))
+
+(defn- unhurried
+  "Run `f` with the flush tick pushed out of reach. These pin WHO publishes a held
+   patch; how long the window is, is [[gw-hi/live-flush-ms]]'s own business."
+  [f]
+  (with-redefs-fn {live-flush-ms (* 60 1000)} f))
 (deftest the-app-watches-a-live-view-test
   (gw-hi/install!)
   (recorded
@@ -661,6 +671,46 @@
                        (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))
                 (is (nil? (get-in event ["result" "markdown"])))))))))))
 
+;; The bridge holds a view's patches for one flush window, so a gateway that goes
+;; away mid-stream would swallow whatever the window still had. `stop!` in
+;; `com.blockether.vis.internal.gateway.server` is [[gw-hi/uninstall!]]'s one
+;; caller, and this is what calling it buys.
+(deftest a-gateway-going-away-publishes-what-it-still-holds-test
+  (gw-hi/install!)
+  (recorded
+    (fn []
+      (unhurried
+        (fn []
+          (with-events
+            (fn [seen]
+              (let
+                [sid
+                 (str (random-uuid))
+
+                 view
+                 (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
+
+                 view-id
+                 (:id view)]
+
+                (try (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one"]}])
+                     (testing "a patch waits for the tick, and the tick is nowhere near due"
+                       (is (empty? (live-events-of seen gw-hi/live-patch-event view-id))))
+                     (testing "so the gateway leaving is what publishes it"
+                       ;; Subscribe again at once: the bus is process-local, so this one
+                       ;; listener is also serving every sibling test's view.
+                       (gw-hi/uninstall!)
+                       (gw-hi/install!)
+                       (let
+                         [frames
+                          (live-events-of seen gw-hi/live-patch-event view-id)
+
+                          [[_ event]]
+                          frames]
+
+                         (is (= 1 (count frames)))
+                         (is (= ["one"] (get-in event ["patch" "ops" 0 "lines"])))))
+                     (finally (hi/close-live! view-id)))))))))))
 (deftest the-app-reads-a-live-view-back-over-http-test
   (gw-hi/install!)
   (recorded
