@@ -4,11 +4,13 @@
 // landed. The point of the screen is that a finished run stays readable without
 // the terminal that ran it, and that reading it costs the phone a bounded
 // picture rather than the whole log.
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LiveArtifact,
   liveRecordFromEdges,
+  liveRunName,
+  LiveRunRow,
   liveVerdictLine,
   LIVE_RECORD_FOLD_LIMIT,
 } from './LiveArtifact';
@@ -16,6 +18,7 @@ import liveArtifactSource from './LiveArtifact.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
 import { liveViewFromWire, type LiveRecord } from '../lib/live-view';
 import type { GatewayClient } from '../lib/gateway';
+import type { IterationAttachment } from '../lib/types';
 
 afterEach(cleanup);
 
@@ -150,5 +153,96 @@ describe('the artifact on screen', () => {
     expect(liveArtifactSource).toContain('<LiveViewPanel');
     expect(liveArtifactSource).not.toContain('<button');
     expect(liveArtifactSource).not.toContain('style=');
+  });
+});
+
+// Reported from the app, with a screenshot: a `gh` watch that had finished left
+// "1 file · release.live.json" in the step — the record was in the session and
+// the transcript said nothing about the run. A settled run is an ARTIFACT, so
+// it reads like one: a row where it happened, and it opens.
+describe('the settled run in the transcript', () => {
+  function record(): IterationAttachment {
+    return {
+      index: 2,
+      iteration_id: 'it-1',
+      filename: 'release.live.json',
+      media_type: 'application/vnd.vis.live+json',
+      size: 4096,
+    } as IterationAttachment;
+  }
+
+  function rowClient(url: string | null = 'blob:record') {
+    const attachmentUrl = vi.fn(async () => url);
+    const retainAttachment = vi.fn(() => () => undefined);
+    return {
+      client: {
+        attachmentUrl,
+        retainAttachment,
+        liveViewLog: vi.fn(async () => ({
+          node_id: 'x',
+          from: 0,
+          lines: [],
+          total: 0,
+        })),
+      } as unknown as GatewayClient,
+      attachmentUrl,
+    };
+  }
+
+  it('is one row, and costs nothing until it is opened', () => {
+    serve([openLine, closeLine({ reason: 'completed', view: sealed })].join('\n'));
+    const { client: c, attachmentUrl } = rowClient();
+    render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
+    // Named after the RUN, not after the file the engine filed it under.
+    expect(screen.getByRole('button', { name: 'Open run release' })).toBeTruthy();
+    expect(screen.getByText('RUN')).toBeTruthy();
+    // A 40MB record must not be fetched to paint a line of text.
+    expect(attachmentUrl).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('opens the picture the run ended on, and nothing about it can be pressed', async () => {
+    serve(
+      [openLine, closeLine({ reason: 'interrupted', note: 'enough', view: sealed })].join('\n'),
+    );
+    const { client: c, attachmentUrl } = rowClient();
+    render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open run release' }));
+    await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeTruthy());
+    expect(attachmentUrl).toHaveBeenCalledWith('s1', 'it-1', 2);
+    // The band REPORTS the verdict; the run is over, so it is what it took, not
+    // an offer to stop it.
+    expect(screen.getByText('stopped by hand — enough')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    // The way out is the band's own, and it names the run.
+    expect(screen.getByRole('button', { name: 'Close release' })).toBeTruthy();
+  });
+
+  it('says so when the record cannot be fetched, in the same screen', async () => {
+    const { client: c } = rowClient(null);
+    render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open run release' }));
+    await waitFor(() =>
+      expect(screen.getByText('Loading…')).toBeTruthy(),
+    );
+  });
+
+  it('paints nothing for a run no iteration owns', () => {
+    const { client: c } = rowClient();
+    render(
+      <LiveRunRow
+        client={c}
+        sid="s1"
+        attachment={{ ...record(), iteration_id: undefined } as IterationAttachment}
+      />,
+    );
+    expect(screen.queryByText('RUN')).toBeNull();
+  });
+
+  it('names the run out of the file the close filed it under', () => {
+    expect(liveRunName('release.live.json')).toBe('release');
+    expect(liveRunName('scan.LIVE.JSON')).toBe('scan');
+    expect(liveRunName(undefined)).toBe('run');
   });
 });

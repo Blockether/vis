@@ -4514,3 +4514,56 @@
                         (filter #(str/includes? (str %) "RESULT"))
                         first)]
           (expect (str/includes? (str line) (str p/INLINE_BOLD_ON "RESULT" p/INLINE_BOLD_OFF)))))))
+
+;; A run the turn watched to its END is an ARTIFACT of that turn: it leaves the
+;; band and reads back from the transcript, where the human is already looking
+;; and where a run watched an hour ago is still reachable. It used to live on
+;; the band alone, so the next finished run retired it.
+(defdescribe
+  answer-run-rows-test
+  (it
+    "gives every finished run a row under the answer, pressable where it is read"
+    (render/invalidate-cache!)
+    (let [payload
+          (render/format-answer-with-thinking-data
+            "Watched it."
+            []
+            80
+            nil
+            nil
+            false
+            {:session-id "s1"
+             :runs
+             [{:view-id "view-1"
+               :title "Release · gh"
+               :reason :completed
+               :lines 314
+               :elapsed-ms 461000}
+              {:view-id "view-2" :title "Nightly" :reason :interrupted :lines 1 :elapsed-ms 1000}]})
+
+          body
+          (strip-ansi (:text payload))
+
+          rows
+          (filterv #(= :live-reopen (:kind %)) (:line-meta payload))]
+
+      (expect (str/includes? body "RUN"))
+      (expect (str/includes? body "Release · gh · completed · 314 lines"))
+      (expect (str/includes? body "Nightly · interrupted · 1 line"))
+      (expect (= ["view-1" "view-2"] (mapv :view-id rows))
+              "one row per run, in the order they finished")
+      (expect (= ["s1" "s1"] (mapv :session-id rows))
+              "each row names the session whose band reopens the record")
+      (expect (< (.indexOf ^String body "Watched it.") (.indexOf ^String body "RUN"))
+              "what the turn SAID comes first; its runs read after it")))
+  (it "a turn that watched nothing carries no rail at all"
+      (render/invalidate-cache!)
+      (let [payload (render/format-answer-with-thinking-data "Nothing here."
+                                                             []
+                                                             80
+                                                             nil
+                                                             nil
+                                                             false
+                                                             {:session-id "s1"})]
+        (expect (not (str/includes? (strip-ansi (:text payload)) "RUN")))
+        (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta payload))))))

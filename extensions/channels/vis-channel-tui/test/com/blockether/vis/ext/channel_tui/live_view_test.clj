@@ -832,24 +832,26 @@
 
 ;; Phase 5 of the live-view plan: a view used to vanish the moment it ended, so
 ;; the log the human had been watching became unreachable one frame after it
-;; finished — and the only way back would have been dumping it into the transcript.
+;; finished. What a finished run leaves now is a ROW OF THE TRANSCRIPT, in the
+;; turn that watched it — the band is only for work that is still happening.
 (deftest live-view-settled-test
-  (testing "a finished view collapses to ONE line: how it ended, what it left, how long it took"
+  (testing "a finished view gives the band back and hands the transcript its row"
     (let [p
           (ended (patched (pane) {:op :append :node-id "tail" :lines ["one" "two" "three"]}))
 
-          text
-          (painted-text [p])]
+          row
+          (lv/run-row p)]
 
-      (is (str/includes? text "✓") "the tone is said without colour, for a terminal that has none")
-      (is (str/includes? text "completed"))
-      (is (str/includes? text "5 lines") "the record it left, not the window it painted")
-      (is (str/includes? text "1m 0s") "and how long the run took, frozen at the close")
-      (is (not (str/includes? text "Ran 314 tests"))
-          "the band gave its BODY back to the transcript the moment the view ended")
-      (is (zero? (long (:total (:geometry (paint-frames [p])))))
-          "a settled view plans no rows at all")))
-  (testing "pressing that line reads the record back, and pressing it again puts it away"
+      (is (str/blank? (painted-text [p])) "the band paints nothing at all for a run that is over")
+      (is (nil? (:geometry (paint-frames [p])))
+          "there is no paint to hand geometry back from: nothing was drawn")
+      (is (nil? (lv/band-rows 96 26 [p] 1 3)) "and the wheel is told there is no band to be over")
+      (is (= "view-1" (:view-id row)) "the row names the view its press reads back")
+      (is (str/includes? (:title row) "fix(loop): move the session pick"))
+      (is (= :completed (:reason row)) "how it ended, in the engine's own word")
+      (is (= 5 (:lines row)) "the record it left, not the window it painted")
+      (is (= 60000 (:elapsed-ms row)) "and how long the run took, frozen at the close")))
+  (testing "pressing that row reads the record back, and pressing it again puts it away"
     (let [p
           (ended (pane))
 
@@ -860,19 +862,10 @@
       (is (not (str/includes? (painted-text [(lv/reopened open)]) "Ran 314 tests"))
           "the same press closes it")
       (is (lv/settled? open) "reopening does not un-end the view")))
-  (testing "the whole line is the control, registered where the mouse is answered"
-    (let [hits
-          (filterv #(= :live-reopen (:kind %)) (regions-of [(ended (pane :id "done-1"))]))
-
-          bounds
-          (:bounds (first hits))]
-
-      (is (= 1 (count hits)))
-      (is (= "done-1" (:view-id (first hits)))
-          "it names the view it reopens, not the pane in front")
-      (is (< 1 (long (:width bounds))) "a one-line control is pressed anywhere on the line")
-      (is (= :live-reopen (:kind (cr/lookup (:col bounds) (:row bounds)))))))
-  (testing "an open view still paints in front of a settled one, and Escape still hits IT"
+  (testing "the band publishes no control for a finished run — the transcript owns it"
+    (is (empty? (filterv #(= :live-reopen (:kind %)) (regions-of [(ended (pane :id "done-1"))])))
+        "the line that used to sit here is a row of the turn now"))
+  (testing "an open view keeps the whole band while a finished one is filed away"
     (let [running
           (pane :id "running-1")
 
@@ -883,7 +876,8 @@
           (painted-text [done running])]
 
       (is (str/includes? text "Ran 314 tests") "the open view keeps the body")
-      (is (str/includes? text "completed") "the settled one keeps its line above it")
+      (is (not (str/includes? text "completed"))
+          "and keeps it whole: a run that ended is no longer band furniture")
       (is (= "running-1" (lv/view-id (lv/interruptible [done running])))
           "a stop can only reach work that is still running")
       (is (nil? (lv/interruptible [done]))
@@ -903,17 +897,28 @@
                  (is (not (lv/dormant? (first (:live-views @state/app-db)))))
                  (state/dispatch [:live-view-reopen "view-1"])
                  (is (lv/dormant? (first (:live-views @state/app-db))))))))
-  (testing "settling a second view retires the first, so the band cannot grow without bound"
-    (with-db (fn []
-               (state/dispatch [:live-view-open (assoc (ci-view :id "a") :session-id "s1")])
-               (state/dispatch [:live-view-open (assoc (ci-view :id "b") :session-id "s1")])
-               (state/dispatch [:live-view-close "a" {:reason :completed}])
-               (state/dispatch [:live-view-close "b" {:reason :failed}])
-               (is (= ["b"] (mapv lv/view-id (:live-views @state/app-db)))
-                   "the run they were watching a moment ago; every older one is the artifact"))))
-  ;; The proof a person can LOOK at: a finished run collapsed onto the band, and
-  ;; the still-running one painting in full above it.
-  (testing "a real PNG of a settled line under an open view"
+  (testing "a second finished run does not erase the first: each one is a row of the turn"
+    (with-db
+      (fn []
+        (swap! state/app-db assoc
+          :messages
+          [{:role :user :text "watch it"} {:role :assistant :text "watching"}])
+        (state/dispatch [:live-view-open (assoc (ci-view :id "a") :session-id "s1")])
+        (state/dispatch [:live-view-open (assoc (ci-view :id "b") :session-id "s1")])
+        (state/dispatch [:live-view-close "a" {:reason :completed}])
+        (state/dispatch [:live-view-close "b" {:reason :failed}])
+        (is (= ["a" "b"] (mapv lv/view-id (:live-views @state/app-db)))
+            "nothing is retired: the run watched an hour ago still reads back")
+        (is (every? lv/dormant? (:live-views @state/app-db))
+            "and neither of them is costing the band a single row")
+        (let [runs (:runs (second (:messages @state/app-db)))]
+          (is (= ["a" "b"] (mapv :view-id runs))
+              "each filed its own row on the assistant turn that watched it")
+          (is (= [:completed :failed] (mapv :reason runs))
+              "carrying the verdict the row has to say")))))
+  ;; The proof a person can LOOK at: one run finished and gone from the band, the
+  ;; one still going painting in full.
+  (testing "a real PNG of the band a finished run has already left"
     (let [png (cap/shot!
                 {:cols 96
                  :rows 24
@@ -925,4 +930,4 @@
                      (lv/paint! g 96 24 [(ended (pane :id "done-1")) (pane :id "running-1")] 1 3)
                      (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-settled.png"))
-      (is (pos? (long (cap/ink png))) "the collapsed line really painted"))))
+      (is (pos? (long (cap/ink png))) "the band belongs entirely to the run still going"))))

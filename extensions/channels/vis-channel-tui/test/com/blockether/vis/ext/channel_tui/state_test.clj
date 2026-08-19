@@ -4825,94 +4825,118 @@
           (expect (nil? fx))
           (expect (= [:main] (mapv :id (:tabs db))))))))
 
-(defdescribe shell-bang-pending-test
-             ;; A `!`/`!&` shell-sugar turn runs LOCALLY with no provider round-trip, so its
-             ;; live placeholder must not claim "Sending request to provider…", and its
-             ;; settled bubble must not carry a model/provider footer. The TUI knows the
-             ;; submission is a bang at submit time, so it flavors the placeholder and marks
-             ;; the message `:slash?` (the same command marker a resumed `:tag :user-shell`
-             ;; turn gets), which `render/draw-*` uses to drop the footer.
-             (let [shell-bang-command?
-                   (deref #'state/shell-bang-command?)
+(defdescribe
+  shell-bang-pending-test
+  ;; A `!`/`!&` shell-sugar turn runs LOCALLY with no provider round-trip, so its
+  ;; live placeholder must not claim "Sending request to provider…", and its
+  ;; settled bubble must not carry a model/provider footer. The TUI knows the
+  ;; submission is a bang at submit time, so it flavors the placeholder and marks
+  ;; the message `:slash?` (the same command marker a resumed `:tag :user-shell`
+  ;; turn gets), which `render/draw-*` uses to drop the footer.
+  (let [shell-bang-command?
+        (deref #'state/shell-bang-command?)
 
-                   pending-assistant-for
-                   (deref #'state/pending-assistant-for)
+        pending-assistant-for
+        (deref #'state/pending-assistant-for)
 
-                   replace-pending-assistant
-                   (deref #'state/replace-pending-assistant)]
+        replace-pending-assistant
+        (deref #'state/replace-pending-assistant)]
 
-               (it "detects `!`/`!&` commands the same way the engine's parse-bang does"
-                   (expect (true? (shell-bang-command? "!ls -la")))
-                   (expect (true? (shell-bang-command? "!&tail -f x")))
-                   (expect (true? (shell-bang-command? "   !grep foo")))
-                   ;; A bare marker is ordinary prose (normal LLM turn), NOT a command.
-                   (expect (false? (shell-bang-command? "!")))
-                   (expect (false? (shell-bang-command? "!& ")))
-                   (expect (false? (shell-bang-command? "hello world")))
-                   (expect (false? (shell-bang-command? nil))))
-               (it "gives a bang submission a shell placeholder + the :slash? command marker"
-                   (let [m (pending-assistant-for "!echo hi")]
-                     (expect (true? (:pending? m)))
-                     (expect (true? (:slash? m)))
-                     (expect (= "Running shell command..." (get-in m [:content 0 "message"])))
-                     ;; The zero-iteration live spinner reads this label instead of
-                     ;; "Vis is calling the provider" — a bang turn makes NO provider call.
-                     (expect (= "Running shell command" (:command-phase-label m)))))
-               (it "gives a REGISTERED slash command a command placeholder + the :slash? marker"
-                   ;; A registered `/draft …` slash dispatches LOCALLY (no provider call), so its
-                   ;; bubble must drop the model/provider footer exactly like a `!` shell turn.
-                   ;; An UNKNOWN `/foo` (no registered root) falls through to template expansion
-                   ;; or a normal LLM turn and legitimately keeps its footer; a pasted absolute
-                   ;; path (`/var/…/shot.png …`) is prose, never a slash.
-                   (with-redefs [com.blockether.vis.core/registered-slashes
-                                 (fn []
-                                   [{:slash/name "draft-blank" :slash/parent []}
-                                    {:slash/name "draft" :slash/parent []}
-                                    {:slash/name "abandon" :slash/parent ["draft"]}])]
-                     (let [blank (pending-assistant-for "/draft-blank empty-provider-list")
-                           sub (pending-assistant-for "/draft abandon")
-                           unk (pending-assistant-for "/nope do a thing")
-                           path (pending-assistant-for "/var/folders/67/x/shot.png what is this")]
+    (it "detects `!`/`!&` commands the same way the engine's parse-bang does"
+        (expect (true? (shell-bang-command? "!ls -la")))
+        (expect (true? (shell-bang-command? "!&tail -f x")))
+        (expect (true? (shell-bang-command? "   !grep foo")))
+        ;; A bare marker is ordinary prose (normal LLM turn), NOT a command.
+        (expect (false? (shell-bang-command? "!")))
+        (expect (false? (shell-bang-command? "!& ")))
+        (expect (false? (shell-bang-command? "hello world")))
+        (expect (false? (shell-bang-command? nil))))
+    (it "gives a bang submission a shell placeholder + the :slash? command marker"
+        (let [m (pending-assistant-for "!echo hi")]
+          (expect (true? (:pending? m)))
+          (expect (true? (:slash? m)))
+          (expect (= "Running shell command..." (get-in m [:content 0 "message"])))
+          ;; The zero-iteration live spinner reads this label instead of
+          ;; "Vis is calling the provider" — a bang turn makes NO provider call.
+          (expect (= "Running shell command" (:command-phase-label m)))))
+    (it "gives a REGISTERED slash command a command placeholder + the :slash? marker"
+        ;; A registered `/draft …` slash dispatches LOCALLY (no provider call), so its
+        ;; bubble must drop the model/provider footer exactly like a `!` shell turn.
+        ;; An UNKNOWN `/foo` (no registered root) falls through to template expansion
+        ;; or a normal LLM turn and legitimately keeps its footer; a pasted absolute
+        ;; path (`/var/…/shot.png …`) is prose, never a slash.
+        (with-redefs [com.blockether.vis.core/registered-slashes
+                      (fn []
+                        [{:slash/name "draft-blank" :slash/parent []}
+                         {:slash/name "draft" :slash/parent []}
+                         {:slash/name "abandon" :slash/parent ["draft"]}])]
+          (let [blank (pending-assistant-for "/draft-blank empty-provider-list")
+                sub (pending-assistant-for "/draft abandon")
+                unk (pending-assistant-for "/nope do a thing")
+                path (pending-assistant-for "/var/folders/67/x/shot.png what is this")]
 
-                       (expect (true? (:slash? blank)))
-                       (expect (= "Running command..." (get-in blank [:content 0 "message"])))
-                       (expect (= "Running command" (:command-phase-label blank)))
-                       (expect (true? (:slash? sub)))
-                       (expect (nil? (:slash? unk)))
-                       (expect (nil? (:slash? path))))))
-               (it "leaves a normal submission on the provider placeholder, no command marker"
-                   (let [m (pending-assistant-for "summarize the repo")]
-                     (expect (true? (:pending? m)))
-                     (expect (nil? (:slash? m)))
-                     (expect (= "Sending request to provider..." (get-in m [:content 0 "message"])))
-                     ;; A normal turn DOES call the provider, so no override label.
-                     (expect (nil? (:command-phase-label m)))))
-               (it
-                 "carries the :slash? command marker from the pending slot onto the settled bubble"
-                 ;; The settled wire result carries no "slash" flag (dead live-path
-                 ;; plumbing), so the command marker must survive the pending->settled swap
-                 ;; or the live footer would reappear until the session is reopened.
-                 (let [msgs
-                       [{:role :assistant :pending? true :slash? true :client-turn-id "t1"}]
+            (expect (true? (:slash? blank)))
+            (expect (= "Running command..." (get-in blank [:content 0 "message"])))
+            (expect (= "Running command" (:command-phase-label blank)))
+            (expect (true? (:slash? sub)))
+            (expect (nil? (:slash? unk)))
+            (expect (nil? (:slash? path))))))
+    (it "leaves a normal submission on the provider placeholder, no command marker"
+        (let [m (pending-assistant-for "summarize the repo")]
+          (expect (true? (:pending? m)))
+          (expect (nil? (:slash? m)))
+          (expect (= "Sending request to provider..." (get-in m [:content 0 "message"])))
+          ;; A normal turn DOES call the provider, so no override label.
+          (expect (nil? (:command-phase-label m)))))
+    (it "carries the :slash? command marker from the pending slot onto the settled bubble"
+        ;; The settled wire result carries no "slash" flag (dead live-path
+        ;; plumbing), so the command marker must survive the pending->settled swap
+        ;; or the live footer would reappear until the session is reopened.
+        (let [msgs
+              [{:role :assistant :pending? true :slash? true :client-turn-id "t1"}]
 
-                       settled
-                       {:role :assistant :client-turn-id "t1" :text "done"}
+              settled
+              {:role :assistant :client-turn-id "t1" :text "done"}
 
-                       out
-                       (replace-pending-assistant msgs settled)]
+              out
+              (replace-pending-assistant msgs settled)]
 
-                   (expect (true? (:slash? (first out)))))
-                 ;; A normal turn's settled bubble is untouched (no marker leaks in).
-                 (let [msgs
-                       [{:role :assistant :pending? true :client-turn-id "t2"}]
+          (expect (true? (:slash? (first out)))))
+        ;; A normal turn's settled bubble is untouched (no marker leaks in).
+        (let [msgs
+              [{:role :assistant :pending? true :client-turn-id "t2"}]
 
-                       settled
-                       {:role :assistant :client-turn-id "t2" :text "done"}
+              settled
+              {:role :assistant :client-turn-id "t2" :text "done"}
 
-                       out
-                       (replace-pending-assistant msgs settled)]
+              out
+              (replace-pending-assistant msgs settled)]
 
-                   (expect (nil? (:slash? (first out))))))))
+          (expect (nil? (:slash? (first out))))))
+    (it "carries the runs the turn already watched onto the settled bubble"
+        ;; A run that FINISHES while the turn is still writing is filed on the
+        ;; placeholder; the settled bubble replaces that map wholesale, so
+        ;; without the carry-over every run watched during the turn vanishes
+        ;; the instant the answer lands.
+        (let [msgs
+              [{:role :assistant
+                :pending? true
+                :client-turn-id "t3"
+                :runs [{:view-id "view-1"
+                        :title "Release · gh"
+                        :reason :completed
+                        :lines 5
+                        :elapsed-ms 60000}]}]
+
+              settled
+              {:role :assistant :client-turn-id "t3" :text "done"}
+
+              out
+              (replace-pending-assistant msgs settled)]
+
+          (expect (= ["view-1"] (mapv :view-id (:runs (first out)))))
+          (expect (= "done" (:text (first out)))
+                  "the answer is the settled one; only the rail is carried")))))
 
 (defdescribe
   queue-mirror-gateway-owned-test

@@ -24,7 +24,7 @@ import {
 import { PdfAnnotator } from "./PdfArtifact";
 import { readArtifactText, TextFrame } from "./TextArtifact";
 import { ChevronIcon } from "./icons";
-import { BandButton, DialogHeader, ListRow, overlayLayer } from "./ui";
+import { BandButton, ListRow, overlayLayer, OverlayScreen } from "./ui";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
 /**
@@ -144,7 +144,10 @@ function DocBody({
  *
  * The header is the group's own report — `4 documents · 31.4KB` — and it only
  * exists when there IS a group: one document is a single row with no header at
- * all, so the common turn pays nothing for the rarer one.
+  * all, so the common turn pays nothing for the rarer one.
+ *
+ * A settled RUN is a row of this same stack: an artifact the reader opens,
+ * under the rule the documents already share.
  */
 export const DocStack = memo(function DocStack({
   summary,
@@ -216,14 +219,6 @@ export const DocOverlay = memo(function DocOverlay({
   onPick?: (at: number) => void;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   // THE HISTORY OF A NAME BELONGS TO THE BAND, NOT TO THE TRANSCRIPT.
   //
   // A revised document is ONE row in the step (`collapseAttachmentVersions`), so
@@ -248,41 +243,22 @@ export const DocOverlay = memo(function DocOverlay({
       </BandButton>
     ) : null;
 
-  // THE OPENED DOCUMENT IS THE VIEWPORT-PINNED LAYER, NOT THE GLASS.
-  //
-  // Regression, user report: with the comment composer open the keyboard covered
-  // it. This screen was `fixed` on `document.body` at `100dvh`, and neither the
-  // native iOS keyboard (the webview is never resized) nor a mobile browser's
-  // `dvh` subtracts a keyboard — so the annotator's field sat under it. It is the
-  // same layer `Modal` is, and it mounts where `Modal` mounts: inside the shell
-  // the keyboard driver pins, `absolute` in it and `h-full` of it.
-  const { position } = overlayLayer();
-
   const chrome: DocumentChrome = ({ actions, note, body }) => (
-    <div
-      className={`${position} inset-0 z-50 flex h-full min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]`}
+    <OverlayScreen
+      title={name}
+      subtitle={
+        note || [docKindLabel(mime), shownLabel].filter(Boolean).join(" · ")
+      }
+      actions={
+        <>
+          {versionCell}
+          {actions}
+        </>
+      }
+      onClose={onClose}
     >
-      {/* The one header band, exactly as an artifact opened from the sheet or any
-          other surface that opens over another wears it: the name is the title,
-          what the file IS is the subtitle, and the way out is the header's own.
-          A document that can be SAVED puts that verb in this same run of cells,
-          and the band reports what became of it under its name. */}
-      <DialogHeader
-        title={name}
-        subtitle={
-          note || [docKindLabel(mime), shownLabel].filter(Boolean).join(" · ")
-        }
-        actions={
-          <>
-            {versionCell}
-            {actions}
-          </>
-        }
-        closeLabel={`Close ${name}`}
-        onClose={onClose}
-      />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
-    </div>
+      {body}
+    </OverlayScreen>
   );
 
   // The thread itself, in the document's own screen: newest first, each row the

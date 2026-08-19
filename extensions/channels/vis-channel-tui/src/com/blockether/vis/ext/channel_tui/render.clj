@@ -1807,23 +1807,31 @@
                        :else false)))))
 
 (defn- register-toggle-region!
-  "Publish the click target for a disclosure HEADER row.
+  "Publish the click target for a row that IS a control.
 
-   A row carrying `:toggle-details` meta IS the toggle. If the marker
-   family that paints it doesn't register the region, the accordion is
-   DEAD in both input paths at once: the mouse finds nothing under the
-   chevron, and the `C-x t` jump overlay (which labels the SAME
-   registered regions) never offers it a letter. Every painter branch
-   that can host a header calls this."
+   Two kinds qualify and they are the same gesture: a disclosure HEADER row
+   carrying `:toggle-details`, and the row a FINISHED RUN leaves in the
+   transcript (`:live-reopen`), which opens that run's record read-only in the
+   band. If the marker family that paints one doesn't register the region, the
+   control is DEAD in both input paths at once: the mouse finds nothing under
+   the chevron, and the `C-x t` jump overlay (which labels the SAME registered
+   regions) never offers it a letter. Every painter branch that can host one
+   calls this."
   [meta viewport-top y x iw]
-  (when (= :toggle-details (:kind meta))
-    (cr/register! {:bounds {:row (+ (long viewport-top) (long y))
-                            :col x
-                            :width (long (or (:click-width meta) iw))}
-                   :kind :toggle-details
-                   :session-id (:session-id meta)
-                   :node-id (:node-id meta)
-                   :collapsed? (:collapsed? meta)})))
+  (let [bounds
+        {:row (+ (long viewport-top) (long y)) :col x :width (long (or (:click-width meta) iw))}]
+    (case (:kind meta)
+      :toggle-details
+      (cr/register! {:bounds bounds
+                     :kind :toggle-details
+                     :session-id (:session-id meta)
+                     :node-id (:node-id meta)
+                     :collapsed? (:collapsed? meta)})
+
+      :live-reopen
+      (cr/register! {:bounds bounds :kind :live-reopen :view-id (:view-id meta) :enabled? true})
+
+      nil)))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -3099,15 +3107,7 @@
                                               t/code-block-bg
                                               t/footer-error-fg))
                       (paint-turn-stamp! g x y line line-bg)
-                      (when (= :toggle-details (:kind meta))
-                        (let [abs-row (+ (long viewport-top) (long y))
-                              click-width (long (or (:click-width meta) iw))]
-
-                          (cr/register! {:bounds {:row abs-row :col x :width click-width}
-                                         :kind :toggle-details
-                                         :session-id (:session-id meta)
-                                         :node-id (:node-id meta)
-                                         :collapsed? (:collapsed? meta)})))))
+                      (register-toggle-region! meta viewport-top y x iw)))
                   ;; Inline markdown links: register a `:url` click region per
                   ;; link span so a click hands the href to the OS opener (the
                   ;; MOVE/CLICK_DOWN mouse handler looks these up). `:col` is a
@@ -6336,6 +6336,43 @@
                           (str/includes? answer explanation)))))
                trace))))
 
+(defn- run-row-entries
+  "The rail of FINISHED RUNS under a turn — one collapsed row per live view the
+   turn watched to its end.
+
+   A settled run is an ARTIFACT of the turn and reads like one: a row that says
+   how the run ended, how much record it left and how long it took, and opens
+   the record read-only in the band when pressed. It lives here, in the
+   transcript, because the band is for work that is still happening — a finished
+   run left on the band either lies about being live or is retired by the next
+   one, and then the log the human watched is gone."
+  [runs max-w session-id]
+  (if (empty? runs)
+    []
+    (into [{:line "" :meta nil}]
+          (map
+            (fn [{:keys [view-id title reason lines elapsed-ms]}]
+              (let [verdict
+                    (some-> reason
+                            name)
+
+                    verdict
+                    (if (contains? #{:failed :interrupted} reason)
+                      (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
+                      verdict)
+
+                    parts
+                    (remove str/blank?
+                      [title verdict
+                       (when (pos? (long (or lines 0)))
+                         (str lines (if (= 1 (long lines)) " line" " lines")))
+                       (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])]
+
+                {:line (ellipsize-cols (str " ▸ " (band-label "RUN") " " (str/join " · " parts))
+                                       (max 1 (long max-w)))
+                 :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}})))
+          runs)))
+
 (defn format-answer-with-thinking-data*
   "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with the
@@ -6470,6 +6507,11 @@
         entries
         (if has-trace? (vec (concat trace-entries trailer)) (vec trailer))
 
+        ;; The runs the turn watched, LAST: an artifact of a turn is read after
+        ;; what the turn said, and a finished run is exactly that.
+        entries
+        (into entries (run-row-entries (:runs opts) content-w (:session-id opts)))
+
         ;; One more coalesce pass across the WHOLE bubble (trace +
         ;; trailer). The trace half is already collapsed by
         ;; `trace-render-entries`, but the seam between the last
@@ -6505,7 +6547,10 @@
              ;; must be in the cache key so a tail-pinned bubble's
              ;; tail-N result doesn't shadow the same bubble's full
              ;; render after the user scrolls up.
-             (:tail-lines opts)]
+             (:tail-lines opts)
+             ;; A run that FINISHED during this bubble adds a row to it, so the
+             ;; rail is part of what the cached render is OF.
+             (:runs opts)]
             #(format-answer-with-thinking-data* answer
                                                 trace
                                                 bubble-w

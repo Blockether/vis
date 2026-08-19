@@ -307,6 +307,31 @@
         (assoc :is-following true
                :offset 0))))
 
+(defn run-row
+  "The TRANSCRIPT's row for a FINISHED run: which view it reads back, how it
+   ended, how much record it left and how long it ran — the three things asked of
+   a finished run.
+
+   A settled view is a photograph, not a pilot, so it stops being band furniture
+   the moment it ends and becomes a row of the turn that watched it — where the
+   human is already reading, and where a run watched an hour ago is still there.
+   The row carries the view id, because pressing it is what reads the record back."
+  [pane]
+  (let [{:keys [reason ended-at]}
+        (:settled pane)
+
+        view
+        (:view pane)
+
+        lines
+        (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))]
+
+    {:view-id (:id view)
+     :title (flat-text (:title view))
+     :reason reason
+     :lines (long lines)
+     :elapsed-ms (max 0 (- (long (or ended-at 0)) (long (or (:created-at view) ended-at 0))))}))
+
 (defn- max-offset
   "The last row the viewport may start on, from what the last paint measured."
   ^long [pane]
@@ -1035,13 +1060,14 @@
         [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
         [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
       (cond-> []
-        (some? pane)
+        (and (some? pane) (not (settled? pane)))
         (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-        ;; Nothing is running and a finished view is still on the band: the only
-        ;; thing left to say is that its line opens again.
-        (and (nil? pane) (some settled? others))
-        (conj ["click" "reopen"])
+        ;; A record read back is a photograph: the only gesture it answers is the
+        ;; one that puts it away. Nothing about it can be stopped — the run it
+        ;; reports on is over, and its row is waiting in the transcript.
+        (and (some? pane) (settled? pane))
+        (conj ["click" "close the record"])
 
         (seq open)
         (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))
@@ -1227,17 +1253,12 @@
                 nil
                 (map vector (columns/slots inner-w (count (:cells entry))) (:cells entry))))
 
-    ;; A SETTLED view is one line and a door: pressing it reads the record back,
-    ;; read-only. It is all that is left of a pane that has given its rows to the
-    ;; transcript, so the click that reopens it belongs to the whole line.
+    ;; A view standing BEHIND the one in front: one line saying where it got to.
+    ;; Nothing here is pressable, because a run that has ENDED is not on the band
+    ;; at all — its row is in the transcript, and that row is the door to the
+    ;; record.
     :collapsed
-    (do (paint-plain! g left row inner-w (tone-fg (:tone entry) t/dialog-hint) (:text entry))
-        (when (:is-settled entry)
-          (cr/register! {:bounds
-                         {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
-                         :kind :live-reopen
-                         :view-id (:view-id entry)
-                         :enabled? true})))
+    (paint-plain! g left row inner-w (tone-fg (:tone entry) t/dialog-hint) (:text entry))
 
     ;; Everything that is prose — the view's description, a status detail, a node
     ;; that holds nothing, the count of what the record kept — speaks in the dim
@@ -1247,61 +1268,28 @@
           :else (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry)))))
 
 (defn- collapsed-row
-  "The ONE line a view keeps above the band: its title and where it got to.
-   Newest last, so the pane in front is the one the human is watching.
+  "The ONE line an open view keeps above the band while another is in front: its
+   title and where it got to. Newest last, so the pane in front is the one the
+   human is watching.
 
-   A SETTLED view says instead how it ENDED, how much record it left and how long
-   it ran — the three things asked of a finished run — and its line is pressable."
+   A SETTLED view has no line here — it left the band for the transcript."
   [pane]
-  (let [{:keys [reason ended-at]}
-        (:settled pane)
-
-        view
-        (:view pane)
-
-        lines
-        (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
-
-        tone
-        (if (settled? pane)
-          (case reason
-            :completed
-            :ok
-
-            :failed
-            :error
-
-            :interrupted
-            :warn
-
-            :idle)
-          (:tone (status-summary pane)))]
-
+  (let [{:keys [tone text]} (status-summary pane)]
     {:kind :collapsed
      :node-id nil
-     :view-id (:id view)
-     :is-settled (settled? pane)
+     :view-id (get-in pane [:view :id])
      :tone tone
      :text (str (or (tone-glyph tone) "▸")
                 " "
                 (str/join " · "
-                          (remove str/blank?
-                            (if (settled? pane)
-                              [(flat-text (:title view))
-                               (some-> reason
-                                       name)
-                               (when (pos? (long lines))
-                                 (str lines (if (= 1 (long lines)) " line" " lines")))
-                               (elapsed-text (- (long (or ended-at 0))
-                                                (long (or (:created-at view) ended-at 0))))]
-                              [(flat-text (:title view)) (:text (status-summary pane))]))))}))
+                          (remove str/blank? [(flat-text (get-in pane [:view :title])) text])))}))
 
 (defn band-rows
   "The rows the band covers on a `cols`×`rows` terminal, as `[from to]`
    inclusive — what the wheel needs to know to tell 'over the pane' from 'over
    the transcript'."
   [cols rows panes content-top prompt-h]
-  (when (seq panes)
+  (when (some (complement dormant?) panes)
     (let [region
           (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
 
@@ -1330,9 +1318,17 @@
   ([g cols rows panes content-top prompt-h]
    (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]
-   (when (seq panes)
-     (let [{:keys [left inner-w] :as region}
+   (when (some (complement dormant?) panes)
+     (let [;; A settled view is not band furniture: it has already given its rows
+           ;; back to the transcript, where its own row now waits. The band exists
+           ;; while something is still happening — or while a record is being read
+           ;; again.
+           panes
+           (vec (remove dormant? panes))
+
+           {:keys [left inner-w] :as region}
            (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
+
        (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
          (let [left (long left)
                inner-w (long inner-w)
@@ -1341,12 +1337,9 @@
                ;; take the next one, so nothing a view paints ever touches a rail —
                ;; and the right lane stays clear for the scrollbar.
                text-w (max 8 (- body-w 4))
-               ;; The pane IN FRONT is the newest view still RUNNING. A settled one has
-               ;; already given its rows back to the transcript and keeps only the
-               ;; line that reopens it — so when every view has settled the band IS
-               ;; that line, until the human presses it.
-               front (last (remove dormant? panes))
-               others (if front (vec (remove #(identical? % front) panes)) (vec panes))
+               ;; The pane IN FRONT is the newest view still on the band.
+               front (last panes)
+               others (if front (vec (butlast panes)) (vec panes))
                collapsed (mapv collapsed-row others)
                rows-plan (if front (plan front text-w) [])
                ;; Half the rows between the top of the transcript and the prompt, at

@@ -13,11 +13,13 @@ import {
 import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
+import { LiveRunRow } from "./LiveArtifact";
 import { AlertIcon, ArrowOutIcon, ChevronIcon } from "./icons";
 import {
   attachmentBytes,
   attachmentIsDoc,
   attachmentIsImage,
+  attachmentIsLive,
   attachmentIsPlayable,
   attachmentIsVideo,
   collapseAttachmentVersions,
@@ -1892,9 +1894,21 @@ export const AttachmentRail = memo(function AttachmentRail({
   const docs = page.shown.filter(
     (entry) => attachmentIsDoc(entry) && entry.iteration_id,
   );
+  // A SETTLED RUN IS A ROW OF THE TRACE, NOT A RECORDED FILE.
+  //
+  // Reported from the app: a finished `gh` watch read as "1 file ·
+  // release.live.json" under the recorded-files disclosure — an unnamed line,
+  // while the record behind it holds the picture the run ended on and its whole
+  // log. It is an artifact this app can open, so it gets an artifact's row.
+  const runs = attachments.filter(
+    (entry) => attachmentIsLive(entry) && entry.iteration_id,
+  );
   const files = recordedFiles(
     attachments.filter(
-      (entry) => !attachmentIsPlayable(entry) && !attachmentIsDoc(entry),
+      (entry) =>
+        !attachmentIsPlayable(entry) &&
+        !attachmentIsDoc(entry) &&
+        !attachmentIsLive(entry),
     ),
   );
   const total = files.reduce((sum, file) => sum + file.count, 0);
@@ -1930,6 +1944,21 @@ export const AttachmentRail = memo(function AttachmentRail({
               sid={sid}
               attachment={attachment}
               versions={threadOf.get(attachment) ?? [attachment]}
+            />
+          ))}
+        </DocStack>
+      )}
+      {runs.length > 0 && (
+        // The same frame the documents stand in, and the same rule: a run is a
+        // ROW that opens, never a panel painted in place — a run that logged
+        // thousands of lines would stand taller than the turn that made it.
+        <DocStack>
+          {runs.map((attachment) => (
+            <LiveRunRow
+              key={`run-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+              client={client}
+              sid={sid}
+              attachment={attachment}
             />
           ))}
         </DocStack>

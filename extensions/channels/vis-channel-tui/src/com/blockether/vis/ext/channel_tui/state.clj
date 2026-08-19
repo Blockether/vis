@@ -610,16 +610,22 @@
         idx
         (pending-assistant-index messages client-turn-id)
 
-        carry-slash
+        carry-over
         (fn [old resp]
           (cond-> resp
             (and (not (contains? resp :slash?)) (:slash? old))
-            (assoc :slash? true)))]
+            (assoc :slash? true)
 
-    (cond idx (assoc messages idx (carry-slash (get messages idx) response))
+            ;; Runs filed on the PLACEHOLDER while the turn was still writing. The
+            ;; settled bubble replaces that map wholesale, so without this every
+            ;; run watched during the turn disappears the instant the answer lands.
+            (and (empty? (:runs resp)) (seq (:runs old)))
+            (assoc :runs (vec (:runs old)))))]
+
+    (cond idx (assoc messages idx (carry-over (get messages idx) response))
           client-turn-id messages
           (and (seq messages) (= :assistant (:role (peek messages))))
-          (conj (pop messages) (carry-slash (peek messages) response))
+          (conj (pop messages) (carry-over (peek messages) response))
           :else (conj messages response))))
 
 (def ^:private throttled-streaming-phases
@@ -2915,28 +2921,48 @@
               (fn [db [_ patch]]
                 (update-live-pane db (:view-id patch) #(lv/patched % patch))))
 
+(defn- file-run-row
+  "Hang a FINISHED run's row on the assistant message the turn is writing.
+
+   The transcript is where a run that has ended belongs: it is what the human is
+   already reading, and it keeps every run instead of only the last one. Nothing
+   is filed when the tab has no assistant message yet — a run with no turn to
+   belong to has nowhere to be read."
+  [w pane]
+  (let [messages
+        (vec (:messages w))
+
+        idx
+        (last (keep-indexed (fn [i m]
+                              (when (= :assistant (:role m)) i))
+                            messages))]
+
+    (if idx
+      (assoc w :messages (update-in messages [idx :runs] (fnil conj []) (lv/run-row pane)))
+      w)))
+
 (reg-event-db :live-view-close
               ;; The verdict is the RUN's answer, not the pane's: the extension reads
               ;; it, the record keeps it, and the band gives its BODY back to the
               ;; transcript the moment the view ends.
               ;;
-              ;; What stays is ONE line, and only for the view that just ended —
-              ;; settling a second one retires the first. The band is bounded by
-              ;; that rule, and the human keeps the door back to the run they were
-              ;; watching a moment ago; every older one is reached as the artifact
-              ;; the close filed, which is what an artifact is FOR.
+              ;; What the view leaves behind is a ROW OF THE TRANSCRIPT — one per run,
+              ;; in the turn that watched it, exactly where an artifact of that turn
+              ;; is read. Nothing is retired: a second finished run erasing the first
+              ;; is what made a watched log unreachable, and the band keeping one line
+              ;; forever is what made a finished run look like it was still going.
               (fn [db [_ view-id result]]
-                (across-tabs db
-                             (fn [w]
-                               (cond-> w
-                                 (seq (:live-views w))
-                                 (update :live-views
-                                         (fn [panes]
-                                           (->> panes
-                                                (mapv #(cond-> % (= view-id (lv/view-id %))
-                                                         (lv/settled result)))
-                                                (filterv #(or (not (lv/settled? %))
-                                                              (= view-id (lv/view-id %))))))))))))
+                (across-tabs
+                  db
+                  (fn [w]
+                    (if-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views w)))]
+                      (let [settled (lv/settled pane result)]
+                        (-> w
+                            (update :live-views
+                                    (fn [panes]
+                                      (mapv #(if (= view-id (lv/view-id %)) settled %) panes)))
+                            (file-run-row settled)))
+                      w)))))
 
 (reg-event-db :live-view-reopen
               ;; The collapsed line of a settled view is a CONTROL: pressing it reads

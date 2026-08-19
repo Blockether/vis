@@ -471,6 +471,36 @@ describe("the attachment rail", () => {
     expect(text(html)).toContain("2 documents");
     expect(text(html)).not.toContain("3 documents");
   });
+
+  // Regression, user report with a screenshot: a `gh` watch that had FINISHED
+  // read as "1 file · release.live.json" — a nameless line under the recorded
+  // files disclosure, while the record behind it holds the picture the run
+  // ended on and its whole log. A settled run is an artifact this app opens,
+  // so it stands in the step as one.
+  const withRun = () =>
+    renderToStaticMarkup(
+      <AttachmentRail
+        client={client}
+        sid="s1"
+        attachments={[
+          {
+            filename: "release.live.json",
+            media_type: "application/vnd.vis.live+json",
+            size: 48_000,
+            iteration_id: "i1",
+            index: 0,
+          },
+        ]}
+      />,
+    );
+
+  it("gives a settled run its own row instead of a recorded file", () => {
+    const html = withRun();
+    expect(html).toContain('aria-label="Open run release"');
+    expect(text(html)).toContain("RUN");
+    // The disclosure that lists what a step merely WROTE must not claim it.
+    expect(text(html)).not.toContain("release.live.json");
+  });
 });
 
 // Regression, live reasoning scroll jump: the trace ramp used to pin its own

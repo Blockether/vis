@@ -498,7 +498,15 @@
          ;; every `vis-image` fence reserves a cell box whose rows the prose
          ;; estimate cannot see. Charge them separately, at `content-w`.
          img-rows
-         (image-rows-est message content-w)]
+         (image-rows-est message content-w)
+
+         ;; One row per FINISHED RUN the turn watched, plus the blank margin the
+         ;; rail opens with. The painter hangs that rail under the answer, so a
+         ;; height that ignored it under-measured every bubble that watched one.
+         run-rows
+         (long (cond-> (count (:runs message))
+                 (seq (:runs message))
+                 inc))]
 
      (cond
        (= role :user)
@@ -622,10 +630,11 @@
                   form-rows  ;; code + result (+ error) rows
                   think-rows ;; per-iteration reasoning + band
                   prose-rows ;; per-iteration assistant prose
+                  run-rows   ;; the rail of finished runs + its margin
                   (prose-rows-est text (max 1 (min 60 fold-w))))))
        (= role :assistant)
        ;; label + footer + gap chrome for a plain answer bubble.
-       (long (+ 5 img-rows (prose-rows-est text prose-w)))
+       (long (+ 5 img-rows run-rows (prose-rows-est text prose-w)))
        :else (long (+ 6 img-rows (prose-rows-est text prose-w)))))))
 
 (defn- estimated-height-with-turn-separator
@@ -862,7 +871,8 @@
                                                   (= :cancelled (:status message))
                                                   (cond-> {:session-id session-id
                                                            :session-turn-id (turn-identity message)
-                                                           :detail-expansions detail-expansions}
+                                                           :detail-expansions detail-expansions
+                                                           :runs (:runs message)}
                                                     tail-lines
                                                     (assoc :tail-lines tail-lines)))]
              (-> message

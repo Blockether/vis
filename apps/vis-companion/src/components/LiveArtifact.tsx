@@ -17,10 +17,22 @@
  * file server-side, one window at a time.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import { attachmentBytes } from "../lib/artifacts";
 import type { GatewayClient } from "../lib/gateway";
 import { liveRecordFromText, type LiveRecord } from "../lib/live-view";
+import { useStickyOverlay } from "../lib/sticky-overlay";
+import type { IterationAttachment } from "../lib/types";
 import { LiveViewPanel } from "./LiveView";
+import { ChevronIcon } from "./icons";
+import { ListRow, overlayLayer, OverlayScreen } from "./ui";
 
 /** Under this, the whole record is folded patch by patch — the honest replay. */
 export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
@@ -148,3 +160,128 @@ export function LiveArtifact({
 
   return <>{chrome({ subtitle: record ? liveVerdictLine(record) : "", body })}</>;
 }
+
+/**
+ * The run's own NAME, out of the file the close filed it under. The engine
+ * names the record after the view's title (`release.live.json`), so the row
+ * says what ran rather than what the file is called.
+ */
+export function liveRunName(filename?: string): string {
+  const name = filename ?? "";
+  return name.replace(/\.live\.json$/i, "") || "run";
+}
+
+/**
+ * A SETTLED RUN, IN THE TRANSCRIPT WHERE IT HAPPENED — one row, and it opens.
+ *
+ * The pane a run paints while it works is a live surface with a stop in it, and
+ * it is gone the moment the run ends. What is left is the RECORD, and it
+ * belongs in the trace beside the block that produced it — not only in the
+ * gallery, and not as an unnamed line in the recorded files ("1 file ·
+ * release.live.json") which is what a settled run used to read as here.
+ *
+ * IT IS A ROW, NOT A PANEL IN PLACE. A run that logged thousands of lines
+ * embedded in the transcript would stand taller than the whole turn that made
+ * it, so the transcript STATES what ran and reading it is one press away — the
+ * same rule a document artifact obeys one row above.
+ *
+ * WHAT OPENS IS A PHOTOGRAPH. The panel is `isSettled`: the picture the run
+ * ended on, its log still walkable a page at a time out of the record on the
+ * gateway, no spinner, no live region, and NO `onInterrupt` — nothing about it
+ * can be stopped or answered, because the run it reports on is over.
+ *
+ * Nothing is fetched until the row is opened: a step with a 40 MB record costs
+ * a row of text until someone asks for it.
+ */
+export const LiveRunRow = memo(function LiveRunRow({
+  client,
+  sid,
+  attachment,
+}: {
+  client: GatewayClient;
+  sid: string;
+  attachment: IterationAttachment;
+}) {
+  const name = liveRunName(attachment.filename);
+  const iterationId = attachment.iteration_id ?? "";
+  const index = attachment.index ?? 0;
+  // Keyed by the RECORD, not by this row: a turn settling re-mounts the row
+  // under a different subtree, and an opened run must stay opened.
+  const [opened, setOpened] = useStickyOverlay(`run:${iterationId}:${index}`);
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!opened || !iterationId || !sid) return;
+    let alive = true;
+    const release = client.retainAttachment(sid, iterationId, index);
+    client
+      .attachmentUrl(sid, iterationId, index)
+      .then((next) => {
+        if (alive) setUrl(next);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+      release();
+    };
+  }, [client, sid, iterationId, index, opened]);
+
+  const close = useCallback(() => setOpened(false), [setOpened]);
+  const open = useCallback(() => setOpened(true), [setOpened]);
+  const sizeLabel = attachmentBytes(attachment.size);
+
+  if (!iterationId) return null;
+
+  return (
+    <>
+      {/* The row IS the control, so the whole line is the target a finger gets:
+          `ListRow` is the app's one pressable row and owns that box. */}
+      <ListRow onClick={open} title={name} aria-label={`Open run ${name}`}>
+        <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">
+          RUN
+        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
+          {name}
+        </span>
+        {sizeLabel ? (
+          <span className="shrink-0 font-mono text-chip text-footer-muted">
+            {sizeLabel}
+          </span>
+        ) : null}
+        <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
+      </ListRow>
+      {/* The opened run is a SCREEN, not a part of the transcript — portalled
+          out of the turn into the viewport-pinned shell, exactly as an opened
+          document is, so the composer strip cannot paint over it. */}
+      {opened &&
+        createPortal(
+          url ? (
+            <LiveArtifact
+              client={client}
+              sid={sid}
+              url={url}
+              chrome={({ subtitle, body }) => (
+                <OverlayScreen
+                  title={name}
+                  subtitle={subtitle}
+                  onClose={close}
+                >
+                  {body}
+                </OverlayScreen>
+              )}
+            />
+          ) : (
+            <OverlayScreen title={name} onClose={close}>
+              <p className="p-4 font-mono text-meta text-dialog-hint">
+                {failed ? "This run's record could not be read." : "Loading…"}
+              </p>
+            </OverlayScreen>
+          ),
+          overlayLayer().host,
+        )}
+    </>
+  );
+});

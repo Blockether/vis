@@ -2,6 +2,7 @@ import {
   createContext,
   forwardRef,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -1735,6 +1736,60 @@ export function DialogHeader({
   );
 }
 
+/**
+ * AN OPENED ARTIFACT IS THE WHOLE SCREEN, and there is one of it.
+ *
+ * A document opened from the transcript and a settled RUN opened from the row
+ * beside it are the same gesture — so they are the same screen: the band names
+ * the artifact, reports what it IS under that name, and the way out is the
+ * band's own cell. The body under it takes every remaining pixel and owns its
+ * own scrolling.
+ *
+ * IT IS THE VIEWPORT-PINNED LAYER, NOT THE GLASS. It mounts where `Modal`
+ * mounts (`overlayLayer`), `absolute` in the shell the keyboard driver pins, so
+ * a raised keyboard cannot bury a field at its bottom edge. Escape is the way
+ * out a keyboard has, and it is here rather than at a call site so every
+ * artifact answers that key the same.
+ */
+export function OverlayScreen({
+  title,
+  subtitle,
+  actions,
+  onClose,
+  children,
+}: {
+  title: string;
+  /** What the band REPORTS about the artifact under its name. */
+  subtitle?: ReactNode;
+  /** The artifact's own verbs, as cells of this band before the ✕. */
+  actions?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const { position } = overlayLayer();
+  return (
+    <div
+      className={`${position} inset-0 z-50 flex h-full min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]`}
+    >
+      <DialogHeader
+        title={title}
+        subtitle={subtitle}
+        actions={actions}
+        closeLabel={`Close ${title}`}
+        onClose={onClose}
+      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+    </div>
+  );
+}
 export function DialogFrame({
   title,
   subtitle,

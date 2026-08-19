@@ -1434,7 +1434,10 @@
     (let [opts {:session-id session-id
                 :session-turn-id (or (:turn-id message) (:session-turn-id message) (:id message))
                 :detail-expansions (assoc (or detail-expansions {})
-                                     :vis.channel-tui/expand-all-details? true)}]
+                                     :vis.channel-tui/expand-all-details? true)
+                ;; The rail of finished runs is part of the bubble, so a copied
+                ;; bubble carries the runs it watched.
+                :runs (:runs message)}]
       (:text (render/format-answer-with-thinking-data (:text message)
                                                       (:traces message)
                                                       bubble-w
