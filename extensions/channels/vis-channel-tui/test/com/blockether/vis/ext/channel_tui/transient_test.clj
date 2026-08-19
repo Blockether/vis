@@ -837,3 +837,32 @@
         (expect (not-any? #(str/includes? % "│ ")
                           (map #(subs % (inc (long left)) (+ (long left) (long inner-w)))
                                (subvec (vec painted) (inc top) bottom))))))))
+
+;; Regression, issue: a group heading wider than its pane was CUT with an ellipsis —
+;; the API-key band's own guidance line lost the URL that answers "where do I get
+;; the key?", though the lanterna fork word-wraps text by the very rule the screen
+;; paints by.
+(defdescribe transient-heading-wrap-test
+             (it "word-wraps a heading too wide for its pane instead of ellipsizing it"
+                 (let [hint
+                       (str "Entitlement is verified against https://gateway.example.com/v1;"
+                            " only a gateway that accepts the token registers this provider.")
+
+                       spec
+                       {:groups [{:title hint
+                                  :items [{:key "k" :type :option :id :api-key :label "API key"}]}
+                                 {:title "Authenticate"
+                                  :items [{:key "a" :type :action :id :submit :label "Sign in"}]}]}
+
+                       grid
+                       (transient-grid! spec 0 40 28)
+
+                       painted
+                       (str/join "\n" grid)]
+
+                   ;; Every word survives, over as many rows as the band needs.
+                   (expect (str/includes? painted "https://gateway.example.com/v1;"))
+                   (expect (str/includes? painted "registers this provider."))
+                   (expect (not (str/includes? painted "\u2026")))
+                   ;; …and not one wrapped row runs past the band's own right rail.
+                   (expect (every? #(= \│ (nth % 41)) (filter #(str/starts-with? % "│") grid))))))

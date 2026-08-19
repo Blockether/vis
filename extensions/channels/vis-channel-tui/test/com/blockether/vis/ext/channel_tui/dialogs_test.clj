@@ -1813,6 +1813,43 @@
             (feed! \z \z :enter)
             (expect (= "zz" ((:read-option questions) {:label "Token" :prompt "Token:"} nil))))
           (finally (.stopScreen screen))))))
+;; Regression, issue: an API-key sign-in band advertised `-k  API key` and pressing
+;; `k` did nothing at all — the band's own `:transient!` handed the spec to the
+;; component WITHOUT the `:read-option` reader beside it, so `tr/run!` fell back to
+;; `(constantly nil)`, no credential could ever be typed, and `a` submitted nothing.
+(defdescribe
+  band-transient-option-test
+  (it "an OPTION inside `:transient!` is READ in the band, never dropped"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try (let [g (.newTextGraphics screen)
+                   region {:left 2 :inner-w 40 :hint-row 20 :text-w 38}
+                   questions (dlg/band-questions screen g region)
+                   _ (doseq [k (concat [(term/keystroke \k)]
+                                       (map term/keystroke "sk-secret")
+                                       [(KeyStroke. KeyType/Enter) (term/keystroke \a)])]
+                       (.addInput terminal k))
+                   {:keys [action options]}
+                   ((:transient! questions)
+                     {:title "Sign in"
+                      :groups
+                      [{:title "Credential"
+                        :items [{:key "k"
+                                 :type :option
+                                 :id :api-key
+                                 :label "API key"
+                                 :prompt "API key:"
+                                 :mask \*
+                                 :secret? true}]}
+                       {:title "Authenticate"
+                        :items
+                        [{:key "a" :type :action :id :submit :label "Sign in with this key"}]}]})]
+
+               (expect (= :submit action))
+               (expect (= "sk-secret" (:api-key options)))
+               ;; …and the credential itself never landed on the screen.
+               (expect (not (str/includes? (str/join "\n" (term/grid terminal)) "sk-secret"))))
+             (finally (.stopScreen screen))))))
+
 
 ;; Regression (reported from the TUI, screenshot of the draft band): a band asked
 ;; its follow-up question on its own hint row while its COMMAND rows stayed

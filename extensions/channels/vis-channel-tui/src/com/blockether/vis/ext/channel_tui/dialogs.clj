@@ -983,7 +983,7 @@
            (ellipsize (or title "") (max 0 (- inner-w 2)))
 
            tx
-            (+ box-left 1 (quot (- inner-w (p/display-width title-text)) 2))]
+           (+ box-left 1 (quot (- inner-w (p/display-width title-text)) 2))]
 
        ;; Accent bar background
        (p/set-bg! g t/dialog-title-bg)
@@ -2680,27 +2680,34 @@
      `:confirm!`     y/n — `[question]` / `[question {:cost … :yes-label … :no-label …}]`
      `:note!`        SAY one line back — `[title line]`, dismissed with `q`
      `:wait!`        HOLD the band while something else finishes — `[title line-fn done?]`
-     `:transient!`   ANOTHER transient over the SAME band region — `[spec]`
+     `:transient!`   ANOTHER transient over the SAME band region — `[spec]`, its
+                     `:read-option` already bound, so an OPTION item inside it
+                     is typed on this band's own hint row
      `:read-option`  the `:read-option` a spec with OPTION items hands `tr/run!`
 
    A transient that opens a transient, and a question that REPLACES the commands
    that led to it instead of opening a second frame, is how magit asks a second
    thing — every band in the TUI does both through this map."
   [^TerminalScreen screen g region]
-  {:read! (fn read! ([label] (read! label {})) ([label opts] (magit-mini-read! screen g region label
-                                                               opts)))
-   :choose! (fn [title choices]
-              (magit-mini-choose! screen g region title choices))
-   :confirm! (fn confirm! ([question] (confirm! question nil)) ([question opts] (magit-mini-confirm!
-                                                                                  screen g region
-                                                                                  question opts)))
-   :note! (fn [title line]
-            (magit-mini-note! screen g region title line))
-   :wait! (fn [title line-fn done?]
-            (magit-mini-wait! screen g region title line-fn done?))
-   :transient! (fn [spec]
-                 (embed-transient! screen g region spec))
-   :read-option (region-option-reader screen g region)})
+  (let [read-option (region-option-reader screen g region)]
+    {:read! (fn read! ([label] (read! label {})) ([label opts] (magit-mini-read! screen g region
+                                                                 label opts)))
+     :choose! (fn [title choices]
+                (magit-mini-choose! screen g region title choices))
+     :confirm! (fn confirm! ([question] (confirm! question nil)) ([question opts]
+                                                                  (magit-mini-confirm! screen g
+                                                                    region question opts)))
+     :note! (fn [title line]
+              (magit-mini-note! screen g region title line))
+     :wait! (fn [title line-fn done?]
+              (magit-mini-wait! screen g region title line-fn done?))
+     :transient! (fn [spec]
+                   (embed-transient! screen
+                                     g
+                                     region
+                                     (assoc spec
+                                       :read-option (or (:read-option spec) read-option))))
+     :read-option read-option}))
 
 (defn transient-dialog!
   "Host ONE magit transient in its OWN modal — the popup for flows that have no
@@ -2740,9 +2747,10 @@
              vec)
 
         ;; The popup's own footprint — the component knows it (`tr/height`), so the
-        ;; box is sized by what the transient will actually paint.
+        ;; box is sized by what the transient will actually paint — a heading
+        ;; wraps, so the WIDTH the box will give it is part of that answer.
         popup-h
-        (tr/height spec)
+        (tr/height spec {:inner-w est-w})
 
         body-gap
         (if (seq wrapped) 1 0)

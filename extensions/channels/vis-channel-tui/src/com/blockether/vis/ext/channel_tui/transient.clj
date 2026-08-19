@@ -296,6 +296,15 @@
                        (conj tail)
                        (into (subvec bs (inc i)))))))))))
 
+(defn- pad-to-tallest
+  "PURE: every pane blank-padded to the tallest one, so pane `j` row `i` is always
+   the cell at that grid position and a painter walks a rectangle instead of a
+   ragged list."
+  [ps]
+  (let [h (long (reduce max 0 (map count ps)))]
+    (mapv (fn [pane]
+            (into (vec pane) (repeat (- h (count pane)) {:kind :blank})))
+          ps)))
 (defn panes
   "PURE: `spec`'s groups dealt into `n` side-by-side panes, in order.
 
@@ -340,14 +349,9 @@
         padded
         ;; Every pane breathes the same: the grid is one rectangle, so a blank top
         ;; row on one column and none on the next would tilt the whole band.
-        (mapv pad-block packed)
+        (mapv pad-block packed)]
 
-        h
-        (long (reduce max 0 (map count padded)))]
-
-    (mapv (fn [pane]
-            (into pane (repeat (- h (count pane)) {:kind :blank})))
-          padded)))
+    (pad-to-tallest padded)))
 
 (defn pane-natural
   "PURE: the columns ONE pane needs for its own content — the lead, its widest
@@ -460,6 +464,43 @@
                              (+ w each (if (< i extra) 1 0))))
               floors)))))
 
+(defn- wrap-headings
+  "PURE: `pane` with every heading WORD-WRAPPED into the columns that pane
+   actually got — one `:header` display row per wrapped line.
+
+   A heading is a SENTENCE whenever the spec makes it one (the API-key band's own
+   guidance line, the one that answers `where do I get the key?` and carries the
+   URL). Cut to the pane with an ellipsis, that sentence lost exactly the part
+   worth reading. The lanterna fork wraps by the same rule the screen paints by
+   ([[p/word-wrap]]), so an over-wide heading costs extra ROWS instead of words.
+   A heading that already fits comes back untouched — no band that fitted before
+   changes shape."
+  [pane ^long pane-w]
+  (let [w (max 1 (- pane-w (long pane-lead)))]
+    (into []
+          (mapcat (fn [r]
+                    (if (and (= :header (:kind r)) (> (long (p/display-width (str (:text r)))) w))
+                      (mapv (fn [line]
+                              {:kind :header :text line})
+                            (p/word-wrap (str (:text r)) w))
+                      [r])))
+          pane)))
+
+(defn pane-grid
+  "PURE: `spec` dealt into `region`'s panes — `{:panes :pane-ws}` — with every
+   heading already wrapped to the width its OWN pane got ([[wrap-headings]]).
+
+   The widths are measured on the DEALT panes, before wrapping: a heading that
+   wraps must not then shrink the column it was wrapped to. No region ⇒ no width
+   is known, so nothing wraps and the deal is the single column."
+  [spec region]
+  (let [dealt
+        (panes spec (pane-count spec region))
+
+        ws
+        (when region (pane-widths region dealt))]
+
+    {:panes (if ws (pad-to-tallest (mapv wrap-headings dealt ws)) dealt) :pane-ws ws}))
 (def ^:private chrome-rows
   "Rows of the popup's OWN chrome above its body: the opening separator, and
    nothing else. A transient band carries NO title row — its first row is the
@@ -472,9 +513,13 @@
   "PURE: rows the popup needs INSIDE the host's frame — its opening separator
    and every display row (the padding blanks included). The closing rule and the
    hint bar are the host's OWN bottom chrome, so they are not counted; a host
-   sizes its box with this before it paints one."
-  ^long [spec]
-  (+ (long chrome-rows) (count (rows spec))))
+   sizes its box with this before it paints one.
+
+   Pass the `region` the band will be painted into whenever it is known: a
+   heading only wraps ([[wrap-headings]]) once a width is known, and a host that
+   sizes its box from the width-less count paints a box too short for it."
+  (^long [spec] (height spec nil))
+  (^long [spec region] (+ (long chrome-rows) (count (first (:panes (pane-grid spec region)))))))
 
 (defn band-geometry
   "PURE: which row of `region` every part of a band `n` display rows tall
@@ -637,11 +682,8 @@
    wide or how tall the host is, so nothing may wrap."
   ([spec] (layout spec nil))
   ([spec region]
-   (let [n
-         (pane-count spec region)
-
-         ps
-         (panes spec n)
+   (let [{ps :panes ws :pane-ws}
+         (pane-grid spec region)
 
          pane-h
          (count (first ps))]
@@ -649,7 +691,7 @@
      {:rows (rows spec)
       :panes ps
       :pane-count (count ps)
-      :pane-ws (when region (pane-widths region ps))
+      :pane-ws ws
       :pane-cols (mapv pane-columns ps)
       :row-count pane-h
       :columns (columns spec)
