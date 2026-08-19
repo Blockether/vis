@@ -220,3 +220,21 @@
               "x, y = again.slides[0].shapes[0], again.slides[0].shapes[1]\n"
               "[x.fill.type, str(x.fill.fore_color.rgb), str(x.line.color.rgb),\n"
               " x.line.width.pt, str(x.line.dash_style), y.fill.type]")))))))
+
+
+;; Regression: a freshly created deck legally has NO slides, and the OOXML kind
+;; sniffer classified a presentation only by `ppt/slides/slide*` — so saving an
+;; empty deck and opening it back failed with "not a readable workbook: Cannot
+;; detect file format" (fixed in com.blockether/imaging 0.1.10).
+(defdescribe pptx-slideless-round-trip-test
+             (it "re-opens a deck that has no slides yet, layouts intact"
+                 (with-python-context
+                   (expect (= [0 11 1]
+                              (ev python-context
+                                  (str "import io\n"
+                                       "from pptx import Presentation\n" "prs = Presentation()\n"
+                                       "b = io.BytesIO()\n" "prs.save(b)\n"
+                                       "again = Presentation(io.BytesIO(b.getvalue()))\n"
+                                       "empty = len(again.slides)\n"
+                                       "again.slides.add_slide(again.slide_layouts[6])\n"
+                                       "[empty, len(again.slide_layouts), len(again.slides)]")))))))

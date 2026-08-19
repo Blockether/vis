@@ -51,7 +51,7 @@
   ;; in the cdylib (four Noto faces). `java.desktop` is still LOADED, and that is
   ;; fine: mic capture uses `javax.sound.sampled` (the JDK's only microphone API) and
   ;; next.jdbc's `clojure.java.data` uses `java.beans.Introspector`.
-  com.blockether/imaging {:mvn/version "0.1.9"}
+  com.blockether/imaging {:mvn/version "0.1.10"}
   ;; Parinfer for Clojure source in pure Java — Blockether's linear-time rewrite of
   ;; parinferish 0.8.0 — carrying `com.blockether.parinferish.balance`, the rule that
   ;; decides whether a language pack's delimiter repair may be written back to a file.
