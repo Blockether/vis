@@ -2,6 +2,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   Banner,
   Button,
+  CloseButton,
   ConfirmRow,
   DialogFrame,
   HeaderActions,
@@ -83,6 +84,7 @@ import {
   type DraftMessageStore,
 } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
+import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, isFavorite, nextFavoriteRank } from '../lib/favorites';
 import {
   groupByWorkDir,
@@ -352,6 +354,15 @@ interface Props {
    * already standing on is the screen lying to them.
    */
   onSearch: (() => void) | null;
+  /**
+   * A share the OS handed over that no composer has taken yet. THIS LIST IS THE
+   * CHOOSER — only the human knows whether a voice memo belongs to a session
+   * that is already running or to a new one — so while a payload is parked the
+   * list says what is waiting and every row is a destination.
+   */
+  share?: SharedPayload | null;
+  /** Throw the parked share away, staged files included. */
+  onDiscardShare?: () => void;
 }
 
 /**
@@ -369,6 +380,8 @@ export function SessionsScreen({
   onOpen,
   isVisible,
   onSearch,
+  share = null,
+  onDiscardShare,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
@@ -2000,6 +2013,26 @@ export function SessionsScreen({
               })}
             </MachineSwitcher>
           </div>
+          {/* WHAT IS WAITING TO BE SENT, on the row that already reports the
+              state of this list. A share arrives with a payload and no
+              destination, and the app must not guess: the memo the human sent
+              from Messages belongs to a conversation only they can name. So the
+              list says what is parked and stays a list — tapping a row sends it
+              there, the yellow + on any project header sends it to a session
+              that does not exist yet, and the ✕ throws it away. */}
+          {share && (
+            <div className="order-last flex w-full min-w-0 items-center gap-2 sm:order-none sm:w-auto">
+              <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
+                Sharing
+              </span>
+              <span className="min-w-0 flex-1 truncate font-mono text-chip text-dialog-hint">
+                {shareSummary(share)} — pick a session, or start a new one
+              </span>
+              {onDiscardShare && (
+                <CloseButton label="Discard the share" onClick={onDiscardShare} />
+              )}
+            </div>
+          )}
           {/* THE SEARCH REPORT IS A LINE OF ITS OWN ON A PHONE. It used to ride the
               trailing cluster beside the switch on a row that could not shrink, so on a
               390px glass "271 matches / 1 machine did not answer" pushed the strip until

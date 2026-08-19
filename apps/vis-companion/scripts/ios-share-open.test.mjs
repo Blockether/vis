@@ -8,6 +8,9 @@ import { describe, expect, it } from 'vitest';
 // imported, so the Swift it embeds is read as text instead.
 const prepare = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ios-prepare.mjs'), 'utf8');
 const shareController = prepare.match(/const shareControllerSource = `([\s\S]*?)\n`;/)?.[1] ?? '';
+const sharePlist = prepare.match(/const sharePlistSource = `([\s\S]*?)\n`;/)?.[1] ?? '';
+const entitlements = prepare.match(/const appGroupEntitlements = `([\s\S]*?)\n`;/)?.[1] ?? '';
+const release = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ios-release.mjs'), 'utf8');
 
 describe('VisShare share extension', () => {
   it('embeds a share controller', () => {
@@ -41,5 +44,54 @@ describe('VisShare share extension', () => {
   it('keeps the documented call first and the nonce on the URL', () => {
     expect(shareController).toContain('context.open(url)');
     expect(shareController).toContain('URLQueryItem(name: "at"');
+  });
+  // A shared FILE conforms to public.url as well, so the link branch used to win:
+  // a voice memo arrived as a file:// address in another process's container,
+  // which the app is not allowed to read, and nothing was attached.
+  it('claims files before the link, and never treats a file as one', () => {
+    expect(shareController.indexOf('await stage(provider')).toBeGreaterThan(-1);
+    expect(shareController.indexOf('await stage(provider'))
+      .toBeLessThan(shareController.indexOf('load(provider, UTType.url.identifier)'));
+    expect(shareController).toContain('!provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)');
+  });
+
+  // The extension's container is not the app's: the only path both processes can
+  // read is inside the App Group, and the provider's own URL dies with the block.
+  it('copies a shared file into the App Group container', () => {
+    expect(shareController).toContain('containerURL(forSecurityApplicationGroupIdentifier: Self.appGroup)');
+    expect(shareController).toContain('Library/Caches/VisShare');
+    expect(shareController).toContain('loadFileRepresentation(forTypeIdentifier:');
+    expect(shareController).toContain('try manager.copyItem(at: url, to: destination)');
+    expect(shareController).toContain('Date().addingTimeInterval(-Self.staleAfter)');
+  });
+
+  // file/name/type are read back by position in src/lib/share-intake.ts, so a
+  // missing media type is still sent — as an empty string, never as a gap.
+  it('hands the app file, name and type index aligned', () => {
+    expect(shareController).toContain('URLQueryItem(name: "file", value: file.url.absoluteString)');
+    expect(shareController).toContain('URLQueryItem(name: "name", value: file.name)');
+    expect(shareController).toContain('URLQueryItem(name: "type", value: file.type)');
+    expect(shareController).toContain('type.preferredMIMEType ?? ""');
+  });
+
+  // iOS offers the extension only for what its activation rule claims: without
+  // these three keys the share sheet shows Vis for a link and hides it for a memo.
+  it('is offered for files, images and movies as well as links', () => {
+    for (const key of ['File', 'Image', 'Movie']) {
+      expect(sharePlist).toContain(`<key>NSExtensionActivationSupports${key}WithMaxCount</key>`);
+    }
+  });
+
+  // Both signatures must carry the SAME group or the container is nil at runtime.
+  it('entitles both targets to one App Group', () => {
+    expect(prepare).toContain('const appGroup = `group.${bundleId}`;');
+    expect(entitlements).toContain('<key>com.apple.security.application-groups</key>');
+    expect(entitlements).toContain('<string>${appGroup}</string>');
+    expect(prepare).toContain("entitlements: 'VisShare/VisShare.entitlements'");
+    expect(prepare).toContain('CODE_SIGN_ENTITLEMENTS = App/App.entitlements');
+    expect(release).toContain('<string>group.${appBundleId}</string>');
+    // The release script adds the push entitlement only when the app target has
+    // none — it must look for the APP's file, not for any entitlement at all.
+    expect(release).toContain("project.includes('CODE_SIGN_ENTITLEMENTS = App/App.entitlements')");
   });
 });

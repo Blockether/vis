@@ -11,6 +11,7 @@ import { render } from "@testing-library/react";
 import { projectPath, sessionIsLive } from "../lib/fleet";
 import { SessionsScreen } from "./SessionsScreen";
 import type { GatewayConn, Session } from "../lib/types";
+import type { SharedPayload } from "../lib/share-intake";
 
 export interface MachineFixture {
   /** Shown as the machine's name; the URL is assigned by the harness. */
@@ -106,6 +107,8 @@ export function renderSessionsScreen({
   isVisible = true,
   onSearch = () => {},
   at,
+  share = null,
+  onDiscardShare,
 }: {
   machines?: MachineFixture[];
   query?: string;
@@ -122,6 +125,9 @@ export function renderSessionsScreen({
    * is the only way to watch a preference outlive the screen that set it.
    */
   at?: GatewayConn[];
+  /** A payload the share sheet parked, waiting for the human to pick a session. */
+  share?: SharedPayload | null;
+  onDiscardShare?: () => void;
 } = {}) {
   const requests: FleetRequest[] = [];
   const conns: GatewayConn[] =
@@ -289,6 +295,8 @@ export function renderSessionsScreen({
       onOpen={onOpen}
       onUnreachable={onUnreachable}
       onSearch={onSearch}
+      share={share}
+      onDiscardShare={onDiscardShare}
     />
   );
   const view = render(screen(query, isVisible));

@@ -39,6 +39,10 @@ const delegate = join(appDir, 'AppDelegate.swift');
 const storyboard = join(appDir, 'Base.lproj', 'Main.storyboard');
 const infoPlist = join(appDir, 'Info.plist');
 const bundleId = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')).appId;
+// The share extension is a SEPARATE process with a SEPARATE container, so a file
+// it was handed can only reach the app through a container both are entitled to.
+// One group, named after the app, carried by the app target and the extension.
+const appGroup = `group.${bundleId}`;
 
 const appIconSource = join(root, 'native-assets', 'ios', 'AppIcon-512@2x.png');
 const appIconTarget = join(appDir, 'Assets.xcassets', 'AppIcon.appiconset', 'AppIcon-512@2x.png');
@@ -322,6 +326,8 @@ if (missingPlistEntries.length > 0) {
 const shareDir = join(root, 'ios', 'App', 'VisShare');
 const shareController = join(shareDir, 'ShareViewController.swift');
 const sharePlist = join(shareDir, 'Info.plist');
+const shareEntitlements = join(shareDir, 'VisShare.entitlements');
+const appEntitlements = join(appDir, 'App.entitlements');
 const shortcutsSwift = join(appDir, 'VisShortcuts.swift');
 const pbxprojPath = join(root, 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
 
@@ -337,11 +343,28 @@ const shareControllerSource = `import UIKit
 import ObjectiveC
 import UniformTypeIdentifiers
 
-/// The whole extension: pull the link (or the text) out of the share, hand it to
-/// the app as a vis://share URL, and get off the screen. No compose UI — the
-/// composer inside Vis is the compose UI, and a second one would only be a
-/// slower way to type the same prompt.
+/// The whole extension: pull the link, the text or the FILES out of the share,
+/// hand them to the app as a vis://share URL, and get off the screen. No compose
+/// UI — the composer inside Vis is the compose UI, and a second one would only be
+/// a slower way to type the same prompt.
+///
+/// A file cannot be handed over as a path: the extension's container is not the
+/// app's, and the URL a provider hands out dies with the extension. Every
+/// attachment is COPIED into the shared App Group container, whose absolute
+/// file:// URL both processes can read; the app deletes it once the bytes are in
+/// the composer, and a share the user abandoned is purged on the next one.
 final class ShareViewController: UIViewController {
+    private static let appGroup = "${appGroup}"
+    private static let maxFiles = 8
+    private static let maxFileBytes = 64 * 1024 * 1024
+    private static let staleAfter: TimeInterval = 7 * 24 * 60 * 60
+
+    private struct StagedFile {
+        let url: URL
+        let name: String
+        let type: String
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
@@ -356,13 +379,24 @@ final class ShareViewController: UIViewController {
         var link: String?
         var text: String?
         var title: String?
+        var files = [StagedFile]()
+        let staging = stagingDirectory()
 
         for case let item as NSExtensionItem in extensionContext?.inputItems ?? [] {
             if title == nil, let subject = item.attributedTitle?.string, !subject.isEmpty {
                 title = subject
             }
             for provider in item.attachments ?? [] {
-                if link == nil, provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                // Files are claimed FIRST: a file conforms to public.url as well,
+                // so the link branch below would otherwise turn a shared voice memo
+                // into a file:// address the app is not allowed to read.
+                if let staging, files.count < Self.maxFiles,
+                   let staged = await stage(provider, into: staging, index: files.count) {
+                    files.append(staged)
+                    continue
+                }
+                if link == nil, provider.hasItemConformingToTypeIdentifier(UTType.url.identifier),
+                   !provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                     link = (await load(provider, UTType.url.identifier) as? URL)?.absoluteString
                 }
                 if text == nil, provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
@@ -380,6 +414,14 @@ final class ShareViewController: UIViewController {
         if let text, !text.isEmpty, text != link { query.append(URLQueryItem(name: "text", value: text)) }
         if let title, !title.isEmpty, title != link { query.append(URLQueryItem(name: "title", value: title)) }
 
+        // file/name/type are INDEX ALIGNED — the app pairs them by position, so a
+        // type it could not determine is still sent, as an empty string.
+        for file in files {
+            query.append(URLQueryItem(name: "file", value: file.url.absoluteString))
+            query.append(URLQueryItem(name: "name", value: file.name))
+            query.append(URLQueryItem(name: "type", value: file.type))
+        }
+
         // A nonce: sharing the SAME page twice must produce two DIFFERENT URLs,
         // or the app's deep-link dedupe (src/lib/deeplink.ts) swallows the second.
         if (!query.isEmpty) {
@@ -395,6 +437,95 @@ final class ShareViewController: UIViewController {
             await open(url)
         }
         extensionContext?.completeRequest(returningItems: nil)
+    }
+
+    /// This share's own folder inside the App Group container. Nil when the group
+    /// is unavailable — a build signed without the capability still hands over its
+    /// link and its text, and simply carries no files.
+    private func stagingDirectory() -> URL? {
+        let manager = FileManager.default
+        guard let container = manager.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroup) else {
+            return nil
+        }
+        let root = container.appendingPathComponent("Library/Caches/VisShare", isDirectory: true)
+        purge(root)
+        let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            return nil
+        }
+        return directory
+    }
+
+    /// A share the user cancelled leaves its copy behind and nobody else will ever
+    /// delete it, so the container is swept before staging the next one.
+    private func purge(_ root: URL) {
+        let manager = FileManager.default
+        let cutoff = Date().addingTimeInterval(-Self.staleAfter)
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        let entries = (try? manager.contentsOfDirectory(at: root, includingPropertiesForKeys: keys)) ?? []
+        for entry in entries {
+            let modified = (try? entry.resourceValues(forKeys: Set(keys)))?.contentModificationDate
+            if let modified, modified > cutoff { continue }
+            try? manager.removeItem(at: entry)
+        }
+    }
+
+    /// The type to copy the attachment AS. Media first — a photo registers both
+    /// public.jpeg and public.file-url — then any concrete file that is neither
+    /// text nor a link, because those two belong in the message, not on a chip.
+    private func stageableType(_ provider: NSItemProvider) -> UTType? {
+        let media: [UTType] = [.image, .movie, .audio, .pdf]
+        let types = provider.registeredTypeIdentifiers.compactMap { UTType($0) }
+        if let match = types.first(where: { candidate in media.contains { candidate.conforms(to: $0) } }) {
+            return match
+        }
+        return types.first { $0.conforms(to: .data) && !$0.conforms(to: .text) && !$0.conforms(to: .url) }
+    }
+
+    private func stage(_ provider: NSItemProvider, into directory: URL, index: Int) async -> StagedFile? {
+        guard let type = stageableType(provider) else { return nil }
+        let folder = directory.appendingPathComponent(String(index), isDirectory: true)
+        let name = fileName(provider, type)
+        return await withCheckedContinuation { (continuation: CheckedContinuation<StagedFile?, Never>) in
+            // The URL is valid only INSIDE this block, so the copy happens here —
+            // after the continuation resumes the temporary file is already gone.
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+                guard let url else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let manager = FileManager.default
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                guard size <= Self.maxFileBytes else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                do {
+                    try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let destination = folder.appendingPathComponent(name)
+                    try? manager.removeItem(at: destination)
+                    try manager.copyItem(at: url, to: destination)
+                    let staged = StagedFile(url: destination, name: name, type: type.preferredMIMEType ?? "")
+                    continuation.resume(returning: staged)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    /// The name the human recognises on the chip: what the sharing app called the
+    /// file, with the extension restored from the type — a photo often arrives as
+    /// "IMG_0001" with none, and the app types an attachment by its extension when
+    /// the platform reports no media type.
+    private func fileName(_ provider: NSItemProvider, _ type: UTType) -> String {
+        let suggested = provider.suggestedName ?? ""
+        let base = suggested.isEmpty ? "shared" : (suggested as NSString).lastPathComponent
+        let ext = type.preferredFilenameExtension ?? ""
+        if ext.isEmpty || (base as NSString).pathExtension.lowercased() == ext.lowercased() { return base }
+        return (base as NSString).appendingPathExtension(ext) ?? base
     }
 
     private func load(_ provider: NSItemProvider, _ type: String) async -> Any? {
@@ -475,6 +606,12 @@ const sharePlistSource = `<?xml version="1.0" encoding="UTF-8"?>
 \t\t\t\t<integer>1</integer>
 \t\t\t\t<key>NSExtensionActivationSupportsText</key>
 \t\t\t\t<true/>
+\t\t\t\t<key>NSExtensionActivationSupportsFileWithMaxCount</key>
+\t\t\t\t<integer>8</integer>
+\t\t\t\t<key>NSExtensionActivationSupportsImageWithMaxCount</key>
+\t\t\t\t<integer>8</integer>
+\t\t\t\t<key>NSExtensionActivationSupportsMovieWithMaxCount</key>
+\t\t\t\t<integer>8</integer>
 \t\t\t</dict>
 \t\t</dict>
 \t\t<key>NSExtensionPointIdentifier</key>
@@ -482,6 +619,23 @@ const sharePlistSource = `<?xml version="1.0" encoding="UTF-8"?>
 \t\t<key>NSExtensionPrincipalClass</key>
 \t\t<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 \t</dict>
+</dict>
+</plist>
+`;
+
+// The App Group is a CAPABILITY: BOTH signatures have to carry it, or
+// `containerURL(forSecurityApplicationGroupIdentifier:)` answers nil and a shared
+// file has nowhere to land. The app's own file also carries `aps-environment`,
+// whose value only the release script knows (development vs production), so this
+// writes it only when it is ABSENT — scripts/ios-release.mjs owns it after that.
+const appGroupEntitlements = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>com.apple.security.application-groups</key>
+\t<array>
+\t\t<string>${appGroup}</string>
+\t</array>
 </dict>
 </plist>
 `;
@@ -672,6 +826,7 @@ const fileOk = (path, contents) => existsSync(path) && readFileSync(path, 'utf8'
 const shareFilesOk =
   fileOk(shareController, shareControllerSource)
   && fileOk(sharePlist, sharePlistSource)
+  && fileOk(shareEntitlements, appGroupEntitlements)
   && fileOk(shortcutsSwift, shortcutsSource);
 const notifyFilesOk =
   fileOk(notifyService, notifyServiceSource)
@@ -754,16 +909,17 @@ if (!projectObject) die('project.pbxproj has no Project object');
 const marketing = /MARKETING_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1.0';
 const buildVersion = /CURRENT_PROJECT_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1';
 
-const shareTarget = { name: 'VisShare', bundleSuffix: 'share' };
+const shareTarget = { name: 'VisShare', bundleSuffix: 'share', entitlements: 'VisShare/VisShare.entitlements' };
 const notifyTarget = { name: 'VisNotify', bundleSuffix: 'notify' };
 
-// No CODE_SIGN_ENTITLEMENTS: the host's aps-environment on an app extension is
-// rejected outright, and neither extension needs a capability of its own — the
-// service extension is entitled by the notification it is handed, not by push.
-const extensionSettings = ({ name, bundleSuffix }, configId, configName, extra) => `\t\t${configId} /* ${configName} */ = {
+// The share extension DOES need an entitlement of its own — the App Group that
+// carries a shared file to the app. The notification service does not: the host's
+// aps-environment on an app extension is rejected outright, and that extension is
+// entitled by the notification it is handed, not by push.
+const extensionSettings = ({ name, bundleSuffix, entitlements }, configId, configName, extra) => `\t\t${configId} /* ${configName} */ = {
 \t\t\tisa = XCBuildConfiguration;
 \t\t\tbuildSettings = {
-\t\t\t\tCODE_SIGN_STYLE = Automatic;
+${entitlements ? `\t\t\t\tCODE_SIGN_ENTITLEMENTS = ${entitlements};\n` : ''}\t\t\t\tCODE_SIGN_STYLE = Automatic;
 \t\t\t\tCURRENT_PROJECT_VERSION = ${buildVersion};
 \t\t\t\tGENERATE_INFOPLIST_FILE = NO;
 \t\t\t\tINFOPLIST_FILE = ${name}/Info.plist;
@@ -1177,7 +1333,15 @@ if (!shareFilesOk) {
   mkdirSync(shareDir, { recursive: true });
   writeFileSync(shareController, shareControllerSource);
   writeFileSync(sharePlist, sharePlistSource);
+  writeFileSync(shareEntitlements, appGroupEntitlements);
   writeFileSync(shortcutsSwift, shortcutsSource);
+}
+// The app's file may already carry aps-environment from scripts/ios-release.mjs —
+// the group is ADDED to it, never written over it.
+if (!existsSync(appEntitlements) || !readFileSync(appEntitlements, 'utf8').includes(appGroup)) {
+  const existing = existsSync(appEntitlements) ? readFileSync(appEntitlements, 'utf8') : '';
+  const group = `\t<key>com.apple.security.application-groups</key>\n\t<array>\n\t\t<string>${appGroup}</string>\n\t</array>\n</dict>`;
+  writeFileSync(appEntitlements, existing.includes('</dict>') ? existing.replace('</dict>', group) : appGroupEntitlements);
 }
 if (!notifyFilesOk) {
   mkdirSync(notifyDir, { recursive: true });
@@ -1188,6 +1352,26 @@ if (!notifyFilesOk) {
 if (!capConfigOk && capConfigJson) {
   capConfigJson.packageClassList = [...(capConfigJson.packageClassList ?? []), 'VisBadgePlugin'];
   writeFileSync(capConfig, `${JSON.stringify(capConfigJson, null, '\t')}\n`);
+}
+// The app has to be entitled to the SAME group as the extension, or it cannot read
+// the file it was just handed. scripts/ios-release.mjs points the app target at
+// this very file for push, and looks for exactly this line before adding it.
+if (!project.includes('CODE_SIGN_ENTITLEMENTS = App/App.entitlements')) {
+  const idPattern = bundleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  project = project.replaceAll(
+    new RegExp(`(\\n(\\s*)PRODUCT_BUNDLE_IDENTIFIER = "?${idPattern}"?;)`, 'g'),
+    '$1\n$2CODE_SIGN_ENTITLEMENTS = App/App.entitlements;',
+  );
+}
+// An `ios/` stamped by an EARLIER version of this script already carries the
+// extension target, so the block above is skipped — the group entitlement is
+// still put on it here, where it is missing.
+if (!project.includes(`CODE_SIGN_ENTITLEMENTS = ${shareTarget.entitlements}`)) {
+  const sharePattern = `${bundleId}.${shareTarget.bundleSuffix}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  project = project.replaceAll(
+    new RegExp(`(\\n(\\s*)PRODUCT_BUNDLE_IDENTIFIER = "?${sharePattern}"?;)`, 'g'),
+    `$1\n$2CODE_SIGN_ENTITLEMENTS = ${shareTarget.entitlements};`,
+  );
 }
 if (project !== projectBefore) writeFileSync(pbxprojPath, project);
 

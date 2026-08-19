@@ -433,10 +433,19 @@ const javaPackageDir = join(androidApp, 'src', 'main', 'java', ...appId.split('.
 const mainActivityPath = join(javaPackageDir, 'MainActivity.java');
 const mainActivity = `package ${appId};
 
+import android.content.ContentResolver;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.text.TextUtils;
+import android.webkit.MimeTypeMap;
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import com.getcapacitor.BridgeActivity;
 import java.util.ArrayList;
 
@@ -445,6 +454,10 @@ public class MainActivity extends BridgeActivity {
 
     private static final String PROCESS_TEXT = "android.intent.action.PROCESS_TEXT";
     private static final String EXTRA_PROCESS_TEXT = "android.intent.extra.PROCESS_TEXT";
+    /** The composer refuses more than this, so copying more than this is waste. */
+    private static final long MAX_STAGED_BYTES = 64L * 1024 * 1024;
+    /** A share nobody came back for. Long enough to survive a weekend offline. */
+    private static final long STAGED_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -464,7 +477,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     /** ACTION_SEND / ACTION_SEND_MULTIPLE / PROCESS_TEXT → vis://share?… ; anything else untouched. */
-    private static Intent asShareLink(Intent intent) {
+    private Intent asShareLink(Intent intent) {
         if (intent == null) {
             return null;
         }
@@ -474,31 +487,26 @@ public class MainActivity extends BridgeActivity {
         }
         String text = null;
         String title = null;
+        ArrayList<Uri> streams = new ArrayList<>();
         if (Intent.ACTION_SEND.equals(action)) {
             text = string(intent.getCharSequenceExtra(Intent.EXTRA_TEXT));
             title = string(intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT));
-            if (text == null) {
-                // An image/file share: the stream URI is all we can honestly
-                // forward, and a link to it still beats dropping the share.
-                android.os.Parcelable stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
-                text = stream == null ? null : stream.toString();
+            Uri stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (stream != null) {
+                streams.add(stream);
             }
         } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
             ArrayList<CharSequence> parts = intent.getCharSequenceArrayListExtra(Intent.EXTRA_TEXT);
             title = string(intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT));
             if (parts != null && !parts.isEmpty()) {
                 text = TextUtils.join("\\n", parts);
-            } else {
-                ArrayList<android.os.Parcelable> streams = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
-                if (streams != null && !streams.isEmpty()) {
-                    StringBuilder joined = new StringBuilder();
-                    for (android.os.Parcelable stream : streams) {
-                        if (joined.length() > 0) {
-                            joined.append('\\n');
-                        }
-                        joined.append(stream.toString());
+            }
+            ArrayList<Uri> shared = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (shared != null) {
+                for (Uri stream : shared) {
+                    if (stream != null) {
+                        streams.add(stream);
                     }
-                    text = joined.toString();
                 }
             }
         } else if (PROCESS_TEXT.equals(action)) {
@@ -506,7 +514,7 @@ public class MainActivity extends BridgeActivity {
         } else {
             return intent;
         }
-        if (text == null && title == null) {
+        if (text == null && title == null && streams.isEmpty()) {
             return intent;
         }
         Uri.Builder share = new Uri.Builder().scheme("vis").authority("share");
@@ -520,6 +528,23 @@ public class MainActivity extends BridgeActivity {
         if (title != null) {
             share.appendQueryParameter("title", title);
         }
+        // A SHARED FILE IS BYTES, NOT A NAME. The content:// URI is a permission
+        // grant to THIS intent — the webview holds no such grant, so a voice memo
+        // forwarded as its URI was a link to something the app could never open.
+        // Copy it into our own cache and hand over the copy: src/lib/share-files.ts
+        // reads it, attaches it, and deletes it.
+        purgeStaged();
+        for (int index = 0; index < streams.size(); index++) {
+            File staged = stageShared(streams.get(index), index);
+            if (staged == null) {
+                continue;
+            }
+            // file/name/type stay INDEX ALIGNED across the three lists, so a type
+            // the provider could not name is an EMPTY value, never a missing one.
+            share.appendQueryParameter("file", Uri.fromFile(staged).toString());
+            share.appendQueryParameter("name", staged.getName());
+            share.appendQueryParameter("type", mimeOf(streams.get(index)));
+        }
         // A nonce: sharing the SAME page twice must produce two DIFFERENT URLs,
         // or the app's deep-link dedupe (src/lib/deeplink.ts) swallows the second.
         share.appendQueryParameter("at", Long.toString(System.currentTimeMillis()));
@@ -527,6 +552,135 @@ public class MainActivity extends BridgeActivity {
         out.setAction(Intent.ACTION_VIEW);
         out.setData(share.build());
         return out;
+    }
+
+    /**
+     * Copy one shared stream into \`cache/shared/<stamp>-<n>/<display name>\`.
+     * Its own directory per file, so the name the human saw survives verbatim
+     * even when two shares carry the same one, and null when the copy failed —
+     * one unreadable item must never cost the rest of the share.
+     */
+    private File stageShared(Uri stream, int index) {
+        if (stream == null) {
+            return null;
+        }
+        File dir = new File(new File(getCacheDir(), "shared"), System.currentTimeMillis() + "-" + index);
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            return null;
+        }
+        File staged = new File(dir, displayName(stream));
+        InputStream in = null;
+        OutputStream out = null;
+        try {
+            in = getContentResolver().openInputStream(stream);
+            if (in == null) {
+                return null;
+            }
+            out = new FileOutputStream(staged);
+            byte[] buffer = new byte[65536];
+            long copied = 0;
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                copied += read;
+                // The composer refuses anything this large anyway; refusing it
+                // here costs no disk and no minute of copying.
+                if (copied > MAX_STAGED_BYTES) {
+                    close(out);
+                    staged.delete();
+                    return null;
+                }
+                out.write(buffer, 0, read);
+            }
+            out.flush();
+        } catch (Exception failed) {
+            staged.delete();
+            return null;
+        } finally {
+            close(in);
+            close(out);
+        }
+        return staged;
+    }
+
+    /** The name the source showed the human, made safe for a file system. */
+    private String displayName(Uri stream) {
+        String name = null;
+        if (ContentResolver.SCHEME_CONTENT.equals(stream.getScheme())) {
+            Cursor cursor = null;
+            try {
+                cursor = getContentResolver().query(stream, new String[] { OpenableColumns.DISPLAY_NAME }, null, null, null);
+                if (cursor != null && cursor.moveToFirst()) {
+                    int column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (column >= 0) {
+                        name = cursor.getString(column);
+                    }
+                }
+            } catch (Exception unreadable) {
+                name = null;
+            } finally {
+                close(cursor);
+            }
+        }
+        if (name == null) {
+            name = stream.getLastPathSegment();
+        }
+        if (name == null || name.trim().isEmpty()) {
+            name = "shared";
+        }
+        name = name.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (name.length() > 96) {
+            name = name.substring(name.length() - 96);
+        }
+        // THE EXTENSION IS THE SECOND OPINION about what these bytes are: a
+        // document provider answers application/octet-stream for any voice memo
+        // it does not recognise, and the app types the file by extension when
+        // the platform's word says nothing.
+        if (!name.contains(".")) {
+            String extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeOf(stream));
+            if (extension != null && !extension.isEmpty()) {
+                name = name + "." + extension;
+            }
+        }
+        return name;
+    }
+
+    private String mimeOf(Uri stream) {
+        String type = getContentResolver().getType(stream);
+        return type == null ? "" : type;
+    }
+
+    /** A share nobody came back for is megabytes of someone else's audio. */
+    private void purgeStaged() {
+        File[] staged = new File(getCacheDir(), "shared").listFiles();
+        if (staged == null) {
+            return;
+        }
+        long cutoff = System.currentTimeMillis() - STAGED_MAX_AGE_MS;
+        for (File entry : staged) {
+            if (entry.lastModified() < cutoff) {
+                delete(entry);
+            }
+        }
+    }
+
+    private static void delete(File entry) {
+        File[] children = entry.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                delete(child);
+            }
+        }
+        entry.delete();
+    }
+
+    private static void close(Closeable it) {
+        if (it != null) {
+            try {
+                it.close();
+            } catch (Exception ignored) {
+                // Closing is best effort; the share has already been read.
+            }
+        }
     }
 
     private static String string(CharSequence value) {
@@ -807,31 +961,38 @@ if (!existsSync(nativeSpeechPluginPath) || readFileSync(nativeSpeechPluginPath, 
 }
 
 // The filters that put Vis in the system share sheet. `text/plain` is what a
-// browser, a reader and a text selection all send; `*/*` would also claim every
-// binary share we cannot do anything useful with.
-const shareFilters = `
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
+// browser, a reader and a text selection all send; the media types are the ones
+// the composer can actually carry — a memo from Messages, a picture, a clip, a
+// PDF. `*/*` would also claim every binary share we can do nothing with, and an
+// app in the sheet that refuses what it was handed is worse than one that is
+// not offered.
+const SHARE_MEDIA_TYPES = ['text/plain', 'image/*', 'audio/*', 'video/*', 'application/pdf'];
+const shareFilter = (action, types) => types
+  .map(
+    (type) => `            <intent-filter>
+                <action android:name="android.intent.action.${action}" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
+                <data android:mimeType="${type}" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.SEND_MULTIPLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.PROCESS_TEXT" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-`;
+`,
+  )
+  .join('');
+const shareFilters =
+  shareFilter('SEND', SHARE_MEDIA_TYPES)
+  + shareFilter('SEND_MULTIPLE', SHARE_MEDIA_TYPES)
+  + shareFilter('PROCESS_TEXT', ['text/plain']);
 let shareManifest = readFileSync(manifestPath, 'utf8');
 const shareManifestBefore = shareManifest;
-if (!shareManifest.includes('android.intent.action.SEND')) {
+// Stamped, never appended to: an earlier build's filter set is REPLACED, or
+// widening the sheet would leave the old text-only block beside the new one.
+shareManifest = shareManifest.replace(
+  /[ \t]*<intent-filter>(?:(?!<\/intent-filter>)[\s\S])*?(?:action\.SEND|action\.SEND_MULTIPLE|action\.PROCESS_TEXT)[\s\S]*?<\/intent-filter>\n/g,
+  '',
+);
+{
   const at = shareManifest.indexOf('</activity>');
   if (at < 0) die('AndroidManifest.xml has no </activity> to attach the share filters to');
-  shareManifest = shareManifest.slice(0, at) + shareFilters.replace(/^\n/, '') + '        ' + shareManifest.slice(at);
+  shareManifest = shareManifest.slice(0, at) + shareFilters + '        ' + shareManifest.slice(at);
 }
 if (shareManifest !== shareManifestBefore) writeFileSync(manifestPath, shareManifest);
 console.log('\u2713 share target   MainActivity SEND/PROCESS_TEXT \u2192 vis://share + AndroidManifest filters');

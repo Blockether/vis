@@ -38,8 +38,13 @@ import { onPairingLink } from "./lib/deeplink";
 import {
   hydratePendingShare,
   parseShareLink,
+  onSharedText,
   receiveSharedText,
+  peekPendingShare,
+  takePendingShare,
+  type SharedPayload,
 } from "./lib/share-intake";
+import { discardSharedFiles } from "./lib/share-files";
 import { applyTheme, resolveTheme } from "./lib/theme";
 import { getThemePref } from "./lib/storage";
 import { BackButton, IconButton, SearchField } from "./components/ui";
@@ -170,6 +175,12 @@ export function App() {
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);
   const [tab, setTab] = useState<Tab>("sessions");
+  // The share still owed a session. The SHELL holds it because the list is the
+  // chooser: until a composer takes it, every screen that could receive it has
+  // to be able to say what is waiting.
+  const [pendingShare, setPendingShare] = useState<SharedPayload | null>(
+    peekPendingShare,
+  );
   // The search question is fleet-wide, so the SHELL owns it: the bar asks it and the
   // list answers it. Kept here rather than in `SessionsScreen` so the field can sit
   // above every machine chip instead of under the one that names a machine.
@@ -290,25 +301,36 @@ export function App() {
   }, [screen]);
 
   // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
-  // payload but no destination. `lib/share-intake` parks it; this decides where
-  // it lands: the most recently opened session of the active gateway, so
-  // "Share → vis" is one tap from a prompt. With nothing to reopen, the list is
-  // the honest destination — the payload stays parked until a composer takes it,
-  // so landing short never loses it.
+  // payload but NO destination — and only the human knows which conversation a
+  // voice memo belongs to. So a share opens the LIST, never a session: the
+  // fleet list already names every session on every machine, and the yellow +
+  // on a project header is the "new session" answer. The payload stays parked
+  // until a composer takes it, so choosing slowly never loses it.
   const openSharedSession = useCallback(async () => {
     const conn = active ?? (await getPrimaryConnection());
     if (!conn) {
       setTab("connect");
       return;
     }
-    const [sid] = await loadSubscribedSessions(conn.url);
-    if (!sid) {
-      setActive(conn);
-      setTab("sessions");
-      return;
-    }
-    openGatewaySession(conn, sid);
-  }, [active, openGatewaySession]);
+    setActive(conn);
+    setOpenTarget(null);
+    setTab("sessions");
+  }, [active]);
+
+  // The parked share, mirrored into shell state so the list can report it. The
+  // listener also answers `null`, which is how the banner learns that a
+  // composer took the payload.
+  useEffect(() => {
+    setPendingShare(peekPendingShare());
+    return onSharedText(setPendingShare);
+  }, []);
+
+  // Dropping the share: the staged copies go with it, or a shared memo stays on
+  // the device as megabytes nobody asked us to keep.
+  const discardShare = useCallback(() => {
+    const share = takePendingShare();
+    if (share?.files?.length) void discardSharedFiles(share.files);
+  }, []);
 
   // Bumped by every accepted share. A counter, not a flag: two links dropped
   // back to back must both re-route, including the one that arrives while the
@@ -322,6 +344,7 @@ export function App() {
   // for whichever composer mounts next either way.
   useEffect(() => {
     void hydratePendingShare().then((share) => {
+      setPendingShare(share);
       if (share && Date.now() - (share.at ?? 0) < RESUMABLE_SHARE_MS) {
         setShareNonce((nonce) => nonce + 1);
       }
@@ -983,6 +1006,10 @@ export function App() {
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
               onOpen={openGatewaySession}
+              // A parked share turns this list into the chooser it already is:
+              // the row the human taps IS the destination.
+              share={pendingShare}
+              onDiscardShare={discardShare}
               // The list's own way into the search page: a pull at the top of it
               // opens the same door the app bar's glass is, and the page it opens is
               // this screen with the query over it — so while it is already open,

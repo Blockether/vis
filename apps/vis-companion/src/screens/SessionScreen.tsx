@@ -113,6 +113,7 @@ import {
   onSharedText,
   takePendingShare,
 } from "../lib/share-intake";
+import { attachmentsFromSharedFiles } from "../lib/share-files";
 import {
   clearPendingVoice,
   readPendingVoice,
@@ -3917,6 +3918,16 @@ export function SessionScreen({
       const share = takePendingShare();
       if (!share) return;
       setPrompt((current) => appendSharedText(current, share));
+      // A shared memo, picture or document is an ATTACHMENT, not a line of
+      // prose. It goes through the composer's ONE gate, so a share is refused
+      // for the same reasons and in the same words a picked file is.
+      const files = share.files ?? [];
+      if (files.length) {
+        void chooseAttachments(
+          (limits) => attachmentsFromSharedFiles(files, limits),
+          "Nothing was shared.",
+        );
+      }
     };
     // Warm: already parked, or dropped while this screen is open.
     drain();

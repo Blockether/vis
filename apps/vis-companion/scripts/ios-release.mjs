@@ -177,6 +177,9 @@ console.log(`· stamped App.xcodeproj  ${marketingVersion} (${buildNumber})`);
 // the *development* profile (sandbox APNs), an archive uses distribution
 // (production). Default production; `--aps development` (or `--dev`) for the
 // device-testing loop. The file is rewritten whenever the value differs.
+//
+// The same file carries the App Group the share extension stages a shared FILE
+// into (scripts/ios-prepare.mjs adds it when this script has not run yet).
 const apsEnvironment = flag('aps') ?? (has('dev') ? 'development' : 'production');
 if (!['development', 'production'].includes(apsEnvironment)) {
   die(`bad --aps "${apsEnvironment}" (development | production)`);
@@ -188,6 +191,10 @@ const entitlements = `<?xml version="1.0" encoding="UTF-8"?>
 <dict>
   <key>aps-environment</key>
   <string>${apsEnvironment}</string>
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.${appBundleId}</string>
+  </array>
 </dict>
 </plist>
 `;
@@ -198,10 +205,10 @@ if (!existsSync(entitlementsPath) || readFileSync(entitlementsPath, 'utf8') !== 
 
 // Point every build configuration of the App target at it. Without this the
 // archive is signed with no `aps-environment` and APNs rejects every token.
-// Only the app target: the VisShare extension has its own bundle id and must
-// never inherit the app's push entitlement.
+// Only the app target: the VisShare extension carries its OWN entitlements file
+// — the App Group and nothing else — and must never inherit the app's push.
 let project = readFileSync(pbxproj, 'utf8');
-if (!project.includes('CODE_SIGN_ENTITLEMENTS')) {
+if (!project.includes('CODE_SIGN_ENTITLEMENTS = App/App.entitlements')) {
   const idPattern = appBundleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   project = project.replaceAll(
     new RegExp(`(\\n(\\s*)PRODUCT_BUNDLE_IDENTIFIER = "?${idPattern}"?;)`, 'g'),

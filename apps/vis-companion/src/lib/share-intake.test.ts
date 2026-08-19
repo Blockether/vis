@@ -44,6 +44,7 @@ import {
   receiveSharedText,
   resetShareIntakeForTests,
   takePendingShare,
+  shareSummary,
 } from './share-intake';
 import type { SharedPayload } from './share-intake';
 
@@ -148,6 +149,76 @@ describe('parseShareLink', () => {
   });
 });
 
+// Files a share sheet handed over. The native side stages a copy and names it
+// here; `file`, `name` and `type` are read back BY POSITION, because a share of
+// four photos is four of each and only their order pairs them.
+describe('shared files', () => {
+  it('reads file, name and type index aligned', () => {
+    const share = parseShareLink(
+      'vis://share?file=%2Ftmp%2Fa%2Fmemo.m4a&name=memo.m4a&type=audio%2Fmp4'
+        + '&file=%2Ftmp%2Fb%2Fshot.png&name=shot.png&type=image%2Fpng',
+    );
+
+    expect(share?.files).toEqual([
+      { path: '/tmp/a/memo.m4a', name: 'memo.m4a', type: 'audio/mp4' },
+      { path: '/tmp/b/shot.png', name: 'shot.png', type: 'image/png' },
+    ]);
+  });
+
+  // Android's document provider often claims nothing at all; the app types the
+  // file by its extension later, so a missing type is absent, never guessed here.
+  it('keeps a file whose type the platform did not know', () => {
+    const share = parseShareLink('vis://share?file=%2Ftmp%2Fa%2Fmemo.m4a&name=memo.m4a');
+
+    expect(share?.files).toEqual([{ path: '/tmp/a/memo.m4a', name: 'memo.m4a' }]);
+  });
+
+  it('names a file after its path when the sender gave no name', () => {
+    const share = parseShareLink('vis://share?file=file%3A%2F%2F%2Ftmp%2FVoice%2520Memo.m4a');
+
+    expect(share?.files?.[0]?.name).toBe('Voice Memo.m4a');
+  });
+
+  // The same staged copy read twice would attach the memo twice.
+  it('drops a repeated path and caps the batch', () => {
+    const many = Array.from({ length: 12 }, (_, index) => `file=%2Ftmp%2F${index}.png`).join('&');
+    const share = parseShareLink(`vis://share?${many}&file=%2Ftmp%2F0.png`);
+
+    expect(share?.files).toHaveLength(8);
+    expect(share?.files?.[0]?.path).toBe('/tmp/0.png');
+  });
+
+  // A photo shared with no caption is still a share: the old rule ("no words, no
+  // share") would have thrown the picture away.
+  it('is a share even with no words at all', () => {
+    expect(parseShareLink('vis://share?file=%2Ftmp%2Fa.png')).toEqual({
+      files: [{ path: '/tmp/a.png', name: 'a.png' }],
+    });
+  });
+
+  it('summarises a share the way a band can hold it', () => {
+    const one = parseShareLink('vis://share?file=%2Ftmp%2Fmemo.m4a');
+    const three = parseShareLink('vis://share?file=%2Fa.png&file=%2Fb.png&file=%2Fc.png');
+    const link = parseShareLink('vis://share?url=https%3A%2F%2Fexample.com%2Fa');
+
+    expect(shareSummary(one)).toBe('memo.m4a');
+    expect(shareSummary(three)).toBe('3 files');
+    expect(shareSummary(link)).toBe('https://example.com/a');
+    expect(shareSummary(null)).toBe('');
+  });
+
+  // Two shares before a composer drains them: words accumulate as words, files as
+  // files — a memo cannot be pasted into a sentence.
+  it('accumulates files across shares that arrive before a drain', () => {
+    receiveSharedText({ text: 'look', files: [{ path: '/tmp/a.png', name: 'a.png' }] });
+    receiveSharedText({ files: [{ path: '/tmp/b.png', name: 'b.png' }] });
+
+    const pending = peekPendingShare();
+    expect(pending?.files?.map((file) => file.name)).toEqual(['a.png', 'b.png']);
+    expect(pending?.text).toBe('look');
+  });
+});
+
 describe('formatShare / appendSharedText', () => {
   it('puts the title first, then the link on its own line, then the text', () => {
     expect(formatShare({ title: 'T', url: 'https://e.com', text: 'note' })).toBe(
@@ -201,7 +272,7 @@ describe('pending slot', () => {
   });
 
   it('delivers to a live listener and stops on unsubscribe', () => {
-    const seen: SharedPayload[] = [];
+    const seen: Array<SharedPayload | null> = [];
     const off = onSharedText((share) => seen.push(share));
     receiveSharedText({ text: 'one' });
     off();

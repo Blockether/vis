@@ -25,6 +25,24 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Ceiling for one shared body; past it the text is truncated, never dropped. */
 const MAX_SHARE_CHARS = 100_000;
 
+/** Files staged by the native side; more than this and the composer refuses. */
+const MAX_SHARE_FILES = 8;
+
+/**
+ * One file the OS handed over, already COPIED by the native side into a place
+ * this process can read: the Android cache dir, the iOS App Group container.
+ * A `content://` URI or a share extension's own temp URL is unreadable from
+ * here, so the path in a `vis://share` link is always a staged copy we own —
+ * and delete the moment its bytes are in the composer.
+ */
+export interface SharedFile {
+  /** Absolute path (or `file://` URL) of the staged copy. */
+  path: string;
+  /** The name the source showed the human. */
+  name: string;
+  /** The media type the platform claimed, when it claimed one. */
+  type?: string;
+}
 export interface SharedPayload {
   /** The shared link, when the source gave one. */
   url?: string;
@@ -34,6 +52,8 @@ export interface SharedPayload {
   title?: string;
   /** When it arrived, for staleness. */
   at?: number;
+  /** Staged files, in the order the OS listed them. */
+  files?: SharedFile[];
 }
 
 /**
@@ -55,13 +75,25 @@ export function parseShareLink(raw: string): SharedPayload | null {
   const path = `${parsed.host}${parsed.pathname}`.replace(/^\/+|\/+$/g, '');
   if (path !== 'share') return null;
   const params = parsed.searchParams;
+  // Files ride as repeated `file=` params, with `name=`/`type=` aligned by
+  // INDEX when the platform knew them — one memo and one photo arriving in the
+  // same share needs no nested encoding, and a sender that knows only paths
+  // still produces a share this reads.
+  const paths = params.getAll('file');
+  const names = params.getAll('name');
+  const types = params.getAll('type');
   const share = normalizeShare({
     url: params.get('url') ?? undefined,
     text: params.get('text') ?? undefined,
     title: params.get('title') ?? undefined,
+    files: paths.map((path, at) => ({
+      path,
+      name: names[at] ?? '',
+      type: types[at] ?? undefined,
+    })),
   });
   // `vis://share` with nothing on it is a launch, not a handoff.
-  return share.url || share.text || share.title ? share : null;
+  return hasSharedContent(share) ? share : null;
 }
 
 function clip(value: string | undefined): string | undefined {
@@ -71,11 +103,47 @@ function clip(value: string | undefined): string | undefined {
   return trimmed.length > MAX_SHARE_CHARS ? trimmed.slice(0, MAX_SHARE_CHARS) : trimmed;
 }
 
+/** The name to show when the sender gave none: whatever the path ends with. */
+function fileName(path: string, given: string | undefined): string {
+  const named = clip(given);
+  if (named) return named;
+  const tail = path.split(/[?#]/u)[0]?.split('/').pop() ?? '';
+  try {
+    return decodeURIComponent(tail) || 'shared-file';
+  } catch {
+    return tail || 'shared-file';
+  }
+}
+
+function normalizeFiles(files: SharedFile[] | undefined): SharedFile[] {
+  if (!Array.isArray(files)) return [];
+  const seen = new Set<string>();
+  const out: SharedFile[] = [];
+  for (const file of files) {
+    const path = clip(file?.path);
+    // The same file shared twice is one attachment; the staged copy is one file
+    // on disk and reading it twice would attach the memo two times.
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const type = clip(file?.type);
+    const name = fileName(path, file?.name);
+    out.push(type ? { path, name, type } : { path, name });
+    if (out.length === MAX_SHARE_FILES) break;
+  }
+  return out;
+}
+
+/** Is there anything to hand a composer? Files count, not just words. */
+export function hasSharedContent(share: SharedPayload | null | undefined): boolean {
+  return !!share && !!(share.url || share.text || share.title || share.files?.length);
+}
 function normalizeShare(share: SharedPayload): SharedPayload {
   const url = clip(share.url);
   const text = clip(share.text);
   const title = clip(share.title);
+  const files = normalizeFiles(share.files);
   const out: SharedPayload = {};
+  if (files.length) out.files = files;
   if (url) out.url = url;
   // Sharing a link from Safari sends the URL as `text` as well; keeping both
   // would paste the same link twice.
@@ -97,6 +165,33 @@ export function formatShare(share: SharedPayload): string {
 }
 
 /**
+ * The share in the words a band can hold — the file when there is one, the
+ * count when there are several, the link otherwise. Files lead: a memo is what
+ * the human watched leave the other app.
+ */
+export function shareSummary(share: SharedPayload | null | undefined): string {
+  if (!hasSharedContent(share)) return '';
+  const files = share?.files ?? [];
+  if (files.length === 1) return files[0]?.name ?? '';
+  if (files.length > 1) return `${files.length} files`;
+  return share?.title ?? share?.url ?? share?.text ?? '';
+}
+
+/**
+ * Fold two shares into one. Text accumulates the way a second dropped link
+ * does; files accumulate as files, because a memo cannot be pasted into a
+ * sentence.
+ */
+function mergeShares(older: SharedPayload, newer: SharedPayload): SharedPayload {
+  const text = appendSharedText(formatShare(older), newer);
+  const files = normalizeFiles([...(older.files ?? []), ...(newer.files ?? [])]);
+  const merged: SharedPayload = { at: Date.now() };
+  if (text) merged.text = text;
+  if (files.length) merged.files = files;
+  return merged;
+}
+
+/**
  * Fold a share into whatever is already typed. Never overwrites the composer:
  * dumping ten links in a row must accumulate, and a half-written prompt must
  * survive the interruption.
@@ -108,7 +203,9 @@ export function appendSharedText(existing: string, share: SharedPayload): string
   return `${existing.replace(/\s+$/, '')}\n${addition}`;
 }
 
-type ShareListener = (share: SharedPayload) => void;
+// `null` says a composer TOOK the parked share — the screens that report one
+// have to stop reporting it, and they learn that here rather than by polling.
+type ShareListener = (share: SharedPayload | null) => void;
 
 const listeners = new Set<ShareListener>();
 let pending: SharedPayload | null = null;
@@ -121,7 +218,7 @@ function parseStored(raw: string | null): SharedPayload | null {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const share = normalizeShare(parsed as SharedPayload);
-    if (!share.url && !share.text && !share.title) return null;
+    if (!hasSharedContent(share)) return null;
     const at = (parsed as SharedPayload).at;
     if (typeof at === 'number' && Date.now() - at > MAX_AGE_MS) return null;
     return { ...share, at: typeof at === 'number' ? at : Date.now() };
@@ -181,9 +278,7 @@ export async function hydratePendingShare(): Promise<SharedPayload | null> {
       // A share can land WHILE the read is in flight. Neither may win: the
       // parked one is older, so it leads, and the live drop follows it.
       const live = pending;
-      pending = live
-        ? { text: appendSharedText(formatShare(stored), live), at: Date.now() }
-        : stored;
+      pending = live ? mergeShares(stored, live) : stored;
     }
     return pending;
   })();
@@ -197,13 +292,13 @@ export async function hydratePendingShare(): Promise<SharedPayload | null> {
  */
 export function receiveSharedText(share: SharedPayload): SharedPayload | null {
   const normalized = normalizeShare(share);
-  if (!normalized.url && !normalized.text && !normalized.title) return null;
+  if (!hasSharedContent(normalized)) return null;
   const merged: SharedPayload = pending
-    ? { text: appendSharedText(formatShare(pending), normalized), at: Date.now() }
+    ? mergeShares(pending, normalized)
     : { ...normalized, at: Date.now() };
   pending = merged;
   void flush();
-  for (const listener of listeners) listener(merged);
+  notify(merged);
   return merged;
 }
 
@@ -212,11 +307,21 @@ export function peekPendingShare(): SharedPayload | null {
   return pending;
 }
 
+function notify(share: SharedPayload | null): void {
+  for (const listener of listeners) listener(share);
+}
 /** The share landed in a composer. Removes it so it is pasted exactly once. */
 export function takePendingShare(): SharedPayload | null {
   const share = pending;
   pending = null;
+  // Always through `flush()`, even on an empty take: a take can happen before the
+  // cold-start read has landed, and `flush()` is what waits for it — returning
+  // early here would leave a parked share unhydrated and lost.
   void flush();
+  // No notify on an empty take, though: a listener that drains on notify would
+  // answer its own message forever.
+  if (!share) return null;
+  notify(null);
   return share;
 }
 
