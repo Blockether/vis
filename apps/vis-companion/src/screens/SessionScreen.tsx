@@ -42,6 +42,7 @@ import {
 import {
   ArrowDownIcon,
   CameraIcon,
+  ClipIcon,
   ImageIcon,
   MicIcon,
   PlusIcon,
@@ -62,9 +63,13 @@ import {
   attachmentsFromFiles,
   capturePhotoAttachment,
   editedAttachment,
+  isAudioMediaType,
   isVideoMediaType,
+  pickDocumentAttachments,
   pickMediaAttachments,
+  type AttachmentLimits,
   type PendingAttachment,
+  type PickAttachmentResult,
 } from "../lib/attachments";
 import { sheetDismissed } from "../lib/image-file";
 import { AttachImageContext } from "../lib/attach-image";
@@ -3918,7 +3923,14 @@ export function SessionScreen({
     };
   }, [draftMessageReady, draftMessageId]);
 
-  async function addAttachments() {
+  // Every chooser ends the same way — the OS sheet, then the ONE gate, then the
+  // composer's own notice — so only the picker itself varies. Keeping that shape
+  // in one place is what lets a third door (Files) exist without a third idea of
+  // what is acceptable or a third way of reporting a refusal.
+  async function chooseAttachments(
+    pick: (limits: AttachmentLimits) => Promise<PickAttachmentResult>,
+    dismissedNotice: string,
+  ) {
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
@@ -3927,23 +3939,16 @@ export function SessionScreen({
       return;
     }
 
-    // iOS/Android's file input hands freshly captured photos to JS as HEIC or
-    // with no MIME type. The native picker transcodes them before this boundary,
-    // so the gateway receives one of its supported image formats.
-    if (!Capacitor.isNativePlatform()) {
-      fileInputRef.current?.click();
-      return;
-    }
-
     // Take the keyboard down HERE, before the sheet: the composer keeps DOM focus
     // across a native sheet, so on cancel nothing puts the keyboard back, and on
     // delivery iOS raises it again itself. Blur first, refocus once it settles.
     const restoreKeyboard = holdKeyboardAcrossSheet(composerRef.current);
     try {
-      const result = await pickMediaAttachments({
+      const result = await pick({
         maxFiles: remaining,
         maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         maxVideoBytes: limits?.max_video_bytes,
+        maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) =>
@@ -3953,46 +3958,45 @@ export function SessionScreen({
         result.rejected.length ? result.rejected.join(" · ") : null,
       );
     } catch (cause) {
+      // A dismissed sheet is a decision, not a failure.
       setComposerNotice(
-        sheetDismissed(cause) ? "No files selected." : (cause as Error).message,
+        sheetDismissed(cause) ? dismissedNotice : (cause as Error).message,
       );
     } finally {
       restoreKeyboard();
     }
   }
 
+  async function addAttachments() {
+    // iOS/Android's file input hands freshly captured photos to JS as HEIC or
+    // with no MIME type. The native picker transcodes them before this boundary,
+    // so the gateway receives one of its supported image formats.
+    if (!Capacitor.isNativePlatform()) {
+      const maximum = capabilities?.features.attachments.max_files ?? 8;
+      if (attachments.length >= maximum) {
+        setComposerNotice(`You can attach up to ${maximum} files`);
+        return;
+      }
+      fileInputRef.current?.click();
+      return;
+    }
+    await chooseAttachments(pickMediaAttachments, "No files selected.");
+  }
+
+  // The gallery sheet only knows the camera roll. A voice memo, a clip someone
+  // sent in a chat, a recording synced from a desktop and a picture saved to
+  // Files instead of Photos are all invisible to it — so on a phone the `+`
+  // could reach none of them however many media types the gateway advertised.
+  // This is the document browser, the same door the web dialog already opens.
+  async function addFiles() {
+    await chooseAttachments(pickDocumentAttachments, "No files selected.");
+  }
+
   // Taking a picture is a DIFFERENT act from picking one: the OS gallery sheet
   // never opens the camera, so this is the composer's shutter. Native only —
   // on web the file input already exposes whatever capture the browser has.
   async function takePhoto() {
-    const limits = capabilities?.features.attachments;
-    const maximum = limits?.max_files ?? 8;
-    if (attachments.length >= maximum) {
-      setComposerNotice(`You can attach up to ${maximum} files`);
-      return;
-    }
-
-    // The camera sheet closes the keyboard the same way the picker does.
-    const restoreKeyboard = holdKeyboardAcrossSheet(composerRef.current);
-    try {
-      const result = await capturePhotoAttachment({
-        maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
-        mediaTypes: limits?.media_types,
-      });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
-    } catch (cause) {
-      // A cancelled shutter is a decision, not a failure.
-      setComposerNotice(
-        sheetDismissed(cause) ? "No photo taken." : (cause as Error).message,
-      );
-    } finally {
-      restoreKeyboard();
-    }
+    await chooseAttachments(capturePhotoAttachment, "No photo taken.");
   }
 
   async function onFilesPicked(fileList: FileList | null) {
@@ -4013,6 +4017,7 @@ export function SessionScreen({
         maxFiles: remaining,
         maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         maxVideoBytes: limits?.max_video_bytes,
+        maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) =>
@@ -4111,6 +4116,7 @@ export function SessionScreen({
         maxFiles: remaining,
         maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         maxVideoBytes: limits?.max_video_bytes,
+        maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) =>
@@ -4143,6 +4149,7 @@ export function SessionScreen({
           maxFiles: 1,
           maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
           maxVideoBytes: limits?.max_video_bytes,
+          maxAudioBytes: limits?.max_audio_bytes,
           mediaTypes: limits?.media_types,
         },
       );
@@ -4169,6 +4176,7 @@ export function SessionScreen({
       const next = await editedAttachment(target, edited, {
         maxFileBytes: limits?.max_file_bytes,
         maxVideoBytes: limits?.max_video_bytes,
+        maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) =>
@@ -5580,6 +5588,16 @@ export function SessionScreen({
                         playsInline
                         preload="metadata"
                       />
+                    ) : isAudioMediaType(attachment.media_type) ? (
+                      // A recording has no thumbnail to show and nothing to draw
+                      // on: what identifies it is its NAME, so the chip says that
+                      // and nothing it cannot honestly paint.
+                      <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5">
+                        <MicIcon className="size-4 shrink-0" />
+                        <span className="truncate font-mono text-chip text-dialog-hint-key">
+                          {attachment.filename}
+                        </span>
+                      </span>
                     ) : (
                       <ExpandableImage
                         src={attachment.previewUrl}
@@ -5669,13 +5687,15 @@ export function SessionScreen({
                 onChange={(event) => void onFilesPicked(event.target.files)}
               />
 
-              {/* ONE attachment button. The gallery sheet has no shutter, so "take
-                a photo" still needs its own path — without it the only way to
-                attach what you are LOOKING at is to leave, open the camera app,
-                come back and hunt for the file. It lives in this menu instead of
-                a second icon crowding the composer. Web keeps the direct file
-                dialog: its input already exposes whatever capture the browser
-                has. */}
+              {/* ONE attachment button, three doors. The gallery sheet has no
+                shutter, so "take a photo" needs its own path — without it the only
+                way to attach what you are LOOKING at is to leave, open the camera
+                app, come back and hunt for the file. And the gallery cannot see
+                past the camera roll, so a voice memo, a document or a clip that
+                arrived in a chat needs the FILES browser or it cannot be attached
+                at all. Three rows in one menu instead of three icons crowding the
+                composer. Web keeps the direct file dialog: one input already
+                offers every accepted type and whatever capture the browser has. */}
               <div
                 className="relative shrink-0"
                 onKeyDown={(event) => {
@@ -5720,6 +5740,14 @@ export function SessionScreen({
                           void addAttachments();
                         }}
                       />
+                      <MenuItem
+                        title="Files"
+                        icon={<ClipIcon />}
+                        onSelect={() => {
+                          setAttachMenuOpen(false);
+                          void addFiles();
+                        }}
+                      />
                     </div>
                   </>
                 )}
@@ -5745,13 +5773,13 @@ export function SessionScreen({
                   }
                   label={
                     Capacitor.isNativePlatform()
-                      ? "Attach a photo or video"
-                      : "Choose photos or videos"
+                      ? "Attach a photo, clip, recording or file"
+                      : "Choose photos, clips, recordings or files"
                   }
                   title={
                     Capacitor.isNativePlatform()
-                      ? "Attach a photo or video"
-                      : "Choose photos or videos"
+                      ? "Attach a photo, clip, recording or file"
+                      : "Choose photos, clips, recordings or files"
                   }
                 >
                   <PlusIcon

@@ -29,9 +29,22 @@ const DEFAULT_IMAGE_MEDIA_TYPES = [
 // has to admit the type, size it, and play it back.
 const DEFAULT_VIDEO_MEDIA_TYPES = ['video/mp4', 'video/quicktime'];
 
+// A recording attaches the same way, and the engine is honest about it in the
+// other direction: no multimodal wire has a block for audio, so the gateway
+// stores the bytes for the HUMAN and NAMES the file to the model. The app owes
+// it the same three things — admit the type, size it, play it back.
+const DEFAULT_AUDIO_MEDIA_TYPES = [
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/wav',
+  'audio/ogg',
+  'audio/flac',
+];
+
 const DEFAULT_MEDIA_TYPES = [
   ...DEFAULT_IMAGE_MEDIA_TYPES,
   ...DEFAULT_VIDEO_MEDIA_TYPES,
+  ...DEFAULT_AUDIO_MEDIA_TYPES,
 ];
 
 // Intake ceiling, not the provider's: the gateway shrinks an oversize still on
@@ -41,16 +54,25 @@ const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024;
 // A clip is megabytes where a screenshot is kilobytes; the gateway advertises
 // its own ceiling (`max_video_bytes`) and this only backstops an older one.
 const DEFAULT_MAX_VIDEO_BYTES = 32 * 1024 * 1024;
+// A recording answers to the clip's ceiling rather than the still's: minutes of
+// speech weigh what a screen recording does, and neither ever ships verbatim.
+const DEFAULT_MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 
 /** Playable-not-still: the ONE test both the size limit and the preview key off. */
 export function isVideoMediaType(media: string | null | undefined): boolean {
   return !!media && media.startsWith('video/');
 }
 
+/** Audible-not-visible: a recording has no thumbnail, only a player. */
+export function isAudioMediaType(media: string | null | undefined): boolean {
+  return !!media && media.startsWith('audio/');
+}
+
 export interface AttachmentLimits {
   maxFiles?: number;
   maxFileBytes?: number;
   maxVideoBytes?: number;
+  maxAudioBytes?: number;
   mediaTypes?: string[];
 }
 
@@ -126,12 +148,16 @@ async function prepareAttachment(
 function attachmentGate({
   maxFileBytes = DEFAULT_MAX_FILE_BYTES,
   maxVideoBytes = DEFAULT_MAX_VIDEO_BYTES,
+  maxAudioBytes = DEFAULT_MAX_AUDIO_BYTES,
   mediaTypes = DEFAULT_MEDIA_TYPES,
 }: AttachmentLimits) {
   return {
     accepts: (mimeType: string) => mediaTypes.includes(mimeType),
-    limitFor: (mimeType: string) =>
-      isVideoMediaType(mimeType) ? maxVideoBytes : maxFileBytes,
+    limitFor: (mimeType: string) => {
+      if (isAudioMediaType(mimeType)) return maxAudioBytes;
+      if (isVideoMediaType(mimeType)) return maxVideoBytes;
+      return maxFileBytes;
+    },
   };
 }
 
@@ -175,6 +201,48 @@ async function collectAttachments(
   return { attachments, rejected };
 }
 
+// The document browser is the one picker that hands back a file the platform
+// could not name: an iCloud Drive item and a voice memo routinely arrive with an
+// empty `mimeType`. The extension is then the only claim there is — and it stays
+// a claim: the gateway sniffs every payload from magic bytes and never trusts
+// the label, so a wrong guess is refused there instead of believed here.
+const EXTENSION_MEDIA_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  flac: 'audio/flac',
+};
+
+/** What a picked file CLAIMS to be: the platform's word, else its extension. */
+export function candidateMediaType(
+  name: string,
+  declared: string | null | undefined,
+): string {
+  if (declared) return declared;
+  const extension = (name.split('.').pop() ?? '').toLowerCase();
+  return EXTENSION_MEDIA_TYPES[extension] ?? '';
+}
+
+/** Picker entries as candidates — the one shape every chooser funnels into. */
+function pickedCandidates(files: PickedFile[]): MediaCandidate[] {
+  return files.map((file) => ({
+    name: file.name,
+    mimeType: candidateMediaType(file.name, file.mimeType),
+    blob: () => pickedFileBlob(file),
+  }));
+}
+
 export async function pickMediaAttachments(
   limits: AttachmentLimits = {},
 ): Promise<PickAttachmentResult> {
@@ -191,14 +259,26 @@ export async function pickMediaAttachments(
       })
     : await FilePicker.pickFiles({ types: mediaTypes, readData: true });
 
-  return collectAttachments(
-    result.files.map((file) => ({
-      name: file.name,
-      mimeType: file.mimeType,
-      blob: () => pickedFileBlob(file),
-    })),
-    limits,
-  );
+  return collectAttachments(pickedCandidates(result.files), limits);
+}
+
+/**
+ * The FILES door: the platform's own document browser, not its photo gallery.
+ *
+ * The gallery sheet can only offer what the camera roll holds. A voice memo, a
+ * clip that arrived in a chat, a recording synced from a desktop and a picture
+ * that was saved to Files instead of Photos all live somewhere the gallery
+ * cannot see — so on a phone the `+` could reach none of them, however many
+ * media types the gateway advertised. `pickFiles` is the same call the web
+ * dialog already makes, and the same gate then judges the candidate: one
+ * chooser more, no second idea of what is acceptable.
+ */
+export async function pickDocumentAttachments(
+  limits: AttachmentLimits = {},
+): Promise<PickAttachmentResult> {
+  const types = limits.mediaTypes ?? DEFAULT_MEDIA_TYPES;
+  const result = await FilePicker.pickFiles({ types, readData: true });
+  return collectAttachments(pickedCandidates(result.files), limits);
 }
 
 /** Capture one new photo with the native camera, then apply the normal attachment gate. */
@@ -254,8 +334,12 @@ export async function attachmentsFromFiles(
     files.map((file) => ({
       name:
         file.name ||
-        (isVideoMediaType(file.type) ? 'pasted-clip' : 'pasted-image'),
-      mimeType: file.type,
+        (isVideoMediaType(file.type)
+          ? 'pasted-clip'
+          : isAudioMediaType(file.type)
+            ? 'pasted-recording'
+            : 'pasted-image'),
+      mimeType: candidateMediaType(file.name, file.type),
       blob: async () => file,
     })),
     limits,

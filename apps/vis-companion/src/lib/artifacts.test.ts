@@ -5,6 +5,7 @@ import {
   artifactMedia,
   artifactTotalLabel,
   attachmentBytes,
+  attachmentIsAudio,
   attachmentIsDoc,
   attachmentIsImage,
   attachmentIsLive,
@@ -100,17 +101,22 @@ describe("attachment classification", () => {
     expect(attachmentIsImage({ index: 0, kind: "image" })).toBe(true);
     expect(attachmentIsImage({ index: 0, media_type: "text/csv" })).toBe(false);
     expect(attachmentIsVideo({ index: 0, media_type: "video/mp4" })).toBe(true);
+    expect(attachmentIsAudio({ index: 0, media_type: "audio/mp4" })).toBe(true);
+    expect(attachmentIsAudio({ index: 0, media_type: "video/mp4" })).toBe(false);
     expect(attachmentIsDoc({ index: 0, media_type: "application/pdf" })).toBe(
       true,
     );
     expect(attachmentIsDoc({ index: 0, kind: "doc" })).toBe(true);
   });
 
-  it("puts a still and a clip on the same rail and nothing else", () => {
+  it("puts a still, a clip and a recording on the same rail and nothing else", () => {
     expect(attachmentIsPlayable({ index: 0, media_type: "image/png" })).toBe(
       true,
     );
     expect(attachmentIsPlayable({ index: 0, media_type: "video/mp4" })).toBe(
+      true,
+    );
+    expect(attachmentIsPlayable({ index: 0, media_type: "audio/mpeg" })).toBe(
       true,
     );
     expect(
@@ -141,6 +147,8 @@ describe("attachment classification", () => {
   it("sorts every attachment into exactly one kind", () => {
     expect(artifactKind({ index: 0, media_type: "image/png" })).toBe("image");
     expect(artifactKind({ index: 0, media_type: "video/mp4" })).toBe("video");
+    expect(artifactKind({ index: 0, media_type: "audio/mp4" })).toBe("audio");
+    expect(artifactKind({ index: 0, media_type: "audio/mpeg" })).toBe("audio");
     expect(artifactKind({ index: 0, media_type: "text/html" })).toBe("doc");
     expect(artifactKind({ index: 0, media_type: "text/csv" })).toBe("file");
     expect(artifactKind({ index: 0 })).toBe("file");
@@ -264,6 +272,7 @@ describe("collecting what a session produced", () => {
       ),
     );
     expect([...covered].sort()).toEqual([
+      "audio",
       "doc",
       "file",
       "image",
@@ -273,6 +282,7 @@ describe("collecting what a session produced", () => {
     expect(ARTIFACT_FILTERS[0].kinds).toEqual([
       "image",
       "video",
+      "audio",
       "live",
       "doc",
       "file",

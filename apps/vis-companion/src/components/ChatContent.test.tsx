@@ -175,6 +175,38 @@ describe("user bubble pictures", () => {
   });
 });
 
+// A voice memo the human sent used to reach this bubble and paint NOTHING: the
+// rail admitted `image/*` and `video/*` only, so the recording the gateway had
+// stored was invisible in the very message that carried it.
+describe("user bubble recordings", () => {
+  const html = () =>
+    renderToStaticMarkup(
+      <UserMessage
+        attachments={[
+          {
+            filename: "memo.m4a",
+            media_type: "audio/mp4",
+            base64: "AAAAIGZ0eXBNNEEg",
+            size: 12,
+          },
+        ]}
+      >
+        {"listen to this"}
+      </UserMessage>,
+    );
+
+  it("plays what it cannot show", () => {
+    expect(html()).toMatch(/<audio[^>]*controls/u);
+    expect(text(html())).toContain("memo.m4a");
+    expect(text(html())).toContain("M4A");
+  });
+
+  // Nothing ever decodes into it, so the 4:3 box a still reserves would be a
+  // frame around silence.
+  it("never stands a recording on a picture's plate", () => {
+    expect(html()).not.toContain(mediaFrameClass);
+  });
+});
 // ONE picture is a plate; several are a GALLERY. A transcript where somebody
 // dropped four screenshots used to be four 60svh plates stacked down the
 // column — a wall to scroll past rather than something to look at.

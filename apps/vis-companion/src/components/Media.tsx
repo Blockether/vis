@@ -8,6 +8,7 @@ import {
   mediaTileFrameClass,
 } from "../lib/media-frame";
 import { ImageGallery } from "../lib/gallery";
+import { MicIcon } from "./icons";
 
 /**
  * ONE picture on its own plate: the reserved frame from `lib/media-frame` with
@@ -38,6 +39,46 @@ export function MediaPlate({
     // matching.
     <figure className="mt-2.5 min-w-0 first:mt-0">
       <div className={mediaFrameClass}>{children}</div>
+      {name ? (
+        <figcaption className={mediaCaptionClass}>
+          <span className="min-w-0 flex-1 truncate">{name}</span>
+          {meta ? (
+            <span className="shrink-0 uppercase tracking-wider opacity-70">
+              {meta}
+            </span>
+          ) : null}
+        </figcaption>
+      ) : null}
+    </figure>
+  );
+}
+
+/**
+ * ONE recording as a ROW: the platform's own player, and the file name under it.
+ *
+ * A voice memo has no picture, so the reserved 4:3 box a still or a clip stands in
+ * would be a frame around silence — and a poster frame that cannot be started is a
+ * picture that lies. What identifies a recording is its NAME; what the reader wants
+ * is the control that starts it, at the width of the column and at a height a thumb
+ * can hit.
+ */
+export function MediaRecording({
+  name,
+  meta,
+  children,
+}: {
+  /** The caption's file name. Without one the row carries no caption at all. */
+  name?: string;
+  /** The caption's right half, e.g. `M4A · 412KB`. */
+  meta?: string;
+  children: ReactNode;
+}) {
+  return (
+    <figure className="mt-2.5 min-w-0 first:mt-0">
+      <div className="flex min-w-0 items-center gap-2 border border-code-edge bg-code px-2 py-2">
+        <MicIcon className="size-4 shrink-0 text-dialog-hint" />
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
       {name ? (
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>

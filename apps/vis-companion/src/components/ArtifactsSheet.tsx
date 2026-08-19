@@ -45,7 +45,7 @@ import { LiveArtifact } from "./LiveArtifact";
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
 import { readArtifactText } from "./TextArtifact";
-import { AlertIcon, ClipIcon, PlayIcon } from "./icons";
+import { AlertIcon, ClipIcon, MicIcon, PlayIcon } from "./icons";
 import {
   Chip,
   DialogHeader,
@@ -489,6 +489,19 @@ function Thumb({
     );
   }
 
+  // A recording has no frame to show: the mark says what it IS, and the row's
+  // own name says which one.
+  if (artifact.kind === "audio") {
+    return (
+      <span
+        className={`grid place-items-center bg-code text-dialog-hint ${box}`}
+        aria-hidden="true"
+      >
+        <MicIcon className="size-7" />
+      </span>
+    );
+  }
+
   if (artifact.kind === "video") {
     return (
       <span
@@ -767,6 +780,16 @@ function ArtifactDetail({
           if (attach) attach(edited, editedFilename(artifact.name));
         }}
       />
+    );
+  }
+
+  if (artifact.kind === "audio") {
+    return (
+      <DetailOverlay name={artifact.name} onClose={onClose}>
+        <div className="p-3">
+          <audio src={url} controls preload="metadata" className="h-11 w-full" />
+        </div>
+      </DetailOverlay>
     );
   }
 

@@ -7,7 +7,14 @@ import {
   mediaPendingClass,
   mediaTileFrameClass,
 } from "../lib/media-frame";
-import { MediaGrid, MediaPlate, MediaTile, mediaMeta, mediaSummary } from "./Media";
+import {
+  MediaGrid,
+  MediaPlate,
+  MediaRecording,
+  MediaTile,
+  mediaMeta,
+  mediaSummary,
+} from "./Media";
 
 /** The frame element of a rendered plate/tile, class list and all. */
 const frame = (html: string) =>
@@ -128,5 +135,28 @@ describe("a plate's caption", () => {
   it("names the format from the file, then its weight", () => {
     expect(mediaMeta({ filename: "shot.png", size: 8 })).toBe("PNG · 8B");
     expect(mediaMeta({ media_type: "image/webp" })).toBe("WEBP");
+  });
+});
+
+// A recording is the one artifact with nothing to paint. Given the plate it
+// would reserve a 4:3 box around silence and caption it like a picture that
+// failed to decode.
+describe("MediaRecording", () => {
+  const html = renderToStaticMarkup(
+    <MediaRecording name="memo.m4a" meta="M4A · 8B">
+      <audio controls />
+    </MediaRecording>,
+  );
+
+  it("reserves no picture box", () => {
+    expect(html).not.toContain(mediaFrameClass);
+    expect(html).not.toContain(mediaTileFrameClass);
+  });
+
+  it("names the recording under the player it hands over", () => {
+    expect(html).toContain("<audio");
+    expect(html).toContain("<figcaption");
+    expect(html).toContain("memo.m4a");
+    expect(html).toContain("M4A · 8B");
   });
 });

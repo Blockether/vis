@@ -17,6 +17,7 @@ import { LiveRunRow } from "./LiveArtifact";
 import { AlertIcon, ArrowOutIcon, ChevronIcon } from "./icons";
 import {
   attachmentBytes,
+  attachmentIsAudio,
   attachmentIsDoc,
   attachmentIsImage,
   attachmentIsLive,
@@ -78,6 +79,7 @@ import {
 import {
   MediaGrid,
   MediaPlate,
+  MediaRecording,
   MediaTile,
   mediaMeta,
   mediaSummary,
@@ -1634,7 +1636,8 @@ const AttachmentTile = memo(function AttachmentTile({
   const iterationId = attachment.iteration_id ?? "";
   const index = attachment.index ?? 0;
   const isVideo = attachmentIsVideo(attachment);
-  const isPlayable = isVideo || attachmentIsImage(attachment);
+  const isAudio = attachmentIsAudio(attachment);
+  const isPlayable = isVideo || isAudio || attachmentIsImage(attachment);
   const name = attachment.filename || "attachment";
 
   useEffect(() => {
@@ -1670,6 +1673,35 @@ const AttachmentTile = memo(function AttachmentTile({
         <ArrowOutIcon className="size-3" />
         <span className="min-w-0 truncate">{name}</span>
       </div>
+    );
+  }
+
+  // A RECORDING is a ROW, not a plate: there is no picture to reserve a box for,
+  // and the reader's whole question about it is answered by its name and the one
+  // control that starts it.
+  if (isAudio) {
+    return (
+      <MediaRecording name={name} meta={mediaMeta(attachment)}>
+        {failed ? (
+          <span className="flex min-w-0 items-center gap-1.5 font-mono text-chip text-footer-muted">
+            <AlertIcon className="size-3" />
+            <span className="min-w-0 truncate">{name}</span>
+          </span>
+        ) : !url ? (
+          <div
+            className="h-11 w-full animate-pulse bg-thinking-surface"
+            aria-hidden="true"
+          />
+        ) : (
+          <audio
+            src={url}
+            controls
+            preload="metadata"
+            onError={() => setFailed(true)}
+            className="h-11 w-full"
+          />
+        )}
+      </MediaRecording>
     );
   }
 
@@ -1875,9 +1907,13 @@ export const AttachmentRail = memo(function AttachmentRail({
   const playable = page.shown.filter(attachmentIsPlayable);
   // A clip is never a gallery tile: at ~183px the platform's own controls do not
   // fit, and a still frame with no way to start it is a picture that lies. Clips
-  // keep the plate; the pictures beside them still become the gallery.
+  // keep the plate; the pictures beside them still become the gallery. A recording
+  // has no frame at all, so it leaves the picture rail entirely.
+  const recordings = playable.filter(attachmentIsAudio);
   const clips = playable.filter(attachmentIsVideo);
-  const pictures = playable.filter((entry) => !attachmentIsVideo(entry));
+  const pictures = playable.filter(
+    (entry) => !attachmentIsVideo(entry) && !attachmentIsAudio(entry),
+  );
   const layout = mediaGroupLayout(pictures.length);
   const gallery = pictures.map((attachment, at) => (
     <AttachmentTile
@@ -1917,6 +1953,15 @@ export const AttachmentRail = memo(function AttachmentRail({
 
   return (
     <>
+      {recordings.map((attachment) => (
+        <AttachmentTile
+          key={`rec-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+          client={client}
+          sid={sid}
+          attachment={attachment}
+          layout="plate"
+        />
+      ))}
       {clips.map((attachment) => (
         <AttachmentTile
           key={`${attachment.iteration_id ?? "iter"}-${attachment.index}`}
@@ -3088,16 +3133,23 @@ export const UserMessage = memo(function UserMessage({
       (a.source ?? "user") === "user" &&
       !!a.base64 &&
       (!!a.media_type?.startsWith("image/") ||
-        !!a.media_type?.startsWith("video/")),
+        !!a.media_type?.startsWith("video/") ||
+        !!a.media_type?.startsWith("audio/")),
   );
   // The very rule the assistant rail follows (`mediaGroupLayout`): ONE picture
   // is a plate with its own caption, several are a gallery. A clip always keeps
-  // the plate, since the platform's controls do not fit a gallery tile.
+  // the plate, since the platform's controls do not fit a gallery tile, and a
+  // recording is a row of its own because it has nothing to paint.
+  const recordings = mediaAttachments.filter((a) =>
+    Boolean(a.media_type?.startsWith("audio/")),
+  );
   const clips = mediaAttachments.filter((a) =>
     Boolean(a.media_type?.startsWith("video/")),
   );
   const pictures = mediaAttachments.filter(
-    (a) => !a.media_type?.startsWith("video/"),
+    (a) =>
+      !a.media_type?.startsWith("video/") &&
+      !a.media_type?.startsWith("audio/"),
   );
   const layout = mediaGroupLayout(pictures.length);
   // These bytes are inline, so there is no pulse to swap out — but a picture
@@ -3168,6 +3220,22 @@ export const UserMessage = memo(function UserMessage({
         <div className="mt-2.5 min-w-0">
           {/* The clip the user sent replays from the SAME DB-owned bytes as a
               picture, so it survives a restart after the source file is gone. */}
+          {/* A recording the user sent replays from those same bytes — it just
+              has no picture, so it stands as a row rather than on a plate. */}
+          {recordings.map((att, index) => (
+            <MediaRecording
+              key={att.id ?? `rec-${index}`}
+              name={att.filename}
+              meta={mediaMeta(att)}
+            >
+              <audio
+                src={attachmentSrc(att)}
+                controls
+                preload="metadata"
+                className="h-11 w-full"
+              />
+            </MediaRecording>
+          ))}
           {clips.map((att, index) => (
             <MediaPlate
               key={att.id ?? `clip-${index}`}

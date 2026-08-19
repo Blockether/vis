@@ -111,6 +111,11 @@ export function attachmentIsVideo(attachment: IterationAttachment): boolean {
   return (attachment.media_type ?? "").startsWith("video/");
 }
 
+// A RECORDING is what the human asked to HEAR — a voice memo, a dictation, a clip
+// of a call. It has no frame to paint, so nothing here tries to give it one.
+export function attachmentIsAudio(attachment: IterationAttachment): boolean {
+  return (attachment.media_type ?? "").startsWith("audio/");
+}
 // A PDF, an HTML page or a written note is a DOCUMENT: `attach` clamps it to
 // `audience: "user"`, so its bytes never reach the model and the app owes the
 // human a reader for them instead of one more line in the recorded-files row.
@@ -134,10 +139,15 @@ export function attachmentIsLive(
 ): boolean {
   return baseMedia(attachment.media_type) === LIVE_ARTIFACT_MEDIA;
 }
-// A still and a clip belong to the SAME rail: both are something the user asked
-// to SEE, so both paint where they were made. Everything else is a recorded file.
+// A still, a clip and a recording belong to the SAME rail: each is something the
+// user asked to SEE or HEAR, so each plays where it was made. Everything else is
+// a recorded file.
 export function attachmentIsPlayable(attachment: IterationAttachment): boolean {
-  return attachmentIsImage(attachment) || attachmentIsVideo(attachment);
+  return (
+    attachmentIsImage(attachment) ||
+    attachmentIsVideo(attachment) ||
+    attachmentIsAudio(attachment)
+  );
 }
 
 export function attachmentBytes(bytes?: number): string {
@@ -149,16 +159,23 @@ export function attachmentBytes(bytes?: number): string {
 }
 
 /**
- * The five things an artifact can BE, in the order of how much the app can do
- * with one: a picture it can zoom and draw on, a clip it can play, a settled live
- * view it can re-open and page the log of, a document it can read in a sandboxed
- * frame, and a file it can only name.
+ * The six things an artifact can BE, in the order of how much the app can do
+ * with one: a picture it can zoom and draw on, a clip it can play, a recording it
+ * can play but never show, a settled live view it can re-open and page the log of,
+ * a document it can read in a sandboxed frame, and a file it can only name.
  */
-export type ArtifactKind = "image" | "video" | "live" | "doc" | "file";
+export type ArtifactKind =
+  | "image"
+  | "video"
+  | "audio"
+  | "live"
+  | "doc"
+  | "file";
 
 export function artifactKind(attachment: IterationAttachment): ArtifactKind {
   if (attachmentIsImage(attachment)) return "image";
   if (attachmentIsVideo(attachment)) return "video";
+  if (attachmentIsAudio(attachment)) return "audio";
   if (attachmentIsLive(attachment)) return "live";
   if (attachmentIsDoc(attachment)) return "doc";
   return "file";
@@ -407,8 +424,9 @@ export function withSavedAttachment(
  * sheet loudly instead of only from one chip.
  */
 export const ARTIFACT_FILTERS: { label: string; kinds: ArtifactKind[] }[] = [
-  { label: "All", kinds: ["image", "video", "live", "doc", "file"] },
+  { label: "All", kinds: ["image", "video", "audio", "live", "doc", "file"] },
   { label: "Pictures", kinds: ["image", "video"] },
+  { label: "Recordings", kinds: ["audio"] },
   { label: "Runs", kinds: ["live"] },
   { label: "Documents", kinds: ["doc"] },
   { label: "Files", kinds: ["file"] },

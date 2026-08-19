@@ -551,10 +551,14 @@ export interface GatewayCapabilities {
       media_types: string[];
       /** The subset of `media_types` that is a clip, not a still. */
       video_media_types?: string[];
+      /** The subset of `media_types` that is a recording: audible, never pixels. */
+      audio_media_types?: string[];
       max_files: number;
       max_file_bytes: number;
       /** Clips carry their own, much larger ceiling. */
       max_video_bytes?: number;
+      /** A recording answers to the clip's ceiling, not the still's. */
+      max_audio_bytes?: number;
     };
     voice: {
       enabled: boolean;

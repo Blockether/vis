@@ -444,8 +444,8 @@ describe("the artifacts sheet", () => {
     const html = sheet([document]);
     expect(html).toContain('aria-label="Pictures, 0 artifacts"');
     expect(html).toContain('aria-label="Documents, 1 artifacts"');
-    // The strip keeps its shape: a disabled chip is still five chips wide.
-    expect(html.match(/aria-pressed=/g)).toHaveLength(5);
+    // The strip keeps its shape: a disabled chip is still one of six chips.
+    expect(html.match(/aria-pressed=/g)).toHaveLength(6);
     expect(html).toContain('disabled=""');
   });
 
@@ -472,8 +472,8 @@ describe("the artifacts sheet", () => {
     expect(html).not.toContain("build.log, LOG");
     expect(text(html)).toContain("build.log");
     expect(html.match(/<button/g)).toHaveLength(
-      // close + five filters + two openable tiles
-      8,
+      // close + six filters + two openable tiles
+      9,
     );
   });
 
