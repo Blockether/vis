@@ -3717,8 +3717,8 @@
           (expect (str/includes? txt "▾ [Transcription #1: memo.m4a]"))
           (expect (str/includes? txt "buy milk and call back"))))
     (it "wraps the spoken words on spaces, not mid-word like a paste"
-        ;; The payload rides a code block - the paste paper - and code wraps by
-        ;; column, so at a narrow width the memo used to read "voice attachmen / ts".
+        ;; Regression: the payload used to ride a CODE block - the paste paper - and
+        ;; code wraps by column, so at a narrow width the memo read "voice attachmen / ts".
         (let [prose
               [:ast {}
                [:code {:lang "vis-transcript"}
@@ -3729,6 +3729,45 @@
 
           (expect (str/includes? txt "attachments"))
           (expect (nil? (re-find #"attachmen\s*\n" txt)))))
+    (it "paints the words as a QUOTATION: curly quotes, italic, justified"
+        ;; Regression: speech on code paper read as machine output. A memo is somebody
+        ;; talking, so the words are quoted, slanted and set flush like every other
+        ;; prose block the renderer paints - never a mono column.
+        (let [node
+              [:code {:lang "vis-transcript"}
+               (str "[Transcription #1: memo.m4a]\n"
+                    "transcription support for voice attachments and a bit more speech here\n")]
+
+              lines
+              (mapv :line (@#'render/paste-disclosure-entries node 40 (opts {[sid node-id] true})))
+
+              body
+              (remove str/blank? (rest lines))
+
+              plain
+              (mapv (fn [l]
+                      (-> l
+                          (str/replace p/INLINE_ITALIC_ON "")
+                          (str/replace p/INLINE_ITALIC_OFF "")))
+                    body)]
+
+          ;; The whole utterance sits inside ONE pair of curly quotes.
+          (expect (str/includes? (first plain) "“transcription"))
+          (expect (str/includes? (last plain) "here”"))
+          ;; ... every row of it slanted ...
+          (expect (every? (fn [l]
+                            (str/includes? l p/INLINE_ITALIC_ON))
+                          body))
+          ;; ... and a line the wrapper broke is stretched flush, not ragged.
+          (expect (some (fn [l]
+                          (str/includes? l "  "))
+                        (butlast plain)))
+          ;; The bare words - no quotes, no stretch - are what a click copies.
+          (expect (= "transcription support for voice attachments and a bit more speech here\n"
+                     (:text (:meta (last (@#'render/paste-disclosure-entries
+                                          node
+                                          40
+                                          (opts {[sid node-id] true})))))))))
     (it "a paste's expansion state cannot open it"
         (let [txt (:text
                     (render/format-answer-markdown-data ast 76 (opts {[sid paste-node-id] true})))]

@@ -4315,21 +4315,32 @@
                                  :session-id session-id
                                  :node-id node-id})
 
-        ;; A paste is CODE: a hard wrap keeps its columns honest. A transcript is
-        ;; SPEECH, where a break mid-word ("attachmen/ts") only makes prose look like
-        ;; code, so its words are wrapped on spaces FIRST and the block paints lines
-        ;; that already fit. The copy payload stays the unwrapped original.
-        body-payload
+        ;; A paste is CODE and paints as code: a hard wrap keeps its columns honest,
+        ;; because its columns ARE the content. A transcript is SPEECH, and speech
+        ;; painted on code paper reads as machine output — a mono column, wrapped by
+        ;; width, breaking mid-word ("attachmen/ts"). So the words go through the
+        ;; QUOTE block instead: word-wrapped by the prose walker, italic (`:em`), in
+        ;; curly quotes, and full-justified to the bubble the way every other prose
+        ;; block in this renderer is. It is a quotation of the audio above it, and it
+        ;; looks like one. The COPY payload stays the bare words — no quotes, no
+        ;; stretch — because that is what a reader pastes.
+        body-ast
         (if (= :transcript kind)
-          (str/join "\n" (wrap-text payload (max 8 (- (long content-w) 4))))
-          payload)
+          ;; TRIMMED before it is quoted: the fence payload ends in a newline, and a
+          ;; trailing break inside a paragraph pushes the closing quote onto a line of
+          ;; its own with a gap in front of it.
+          [:ast {} [:quote {} [:p {} [:em {} [:span {} (str "“" (str/trim payload) "”")]]]]]
+          [:ast {} [:code {:wrap? true} payload]])
 
         body
         (when expanded?
-          (tag-copy-block-body
-            (vec (layout/ast->entries [:ast {} [:code {:wrap? true} body-payload]] content-w opts))
-            node-id
-            payload))]
+          (tag-copy-block-body (vec (layout/ast->entries body-ast
+                                                         content-w
+                                                         (cond-> opts
+                                                           (= :transcript kind)
+                                                           (assoc :justify? true))))
+                               node-id
+                               payload))]
 
     (vec (concat header body))))
 
