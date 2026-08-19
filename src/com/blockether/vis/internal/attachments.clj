@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.attachments
-  "User-message image and video attachments.
+  "User-message image, video and audio attachments.
 
    Dropping a file onto the terminal pastes its PATH into the input (the
    terminal's drop behavior — same mechanism pi relies on). At turn start
@@ -9,10 +9,12 @@
    gets the same behavior because the scan runs in the engine,
    not the channel.
 
-   Only files the model can genuinely consume are attached: the MIME type
-   is sniffed from magic bytes (pi-parity: jpeg / non-animated png / gif /
-   webp / bmp, plus MP4/QuickTime clips) or, for SVG, from the markup head --
-   never trusted from the extension alone.
+   What a file IS is sniffed from magic bytes (pi-parity: jpeg / non-animated
+   png / gif / webp / bmp, plus MP4/QuickTime clips and mp3/m4a/wav/ogg/flac
+   recordings) or, for SVG, from the markup head -- never trusted from the
+   extension alone. A container the model cannot consume is still attached: a
+   recording is kept for the HUMAN and NAMED to the model
+   ([[model-blind-media-type?]]), the same route a PDF already takes.
 
    Storing and SENDING are deliberately separate concerns:
 
@@ -59,6 +61,13 @@
    32MB ceiling covers a normal screen recording or a phone clip."
   (* 32 1024 1024))
 
+(def max-audio-bytes
+  "Per-recording byte cap. A recording never reaches a provider at all --
+   it is stored, played back by the human, and NAMED to the model
+   ([[model-blind-media-type?]]) -- so this bounds the original the session
+   keeps and the memory one drop can cost, nothing on any wire. The same 32MB
+   ceiling a clip answers to covers a long voice memo or an interview take."
+  (* 32 1024 1024))
 (def max-image-count
   "Attachment count cap per user message. Guards against a pathological
    message (e.g. a pasted directory listing) ballooning the request."
@@ -219,17 +228,24 @@
   (when (>= (alength b) (+ off 4))
     (str/lower-case (String. b (int off) 4 StandardCharsets/US_ASCII))))
 
+(def audio-brands
+  "ISO-BMFF major brands that are a RECORDING, not a clip. A voice memo is an
+   `.m4a` -- the very container an MP4 uses -- so a naive `ftyp` check files it
+   as a video, and the send-time gate then tries to sample frames out of a file
+   that has none."
+  #{"m4a " "m4b " "m4p " "m4r " "f4a " "f4b " "aac "})
 (defn detect-video-mime
   "Sniff a supported video MIME type from the leading bytes of a file.
    Returns \"video/mp4\" | \"video/quicktime\", or nil.
 
    ISO-BMFF only (`ftyp` at offset 4); the major brand at offset 8 decides.
-   `qt  ` is QuickTime, a [[still-image-brands]] brand is a PHOTO (nil, never a
-   clip), anything else is MP4."
+   `qt  ` is QuickTime, a [[still-image-brands]] brand is a PHOTO and an
+   [[audio-brands]] brand is a RECORDING (both nil, never a clip), anything
+   else is MP4."
   [^bytes b]
   (when (and (>= (alength b) 12) (ascii-at? b 4 "ftyp"))
     (let [brand (brand-at b 8)]
-      (when-not (contains? still-image-brands brand)
+      (when-not (or (contains? still-image-brands brand) (contains? audio-brands brand))
         (if (= "qt  " brand) "video/quicktime" "video/mp4")))))
 
 (def video-media-types
@@ -243,12 +259,41 @@
   [media-type]
   (contains? video-media-types (str/lower-case (str/trim (str media-type)))))
 
+(defn detect-audio-mime
+  "Sniff a supported audio MIME type from the leading bytes of a file.
+   Returns \"audio/mpeg\" | \"audio/mp4\" | \"audio/wav\" | \"audio/ogg\" |
+   \"audio/flac\", or nil.
+
+   Magic bytes only, like every other sniff here: an extension is a CLAIM, and
+   a phone that hands the webview a `.m4a` with no MIME type at all is the
+   normal case rather than the odd one."
+  [^bytes b]
+  (cond (ascii-at? b 0 "ID3") "audio/mpeg"
+        (and (>= (alength b) 2) (= 0xff (u8 b 0)) (= 0xe0 (bit-and (u8 b 1) 0xe0))) "audio/mpeg"
+        (and (ascii-at? b 0 "RIFF") (ascii-at? b 8 "WAVE")) "audio/wav"
+        (ascii-at? b 0 "OggS") "audio/ogg"
+        (ascii-at? b 0 "fLaC") "audio/flac"
+        (and (ascii-at? b 4 "ftyp") (contains? audio-brands (brand-at b 8))) "audio/mp4"
+        :else nil))
+
+(def audio-media-types
+  "Audio containers vis stores. No wire carries any of them: a recording is not
+   pixels, so it is kept for the HUMAN and the model is TOLD the file is there
+   ([[model-blind-media-type?]]) instead of being handed bytes it cannot hear."
+  #{"audio/mpeg" "audio/mp4" "audio/wav" "audio/ogg" "audio/flac"})
+
+(defn audio-media-type?
+  "True when `media-type` is one of [[audio-media-types]]."
+  [media-type]
+  (contains? audio-media-types (str/lower-case (str/trim (str media-type)))))
 (defn detect-media-mime
   "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
-   then [[detect-video-mime]]. Stills win the tie deliberately -- HEIF/AVIF
-   photos share the MP4 container header."
+   then [[detect-audio-mime]], then [[detect-video-mime]]. Stills win the tie
+   deliberately -- HEIF/AVIF photos share the MP4 container header; a recording
+   is asked about before a clip for the same reason, since an `.m4a` shares it
+   too."
   [^bytes b]
-  (or (detect-image-mime b) (detect-video-mime b)))
+  (or (detect-image-mime b) (detect-audio-mime b) (detect-video-mime b)))
 
 (def provider-image-media-types
   "The ONLY image media types a vision wire accepts VERBATIM. Anthropic names
@@ -286,9 +331,9 @@
 
 (def ^:private media-extension-pattern
   "Cheap pre-filter before any filesystem access: only tokens that END in
-   an image or video extension are stat'd. The magic-byte sniff still owns
-   the final verdict."
-  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov)$")
+   an image, video or audio extension are stat'd. The magic-byte sniff still
+   owns the final verdict."
+  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|wav|ogg|oga|flac)$")
 
 (def ^:private media-extension-present-pattern
   "Whole-text fast path: a single unanchored scan that answers \"could this
@@ -401,10 +446,12 @@
 
    A CLIP answers to [[max-video-bytes]] instead: no clip ever reaches a
    provider in its own container -- it leaves as a small GIF, which is the
-   payload the cap then judges."
+   payload the cap then judges. A RECORDING answers to [[max-audio-bytes]],
+   because nothing of it is ever put on a wire at all."
   ^long [media-type ^long max-bytes]
   (cond (provider-image-media-type? media-type) (* (long upload-rescue-factor) max-bytes)
         (video-media-type? media-type) max-video-bytes
+        (audio-media-type? media-type) max-audio-bytes
         :else (* (long oversize-rescue-factor) max-bytes)))
 
 (defn- attach-file
@@ -657,6 +704,9 @@
   "Why a PDF or an HTML page is named to the model instead of shown to it."
   "a document for the human — open the file to read it, it is never an image block")
 
+(def ^:private recording-reason
+  "Why a voice memo or a music file is named to the model instead of sent to it."
+  "a recording for the human — open the file to hear it, it is never an image block")
 (def audiences
   "The CLOSED vocabulary of an attachment's AUDIENCE — who the artifact is for:
 
@@ -694,6 +744,15 @@
                (str/trim))]
     (contains? human-only-media-types mt)))
 
+(defn model-blind-media-type?
+  "True when these bytes must never ride a request as an image block, whatever
+   audience the caller asked for: a [[human-only-media-type?]] document, or an
+   [[audio-media-type?]] recording. Neither is pixels, and a multimodal wire has
+   no other block to put them in -- so the honest route for both is the same one,
+   named in ONE place: keep the bytes for the human and TELL the model the file
+   is there."
+  [media-type]
+  (or (human-only-media-type? media-type) (audio-media-type? media-type)))
 (defn normalize-audience
   "Coerce whatever the shim bridge, a wire payload or a DB row carries into a
    member of [[audiences]], defaulting to `\"both\"`. An unknown word falls back
@@ -705,12 +764,13 @@
 (defn attachment-audience
   "This attachment's audience word, normalized — `\"both\"` when unstamped.
 
-   A [[human-only-media-type?]] artifact is CLAMPED to `\"user\"` here rather than
-   at each call site: the PDF or HTML page is for the human, and every gate that
-   already asks this question ([[hidden-from-model?]], the send-time image path,
-   the wire manifest) inherits the refusal from one place."
+   A [[model-blind-media-type?]] artifact is CLAMPED to `\"user\"` here rather
+   than at each call site: the PDF, the HTML page and the voice memo are for the
+   human, and every gate that already asks this question ([[hidden-from-model?]],
+   the send-time image path, the wire manifest) inherits the refusal from one
+   place."
   [attachment]
-  (if (human-only-media-type? (:media-type attachment))
+  (if (model-blind-media-type? (:media-type attachment))
     "user"
     (normalize-audience (:audience attachment))))
 
@@ -1004,14 +1064,15 @@
      (fn [acc {:keys [media-type] :as att}]
        (let [label (image-label att)]
          (cond
-           (hidden-from-model? att) (update acc
-                                            :skipped
-                                            conj
-                                            {:path label
-                                             :reason (if (human-only-media-type? media-type)
-                                                       human-only-doc-reason
-                                                       user-only-reason)
-                                             :readable-blind? true})
+           (hidden-from-model? att)
+           (update acc
+                   :skipped
+                   conj
+                   {:path label
+                    :reason (cond (audio-media-type? media-type) recording-reason
+                                  (human-only-media-type? media-type) human-only-doc-reason
+                                  :else user-only-reason)
+                    :readable-blind? true})
            (not vision?)
            (update acc :skipped conj {:path label :reason no-vision-reason :readable-blind? true})
            :else

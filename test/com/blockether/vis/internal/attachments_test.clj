@@ -117,6 +117,73 @@
                       [0 0 2 0]
                       (repeat 8 0))))
 
+(defn- riff-head
+  "The leading bytes of a RIFF file with form type `form` — WAVE for audio, WEBP
+   for a still, which is exactly the pair the sniffer has to keep apart."
+  ^bytes [^String form]
+  (byte-array
+    (concat (.getBytes "RIFF" "US-ASCII") [0x24 0 0 0] (.getBytes form "US-ASCII") (repeat 16 0))))
+
+(defdescribe
+  detect-audio-mime-test
+  "A recording is attachable media too. The container is the whole difficulty: a
+   voice memo is an `.m4a`, which is ISO-BMFF — the very header an MP4 wears — so
+   before the audio brands existed a memo was filed as `video/mp4` and the
+   send-time gate went looking for frames to sample out of a file with none."
+  (it "sniffs an m4a recording, and NOT as a clip"
+      (expect (= "audio/mp4" (attachments/detect-audio-mime (ftyp-head "M4A "))))
+      (expect (nil? (attachments/detect-video-mime (ftyp-head "M4A "))))
+      (expect (= "audio/mp4" (attachments/detect-media-mime (ftyp-head "M4A ")))))
+  (it "sniffs the containers a phone and a desktop actually produce"
+      (expect (= "audio/mpeg"
+                 (attachments/detect-audio-mime (byte-array (concat (.getBytes "ID3" "US-ASCII")
+                                                                    (repeat 16 0))))))
+      (expect (= "audio/mpeg"
+                 (attachments/detect-audio-mime (byte-array (concat [0xff 0xfb] (repeat 16 0))))))
+      (expect (= "audio/wav" (attachments/detect-audio-mime (riff-head "WAVE"))))
+      (expect (= "audio/ogg"
+                 (attachments/detect-audio-mime (byte-array (concat (.getBytes "OggS" "US-ASCII")
+                                                                    (repeat 16 0))))))
+      (expect (= "audio/flac"
+                 (attachments/detect-audio-mime (byte-array (concat (.getBytes "fLaC" "US-ASCII")
+                                                                    (repeat 16 0)))))))
+  (it "never crosses the picture/recording line"
+      (expect (nil? (attachments/detect-audio-mime tiny-png-bytes)))
+      (expect (nil? (attachments/detect-audio-mime (riff-head "WEBP"))))
+      (expect (= "image/webp" (attachments/detect-image-mime (riff-head "WEBP"))))
+      (expect (nil? (attachments/detect-audio-mime tiny-mp4-bytes))))
+  (it "audio-media-type? normalises case and padding"
+      (expect (attachments/audio-media-type? "audio/mp4"))
+      (expect (attachments/audio-media-type? " Audio/MPEG "))
+      (expect (not (attachments/audio-media-type? "video/mp4"))))
+  (it "a recording is kept for the HUMAN: clamped to `user`, never an image block"
+      (let [memo {:media-type "audio/mp4" :filename "memo.m4a" :base64 "AAAA"}]
+        (expect (attachments/model-blind-media-type? "audio/mp4"))
+        (expect (= "user" (attachments/attachment-audience memo)))
+        (expect (attachments/hidden-from-model? memo))
+        (expect (nil? (attachments/wire-image memo)))
+        (let [out (attachments/wire-images [memo])]
+          (expect (empty? (:attached out)))
+          (expect (= 1 (count (:skipped out))))
+          (expect (:readable-blind? (first (:skipped out))))
+          (expect (str/includes? (:reason (first (:skipped out))) "recording")))))
+  (it "a recording answers to its own intake cap"
+      (expect (= attachments/max-video-bytes attachments/max-audio-bytes)))
+  (it "an inline upload of a recording is stored under its SNIFFED container"
+      (let [head
+            (byte-array (concat [0 0 0 0x18]
+                                (.getBytes "ftyp" "US-ASCII")
+                                (.getBytes "M4A " "US-ASCII")
+                                (repeat 12 0)))
+
+            out
+            (attachments/prepare-inline-attachments [{:base64 (.encodeToString (Base64/getEncoder)
+                                                                               ^bytes head)
+                                                      :filename "memo.m4a"
+                                                      :media-type "application/octet-stream"}])]
+
+        (expect (= ["audio/mp4"] (mapv :media-type (:attached out))))
+        (expect (empty? (:skipped out))))))
 (defdescribe
   detect-video-mime-test
   "MP4/QuickTime are attachable media, but ONLY when the bytes really are a clip:

@@ -664,11 +664,16 @@
           (is (= (* 25 1024 1024) (get-in body ["features" "attachments" "max_file_bytes"])))
           ;; Clips are advertised as ATTACHABLE media with their own ceiling, so a
           ;; companion knows to offer the gallery's videos and how big one may be.
+          ;; A RECORDING rides beside them: no wire carries it to a model, but the
+          ;; app cannot offer a voice memo it was never told this gateway keeps.
           (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "video/mp4"
-                  "video/quicktime"]
+                  "video/quicktime" "audio/mpeg" "audio/mp4" "audio/wav" "audio/ogg" "audio/flac"]
                  (get-in body ["features" "attachments" "media_types"])))
           (is (= ["video/mp4" "video/quicktime"]
                  (get-in body ["features" "attachments" "video_media_types"])))
+          (is (= ["audio/flac" "audio/mp4" "audio/mpeg" "audio/ogg" "audio/wav"]
+                 (get-in body ["features" "attachments" "audio_media_types"])))
+          (is (= (* 32 1024 1024) (get-in body ["features" "attachments" "max_audio_bytes"])))
           (is (= (* 32 1024 1024) (get-in body ["features" "attachments" "max_video_bytes"])))
           (is (false? (get-in body ["features" "voice" "enabled"])))
           (is (= "unavailable" (get-in body ["features" "voice" "model" "status"])))

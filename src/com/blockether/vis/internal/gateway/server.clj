@@ -3231,11 +3231,17 @@
                   :attachments {:enabled true
                                 :transport "inline-base64"
                                 :media-types ["image/jpeg" "image/png" "image/gif" "image/webp"
-                                              "image/bmp" "video/mp4" "video/quicktime"]
+                                              "image/bmp" "video/mp4" "video/quicktime" "audio/mpeg"
+                                              "audio/mp4" "audio/wav" "audio/ogg" "audio/flac"]
                                 :video-media-types ["video/mp4" "video/quicktime"]
+                                ;; A recording rides the same intake as a clip and is kept for
+                                ;; the human: the model is told the file is there rather than
+                                ;; handed bytes no multimodal wire has a block for.
+                                :audio-media-types (vec (sort attachments/audio-media-types))
                                 :max-files attachments/max-image-count
                                 :max-file-bytes attachments/max-upload-image-bytes
-                                :max-video-bytes attachments/max-video-bytes}
+                                :max-video-bytes attachments/max-video-bytes
+                                :max-audio-bytes attachments/max-audio-bytes}
                   :voice voice-caps
                   :speech speech-caps
                   :push (push/status)}})))
