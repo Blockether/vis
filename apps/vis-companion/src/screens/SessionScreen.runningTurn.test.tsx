@@ -139,4 +139,36 @@ describe("a running turn the session read cannot confirm", () => {
       (await screen.findAllByText(/Vis is waiting for an update/)).length,
     ).toBeGreaterThan(0);
   });
+  // Reported from the app with a CI watch on screen: the row above the live panel
+  // still read "Vis is thinking (iter 30)... 10m 1s" while the panel under it was
+  // filling in and offering an Interrupt — a hang, in the one place the answer was.
+  it("names the live panel instead of saying Vis is thinking", async () => {
+    renderSessionScreen({
+      client: {
+        transcript: () =>
+          Promise.resolve([
+            {
+              ...runningRow,
+              iterations: [{ position: 1, thinking: "weighing it up", forms: [] }],
+            },
+          ]),
+        liveViews: () =>
+          Promise.resolve([
+            { id: "v1", title: "CI · run 42", description: "", nodes: [] },
+          ]),
+      },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+      },
+    });
+
+    expect(
+      (await screen.findAllByText(/Vis is showing CI · run 42 — live \(iter 1\)/))
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/Vis is thinking/)).toBeNull();
+  });
 });

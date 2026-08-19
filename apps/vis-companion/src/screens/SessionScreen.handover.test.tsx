@@ -15,6 +15,24 @@ function deferred<T>() {
 
 const linger = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
+// The real hub broadcasts to EVERY listener. A single-slot stub hands the events
+// to whichever effect subscribed LAST, so the screen's own listener silently
+// loses them the moment a second one (the live-view hook) is mounted beside it.
+function hub() {
+  const listeners = new Set<(event: SseEvent) => void>();
+  return {
+    subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    emit: (event: SseEvent) => {
+      for (const listener of [...listeners]) listener(event);
+    },
+  };
+}
+
 function live(): string {
   return document.querySelector('[data-live="true"]')?.textContent ?? "";
 }
@@ -28,7 +46,7 @@ function live(): string {
 // that arrives after it.
 describe("the message just sent", () => {
   it("keeps streaming when the previous turn's terminal frame lands first", async () => {
-    let emit: (event: SseEvent) => void = () => {};
+    const events = hub();
     const posted = deferred<unknown>();
 
     renderSessionScreen({
@@ -38,10 +56,7 @@ describe("the message just sent", () => {
         submitTurn: () => posted.promise,
       },
       subscriptions: {
-        subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
-          emit = listener;
-          return () => {};
-        },
+        subscribeSession: events.subscribeSession,
         subscribeConnection: (on: (connected: boolean) => void) => {
           on(true);
           return () => {};
@@ -54,7 +69,7 @@ describe("the message just sent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText("run the tests")).toBeInTheDocument();
 
-    emit({
+    events.emit({
       type: "turn.completed",
       turn_id: "the-previous-turn",
       seq: 10,
@@ -94,7 +109,7 @@ describe("a finished turn handed to its persisted row", () => {
   };
 
   it("keeps the answer the terminal frame itself delivered", async () => {
-    let emit: (event: SseEvent) => void = () => {};
+    const events = hub();
     renderSessionScreen({
       client: {
         cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
@@ -102,15 +117,12 @@ describe("a finished turn handed to its persisted row", () => {
         transcript: () => Promise.resolve([proseFreeRow]),
       },
       subscriptions: {
-        subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
-          emit = listener;
-          return () => {};
-        },
+        subscribeSession: events.subscribeSession,
       },
     });
 
     expect(await screen.findByText("explain the failure")).toBeInTheDocument();
-    emit({
+    events.emit({
       type: "turn.completed",
       turn_id: "gw-1",
       seq: 11,

@@ -49,7 +49,7 @@ import {
   VoiceLoopIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
-import { LiveView } from "../components/LiveView";
+import { LiveView, useLiveViews } from "../components/LiveView";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
@@ -459,6 +459,7 @@ function liveProgressPhase(
   turn: LiveTurn,
   connected: boolean,
   workspaceRoots: readonly (string | null | undefined)[],
+  watching: string | null,
 ): string {
   if (!connected) return "Reconnecting — checking turn status";
   if (turn.cancelling) return "Vis is cancelling";
@@ -475,6 +476,11 @@ function liveProgressPhase(
     return commandPhase(turn.request) ?? "Vis is waiting for an update";
 
   const suffix = `(iter ${iteration})`;
+
+  // A run SHOWING its work is not thinking: the panel under this row is live and
+  // yours to stop. "Vis is thinking (iter 30)... 10m 1s" over an open CI run read
+  // as a hang for as long as the run took, with the answer already on screen.
+  if (watching) return `Vis is showing ${compactLabel(watching, "a live view")} — live ${suffix}`;
   switch (activity?.kind) {
     case "shell-run":
       return `Vis is running: ${compactLabel(activity.command ?? "", "…")}`;
@@ -4923,6 +4929,12 @@ export function SessionScreen({
     };
   }, [client, sid, liveTurnId, liveTurnAttachments]);
 
+  // A view a run is SHOWING is not only a panel: while one is open the running
+  // row names what is on screen instead of saying Vis is thinking, so the phase
+  // line and the panel below it read ONE list.
+  const liveViews = useLiveViews(client, subscriptions, sid);
+  const watching = liveViews.at(-1)?.title ?? null;
+
   const liveRow = useMemo(() => {
     if (!liveTurn) return null;
     // A screenshot just sent lives only in this device's memory until the turn
@@ -4962,10 +4974,12 @@ export function SessionScreen({
                 : []),
           }}
           streaming={liveTurn.status === "running"}
-          activity={liveProgressPhase(liveTurn, connected, [
-            session?.workspace?.root,
-            session?.workspace?.repo_root,
-          ])}
+          activity={liveProgressPhase(
+            liveTurn,
+            connected,
+            [session?.workspace?.root, session?.workspace?.repo_root],
+            watching,
+          )}
           startedAt={liveTurn.startedAt}
           client={client}
           sid={sid}
@@ -4981,6 +4995,7 @@ export function SessionScreen({
     fetchedLiveAttachments,
     session?.workspace?.root,
     session?.workspace?.repo_root,
+    watching,
   ]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
   // has to do: the anchor observer holds the reader's line for every mutation.
@@ -5297,7 +5312,7 @@ export function SessionScreen({
                   and no scroll lock — it fills in while the operator reads, and
                   it leaves when the run ends, exactly as the terminal band does. */}
                 <div className="mt-5">
-                  <LiveView client={client} subscriptions={subscriptions} sid={sid} />
+                  <LiveView views={liveViews} client={client} sid={sid} />
                 </div>
               </>
             </div>

@@ -509,19 +509,17 @@ export function LiveViewPanel({
  * fold into it as they arrive — the same two doors the parked-form dialog uses,
  * for the same reason: a phone woken by a push never saw the frames that opened
  * the view it is about to paint.
+ *
+ * A HOOK rather than the panel's own state, because an open view is not only a
+ * panel: the running row above the transcript stops saying "Vis is thinking"
+ * and names what is on screen instead, and both must read one list.
  */
-export function LiveView({
-  client,
-  subscriptions,
-  sid,
-}: {
-  client: GatewayClient;
-  subscriptions: SessionSubscriptionHub;
-  sid: string;
-}) {
+export function useLiveViews(
+  client: GatewayClient,
+  subscriptions: SessionSubscriptionHub,
+  sid: string,
+): LiveViewModel[] {
   const [views, setViews] = useState<LiveViewModel[]>([]);
-  const [stopping, setStopping] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -570,6 +568,22 @@ export function LiveView({
       controller.abort();
     };
   }, [isStale, client, sid]);
+
+  return views;
+}
+
+/** Every open view of this session, painted where the transcript ends. */
+export function LiveView({
+  views,
+  client,
+  sid,
+}: {
+  views: LiveViewModel[];
+  client: GatewayClient;
+  sid: string;
+}) {
+  const [stopping, setStopping] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   if (views.length === 0) return null;
 
