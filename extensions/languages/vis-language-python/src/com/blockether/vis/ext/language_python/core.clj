@@ -447,7 +447,7 @@
       dep-smell?
       (assoc "hint"
         (str "Some tests failed to import modules under the stdlib-only GraalPy "
-             "sandbox. Re-run with {\"environment\": \"project\"} to use the project's "
+             "sandbox. Re-run with {\"runner\": \"project\"} to use the project's "
              "interpreter and installed dependencies.")))))
 
 (defn- pytest-counts
@@ -562,21 +562,20 @@
 
 (defn- select-runner
   "Which backend a `run_tests` call uses, in precedence order: an explicit
-   `environment` (`project`, else the sandbox), then `python.runner` from merged
-   config, else the hermetic GraalPy sandbox. ONE word chooses it — the call says
-   `environment`, config says `runner`, and neither spelling is accepted in the
-   other's place."
+   `runner` (`project`, else the sandbox), then `python.runner` from merged
+   config, else the hermetic GraalPy sandbox. ONE spelling on every surface:
+   the call, the config, the result key and the doc pages all say `runner`."
   [opts]
-  (let [environment
-        (str/lower-case (str (or (get opts "environment") "")))
+  (let [runner
+        (str/lower-case (str (or (get opts "runner") "")))
 
         configured
         (str/lower-case (str (or (interpreter/configured-runner) "graalpy")))]
 
-    (cond (= "project" environment) "project"
-          ;; An explicit environment that is not `project` is the sandbox,
+    (cond (= "project" runner) "project"
+          ;; An explicit runner that is not `project` is the sandbox,
           ;; whatever config says.
-          (seq environment) "graalpy"
+          (seq runner) "graalpy"
           (= "project" configured) "project"
           :else "graalpy")))
 
@@ -589,12 +588,12 @@
        `{paths}` entries may be FILES or dirs, resolve against `cwd`, must
        exist, and discovering nothing is NOT a pass. It runs whole FILES and
        has no test-name filter, so a `<path>::<test-name>` node id is REFUSED
-       here (pointing at `{environment \"project\"}`) rather than quietly
+       here (pointing at `{runner \"project\"}`) rather than quietly
        running every test in the file. The project's declared
        import roots (a `src` layout) are on `sys.path`; installed third-party
        deps are NOT visible. When that layout could not be READ, the result
        carries a `warning` instead of quietly claiming the project has none.
-     - `{environment \"project\"}` shells the project interpreter's pytest
+     - `{runner \"project\"}` shells the project interpreter's pytest
        (the argv pinned as `python.interpreter`, else `uv`/`poetry`/`.venv`/
        `python3` `-m pytest <paths>`) so installed test dependencies are
        visible. Node ids go straight through as pytest's own
@@ -605,7 +604,7 @@
    reads pytest's own `--junitxml` report), and `output` carries the transcript
    capped in the middle behind a marker that says how much it dropped.
    `python.runner` in merged config chooses the DEFAULT backend; an explicit
-   `environment` argument still wins."
+   `runner` argument still wins."
   [env arg]
   (let [root
         (env-root env)
@@ -636,7 +635,7 @@
                                  " sandbox: " (pr-str (mapv (fn [{:keys [path var]}]
                                                               (str path "::" var))
                                                             named))
-                                 " — rerun with {\"environment\": \"project\"} so the project's own"
+                                 " — rerun with {\"runner\": \"project\"} so the project's own"
                                  " pytest reads the node id, or name the FILE to run all of it.")
                             {:type :py/bad-args :paths (mapv :path named)}))))
 

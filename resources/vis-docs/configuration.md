@@ -654,8 +654,8 @@ installation, which would leave `pyvenv.cfg` unread and the venv's packages
 
 `runner` chooses the default `run_tests({"language": "python"})` backend: `graalpy`, the
 hermetic stdlib-only sandbox, or `project`, the interpreter's own pytest, where
-installed dependencies are visible. An explicit `environment` or `runner`
-argument on the call still wins.
+installed dependencies are visible. An explicit `runner` argument on the call
+still wins — the same spelling the result's `runner` key reports.
 
 ## Extension environment
 

@@ -94,17 +94,17 @@
 ;; as the selection the caller asked for.
 (defdescribe
   graalpy-node-id-refusal-test
-  (it "refuses a node id in the sandbox and names the environment that reads it"
+  (it "refuses a node id in the sandbox and names the runner that reads it"
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests/test_math.py") "def test_adds():\n    assert True\n")
              (let [e (try (core/py-test-fn {:workspace/root (.getPath root) :session-id "sid"}
                                            {"paths" ["tests/test_math.py::test_adds"]
-                                            "environment" "graalpy"})
+                                            "runner" "graalpy"})
                           nil
                           (catch clojure.lang.ExceptionInfo e e))]
                (expect (= :py/bad-args (:type (ex-data e))))
-               (expect (re-find #"environment" (ex-message e))))
+               (expect (re-find #"runner" (ex-message e))))
              (finally (cleanup root))))))
 
 (defdescribe
@@ -117,7 +117,7 @@
              (spit (io/file root "tests" "test_sample.py")
                    (str "def test_ok():\n" "    assert 1 + 1 == 2\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
-             (let [r (core/py-test-fn {:workspace/root (.getPath root)} {"environment" "graalpy"})
+             (let [r (core/py-test-fn {:workspace/root (.getPath root)} {"runner" "graalpy"})
                    res (:result r)]
 
                (expect (:success? r))
@@ -155,7 +155,7 @@
                    {:roots-fn (constantly [(.getPath root)]) :net-enabled? true :disabled? true}))
                (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)
                                                     :session-id session-id}
-                                                   {"environment" "project"}))]
+                                                   {"runner" "project"}))]
                  (expect (= "project" (get res "runner")))
                  ;; ONE spelling of the argv: a `command` STRING, never a `cmd` vec
                  (expect (string? (get res "command")))
@@ -273,18 +273,36 @@
   (it "honors python.runner from merged config"
       (with-redefs [interp/configured-runner (constantly "project")]
         (expect (= "project" (select-runner {})))))
-  (it "lets an explicit environment beat the configured default"
+  (it "lets an explicit runner beat the configured default"
       (with-redefs [interp/configured-runner (constantly "project")]
-        (expect (= "graalpy" (select-runner {"environment" "graalpy"})))))
-  (it "routes environment/project to the project interpreter"
-      (expect (= "project" (select-runner {"environment" "project"}))))
-  (it "reads no compatibility alias in place of environment"
-      ;; `runner` and `interpreter` used to choose the backend from a CALL as
-      ;; well, so three spellings picked one thing while the failure hint named
-      ;; only one of them. On a call they now select nothing.
+        (expect (= "graalpy" (select-runner {"runner" "graalpy"})))))
+  (it "routes runner/project to the project interpreter"
+      (expect (= "project" (select-runner {"runner" "project"}))))
+  (it "reads no compatibility alias in place of runner"
+      ;; 1baadd21b renamed the call key to `environment` and kept `runner`
+      ;; as a private alias; sixteen minutes later 4c8d81429 added config
+      ;; `python.runner`, and f0afb891d dropped the aliases — leaving the
+      ;; docs, the config and the result key saying `runner` while the call
+      ;; read only `environment`. One spelling now; aliases select nothing.
       (with-redefs [interp/configured-runner (constantly nil)]
-        (expect (= "graalpy" (select-runner {"runner" "project"})))
+        (expect (= "graalpy" (select-runner {"environment" "project"})))
         (expect (= "graalpy" (select-runner {"interpreter" "python3"}))))))
+
+(defdescribe docs-teach-the-key-the-code-reads-test
+             ;; graalpython.md taught `{"runner": "project"}` while the call read only
+             ;; `environment`: a model following the page silently stayed in the hermetic
+             ;; sandbox. The pages and the code must keep naming the same key.
+             (it "graalpython.md and configuration.md teach `runner`, no dead spelling"
+                 (let [page
+                       (slurp (io/resource "vis-docs/graalpython.md"))
+
+                       conf
+                       (slurp (io/resource "vis-docs/configuration.md"))]
+
+                   (expect (str/includes? page "{\"runner\": \"project\"}"))
+                   (expect (not (str/includes? page "{\"environment\"")))
+                   (expect (str/includes? conf "An explicit `runner` argument on the call"))
+                   (expect (not (str/includes? conf "`environment` or `runner`"))))))
 
 (defdescribe
   layout-warning-test
@@ -299,7 +317,7 @@
                                                               :warning
                                                               "project layout not read: boom"})]
                (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                   {"environment" "graalpy"}))]
+                                                   {"runner" "graalpy"}))]
                  (expect (= "project layout not read: boom" (get res "warning")))
                  (expect (= 1 (get res "pass")))))
              (finally (cleanup root)))))
@@ -308,7 +326,7 @@
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests" "test_sample.py") "def test_ok():\n    assert True\n")
              (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                 {"environment" "graalpy"}))]
+                                                 {"runner" "graalpy"}))]
                (expect (nil? (get res "warning"))))
              (finally (cleanup root))))))
 
@@ -337,7 +355,7 @@
 
 (def ^:private output-char-cap @#'core/output-char-cap)
 
-;; Regression, issue #136: `run_tests("python", {"environment" "project"})`
+;; Regression, issue #136: `run_tests("python", {"runner" "project"})`
 ;; reported `fail: 1` with `failures: []` / `errors: []` — counts and not one
 ;; node id, file or message — and its `output` was a tail slice behind a bare
 ;; `…`, so a run with many failures came back with the summary line and no
@@ -426,7 +444,7 @@
                    (str "def test_ok():\n" "    assert True\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
              (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                 {"environment" "graalpy"}))
+                                                 {"runner" "graalpy"}))
                    f (first (get res "failures"))]
 
                (expect (= 1 (count (get res "failures"))))
@@ -454,7 +472,7 @@
                           "def test_bad():\n" "    assert 1 == 2\n"))
                (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)
                                                     :session-id session-id}
-                                                   {"environment" "project"}))]
+                                                   {"runner" "project"}))]
                  (expect (= "project" (get res "runner")))
                  ;; pytest itself may be absent on the machine running this suite;
                  ;; assert the faults only for a run that actually reported one.

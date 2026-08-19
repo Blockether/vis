@@ -470,7 +470,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the selector every language shares; `::<test-name>` alone finds that test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace name, or `ns/var` for one test) and resolves it the same way, and runs `*_test.cljs` through the project's own shadow-cljs build (`build` names which one when several could); `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
+  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the selector every language shares; `::<test-name>` alone finds that test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace name, or `ns/var` for one test) and resolves it the same way, and runs `*_test.cljs` through the project's own shadow-cljs build (`build` names which one when several could); `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `runner` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   (let [started-at
         (System/nanoTime)
@@ -568,20 +568,22 @@
        "Counts: `total`, `pass`, `fail`, `errored` (the erroring subset of `fail`), `skipped`, "
        "`selected`. `failures` carries ONE ROW PER FAULT — `test`, `type` (`fail` or `error`), "
        "`message`, plus `ns` (Clojure) or `file` (Python) — so a red run already names what to "
-       "open. `output` is the runner's own text; `ns`, `target`, `framework`, `mode`, `ms` say "
-       "what ran and how. A REPL that could not serve answers `repl_wedged`, `repl_unusable`, "
+       "open. `output` is the runner's own text; `runner`, `ns`, `target`, `framework`, `mode`, `ms` "
+       "say what ran and how. A REPL that could not serve answers `repl_wedged`, `repl_unusable`, "
        "`recovered` and a `hint`; `timed_out`, `error`, `exit` carry the rest.")
      :description
-     (str
-       "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "
-       "`run_tests(\"python\", {\"paths\": [...]})`. `language` leads the call and is optional "
-       "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
-       "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
-       "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
-       "`include`/`exclude` narrow by tag, `cwd` chooses the project. Omit `paths` to run everything.")
+     (str "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "
+          "`run_tests(\"python\", {\"paths\": [...]})`. `language` leads the call and is optional "
+          "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
+          "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
+          "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
+          "`include`/`exclude` narrow by tag, `cwd` chooses the project; `runner` (python) "
+          "selects `project` — the interpreter's own pytest — over the hermetic sandbox. "
+          "Omit `paths` to run everything.")
      :params [{:name "language"} {:name "paths"}
               {:name "ns" :note "clojure — namespace or `ns/var`"} {:name "include"}
-              {:name "exclude"} {:name "cwd"}]
+              {:name "exclude"} {:name "cwd"}
+              {:name "runner" :note "python — \"project\" for the interpreter's own pytest"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
