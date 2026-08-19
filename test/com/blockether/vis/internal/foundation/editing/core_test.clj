@@ -2948,6 +2948,63 @@
                      (expect (= 3 (get out "limit")))
                      (expect (= 1 (get out "hit_count")))))))
 
+;; Regression: a near-miss key used to cost the WHOLE search — `grep({"query" "x" "glob"
+;; "*.clj"})` died on "find spec has unknown keys: glob" over a word nobody could have
+;; guessed differently. Each near-miss now folds onto the canonical key it means, and
+;; naming ONE idea twice is still refused.
+(defdescribe
+  grep-near-miss-key-aliases-test
+  "Near-miss grep keys fold onto the canonical name; one idea named twice is refused."
+  (let [coerce-find
+        (private-fn "coerce-find-spec")
+
+        grep
+        (grep-data-fn)
+
+        caught
+        (fn [f & args]
+          (try (apply f args) nil (catch clojure.lang.ExceptionInfo e e)))]
+
+    (it "path, dir and dirs are read as paths"
+        (doseq [alias ["path" "dir" "dirs"]]
+          (expect (= ["."] (:paths (coerce-find [{"query" "needle" alias ["."]}]))))))
+    (it "context_lines, regex and hidden are read as their canonical keys"
+        (expect (= 2 (:context (coerce-find [{"query" "needle" "context_lines" 2}]))))
+        (expect (true? (:is_regex (coerce-find [{"query" "needle" "regex" true}]))))
+        (expect (true? (:is_hidden (coerce-find [{"query" "needle" "hidden" true}])))))
+    (it "an unknown key is still refused, and the refusal names the vocabulary"
+        (let [e (caught coerce-find [{"query" "needle" "reggex" true}])]
+          (expect (some? e))
+          (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
+          (expect (string/includes? (ex-message e) "reggex"))
+          (expect (string/includes? (ex-message e) "Allowed: query, paths"))))
+    (it "a glob grep filters exactly like include, and excludes folds onto exclude"
+        (write-temp! "aliasglob/a.clj" "needle here\n")
+        (write-temp! "aliasglob/b.txt" "needle here\n")
+        (let [dir
+              (temp-dir-path "aliasglob")
+
+              by-glob
+              (:result (grep {"query" "needle" "paths" [dir] "glob" ["**/*.clj"]}))
+
+              by-include
+              (:result (grep {"query" "needle" "paths" [dir] "include" ["**/*.clj"]}))
+
+              by-excludes
+              (:result (grep {"query" "needle" "paths" [dir] "excludes" ["**/*.txt"]}))
+
+              by-exclude
+              (:result (grep {"query" "needle" "paths" [dir] "exclude" ["**/*.txt"]}))]
+
+          (expect (= by-include by-glob))
+          (expect (= by-exclude by-excludes))
+          (expect (< (get by-exclude "hit_count")
+                     (get (:result (grep {"query" "needle" "paths" [dir]})) "hit_count")))))
+    (it "one idea named twice — include and glob — is refused, naming both"
+        (let [e (caught coerce-find [{"query" "needle" "include" ["*.clj"] "glob" ["*.clj"]}])]
+          (expect (some? e))
+          (expect (string/includes? (ex-message e) "only one of canonical"))
+          (expect (string/includes? (ex-message e) "glob"))))))
 
  ;; Regression: `grep(["a", "b"], ["src", "tools"])` — needles, then scopes, the
 ;; obvious reading of a two-argument search — died on ARGUMENT SHAPE instead of

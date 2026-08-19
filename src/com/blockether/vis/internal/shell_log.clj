@@ -254,6 +254,25 @@
             (if (>= (inc (long seen)) n) (+ base i 1) (recur (dec i) (inc (long seen))))
             :else (recur (dec i) seen)))))
 
+(defn- line-window-length
+  "How many of `buf`'s bytes, from `head`, hold the FIRST `n` lines of the
+   `keep-n` bytes that follow it — the whole window when it holds fewer.
+
+   `lines` is a WINDOW, not a hint: a caller who asks to walk a log ten lines at
+   a time gets ten, and the byte offset for the eleventh comes back as
+   `next-offset` rather than being something they must count out themselves. A
+   line ENDS at its newline, so the tenth line arrives complete."
+  ^long [^bytes buf ^long head ^long keep-n ^long n]
+  (loop [i
+         head
+
+         seen
+         0]
+
+    (cond (>= i (+ head keep-n)) keep-n
+          (= 10 (bit-and (aget buf (int i)) 0xFF))
+          (if (>= (inc (long seen)) n) (- (inc i) head) (recur (inc i) (inc (long seen))))
+          :else (recur (inc i) seen))))
 (defn read-chunk
   "Read shell `id`'s log `file` from `:offset` and answer a [[::log-chunk]].
 
@@ -263,14 +282,23 @@
    FORWARD from exactly that byte, which is what a loop feeding `next-offset`
    does. A NEGATIVE offset counts LINES back from the end — `{:offset -50}` is
    the last 50 lines — and clamps to the start of the window when the log holds
-   fewer, so more tail than exists is the whole log rather than an error.
+    fewer, so more tail than exists is the whole log rather than an error.
+
+   `:lines` N is the LINE window: the answer holds at most N lines, and with no
+   `:offset` it is anchored at the last N — so `{:lines 10}` is the last ten
+   lines and `{:offset next-offset :lines 10}` walks the next ten, the two
+   switches a reader of a long log actually reaches for. Bytes stay the outer
+   cap: `:limit` still bounds one read.
 
    A missing file is an empty chunk at offset 0, not an error: a shell that has
    printed nothing yet and a shell whose log was deleted read alike, and neither
    is worth an exception."
   ([id file] (read-chunk id file nil))
-  ([id ^File file {:keys [offset limit]}]
-   (let [len
+  ([id ^File file {:keys [offset limit lines]}]
+   (let [want-lines
+         (when (and lines (pos? (long lines))) (long lines))
+
+         len
          (long (if (.isFile file) (.length file) 0))
 
          lim
@@ -281,6 +309,9 @@
          off
          (long (cond
                  ;; No offset: the tail bytes, what a watcher of a live command wants.
+                 ;; `:lines` with no offset anchors at the last N lines, not at the
+                 ;; last N bytes: the caller counted lines, so the read starts on one.
+                 (and (nil? offset) want-lines) (tail-line-offset file len lim want-lines)
                  (nil? offset) (max 0 (- len lim))
                  ;; NEGATIVE: the last `n` LINES, the same reading `cat(path, -50)` has.
                  ;; A line count is the unit a caller actually holds; a byte offset for
@@ -306,15 +337,20 @@
          tail
          (long (if (< (+ off got) len) (partial-tail buf got) 0))
 
+         whole-n
+         (long (max 0 (- got head tail)))
+
+         ;; The LINE window closes the chunk early; `next-offset` then names the
+         ;; first byte of the line after it, so the next call continues there.
          keep-n
-         (long (max 0 (- got head tail)))]
+         (long (if want-lines (line-window-length buf head whole-n want-lines) whole-n))]
 
      {:id (str id)
       :offset (+ off head)
       :next-offset (+ off head keep-n)
       :text (String. buf (int head) (int keep-n) StandardCharsets/UTF_8)
       :is-eof (>= (+ off head keep-n) len)
-      :is-truncated (< (+ off got) len)})))
+      :is-truncated (or (< keep-n whole-n) (< (+ off got) len))})))
 
 ;; The index row: which logs does this session have?
 

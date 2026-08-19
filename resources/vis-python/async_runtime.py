@@ -992,15 +992,38 @@ class __VisShell__(__VisResult__):
             raise RuntimeError(globals()["__vis_process_surface__"]["off"])
         return __vis_settle__(fn(__vis_args__))
 
-    def logs(self, offset=None, limit=None):
+    __vis_logs_aliases__ = {
+        "n": "lines",
+        "tail": "lines",
+        "start": "offset",
+        "bytes": "limit",
+    }
+
+    def logs(self, offset=None, lines=None, limit=None, **aliases):
         # Read the log and return NOW — nothing blocks on the caller's behalf.
         # A NEGATIVE offset is the last n LINES (`sh.logs(-50)`), the same
         # reading `cat(path, -50)` has; a positive one is a byte cursor.
+        # `lines=10` is the LINE window: the last ten with no offset, the NEXT
+        # ten from one (`sh.logs(next_offset, 10)`), so a long log is walked a
+        # screenful at a time. A near-miss keyword folds onto the one it means
+        # rather than costing the read.
+        named = {"offset": offset, "lines": lines, "limit": limit}
+        for key, value in aliases.items():
+            canonical = self.__vis_logs_aliases__.get(key)
+            if canonical is None:
+                raise TypeError(
+                    "logs: no keyword '%s'. Keywords: offset, lines, limit "
+                    "(n/tail mean lines, start means offset)." % key
+                )
+            if named[canonical] is not None:
+                raise TypeError(
+                    "logs: %s named twice, as '%s' too." % (canonical, key)
+                )
+            named[canonical] = value
         args = {"id": self["id"]}
-        if offset is not None:
-            args["offset"] = int(offset)
-        if limit is not None:
-            args["limit"] = int(limit)
+        for key in ("offset", "lines", "limit"):
+            if named[key] is not None:
+                args[key] = int(named[key])
         return self.__vis_op__("_shell_logs", args)
 
     def type(self, text, is_enter=True):
@@ -1012,11 +1035,21 @@ class __VisShell__(__VisResult__):
     def stop(self):
         return self.__vis_op__("_shell_stop", {"id": self["id"]})
 
-    def wait(self, seconds=120):
+    def wait(self, seconds=120, **aliases):
         # ONE wait, and it does NOT live here: the bounded poll loop is host code
         # (`_shell_wait`), so the sandbox handle, an extension's handle and the tests
         # all wait the same way instead of each re-typing a loop that can disagree
         # about the deadline. `timed_out` means the WAIT expired, not the process.
+        # `secs=`/`timeout=` mean `seconds`: the docs say `sh.wait(secs)`, so the
+        # word a reader carries over must not silently do nothing.
+        for key in ("secs", "timeout"):
+            if key in aliases:
+                seconds = aliases.pop(key)
+        if aliases:
+            raise TypeError(
+                "wait: no keyword '%s'. Keywords: seconds (secs/timeout mean it)."
+                % sorted(aliases)[0]
+            )
         return self.__vis_op__(
             "_shell_wait", {"id": self["id"], "seconds": int(seconds)}
         )

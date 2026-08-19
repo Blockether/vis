@@ -5,7 +5,8 @@
    into the per-block sink (drained into the block outcome's `:attachments`, which the
    loop persists as `:attachments`), with the media-type sniffed from magic bytes
    / extension / a utf-8 probe. No stdout fence, no parsing."
-  (:require [com.blockether.vis.internal.env-python :as ep]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
@@ -879,17 +880,111 @@
         ;; The one the human alone was shown is put in front of the model; the
         ;; one already riding this request is not sent twice.
         (expect (= ["user.png"] (mapv :filename @sink)))))
-  (it "refuses a wrong keyword BY NAME, naming the one that was meant"
+  ;; Regression, vis session a64d44c2: `attach(p, name=…, title=…)` raised
+  ;; TypeError and stored NOTHING — an artifact lost to two words, by a model
+  ;; that reaches for `name=` again the next turn.
+  (it "folds a near-miss keyword onto the canonical one"
       (let [pctx
             (ctx-with-root (temp-root))
 
             out
             (block pctx
-                   (str "try:\n"
-                        "    attach(b'x', name='a.txt', title='t')\n" "except TypeError as e:\n"
-                        "    print('RAISED', \"no keyword 'name'\" in str(e),\n"
-                        "          'filename' in str(e))\n"))]
+                   (str "d = attach(b'x', name='a.txt', title='a caption')\n"
+                        "print(d['filename'])\n"))]
 
         (expect (nil? (:error out)))
-        (expect (re-find #"RAISED True True" (str (:stdout out))))
+        (expect (re-find #"a\.txt" (str (:stdout out))))
+        (expect (= [["a.txt" "a caption"]] (mapv (juxt :filename :label) (:attachments out))))))
+  (it "reads path= as the source it means"
+      (let [root
+            (temp-root)
+
+            _
+            (spit (str root "/note.txt") "hello")
+
+            pctx
+            (ctx-with-root root)
+
+            out
+            (block pctx
+                   (str "d = attach(path=" (pr-str (str root "/note.txt"))
+                        ")\n" "print(d['filename'], d['size'])\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"note\.txt 5" (str (:stdout out))))))
+  (it "refuses one idea named twice, a keyword that spells nothing, and no source"
+      (let [pctx
+            (ctx-with-root (temp-root))
+
+            out
+            (block pctx
+                   (str "try:\n" "    attach(b'x', filename='a.txt', name='b.txt')\n"
+                        "except TypeError as e:\n" "    print('TWICE', 'named twice' in str(e))\n"
+                        "try:\n" "    attach(b'x', colour='red')\n"
+                        "except TypeError as e:\n"
+                        "    print('UNKNOWN', \"no keyword 'colour'\" in str(e))\n"
+                        "try:\n" "    attach(filename='a.txt')\n"
+                        "except TypeError as e:\n"
+                        "    print('NOSOURCE', 'source is required' in str(e))\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"TWICE True" (str (:stdout out))))
+        (expect (re-find #"UNKNOWN True" (str (:stdout out))))
+        (expect (re-find #"NOSOURCE True" (str (:stdout out))))
         (expect (empty? (:attachments out))))))
+
+(defdescribe
+  attach-pages-are-canonical-test
+  "A prebound global's page is the whole contract its caller reads, so it wears
+   the shape every documented Vis verb wears: the CALL LINE and the KEYS are
+   STRUCTURE (`__vis_calls__` / `__vis_keys__`, printed above the document and
+   out of the text `apropos` scores), the keys line is where requiredness is
+   stated, and the result is stated exactly once. The five attachment globals
+   shipped prose that opened with a retyped signature and named no keys at all."
+  (it
+    "states call, keys and result for every attachment global, matched to the def"
+    (let [pctx
+          (ctx-with-root (temp-root))
+
+          out
+          (block pctx
+                 (str "import inspect\n" "bad = []\n"
+                      "for n in ('attach', 'list_attachments', 'get_attachment',\n"
+                      "          'read_attachment', 'show_attachment'):\n"
+                      "    fn = globals()[n]\n" "    call = __vis_calls__.get(n, '')\n"
+                      "    keyline = __vis_keys__.get(n, '')\n"
+                      "    page = __vis_docs__.get(n, '')\n"
+                      "    ps = [p for p in inspect.signature(fn).parameters.values()\n"
+                      "          if p.kind is not p.VAR_KEYWORD]\n"
+                      "    want = n + '(' + ', '.join(str(p) for p in ps) + ')'\n"
+                      "    named = [k.split(' ')[0]\n"
+                      "             for k in keyline[len('Keys: '):].split(' · ')]\n"
+                      "    if call != want:\n"
+                      "        bad.append((n, 'call', call, want))\n"
+                      "    if not keyline.startswith('Keys: '):\n"
+                      "        bad.append((n, 'keys', keyline))\n"
+                      "    if [k for k in named if k not in [p.name for p in ps]]:\n"
+                      "        bad.append((n, 'key nothing takes', named))\n"
+                      "    if [p.name for p in ps if p.name not in named]:\n"
+                      "        bad.append((n, 'undocumented parameter', named))\n"
+                      "    if 'Raw result:' not in page:\n"
+                      "        bad.append((n, 'no result contract', page[:40]))\n"
+                      "    if page.startswith(n + '('):\n"
+                      "        bad.append((n, 'signature retyped into the prose', page[:40]))\n"
+                      "print(bad)\n"))]
+
+      (expect (nil? (:error out)))
+      ;; REQUIRED is the machine-readable half of the same line.
+      (expect (= "[]" (str/trim (str (:stdout out)))))))
+  (it "marks the parameter a caller cannot omit REQUIRED"
+      (let [pctx
+            (ctx-with-root (temp-root))
+
+            out
+            (block pctx
+                   (str "print(__vis_keys__['attach'].split(' · ')[0])\n"
+                        "print(__vis_keys__['get_attachment'].split(' · ')[0])\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"Keys: source \(REQUIRED" (str (:stdout out))))
+        (expect (re-find #"Keys: target \(REQUIRED" (str (:stdout out)))))))

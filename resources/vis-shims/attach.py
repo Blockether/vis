@@ -331,13 +331,21 @@ def __vis_install_attach__():
         image.save(buf, format=fmt)
         return buf.getvalue()
 
-    __vis_attach_kwargs = ("filename", "kind", "media_type", "label", "audience")
+    # ONE canonical name per idea - and the near-misses a caller reaches for FOLD
+    # into it. `attach(p, name=..., title=...)` attaches; learning that the words
+    # here are `filename=` and `label=` is not worth a whole failed call, and the
+    # model that types `name=` types it again next turn. The same idea named
+    # TWICE (canonical and alias together) is still refused: that is two answers
+    # to one question, not a slip.
+    __vis_attach_kwargs = ("source", "filename", "kind", "media_type", "label", "audience")
 
-    __vis_attach_kwarg_hints = {
+    __vis_attach_kwarg_aliases = {
         "name": "filename",
         "file_name": "filename",
         "fname": "filename",
         "path": "source",
+        "file": "source",
+        "src": "source",
         "title": "label",
         "caption": "label",
         "description": "label",
@@ -349,28 +357,55 @@ def __vis_install_attach__():
     }
 
     def attach(
-        source,
+        source=None,
         filename=None,
         kind=None,
         media_type=None,
         label=None,
         audience="both",
-        **unknown,
+        **aliases,
     ):
-        # A wrong keyword is refused BY NAME, with the one that was meant: the
-        # interpreter reports only a COUNT once two of them are wrong, and
-        # `name=` / `title=` are what a caller reaches for first.
-        if unknown:
-            bad = sorted(unknown)[0]
-            hint = __vis_attach_kwarg_hints.get(bad)
+        if aliases:
+            given = {
+                "source": source,
+                "filename": filename,
+                "kind": kind,
+                "media_type": media_type,
+                "label": label,
+            }
+            for spelled in sorted(aliases):
+                canonical = __vis_attach_kwarg_aliases.get(spelled)
+                if canonical is None:
+                    raise TypeError(
+                        "attach: no keyword '"
+                        + spelled
+                        + "'. Keywords: "
+                        + ", ".join(__vis_attach_kwargs)
+                        + "."
+                    )
+                if given[canonical] is not None:
+                    raise TypeError(
+                        "attach: "
+                        + canonical
+                        + " named twice, as '"
+                        + spelled
+                        + "' and as '"
+                        + canonical
+                        + "' - pass one."
+                    )
+                given[canonical] = aliases[spelled]
+            source = given["source"]
+            filename = given["filename"]
+            kind = given["kind"]
+            media_type = given["media_type"]
+            label = given["label"]
+        # `source` carries no default in the CONTRACT (`doc("attach")` marks it
+        # REQUIRED); it only carries one in the signature so `path=`/`file=` can
+        # reach it as a keyword at all.
+        if source is None:
             raise TypeError(
-                "attach: no keyword '"
-                + bad
-                + "'"
-                + ((" - did you mean " + hint + "=?") if hint else "")
-                + " Keywords: "
-                + ", ".join(__vis_attach_kwargs)
-                + "."
+                "attach: source is required - a confined path, bytes, a PIL image "
+                "or a matplotlib figure (path=/file= reach it too)."
             )
         # ONE attach verb, four shapes of source: a confined PATH, in-memory
         # BYTES (a str is a path, so encode text you produced), anything with
@@ -536,93 +571,115 @@ def __vis_install_attach__():
         # printing this call can never spill a metadata map nobody asked for.
         return _b64.b64decode(b64) if b64 else b""
 
-    attach.__doc__ = (
-        "Persist a produced artifact as a durable attachment. source is a confined "
-        "PATH, in-memory BYTES (name them with filename), a PIL image, or a "
-        "matplotlib figure. "
-        "SAME DOCUMENT, SAME NAME: re-attaching a filename stores the next "
-        "VERSION of that artifact, never report_v2.png beside report.png; a new "
-        "name is a different document. Attach one or two artifacts per turn - "
-        "compose many images into ONE sheet. audience routes it: 'both' "
-        "(default), 'user' (human only), 'model' (context only). A CSV/TSV "
-        "becomes a transcript table whose rows stay out of the model's context; "
-        "a *.pdf/*.html is a human-only document and refuses audience='model'. "
-        "kind, media_type and filename override inference; label is a one-line "
-        "caption. Returns that artifact's DESCRIPTOR - id, filename, version, "
-        "media_type, kind, size, audience - which every read verb here takes as "
-        "its target, in this same block."
+    # ONE page per callable, in the shape every documented Vis verb wears: the
+    # CALL LINE and the KEYS are STRUCTURE - `doc(name)` prints them above the
+    # document, out of the text `apropos` scores - and the page itself is prose
+    # plus the raw-result contract. The call line is DERIVED from the live `def`
+    # rather than retyped, because a signature spelled twice drifts one edit
+    # later; the keys line is where requiredness is stated, because a Python
+    # default can be a spelling detail (`source=None` exists only so that
+    # `path=` can reach it as a keyword).
+    def __vis_call_line(fn):
+        import inspect as _inspect
+
+        shown = [
+            p
+            for p in _inspect.signature(fn).parameters.values()
+            if p.kind is not p.VAR_KEYWORD
+        ]
+        return fn.__name__ + "(" + ", ".join(str(p) for p in shown) + ")"
+
+    __vis_target_keys = (
+        "Keys: target (REQUIRED — filename, id or descriptor)"
+        " · version (one cut, negative counts back)"
     )
-    list_attachments.__doc__ = (
-        "Descriptor dicts for this session's artifacts - what this block just "
-        "attached included - or, given a filename, that one artifact's versions, "
-        "oldest first ([] if never attached)."
-    )
-    get_attachment.__doc__ = (
-        "ONE artifact's descriptor dict, never its bytes. target is the filename "
-        "you attached under (the artifact: latest cut unless you pass version, "
-        "negative counting back), an id, or a descriptor you already hold. "
-        "LookupError when it does not exist."
-    )
-    read_attachment.__doc__ = (
-        "The artifact's raw BYTES, for Python. Same target/version addressing as "
-        "get_attachment."
-    )
-    show_attachment.__doc__ = (
-        "Put a stored IMAGE in front of the model for exactly the NEXT request, "
-        "then stored-only again; nothing is re-stored. Images replay only while "
-        "they fit the request's image budget, and this is the way back to one "
-        "that dropped out. Same addressing as get_attachment - an image this "
-        "block attached for the model is on the wire already, so showing it is a "
-        "no-op."
+
+    __vis_pages = (
+        (
+            attach,
+            "Keys: source (REQUIRED — path, bytes, PIL image, figure)"
+            " · filename (same name stores the next version)"
+            " · kind · media_type (overrides what the bytes sniff as)"
+            " · label (one-line caption)"
+            " · audience ('both', 'user' or 'model')",
+            "Persist a produced artifact as a durable attachment, across restarts. "
+            "source is a confined PATH, in-memory BYTES (name them with filename), "
+            "a PIL image, or a matplotlib figure. SAME DOCUMENT, SAME NAME: "
+            "re-attaching a filename stores the next VERSION of that artifact, never "
+            "report_v2.png beside report.png; a new name is a different document. "
+            "Attach one or two artifacts per turn - compose many images into ONE "
+            "sheet. audience routes it: 'both' (default), 'user' (human only), "
+            "'model' (context only). A CSV/TSV becomes a transcript table whose rows "
+            "stay out of the model's context; a *.pdf/*.html is a human-only document "
+            "and refuses audience='model'. kind, media_type and filename override "
+            "inference; label is a one-line caption. A near-miss spelling FOLDS onto "
+            "the keyword it meant instead of costing the call: name/file_name/fname "
+            "-> filename, path/file/src -> source, title/caption/description/alt -> "
+            "label, mime/mime_type/content_type -> media_type, type -> kind. Naming "
+            "one idea twice - canonical and alias in the same call - is refused."
+            "\n\nRaw result: that artifact's DESCRIPTOR dict - id, filename, version, "
+            "media_type, kind, size, audience - which every read verb here takes as "
+            "its target, in this same block.",
+        ),
+        (
+            list_attachments,
+            "Keys: name (one artifact's versions, oldest first)",
+            "This session's artifacts - the ones this very block attached included - "
+            "or, given a filename, that ONE artifact's versions oldest first."
+            "\n\nRaw result: a list of descriptor dicts (id, filename, version, "
+            "media_type, kind, size, audience, turn_id, is_pending, ...); [] when "
+            "nothing was ever attached under that name.",
+        ),
+        (
+            get_attachment,
+            __vis_target_keys,
+            "ONE artifact's descriptor, never its bytes. target is the FILENAME you "
+            "attached under - the artifact, its latest cut unless you name a version "
+            "(negative counts back) - an id, or a descriptor attach() handed back, "
+            "which is one exact cut. That same addressing holds for every read verb "
+            "here."
+            "\n\nRaw result: one descriptor dict, no bytes; LookupError when nothing "
+            "in this session carries that target.",
+        ),
+        (
+            read_attachment,
+            __vis_target_keys,
+            "The artifact's raw BYTES, for Python - the only door to them - addressed "
+            "exactly like get_attachment."
+            "\n\nRaw result: bytes, and nothing else, so printing this call can never "
+            "spill a metadata map nobody asked for.",
+        ),
+        (
+            show_attachment,
+            __vis_target_keys,
+            "Put a stored IMAGE in front of the model for exactly the NEXT request, "
+            "then stored-only again; nothing is re-stored. Images replay only while "
+            "they fit the request's image budget, and this is the way back to one "
+            "that dropped out. Same addressing as get_attachment - an image this "
+            "block attached for the model is on the wire already, so showing it is a "
+            "no-op."
+            "\n\nRaw result: {id, filename, media_type, size} for the image now queued "
+            "for the next request.",
+        ),
     )
 
     g = globals()
-    g["attach"] = attach
-    g["list_attachments"] = list_attachments
-    g["get_attachment"] = get_attachment
-    g["read_attachment"] = read_attachment
-    g["show_attachment"] = show_attachment
+    docs = g.setdefault("__vis_docs__", {})
+    calls = g.setdefault("__vis_calls__", {})
+    keys = g.setdefault("__vis_keys__", {})
+
+    for fn, keyline, page in __vis_pages:
+        name = fn.__name__
+        g[name] = fn
+        docs[name] = page
+        calls[name] = __vis_call_line(fn)
+        keys[name] = keyline
+        # ONE text for one handle: `help(attach)` and `doc("attach")` read the
+        # same string, so neither can go stale against the other.
+        fn.__doc__ = page
+
     g["__vis_guess_media_type"] = __vis_guess_media_type
     g["__vis_kind_for"] = __vis_kind_for
-
-    docs = g.setdefault("__vis_docs__", {})
-    docs["attach"] = (
-        "attach(source, filename=None, kind=None, media_type=None, label=None, "
-        "audience='both'): persist an artifact durably across restarts. source is "
-        "a confined PATH, BYTES (name them with filename), a PIL image, or a "
-        "matplotlib figure. SAME DOCUMENT, SAME NAME - re-attaching a filename stores the "
-        "next VERSION of that artifact, never report_v2.png beside report.png; a "
-        "new name is a different document. One or two artifacts per turn: "
-        "compose many images into ONE sheet. audience='both'|'user'|'model' "
-        "routes who sees it. CSV/TSV becomes a transcript table whose rows stay "
-        "out of the model's context; *.pdf/*.html is a human-only document and "
-        "refuses audience='model'. label is a one-line caption. Returns the "
-        "artifact's descriptor (id, filename, version, ...), addressable at once."
-    )
-    docs["list_attachments"] = (
-        "list_attachments(name=None): descriptor dicts (id, filename, version, "
-        "media_type, kind, size, audience, turn_id, is_pending, ...) for this "
-        "session's artifacts - including the ones this block just attached - or "
-        "one filename's versions oldest first."
-    )
-    docs["get_attachment"] = (
-        "get_attachment(target, version=None): ONE descriptor dict, no bytes. "
-        "target is the FILENAME you attached under - the artifact, latest cut "
-        "unless you name a version (negative counts back) - an id, or a "
-        "descriptor attach() handed back, one exact cut. That same addressing "
-        "holds for every "
-        "read call here. LookupError when it does not exist."
-    )
-    docs["read_attachment"] = (
-        "read_attachment(target, version=None): the artifact's raw BYTES and "
-        "nothing else, addressed like get_attachment."
-    )
-    docs["show_attachment"] = (
-        "show_attachment(target, version=None): put a stored IMAGE in front of "
-        "the model for exactly the NEXT request, then stored-only again. Images "
-        "replay only while they fit the request's image budget; this is the way "
-        "back to one that dropped out, and it re-stores nothing."
-    )
 
 
 __vis_install_attach__()

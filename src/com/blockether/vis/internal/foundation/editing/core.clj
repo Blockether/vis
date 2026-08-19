@@ -1433,13 +1433,60 @@
 
     (if (empty? toks) 0.0 (transduce (map #(find-token-score % pnorm nnorm)) min 1.0 toks))))
 
+(def ^:private find-spec-canonical-keys
+  "grep's WHOLE key vocabulary — one canonical name per idea, the names
+   `doc(\"grep\")` declares and the only ones the search itself reads."
+  #{"query" "paths" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_regex"})
+
+(def ^:private find-spec-aliases
+  "Near-miss spellings that FOLD onto the canonical key they meant. A model
+   types `glob=`, `globs=`, `context_lines=`, `max_results=`, `path=` — and each
+   one used to cost the whole search (\"find spec has unknown keys: glob\") over
+   a word nobody could have guessed differently. Naming ONE idea twice — alias
+   and canonical in the same call — is still refused: that is two answers to one
+   question, not a slip."
+  {"path" "paths"
+   "dir" "paths"
+   "dirs" "paths"
+   "max_results" "limit"
+   "glob" "include"
+   "globs" "include"
+   "includes" "include"
+   "excludes" "exclude"
+   "context_lines" "context"
+   "regex" "is_regex"
+   "hidden" "is_hidden"})
+
+(defn- fold-find-aliases
+  "`spec` with every accepted alias renamed to the canonical key it means, or a
+   throw naming the idea that was answered twice. An UNKNOWN key is left alone —
+   [[coerce-find-spec]] refuses it by name, with the vocabulary."
+  [spec]
+  (reduce-kv (fn [m alias canonical]
+               (if-not (contains? m alias)
+                 m
+                 (if (contains? m canonical)
+                   (throw (ex-info (str "find spec must use only one of canonical \""
+                                        canonical
+                                        "\" or alias \""
+                                        alias
+                                        "\".")
+                                   {:type :ext.foundation.editing/invalid-find-args :spec spec}))
+                   (-> m
+                       (assoc canonical (get m alias))
+                       (dissoc alias)))))
+             spec
+             find-spec-aliases))
+
 (defn- coerce-find-spec
   "ONE canonical call shape: grep takes a SINGLE options map. Python kwargs fold
    into that very map, so `grep(query=q, paths=[\"src\"])` and
    `grep({\"query\": q, \"paths\": [\"src\"]})` are the same call. A positional query is
    REFUSED because the second positional used to mean OPTIONS: the obvious
    reading of `grep([\"a\" \"b\"], [\"src\" \"tools\"])` — needles, then scopes — died
-   on argument shape instead of searching. `limit` is canonical; `max_results` is its accepted alias — ONE of the two, never both."
+   on argument shape instead of searching. ONE canonical name per idea, and the
+   near-miss spellings fold onto it ([[find-spec-aliases]]) — never both in one
+   call."
   [args]
   (let [spec
         (first args)
@@ -1453,23 +1500,23 @@
                    "A positional query or paths argument is not accepted.")
               {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
 
-        allowed-keys
-        #{"query" "paths" "path" "limit" "max_results" "offset" "include" "exclude" "context"
-          "is_hidden" "is_regex"}
+        spec
+        (fold-find-aliases spec)
 
         unknown-keys
-        (seq (remove allowed-keys (keys spec)))]
+        (seq (remove find-spec-canonical-keys (keys spec)))]
 
     (when unknown-keys
-      (throw
-        (ex-info
-          (str
-            "find spec has unknown keys: "
-            (str/join ", " (map str unknown-keys))
-            ". Allowed: query, paths, limit (alias max_results), offset, include, exclude, context, is_hidden, is_regex.")
-          {:type :ext.foundation.editing/invalid-find-args
-           :unknown (vec unknown-keys)
-           :allowed (vec (sort allowed-keys))})))
+      (throw (ex-info
+               (str
+                 "find spec has unknown keys: "
+                 (str/join ", " (map str unknown-keys))
+                 ". Allowed: query, paths, limit, offset, include, exclude, context, is_hidden, "
+                 "is_regex — a near-miss spelling (path, max_results, glob, globs, context_lines) "
+                 "folds onto the one it means.")
+               {:type :ext.foundation.editing/invalid-find-args
+                :unknown (vec unknown-keys)
+                :allowed (vec (sort find-spec-canonical-keys))})))
     (let
       [raw-query
        (get spec "query")
@@ -1495,15 +1542,8 @@
              (sequential? raw-query) (str/join " " raw-query)
              :else raw-query)
 
-       _
-       (when (and (contains? spec "paths") (contains? spec "path"))
-         (throw (ex-info "find spec must use only one of canonical \"paths\" or alias \"path\"."
-                         {:type :ext.foundation.editing/invalid-find-args :spec spec})))
-
        raw-paths
-       (cond (contains? spec "paths") (get spec "paths")
-             (contains? spec "path") (get spec "path")
-             :else ["."])
+       (get spec "paths" ["."])
 
        paths
        (cond (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths))) ["."]
@@ -1534,14 +1574,8 @@
        paths
        (into [] (comp (map normalize-find-dir-path) (distinct)) paths)
 
-       _
-       (when (and (contains? spec "limit") (contains? spec "max_results"))
-         (throw (ex-info
-                  "find spec must use only one of canonical \"limit\" or alias \"max_results\"."
-                  {:type :ext.foundation.editing/invalid-find-args :spec spec})))
-
        limit
-       (or (get spec "limit") (get spec "max_results") default-find-limit)
+       (get spec "limit" default-find-limit)
 
        _
        (when-not (and (integer? limit) (pos? (long limit)))
@@ -1877,10 +1911,13 @@
         args
 
         spec
-        (cond (and (= 1 (count args)) (map? a)) a
-              (and (= 2 (count args)) (map? b)) (assoc b "query" a)
-              (= 1 (count args)) {"query" a}
-              :else {})
+        ;; FOLDED, not raw: `glob=`/`excludes=` mean `include`/`exclude`, and a
+        ;; content search that read the raw map would silently drop the very
+        ;; filter the caller asked for.
+        (fold-find-aliases (cond (and (= 1 (count args)) (map? a)) a
+                                 (and (= 2 (count args)) (map? b)) (assoc b "query" a)
+                                 (= 1 (count args)) {"query" a}
+                                 :else {}))
 
         {paths :precise-paths :keys [context offset]}
         (coerce-find-spec args)]
@@ -4713,10 +4750,12 @@
        "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched). "
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
-       "`query: \"\"` lists files. Page with `offset`: line 1 names the next call when capped.")
-     :params [{:name "query"} {:name "paths"} {:name "include"} {:name "exclude"} {:name "is_regex"}
-              {:name "context"} {:name "limit"} {:name "max_results"} {:name "offset"}
-              {:name "is_hidden"}]
+       "`query: \"\"` lists files. Page with `offset`: line 1 names the next call when capped. "
+       "A near-miss key folds onto the one it means — `glob`/`globs`→`include`, `context_lines`→"
+       "`context`, `max_results`→`limit`, `path`→`paths` — so no search dies over a word.")
+     :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}
+              {:name "exclude"} {:name "is_regex"} {:name "context" :note "or `context_lines`"}
+              {:name "limit" :note "or `max_results`"} {:name "offset"} {:name "is_hidden"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation

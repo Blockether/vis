@@ -31,7 +31,8 @@
 
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
-   `sh.logs(-50)` reads the last 50 LINES (or a byte OFFSET) and returns NOW,
+   `sh.logs(-50)` reads the last 50 LINES (or a byte OFFSET, or `lines=10` for a
+   ten-line window that `next_offset` walks forward) and returns NOW,
    `sh.wait(30)` is the bounded poll loop written once in the engine, `sh.type(\"y\")`
    types into the pty and `sh.stop()` kills the tree. There are no id-taking verbs to
    re-type an id into; re-issuing a LIVE id gives the same handle back.
@@ -1993,13 +1994,18 @@
    command wants; `{:offset 0}` is the head, and a loop from there is the whole
    log. A NEGATIVE `:offset` is the last n LINES — `{:offset -50}` reads back 50
    lines, the same reading `cat(path, -50)` has, and clamps to the head when the
-   log holds fewer. `is_eof` false means read again NOW rather than sleep.
+    log holds fewer. `is_eof` false means read again NOW rather than sleep.
+
+   `:lines` N is the LINE switch: at most N lines come back, anchored at the LAST
+   N when no `:offset` is given, so `{:lines 10}` is the last ten and
+   `{:offset next_offset :lines 10}` is the next ten — walking a long log a
+   screenful at a time instead of guessing byte counts.
 
    The id may name a LIVE shell or a finished RUN: every run claims a handle before
    it waits, so a batch that ended inside its wait still has a log to read, and the
    file is what answers once the registry entry is gone."
   ([env id] (shell-logs-impl env id nil))
-  ([env id {:keys [offset limit]}]
+  ([env id {:keys [offset limit lines]}]
    (let [session
          (:session-id env)
 
@@ -2019,7 +2025,7 @@
                             " answers with its own id; live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (let [chunk
-           (shell-log/read-chunk id file {:offset offset :limit limit})
+           (shell-log/read-chunk id file {:offset offset :limit limit :lines lines})
 
            t
            (now-ms)]
@@ -2273,12 +2279,21 @@
   (or (map? x) (instance? java.util.Map x)))
 
 (defn- opt
-  "Read `k` from an options map that may be string- or keyword-keyed."
-  [opts k]
-  (if (nil? opts)
-    nil
-    (let [v (get opts (name k))]
-      (if (nil? v) (get opts (keyword k)) v))))
+  "Read `k` — or the first of its near-miss ALIASES that is present — from an
+   options map that may be string- or keyword-keyed.
+
+   A shell option map refuses nothing: a key nobody reads is silently DROPPED, so
+   a near-miss spelling costs the caller the whole option and says nothing. The
+   aliases are therefore part of the read, not a courtesy."
+  [opts k & aliases]
+  (when (some? opts)
+    (loop [ks (cons k aliases)]
+      (when (seq ks)
+        (let [kk (first ks)
+              v (let [v (get opts (name kk))]
+                  (if (nil? v) (get opts (keyword kk)) v))]
+
+          (if (some? v) v (recur (rest ks))))))))
 
 (defn- shell-stop-impl
   "`sh.stop()` — the TERMINAL lifecycle stage. Stopping used to be
@@ -2454,14 +2469,18 @@
           (reject-text)
           (shell-logs-impl env
                            (need-id)
-                           {:offset (->whole-long (opt opts :offset) "offset")
-                            :limit (->pos-long (opt opts :limit) "limit")}))
+                           {:offset (->whole-long (opt opts :offset :start) "offset")
+                            :limit (->pos-long (opt opts :limit :bytes) "limit")
+                            :lines (->pos-long (opt opts :lines :n :tail) "lines")}))
 
       "wait"
       ;; The ONE wait, on the handle and in the host: no caller writes a poll loop.
       (do (reject-command)
           (reject-text)
-          (shell-wait-impl env (need-id) {:seconds (opt opts :seconds) :offset (opt opts :offset)}))
+          (shell-wait-impl env
+                           (need-id)
+                           {:seconds (opt opts :seconds :secs :timeout)
+                            :offset (opt opts :offset :start)}))
 
       "send"
       (do (reject-command) (shell-send-impl env (need-id) (need-text) opts))
@@ -2683,7 +2702,9 @@
 
 (defn shell-logs
   "`sh.logs()` — read a background shell's log from a byte offset, or the last
-   n LINES with a negative one (`sh.logs(-50)`), and return NOW. Nothing blocks
+   n LINES with a negative one (`sh.logs(-50)`), and return NOW. `lines=10` is
+   the LINE window — the last ten, or the NEXT ten from an offset — so a long
+   log is walked a screenful at a time. Nothing blocks
    on your behalf: a wait is a bounded loop you write in `python_execution` and
    break on what you actually read."
   {:arglists '([id] [id opts])}
@@ -3081,8 +3102,8 @@
        "real pty and return its HANDLE NOW; every run is a background run. Chain with `&&`; "
        "run independent work as separate calls. Drive "
        "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
-       "expired, not the process), `sh.logs(-50)` (the last 50 LINES; `offset=…` bytes), "
-       "`sh.type(text)`, `sh.stop()` — never "
+       "expired, not the process), `sh.logs(-50)` (the last 50 LINES; `offset=…` bytes, "
+       "`lines=10` a ten-line window), " "`sh.type(text)`, `sh.stop()` — never "
        "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "
        "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
        "twice. NEVER trim inside the command: `| head`, "
@@ -3111,10 +3132,15 @@
           "window this read returned; feed `next_offset` back to continue, and `is_eof` false "
           "means read again now.")
      :description
-     (str "TRANSPORT for `sh.logs(offset=…, limit=…)` — call the HANDLE the shell result already "
+     (str "TRANSPORT for `sh.logs(offset=…, lines=…)` — call the HANDLE the shell result already "
           "is, not this. Reads a background shell's log and returns NOW. No offset reads the TAIL; "
           "`offset=0` starts at the beginning; a NEGATIVE offset is the last n LINES "
-          "(`sh.logs(-50)`), the same reading `cat(path, -50)` has.")
+          "(`sh.logs(-50)`), the same reading `cat(path, -50)` has. `lines=10` is the last ten "
+          "lines, and `sh.logs(next_offset, lines=10)` walks the next ten.")
+     :params [{:name "id" :required? true :note "the shell handle's own id"}
+              {:name "offset" :note "byte cursor; negative counts LINES"}
+              {:name "limit" :note "byte cap for one read"}
+              {:name "lines" :note "at most N lines; or `n`"}]
      :inject-env? true
      :tag :observation
      :ticker-fn (shell-ticker "logs")

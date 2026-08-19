@@ -72,9 +72,16 @@
        (str
          "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk as "
          "a compact STRING: a `path  Nd Nf` header, then one line per entry, directories first "
+         "then alphabetical. Dotfiles need `is_hidden=True`; gitignored entries are never "
+         "listed; a file raises `NotADirectoryError`. Row shapes and batches: `doc(\"ls\")`.")
+       :shim/docs
+       (str
+         "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk as "
+         "a compact STRING: a `path  Nd Nf` header, then one line per entry, directories first "
          "then alphabetical — a directory is `name/` (with its child count once `depth` expanded "
          "it), a file is `name  size` (`812`, `7.2k`, `2.1M`). `ls([dir, ...])` renders one "
-         "blank-line separated section per directory. Dotfiles need `is_hidden=True`; gitignored "
+         "blank-line separated section per directory, and a batch entry may be a per-path spec "
+         "(`{\"path\": dir, \"depth\": 2}`). Dotfiles need `is_hidden=True`; gitignored "
          "entries are never listed; a file raises `NotADirectoryError`. A path is a `str` or a "
          "`pathlib.Path`.")
        :shim/bindings ls-bridge-bindings

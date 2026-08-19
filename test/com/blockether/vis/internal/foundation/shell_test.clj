@@ -1725,6 +1725,32 @@
                               "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
                               " 'got ready' in w['stdout'], w['status'], w['timed_out']]"))))
              (finally (resources/stop-all! sid)))))
+  (it "reads a LINE window on the handle, folds `n`, and refuses a keyword by name"
+      ;; A near-miss keyword used to cross as an unread key: `sh.logs(n=10)` came
+      ;; back as if nothing had been asked, and there was no line switch at all —
+      ;; walking a long log forward meant guessing byte counts.
+      (let [sid
+            (str "py-logs-lines-" (System/nanoTime))
+
+            c
+            (py-ctx {:session-id sid})]
+
+        (try (expect (= [true true true true]
+                        (py c
+                            (str "sh = __vis_settle__(shell('for i in $(seq 1 40); do echo line-$i;"
+                                 " done', {'id':'walk'}))\n"
+                                 "sh.wait(30)\n" "a = sh.logs(lines=3)\n"
+                                 "b = sh.logs(n=3)\n" "head = sh.logs(0, 10)\n"
+                                 "try:\n" "    sh.logs(nlines=3)\n"
+                                 "    refusal = 'nothing was refused'\n" "except TypeError as e:\n"
+                                 "    refusal = str(e)\n" "sh.stop()\n"
+                                 "[a['stdout'].strip().splitlines() =="
+                                 " ['line-38', 'line-39', 'line-40'],"
+                                 " a['stdout'] == b['stdout'],"
+                                 " head['stdout'].strip().splitlines() =="
+                                 " ['line-%d' % i for i in range(1, 11)],"
+                                 " refusal.startswith(\"logs: no keyword 'nlines'\")]"))))
+             (finally (resources/stop-all! sid)))))
   (it "reports the shell's status on the run's OWN answer, with no second call"
       ;; The handle carried a `status()` verb of its own, so "has it finished" read as a
       ;; separate question about a shell whose own answer had already said it.
@@ -2361,3 +2387,52 @@
                        (expect (str/includes? out (str "payload-" i)))
                        (expect (not (str/includes? out (str "payload-" (mod (inc (long i)) n))))))))
                  (finally (resources/stop-all! sid)))))))))
+;; "Go down ten lines" — the switch a reader of a long log reaches for. It used to
+;; exist nowhere: the only line-aware read was the whole negative tail, and a
+;; near-miss spelling (`n`, `tail`, `secs`) was silently DROPPED by the options
+;; map, so the call came back as if the caller had asked for nothing.
+(defdescribe
+  shell-log-line-switch-test
+  "`logs` takes a LINE window, and a near-miss spelling of an option still means it."
+  (it "reads the last n lines, then the next n, and `n`/`tail` mean `lines`"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let [sid "shell-ext-line-switch"
+                  env {:session-id sid}]
+
+              (try (shell-bg* env "lines" "for i in $(seq 1 40); do echo line-$i; done")
+                   (poll #(:result (shell* env {"op" "logs" "id" "lines"}))
+                         #(str/includes? (str (get % "stdout")) "line-40"))
+                   (let [lines-of (fn [r]
+                                    (str/split-lines (str/trim (str (get r "stdout")))))
+                         last-three (:result (shell* env {"op" "logs" "id" "lines" "lines" 3}))
+                         by-alias (:result (shell* env {"op" "logs" "id" "lines" "n" 3}))
+                         head (:result (shell* env
+                                               {"op" "logs" "id" "lines" "offset" 0 "lines" 10}))
+                         next-ten (:result (shell* env
+                                                   {"op" "logs"
+                                                    "id" "lines"
+                                                    "offset" (get head "next_offset")
+                                                    "tail" 10}))]
+
+                     (expect (= ["line-38" "line-39" "line-40"] (lines-of last-three)))
+                     (expect (= (get last-three "stdout") (get by-alias "stdout")))
+                     (expect (= (mapv #(str "line-" %) (range 1 11)) (lines-of head)))
+                     (expect (= (mapv #(str "line-" %) (range 11 21)) (lines-of next-ten)))
+                     ;; The window closed the chunk early, so the reader is told there
+                     ;; is more rather than being left to sleep on a finished log.
+                     (expect (false? (get head "is_eof"))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "waits when the deadline is spelled `secs` or `timeout`"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let [sid "shell-ext-wait-alias"
+                               env {:session-id sid}]
+
+                           (try (shell-bg* env "quick" "echo done")
+                                (let [r (:result (shell* env {"op" "wait" "id" "quick" "secs" 20}))]
+                                  (expect (= 0 (get r "exit")))
+                                  (expect (false? (get r "timed_out")))
+                                  (expect (str/includes? (str (get r "stdout")) "done")))
+                                (finally (resources/stop-all! sid)))))))))

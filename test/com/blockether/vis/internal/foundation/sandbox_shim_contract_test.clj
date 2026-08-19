@@ -194,9 +194,13 @@
 (defdescribe
   shim-globals-name-their-call-test
   "A prebound global is typed straight into a block — `ls(...)`, `nippy_decode(...)` — with
-   no import and no signature to inspect first, so its page is the only place its arguments
-   are ever stated. Every one of them shows its own call form; the two nippy globals were
-   pages of prose that named neither an argument nor a result."
+   no import and no signature to inspect first, so something has to state its arguments.
+   The canonical home is STRUCTURE: `__vis_calls__[name]`, which `doc(name)` prints above
+   the document, exactly where a tool's `:call` line goes — a page that opens with its own
+   signature previews as a signature and stops matching the words its prose is written in.
+   A shim that has not moved yet may still carry the call form inside its text; naming it
+   NOWHERE is the bug (the two nippy globals were pages that named neither an argument nor
+   a result)."
   (it "documents every shim global with its own call form"
       (let [names
             (->> (registered-shims)
@@ -209,11 +213,11 @@
             (:python-context (ep/create-python-context {}))
 
             code
-            (str "_names = ["
-                 (str/join ", " (map pr-str names))
-                 "]\n"
-                 "_docs = globals().get('__vis_docs__', {})\n"
-                 "print([n for n in _names if (n + '(') not in str(_docs.get(n, ''))])")
+            (str "_names = [" (str/join ", " (map pr-str names))
+                 "]\n" "_docs = globals().get('__vis_docs__', {})\n"
+                 "_calls = globals().get('__vis_calls__', {})\n" "print([n for n in _names\n"
+                 "       if (n + '(') not in str(_calls.get(n, ''))\n"
+                 "       and (n + '(') not in str(_docs.get(n, ''))])")
 
             undocumented
             (try (:stdout (ep/run-python-block ctx code "t1/i1")) (finally (.close ctx)))]

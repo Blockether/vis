@@ -194,6 +194,52 @@
         (expect (= (.getCanonicalPath (shell-log/session-dir sid))
                    (.getCanonicalPath ^File (.getParentFile file)))))))
 
+;; The switches a reader of a long log actually reaches for: "the last ten lines",
+;; then "the next ten". Before `:lines` the only line-aware read was the whole
+;; tail, so walking a log FORWARD meant guessing byte counts.
+(defdescribe
+  line-window-test
+  "`:lines` is a LINE window: the last N with no offset, the NEXT N from one."
+  (it "with no offset it reads the LAST n lines"
+      (let [sid
+            (session-id "linetail")
+
+            text
+            (str/join (map #(str "line-" % "\n") (range 500)))]
+
+        (try (write-log! sid "w" text)
+             (let [c (shell-log/read-chunk "w" (shell-log/log-file sid "w") {:lines 3})]
+               (expect (s/valid? ::shell-log/log-chunk c))
+               (expect (= "line-497\nline-498\nline-499\n" (:text c)))
+               (expect (true? (:is-eof c))))
+             ;; More lines than the log holds is the whole log, never an error.
+             (let [c (shell-log/read-chunk "w" (shell-log/log-file sid "w") {:lines 100000})]
+               (expect (= text (:text c))))
+             (finally (shell-log/delete-session-logs! sid)))))
+  (it "from an offset it reads the NEXT n lines, and next-offset continues there"
+      (let [sid
+            (session-id "linewalk")
+
+            text
+            (str/join (map #(str "line-" % "\n") (range 500)))
+
+            file
+            (shell-log/log-file sid "w")]
+
+        (try (write-log! sid "w" text)
+             (let [a
+                   (shell-log/read-chunk "w" file {:offset 0 :lines 10})
+
+                   b
+                   (shell-log/read-chunk "w" file {:offset (:next-offset a) :lines 10})]
+
+               (expect (= (mapv #(str "line-" %) (range 10)) (str/split-lines (:text a))))
+               (expect (= (mapv #(str "line-" %) (range 10 20)) (str/split-lines (:text b))))
+               ;; The window closed the chunk early, so there IS more: a reader who
+               ;; sleeps here would sleep on a log that is already written.
+               (expect (false? (:is-eof a)))
+               (expect (true? (:is-truncated a))))
+             (finally (shell-log/delete-session-logs! sid))))))
 (defdescribe
   tee-test
   (it "writes through every byte the pump reads"
