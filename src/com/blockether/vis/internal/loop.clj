@@ -10828,8 +10828,29 @@
   "Insert `env` into the cache under `session-id` (UUID, or string
    normalized via `cache-key`). Returns `{:id <UUID> :environment env}`."
   [session-id env]
-  (let [k (cache-key session-id)]
+  (let [k (cache-key session-id)
+
+        ;; Whatever this insert is about to displace. Overwriting the entry used
+        ;; to drop it on the floor: its GraalPy Context — and, since every
+        ;; Context now carries its own Engine, that Engine with everything ever
+        ;; built on it — stayed reachable for the life of the process, because
+        ;; nothing else ever disposes an env the cache no longer points at. A
+        ;; gateway up 16h held 36 live Engines against 3 live PythonContexts and
+        ;; only 5 reaper evictions: the difference was displaced envs.
+        displaced
+        (get @cache k)]
+
     (swap! cache assoc k (new-cache-entry env))
+    ;; Lock-guarded like `evict-if-idle!`, and only for a DIFFERENT env: a turn
+    ;; running on the displaced env must finish on it rather than have its
+    ;; interpreter closed underneath. A busy one is left to the reaper, which
+    ;; sweeps whatever the cache still points at — this only rescues what the
+    ;; cache has already forgotten.
+    (when-let [old (:environment displaced)]
+      (when-not (identical? old env)
+        (let [^java.util.concurrent.locks.ReentrantLock lock (:lock displaced)]
+          (when (and lock (.tryLock lock))
+            (try (dispose-environment! old) (catch Throwable _ nil) (finally (.unlock lock)))))))
     (ensure-env-reaper!)
     {:id k :environment env}))
 
