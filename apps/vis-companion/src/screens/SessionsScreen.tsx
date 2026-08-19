@@ -250,6 +250,25 @@ function clientFor(conn: GatewayConn): GatewayClient {
 // into the fleet when it ANSWERS — never because it is being asked again.
 const fleetOutage = new Map<string, string>();
 
+// ONE MISSED READ IS NOT AN OUTAGE, and this counts the failures nothing has confirmed
+// yet.
+//
+// A machine that has been answering is a machine that is THERE: a phone hands its radio
+// between cells, a Wi-Fi roam drops the socket mid-flight, and the read that runs the
+// instant a session is left lands in exactly that gap. Publishing that one failure
+// declared the machine dark — which drains it out of `All` AND drops the reader's scope
+// back to the whole fleet (`resolveScope`), so leaving a transcript flipped the screen
+// from the one machine being read to every machine, and back again a poll later. The
+// darkness has to be CONFIRMED: a machine that has spoken to this device keeps its rows,
+// its section and the scope through a single failed read, and the next read decides. A
+// machine that has NOT spoken has nothing on screen to protect and goes dark on the
+// first failure, exactly as before.
+const fleetMisses = new Map<string, number>();
+
+// Two failed reads in a row is the confirmation. The poll behind the first one is ten
+// seconds away, so a gateway that really is gone still drains within a cycle.
+const OUTAGE_CONFIRMING_MISSES = 2;
+
 // Rebuild the fleet from the paired machines, painting each new one from its own
 // last known list so a machine that was on screen a second ago comes back with
 // rows instead of a skeleton — drained from the first frame when it is known dark.
@@ -606,6 +625,7 @@ export function SessionsScreen({
       const alive = () => {
         searchSilentRef.current.delete(key);
         fleetOutage.delete(key);
+        fleetMisses.delete(key);
       };
       try {
         // A poll that answers with the rows already on screen is NOT NEWS. Patching
@@ -672,12 +692,18 @@ export function SessionsScreen({
       } catch (cause) {
         if (signal?.aborted) return null;
         const failure = (cause as Error).message;
+        const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
+        // ONE MISSED READ IS NOT AN OUTAGE (see `fleetMisses`): a machine that was
+        // answering a moment ago gets the next read before this device calls it dark.
+        const misses = (fleetMisses.get(key) ?? 0) + 1;
+        fleetMisses.set(key, misses);
+        if (misses < OUTAGE_CONFIRMING_MISSES && held?.answered && held.error === null)
+          return failure;
         fleetOutage.set(key, failure);
         // A FAILURE THAT SAYS NOTHING NEW IS NOT NEWS EITHER (same rule as `settle`).
         // Re-patching an unchanged verdict handed the list a new fleet array on every
         // poll — and with it a re-anchored scroll position and every memo built from the
         // fleet — for a machine that has not been on screen since it went dark.
-        const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
         if (held?.error !== failure)
           patchMachine(key, (machine) => ({ ...machine, error: failure, answered: false }));
         return failure;

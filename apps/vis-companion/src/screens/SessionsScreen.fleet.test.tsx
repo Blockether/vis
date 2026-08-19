@@ -238,6 +238,70 @@ describe("the All view is a fleet of separate machines", () => {
   });
 });
 
+// Regression, user report (paraphrased: "I have one machine picked, and coming out of a
+// session the list sometimes flashes the all-machines version"): the read that runs the
+// moment the list is back on the glass can land in a radio handover, and ONE failed read
+// declared the machine dark — which drained it out of `All` and dropped the reader's
+// scope back to the whole fleet (`resolveScope`), then took it back a poll later.
+describe("a machine that misses one read is not an outage", () => {
+  const betaReads = (view: ReturnType<typeof renderSessionsScreen>) => {
+    const origin = new URL(view.conns[1].url).origin;
+    return view.requests.filter(
+      (request) => request.machine === origin && request.path.startsWith("/v1/sessions?"),
+    ).length;
+  };
+
+  /** Park the list behind a transcript and come back to it, as leaving a session does. */
+  const leaveSession = (view: ReturnType<typeof renderSessionsScreen>) => {
+    view.setVisible(false);
+    view.setVisible(true);
+  };
+
+  const scopeToBeta = async () => {
+    await userEvent.click(
+      within(screen.getByLabelText("Machines")).getByRole("button", { name: /^beta/ }),
+    );
+    await waitFor(() => expect(screen.queryByText("First")).toBeNull());
+  };
+
+  it("keeps the reader on their machine when one read drops", async () => {
+    const view = renderSessionsScreen({
+      machines: [fleet()[0], { ...fleet()[1], drops: [2] }],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+    await scopeToBeta();
+
+    leaveSession(view);
+    await waitFor(() => expect(betaReads(view)).toBe(2));
+    await act(async () => {});
+
+    // The screen the reader left is the screen they came back to.
+    expect(screen.queryByText("First")).toBeNull();
+    expect(screen.getByText("Second")).toBeTruthy();
+    expect(named(/^Reconnect to beta/)).toHaveLength(0);
+  });
+
+  // The other half of the same rule: a machine that really is gone still goes, so the
+  // reader is never parked on a dead machine's list.
+  it("drains the machine once a second read confirms it", async () => {
+    const view = renderSessionsScreen({
+      machines: [fleet()[0], { ...fleet()[1], drops: [2, 3] }],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+    await scopeToBeta();
+
+    leaveSession(view);
+    await waitFor(() => expect(betaReads(view)).toBe(2));
+    leaveSession(view);
+    await waitFor(() => expect(betaReads(view)).toBe(3));
+
+    expect(await screen.findByText("First")).toBeTruthy();
+    await waitFor(() => expect(named(/^Reconnect to beta/)).toHaveLength(1));
+    expect(screen.queryByText("Second")).toBeNull();
+  });
+});
 // Regression, user report (paraphrased: "this reconnecting should have a 5 second
 // timeout, and the error should then be RED, say something like 'Unable to connect',
 // and be shown for at most 3 seconds"): the press inherited the transport's own 30s

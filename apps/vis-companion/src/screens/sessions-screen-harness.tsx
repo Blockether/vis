@@ -30,6 +30,12 @@ export interface MachineFixture {
    * a press give up on its own deadline instead of on a transport error.
    */
   hangs?: boolean;
+  /**
+   * The reads that DROP — 1-based, counted per gateway across relaunches like `heals`.
+   * A machine that answers, loses one read to a radio handover and answers again is a
+   * blip (`[2]`); one that keeps refusing from there is really gone (`[2, 3]`).
+   */
+  drops?: number[];
   /** Answers its list reads, but never answers a search. */
   searchHangs?: boolean;
   /**
@@ -202,6 +208,7 @@ export function renderSessionsScreen({
     const seen = (reads.get(url.origin) ?? 0) + 1;
     reads.set(url.origin, seen);
     if (machine.hangs && seen > 1) return blackhole(init?.signal);
+    if (machine.drops?.includes(seen)) throw new TypeError("Failed to fetch");
     // Alive to the list, dark to the search: the machine whose transcripts nobody is
     // reading answers everything else, so its darkness is something only a search can
     // discover — and something the next search has to remember.
