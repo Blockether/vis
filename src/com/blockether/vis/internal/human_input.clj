@@ -1782,6 +1782,35 @@
       (invalid-live-view! why)
       artifact)))
 
+(defonce ^:private late-artifact-filer
+  ;; The ONE way an artifact reaches durable storage from OUTSIDE a running block.
+  ;; The layer that owns the database installs it; this namespace cannot reach that
+  ;; layer (the turn loop sits between the two), and there is deliberately no
+  ;; second door.
+  (atom nil))
+
+(defn set-late-artifact-filer!
+  "Install what a LATE close files its artifact through: called
+   `[iteration-id attachment]`, answering the stored row or nil.
+
+   Until one is installed a late close still seals its record and still answers
+   its verdict — only the row that LISTS the artifact is missing."
+  [f]
+  (reset! late-artifact-filer f))
+
+(defn- file-late-artifact!
+  "File `attachment` on iteration `home`, for a view whose block is already over.
+   True when a row was stored. Never throws: a close owes a verdict first."
+  [home attachment]
+  (boolean (when-let [f @late-artifact-filer]
+             (try (some? (f home attachment))
+                  (catch Throwable t
+                    (tel/log! {:level :warn
+                               :id ::live-artifact-not-filed
+                               :data {:iteration-id (str home) :error (ex-message t)}
+                               :msg "Late live-view artifact could not be filed"})
+                    false)))))
+
 (defn close-live!
   "End live view `view-id` and return its verdict — the ONE thing the model
    reads. nil when the view was already closed, so a `finally` closing what an
@@ -1816,13 +1845,20 @@
                [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
-             (let [;; A human's stop arrives on a gateway thread, which collects no artifacts of
-                   ;; its own: the row belongs to the block whose run produced it, so file into
-                   ;; the collector that block captured when nothing is collecting here.
-                   sink (or mpl-capture/*attachment-sink* (:attachment-sink entry))
-                   artifact-id (when (binding [mpl-capture/*attachment-sink* sink]
-                                       (mpl-capture/record-attachment! (live-attachment artifact)))
-                                 (:id artifact))
+             (let [;; WHERE the row goes. A block collecting HERE — the view opened and
+                   ;; closed inside one run, or carried into a later block — takes it out
+                   ;; with its own artifacts. A human's stop arriving after that block
+                   ;; ENDED reaches a collector nobody will ever read again, so the row
+                   ;; goes to the iteration that block became: the turn the human is
+                   ;; already reading, where every other artifact of that run is listed.
+                   attachment (live-attachment artifact)
+                   filed?
+                   (if-let [home (and (nil? mpl-capture/*attachment-sink*) (:late-home entry))]
+                     (file-late-artifact! home attachment)
+                     (some? (binding [mpl-capture/*attachment-sink*
+                                      (or mpl-capture/*attachment-sink* (:attachment-sink entry))]
+                              (mpl-capture/record-attachment! attachment))))
+                   artifact-id (when filed? (:id artifact))
                    result (cond-> verdict
                             artifact-id
                             (assoc :artifact-id artifact-id))]
@@ -1930,6 +1966,34 @@
         (keep (fn [[view-id entry]]
                 (when (= :live (:kind entry)) view-id)))
         @pending))
+
+(defn adopt-open-views!
+  "Give every live view still open and not yet homed the iteration `home` — where
+   a close arriving after its block is gone files its artifact. Returns the ids
+   it stamped, and is called when a block ENDS, the moment that id exists.
+
+   A view OUTLIVES the block that opened it: the call returns while the run keeps
+   painting, and the human's stop can arrive an hour later on a gateway thread.
+   That block's artifact collector was drained the instant it returned, so a close
+   reaching only the collector files a row nobody will ever read — the picture the
+   human watched, lost at the moment they stopped it."
+  [home]
+  (if-not home
+    []
+    (let [ids (into #{}
+                    (keep (fn [[view-id entry]]
+                            (when (and (= :live (:kind entry)) (nil? (:late-home entry))) view-id)))
+                    @pending)]
+      (when (seq ids)
+        (swap! pending (fn [m]
+                         (reduce (fn [acc view-id]
+                                   (cond-> acc
+                                     (and (contains? acc view-id)
+                                          (nil? (:late-home (get acc view-id))))
+                                     (assoc-in [view-id :late-home] home)))
+                                 m
+                                 ids))))
+      (vec (sort ids)))))
 
 (defn close-abandoned!
   "Close every live view open right now whose id is NOT in `known`, with

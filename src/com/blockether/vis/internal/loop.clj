@@ -7994,6 +7994,10 @@
                                 (:tokens tc) :cost-usd
                                 (:cost-usd tc)))))
                         _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
+                        ;; A view still open when the block ends outlives the collector that
+                        ;; block was draining: from here on its record belongs to the
+                        ;; ITERATION, which is only nameable now.
+                        _ (human-input/adopt-open-views! iteration-id)
                         ;; Context end-of-iter bookkeeping.
                         ctx-atom-ref (:ctx-atom environment)
                         _ (when ctx-atom-ref

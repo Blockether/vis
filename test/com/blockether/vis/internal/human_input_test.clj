@@ -2014,7 +2014,41 @@
                     (binding [mpl/*attachment-sink* sink]
                       (expect (some? (hi/close-live! (:id view))))
                       (expect (nil? (hi/close-live! (:id view)))))
-                    (expect (= 1 (count @sink))))))))
+                    (expect (= 1 (count @sink)))))))
+  ;; A run the human stops LONG after the block returned: that block's collector was
+  ;; drained the instant it returned, so a row filed into it is listed nowhere and the
+  ;; picture the human watched is lost at the moment they stop it.
+  (it "files a stop that lands after the block ended onto the iteration instead"
+      (recorded
+        (fn []
+          (let [sink
+                (atom [])
+
+                filed
+                (atom [])
+
+                view
+                (binding [mpl/*attachment-sink* sink]
+                  (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
+
+                ;; The block ENDS: its iteration is nameable now, and from here the
+                ;; record belongs to it.
+                adopted
+                (hi/adopt-open-views! "iteration-7")
+
+                result
+                (try (hi/set-late-artifact-filer! (fn [home att]
+                                                    (swap! filed conj [home att])
+                                                    {:id "row-1"}))
+                     @(future (hi/interrupt-live! (:id view) "enough"))
+                     (finally (hi/set-late-artifact-filer! nil)))]
+
+            (expect (= [(:id view)] adopted))
+            (expect (= :interrupted (:reason result)))
+            (expect (empty? @sink) "the collector the block already drained is never written again")
+            (expect (= ["iteration-7"] (mapv first @filed)))
+            (expect (str/ends-with? (:filename (second (first @filed))) ".live.json"))
+            (expect (string? (:artifact-id result))))))))
 
 (defdescribe
   live-view-holds-the-watchers-wall-test

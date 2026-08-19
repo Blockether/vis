@@ -3372,7 +3372,42 @@
         (expect (= "user" (name (:audience revision))))
         (expect (= "# Note\n\n> a comment\n"
                    (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 revision))
-                            "UTF-8")))))))
+                            "UTF-8"))))))
+  ;; A live view a human STOPS after the block ended files the FIRST artifact its
+  ;; iteration ever gets. The owning turn used to be read off a SIBLING row, so an
+  ;; iteration with no other artifact dropped it — and the run the human watched
+  ;; was listed nowhere.
+  (it "appends the first artifact an iteration ever gets"
+      (let [s
+            (h/store)
+
+            cid
+            (h/store-session! s {:channel :cli})
+
+            tid
+            (vis/db-store-session-turn! s {:parent-session-id cid :user-request "watch CI"})
+
+            iid
+            (h/store-iteration! s {:session-turn-id tid :status :done :code "gh_watch_run(...)"})
+
+            stored
+            (persistance/db-append-iteration-attachment! s
+                                                         iid
+                                                         {:media-type
+                                                          "application/vnd.vis.live+json"
+                                                          :storage-uri "vis-live://s1/view-1"
+                                                          :size 4096
+                                                          :filename "release.live.json"
+                                                          :kind "file"
+                                                          :audience "user"})
+
+            rows
+            (vis/db-list-iteration-attachments s iid)]
+
+        (expect (some? stored))
+        (expect (= 1 (:version stored)))
+        (expect (= ["release.live.json"] (mapv :filename rows)))
+        (expect (= "vis-live://s1/view-1" (:storage-uri (first rows)))))))
 
 ;; Regression (session 4b6897d4): nothing bounded a STORED artifact -- neither a
 ;; tool's `attach()` nor the companion revision path had a cap at all -- so one

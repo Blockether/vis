@@ -3437,14 +3437,14 @@
    end of it, which keeps the table's `(iteration, tool_call_id, position)`
    UNIQUE constraint.
 
-   The owning turn soul is read off the iteration's existing attachments: an
-   artifact is only ever revised through the one it came from, so there is
-   always a sibling row, and no assumption about the iteration table's own
-   columns is baked in here.
+   The owning turn soul is read off the ITERATION itself, through the turn state
+   its row points at: a live view a human stops long after the block ended files
+   the FIRST artifact that iteration ever gets, and reading the soul off a
+   sibling row would drop it for having no siblings.
 
    `att` is `{:media-type :base64 :filename? :kind? :audience?}`. Returns
    `{:id :version :position}` for the stored row, or nil when the iteration is
-   unknown, has no artifacts, or the payload does not decode."
+   unknown or the payload does not decode."
   [db-info iteration-id att]
   (when (and (ds db-info) iteration-id)
     (sqlite-write-tx!
@@ -3455,10 +3455,11 @@
 
               soul-id-s
               (:session_turn_soul_id (first (query! tx-info
-                                                    {:select [:session_turn_soul_id]
-                                                     :from :session_attachment
-                                                     :where [:= :session_turn_iteration_id
-                                                             iter-id-s]
+                                                    {:select [:sts.session_turn_soul_id]
+                                                     :from [[:session_turn_iteration :it]]
+                                                     :join [[:session_turn_state :sts]
+                                                            [:= :sts.id :it.session_turn_state_id]]
+                                                     :where [:= :it.id iter-id-s]
                                                      :limit 1})))
 
               payload

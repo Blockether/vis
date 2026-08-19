@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.human-input :as human-input]
             [com.blockether.vis.internal.session-model :as smodel]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -1134,6 +1135,13 @@
        (catch Throwable t
          (tel/log! :warn ["gateway: append-iteration-attachment! failed" (str iid) (ex-message t)])
          nil)))
+
+;; A live view a human stops AFTER the block that opened it returned has no
+;; collector left to file into — the block's was drained the moment it returned.
+;; The engine hands the record here instead, and this is the layer that owns the
+;; database, so this is where the door is hung: the human-input namespace cannot
+;; require it (the turn loop sits between the two).
+(human-input/set-late-artifact-filer! append-iteration-attachment!)
 
 (def ^:private activity-phases
   "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned
