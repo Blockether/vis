@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.40 (4546) — 2026-08-19
+<!-- commit: ac9e2bde25e37e0a1bbb61e2c8ffb9f44bc86201 -->
+
+- Paint a recording's transcript as a quotation, not code
+- Quote a memo's transcript instead of icing it
+- Dispose the env a cache insert displaces
+- Fold near-miss tool keywords instead of refusing the call
+- Wrap a recording's transcript on words, not columns
+- Open a recording's transcription under its player
+- Fold a recording's transcript under the turn that carried it
+- Transcribe an attached recording into the model's manifest
+- Let an issued credential name its wire dialect
+- Break the walls of text into lists, tables and steps
+- Let the wheel own every row the live band paints
+- One forgiving, validated wire-dialect vocabulary
+- Say which live view the running row is showing
+- One shape for a tool's doc page, cross-validated against the handlers
+- Keep a gh watch moving and settle it into one picture
+- Keep project-scoped blocks out of the machine store
+- Name an Android octet-stream pick by its extension
+- Isolate a dropped recording path like a dropped picture
+- Sniff every recorder format, not only the m4a
+- One canonical page shape, and a gate that keeps it
+
 ## 0.1.40 (4508) — 2026-08-19
 <!-- commit: 057697b52fb6875584d6a565351226d15335c360 -->
 
