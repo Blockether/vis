@@ -878,10 +878,21 @@ export function SessionsScreen({
   // ignores it, so an in-place rename saved to storage and then painted the old name
   // until the next pairing change. Re-hydrating keeps every row (`reconcileMachines`
   // hands the surviving machine its new connection) and reloads nothing.
-  const fleetNames = conns.map((conn) => `${conn.url}\u0000${conn.label ?? ''}`).join('|');
+  //
+  // The same holds for the FACTS this screen never paints but the rest of the app reads
+  // off `machine.conn`: the machine `id` backfilled after pairing and the `alts` learned
+  // by address recovery. A row hands its OWN conn to `onOpen`, which becomes the active
+  // connection and later the machine Settings opens on — so a fleet still holding the
+  // pre-backfill conn opened Settings on an id-less machine and its panels never came.
+  const fleetFacts = conns
+    .map(
+      (conn) =>
+        `${conn.url}\u0000${conn.label ?? ''}\u0000${conn.id ?? ''}\u0000${(conn.alts ?? []).join(' ')}`,
+    )
+    .join('|');
   useEffect(() => {
     setMachines((current) => hydrateMachines(connsRef.current, current));
-  }, [fleetNames]);
+  }, [fleetFacts]);
 
   // Pairing changes rebuild the fleet; machines that stayed keep their rows.
   useEffect(() => {

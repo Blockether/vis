@@ -1855,9 +1855,18 @@ export function SettingsDialog({
 
   // WHICH MACHINES STAND OPEN, held by the identity that survives an address change.
   // Several may: opening a machine is never a reason to close another one.
-  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(
-    () => new Set(gateway ? [machineId(gateway)] : []),
-  );
+  //
+  // The conn we were opened FROM can be a snapshot taken before that machine's id was
+  // backfilled, so it is resolved against the live fleet — by identity, then by address —
+  // before its identity is taken. Trusting the snapshot opened the dialog on an id no row
+  // carried, and the machine's own panels stayed shut.
+  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(() => {
+    if (!gateway) return new Set<string>();
+    const paired =
+      gateways.find((conn) => machineId(conn) === machineId(gateway)) ??
+      gateways.find((conn) => conn.url === gateway.url);
+    return new Set([machineId(paired ?? gateway)]);
+  });
   const toggleMachine = useCallback((conn: GatewayConn) => {
     setOpenIds((open) => {
       const next = new Set(open);

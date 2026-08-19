@@ -284,10 +284,11 @@ export function renderSessionsScreen({
   }) as typeof fetch;
 
   let shownQuery = query;
+  let shownConns = conns;
   let shownVisible = isVisible;
   const screen = (next: string, visible: boolean) => (
     <SessionsScreen
-      conns={conns}
+      conns={shownConns}
       isVisible={visible}
       query={next}
       onQuery={onQuery}
@@ -330,6 +331,14 @@ export function renderSessionsScreen({
     setRows(index: number, rows: Session[]) {
       const machine = byOrigin.get(new URL(conns[index].url).origin);
       if (machine) machine.sessions = rows.map((row) => ({ ...row }));
+    },
+    /**
+     * The PAIRED LIST changes under the screen: the app learns a machine's durable
+     * id or the addresses it also answers on, and saves that beside the same URL.
+     */
+    setConns(next: GatewayConn[]) {
+      shownConns = next;
+      view.rerender(screen(shownQuery, shownVisible));
     },
     /** Hand the list a new filter, the way the app bar's field does. */
     setQuery(next: string) {
