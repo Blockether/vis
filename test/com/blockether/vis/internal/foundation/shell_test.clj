@@ -1565,7 +1565,12 @@
       ;; Regression, handle audit: a negative offset was refused as a bad number, so
       ;; the contract could not offer the tail by LINES at all.
       (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs(-50)"))
-      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "LINES")))
+      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "LINES"))
+      ;; Both directions, or the switch is only half a window: a reader who paged past
+      ;; a line had no documented way back.
+      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "lines=-10"))
+      (expect (str/includes? (str (:ext.symbol/params shell/shell-logs-symbol))
+                             "negative scrolls up")))
   ;; Regression, handle audit: the description taught the SHAPE of a run but not what to put
   ;; IN it, so commands arrived pre-trimmed - `| tail -50`, `| grep foo`, `2>/dev/null` - which
   ;; threw away bytes the handle already keeps whole and hid a nonzero exit behind the
@@ -1750,6 +1755,27 @@
                                  " head['stdout'].strip().splitlines() =="
                                  " ['line-%d' % i for i in range(1, 11)],"
                                  " refusal.startswith(\"logs: no keyword 'nlines'\")]"))))
+             (finally (resources/stop-all! sid)))))
+  (it "scrolls the LINE window back UP: `lines=-10` is the ten ABOVE an offset"
+      ;; The window only ever moved forward, so a reader who paged past the line they
+      ;; wanted had no way back short of re-reading the log from byte 0.
+      (let [sid
+            (str "py-logs-back-" (System/nanoTime))
+
+            c
+            (py-ctx {:session-id sid})]
+
+        (try (expect (= [true true true]
+                        (py c
+                            (str "sh = __vis_settle__(shell('for i in $(seq 1 40); do echo line-$i;"
+                                 " done', {'id':'back'}))\n" "sh.wait(30)\n"
+                                 "down = sh.logs(0, 10)\n"
+                                 "further = sh.logs(down['next_offset'], 10)\n"
+                                 "up = sh.logs(down['next_offset'], -10)\n" "sh.stop()\n"
+                                 "[further['stdout'].strip().splitlines() =="
+                                 " ['line-%d' % i for i in range(11, 21)],"
+                                 " up['stdout'] == down['stdout'],"
+                                 " up['next_offset'] == down['next_offset']]"))))
              (finally (resources/stop-all! sid)))))
   (it "reports the shell's status on the run's OWN answer, with no second call"
       ;; The handle carried a `status()` verb of its own, so "has it finished" read as a

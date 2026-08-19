@@ -1004,8 +1004,9 @@ class __VisShell__(__VisResult__):
         # A NEGATIVE offset is the last n LINES (`sh.logs(-50)`), the same
         # reading `cat(path, -50)` has; a positive one is a byte cursor.
         # `lines=10` is the LINE window: the last ten with no offset, the NEXT
-        # ten from one (`sh.logs(next_offset, 10)`), so a long log is walked a
-        # screenful at a time. A near-miss keyword folds onto the one it means
+        # ten from one (`sh.logs(next_offset, 10)`), and `lines=-10` the ten
+        # ABOVE that offset — the window scrolls a long log both ways instead
+        # of only forward. A near-miss keyword folds onto the one it means
         # rather than costing the read.
         named = {"offset": offset, "lines": lines, "limit": limit}
         for key, value in aliases.items():

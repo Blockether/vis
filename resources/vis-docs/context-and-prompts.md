@@ -137,8 +137,9 @@ shell analogue of `/slash`, and works the same way in the **TUI** and the
   and the result is a HANDLE:
   `sh = await shell("npm run dev", id="dev")`, then
   `sh.wait(30)` (the only wait there is), `sh.logs(-50)` for the last 50 lines
-  (`offset=0` for the head, a byte cursor; `lines=10` a ten-line window and
-  `sh.logs(next_offset, 10)` the next ten), `sh.type("y")`,
+  (`offset=0` for the head, a byte cursor; `lines=10` a ten-line window,
+  `sh.logs(next_offset, 10)` the next ten and `lines=-10` the ten above an
+  offset), `sh.type("y")`,
   `sh.stop()`. Every answer already carries that shell's status — running or exited,
   since when, its `log_path`, and the live `cpu_ms`/`cpu_percent`/`rss_bytes` of its
   process tree — so nothing has to ask again. There is no `wait` knob on the request — a request cannot select a

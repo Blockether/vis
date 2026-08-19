@@ -32,7 +32,8 @@
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
    `sh.logs(-50)` reads the last 50 LINES (or a byte OFFSET, or `lines=10` for a
-   ten-line window that `next_offset` walks forward) and returns NOW,
+   ten-line window that `next_offset` walks forward and `lines=-10` scrolls back
+   up) and returns NOW,
    `sh.wait(30)` is the bounded poll loop written once in the engine, `sh.type(\"y\")`
    types into the pty and `sh.stop()` kills the tree. There are no id-taking verbs to
    re-type an id into; re-issuing a LIVE id gives the same handle back.
@@ -242,8 +243,9 @@
    has no reading: clamping a `limit: -5` into a real read is the same silent
    mode change as rounding a fraction.
 
-   `logs` takes its `offset` through [[->whole-long]] instead, because there a
-   negative IS a reading — the last n LINES, as in `cat(path, -50)`."
+   `logs` takes its `offset` and its `lines` through [[->whole-long]] instead,
+   because there a negative IS a reading — the last n LINES back from the end, as
+   in `cat(path, -50)`, and `lines: -10` the ten ABOVE an offset."
   [x what]
   (let [n (->whole-long x what)]
     (when (and n (neg? (long n)))
@@ -1999,7 +2001,9 @@
    `:lines` N is the LINE switch: at most N lines come back, anchored at the LAST
    N when no `:offset` is given, so `{:lines 10}` is the last ten and
    `{:offset next_offset :lines 10}` is the next ten — walking a long log a
-   screenful at a time instead of guessing byte counts.
+   screenful at a time instead of guessing byte counts. A NEGATIVE N walks UP
+   instead: `{:offset o :lines -10}` is the ten lines ENDING at `o`, so the same
+   window scrolls back through what already scrolled past.
 
    The id may name a LIVE shell or a finished RUN: every run claims a handle before
    it waits, so a batch that ended inside its wait still has a log to read, and the
@@ -2471,7 +2475,7 @@
                            (need-id)
                            {:offset (->whole-long (opt opts :offset :start) "offset")
                             :limit (->pos-long (opt opts :limit :bytes) "limit")
-                            :lines (->pos-long (opt opts :lines :n :tail) "lines")}))
+                            :lines (->whole-long (opt opts :lines :n :tail) "lines")}))
 
       "wait"
       ;; The ONE wait, on the handle and in the host: no caller writes a poll loop.
@@ -2703,8 +2707,9 @@
 (defn shell-logs
   "`sh.logs()` — read a background shell's log from a byte offset, or the last
    n LINES with a negative one (`sh.logs(-50)`), and return NOW. `lines=10` is
-   the LINE window — the last ten, or the NEXT ten from an offset — so a long
-   log is walked a screenful at a time. Nothing blocks
+   the LINE window — the last ten, or the NEXT ten from an offset, and `-10` the
+   ten ABOVE it — so a long log is walked a screenful at a time, both ways.
+   Nothing blocks
    on your behalf: a wait is a bounded loop you write in `python_execution` and
    break on what you actually read."
   {:arglists '([id] [id opts])}
@@ -3103,7 +3108,8 @@
        "run independent work as separate calls. Drive "
        "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
        "expired, not the process), `sh.logs(-50)` (the last 50 LINES; `offset=…` bytes, "
-       "`lines=10` a ten-line window), " "`sh.type(text)`, `sh.stop()` — never "
+       "`lines=10` a ten-line window, `-10` the ten above it), "
+       "`sh.type(text)`, `sh.stop()` — never "
        "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "
        "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
        "twice. NEVER trim inside the command: `| head`, "
@@ -3136,11 +3142,12 @@
           "is, not this. Reads a background shell's log and returns NOW. No offset reads the TAIL; "
           "`offset=0` starts at the beginning; a NEGATIVE offset is the last n LINES "
           "(`sh.logs(-50)`), the same reading `cat(path, -50)` has. `lines=10` is the last ten "
-          "lines, and `sh.logs(next_offset, lines=10)` walks the next ten.")
+          "lines, `sh.logs(next_offset, lines=10)` walks the next ten and `lines=-10` the ten "
+          "ABOVE that offset, so the window scrolls both ways.")
      :params [{:name "id" :required? true :note "the shell handle's own id"}
               {:name "offset" :note "byte cursor; negative counts LINES"}
               {:name "limit" :note "byte cap for one read"}
-              {:name "lines" :note "at most N lines; or `n`"}]
+              {:name "lines" :note "N lines; negative scrolls up"}]
      :inject-env? true
      :tag :observation
      :ticker-fn (shell-ticker "logs")

@@ -226,7 +226,11 @@
    More tail than the file holds — or than `lim` covers — clamps to the start of
    the window instead of refusing: asking for 500 lines of a 3-line log is a
    request for the whole log, never an error. A trailing newline ENDS the last
-   line rather than beginning an empty one, so `-1` on `a\\nb\\n` is `b`."
+   line rather than beginning an empty one, so `-1` on `a\nb\n` is `b`.
+
+   `len` is where the search ENDS, not necessarily the file's length: a tail read
+   passes the length, and a backward `:lines` window passes the offset it ends at,
+   which is how the same walk answers \"the ten lines ABOVE here\"."
   ^long [^File f ^long len ^long lim ^long n]
   (let [win
         (long (min len lim))
@@ -287,7 +291,10 @@
    `:lines` N is the LINE window: the answer holds at most N lines, and with no
    `:offset` it is anchored at the last N — so `{:lines 10}` is the last ten
    lines and `{:offset next-offset :lines 10}` walks the next ten, the two
-   switches a reader of a long log actually reaches for. Bytes stay the outer
+   switches a reader of a long log actually reaches for. A NEGATIVE `:lines`
+   walks the OTHER way: `{:offset o :lines -10}` is the ten lines ENDING at `o`,
+   so the window slides back up a log as easily as it slides down, and the
+   `:offset` it answers is what feeds the read above it. Bytes stay the outer
    cap: `:limit` still bounds one read.
 
    A missing file is an empty chunk at offset 0, not an error: a shell that has
@@ -296,7 +303,13 @@
   ([id file] (read-chunk id file nil))
   ([id ^File file {:keys [offset limit lines]}]
    (let [want-lines
-         (when (and lines (pos? (long lines))) (long lines))
+         (let [n (long (or lines 0))]
+           (when-not (zero? n) (if (neg? n) (- n) n)))
+
+         ;; A negative count is a DIRECTION, not a smaller number: the same N
+         ;; lines, taken above `:offset` instead of below it.
+         back-lines?
+         (boolean (and lines (neg? (long lines))))
 
          len
          (long (if (.isFile file) (.length file) 0))
@@ -306,21 +319,32 @@
              (max 1)
              (min (long max-chunk-bytes)))
 
+         ;; Where a BACKWARD window ends: the offset the caller is looking at, or the
+         ;; end of the log when there is none. Nothing above it is what `:lines -n` asks
+         ;; for, so it also caps the read below.
+         back-anchor
+         (long (if (and offset (not (neg? (long offset)))) (min (long offset) len) len))
+
          off
-         (long (cond
-                 ;; No offset: the tail bytes, what a watcher of a live command wants.
-                 ;; `:lines` with no offset anchors at the last N lines, not at the
-                 ;; last N bytes: the caller counted lines, so the read starts on one.
-                 (and (nil? offset) want-lines) (tail-line-offset file len lim want-lines)
-                 (nil? offset) (max 0 (- len lim))
-                 ;; NEGATIVE: the last `n` LINES, the same reading `cat(path, -50)` has.
-                 ;; A line count is the unit a caller actually holds; a byte offset for
-                 ;; it is only knowable after reading the file, which is the read they
-                 ;; were trying to make.
-                 (neg? (long offset)) (tail-line-offset file len lim (- (long offset)))
-                 :else (-> (long offset)
-                           (max 0)
-                           (min len))))
+         (long
+           (cond
+             ;; NEGATIVE `:lines`: the N lines that END at `back-anchor` — the window
+             ;; slides UP, and the forward line window below closes the chunk exactly
+             ;; where the caller was already reading.
+             back-lines? (tail-line-offset file back-anchor lim want-lines)
+             ;; No offset: the tail bytes, what a watcher of a live command wants.
+             ;; `:lines` with no offset anchors at the last N lines, not at the
+             ;; last N bytes: the caller counted lines, so the read starts on one.
+             (and (nil? offset) want-lines) (tail-line-offset file len lim want-lines)
+             (nil? offset) (max 0 (- len lim))
+             ;; NEGATIVE: the last `n` LINES, the same reading `cat(path, -50)` has.
+             ;; A line count is the unit a caller actually holds; a byte offset for
+             ;; it is only knowable after reading the file, which is the read they
+             ;; were trying to make.
+             (neg? (long offset)) (tail-line-offset file len lim (- (long offset)))
+             :else (-> (long offset)
+                       (max 0)
+                       (min len))))
 
          want
          (long (min (- len off) lim))
@@ -341,9 +365,13 @@
          (long (max 0 (- got head tail)))
 
          ;; The LINE window closes the chunk early; `next-offset` then names the
-         ;; first byte of the line after it, so the next call continues there.
+         ;; first byte of the line after it, so the next call continues there. A
+         ;; BACKWARD window also stops at its anchor: asking for more lines than sit
+         ;; above the offset is the head up to it, never a read that runs past it.
          keep-n
-         (long (if want-lines (line-window-length buf head whole-n want-lines) whole-n))]
+         (long (cond-> (if want-lines (line-window-length buf head whole-n want-lines) whole-n)
+                 back-lines?
+                 (min (max 0 (- back-anchor off head)))))]
 
      {:id (str id)
       :offset (+ off head)

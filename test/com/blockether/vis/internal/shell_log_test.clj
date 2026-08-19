@@ -239,7 +239,46 @@
                ;; sleeps here would sleep on a log that is already written.
                (expect (false? (:is-eof a)))
                (expect (true? (:is-truncated a))))
-             (finally (shell-log/delete-session-logs! sid))))))
+             (finally (shell-log/delete-session-logs! sid)))))
+  (it
+    "a NEGATIVE n reads the lines ABOVE an offset, so the window scrolls back"
+    (let [sid
+          (session-id "linescroll")
+
+          text
+          (str/join (map #(str "line-" % "\n") (range 500)))
+
+          file
+          (shell-log/log-file sid "w")]
+
+      (try (write-log! sid "w" text)
+           (let [down
+                 (shell-log/read-chunk "w" file {:offset 0 :lines 10})
+
+                 further
+                 (shell-log/read-chunk "w" file {:offset (:next-offset down) :lines 10})
+
+                 up
+                 (shell-log/read-chunk "w" file {:offset (:next-offset down) :lines -10})]
+
+             (expect (= (mapv #(str "line-" %) (range 10 20)) (str/split-lines (:text further))))
+             ;; Scrolling back up from where the second window starts IS the first
+             ;; window — same text, same offsets — so the two directions agree and a
+             ;; reader can walk a log in both.
+             (expect (= (:text down) (:text up)))
+             (expect (= (:offset down) (:offset up)))
+             (expect (= (:next-offset down) (:next-offset up))))
+           ;; Nothing above the end of the log: with no offset a negative n is the
+           ;; tail, exactly like a negative offset.
+           (let [c (shell-log/read-chunk "w" file {:lines -3})]
+             (expect (= "line-497\nline-498\nline-499\n" (:text c))))
+           ;; More lines than sit above the offset is the head up to it, never a read
+           ;; that runs PAST where the caller was looking.
+           (let [c (shell-log/read-chunk "w" file {:offset 200 :lines -100000})]
+             (expect (zero? (long (:offset c))))
+             (expect (= 200 (long (:next-offset c))))
+             (expect (false? (:is-eof c))))
+           (finally (shell-log/delete-session-logs! sid))))))
 (defdescribe
   tee-test
   (it "writes through every byte the pump reads"
