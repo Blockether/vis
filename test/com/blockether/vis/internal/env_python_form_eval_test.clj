@@ -1241,27 +1241,27 @@ await patch({'path': css})" "t1/i1")]
   probe-path-binding-test
   "`probe-path` binds as the snake_case `probe_path` tool in the sandbox — no `is_exists`/`exists` alias."
   (it "exposes probe_path and NOT the old is_exists name"
-      (let [ctx
-            (:python-context (ep/create-python-context
-                               ;; strings-only boundary: tool results are built with STRING
-                               ;; keys at the source (a keyword-keyed result now throws).
-                               {'probe-path (fn [path]
-                                              {"path" path "exists" (= path "present.txt")})}))
+      (tpc/with-own [ctx
+                     ;; strings-only boundary: tool results are built with STRING
+                     ;; keys at the source (a keyword-keyed result now throws).
+                     {'probe-path (fn [path]
+                                    {"path" path "exists" (= path "present.txt")})}]
+        (let
+          [via-file
+           (ep/run-python-block ctx "await probe_path('present.txt')" "t1/i1")
 
-            via-file
-            (ep/run-python-block ctx "await probe_path('present.txt')" "t1/i1")
+           via-missing
+           (ep/run-python-block ctx "await probe_path('missing.txt')" "t1/i2")
 
-            via-missing
-            (ep/run-python-block ctx "await probe_path('missing.txt')" "t1/i2")
+           via-old
+           (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
 
-            via-old
-            (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
-
-        (expect (nil? (:error via-file)))
-        (expect (nil? (:error via-missing)))
-        (expect (= {"path" "present.txt" "exists" true} (:result via-file)))
-        (expect (= {"path" "missing.txt" "exists" false} (:result via-missing)))
-        (expect (str/includes? (get-in via-old [:error :message]) "`is_exists` is not defined"))))
+          (expect (nil? (:error via-file)))
+          (expect (nil? (:error via-missing)))
+          (expect (= {"path" "present.txt" "exists" true} (:result via-file)))
+          (expect (= {"path" "missing.txt" "exists" false} (:result via-missing)))
+          (expect (str/includes? (get-in via-old [:error :message])
+                                 "`is_exists` is not defined")))))
   (it "removing the binding makes probe_path undefined"
       (let [ctx (tpc/context ::ctx)]
         (ep/set-python-binding! ctx
@@ -1713,35 +1713,34 @@ await patch({'path': css})" "t1/i1")]
   ;; touch died with Truffle's "Null receiver values are not supported by
   ;; libraries" instead of a normal python error.
   (it "binds an awaited nil result as real python None and a map result as a real dict"
-      (let [pc
-            (ep/create-python-context {'nil_tool (fn nil-tool [& _]
-                                                   nil)
-                                       'map_tool (fn map-tool [& _]
-                                                   {"op" "probe" "stdout" "hi" "stderr" nil})})
+      (tpc/with-own [ctx
+                     {'nil_tool (fn nil-tool [& _]
+                                  nil)
+                      'map_tool (fn map-tool [& _]
+                                  {"op" "probe" "stdout" "hi" "stderr" nil})}]
+        (let
+          [res
+           (ep/run-python-block
+             ctx
+             (str "async def f():\n"
+                  "    a = await map_tool()\n" "    n = await nil_tool()\n"
+                  "    return [isinstance(a, dict), a['stdout'], a['stderr'] is None,"
+                  " n is None, type(n).__name__]\n"
+                  "r = await f()\n" "r"))]
 
-            res
-            (ep/run-python-block
-              (:python-context pc)
-              (str "async def f():\n"
-                   "    a = await map_tool()\n" "    n = await nil_tool()\n"
-                   "    return [isinstance(a, dict), a['stdout'], a['stderr'] is None,"
-                   " n is None, type(n).__name__]\n"
-                   "r = await f()\n" "r"))]
-
-        (expect (nil? (:error res)))
-        (expect (= [true "hi" true true "NoneType"] (:result res)))))
+          (expect (nil? (:error res)))
+          (expect (= [true "hi" true true "NoneType"] (:result res))))))
   (it "a null field of an awaited result raises a NORMAL python TypeError, not a host NPE"
-      (let [pc
-            (ep/create-python-context {'map_tool (fn map-tool [& _]
-                                                   {"op" "probe" "stderr" nil})})
+      (tpc/with-own [ctx
+                     {'map_tool (fn map-tool [& _]
+                                  {"op" "probe" "stderr" nil})}]
+        (let
+          [err
+           (:error (ep/run-python-block ctx "a = await map_tool()\na['stderr'][:5]"))]
 
-            err
-            (:error (ep/run-python-block (:python-context pc)
-                                         "a = await map_tool()\na['stderr'][:5]"))]
-
-        (expect (str/includes? (:message err) "NoneType"))
-        (expect (not (str/includes? (:message err) "NullPointerException")))
-        (expect (not (str/includes? (:message err) "Null receiver"))))))
+          (expect (str/includes? (:message err) "NoneType"))
+          (expect (not (str/includes? (:message err) "NullPointerException")))
+          (expect (not (str/includes? (:message err) "Null receiver")))))))
 
 (defdescribe pyify-never-leaks-a-raw-proxy-test
              ;; REGRESSION: when the one-shot rebuild of a foreign map failed,
