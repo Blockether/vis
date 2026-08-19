@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -181,6 +184,27 @@ describe("MediaRecording", () => {
   it("shows no band at all when nothing could read the recording", () => {
     expect(html).not.toContain("TRANSCRIPTION");
     expect(html).not.toContain("aria-expanded");
+  });
+
+  // A mic glyph beside a player is the same claim twice: the control is already,
+  // visibly, audio. It only ate column width from the scrubber.
+  it("puts no icon beside the player", () => {
+    expect(html).not.toContain("<svg");
+  });
+
+  // Speech is not code. Opened, the words read as a QUOTATION of the audio right
+  // above them — curly quotes, italic, justified to the column the bubble owns.
+  it("quotes the opened transcript in italic, justified", async () => {
+    render(
+      <MediaRecording name="memo.m4a" transcription="buy milk and call back">
+        <audio controls />
+      </MediaRecording>,
+    );
+    await userEvent.click(screen.getByText("TRANSCRIPTION"));
+    const words = screen.getByText(/buy milk and call back/);
+    expect(words.textContent).toBe("“buy milk and call back”");
+    expect(words.className).toContain("italic");
+    expect(words.className).toContain("text-justify");
   });
 
   it("ignores a transcript that is only whitespace", () => {

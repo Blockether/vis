@@ -8,7 +8,6 @@ import {
   mediaTileFrameClass,
 } from "../lib/media-frame";
 import { ImageGallery } from "../lib/gallery";
-import { MicIcon } from "./icons";
 import { Disclosure } from "./ui";
 
 /**
@@ -69,6 +68,13 @@ export function MediaPlate({
  * without a playback; shut, a two-minute memo stays one row. It is a `Disclosure` at
  * band weight, so it opens exactly like the THINKING band and the tool step above it
  * rather than inventing a fourth chevron for the same question.
+ *
+ * The words are painted as SPEECH QUOTED, not as code: curly quotes around them,
+ * italic, and justified to the column. A memo is somebody talking, and what the row
+ * owes the reader is that it is a quotation of the audio directly above it — the mono
+ * code face said "machine output" about a sentence a person said. There is no mic
+ * beside the player either: the control already announces itself as audio, and a glyph
+ * that repeats the widget next to it only takes column width from the scrubber.
  */
 export function MediaRecording({
   name,
@@ -92,9 +98,8 @@ export function MediaRecording({
   const transcript = transcription?.trim() ?? "";
   return (
     <figure className="mt-2.5 min-w-0 first:mt-0">
-      <div className="flex min-w-0 items-center gap-2 border border-code-edge bg-code px-2 py-2">
-        <MicIcon className="size-4 shrink-0 text-dialog-hint" />
-        <div className="min-w-0 flex-1">{children}</div>
+      <div className="min-w-0 border border-code-edge bg-code p-2">
+        <div className="min-w-0">{children}</div>
       </div>
       {transcript ? (
         <div className="min-w-0">
@@ -107,8 +112,8 @@ export function MediaRecording({
             TRANSCRIPTION
           </Disclosure>
           {isTranscriptOpen ? (
-            <p className="min-w-0 whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 font-mono text-meta text-dialog-hint">
-              {transcript}
+            <p className="min-w-0 hyphens-auto whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 text-meta italic text-dialog-hint text-justify">
+              {`“${transcript}”`}
             </p>
           ) : null}
         </div>
