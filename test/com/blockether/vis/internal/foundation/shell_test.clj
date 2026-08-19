@@ -342,6 +342,15 @@
                    (expect (str/includes? (:body card) "Compressing objects: 100% (11/11), done."))
                    (expect (not (str/includes? (:body card) "9% (1/11)"))))))
 
+(defdescribe shell-doc-page-test
+             ;; Regression, issue #137: the result carried no `stderr` field and the DOC PAGE the
+             ;; model reads never said so, so a caller reached for `sh.logs(-20)["stderr"]`, hit a
+             ;; KeyError and lost the whole block that was printing around it.
+             (it "tells the reader of the result shape that the pty merges stderr into stdout"
+                 (let [result (:ext.symbol/result shell/shell-symbol)]
+                   (expect (str/includes? result "stderr"))
+                   (expect (str/includes? result "no `stderr` key")))))
+
 (defdescribe
   shell-run-sync-test
   (it

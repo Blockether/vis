@@ -3100,7 +3100,9 @@
      (str "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
           "status, exit, stdout, duration_ms, timed_out, offset, next_offset, is_eof, "
           "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
-          "methods below. A fresh run has no `exit`; nonzero exit is data.")
+          "methods below. A fresh run has no `exit`; nonzero exit is data. `stdout` is the "
+          "pty's ONE stream: a terminal has no second channel, so whatever the command wrote "
+          "to stderr is IN it, in order — there is no `stderr` key, and asking for one raises.")
      :description
      (str
        "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
