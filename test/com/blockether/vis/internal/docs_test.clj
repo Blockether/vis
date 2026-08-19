@@ -165,6 +165,46 @@
   (let [tail (second (str/split md #"(?m)^## See also$" 2))]
     (re-seq #"\]\(([A-Za-z0-9._-]+\.md)" (str tail))))
 
+(def ^:private max-unit-chars
+  "Characters one paragraph — or one list item with its continuation lines — may
+   carry before it stops being prose and becomes a table nobody drew. Roughly 120
+   words: past that a reader scans instead of reading, and the structure is
+   already inside the sentence."
+  800)
+
+(defn- text-units
+  "PURE: `[[line text] …]` — every prose paragraph of `md`, plus every list item
+   with the lines that continue it, joined into one string. Fenced blocks,
+   headings, tables and quotes carry their own shape and are skipped."
+  [^String md]
+  (let [close (fn [acc {:keys [line buf]}]
+                (if (seq buf) (conj acc [line (str/join " " buf)]) acc))]
+    (loop [ls (str/split-lines md)
+           n 1
+           in-fence? false
+           cur {:line 0 :buf []}
+           acc []]
+
+      (if (empty? ls)
+        (close acc cur)
+        (let [l (str/trim (str (first ls)))
+              item? (boolean (re-matches #"(?s)([-*+]|\d+[.)])\s.*" l))
+              skip? (or (str/blank? l)
+                        (str/starts-with? l "#")
+                        (str/starts-with? l "|")
+                        (str/starts-with? l ">"))]
+
+          (cond (str/starts-with? l "```")
+                (recur (rest ls) (inc n) (not in-fence?) {:line 0 :buf []} (close acc cur))
+                in-fence? (recur (rest ls) (inc n) in-fence? cur acc)
+                skip? (recur (rest ls) (inc n) in-fence? {:line 0 :buf []} (close acc cur))
+                item? (recur (rest ls) (inc n) in-fence? {:line n :buf [l]} (close acc cur))
+                :else (recur (rest ls)
+                             (inc n)
+                             in-fence?
+                             (if (seq (:buf cur)) (update cur :buf conj l) {:line n :buf [l]})
+                             acc)))))))
+
 (defn- page-canon
   "PURE: every way `page` breaks the page contract, as reader-facing lines.
    `anchors` is `{slug #{anchor-id}}` for the whole site, so a cross-page
@@ -247,6 +287,18 @@
 
         (say "the fence on line " line
              " declares " (if (str/blank? lang) "no language" (pr-str lang))))
+      (for [[line text]
+            (text-units md)
+
+            :when (> (count text) (long max-unit-chars))]
+
+        (say "the paragraph on line "
+             line
+             " runs "
+             (count text)
+             " characters — over "
+             max-unit-chars
+             ", so it is a list or a table wearing prose"))
       (when (str/blank? (str blurb)) [(say "has no `:blurb` in the manifest")])
       (for [[_ target frag]
             (re-seq #"\]\((?!https?:|/|#)([A-Za-z0-9._-]+\.md)(#[A-Za-z0-9._-]+)?\)" md)

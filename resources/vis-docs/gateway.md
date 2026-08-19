@@ -421,18 +421,13 @@ sealed capability carrying its own device token and expiry, and the abuse counte
 live in Cloudflare's rate limiting bindings, so there is no table to dump, exhaust,
 or migrate. Its README covers deploying, the limits and the failure verdicts.
 
-**Run your own.** The address is a build constant on both sides — the companion's
-`PUBLISHER_RELAY_URL` and the gateway's `relay/DEFAULT-URL`, which a test keeps
-equal. A self-hoster changes them in their own build, next to the bundle id and
-`google-services.json` they already had to change. Deploy that Worker to your own
-Cloudflare account with your own `RELAY_SEAL_KEY` and your own APNs key or
-Firebase service account, and every phone running your build mints there, on
-every machine, with nothing of yours touching anyone else's infrastructure;
-`VIS_PUSH_RELAY_URL` overrides one machine when you want it to. The one thing
-configuration cannot move is the wall at the top of this section: a relay signs
-for the app whose keys it holds, so your own relay serves *your own* companion
-build — a store-distributed companion can only be woken by the relay its
-publisher runs.
+**Run your own.** The address is a build constant on both sides — the companion's `PUBLISHER_RELAY_URL` and the gateway's `relay/DEFAULT-URL`, which a test keeps equal. A self-hoster changes them in their own build, next to the bundle id and `google-services.json` they already had to change.
+
+1. Deploy that Worker to your own Cloudflare account, with your own `RELAY_SEAL_KEY` and your own APNs key or Firebase service account.
+2. Point your build at it: every phone running your build then mints there, on every machine, with nothing of yours touching anyone else's infrastructure.
+3. `VIS_PUSH_RELAY_URL` overrides one machine when you want it to.
+
+The one thing configuration cannot move is the wall at the top of this section: a relay signs for the app whose keys it holds, so your own relay serves *your own* companion build — a store-distributed companion can only be woken by the relay its publisher runs.
 
 Two failures are worth telling apart. An address that is not `https` is not a relay:
 the gateway reports `push.relay.is_insecure`, refuses to hand it a grant

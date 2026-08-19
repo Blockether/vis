@@ -783,19 +783,11 @@ shortcut refuses and names both ids rather than guessing. A view can also grow:
 `view.add(vis.table("failures", columns=[...]), after="tail")` mounts a node a
 run only discovers it needs, and `view.drop("failures")` takes it away.
 
-**Where nodes stand is the form's own layout vocabulary, and a live view speaks
-it: `vis.row(...)` and `vis.column(...)`** — the same builders a question arranges
-its fields with, with one difference: a view's group carries an id, because every
-node in a view is addressable. A row stands its children side by side wherever
-there is room — the terminal splits the band into columns, a wide phone splits the
-row, a narrow one stacks, and the document lists them in order, because a row is an
-ARRANGEMENT and not content. Layout is declared once and no op moves it; a layout
-that jumps under the eye of whoever is reading it is worse than no layout at all.
-That is how a paragraph stands to the right of the table it explains:
-`vis.row("reading", vis.table("hosts", ...), vis.status("why", "..."))`. A group is
-part of the tree it arranges: `view.add(vis.stat("counts"), after="hosts")` lands
-inside the row that holds `hosts`, and `view.drop("reading")` takes the nodes it
-arranged with it.
+**Where nodes stand is the form's own layout vocabulary, and a live view speaks it: `vis.row(...)` and `vis.column(...)`** — the same builders a question arranges its fields with, with one difference: a view's group carries an id, because every node in a view is addressable.
+
+A row stands its children side by side wherever there is room: the terminal splits the band into columns, a wide phone splits the row, a narrow one stacks, and the document lists them in order, because a row is an ARRANGEMENT and not content. Layout is declared once and no op moves it — a layout that jumps under the eye of whoever is reading it is worse than no layout at all.
+
+That is how a paragraph stands to the right of the table it explains: `vis.row("reading", vis.table("hosts", ...), vis.status("why", "..."))`. A group is part of the tree it arranges: `view.add(vis.stat("counts"), after="hosts")` lands inside the row that holds `hosts`, and `view.drop("reading")` takes the nodes it arranged with it.
 
 **Every human-facing string takes inline markdown** — `` `code` ``, `**bold**`,
 `_italic_`, a link. Both surfaces paint it: the terminal styles the runs in place,
@@ -806,17 +798,10 @@ machine output and stay verbatim, byte for byte. There is no markdown NODE and
 there will not be one — the view's document is two-way (every node type has one
 markdown form, a fence IS a log, a pipe table IS a table), so a free-markdown node
 could not be read back as the type it was declared.
-**The human can always stop watching, and the extension finds out why.** A view
-asks nothing, so nothing can refuse the stop: `Escape` in the terminal arms it and
-opens one line for a comment — `Escape` or `Enter` sends the stop, `Backspace` on
-an empty line goes back to watching — and the Interrupt button on the phone opens
-the same line. `view.is_interrupted` is true once the view ended without the extension
-closing it, `view.is_from_human` says a PERSON ended it, and `view.note` carries
-the words they left — `None` when they left none. The flag asks the engine at
-most once per batching window, so a tight loop may poll it every iteration and
-still cost one host call per tick. Pushing into a view that has already ended
-raises `vis.Interrupted` (carrying the same note), so a loop that ignores the
-flag still stops instead of reporting into a surface nobody is watching.
+
+**The human can always stop watching, and the extension finds out why.** A view asks nothing, so nothing can refuse the stop: `Escape` in the terminal arms it and opens one line for a comment — `Escape` or `Enter` sends the stop, `Backspace` on an empty line goes back to watching — and the Interrupt button on the phone opens the same line.
+
+`view.is_interrupted` is true once the view ended without the extension closing it, `view.is_from_human` says a PERSON ended it, and `view.note` carries the words they left (`None` when they left none). The flag asks the engine at most once per batching window, so a tight loop may poll it every iteration and still cost one host call per tick. Pushing into a view that has already ended raises `vis.Interrupted` (carrying the same note), so a loop that ignores the flag still stops instead of reporting into a surface nobody is watching.
 
 **A live view has no deadline — and neither does the block that shows it.** The
 engine's eval wall is a backstop for guest code that has gone SILENT; work
@@ -892,19 +877,13 @@ vis.extension(
 )
 ```
 
-The `preset` flows into the router the same way a built-in provider's does, so
-adding `acme` to `~/.vis/config.yml`'s `providers` (or the TUI *Add Provider*
-picker, which lists any labelled provider) makes the model call it. Callable
-slots — `get_token_fn`, `detect_fn`, `status_fn`, `logout_fn`, `limits_fn`,
-`refresh_token_fn`, `auth_fn`, `auth_prompt_fn`, `enrich_models_fn`,
-`on_selected_fn` — are all optional (every function-valued slot carries the
-`_fn` suffix); a static-key provider usually just
-needs `get_token_fn` + a `preset`. Dict keys may be snake_case or kebab (`api_url` ≡
-`:api-url`), and a Python boolean-predicate key
-written `is_<name>` maps to the `:<name>?` the host reads — so a `status_fn` result
-returns `is_authenticated` (Python can't spell the trailing `?`), which the
-runtime consumes as `:is-authenticated`. `vis-agent providers auth/status/limits
-<id>` work against it like any other provider.
+The `preset` flows into the router the same way a built-in provider's does, so adding `acme` to `~/.vis/config.yml`'s `providers` — or picking it in the TUI's *Add Provider* picker, which lists any labelled provider — makes the model call it. `vis-agent providers auth/status/limits <id>` work against it like any other provider.
+
+Three spelling rules govern the rest:
+
+- **Every callable slot is optional, and carries the `_fn` suffix** — `get_token_fn`, `detect_fn`, `status_fn`, `logout_fn`, `limits_fn`, `refresh_token_fn`, `auth_fn`, `auth_prompt_fn`, `enrich_models_fn`, `on_selected_fn`. A static-key provider usually needs only `get_token_fn` plus a `preset`.
+- **Dict keys may be snake_case or kebab** — `api_url` ≡ `:api-url`.
+- **A boolean predicate written `is_<name>` maps to the `:<name>?` the host reads** — a `status_fn` result returns `is_authenticated` (Python cannot spell the trailing `?`), which the runtime consumes as `:is-authenticated`.
 
 **`api_style` in a preset is the endpoint's wire dialect, and it is checked.** It
 takes the same vocabulary as a provider's `compatibility:` in `vis.yml` —
@@ -918,35 +897,47 @@ which posts a Responses endpoint's history to `/chat/completions`. Say
 `"openai-responses"` whenever the endpoint serves the Responses API, even when
 the same gateway also answers `/chat/completions`.
 
+**The credential may name the wire too.** `get_token_fn` answers
+`{"token": ..., "api_url": ..., "llm_headers": ..., "responses_path": ...,
+"api_style": ...}` — everything but `token` optional. `api_style` takes the same
+checked vocabulary as the preset, and exists because a managed provider's
+endpoint only comes into being when the credential is issued: the extension that
+mints `api_url` is the only thing that knows which wire that URL speaks.
+Precedence is **config > credential > preset**, so an `api_style:` /
+`compatibility:` a user wrote in `vis.yml` still wins. A `responses_path` with no
+dialect named anywhere is read as `openai-responses` on its own — nothing else
+ever posts to that path.
+
 A provider whose credential the RUNTIME issues — a company gateway, a device
 policy — declares itself with `is_managed=True` and is never asked for a key at
 all: see [Managed providers](#managed-providers) below.
 
-Where a slot's output lands differs. `status_fn` answers *am I connected*: the host
-reads `is_authenticated` (plus an optional `error`) for the provider dot and for
-routing, and any extra key you return is shown in the status dialog only. **Live
-quota is a different slot** — only `limits_fn` feeds the TUI footer's usage line.
-It returns `{"provider_id": ..., "status": "ok", "dynamic": {"limits": [row, ...]}}`,
-and every row must carry `id`, `label`, `scope` (`account` / `plan` / `workspace` /
-`model`), `kind` (`requests` / `tokens` / `usd` / `credits` / `sessions` / `rate`),
-`precision` (`exact` / `estimate` / `derived` / `unknown`), `source` (`provider-api` /
-`derived` / `static` / `local`) and `is_unlimited`; `used`, `limit`, `remaining`,
-`subject`, `note` and `window` (`{"kind": "calendar"|"rolling"|"lifetime", "unit":
-..., "size": N, "resets_at_ms": ...}`) are optional. `is_authenticated` and
-`is_unlimited` are the two keys kept **verbatim** — every other `is_<name>` still
-becomes `:<name>?`. One missing required key invalidates the whole report and the
-footer renders `limits: error`, so check yours with `vis-agent providers limits <id>`.
+Where a slot's output lands differs:
 
-**Provider callbacks run at process level, not inside a session.** `detect_fn`,
-`status_fn` and `limits_fn` are called while Vis starts, while the provider picker
-and *Settings → Providers* paint, and from the footer's own polling thread —
-moments when no turn is being handled at all. `subprocess`, `os.system`,
-`vis.shell` and `vis.jailed_shell` work with or without a session and are what a
-credential helper must use here; `vis.jailed_shell_session` and `vis.ask` require
-a live turn and refuse with *available only while handling a session*. Write these
-slots so they can answer with no session — cache a minted credential on disk
-rather than shelling out to mint one at render time. When a callback *is* invoked
-from a caller that has a session, the host keeps that session around it.
+- **`status_fn` answers *am I connected*.** The host reads `is_authenticated` (plus an optional `error`) for the provider dot and for routing; any extra key you return is shown in the status dialog only.
+- **`limits_fn` answers *how much is left*.** It is the ONLY slot that feeds the TUI footer's usage line.
+
+`limits_fn` returns `{"provider_id": ..., "status": "ok", "dynamic": {"limits": [row, ...]}}`, and every row carries:
+
+| key | required | values |
+|---|---|---|
+| `id`, `label` | yes | your own row id, and the name shown for it |
+| `scope` | yes | `account` · `plan` · `workspace` · `model` |
+| `kind` | yes | `requests` · `tokens` · `usd` · `credits` · `sessions` · `rate` |
+| `precision` | yes | `exact` · `estimate` · `derived` · `unknown` |
+| `source` | yes | `provider-api` · `derived` · `static` · `local` |
+| `is_unlimited` | yes | boolean |
+| `used`, `limit`, `remaining`, `subject`, `note` | no | the numbers, and free text beside them |
+| `window` | no | `{"kind": ..., "unit": ..., "size": N, "resets_at_ms": ...}`, where `kind` is `calendar`, `rolling` or `lifetime` |
+
+`is_authenticated` and `is_unlimited` are the two keys kept **verbatim** — every other `is_<name>` still becomes `:<name>?`. One missing required key invalidates the whole report and the footer renders `limits: error`, so check yours with `vis-agent providers limits <id>`.
+
+**Provider callbacks run at process level, not inside a session.** `detect_fn`, `status_fn` and `limits_fn` are called while Vis starts, while the provider picker and *Settings → Providers* paint, and from the footer's own polling thread — moments when no turn is being handled at all.
+
+- **Available with or without a session** — `subprocess`, `os.system`, `vis.shell`, `vis.jailed_shell`. These are what a credential helper must use here.
+- **Require a live turn** — `vis.jailed_shell_session` and `vis.ask`, which refuse with *available only while handling a session*.
+
+Write these slots so they can answer with no session: cache a minted credential on disk rather than shelling out to mint one at render time. When a callback *is* invoked from a caller that has a session, the host keeps that session around it.
 
 For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime
 hands it a `printer(line)` callback to emit instructions, and its return signals
@@ -1230,38 +1221,21 @@ first import:
   `xlsxwriter`, `fontTools`.
 - Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`, `pytz`, `tzdata` (the same JVM zone store).
 - Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs), `ruff` (in-process lint and format).
-- Globals, no import needed — `attach`, `list_attachments`, `get_attachment`,
-  `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
-  `attach(...)` hands back the descriptor of what it just stored, and
-  `list_attachments()` / `get_attachment(...)` answer the same shape (id,
-  filename, version, media type, kind, size, audience, and the `turn_id` it
-  belongs to — a tool artifact adds `iteration_id` / `tool_call_id`);
-  `read_attachment(...)` returns the raw bytes and nothing else. What the
-  RUNNING block attached is addressable inside that block: pass the returned
-  descriptor — or its filename — straight to `show_attachment`,
-  `read_attachment` or `get_attachment`, where it carries `is_pending` until
-  the iteration is stored.
-  **Same document, same name**: a revision goes back under the filename it
-  already had and is stored as that artifact's next **version**, never
-  `report_v2.png` beside `report.png`; a fresh name is a different document, and
-  `list_attachments(name)` walks the thread.
+- Globals, no import needed — `attach`, `list_attachments`, `get_attachment`, `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
+  - `attach(...)` hands back the descriptor of what it just stored, and `list_attachments()` / `get_attachment(...)` answer the same shape: id, filename, version, media type, kind, size, audience, and the `turn_id` it belongs to — a tool artifact adds `iteration_id` / `tool_call_id`. `read_attachment(...)` returns the raw bytes and nothing else.
+  - What the RUNNING block attached is addressable inside that block: pass the returned descriptor — or its filename — straight to `show_attachment`, `read_attachment` or `get_attachment`, where it carries `is_pending` until the iteration is stored.
+  - **Same document, same name.** A revision goes back under the filename it already had and is stored as that artifact's next **version**, never `report_v2.png` beside `report.png`; a fresh name is a different document, and `list_attachments(name)` walks the thread.
 
   **Name vs id — one addressing rule.** The filename is the artifact, an id is
   one exact stored version of it. Every read call takes either as its first
   argument: a filename resolves to the latest cut unless you pass a `version`
   (negative counts back from the latest), an id resolves to that one cut.
 
-`matplotlib` renders through a native `imaging` PNG backend: `plt.show()` paints the
-figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and
-falls back to an ASCII plot on text-only terminals; `savefig` writes a PNG (or
-`*.txt`/`*.asc`/`format='txt'` ASCII, honoring `width`/`height`/`color`).
-`mpl_toolkits.mplot3d` / `projection='3d'` is real: `plot_surface`,
-`plot_wireframe`, `contour(offset=…)`, 3-D `scatter`/`plot`/`text`, `bar3d` and
-`view_init` go through a painter's-algorithm camera with shading and colormaps,
-and the ASCII backend projects the same scene into braille.
-`subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they
-raise and name the sandbox's `shell(...)` call, which is the one door to a process. (Trusted
-extension code, outside the sandbox, keeps the real `subprocess`.)
+`matplotlib` renders through a native `imaging` PNG backend: `plt.show()` paints the figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and falls back to an ASCII plot on text-only terminals; `savefig` writes a PNG (or `*.txt`/`*.asc`/`format='txt'` ASCII, honoring `width`/`height`/`color`).
+
+`mpl_toolkits.mplot3d` / `projection='3d'` is real: `plot_surface`, `plot_wireframe`, `contour(offset=…)`, 3-D `scatter`/`plot`/`text`, `bar3d` and `view_init` go through a painter's-algorithm camera with shading and colormaps, and the ASCII backend projects the same scene into braille.
+
+`subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they raise and name the sandbox's `shell(...)` call, which is the one door to a process. (Trusted extension code, outside the sandbox, keeps the real `subprocess`.)
 
 These are compatibility subsets, not the full PyPI packages — enough for
 scripting and tests, not a substitute for the real library's every corner. Each
@@ -1435,7 +1409,21 @@ contract without depending on the engine that implements it.
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 
-The remaining accepted keys are declarative registrations: the host applies them when the extension registers and undoes them when it unregisters, so nothing needs a global atom or an imperative `register-*!` call. `:ext/cli` adds CLI commands (auto-placed under the `vis-agent extension` parent unless the entry names its own `:cmd/parent`); `:ext/language-tools` contributes a language's format/lint/test/REPL handlers; `:ext/hooks` and `:ext/op-hooks` run at named lifecycle phases (an op-hook on a GATE op such as `:fs/access` guards paths instead, and is asked rather than wrapped); `:ext/network-filters` adds egress predicates; `:ext/attachment-storage` supplies an attachment backend; `:ext/channel-contributions` fills channel UI slots; `:ext/theme` ships theme overrides; `:ext/requires` names extensions that must register first (load order is topologically sorted); `:ext/source-nses` marks the namespaces the extension is built from. The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension`.
+The remaining accepted keys are **declarative registrations**: the host applies them when the extension registers and undoes them when it unregisters, so nothing needs a global atom or an imperative `register-*!` call.
+
+| key | registers |
+|---|---|
+| `:ext/cli` | CLI commands — auto-placed under the `vis-agent extension` parent unless the entry names its own `:cmd/parent`. |
+| `:ext/language-tools` | a language's format / lint / test / REPL handlers. |
+| `:ext/hooks`, `:ext/op-hooks` | code at named lifecycle phases. An op-hook on a GATE op such as `:fs/access` guards paths instead — it is asked, not wrapped. |
+| `:ext/network-filters` | egress predicates. |
+| `:ext/attachment-storage` | an attachment backend. |
+| `:ext/channel-contributions` | channel UI slots. |
+| `:ext/theme` | theme overrides. |
+| `:ext/requires` | extensions that must register first; load order is topologically sorted. |
+| `:ext/source-nses` | the namespaces the extension is built from. |
+
+The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension`.
 
 ### Tools: symbols
 

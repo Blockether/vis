@@ -271,6 +271,8 @@ That refusal matters more than it looks. A gateway (LiteLLM, or Azure behind one
 
 The dialect is a property of the **endpoint**, so it belongs on the provider; use a per-model `api_style` only when one endpoint deliberately routes models through different APIs (one gateway serving both Anthropic-wire and OpenAI-wire models).
 
+**A `responses_path` with no dialect named anywhere is read as `openai-responses`** — nothing else ever posts to that path. A provider whose credential an extension issues (a managed company gateway) may also name the dialect at runtime, beside the URL it mints; an `api_style` or `compatibility` you write here still wins over it.
+
 **Model order is your order.** Models are offered in exactly the order you wrote them under a provider in `vis.yml`; anything discovered from the provider's live catalog is appended after them, sorted. With nothing else set, the first provider is the active one and its first model is the default.
 
 Vis is model-agnostic: anything that speaks an OpenAI- or Anthropic-style chat API works, including fully local models.
@@ -307,7 +309,12 @@ There is one default in the whole config — one provider and one model — not 
   ```
 - Vis does **not** remember a model per provider. Change `default_provider` alone and you get that provider's first model until you set `default_model` too.
 - Choosing a default never reorders `providers:` — order stays yours (above), the pair is just a pointer into it.
-- **The pair is per user, never per repository.** Which provider you are entitled to and which model you pay for is your own decision, so the committed `<project>/vis.yml` may not carry it: that tier is loaded with `default_provider`, `default_model`, `fallback_provider` and `fallback_model` **dropped**, and one warning naming the file. Their homes are `~/.vis/config.yml` (hand-written), `~/.vis/state.yml` (what the TUI, gateway and companion write when you pick a model), and the gitignored `<project>/.vis/config.yml` overlay when a pin really is per-checkout. `--model provider/model` (above) still overrides both for one run without persisting anything.
+- **The pair is per user, never per repository.** Which provider you are entitled to and which model you pay for is your own decision, so the committed `<project>/vis.yml` may not carry it: that tier is loaded with `default_provider`, `default_model`, `fallback_provider` and `fallback_model` **dropped**, and one warning naming the file. Their homes are:
+  - `~/.vis/config.yml` — hand-written.
+  - `~/.vis/state.yml` — what the TUI, gateway and companion write when you pick a model.
+  - `<project>/.vis/config.yml` — the gitignored overlay, when a pin really is per-checkout.
+
+  `--model provider/model` (above) still overrides both for one run without persisting anything.
 
 ### The fallback selection is a SECOND pair
 
@@ -468,33 +475,40 @@ under the OS jail (Seatbelt on macOS, bubblewrap on Linux) and use the gateway
 egress proxy. Shell access has a separate `toggles.shell` switch. Unsupported hosts
 currently have no OS boundary and a requested `jail.enabled: true` fails loud.
 
-This section is the KEY reference. The policy itself — what each root admits, the
-egress proxy, programmable network filters, and the verification runs — is
-[Process jail & egress](jail.md).
-Filesystem roots are declared once in the `workspace.filesystem` catalog (`id`,
-`path`, optional `description`, `access` = `read-write`/`read-only`, `search`,
-`draft`, plus the conditional-mount keys `when` and `optional`), and
-`jail.filesystem.allow` lists the ids that enter the jail
-(deny-by-omission). `draft` is that root's isolation policy for a drafted
-session: `shared` (default) writes through to the real root, `copy-only` forks a
-private copy the draft never lands back, `copy-and-apply` lands that private copy
-on `/draft apply`, and `not-allowed` withholds the root from a drafted session on
-read and write. Draft isolation is independent of the jail and applies with
-`jail.enabled: false` too — see [Drafts](drafts.md).
-Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`)
-whatever the catalog and the allow list say; declare it to override that.
+This section is the KEY reference for the *keys*. The policy itself — what each root admits, the egress proxy, the programmable network filters, and the verification runs — is [Process jail & egress](jail.md).
 
-A declared read-write root that holds a `.git` also appears in the TUI's `C-x g`
-status buffer, next to the project and the repositories nested inside it, so one
-buffer stages, commits and pushes across every repository the session works on.
-It is labelled by its catalog `id`; a `read-only` root is left out, and a drafted
-session sees the private copy of an isolated root instead of the real one.
-Every repository is listed ONCE: a root declared under another spelling of a
-directory already shown — a symlink, a trailing slash, the project itself, a
-repository nested inside it, or the trunk a drafted session already shows as its
-private copy — earns no second header. Two repositories that would wear the same
-name are told apart by as much of their path as it takes (`work/vis` beside
-`src/vis`), because that header is what every verb acts on.
+Filesystem roots are declared once, in the `workspace.filesystem` catalog:
+
+| key | meaning |
+|---|---|
+| `id` | the name the allow list, the TUI and drafts use |
+| `path` | the directory itself |
+| `description` | optional; what the model is told the root is for |
+| `access` | `read-write` or `read-only` |
+| `search` | whether search may index it |
+| `draft` | the root's isolation policy for a drafted session (below) |
+| `when`, `optional` | conditional mount — declare a root that may not exist |
+
+`jail.filesystem.allow` then lists the ids that enter the jail. It is **deny-by-omission**: a root the list does not name is not there.
+
+`draft` decides what a drafted session sees:
+
+- `shared` (default) — writes through to the real root.
+- `copy-only` — forks a private copy the draft never lands back.
+- `copy-and-apply` — lands that private copy on `/draft apply`.
+- `not-allowed` — withholds the root from a drafted session, on read and on write.
+
+Draft isolation is independent of the jail and applies with `jail.enabled: false` too — see [Drafts](drafts.md).
+
+Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`) whatever the catalog and the allow list say; declare it to override that.
+
+A declared read-write root that holds a `.git` also appears in the TUI's `C-x g` status buffer, next to the project and the repositories nested inside it, so one buffer stages, commits and pushes across every repository the session works on.
+
+- It is labelled by its catalog `id`.
+- A `read-only` root is left out.
+- A drafted session sees the private copy of an isolated root instead of the real one.
+- Every repository is listed ONCE — a root declared under another spelling of a directory already shown (a symlink, a trailing slash, the project itself, a repository nested inside it, or the trunk a drafted session already shows as its private copy) earns no second header.
+- Two repositories that would wear the same name are told apart by as much of their path as it takes (`work/vis` beside `src/vis`), because that header is what every verb acts on.
 
 Nothing caps how many repositories a buffer shows: a mega-repo that vendors forty
 clones under `repositories/` opens as forty headers, each clean one folded to its

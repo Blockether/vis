@@ -8,7 +8,18 @@ GraalPy is a Truffle language on the GraalVM runtime, so the interpreter shares 
 
 ## Sandboxed by design
 
-The Context is **deny-by-default**: no host-class access, native access off, polyglot access off, and filesystem IO either confined to workspace roots or disabled. HTTP clients are routed through the gateway egress policy and programmable network filters; a socket-level host guard remains the floor for raw sockets. GraalPy is in-process, so Seatbelt cannot be applied to only its JVM thread. Dangerous builtins (`exec`, `eval`, `compile`, `__import__`) are refused before a block runs, and each eval is bounded by a wall-clock timeout. See [Process jail and gateway egress](jail.md) for the complete boundary.
+The GraalPy Context is **deny-by-default**. Every capability below is off, or narrowed, unless Vis turns it on:
+
+| capability | default |
+|---|---|
+| Host classes, native access, polyglot access | off |
+| Filesystem IO | confined to the workspace roots, or disabled |
+| HTTP clients | routed through the gateway egress policy and the programmable network filters |
+| Raw sockets | a socket-level host guard is the floor |
+| `exec`, `eval`, `compile`, `__import__` | refused before a block runs |
+| Wall-clock time | every eval is bounded by a timeout |
+
+GraalPy is in-process, so Seatbelt cannot be applied to its JVM thread alone — the Context *is* the boundary there. See [Process jail and gateway egress](jail.md) for the complete boundary.
 
 ## Two Python surfaces, on purpose
 
@@ -18,7 +29,14 @@ Vis runs Python in **two different places**, and they deliberately do not see th
 
 - **The project surface — `repl_start({"language": "python"})` + `repl_eval({"language": "python", "code": …})`.** Starting the REPL spawns a real project interpreter subprocess selected from `uv` / Poetry / `.venv` / `python3`. On macOS that managed process inherits the same filesystem jail and gateway-proxied network policy as shell children; dependency caches (`~/.cache/uv`, a project `.venv`, …) enter through the shared `workspace.filesystem` catalog, so cache access is explicit. It sees the project's installed dependencies and site-packages but none of the Vis Python shims. `repl_connect` is different: it attaches to a user-owned process that already exists, so Vis cannot retroactively jail it.
 
-The practical rule: **stdlib-only compute and tool glue → `python_execution`; anything that needs your installed packages → check the session resource, start one with `repl_start({"language": "python"})` when needed, then use `repl_eval({"language": "python", "code": …})`.** The same divide governs `run_tests({"language": "python"})` — it defaults to the hermetic GraalPy runner (stdlib + the bundled pytest shim) and switches to the real interpreter's pytest with `{"runner": "project"}` when your tests import third-party packages. When a hermetic run trips over a missing third-party module, the result says so and points you at the project runner.
+The practical rule is one question — does this code import your project's dependencies?
+
+| what you are doing | where it runs |
+|---|---|
+| stdlib-only compute, tool glue, filtering a result | `python_execution` |
+| anything that needs your installed packages | `repl_start({"language": "python"})`, then `repl_eval({"language": "python", "code": …})` |
+
+`run_tests({"language": "python"})` follows the same divide: it defaults to the hermetic GraalPy runner (stdlib plus the bundled pytest shim) and switches to the project interpreter's pytest with `{"runner": "project"}`. A hermetic run that trips over a missing third-party module says so, and points at the project runner.
 
 ## Why Python for the action layer
 
@@ -30,7 +48,24 @@ GraalPy ships substantial native-image configuration (build-time initialization,
 
 ## Internal resources cache
 
-GraalPy's Python stdlib ships as "internal resources" — inside the language jar on the JVM, and, in the compiled native binary, in a `resources/` directory **beside the executable** (`-H:-IncludeLanguageResources -H:+CopyLanguageResources`; `PythonHome` is never used). Release bundles carry it as `vis-agent-resources/` and the launcher passes `-Dpolyglot.engine.resourcePath` at startup, so nothing is extracted at runtime; `VIS_NATIVE_RESOURCES` points at a different copy. On the JVM they are extracted at **runtime** into `$XDG_CACHE_HOME/org.graalvm.polyglot` (default `~/.cache/org.graalvm.polyglot`). When that root is unwritable (confined process, read-only home), the first stdlib import fails with `ModuleNotFoundError: No module named 'ast'` — the same error a native bundle gives when its resources directory is missing. Vis redirects the cache to a writable fallback automatically, and the root is configurable: `python.resource_cache` in `vis.yml`, or the `-Dpolyglot.engine.userResourceCache` system property, which always wins. Read once per process — restart, don't `/reload`. See [Configuration](configuration.md#graalpy-internal-resource-cache).
+GraalPy's Python stdlib ships as **internal resources**, not as loose files on your machine. Where they live depends on how Vis is running:
+
+| runtime | where the stdlib lives |
+|---|---|
+| JVM | inside the GraalPy language jar, extracted at **runtime** into `$XDG_CACHE_HOME/org.graalvm.polyglot` (default `~/.cache/org.graalvm.polyglot`) |
+| Native binary | a `resources/` directory **beside the executable** (`-H:-IncludeLanguageResources -H:+CopyLanguageResources`; `PythonHome` is never used) |
+| Release bundle | `vis-agent-resources/`, handed to the launcher as `-Dpolyglot.engine.resourcePath`, so nothing is extracted at runtime |
+
+`VIS_NATIVE_RESOURCES` points a native run at a different copy of that directory.
+
+Only the JVM path writes anything at runtime, so it is the one that can fail:
+
+- **Symptom** — the first stdlib import fails with `ModuleNotFoundError: No module named 'ast'`, the same error a native bundle gives when its resources directory is missing.
+- **Cause** — the cache root is unwritable: a confined process, a read-only home.
+- **Fix** — Vis redirects to a writable fallback automatically. To choose the root yourself, set `python.resource_cache` in `vis.yml`, or pass the `-Dpolyglot.engine.userResourceCache` system property, which always wins.
+- **Scope** — the root is read once per process, so a change needs a restart; `/reload` will not move it.
+
+See [Configuration](configuration.md#graalpy-internal-resource-cache).
 
 ## See also
 

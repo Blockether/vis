@@ -103,29 +103,27 @@ guess. A checkout of your own is never moved by an update: git owns it.
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
-`bin/install-vis-agent` takes one option, `--install-dir PATH` (default
-`~/.local/bin`, added to your shell profile when PATH lacks it), and installs
-exactly one runtime: JVM source at the newest commit of `main`. It installs the
-wrapper and then hands off to `vis-agent update`, which acquires that runtime in
-the same command, so runtime acquisition always belongs to `vis-agent` and the
-two cannot drift apart. It requires git and curl. A JVM launch reuses a matching GraalVM CE 25.1.3 already installed (including through SDKMAN), or installs the pinned JDK when no Java is available; the Clojure CLI is installed automatically when the JVM runtime first needs it. Set `VIS_NO_AUTO_INSTALL=1` to disable automatic tool installation.
+`bin/install-vis-agent` installs exactly one runtime — **JVM source at the newest commit of `main`** — and takes one option: `--install-dir PATH` (default `~/.local/bin`, added to your shell profile when PATH lacks it).
 
-Nothing that install *runs* is tagged: the source comes from the branch tip,
-because a published `vX.Y.Z` can be broken source and a fix lands on the branch
-first. The two scripts are the exception — `curl` fetches the installer, and the
-installer fetches the wrapper, from
-`github.com/$VIS_REPO_SLUG/releases/download/installer/`, because
-`raw.githubusercontent.com` is blocked on many corporate networks while
-`github.com` release downloads are not. `installer` is a ROLLING release, not a
-version: `.github/workflows/installer-assets.yml` force-moves that one tag and
-re-uploads both scripts on every commit on `main` that changes them, so the
-published one-liner is always the branch's own installer and no per-commit
-snapshot release is ever created. It stays a prerelease, so `releases/latest`
-still means the newest `vX.Y.Z`, which keeps its own copy of both scripts. The
-asset is only a bootstrap: `vis-agent update` immediately refreshes the wrapper
-from the source it pins. Cloning the
-repository and running `bin/install-vis-agent` out of the checkout works too — it
-installs that checkout's own wrapper.
+It installs the wrapper and then hands off to `vis-agent update`, which acquires that runtime in the same command. Runtime acquisition always belongs to `vis-agent`, so the two can never drift apart.
+
+What it needs on the machine:
+
+- **git and curl** — required.
+- **GraalVM CE 25.1.3** — a matching one already installed (including through SDKMAN) is reused; otherwise the pinned JDK is installed.
+- **Clojure CLI** — installed automatically the first time the JVM runtime needs it.
+- `VIS_NO_AUTO_INSTALL=1` disables every automatic tool installation.
+
+**Nothing that install *runs* is tagged.** The source comes from the branch tip, because a published `vX.Y.Z` can be broken source and the fix lands on the branch first.
+
+The two scripts are the exception: `curl` fetches the installer, and the installer fetches the wrapper, from `github.com/$VIS_REPO_SLUG/releases/download/installer/`.
+
+- **Why a release asset** — `raw.githubusercontent.com` is blocked on many corporate networks, while `github.com` release downloads are not.
+- **`installer` is a ROLLING release, not a version** — `.github/workflows/installer-assets.yml` force-moves that one tag and re-uploads both scripts on every commit on `main` that changes them, so the published one-liner is always the branch's own installer and no per-commit snapshot release is ever created.
+- **It stays a prerelease** — so `releases/latest` still means the newest `vX.Y.Z`, which keeps its own copy of both scripts.
+- **The asset is only a bootstrap** — `vis-agent update` immediately refreshes the wrapper from the source it pins.
+
+Cloning the repository and running `bin/install-vis-agent` out of the checkout works too: it installs that checkout's own wrapper.
 
 ## Everything Vis owns
 
@@ -190,21 +188,19 @@ release CI and local builds, so a hand-built asset and a CI asset are identical.
 | Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` | release CI, or a local container build |
 | macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | release CI on the repository's own Apple-silicon runner (label `vis-macos-arm64`), any Apple-silicon machine with 32 GB, or a cloud Apple-silicon runner with at least 16 GiB (repository variable `VIS_MACOS_ARM64_RUNNER`) — no GitHub-hosted macOS runner can finish this image |
 
-Building the image needs GraalVM Community Edition 25.1.3 exactly (the repository
-pin is authoritative) and a machine with **32 GB of RAM**: the points-to analysis
-live set is ~14 GiB, and a 16 GB host spends most of the build in GC. On such a
-machine, `bin/release-native` builds every asset that host can produce, smoke-tests
-each one, and with `--tag vX.Y.Z --upload` attaches them to the release. On Apple
-silicon that is all three: macOS natively, Linux ARM64 in a container with no
-emulation, and Linux x86-64 through Rosetta — measured at 4.8x native for
-native-image (a hello-world image takes 15.8 s on `linux/arm64` against 1 m 16 s on
-`linux/amd64`), which is still well inside the 86–130 minutes the free x86-64 runner
-needs when it does not run out of memory. The emulator decides that, so the script
-measures it and refuses qemu-user, where the same analysis runs for hours and
-usually dies: Docker Desktop needs *Use Rosetta for x86_64/amd64 emulation*, podman
-needs a machine created with `rosetta = true` under `[machine]` in
-`containers.conf`. Where it was built does not change the asset — native-image
-targets the `x86-64-v3` baseline regardless of the builder's own CPU.
+Building the image needs two things exactly:
+
+- **GraalVM Community Edition 25.1.3** — the repository pin is authoritative.
+- **32 GB of RAM** — the points-to analysis live set is ~14 GiB, and a 16 GB host spends most of the build in GC.
+
+On such a machine, `bin/release-native` builds every asset that host can produce, smoke-tests each one, and with `--tag vX.Y.Z --upload` attaches them to the release. On Apple silicon that is all three: macOS natively, Linux ARM64 in a container with no emulation, and Linux x86-64 through Rosetta.
+
+Rosetta measures at 4.8x native for native-image — a hello-world image takes 15.8 s on `linux/arm64` against 1 m 16 s on `linux/amd64` — which is still well inside the 86–130 minutes the free x86-64 runner needs when it does not run out of memory. The emulator decides that, so the script measures it and refuses qemu-user, where the same analysis runs for hours and usually dies:
+
+- **Docker Desktop** — turn on *Use Rosetta for x86_64/amd64 emulation*.
+- **podman** — create the machine with `rosetta = true` under `[machine]` in `containers.conf`.
+
+Where it was built does not change the asset: native-image targets the `x86-64-v3` baseline regardless of the builder's own CPU.
 
 The container build also needs those 16+ GB **inside** the Linux VM, which a default
 podman machine does not have. `bin/release-native` therefore looks past it: if the

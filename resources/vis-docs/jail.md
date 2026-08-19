@@ -295,15 +295,13 @@ the opaque Security message as the only evidence.
 
 ## Environment scrubbing
 
-A confined child does **not** inherit the operator's environment. It gets
-exactly three things: an allowlist of non-secret variables (`PATH`, `HOME`,
-`USER`, `SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, …), **the
-project's own environment** — the workspace's `.env`/`.env.local` plus the
-`environment:` declarations, see `configuration.md` — and this session's proxy
-and CA variables. Every other `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`
-and operator credential is dropped before the process starts. This covers the
-sandbox's `shell(...)` call (every stage), trusted extension `subprocess`, and every managed
-language REPL / test runner.
+A confined child does **not** inherit the operator's environment. It gets exactly three things:
+
+1. **An allowlist of non-secret variables** — `PATH`, `HOME`, `USER`, `SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, ….
+2. **The project's own environment** — the workspace's `.env`/`.env.local` plus the `environment:` declarations, see [Configuration](configuration.md).
+3. **This session's proxy and CA variables.**
+
+Every other `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD` and operator credential is dropped before the process starts. This covers the sandbox's `shell(...)` call (every stage), trusted extension `subprocess`, and every managed language REPL and test runner.
 
 The project's `.env` is *not* withheld from a confined child on purpose: the
 child was granted the workspace and can read that file itself, so dropping the
@@ -390,18 +388,14 @@ CONNECT and the SOCKS5 lane) — e.g. `ports: [22, 443]` allows only ssh + https
 to a host, `ports: [5432]` only Postgres. A rule with no `ports` allows any port
 (the default); a rule that lists only `ports` leaves verbs unrestricted.
 
-`denied_domains` blocks a host by BOTH its name and its resolved IP: a concrete
-denied name (not a `*.` glob) is resolved to its addresses, and any dial whose
-destination resolves to one of those addresses is refused at the connect
-chokepoint — so a child cannot bypass the denylist by resolving the name itself
-and dialing the raw IP literal. Glob entries (`*.evil.com`) still match by name
-only (a wildcard has no single IP to resolve). For the hardest boundary, use a
-strict `allowed_domains` allowlist — it is enforced against IP-literal targets
-too (a non-listed IP is denied) — and combine it with the always-on SSRF floor,
-which validates every *resolved* address (loopback reserved ports,
-link-local/metadata, private ranges) and cannot be bypassed by IP literal or DNS
-rebinding. This applies
-identically to HTTP(S) and the SOCKS5 lane — both share one host gate.
+`denied_domains` blocks a host by BOTH its name and its resolved IP:
+
+- A concrete denied name (not a `*.` glob) is resolved to its addresses, and any dial whose destination resolves to one of those addresses is refused at the connect chokepoint — so a child cannot bypass the denylist by resolving the name itself and dialing the raw IP literal.
+- Glob entries (`*.evil.com`) still match by name only: a wildcard has no single IP to resolve.
+
+For the hardest boundary, use a strict `allowed_domains` allowlist — it is enforced against IP-literal targets too, so a non-listed IP is denied — and combine it with the always-on SSRF floor, which validates every *resolved* address (loopback reserved ports, link-local/metadata, private ranges) and cannot be bypassed by an IP literal or by DNS rebinding.
+
+All of it applies identically to HTTP(S) and the SOCKS5 lane: both share one host gate.
 
 HTTPS verb and path enforcement uses a gateway-owned ephemeral CA and TLS
 termination. Common clients receive CA environment variables, and managed JVMs

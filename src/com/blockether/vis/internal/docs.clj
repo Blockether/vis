@@ -35,6 +35,11 @@
        a topic explained twice is a cross-link somebody never wrote.
      * Every manifest entry carries a `:blurb`, the one sentence the sidebar and
        the index cards show.
+     * NO WALL OF TEXT: one paragraph — or one list item with its continuation
+       lines — stays under 800 characters. Past that the reader is handed a
+       table or a list as prose, and the structure is usually already in the
+       sentence (`A; B; C`, `first … then … finally`): write it as the list it is.
+
    One renderer, two outputs:
      * `build-site!` writes a static, themed HTML bundle (for GitHub Pages).
      * `handle` serves the same pages live (HTMX nav), mountable on the gateway
