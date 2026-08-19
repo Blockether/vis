@@ -3230,10 +3230,13 @@
        :features {:chat {:enabled true}
                   :attachments {:enabled true
                                 :transport "inline-base64"
-                                :media-types ["image/jpeg" "image/png" "image/gif" "image/webp"
-                                              "image/bmp" "video/mp4" "video/quicktime" "audio/mpeg"
-                                              "audio/mp4" "audio/wav" "audio/ogg" "audio/flac"]
-                                :video-media-types ["video/mp4" "video/quicktime"]
+                                ;; Derived, never a second list: a media type the sniffer
+                                ;; learns is offered by the picker in the same commit.
+                                :media-types (into ["image/jpeg" "image/png" "image/gif"
+                                                    "image/webp" "image/bmp"]
+                                                   (concat (sort attachments/video-media-types)
+                                                           (sort attachments/audio-media-types)))
+                                :video-media-types (vec (sort attachments/video-media-types))
                                 ;; A recording rides the same intake as a clip and is kept for
                                 ;; the human: the model is told the file is there rather than
                                 ;; handed bytes no multimodal wire has a block for.

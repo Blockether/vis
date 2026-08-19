@@ -667,11 +667,13 @@
           ;; A RECORDING rides beside them: no wire carries it to a model, but the
           ;; app cannot offer a voice memo it was never told this gateway keeps.
           (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "video/mp4"
-                  "video/quicktime" "audio/mpeg" "audio/mp4" "audio/wav" "audio/ogg" "audio/flac"]
+                  "video/quicktime" "audio/aac" "audio/aiff" "audio/amr" "audio/flac" "audio/mp4"
+                  "audio/mpeg" "audio/ogg" "audio/wav" "audio/x-caf"]
                  (get-in body ["features" "attachments" "media_types"])))
           (is (= ["video/mp4" "video/quicktime"]
                  (get-in body ["features" "attachments" "video_media_types"])))
-          (is (= ["audio/flac" "audio/mp4" "audio/mpeg" "audio/ogg" "audio/wav"]
+          (is (= ["audio/aac" "audio/aiff" "audio/amr" "audio/flac" "audio/mp4" "audio/mpeg"
+                  "audio/ogg" "audio/wav" "audio/x-caf"]
                  (get-in body ["features" "attachments" "audio_media_types"])))
           (is (= (* 32 1024 1024) (get-in body ["features" "attachments" "max_audio_bytes"])))
           (is (= (* 32 1024 1024) (get-in body ["features" "attachments" "max_video_bytes"])))

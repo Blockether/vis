@@ -152,6 +152,55 @@
       (expect (nil? (attachments/detect-audio-mime (riff-head "WEBP"))))
       (expect (= "image/webp" (attachments/detect-image-mime (riff-head "WEBP"))))
       (expect (nil? (attachments/detect-audio-mime tiny-mp4-bytes))))
+  (it "separates a bare AAC frame from an MP3 frame on the layer bits alone"
+      ;; Both open with the same 11-bit sync. ADTS zeroes the MPEG layer bits and
+      ;; a real MP3 frame never does, so this is the whole test there is before a
+      ;; decoder gets involved -- and an Android recorder writes bare ADTS.
+      (expect (= "audio/aac"
+                 (attachments/detect-audio-mime (byte-array (concat [0xff 0xf1] (repeat 16 0))))))
+      (expect (= "audio/aac"
+                 (attachments/detect-audio-mime (byte-array (concat [0xff 0xf9] (repeat 16 0))))))
+      (expect (= "audio/mpeg"
+                 (attachments/detect-audio-mime (byte-array (concat [0xff 0xfb] (repeat 16 0))))))
+      (expect (= "audio/mpeg"
+                 (attachments/detect-audio-mime (byte-array (concat [0xff 0xfa] (repeat 16 0)))))))
+  (it "sniffs what the two phones record when they are not writing an m4a"
+      (expect (= "audio/aiff"
+                 (attachments/detect-audio-mime (byte-array (concat (.getBytes "FORM" "US-ASCII")
+                                                                    [0x24 0 0 0]
+                                                                    (.getBytes "AIFF" "US-ASCII")
+                                                                    (repeat 16 0))))))
+      (expect (= "audio/aiff"
+                 (attachments/detect-audio-mime (byte-array (concat (.getBytes "FORM" "US-ASCII")
+                                                                    [0x24 0 0 0]
+                                                                    (.getBytes "AIFC" "US-ASCII")
+                                                                    (repeat 16 0))))))
+      (expect (= "audio/x-caf"
+                 (attachments/detect-audio-mime (byte-array (concat (.getBytes "caff" "US-ASCII")
+                                                                    (repeat 16 0))))))
+      (expect (= "audio/amr"
+                 (attachments/detect-audio-mime (byte-array (concat (.getBytes "#!AMR" "US-ASCII")
+                                                                    (repeat 16 0))))))
+      (expect (every? attachments/audio-media-type?
+                      ["audio/aac" "audio/aiff" "audio/x-caf" "audio/amr"])))
+  (it "attaches a recording NAMED IN PROSE — the terminal's only way to hand one over"
+      ;; The TUI has no picker: a dropped voice memo arrives as a path inside the
+      ;; message, and the extension pre-filters used to list pictures and clips
+      ;; only -- so the file was never even stat'd and the memo silently vanished.
+      (let [dir
+            (temp-dir)
+
+            memo
+            (write-file dir "memo.m4a" (ftyp-head "M4A "))
+
+            res
+            (attachments/collect-user-images (str "listen to " (.getAbsolutePath memo) " please"))]
+
+        (expect (= 1 (count (:attached res))))
+        (expect (= "audio/mp4" (:media-type (first (:attached res)))))
+        ;; ... and the compact preview names it instead of pasting a temp path.
+        (expect (= "listen to memo.m4a"
+                   (attachments/text->chip-preview (str "listen to " (.getAbsolutePath memo)))))))
   (it "audio-media-type? normalises case and padding"
       (expect (attachments/audio-media-type? "audio/mp4"))
       (expect (attachments/audio-media-type? " Audio/MPEG "))

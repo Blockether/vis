@@ -259,18 +259,35 @@
   [media-type]
   (contains? video-media-types (str/lower-case (str/trim (str media-type)))))
 
+(defn- adts-aac?
+  "True when the head is a raw ADTS AAC frame (`.aac`, and what an Android
+   recorder writes when it is not wrapping the stream in a container).
+
+   The 12-bit `0xFFF` syncword with the MPEG LAYER bits zero. An MP3 frame shares
+   the first 11 bits of that syncword, and its layer bits are never zero -- which
+   is the only thing that separates the two before a decoder is involved."
+  [^bytes b]
+  (and (>= (alength b) 2) (= 0xff (u8 b 0)) (= 0xf0 (bit-and (u8 b 1) 0xf6))))
+
 (defn detect-audio-mime
   "Sniff a supported audio MIME type from the leading bytes of a file.
-   Returns \"audio/mpeg\" | \"audio/mp4\" | \"audio/wav\" | \"audio/ogg\" |
+   Returns \"audio/mpeg\" | \"audio/aac\" | \"audio/mp4\" | \"audio/wav\" |
+   \"audio/aiff\" | \"audio/x-caf\" | \"audio/amr\" | \"audio/ogg\" |
    \"audio/flac\", or nil.
 
    Magic bytes only, like every other sniff here: an extension is a CLAIM, and
    a phone that hands the webview a `.m4a` with no MIME type at all is the
-   normal case rather than the odd one."
+   normal case rather than the odd one. The four beyond the obvious ones are all
+   RECORDERS rather than music: `caf` and `aiff` are what an iPhone writes,
+   `amr` and bare `aac` what an Android one does."
   [^bytes b]
   (cond (ascii-at? b 0 "ID3") "audio/mpeg"
+        (adts-aac? b) "audio/aac"
         (and (>= (alength b) 2) (= 0xff (u8 b 0)) (= 0xe0 (bit-and (u8 b 1) 0xe0))) "audio/mpeg"
         (and (ascii-at? b 0 "RIFF") (ascii-at? b 8 "WAVE")) "audio/wav"
+        (and (ascii-at? b 0 "FORM") (or (ascii-at? b 8 "AIFF") (ascii-at? b 8 "AIFC"))) "audio/aiff"
+        (ascii-at? b 0 "caff") "audio/x-caf"
+        (ascii-at? b 0 "#!AMR") "audio/amr"
         (ascii-at? b 0 "OggS") "audio/ogg"
         (ascii-at? b 0 "fLaC") "audio/flac"
         (and (ascii-at? b 4 "ftyp") (contains? audio-brands (brand-at b 8))) "audio/mp4"
@@ -280,7 +297,8 @@
   "Audio containers vis stores. No wire carries any of them: a recording is not
    pixels, so it is kept for the HUMAN and the model is TOLD the file is there
    ([[model-blind-media-type?]]) instead of being handed bytes it cannot hear."
-  #{"audio/mpeg" "audio/mp4" "audio/wav" "audio/ogg" "audio/flac"})
+  #{"audio/mpeg" "audio/aac" "audio/mp4" "audio/wav" "audio/aiff" "audio/x-caf" "audio/amr"
+    "audio/ogg" "audio/flac"})
 
 (defn audio-media-type?
   "True when `media-type` is one of [[audio-media-types]]."
@@ -333,18 +351,18 @@
   "Cheap pre-filter before any filesystem access: only tokens that END in
    an image, video or audio extension are stat'd. The magic-byte sniff still
    owns the final verdict."
-  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|wav|ogg|oga|flac)$")
+  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)$")
 
 (def ^:private media-extension-present-pattern
   "Whole-text fast path: a single unanchored scan that answers \"could this
-   message mention ANY image or video file at all?\". When it misses we skip
+   message mention ANY image, video or audio file at all?\". When it misses we skip
    tokenization + per-token filtering entirely -- turning a large paste (a
    90KB log, thousands of tokens) from a ~10ms multi-regex walk into one
    ~0.3ms linear scan. Deliberately looser than [[media-extension-pattern]]
    (no end anchor): a hit only means \"keep looking\", the anchored per-token
    pattern and the magic-byte sniff still own the real verdict, so the
    loose match can never let a non-media file through."
-  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov)")
+  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)")
 
 (def ^:private quoted-span-pattern
   "Single- or double-quoted spans — several terminals quote dropped paths
@@ -379,10 +397,10 @@
 
 (def ^:private media-path-token-pattern
   "One media-shaped PATH token as it appears IN prose: a quoted span or a
-   whitespace-delimited token ending in an image or video extension.
+   whitespace-delimited token ending in an image, video or audio extension.
    Non-capturing throughout so `str/replace` hands the matcher fn a plain
    string."
-  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov)'|\S+\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov))")
+  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)'|\S+\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr))")
 
 (defn- path-candidates
   "Raw path-shaped candidates from user text, drop-pattern aware:
