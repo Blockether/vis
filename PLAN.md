@@ -905,7 +905,7 @@ Done:
 - Phase 6 COMPLETE — the first live view a person actually watches, and the end-to-end proof of the chain.
   `.vis/extensions/gh.py` watches a GitHub Actions run through the `gh` CLI: seven declared nodes (`run` status,
   `progress`, the four-counter `score`, a `jobs` table upserted by `databaseId`, the failing job's `failing` steps,
-  the `output` log and the `links`), a 5s tick that backs off to 15s after five minutes, and a 90-minute cap. Only
+  the `output` log and the `links`), a 5s tick that backs off to 15s after five minutes, and no clock of its own. Only
   what MOVED since the last poll crosses the wire, focus follows the job that failed (its checklist cleared before
   the new job's steps land), and `gh_watch_checks` maps a pull request's checks onto the same seven answers. The
   Unknown is settled by the CLI itself: `gh` refuses a job log while the run is in progress, so the log pane holds

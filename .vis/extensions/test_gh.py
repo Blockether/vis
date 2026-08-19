@@ -267,6 +267,47 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
     assert node(verdict["view"], "progress")["done"] == 4
 
 
+def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):
+    # Regression: a watch stopped itself after 90 minutes it invented, so a longer CI run was
+    # abandoned mid-flight and the model was told "still running" about a run it never saw end.
+    hours = iter(range(1, 200))
+    seen = []
+
+    def a_slow_clock():
+        seen.append(next(hours) * 3600.0)
+        return seen[-1]
+
+    monkeypatch.setattr(gh.time, "monotonic", a_slow_clock)
+    polls = []
+
+    def poll():
+        polls.append(True)
+        if len(polls) == 6:
+            # The only thing that may end this: the person watching.
+            vis._host.live(
+                json.dumps(
+                    {
+                        "op": "close",
+                        "view_id": next(
+                            one["view_id"]
+                            for one in recorder.said
+                            if one.get("view_id")
+                        ),
+                        "ending": {"reason": "interrupted"},
+                    }
+                )
+            )
+        return fixture("run-mid.json")
+
+    verdict = gh.watch(TITLE, DESCRIPTION, poll)
+
+    # Hours passed with the run still going and nothing here counted them.
+    assert seen[-1] - seen[0] > 3 * 3600
+    assert len(polls) >= 6
+    assert verdict["reason"] == "interrupted"
+    assert verdict["is_completed"] is False
+
+
 def test_a_missing_gh_refuses_in_one_line_before_a_view_opens(recorder, monkeypatch):
     monkeypatch.setattr(
         gh,

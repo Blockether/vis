@@ -805,6 +805,17 @@ still cost one host call per tick. Pushing into a view that has already ended
 raises `vis.Interrupted` (carrying the same note), so a loop that ignores the
 flag still stops instead of reporting into a surface nobody is watching.
 
+**A live view has no deadline — and neither does the block that shows it.** The
+engine's eval wall is a backstop for guest code that has gone SILENT; work
+painting a picture a person is watching is the opposite of silent, so for as long
+as a view is open the wall is lifted and nothing bills that run a deadline at
+all. Which makes the ending yours to declare, on something you can actually SEE:
+the run reports itself over, the process exits, the command stops answering. When
+there is no such signal, do not invent a duration — a guessed cap is the wall
+again one layer down, and it quits precisely where nobody was watching. Leave the
+view up and let the human press Interrupt: `view.is_interrupted` is the stop, and
+the person watching is the one who knows.
+
 **Pushes are batched, not throttled away.** The first op after a quiet stretch
 crosses immediately; whatever else arrives within `flush_ms` (100 ms by default,
 `vis.live(..., flush_ms=…)` per view) rides the next push. Ops that fold into

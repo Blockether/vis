@@ -40,11 +40,6 @@ BACKOFF_AFTER_S = 300.0
 # The model's copy of a failing job's log is a TAIL: the whole log stays in the view's record.
 LOG_TAIL_LINES = 200
 
-# A watch that outlives this stops itself rather than polling a run nobody is waiting for.
-# The engine's eval wall is no longer the limit: an open view holds it, and every poll —
-# a patch, or the question of whether the human stopped — buys it again.
-DEFAULT_MINUTES = 90
-
 _RUNNING_STATES = ("queued", "in_progress", "waiting", "requested", "pending")
 
 
@@ -348,11 +343,17 @@ def _summary(shape):
     )
 
 
-def watch(title, description, poll, minutes=DEFAULT_MINUTES, log_tail=None):
+def watch(title, description, poll, log_tail=None):
     """Open the view on the first poll, patch it until the run ends, answer the picture.
 
     Whatever ends it, the model gets the same shape: a human's stop answers the state they were
     looking at plus their note, a finished run answers the finished run.
+
+    There is no clock here. The loop ends when GitHub says the run is over, when `gh` stops
+    answering, or when the human presses Interrupt — never on a duration this extension
+    invented. A watch whose end the extension cannot SEE is meant to hang: the view is on
+    screen and the stop is one keystroke away, so the person watching decides, and the engine's
+    eval wall (lifted for as long as a view is open) is nobody's deadline.
     """
     shape = run_shape(poll())
     began = time.monotonic()
@@ -360,7 +361,7 @@ def watch(title, description, poll, minutes=DEFAULT_MINUTES, log_tail=None):
         try:
             view["output"].write("· GitHub serves a job's log when the run finishes")
             while not shape["is_over"]:
-                if view.is_interrupted or (time.monotonic() - began) > minutes * 60:
+                if view.is_interrupted:
                     break
                 time.sleep(_tick(time.monotonic() - began))
                 try:
@@ -383,7 +384,7 @@ def watch(title, description, poll, minutes=DEFAULT_MINUTES, log_tail=None):
         return view.close(summary=_summary(shape))
 
 
-def gh_watch_run(run=None, repo=None, minutes=DEFAULT_MINUTES):
+def gh_watch_run(run=None, repo=None):
     """What is this CI run doing, and how did it end? Watch a GitHub Actions run to its verdict.
 
     Opens a live view a person can watch (and stop) while it polls `gh run view` every five
@@ -403,7 +404,6 @@ def gh_watch_run(run=None, repo=None, minutes=DEFAULT_MINUTES):
         f"{title} · run {run_id}",
         described.strip(" ·"),
         lambda: fetch_run(run_id, repo),
-        minutes,
         lambda job_id: job_log_tail(run_id, job_id, repo),
     )
 
@@ -463,7 +463,7 @@ def fetch_checks(pull, repo=None):
     return checks_payload(json.loads(text), pull)
 
 
-def gh_watch_checks(pr=None, repo=None, minutes=DEFAULT_MINUTES):
+def gh_watch_checks(pr=None, repo=None):
     """Are this pull request's checks green yet? Watch `gh pr checks` to its verdict.
 
     The same seven-node view as `gh_watch_run` over a pull request's checks — each check is a
@@ -476,7 +476,6 @@ def gh_watch_checks(pr=None, repo=None, minutes=DEFAULT_MINUTES):
         f"Checks · {pr}" if pr else "Checks",
         str(first.get("displayTitle") or "checks"),
         lambda: fetch_checks(pr, repo),
-        minutes,
     )
 
 
