@@ -4738,9 +4738,10 @@
        "Text, not a map: line 1 summarizes (hits, files, truncation and the exact next call); then "
        "per path a header and one `  <line>:<hash>│ <text>` row per hit, context lines anchored "
        "too, `⋮` marking a gap. Fuzzy NAME matches follow as `~ path`, then `hint:`. Feed an "
-       "anchor straight to `patch`. The page CONTINUES ITSELF when capped: `r.more()` is the next "
-       "page (None when complete), `r.pages()` walks them bounded, `r.all()` is the whole answer as "
-       "one text, `r.next_offset` is where the next page starts.")
+       "anchor straight to `patch`. The page CONTINUES ITSELF when capped: `next(r)` is the next "
+       "page (StopIteration when complete, so `next(r, None)` is the sentinel form), `r.pages()` "
+       "walks them bounded, `r.all()` is every page as one text, `r.next_offset` is where the "
+       "next page starts.")
      :description
      (str
        "FIND WHERE something is — the codebase-wide search that answers `where is X`, `who calls this "
@@ -4753,7 +4754,7 @@
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
        "`query: \"\"` lists files. Capped is never silent: line 1 names the next call, and the "
-       "result pages itself — `r.more()` / `r.pages()` / `r.all()`, or pass `offset` by hand. "
+       "result pages itself — `next(r)` / `r.pages()` / `r.all()`, or pass `offset` by hand. "
        "A near-miss key folds onto the one it means — `glob`/`globs`→`include`, `context_lines`→"
        "`context`, `max_results`→`limit`, `path`→`paths` — so no search dies over a word.")
      :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}

@@ -1123,7 +1123,7 @@ def __vis_paged_spec__(__vis_c__):
     #
     # grep takes exactly ONE options map (kwargs ARE that map, a positional query is
     # refused), so the next page is that map plus `offset`. A call shaped any other
-    # way pages to None, and `more()` then refuses BY NAME instead of quietly
+    # way pages to None, and `next(g)` then refuses BY NAME instead of quietly
     # searching for something else.
     __vis_nm__ = getattr(__vis_c__, "nm", None)
     if __vis_nm__ not in __vis_paged_tools__:
@@ -1153,7 +1153,9 @@ class __VisGrep__(__VisResultStr__):
     # break `"".join(g)` and `list(g)`. Pages are walked by name:
     #
     #   g.next_offset          where the next page starts, None when complete
-    #   g.more()               the next page (a __VisGrep__ too), or None
+    #   next(g)                the next page (a __VisGrep__ too); StopIteration
+    #                          when there is none, so `next(g, None)` is the
+    #                          sentinel form
     #   for page in g.pages(): every page from this one, BOUNDED
     #   g.all()                every page as ONE text, bounded, and it SAYS so
     #
@@ -1168,10 +1170,15 @@ class __VisGrep__(__VisResultStr__):
         self.is_capped = self.next_offset is not None
         return self
 
-    def more(self):
-        # The NEXT page, or None when this page already is the whole answer.
+    def __next__(self):
+        # THE NEXT PAGE. `next(g)` is what Python already calls this, so a walk over
+        # pages needs no vocabulary of its own; a page that already IS the whole
+        # answer raises StopIteration, which makes `next(g, None)` the sentinel form
+        # and lets `pages()` end the way every Python walk ends. `__iter__` stays the
+        # str's own (characters), so this is the PROTOCOL name, not a claim that a
+        # search answer is an iterator.
         if self.next_offset is None:
-            return None
+            raise StopIteration
         if self.__vis_spec__ is None:
             raise RuntimeError(
                 self.__vis_tool__ + ": this page cannot continue itself — it did not"
@@ -1200,7 +1207,7 @@ class __VisGrep__(__VisResultStr__):
             __vis_seen__ += 1
             if __vis_seen__ >= __vis_cap__:
                 break
-            __vis_page__ = __vis_page__.more()
+            __vis_page__ = next(__vis_page__, None)
 
     def all(self, max_pages=None):
         # Every page as ONE text. When the bound stops the walk before the search
