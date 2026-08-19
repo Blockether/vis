@@ -597,7 +597,7 @@
      :result
      (str
        "String-keyed `op` result. Code/file: `changed` plus optional `chars,path,formatter,repaired`; "
-       "batch: `files,by-cwd,formatters`. No source text.")
+       "batch: `files,formatters`. No source text.")
      :description
      (str
        "Format through the active pack — `format_code({\"paths\": [\"src\"]})`, or "
@@ -624,7 +624,7 @@
     {:symbol 'lint_code
      :result
      (str
-       "String-keyed `op` object: `language`, severity counts, `files,findings,providers,by-cwd`; "
+       "String-keyed `op` object: `language`, severity counts, `files,findings,providers`; "
        "stdin adds `snippet`, paths add `targets`. Findings use `file,row,col,level,type,message` "
        "and optional `provider`.")
      :description

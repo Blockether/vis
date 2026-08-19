@@ -377,36 +377,28 @@
 
 (defdescribe
   recursive-format-test
-  (it
-    "formats a DIRECTORY in {\"paths\"} RECURSIVELY, skipping non-Clojure files"
-    (let [dir (tmp-dir)]
-      (try (let [sub (io/file dir "sub")]
-             (.mkdirs sub)
-             (spit (io/file dir "a.clj") "(defn f [x]\n(* x 2))\n") ; mis-indented -> changes
-             (spit (io/file sub "b.cljc") "(defn g [y]\n(+ y 1))\n") ; nested -> changes
-             (spit (io/file sub "c.clj") "(defn h [z] (dec z))\n")   ; tidy -> no change
-             (spit (io/file dir "notes.txt") "not clojure\n") ; must be ignored
-             (let [r (core/clj-format-fn {:workspace/root (str dir)} {"paths" [(str dir)]})
-                   files (get-in r [:result "files"])]
+  (it "formats a DIRECTORY in {\"paths\"} RECURSIVELY, skipping non-Clojure files"
+      (let [dir (tmp-dir)]
+        (try (let [sub (io/file dir "sub")]
+               (.mkdirs sub)
+               (spit (io/file dir "a.clj") "(defn f [x]\n(* x 2))\n") ; mis-indented -> changes
+               (spit (io/file sub "b.cljc") "(defn g [y]\n(+ y 1))\n") ; nested -> changes
+               (spit (io/file sub "c.clj") "(defn h [z] (dec z))\n")   ; tidy -> no change
+               (spit (io/file dir "notes.txt") "not clojure\n") ; must be ignored
+               (let [r (core/clj-format-fn {:workspace/root (str dir)} {"paths" [(str dir)]})
+                     files (get-in r [:result "files"])]
 
-               (expect (:success? r))
-               ;; only the 3 Clojure sources, walked recursively; the .txt is skipped
-               (expect (= 3 (count files)))
-               (expect (= ["a.clj" "sub/b.cljc" "sub/c.clj"] (sort (mapv #(get % "path") files))))
-               (expect (= 2 (get-in r [:result "changed"]))) ; a + b changed, c tidy
-               ;; findings/files ALSO grouped under the directory (prefix written once)
-               ;; and the whole result conforms to the language-surface contract
-               (let [by-cwd (get-in r [:result "by-cwd"])]
-                 (expect (= #{"." "sub"} (set (keys by-cwd))))
-                 (expect (= #{"a.clj"} (set (keys (get by-cwd ".")))))
-                 (expect (= #{"b.cljc" "c.clj"} (set (keys (get by-cwd "sub")))))
-                 (expect (true? (get-in by-cwd ["." "a.clj" "changed"])))
-                 (expect (false? (get-in by-cwd ["sub" "c.clj" "changed"]))))
-               (expect (contract/valid? :format-fn (:result r)))
-               (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file dir "a.clj"))))
-               (expect (= "(defn g [y]\n  (+ y 1))\n" (slurp (io/file sub "b.cljc"))))
-               (expect (= "not clojure\n" (slurp (io/file dir "notes.txt"))))))
-           (finally (cleanup dir))))))
+                 (expect (:success? r))
+                 ;; only the 3 Clojure sources, walked recursively; the .txt is skipped
+                 (expect (= 3 (count files)))
+                 (expect (= ["a.clj" "sub/b.cljc" "sub/c.clj"] (sort (mapv #(get % "path") files))))
+                 (expect (= 2 (get-in r [:result "changed"]))) ; a + b changed, c tidy
+                 ;; and the whole result conforms to the language-surface contract
+                 (expect (contract/valid? :format-fn (:result r)))
+                 (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file dir "a.clj"))))
+                 (expect (= "(defn g [y]\n  (+ y 1))\n" (slurp (io/file sub "b.cljc"))))
+                 (expect (= "not clojure\n" (slurp (io/file dir "notes.txt"))))))
+             (finally (cleanup dir))))))
 
 (defdescribe default-project-format-test
              (it

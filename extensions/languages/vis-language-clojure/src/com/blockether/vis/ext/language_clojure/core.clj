@@ -725,27 +725,6 @@
       why
       (assoc "unbalanced" why))))
 
-(defn- group-format-by-cwd
-  "Nest the per-file format results under their DIRECTORY so each directory
-   prefix is written once: `{<dir> {<basename> {\"changed\" .. \"repaired\" ..
-   \"wrote\" ..}}}`. `<dir>` is the file's parent (`\".\"` when it has none); the
-   inner key is the basename, its payload the per-file map minus the now-implied
-   `\"path\"`. Mirrors `lint/group-by-cwd` so format and lint share one shape."
-  [files]
-  (reduce (fn [m f]
-            (let [jf
-                  (java.io.File. ^String (get f "path"))
-
-                  dir
-                  (or (.getParent jf) ".")
-
-                  base
-                  (.getName jf)]
-
-              (assoc-in m [dir base] (dissoc f "path"))))
-          {}
-          files))
-
 (defn clj-format-fn
   "Format Clojure source via the language facade (`format_code`). Accepts:
      - a raw code string / {\"code\": ...}   -> report changed? + char delta (NO text)
@@ -755,7 +734,6 @@
      - nothing / {}                         -> format the whole project's source
          roots (every deps.edn module's :paths + test), skipping build/vendor
          dirs (target, dist, node_modules, .clj-kondo, .clojure-lsp, .cpcache…)
-   dirs (target, dist, node_modules, .clj-kondo, .clojure-lsp, .cpcache…)
    Paths are resolved against the workspace root when relative. Every result
    NAMES the backend that ran: `\"formatter\"` (\"zprint\" | \"cljfmt\") on a
    single file / code string, and the distinct `\"formatters\"` set on a batch."
@@ -793,7 +771,6 @@
                                        {"op" "clj-format"
                                         "files" files
                                         "changed" (count (filter #(get % "changed") files))
-                                        "by-cwd" (group-format-by-cwd files)
                                         "formatters" (vec (sort (distinct (keep #(get % "formatter")
                                                                                 files))))})}))
        (let
@@ -887,10 +864,7 @@
    branch) and `\"general\"` (the compiler's reflection + boxed-math warnings).
    Reflection/boxed-math only exist at compile time, so `\"general\"` COMPILES its
    target: the code-string snippet, or every source file the lint targets (path /
-   paths / whole project) — each in a throwaway namespace that is torn down. The
-   flat `\"findings\"` vector is also grouped under `\"by-cwd\"` — nested by
-   directory to write each path prefix once:
-   `{<dir> {<basename> {\"error\"/\"warning\"/\"info\" [...]}}}`."
+   paths / whole project) — each in a throwaway namespace that is torn down."
   [env arg]
   (let [root
         (io/file (or (:workspace/root env) "."))
@@ -971,8 +945,7 @@
                                                     (cond-> (assoc base
                                                               "findings" findings
                                                               "language" "clojure"
-                                                              "providers" providers
-                                                              "by-cwd" (lint/group-by-cwd findings))
+                                                              "providers" providers)
                                                       code
                                                       (assoc "snippet" code)
 

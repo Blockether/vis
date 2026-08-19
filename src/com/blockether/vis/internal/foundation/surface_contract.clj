@@ -6,12 +6,10 @@
    under
    `:ext/language-tools` returns a result map that MUST conform to these specs,
    so the shape is UNIFORM across packs (clojure, and a future python / js) and
-   can never silently drift. Both results share the directory-nested `by-cwd`
-   grouping (`{<dir> {<basename> <payload>}}`) that writes each long directory
-   prefix ONCE.
+   can never silently drift.
 
    The result maps cross the strings-only Python boundary, so their keys are
-   STRINGS (\"op\", \"findings\", \"by-cwd\", ...). clojure.spec's `s/keys` only
+   STRINGS (\"op\", \"findings\", ...). clojure.spec's `s/keys` only
    speaks keyword keys, so the map specs here are plain predicates over the
    string keys, composed from `s/map-of` / `s/coll-of` for the nested pieces.
 
@@ -21,13 +19,6 @@
    `capability->spec` is the single source of truth mapping a capability keyword
    to its result spec."
   (:require [clojure.spec.alpha :as s]))
-
-;; Shared: the directory-nested grouping BOTH format and lint expose
-
-;; `{<dir> {<basename> <payload-map>}}` — the long directory prefix is written
-;; ONCE per group (dir), then each file's basename under it. `<payload>` is a
-;; map: for lint the level->findings map, for format the per-file flag map.
-(s/def ::by-cwd (s/map-of string? (s/map-of string? map?)))
 
 (defn- opt
   "A predicate over string key `k`: true when `m` lacks `k` OR holds nil there,
@@ -56,7 +47,6 @@
          #(string? (get % "op"))
          (opt "changed" #(or (boolean? %) (nat-int? %)))
          (opt "files" #(s/valid? (s/coll-of ::format-file) %))
-         (opt "by-cwd" #(s/valid? ::by-cwd %))
          ;; which backend(s) ran: "formatter" on a single-file/code result, the
          ;; distinct "formatters" set on a batch — so the result NAMES the provider
          (opt "formatter" string?)
@@ -86,8 +76,7 @@
          (count-key "info")
          #(s/valid? (s/coll-of ::finding) (get % "findings"))
          (opt "providers" #(s/valid? (s/coll-of string?) %))
-         (opt "snippet" string?)
-         (opt "by-cwd" #(s/valid? ::by-cwd %))))
+         (opt "snippet" string?)))
 
 ;; run_tests result
 
@@ -109,8 +98,6 @@
 
 ;; The uniform run_tests result. \"mode\" (repl|cli) and \"language\" are the two
 ;; invariants EVERY branch returns; counts / exit / flags are per-branch optional.
-;; "by-cwd" is the SAME directory-nested grouping format + lint expose — here
-;; `{<dir> {<basename> {\"failures\" [...]}}}` off each fault's file.
 (s/def ::test-result
   (s/and map?
          #(contains? #{"repl" "cli"} (get % "mode"))
@@ -128,8 +115,7 @@
          (count-key "errored")
          (count-key "selected")
          (count-key "skipped")
-         (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))
-         (opt "by-cwd" #(s/valid? ::by-cwd %))))
+         (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))))
 
 ;; run_tests: the TOTAL key set
 
@@ -172,10 +158,9 @@
    "errored" nil
    "selected" nil
    "skipped" nil
-   ;; structured faults + their directory-nested view — ONE list, where an
-   ;; erroring test is a fault with "type" "error"
+   ;; structured faults — ONE list, where an erroring test is a fault carrying
+   ;; "type" "error"
    "failures" []
-   "by-cwd" {}
    ;; narrative
    "output" nil
    "note" nil
@@ -269,8 +254,7 @@
                  "total" total
                  "skipped" skipped
                  "is_pass" is-pass
-                 "failures" faults
-                 "by-cwd" (or (get result "by-cwd") {}))))))
+                 "failures" faults)))))
 
 ;; Capability -> spec + the check the packs run
 

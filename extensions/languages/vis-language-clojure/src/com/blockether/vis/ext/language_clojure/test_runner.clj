@@ -393,8 +393,7 @@
    `Unknown` / `NO_SOURCE_PATH` sentinel — lazytest copies both onto the failure
    verbatim, and a NEGATIVE line violates the run_tests contract (`\"line\"` is a
    non-negative count), which used to blow up the whole result. nil is exactly
-   what `failures->text` and `group-faults-by-cwd` already render as \"no
-   location\"."
+   what `failures->text` already renders as \"no location\"."
   [fault]
   (let [file
         (str (get fault "file"))
@@ -454,34 +453,6 @@
 
              (str/join "\n" (cons head detail)))))
        (str/join "\n")))
-
-(defn group-faults-by-cwd
-  "Regroup the flat `failures` vector into the SAME directory-nested `by-cwd`
-   shape lint and format expose, writing each file's directory ONCE:
-   `{<dir> {<basename> {\"failures\" [...]}}}`.
-   `<dir>` is the failing file's parent (`\".\"` when it has none, e.g. a bare JVM
-   frame like `Numbers.java` or a missing file) and the inner key is the
-   basename, so the long path prefix isn't repeated per file — the same
-   character saving `lint/group-by-cwd` gives lint. A fault with no usable file
-   lands under `\".\"`/`\"<unknown>\"`. Erroring tests are not grouped apart: each
-   fault carries its own `\"type\"`."
-  [failures]
-  (reduce (fn [m fault]
-            (let [raw
-                  (get fault "file")
-
-                  file
-                  (when-not (str/blank? (str raw)) (str raw))
-
-                  dir
-                  (if file (or (.getParent (java.io.File. ^String file)) ".") ".")
-
-                  base
-                  (if file (.getName (java.io.File. ^String file)) "<unknown>")]
-
-              (update-in m [dir base "failures"] (fnil conj []) fault)))
-          {}
-          failures))
 
 (defn- compose-repl-output
   "Final `output` for a repl-mode result: the tests' OWN captured stdout (ANSI-
@@ -1561,16 +1532,9 @@
            (if (and (get result "error")
                     (str/includes? (get result "error") "Could not locate lazytest/core"))
              (run-via-cli eff-root norm)
-             result)
-
-           ;; Directory-nested view of the fault maps — the same `by-cwd` grouping
-           ;; lint/format expose, so a 30-failure run writes each path prefix ONCE.
-           ;; Only present when there's something to group.
-           result''
-           (let [failures (get result' "failures")]
-             (if (seq failures) (assoc result' "by-cwd" (group-faults-by-cwd failures)) result'))]
+             result)]
 
        (extension/success {:result (surface/check :test-fn
                                                   (assoc (note-unapplied-aliases (:aliases norm)
-                                                                                 result'')
+                                                                                 result')
                                                     "language" "clojure"))})))))

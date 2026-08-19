@@ -144,23 +144,13 @@
                (expect (pos? (get res "warning"))))
              (finally (cleanup dir))))))
 
-;; ── provider tag + by-path grouping ───────────────────────────────────────
+;; ── provider tag ─────────────────────────────────────────────────────────────
 
-(defdescribe provider-and-grouping-test
+(defdescribe provider-tag-test
              (it "tags each clj-kondo finding with \"provider\" \"clj-kondo\""
                  (let [findings (get (lint/lint-code "(ns a) (defn h [a b] a)") "findings")]
                    (expect (seq findings))
-                   (expect (every? #(= "clj-kondo" (get % "provider")) findings))))
-             (it "group-by-cwd nests findings by directory then basename then level"
-                 (let [grouped (lint/group-by-cwd
-                                 [{"file" "src/x.clj" "level" "warning" "type" "a"}
-                                  {"file" "src/x.clj" "level" "error" "type" "b"}
-                                  {"file" "test/y.clj" "level" "warning" "type" "c"}])]
-                   (expect (= #{"src" "test"} (set (keys grouped))))
-                   (expect (= 1 (count (get-in grouped ["src" "x.clj" "warning"]))))
-                   (expect (= 1 (count (get-in grouped ["src" "x.clj" "error"]))))
-                   (expect (= 1 (count (get-in grouped ["test" "y.clj" "warning"]))))
-                   (expect (nil? (get-in grouped ["test" "y.clj" "error"]))))))
+                   (expect (every? #(= "clj-kondo" (get % "provider")) findings)))))
 
 ;; ── the :general provider through the facade (code strings AND paths) ─────────
 
@@ -176,18 +166,6 @@
   (it "flags boxed math via the :general provider"
       (let [res (lint-result {} "(ns demo) (defn add [a b] (+ a b))")]
         (expect (some #(= "boxed-math" (get % "type")) (get res "findings")))))
-  (it "exposes the by-cwd grouped view nested directory → basename"
-      (let [res
-            (lint-result {} "(ns demo) (defn h [a b] (.length a))")
-
-            grouped
-            (get res "by-cwd")]
-
-        ;; <stdin> has no directory → grouped under "." then its basename;
-        ;; clj-kondo (unused b) + general (reflection) mix under one file group
-        (expect (contains? grouped "."))
-        (expect (= #{"clj-kondo" "general"}
-                   (set (map #(get % "provider") (get-in grouped ["." "<stdin>" "warning"])))))))
   (it "runs the :general provider on paths too (compiling each targeted file)"
       (let [dir (tmp-dir)]
         (try (let [src (io/file dir "src" "g.clj")]
