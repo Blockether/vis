@@ -235,10 +235,31 @@
       (subs cut 0 (dec (.length cut)))
       cut)))
 
+(def ^:private word-run
+  "One run of letters and digits — exactly what `tokens` sees between two
+   separators, by the same `Character/isLetterOrDigit` rule the tokenizer walks."
+  #"[\p{L}\p{Nd}]+")
+
 (defn terms
-  "`s` as the terms the index and the query both speak: tokenized, then folded."
+  "`s` as the terms the index and the query both speak: tokenized, then folded.
+
+   A run that camelCase SPLIT also keeps its whole self — `arXiv` is `ar`, `xiv`
+   AND `arxiv`; `GitHub` is `git`, `hub` and `github`. Nobody types the inner
+   capital into a search box, so without the joined term a document's own
+   spelling and the query's could never meet: the index carried `ar`/`xiv`,
+   `apropos(\"arxiv\")` matched no document at all and spell-correction answered
+   with three confident, unrelated pages. Only a camelCase run joins — a
+   separator keeps words apart, so `code search` never becomes `codesearch`.
+
+   `tokens` itself stays split: a handle is an identifier, and
+   `normalized-handle` must stay `from_anchor`."
   [s]
-  (into [] (map stem) (tokens s)))
+  (into []
+        (comp (mapcat (fn [run]
+                        (let [ps (tokens run)]
+                          (if (next ps) (conj ps (str/join ps)) ps))))
+              (map stem))
+        (re-seq word-run (str s))))
 
 (defn normalized-handle
   "A name or a whole query as ONE comparable string, so `from_anchor`,

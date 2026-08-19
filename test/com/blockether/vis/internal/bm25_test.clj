@@ -169,6 +169,27 @@
       (expect (empty? (bm25/search (docs) "wyszukiwanie dokumentów")))))
 
 (defdescribe
+  compound-word-test
+  "A document spelling it `arXiv` indexed `ar` + `xiv`, while the way anyone
+   types it — `arxiv` — stayed ONE term, so the two never met: `apropos` for
+   `arxiv` found no paper search at all and answered whatever the typo rescue
+   reached instead."
+  (it "keeps the whole word beside its camelCase pieces"
+      (expect (= ["ar" "xiv" "arxiv"] (vec (bm25/terms "arXiv"))))
+      (expect (= ["git" "hub" "github"] (vec (bm25/terms "GitHub")))))
+  (it "never joins across a separator"
+      (expect (= ["git" "hub"] (vec (bm25/terms "git hub"))))
+      (expect (= ["from" "anchor"] (vec (bm25/terms "from_anchor")))))
+  (it "answers the tool for the way a human spells its subject"
+      (let [ds [(doc* "search_papers" "Search arXiv for relevant papers.")
+                (doc* "search_code" "Search public code with GitHub Code Search.")
+                (doc* "patch" "Edit a file by address.")]]
+        (expect (= "search_papers" (:name (first (bm25/search ds "arxiv")))))
+        (expect (= "search_code" (:name (first (bm25/search ds "github")))))))
+  (it "leaves a handle an identifier"
+      (expect (= "from_anchor" (bm25/normalized-handle "fromAnchor")))))
+
+(defdescribe
   prefix-and-typo-test
   "A term nothing carries was only ever spell-corrected, so an interactively
    typed PREFIX answered the wrong document — or, at distance 1 from two
