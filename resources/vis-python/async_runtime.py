@@ -1096,7 +1096,7 @@ def __vis_grep_next_offset__(__vis_text__):
     # Line 1 of a search answer names the LITERAL next call whenever the sweep was
     # capped:
     #
-    #   grep 'q'  50 hits · 3 of 30 files  capped by limit → grep({…, "offset": 50})
+    #   grep 'q'  50 hits · 3 of 30 files  capped by limit → next(r) or grep({…, "offset": 50})
     #
     # The renderer OWNS that sentence (`grep-summary-line`, pinned verbatim by
     # `core_test`), so reading the offset back out of it reads the CONTRACT, not

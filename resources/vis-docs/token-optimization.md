@@ -33,7 +33,7 @@ src/com/blockether/vis/internal/foundation/editing/core.clj  (2)
   4735:981│ (defn- patch-tool
 ```
 
-Every hit is already a `patch` argument. Terms are ORed over every scope, `include`/`exclude` bound which files the content sweep reads, `is_regex: True` runs the query as a real regex, and `query: ""` lists files.
+Every hit is already a `patch` argument. Terms are ORed over every scope, `include`/`exclude` bound which files the content sweep reads, `is_regex: True` runs the query as a real regex, and `query: ""` lists files. A wide sweep answers ONE page and line 1 says so, but the page CONTINUES ITSELF: `next(g)` is the next one (`StopIteration` when this page already is the whole answer, so `next(g, None)` is the sentinel form), `g.pages()` walks them bounded, and `g.all()` is the lot as one text.
 
 For a known region, `cat(path, start, end)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. A negative endpoint counts from the end (`cat(path, -50)` is the tail 50 lines, `cat(path, -50, -30)` the window between them). `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
 
@@ -81,8 +81,8 @@ Write a small helper the first time a shape repeats, then CALL it from every lat
 
 ```python
 def hits(needles, *paths, ctx=0):
-    """Anchored `line:hash│ text` rows only, without the per-path headers."""
-    text = grep({"query": needles, "paths": list(paths), "context": ctx})
+    """Anchored `line:hash│ text` rows only, across every page."""
+    text = grep({"query": needles, "paths": list(paths), "context": ctx}).all()
     return [l for l in text.splitlines() if "│ " in l]
 ```
 
@@ -91,8 +91,8 @@ A definition lives as long as the **session**, and now longer than the **process
 ```python
 print(defs())            # 2 definitions in this sandbox
                          #   deploy_ok(env)                <prog:1>  2 lines
-                         #   hits(needles, *paths, ctx=0)  <prog:1>  3 lines  Grep several needles at once
-                         #                                                    and return {path: [lines]}.
+                         #   hits(needles, *paths, ctx=0)  <prog:1>  3 lines  Anchored `line:hash│ text`
+                         #                                                    rows only, across every page.
                          # defs("name") returns one's source. 1 has no docstring — one line of it would be
                          # the gist above, the whole of it a doc(name) page the next turn can search.
 print(defs("hits"))      # its source — edit THAT, never re-paste from memory

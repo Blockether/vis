@@ -1997,7 +1997,7 @@
 
       (expect
         (=
-          "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → grep({…, \"offset\": 50})"
+          "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → next(r) or grep({…, \"offset\": 50})"
           head)))))
 
 

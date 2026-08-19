@@ -24,7 +24,8 @@
    nil is an UNCAPPED page — no arrow, and so no next call."
   [offset next-offset]
   (str "grep 'q'  50 hits · 3 of 30 files"
-       (when next-offset (str "  capped by limit → grep({…, \"offset\": " next-offset "})"))
+       (when next-offset
+         (str "  capped by limit → next(r) or grep({…, \"offset\": " next-offset "})"))
        "\nsrc/a.clj  (1)\n  1:aaa│ hit from offset " offset))
 
 (defn- stub-grep
