@@ -3716,6 +3716,19 @@
         (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {[sid node-id] true})))]
           (expect (str/includes? txt "▾ [Transcription #1: memo.m4a]"))
           (expect (str/includes? txt "buy milk and call back"))))
+    (it "wraps the spoken words on spaces, not mid-word like a paste"
+        ;; The payload rides a code block - the paste paper - and code wraps by
+        ;; column, so at a narrow width the memo used to read "voice attachmen / ts".
+        (let [prose
+              [:ast {}
+               [:code {:lang "vis-transcript"}
+                "[Transcription #1: memo.m4a]\ntranscription support for voice attachments\n"]]
+
+              txt
+              (:text (render/format-answer-markdown-data prose 34 (opts {[sid node-id] true})))]
+
+          (expect (str/includes? txt "attachments"))
+          (expect (nil? (re-find #"attachmen\s*\n" txt)))))
     (it "a paste's expansion state cannot open it"
         (let [txt (:text
                     (render/format-answer-markdown-data ast 76 (opts {[sid paste-node-id] true})))]

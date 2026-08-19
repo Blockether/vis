@@ -4315,10 +4315,19 @@
                                  :session-id session-id
                                  :node-id node-id})
 
+        ;; A paste is CODE: a hard wrap keeps its columns honest. A transcript is
+        ;; SPEECH, where a break mid-word ("attachmen/ts") only makes prose look like
+        ;; code, so its words are wrapped on spaces FIRST and the block paints lines
+        ;; that already fit. The copy payload stays the unwrapped original.
+        body-payload
+        (if (= :transcript kind)
+          (str/join "\n" (wrap-text payload (max 8 (- (long content-w) 4))))
+          payload)
+
         body
         (when expanded?
           (tag-copy-block-body
-            (vec (layout/ast->entries [:ast {} [:code {:wrap? true} payload]] content-w opts))
+            (vec (layout/ast->entries [:ast {} [:code {:wrap? true} body-payload]] content-w opts))
             node-id
             payload))]
 
