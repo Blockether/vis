@@ -424,6 +424,21 @@
        (compatibility-api-style (:compatibility provider))
        (:api-style template))))
 
+(defn effective-api-style
+  "The wire dialect a provider actually speaks, in precedence order: what the
+   user DECLARED (`api_style` / `compatibility`), then what the provider's own
+   extension answered when it issued the credential (`get-token-fn`'s
+   `api_style`), then the catalog/preset template.
+
+   When nobody names one and the provider carries a `responses_path`, that path
+   IS the declaration: only the Responses wire ever posts to it. Reading it as
+   chat completions is the silent misroute of issue #152 - a Responses-minted
+   tool-call id replayed onto `/chat/completions` and rejected upstream."
+  [{:keys [declared runtime template responses-path]}]
+  (or declared
+      (config-spec/normalize-api-style runtime)
+      template
+      (when-not (str/blank? responses-path) :openai-compatible-responses)))
 (defn provider-base-url
   "Resolve base-url for a provider: explicit field on the provider
    map first (so user-supplied URLs win), then the merged catalog."
@@ -638,14 +653,22 @@
         explicit-url
         (:base-url provider)
 
-        explicit-api-style
-        (provider-api-style provider template)
+        ;; What the CONFIG declares, kept apart from the template so a dialect the
+        ;; provider's own extension answers at runtime can sit between them.
+        declared-api-style
+        (or (config-spec/normalize-api-style (:api-style provider))
+            (compatibility-api-style (:compatibility provider)))
 
         explicit-headers
         (:llm-headers provider)
 
         explicit-responses
         (:responses-path provider)
+
+        static-api-style
+        (effective-api-style {:declared declared-api-style
+                              :template (:api-style template)
+                              :responses-path explicit-responses})
 
         ;; `is_stateless: true` — this endpoint cannot resolve item ids minted by
         ;; another backend (LiteLLM/Azure multi-resource), so svar must not replay
@@ -672,7 +695,7 @@
                   :provider/get-token-fn))]
 
     (if get-token-fn
-      (let [{:keys [token api-url llm-headers responses-path]}
+      (let [{:keys [token api-url llm-headers responses-path api-style]}
             (with-boot-token-timeout pid get-token-fn)
 
             url
@@ -682,7 +705,13 @@
             (or explicit-headers llm-headers)
 
             merged-response
-            (or explicit-responses responses-path)]
+            (or explicit-responses responses-path)
+
+            resolved-api-style
+            (effective-api-style {:declared declared-api-style
+                                  :runtime api-style
+                                  :template (:api-style template)
+                                  :responses-path merged-response})]
 
         ;; Remember the token this router bakes in, so a later 401 can hand the
         ;; single-flight refresh the EXACT token that failed as `rejected`.
@@ -691,8 +720,8 @@
           url
           (assoc :base-url url)
 
-          explicit-api-style
-          (assoc :api-style explicit-api-style)
+          resolved-api-style
+          (assoc :api-style resolved-api-style)
 
           merged-response
           (assoc :responses-path merged-response)
@@ -715,8 +744,8 @@
         explicit-url
         (assoc :base-url explicit-url)
 
-        explicit-api-style
-        (assoc :api-style explicit-api-style)
+        static-api-style
+        (assoc :api-style static-api-style)
 
         explicit-responses
         (assoc :responses-path explicit-responses)

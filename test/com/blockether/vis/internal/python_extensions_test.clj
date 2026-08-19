@@ -818,7 +818,24 @@ vis.extension(
                    (fn [result _]
                      (expect (= 1 (:failed result)))
                      (expect (str/includes? (:error (first (pyx/load-failures)))
-                                            "names no wire dialect"))))))
+                                            "names no wire dialect")))))
+  (it "a credential the extension issues may declare the wire dialect too"
+      ;; The dialect is a property of the ENDPOINT, and a managed provider's endpoint
+      ;; only exists once the credential is issued — so `get_token_fn` takes the same
+      ;; vocabulary as the preset does.
+      (with-loaded
+        {"tokendialect.py"
+         (str "import vis\n" "def _token():\n"
+              "    return {'token': 'k', 'api_url': 'https://issued.test/v1',\n"
+              "            'api_style': 'openai_responses', 'responses_path': '/responses'}\n"
+              "vis.extension(name='tokendialect', description='d',\n"
+              "              providers=[vis.provider(id='tokendialect', label='Issued',\n"
+              "                  preset={'base_url': 'https://issued.test/v1'},\n"
+              "                  get_token_fn=_token)])\n")}
+        (fn [_ _]
+          (expect (= :openai-compatible-responses
+                     (:api-style ((:provider/get-token-fn (registry/provider-by-id
+                                                            :tokendialect))))))))))
 ;; Reload + project-over-global precedence
 
 (defdescribe

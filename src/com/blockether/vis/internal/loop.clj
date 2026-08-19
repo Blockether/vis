@@ -5984,39 +5984,52 @@
   (update router
           :providers
           (fn [provider-entries]
-            (mapv (fn [{:keys [id] :as provider-entry}]
-                    (if-let [get-token-fn (some-> (registry/provider-by-id id)
-                                                  :provider/get-token-fn)]
-                      (try (let [{:keys [token api-url llm-headers responses-path]} (get-token-fn)]
-                             (cond-> provider-entry
-                               (some? token)
-                               (assoc :api-key token)
+            (mapv
+              (fn [{:keys [id] :as provider-entry}]
+                (if-let [get-token-fn (some-> (registry/provider-by-id id)
+                                              :provider/get-token-fn)]
+                  (try (let [{:keys [token api-url llm-headers responses-path api-style]}
+                             (get-token-fn)
+                             ;; The credential may also NAME the wire it issued
+                             ;; (#152): an extension that mints its own `api_url`
+                             ;; is the only thing that knows the dialect. Config
+                             ;; precedence was resolved when the router was built,
+                             ;; so a runtime dialect fills a gap, never overrides.
+                             dialect (when (nil? (:api-style provider-entry))
+                                       (config/effective-api-style {:runtime api-style}))]
 
-                               (some? api-url)
-                               (assoc :base-url api-url)
+                         (cond-> provider-entry
+                           (some? token)
+                           (assoc :api-key token)
 
-                               (some? llm-headers)
-                               (assoc :llm-headers llm-headers)
+                           (some? api-url)
+                           (assoc :base-url api-url)
 
-                               (some? responses-path)
-                               (assoc :responses-path responses-path)))
-                           (catch Throwable t
-                             (tel/log! {:level :warn
-                                        :id ::provider-credential-hydration-failed
-                                        :data {:provider id :error (ex-message t)}}
-                                       (str "Could not hydrate current credential for "
-                                            id
-                                            "; retaining the previous request snapshot"))
-                             provider-entry))
-                      ;; Command-backed: the cache serves the same token in the
-                      ;; steady state (no fork per request) and re-execs the
-                      ;; helper exactly once after a 401 invalidated it. A helper
-                      ;; that is failing right now yields nil and keeps the
-                      ;; snapshot, so the provider error stays authoritative.
-                      (if-let [token (config/command-token id)]
-                        (assoc provider-entry :api-key token)
-                        provider-entry)))
-                  provider-entries))))
+                           (some? llm-headers)
+                           (assoc :llm-headers llm-headers)
+
+                           (some? responses-path)
+                           (assoc :responses-path responses-path)
+
+                           (some? dialect)
+                           (assoc :api-style dialect)))
+                       (catch Throwable t
+                         (tel/log! {:level :warn
+                                    :id ::provider-credential-hydration-failed
+                                    :data {:provider id :error (ex-message t)}}
+                                   (str "Could not hydrate current credential for "
+                                        id
+                                        "; retaining the previous request snapshot"))
+                         provider-entry))
+                  ;; Command-backed: the cache serves the same token in the
+                  ;; steady state (no fork per request) and re-execs the
+                  ;; helper exactly once after a 401 invalidated it. A helper
+                  ;; that is failing right now yields nil and keeps the
+                  ;; snapshot, so the provider error stays authoritative.
+                  (if-let [token (config/command-token id)]
+                    (assoc provider-entry :api-key token)
+                    provider-entry)))
+              provider-entries))))
 
 (defn- hydrate-environment-router
   "Hydrate only the router snapshot used by this provider attempt."

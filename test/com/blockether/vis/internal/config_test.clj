@@ -991,6 +991,47 @@
       (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
                               :image-input?)))))
 
+;; Regression, issue #152: a provider whose extension ISSUES the credential could
+;; answer a `responses_path` but had no way to name the wire it speaks, so the
+;; router built it as `/chat/completions` and replayed a Responses history onto
+;; the chat wire.
+(defdescribe
+  provider-runtime-dialect-test
+  "A `get-token-fn` may declare the wire dialect, and a responses path implies it."
+  (it "adopts the dialect the credential declares, in any accepted spelling"
+      (with-redefs [registry/provider-by-id (constantly {:provider/get-token-fn
+                                                         (fn []
+                                                           {:token "t"
+                                                            :api-url "https://issued.example/v1"
+                                                            :api-style "openai_responses"})})]
+        (expect (= :openai-compatible-responses
+                   (:api-style (config/->svar-provider {:id :gw :models [{:name "m"}]}))))))
+  (it "keeps a dialect declared in the config above the runtime one"
+      (with-redefs [registry/provider-by-id (constantly {:provider/get-token-fn
+                                                         (fn []
+                                                           {:token "t"
+                                                            :api-style "openai-responses"})})]
+        (expect (= :openai-compatible-chat
+                   (:api-style (config/->svar-provider
+                                 {:id :gw :compatibility :openai :models [{:name "m"}]}))))))
+  (it "reads a responses path as the Responses wire when nothing declares one"
+      (expect (= :openai-compatible-responses
+                 (:api-style
+                   (config/->svar-provider
+                     {:id :gw :api-key "k" :responses-path "/responses" :models [{:name "m"}]}))))
+      (with-redefs [registry/provider-by-id (constantly {:provider/get-token-fn (fn []
+                                                                                  {:token "t"
+                                                                                   :responses-path
+                                                                                   "/responses"})})]
+        (expect (= :openai-compatible-responses
+                   (:api-style (config/->svar-provider {:id :gw :models [{:name "m"}]}))))))
+  (it "never lets that implication override a declared chat dialect"
+      (expect (= :openai-compatible-chat
+                 (:api-style (config/->svar-provider {:id :gw
+                                                      :api-key "k"
+                                                      :api-style :openai
+                                                      :responses-path "/responses"
+                                                      :models [{:name "m"}]}))))))
 (defn- with-declared-environment
   "Run `f` with `block` DECLARED as the active config's `environment:` block."
   [block f]

@@ -993,12 +993,34 @@
   [fields v]
   (if (map? v) (decode fields v) v))
 
+(defn- as-api-style
+  "A provider's wire dialect - in a `preset`, or in the credential a
+   `get_token_fn` issues - resolved through the ONE vocabulary
+   (`config-spec/api-style-aliases`) and REFUSED when it names no dialect.
+
+   svar `case`s the api-style and every value it does not recognise falls
+   through to `/chat/completions`, so keywordizing the author's string verbatim
+   made `\"openai_responses\"` mean chat completions — a Responses endpoint served
+   on the wrong wire, silently. Forgiving on every accepted spelling, loud on
+   anything else."
+  [v]
+  (when (some? v)
+    (let [raw (str v)]
+      (or (config-spec/normalize-api-style raw)
+          (throw (ex-info (str "provider api_style " (pr-str raw)
+                               " names no wire dialect - use one of "
+                               (str/join ", " config-spec/api-style-values))
+                          {:api-style raw :accepted config-spec/api-style-values}))))))
+
 (def ^:private token-fields
   "`get_token_fn` / `refresh_token_fn` / `detect_fn` -> the credential map
    `config/->svar-provider` and `loop/hydrate-router-credentials` destructure.
+   `api-style` is the wire the ISSUED endpoint speaks, checked exactly like a
+   preset's: an extension that mints its own `api_url` is the only thing that
+   knows the dialect, and a config `api_style` still wins over it.
    `llm-headers` is deliberately NOT declared: a header map is string-keyed on
    the wire and stays exactly as the author wrote it."
-  {:token as-str :api-url as-str :responses-path as-str :source as-kw})
+  {:token as-str :api-url as-str :responses-path as-str :api-style as-api-style :source as-kw})
 
 (def ^:private status-fields
   "`status_fn` -> the shared connection verdict (`providers/safe-provider-status`,
@@ -1040,24 +1062,6 @@
    :static (decoder {:rpm as-long :tpm as-long})
    :dynamic (decoder {:limits (decoder-rows limit-row-fields) :note as-str})
    :error (decoder {:type as-kw :message as-str :data (decoder {})})})
-
-(defn- as-api-style
-  "A preset's wire dialect, resolved through the ONE vocabulary
-   (`config-spec/api-style-aliases`) and REFUSED when it names no dialect.
-
-   svar `case`s the api-style and every value it does not recognise falls
-   through to `/chat/completions`, so keywordizing the author's string verbatim
-   made `\"openai_responses\"` mean chat completions — a Responses endpoint served
-   on the wrong wire, silently. Forgiving on every accepted spelling, loud on
-   anything else."
-  [v]
-  (when (some? v)
-    (let [raw (str v)]
-      (or (config-spec/normalize-api-style raw)
-          (throw (ex-info (str "provider preset api_style " (pr-str raw)
-                               " names no wire dialect - use one of "
-                               (str/join ", " config-spec/api-style-values))
-                          {:api-style raw :accepted config-spec/api-style-values}))))))
 
 (def ^:private preset-fields
   "The preset keys the host owns. ONE spelling per key: a Python author writes

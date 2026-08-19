@@ -11,7 +11,9 @@ optional.
     `~/.vis/config.edn`'s `:providers` (or the TUI *Add Provider* picker)
     makes the model route to it.
   * `get_token_fn` — returns the credential for each request; raising is the
-    "not configured" path the CLI/TUI surfaces.
+    "not configured" path the CLI/TUI surfaces. Beside `token` it may answer
+    `api_url`, `llm_headers`, `responses_path` and `api_style` — a provider whose
+    endpoint only exists once the credential is issued names its wire here.
   * `status_fn`    — powers `vis-agent providers status acme`.
 
 Dict keys may be snake_case or kebab (`api_url` ≡ `:api-url`). `api_style` is
@@ -30,6 +32,8 @@ def _token():
     key = os.environ.get("ACME_API_KEY")
     if not key:
         raise ValueError("set ACME_API_KEY to use the acme provider")
+    # `api_style` here would name the wire of THIS issued URL; the preset
+    # already declares it, and a user's `api_style` in vis.yml wins over both.
     return {"token": key, "api_url": "https://api.acme.ai/v1"}
 
 

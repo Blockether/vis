@@ -4610,54 +4610,75 @@
       (expect (true? (auth-refresh-allowed? :other)))
       (reset! auth-refresh-events {})))
 
-(defdescribe request-bound-credential-hydration-test
-             "Every provider attempt reads dynamic auth fields without rebuilding router state."
-             (it "replaces all dynamic credential fields while preserving router state"
-                 (let [state
-                       (atom {:health :warm})
+(defdescribe
+  request-bound-credential-hydration-test
+  "Every provider attempt reads dynamic auth fields without rebuilding router state."
+  (it "replaces all dynamic credential fields while preserving router state"
+      (let [state
+            (atom {:health :warm})
 
-                       router
-                       {:providers [{:id :ap
-                                     :api-key "old"
-                                     :base-url "https://old.example"
-                                     :llm-headers {"old" "header"}
-                                     :responses-path "/old"}]
-                        :state state
-                        :budget {:spent 42}}]
+            router
+            {:providers [{:id :ap
+                          :api-key "old"
+                          :base-url "https://old.example"
+                          :llm-headers {"old" "header"}
+                          :responses-path "/old"}]
+             :state state
+             :budget {:spent 42}}]
 
-                   (with-redefs [registry/provider-by-id (fn [_]
-                                                           {:provider/get-token-fn
-                                                            (fn []
-                                                              {:token "fresh"
-                                                               :api-url "https://fresh.example"
-                                                               :llm-headers {"fresh" "header"}
-                                                               :responses-path "/responses"})})]
-                     (let [hydrated (hydrate-router-credentials router)]
-                       (expect (identical? state (:state hydrated)))
-                       (expect (= {:spent 42} (:budget hydrated)))
-                       (expect (= {:id :ap
-                                   :api-key "fresh"
-                                   :base-url "https://fresh.example"
-                                   :llm-headers {"fresh" "header"}
-                                   :responses-path "/responses"}
-                                  (first (:providers hydrated))))))))
-             (it "retains the exact old provider snapshot when token lookup fails"
-                 (let [provider
-                       {:id :ap :api-key "still-usable" :base-url "https://old.example"}
+        (with-redefs [registry/provider-by-id (fn [_]
+                                                {:provider/get-token-fn
+                                                 (fn []
+                                                   {:token "fresh"
+                                                    :api-url "https://fresh.example"
+                                                    :llm-headers {"fresh" "header"}
+                                                    :responses-path "/responses"})})]
+          (let [hydrated (hydrate-router-credentials router)]
+            (expect (identical? state (:state hydrated)))
+            (expect (= {:spent 42} (:budget hydrated)))
+            (expect (= {:id :ap
+                        :api-key "fresh"
+                        :base-url "https://fresh.example"
+                        :llm-headers {"fresh" "header"}
+                        :responses-path "/responses"}
+                       (first (:providers hydrated))))))))
+  (it "retains the exact old provider snapshot when token lookup fails"
+      (let [provider
+            {:id :ap :api-key "still-usable" :base-url "https://old.example"}
 
-                       router
-                       {:providers [provider]}]
+            router
+            {:providers [provider]}]
 
-                   (with-redefs [registry/provider-by-id (fn [_]
-                                                           {:provider/get-token-fn
-                                                            (fn []
-                                                              (throw (ex-info "disk race" {})))})]
-                     (expect (= provider
-                                (first (:providers (hydrate-router-credentials router))))))))
-             (it "leaves static providers untouched"
-                 (let [router {:providers [{:id :static :api-key "configured"}]}]
-                   (with-redefs [registry/provider-by-id (constantly nil)]
-                     (expect (= router (hydrate-router-credentials router)))))))
+        (with-redefs [registry/provider-by-id (fn [_]
+                                                {:provider/get-token-fn
+                                                 (fn []
+                                                   (throw (ex-info "disk race" {})))})]
+          (expect (= provider (first (:providers (hydrate-router-credentials router))))))))
+  ;; Regression, issue #152: the credential could answer a responses path
+  ;; but never the wire it speaks, so a runtime-issued Responses endpoint
+  ;; kept the chat dialect the router had defaulted to.
+  (it "fills a missing dialect from the credential, in any accepted spelling"
+      (with-redefs [registry/provider-by-id (fn [_]
+                                              {:provider/get-token-fn
+                                               (fn []
+                                                 {:token "t" :api-style "openai_responses"})})]
+        (expect (= :openai-compatible-responses
+                   (:api-style (first (:providers (hydrate-router-credentials {:providers
+                                                                               [{:id :ap}]}))))))))
+  (it "leaves a dialect the config already resolved alone"
+      (with-redefs [registry/provider-by-id (fn [_]
+                                              {:provider/get-token-fn
+                                               (fn []
+                                                 {:token "t" :api-style "openai-responses"})})]
+        (expect (= :openai-compatible-chat
+                   (:api-style (first (:providers (hydrate-router-credentials
+                                                    {:providers [{:id :ap
+                                                                  :api-style
+                                                                  :openai-compatible-chat}]}))))))))
+  (it "leaves static providers untouched"
+      (let [router {:providers [{:id :static :api-key "configured"}]}]
+        (with-redefs [registry/provider-by-id (constantly nil)]
+          (expect (= router (hydrate-router-credentials router)))))))
 
 (defdescribe request-bound-auth-refresh-test
              "401 recovery adopts peer rotations first and refreshes only the exact rejected token."
