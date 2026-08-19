@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.prompt :as prompt]
@@ -6372,3 +6373,34 @@
                         (expect (= ["probe"] (mapv #(get % "id") (get store "providers")))))
                       (finally (System/setProperty "user.home" old-home)
                                (config/invalidate-config-cache!))))))
+
+(defdescribe create-environment-failure-disposes-sandbox-test
+  ;; A sandbox is built ~130 lines before `create-environment` returns, and
+  ;; workspace resolution, extension discovery and the defs restore all run after
+  ;; it. A throw in that stretch used to abandon it — and an abandoned sandbox is
+  ;; never reclaimed, because its GraalPy action thread is a GC root pinning the
+  ;; Context, its Engine and the whole Python heap. So the FAILURE path leaked
+  ;; worse than success ever could, on exactly the runs a caller retries.
+  (it "closes the sandbox it built when a later step throws"
+    (let
+      [disposed
+       (atom [])
+
+       boom
+       (RuntimeException. "workspace exploded")]
+
+      (with-redefs-fn
+        {#'res/dispose! (fn [sandbox] (swap! disposed conj sandbox) nil)
+         ;; A step that runs AFTER the sandbox exists, and fails.
+         #'env/restore-session-defs! (fn [& _] (throw boom))}
+        (fn []
+          (let
+            [thrown
+             (try (lp/create-environment ::router {:db :memory}) nil (catch Throwable t t))]
+
+            (expect (identical? boom thrown) "the original failure must reach the caller")
+            (expect (= 1 (count @disposed))
+                    (str "create-environment abandoned its sandbox on the failure path"
+                         " (dispose! calls: " (count @disposed) ")"))
+            (expect (some? (:python-context (first @disposed)))
+                    "the disposed value must be the sandbox it built")))))))

@@ -9766,6 +9766,15 @@
    Returns the vis environment map."
   [router {:keys [db session channel external-id title workspace-id prewarm?]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
+  ;; Everything from here to the end runs with the sandbox GUARDED: the Context is
+  ;; built ~130 lines before this function returns, and workspace resolution,
+  ;; extension discovery and the defs restore all still run after it. A throw in
+  ;; that stretch used to ABANDON the sandbox — and an abandoned one is never
+  ;; reclaimed, because its GraalPy action thread is a GC root that pins the
+  ;; Context, its Engine and the whole Python heap. So the failure path leaked
+  ;; worse than success ever could, on exactly the runs a caller would retry.
+  (let [pending (volatile! nil)]
+   (try
   (let [db-info
         (persistance/db-create-connection! db)
 
@@ -10228,13 +10237,16 @@
           (extension/fs-access-gate (fn []
                                       @environment-atom)))
 
-        {:keys [python-context python-engine sandbox-ns initial-ns-keys]}
+        {:keys [python-context python-engine sandbox-ns initial-ns-keys] :as sandbox}
         (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
                                    sandbox-roots-fn
                                    network-opts
                                    nil
                                    nil
                                    sandbox-gate-fn)
+
+        _
+        (vreset! pending sandbox)
 
         ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
         ;; while the transcript still shows the helpers this session refined, so the
@@ -10359,7 +10371,11 @@
     ;; this process's own start and `/reload` may pick an edit up.
     (python-extensions/ensure-python-extensions-loaded!)
     (extension/register-extensions! env install-extension!)
-    env))
+    env)
+   (catch Throwable t
+     ;; Best-effort: a teardown must never replace the real failure with its own.
+     (try (res/dispose! @pending) (catch Throwable _ nil))
+     (throw t)))))
 
 ;; Session env cache
 
