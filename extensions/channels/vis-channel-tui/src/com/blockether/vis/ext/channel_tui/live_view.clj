@@ -1293,17 +1293,82 @@
                 (str/join " · "
                           (remove str/blank? [(flat-text (get-in pane [:view :title])) text])))}))
 
+(defn- band-shape
+  "PURE: what the band is made of on `region` — the live panes oldest first, the
+   collapsed lines behind the pane in FRONT, that pane's plan rows, its armed
+   stop, and `:n`, the display rows the band geometry is asked for.
+
+   The HEIGHT is decided once, HERE, because two callers have to agree on it:
+   [[paint!]] draws that many rows and [[band-rows]] tells the wheel which rows
+   those are. A band drawn taller than the wheel believes hands the top of the
+   pane's own scroll back to the transcript underneath it, which reads as a live
+   view that only scrolls near its footer."
+  [panes region]
+  (let [;; A settled view is not band furniture: it has already given its rows
+        ;; back to the transcript, where its own row now waits.
+        panes
+        (vec (remove dormant? panes))
+
+        ;; The body opens one column inside the rails and the row painters take
+        ;; the next one, so nothing a view paints ever touches a rail — and the
+        ;; right lane stays clear for the scrollbar.
+        text-w
+        (max 8 (- (dec (long (:inner-w region))) 4))
+
+        ;; The pane IN FRONT is the newest view still on the band.
+        front
+        (last panes)
+
+        others
+        (if front (vec (butlast panes)) (vec panes))
+
+        collapsed
+        (mapv collapsed-row others)
+
+        rows-plan
+        (if front (plan front text-w) [])
+
+        ;; Half the rows between the top of the transcript and the prompt, at the
+        ;; most: the run this view reports on is still being read above it. Four
+        ;; rows is the floor — a band shorter than that says nothing at all.
+        room
+        (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
+
+        ;; An ARMED stop takes two body rows: the line the human types into and
+        ;; the rule that fences it off from the view above. The band asks WHY it
+        ;; is being stopped where it is being stopped, and the answer rides along
+        ;; with the stop — but the question is the BAND speaking, not one more row
+        ;; of the run's own report, so it is ruled off on both sides.
+        stop
+        (stop-prompt front)
+
+        ;; What the band WANTS: every collapsed line, the plan, the row the fenced
+        ;; hint rule costs, and that note line when it is armed.
+        wanted
+        (+ (count collapsed) (count rows-plan) 1 (if stop 2 0))]
+
+    {:panes panes
+     :front front
+     :others others
+     :collapsed collapsed
+     :rows-plan rows-plan
+     :stop stop
+     :n (min wanted room)}))
+
 (defn band-rows
   "The rows the band covers on a `cols`×`rows` terminal, as `[from to]`
    inclusive — what the wheel needs to know to tell 'over the pane' from 'over
-   the transcript'."
+   the transcript'.
+
+   The height is [[band-shape]]'s, the very one [[paint!]] draws with, so the
+   wheel claims exactly the rows the human sees."
   [cols rows panes content-top prompt-h]
   (when (some (complement dormant?) panes)
     (let [region
           (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
 
           {:keys [sep-row foot-row]}
-          (tr/band-geometry region 1 false)]
+          (tr/band-geometry region (:n (band-shape panes region)) false)]
 
       [(long sep-row) (long foot-row)])))
 
@@ -1342,29 +1407,9 @@
          (let [left (long left)
                inner-w (long inner-w)
                body-w (dec inner-w)
-               ;; The body opens one column inside the rails and the row painters
-               ;; take the next one, so nothing a view paints ever touches a rail —
-               ;; and the right lane stays clear for the scrollbar.
-               text-w (max 8 (- body-w 4))
-               ;; The pane IN FRONT is the newest view still on the band.
-               front (last panes)
-               others (if front (vec (butlast panes)) (vec panes))
-               collapsed (mapv collapsed-row others)
-               rows-plan (if front (plan front text-w) [])
-               ;; Half the rows between the top of the transcript and the prompt, at
-               ;; the most: the run this view reports on is still being read above it.
-               room (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
-               ;; An ARMED stop takes two body rows: the line the human types into and
-               ;; the rule that fences it off from the view above. The band asks WHY it
-               ;; is being stopped where it is being stopped, and the answer rides
-               ;; along with the stop — but the question is the BAND speaking, not one
-               ;; more row of the run's own report, so it is ruled off on both sides.
-               stop (stop-prompt front)
-               ;; What the band WANTS: every collapsed line, the plan, the row the
-               ;; fenced hint rule costs, and that note line when it is armed.
-               wanted (+ (count collapsed) (count rows-plan) 1 (if stop 2 0))
+               {:keys [front others collapsed rows-plan stop n]} (band-shape panes region)
                {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
-               (tr/band-geometry region (min wanted room) false)
+               (tr/band-geometry region n false)
                ;; The band CLOSES below its hint bar, exactly like the form's: the
                ;; bar takes the row the closing rule used to own, the rule drops onto
                ;; the host's hint row, and the fence above the bar costs the body one

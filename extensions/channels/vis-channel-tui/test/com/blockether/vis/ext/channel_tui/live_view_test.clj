@@ -830,6 +830,40 @@
   (cr/commit-frame!)
   (cr/current))
 
+;; Regression, vis session a64d44c2: `band-rows` measured the band as ONE display
+;; row while `paint!` drew every row the view asked for, so the wheel owned only
+;; the four rows above the prompt — over the rest of a tall pane the transcript
+;; underneath it scrolled instead.
+(deftest live-band-height-test
+  (testing "the wheel claims exactly the rows the band paints"
+    (let [p
+          (patched (pane) {:op :append :node-id "tail" :lines (mapv #(str "line " %) (range 40))})
+
+          lines
+          (str/split-lines (painted-text [p] 96 40))
+
+          [from to]
+          (lv/band-rows 96 40 [p] 1 3)]
+
+      (is (str/includes? (nth lines from) "CI · fix(loop): move the session pick")
+          "the first row it claims is the band's own titled rule")
+      (is (str/includes? (nth lines to) "└") "the last is the rule that closes it")
+      (is (every? str/blank? (take from lines))
+          "and nothing of the band is painted above the rows the wheel owns")))
+  (testing "a view takes half the terminal at the most, and never a sliver of it"
+    (let [p
+          (patched (pane) {:op :append :node-id "tail" :lines (mapv #(str "line " %) (range 40))})
+
+          height
+          (fn [rows]
+            (let [[from to] (lv/band-rows 96 rows [p] 1 3)]
+              (inc (- (long to) (long from)))))]
+
+      (doseq [rows [20 24 40 60]]
+        (is (<= (height rows) (quot rows 2))
+            (str "on " rows " rows the band stops at half the screen"))
+        (is (>= (height rows) (quot rows 3))
+            (str "on " rows " rows a view with more to show still gets a third"))))))
 ;; Phase 5 of the live-view plan: a view used to vanish the moment it ended, so
 ;; the log the human had been watching became unreachable one frame after it
 ;; finished. What a finished run leaves now is a ROW OF THE TRANSCRIPT, in the
