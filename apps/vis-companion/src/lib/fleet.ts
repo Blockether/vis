@@ -32,6 +32,16 @@ export interface FleetMachine {
   /** Last load failure. Set means offline/unauthorized; the row degrades. */
   error: string | null;
   /**
+   * THE FAILURE ABOVE IS WHAT THIS DEVICE REMEMBERED, not what it measured in this run.
+   *
+   * A machine found dark is saved as dark (`lib/fleet-outage`), so a relaunch starts it
+   * drained instead of meeting an hours-old corpse as a machine nobody has ever tried. That
+   * memory drains the tile and the section exactly as a fresh failure does — but it is not
+   * this device watching the fleet go dark, so it must not hand the whole screen to the
+   * offline gate before one read of this run has been allowed to fail (see `fleetError`).
+   */
+  isRemembered?: boolean;
+  /**
    * TRUE ONLY ONCE THIS GATEWAY HAS SPOKEN TO THIS DEVICE since the screen mounted.
    *
    * `sessions` can be non-null without a single byte from the machine — the rows may
@@ -227,6 +237,11 @@ export function fleetError(machines: FleetMachine[]): string | null {
   if (machines.length === 0) return null;
   const failed = machines.filter((machine) => machine.error);
   if (failed.length !== machines.length) return null;
+  // A fleet still holding a machine whose darkness is only REMEMBERED has not run out of
+  // machines to try: that read is in flight, and a saved verdict handing the shell its
+  // offline screen would park every cold start on it — including the launch where the
+  // laptop had been woken up an hour ago.
+  if (failed.some((machine) => machine.isRemembered)) return null;
   return failed[0]?.error ?? null;
 }
 

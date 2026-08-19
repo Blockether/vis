@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 import type { MachineFixture } from "./sessions-screen-harness";
+import { machineOutage, rememberMachineOutage } from "../lib/fleet-outage";
 
 let restore = () => {};
 afterEach(() => restore());
@@ -492,5 +493,74 @@ describe("a machine known to be dark reconnects in the background", () => {
       expect(screen.getByText("Second")).toBeTruthy();
       expect(railHue("beta")).not.toBe(railHue("alpha"));
     });
+  });
+});
+
+// Regression, user report (paraphrased: "the gateway machine has been off for hours, and the
+// sessions list still shows it as active and pressable — it goes dark for a second, then it is
+// active again; you are not saving it anywhere"): the dark verdict lived in a module-level Map
+// that dies with the JavaScript context, and the OS kills this webview whenever the app goes
+// to the background. So every launch met a machine this device had already found dark as one
+// nobody had ever tried — a raised, pressable tile — until that launch's own socket ran out
+// the transport's deadline all over again.
+describe("what this device found dark outlives the app", () => {
+  const strip = () => within(screen.getByLabelText("Machines"));
+
+  it("writes the verdict down when the machine goes dark", async () => {
+    const view = renderSessionsScreen({ machines: [fleet()[0], { label: "beta", down: true }] });
+    restore = view.restore;
+    await screen.findByText("First");
+    await waitFor(() =>
+      expect(strip().getByRole("button", { name: /^Reconnect to beta/ })).toBeTruthy(),
+    );
+
+    expect(machineOutage(view.conns[1].url)).toBeTruthy();
+    // The machine that answered is not remembered as anything.
+    expect(machineOutage(view.conns[0].url)).toBeNull();
+  });
+
+  it("starts that machine drained in the FIRST frame of the next launch", async () => {
+    const conns = [
+      { url: "http://relaunch-alpha.example.com", token: "t", label: "alpha" },
+      { url: "http://relaunch-beta.example.com", token: "t", label: "beta" },
+    ];
+    // What the run before the kill wrote down.
+    rememberMachineOutage(conns[1].url, "Failed to fetch");
+
+    const view = renderSessionsScreen({
+      machines: [fleet()[0], { label: "beta", down: true, hangs: true }],
+      at: conns,
+    });
+    restore = view.restore;
+
+    // Nothing has been probed yet in this app: the tile is the retry, not a place to go.
+    expect(strip().getByRole("button", { name: /^Reconnect to beta/ })).toBeTruthy();
+    expect(strip().queryByRole("button", { name: /^beta$/ })).toBeNull();
+    expect(screen.queryByLabelText("beta projects")).toBeNull();
+
+    await screen.findByText("First");
+    expect(strip().getByRole("button", { name: /^Reconnect to beta/ })).toBeTruthy();
+  });
+
+  // A memory is not a blackout: the shell's offline screen belongs to a fleet that has RUN OUT
+  // of machines this run, or a solo user whose laptop was woken an hour ago would open the app
+  // onto the pairing page every time.
+  it("never hands the shell its offline screen on a saved verdict alone", async () => {
+    const conns = [{ url: "http://relaunch-solo.example.com", token: "t", label: "tower" }];
+    rememberMachineOutage(conns[0].url, "Failed to fetch");
+    const told: string[] = [];
+
+    const view = renderSessionsScreen({
+      machines: [{ label: "tower", sessions: [listSession({ id: "t1", title: "Only" })] }],
+      at: conns,
+      onUnreachable: (message) => {
+        if (message) told.push(message);
+      },
+    });
+    restore = view.restore;
+
+    // It is up, and it says so on this run's first read.
+    await screen.findByText("Only");
+    expect(told).toEqual([]);
   });
 });

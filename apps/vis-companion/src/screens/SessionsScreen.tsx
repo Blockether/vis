@@ -74,6 +74,11 @@ import {
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
+  clearMachineOutage,
+  machineOutage,
+  rememberMachineOutage,
+} from '../lib/fleet-outage';
+import {
   clearDraftMessage,
   draftMessageHasUnsent,
   draftMessageKey,
@@ -241,16 +246,18 @@ function clientFor(conn: GatewayConn): GatewayClient {
   return client;
 }
 
-// MACHINES THIS DEVICE HAS ALREADY FOUND DARK, remembered for as long as their clients
-// are. A machine that is not answering is drained out of `All` (`scopedMachines`) — but
-// the fleet was rebuilt from nothing on every mount, and opening a session unmounts this
-// screen, so a laptop that was asleep came back as a machine nobody had tried yet: its
-// last known rows took a band, a rail and a section in the middle of the working fleet,
-// and the probe behind them spent the transport's whole budget confirming what this
-// device already knew before that section vanished under the reader. The verdict outlives
-// the screen that reached it: a machine known to be dark starts drained, and walks back
-// into the fleet when it ANSWERS — never because it is being asked again.
-const fleetOutage = new Map<string, string>();
+// MACHINES THIS DEVICE HAS ALREADY FOUND DARK. A machine that is not answering is drained
+// out of `All` (`scopedMachines`) — but the fleet was rebuilt from nothing on every mount, and
+// opening a session unmounts this screen, so a laptop that was asleep came back as a machine
+// nobody had tried yet: its last known rows took a band, a rail and a section in the middle of
+// the working fleet, and the probe behind them spent the transport's whole budget confirming
+// what this device already knew before that section vanished under the reader.
+//
+// The verdict outlives the screen that reached it AND the run that measured it — it is SAVED
+// (`lib/fleet-outage`), because the OS kills this webview whenever it feels like it and a
+// machine that was off all night is not a machine nobody has met. A machine known to be dark
+// starts drained, and walks back into the fleet when it ANSWERS — never because it is being
+// asked again.
 
 // ONE MISSED READ IS NOT AN OUTAGE, and this counts the failures nothing has confirmed
 // yet.
@@ -277,16 +284,19 @@ const OUTAGE_CONFIRMING_MISSES = 2;
 function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetMachine[] {
   return reconcileMachines(conns, previous).map((machine) => {
     if (machine.error !== null) return machine;
-    const outage = fleetOutage.get(machineKey(machine.conn)) ?? null;
+    const outage = machineOutage(machineKey(machine.conn));
     // Cached rows are what to paint WHEN it answers — never a claim that it has.
-    if (machine.sessions !== null) return outage ? { ...machine, error: outage } : machine;
+    // A verdict this run has not measured is REMEMBERED: it drains the machine exactly as a
+    // fresh failure does, but it is not this device WATCHING the fleet go dark (`fleetError`).
+    if (machine.sessions !== null)
+      return outage ? { ...machine, error: outage, isRemembered: true } : machine;
     const api = clientFor(machine.conn);
     // The header row's numbers come back with the machine, in the FIRST frame: a
     // gateway returned to must not re-tally itself out of session windows.
     const overview = machine.overview ?? api.cachedProjectsOverview();
     const cached = api.cachedSessions();
     if (!cached && !outage) return overview ? { ...machine, overview } : machine;
-    return { ...machine, sessions: cached ?? null, error: outage, overview };
+    return { ...machine, sessions: cached ?? null, error: outage, isRemembered: outage !== null, overview };
   });
 }
 
@@ -637,7 +647,7 @@ export function SessionsScreen({
       // was asked.
       const alive = () => {
         searchSilentRef.current.delete(key);
-        fleetOutage.delete(key);
+        clearMachineOutage(key);
         fleetMisses.delete(key);
       };
       try {
@@ -668,6 +678,7 @@ export function SessionsScreen({
             awaiting: parked,
             error: null,
             answered: true,
+            isRemembered: false,
           }));
         };
         // The header row's numbers, in ONE request, beside the window — never a
@@ -712,13 +723,20 @@ export function SessionsScreen({
         fleetMisses.set(key, misses);
         if (misses < OUTAGE_CONFIRMING_MISSES && held?.answered && held.error === null)
           return failure;
-        fleetOutage.set(key, failure);
+        rememberMachineOutage(key, failure);
         // A FAILURE THAT SAYS NOTHING NEW IS NOT NEWS EITHER (same rule as `settle`).
         // Re-patching an unchanged verdict handed the list a new fleet array on every
         // poll — and with it a re-anchored scroll position and every memo built from the
         // fleet — for a machine that has not been on screen since it went dark.
-        if (held?.error !== failure)
-          patchMachine(key, (machine) => ({ ...machine, error: failure, answered: false }));
+        // A REMEMBERED failure is not this same verdict: this read is what CONFIRMS the
+        // darkness in THIS run, and the shell's offline gate waits for exactly that.
+        if (held?.error !== failure || held.isRemembered)
+          patchMachine(key, (machine) => ({
+            ...machine,
+            error: failure,
+            answered: false,
+            isRemembered: false,
+          }));
         return failure;
       }
     },
@@ -842,7 +860,7 @@ export function SessionsScreen({
       // BESIDE it, so it can neither hold the fleet's refresh open nor repaint a list it
       // is not in.
       const paired = connsRef.current;
-      const dark = (conn: GatewayConn) => fleetOutage.has(machineKey(conn));
+      const dark = (conn: GatewayConn) => machineOutage(machineKey(conn)) !== null;
       for (const conn of paired.filter(dark)) reconnectMachine(conn);
       try {
         await Promise.all(
