@@ -36,7 +36,7 @@ vis.extension(
 
 ## One file, two hosts
 
-Everything the module does, it does through thirteen host ops declared as data in
+Everything the module does, it does through the host ops declared as data in
 [`packages/vis-contract/resources/vis-contract/python-host.edn`](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/python-host.edn)
 and installed alongside as `vis-contract`, which ships that declaration as
 `vis_contract/contract.json` and the `Host` protocol this package is written against.

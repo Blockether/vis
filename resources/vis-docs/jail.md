@@ -634,13 +634,12 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
   when `passt` is installed (only the gateway proxy port reachable); without it,
   a proxy-restricted network is denied entirely (safe).
 
-## Reload, inheritance, and model context
+## Reload and model context
 
-Security configuration is resolved and snapshotted when a root session environment
+Security configuration is resolved and snapshotted when a session environment
 is built. Relative paths become absolute and symlinks are resolved at that boundary.
-Every child environment inherits the exact same snapshot; it never rereads
-`vis.yml`. Editing a model-writable configuration file therefore cannot widen a
-running parent or child. `/reload` bumps one process-wide policy epoch that
+The environment never rereads `vis.yml`. Editing a model-writable configuration file
+therefore cannot widen a running session. `/reload` bumps one process-wide policy epoch that
 invalidates **every** active session, not only the one you typed it in. The
 rebuild is lazy and per session: each session recycles its environment and
 re-snapshots from the current `vis.yml` on its **next** message, so an idle

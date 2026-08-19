@@ -3,7 +3,7 @@
 `vis/__init__.py` is the extension API and nothing else: every call it makes goes
 through `_host`, the dict of callables the engine seeds before it execs the module
 inside an extension context. Installed from PyPI there is no engine, so this
-module answers the same thirteen names — and it answers them the way the
+module answers the same names the contract declares — and it answers them the way the
 `vis-contract` package says each one behaves outside the sandbox, never by guessing:
   outside == "local"   the op has an honest local meaning, so do it locally:
                        state is a JSON file, `log`/`notify` are stderr lines,

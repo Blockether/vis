@@ -103,7 +103,7 @@ set `VIS_OUTSIDE_NONINTERACTIVE=1` to have every ask come back undeliverable.
 `background`, `logs`, `wait`, `send`, `stop`, read out of that declaration — so a
 file written against the sandbox drives a process the same way outside it.
 
-Neither host is special: `vis` calls thirteen methods on whatever object sits in
+Neither host is special: `vis` calls every op the contract declares on whatever object sits in
 its `_host`, and `vis_contract.Host` is that interface — a `typing.Protocol`, with
 `vis_contract.check_host(obj)` refusing an object that misses an op and naming the
 ones it missed. A third runtime that wants to run extension files implements it and
@@ -1148,19 +1148,20 @@ upstream pytest (no plugins, no assertion-rewriting import hook).
 
 ### Batteries in the model's sandbox
 
-The model's sandbox ships pure-Python, stdlib-only module shims so common
-imports work without pip. Each one is a real `.py` file under
+The model's sandbox ships module shims so common imports work without pip —
+most are pure-Python reimplementation subsets; a few (PIL, sqlite3, the time
+shims) reach the JVM or a native backend. Each one is a real `.py` file under
 `resources/vis-shims/`, published into the sandbox context and loaded lazily on
 first import:
 
 - Data / formats — `numpy`, `pandas`, `yaml`, `toml`, `tabulate`, `sqlite3`,
-  `brotli`.
-- HTTP / web — `requests`, `httpx`, `urllib3`, `bs4`.
+  `brotli`, `nippy` (Vis' own Nippy codec).
+- HTTP / web — `requests`, `httpx`, `urllib3`, `bs4`, `soupsieve` (bs4's bundled selector engine).
 - Documents / media — `anydoc` (any document as Markdown, and any question about
-  it as citations — see below), `PIL`, `matplotlib`, `pptx`, `xlsxwriter`,
-  `fontTools`.
-- Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
-- Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
+  it as citations — see below), `PIL`, `matplotlib`, `mpl_toolkits`, `pptx`,
+  `xlsxwriter`, `fontTools`.
+- Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`, `pytz`, `tzdata` (the same JVM zone store).
+- Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs), `ruff` (in-process lint and format).
 - Globals, no import needed — `attach`, `list_attachments`, `get_attachment`,
   `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
   `attach(...)` hands back the descriptor of what it just stored, and

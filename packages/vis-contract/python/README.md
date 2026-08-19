@@ -30,7 +30,7 @@ class MyHost:
 vis_contract.check_host(MyHost())  # TypeError names every op you did not answer
 ```
 
-`vis_contract.Host` is a `typing.Protocol`: the thirteen calls, their arities and
+`vis_contract.Host` is a `typing.Protocol`: the calls, their arities and
 their doc lines are the document's, and the package's own suite fails when the
 protocol and `contract.json` stop agreeing.
 
