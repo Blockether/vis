@@ -3681,6 +3681,46 @@
           (expect (true? (:collapsed? meta)))))))
 
 (defdescribe
+  transcript-disclosure-render-test
+  ;; A terminal cannot PLAY a voice memo, so its words are the only thing the reader
+  ;; can have — but a minute of speech is a paragraph, so they arrive folded, on the
+  ;; same disclosure a paste uses. It must carry its OWN node id: `[Pasted #1]` and
+  ;; `[Transcription #1]` in one turn used to toggle each other.
+  (let [ast
+        [:ast {}
+         [:code {:lang "vis-transcript"} "[Transcription #1: memo.m4a]\nbuy milk and call back\n"]]
+
+        sid
+        "s1"
+
+        turn
+        "client-turn-1"
+
+        opts
+        (fn [de]
+          {:session-id sid :session-turn-id turn :detail-expansions de :section :user})
+
+        node-id
+        (@#'render/detail-node-id
+         {:session-turn-id turn :section :user :kind :transcript :details-path ["1"]})
+
+        paste-node-id
+        (@#'render/detail-node-id
+         {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
+
+    (it "collapsed by default: the name shows, the words do not"
+        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
+          (expect (str/includes? txt "▸ [Transcription #1: memo.m4a]"))
+          (expect (not (str/includes? txt "buy milk")))))
+    (it "expanded: the chevron flips and the recording's own words appear"
+        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {[sid node-id] true})))]
+          (expect (str/includes? txt "▾ [Transcription #1: memo.m4a]"))
+          (expect (str/includes? txt "buy milk and call back"))))
+    (it "a paste's expansion state cannot open it"
+        (let [txt (:text
+                    (render/format-answer-markdown-data ast 76 (opts {[sid paste-node-id] true})))]
+          (expect (not (str/includes? txt "buy milk")))))))
+(defdescribe
   image-disclosure-render-test
   ;; A dropped image renders NON-collapsible: the `[Image #N: ...]` token is a
   ;; plain caption row and the picture's cell box is ALWAYS reserved in the

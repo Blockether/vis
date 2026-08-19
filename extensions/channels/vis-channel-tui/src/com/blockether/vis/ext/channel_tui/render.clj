@@ -4212,12 +4212,24 @@
   [node]
   (and (vector? node) (= :code (first node)) (= "vis-doc" (:lang (second node)))))
 
+(defn- transcript-code-block?
+  "True for a `vis-transcript` code node — the fence a persisted RECORDING gets
+   when the gateway's speech engine could read it (`chat/attachment-transcript-fence`).
+   Body lines: the `[Transcription #N: name]` token, then the words.
+
+   A recording is the one attachment a terminal cannot play, so the transcript is
+   not a nicety here — it is the ONLY way to know what the memo said. Collapsed,
+   because a minute of speech is a paragraph nobody asked to re-read."
+  [node]
+  (and (vector? node) (= :code (first node)) (= "vis-transcript" (:lang (second node)))))
+
 (defn- disclosure-code-block?
   [node]
   (or (paste-code-block? node)
       (image-code-block? node)
       (table-code-block? node)
-      (doc-code-block? node)))
+      (doc-code-block? node)
+      (transcript-code-block? node)))
 
 (defn- image-block-parts
   "Parse a `vis-image` node body into `{:summary :path :mime :width :height
@@ -4264,11 +4276,11 @@
     (if (neg? nl) [body ""] [(subs body 0 nl) (subs body (inc nl))])))
 
 (defn- paste-disclosure-entries
-  "Render one `vis-paste` block as a collapsible disclosure: the
-   `[Pasted #N: ...]` token is the chevron summary row (`▸`/`▾` +
-   `:toggle-details` click meta), the verbatim payload the body shown
-   only when expanded. Collapsed by default so a pasted wall stays a
-   one-liner. A trailing blank row gives the next content breathing
+  "Render one `vis-paste` OR `vis-transcript` block as a collapsible disclosure:
+   the `[Pasted #N: ...]` / `[Transcription #N: ...]` token is the chevron summary
+   row (`▸`/`▾` + `:toggle-details` click meta), the payload the body shown only
+   when expanded. Collapsed by default so a pasted wall — or a minute of speech —
+   stays a one-liner. A trailing blank row gives the next content breathing
    room."
   [node content-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
   (let [[summary payload]
@@ -4282,9 +4294,15 @@
                     second)
             "0")
 
+        ;; A transcript rides the SAME disclosure as a paste and must not share its
+        ;; node id: `[Pasted #1]` and `[Transcription #1]` in one turn would toggle
+        ;; each other open.
+        kind
+        (if (transcript-code-block? node) :transcript :paste)
+
         node-id
         (detail-node-id
-          {:session-turn-id session-turn-id :section :user :kind :paste :details-path [id]})
+          {:session-turn-id session-turn-id :section :user :kind kind :details-path [id]})
 
         expanded?
         (detail-expanded? detail-expansions session-id node-id false)

@@ -470,6 +470,34 @@
        (or size-label "")
        "\n````\n"))
 
+(defn- attachment-transcript-fence
+  "One `vis-transcript` fenced block: the words a persisted RECORDING says.
+
+   A terminal cannot play a voice memo, so its chip is the whole of what the reader
+   gets — and the chip says only that a file arrived. The gateway transcribed it once
+   with its own speech engine on the turn that carried it, and the model was given
+   exactly this string; the fence puts the same words one keypress away
+   (`render/transcript-code-block?` paints it collapsed, like a paste).
+
+   `n` is the 1-based caption index; body lines mirror the paste shape: the summary
+   token, then the payload."
+  [n filename transcript]
+  (str "\n````vis-transcript\n" "[Transcription #" n ": " filename "]" "\n" transcript "\n````\n"))
+
+(defn- attachment-transcripts
+  "Every `vis-transcript` fence one persisted turn's USER recordings earn, in order.
+   Empty when nothing was transcribable — an engine-less build, or a memo nothing
+   could read, renders exactly as it does today."
+  [attachments]
+  (->> attachments
+       (filter #(= "user" (str (get % "source"))))
+       (keep (fn [att]
+               (let [transcript (str/trim (str (get att "transcription")))]
+                 (when (and (str/starts-with? (str (get att "media_type")) "audio/")
+                            (seq transcript))
+                   [(str (get att "filename")) transcript]))))
+       vec))
+
 (defn- user-request-with-images
   "Re-render a persisted turn's user images from DB-owned bytes: strip any stale
    `vis-image` fences from `user-request` and append one durable fence per
@@ -477,22 +505,35 @@
    bytes live in the DB, so the picture survives a TUI restart even after the
    original clipboard/temp file is purged.
 
+   A RECORDING has no picture to re-render, so it earns the other durable fence:
+   one `vis-transcript` per memo the gateway could read, carrying what it says.
+
    Whatever prose survives goes through `attach/text->inline-chips`, so a turn
    persisted with a BARE temp path (submitted before the collapsed display copy
    rode along, or typed by hand) reads as `clipboard-….png` instead of a raw
    `/var/folders/…` line. DISPLAY only — nothing re-sends this text."
   [user-request attachments]
-  (let [descs (->> attachments
-                   (filter #(= "user" (str (get % "source"))))
-                   (keep timg/materialize-attachment)
-                   vec)]
-    (if (empty? descs)
+  (let [descs
+        (->> attachments
+             (filter #(= "user" (str (get % "source"))))
+             (keep timg/materialize-attachment)
+             vec)
+
+        transcripts
+        (attachment-transcripts attachments)]
+
+    (if (and (empty? descs) (empty? transcripts))
       (chip-image-paths user-request)
       (str (str/trimr (chip-image-paths (strip-image-fences user-request)))
            (str/join ""
                      (map-indexed (fn [i d]
                                     (attachment-image-fence (inc (long i)) d))
-                                  descs))))))
+                                  descs))
+           (str/join ""
+                     (map-indexed
+                       (fn [i [filename transcript]]
+                         (attachment-transcript-fence (inc (long i)) filename transcript))
+                       transcripts))))))
 
 (defn- turns->messages
   "Wire transcript turns (oldest-first) -> the TUI's flat message vector.

@@ -812,3 +812,34 @@
       (expect (= :iteration-error (:phase chunk)))
       (expect (= {:type :svar.core/http-error :message "upstream reset" :status 503}
                  (:error chunk)))))
+
+(defdescribe user-recording-transcript-fence-test
+             ;; A persisted RECORDING has no picture to re-render, so the turn used to carry
+             ;; nothing but a `memo.m4a` chip — the terminal cannot play it, and what it SAID
+             ;; was unreachable. The gateway transcribed it once on the way in; history now
+             ;; appends the words as a collapsed `vis-transcript` fence.
+             (let [render @#'chat/user-request-with-images]
+               (it "appends what a user's recording says, once, as its own fence"
+                   (let [out (render "listen to /tmp/memo.m4a"
+                                     (wire/canonical [{:filename "memo.m4a"
+                                                       :media-type "audio/mp4"
+                                                       :source "user"
+                                                       :transcription "buy milk and call back"}]))]
+                     (expect (str/includes? out "````vis-transcript"))
+                     (expect (str/includes? out "[Transcription #1: memo.m4a]"))
+                     (expect (str/includes? out "buy milk and call back"))))
+               (it "leaves a turn alone when nothing could read the recording"
+                   ;; No engine, or audio it could not decode: the chip is what it always was.
+                   (let [out (render "listen to /tmp/memo.m4a"
+                                     (wire/canonical [{:filename "memo.m4a"
+                                                       :media-type "audio/mp4"
+                                                       :source "user"}]))]
+                     (expect (not (str/includes? out "vis-transcript")))))
+               (it "never speaks for the MODEL's own audio artifact"
+                   ;; Only what the human attached belongs in the human's own bubble.
+                   (let [out (render "make me a sound"
+                                     (wire/canonical [{:filename "reply.m4a"
+                                                       :media-type "audio/mp4"
+                                                       :source "tool"
+                                                       :transcription "spoken answer"}]))]
+                     (expect (not (str/includes? out "vis-transcript")))))))
