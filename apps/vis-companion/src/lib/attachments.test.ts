@@ -128,3 +128,52 @@ describe('naming a candidate', () => {
     expect(isAudioMediaType(undefined)).toBe(false);
   });
 });
+
+// Regression: an Android voice memo arrives from the document provider with the
+// MIME type `application/octet-stream` — `ContentResolver.getType` answers that
+// for every URI its table does not know. Believed, that word cost the user the
+// file at the gate; carried into the Blob, it also silenced the player, because
+// a data URL typed `application/octet-stream` will not decode in an <audio>.
+describe('what Android hands over', () => {
+  it('names an octet-stream memo by its extension and types its bytes to match', async () => {
+    filePicker.pickFiles.mockResolvedValue({
+      files: [
+        { name: 'Recording.m4a', mimeType: 'application/octet-stream', data: 'AAAAAAAA' },
+      ],
+    });
+
+    const result = await pickDocumentAttachments({ mediaTypes: ['audio/mp4'] });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mp4']);
+    expect(result.attachments[0].previewUrl.startsWith('data:audio/mp4;base64,')).toBe(true);
+  });
+
+  it('re-types a dropped file whose Blob the platform left generic', async () => {
+    const files = [
+      new File([new Uint8Array(64)], 'memo.aac', { type: 'application/octet-stream' }),
+    ];
+
+    const result = await attachmentsFromFiles(files, { mediaTypes: ['audio/aac'] });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0].media_type).toBe('audio/aac');
+    expect(result.attachments[0].previewUrl.startsWith('data:audio/aac;base64,')).toBe(true);
+  });
+
+  it('keeps an unnameable file unnameable rather than guessing', () => {
+    expect(candidateMediaType('memo.m4a', 'application/octet-stream')).toBe('audio/mp4');
+    expect(candidateMediaType('blob', 'application/octet-stream')).toBe(
+      'application/octet-stream',
+    );
+  });
+
+  it('takes every recorder format the gateway now advertises', () => {
+    expect(candidateMediaType('memo.caf', '')).toBe('audio/x-caf');
+    expect(candidateMediaType('memo.amr', '')).toBe('audio/amr');
+    expect(candidateMediaType('memo.aiff', '')).toBe('audio/aiff');
+    expect(candidateMediaType('memo.aac', '')).toBe('audio/aac');
+    expect(candidateMediaType('memo.opus', '')).toBe('audio/ogg');
+    expect(candidateMediaType('book.m4b', '')).toBe('audio/mp4');
+  });
+});

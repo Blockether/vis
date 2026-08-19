@@ -35,8 +35,12 @@ const DEFAULT_VIDEO_MEDIA_TYPES = ['video/mp4', 'video/quicktime'];
 // it the same three things — admit the type, size it, play it back.
 const DEFAULT_AUDIO_MEDIA_TYPES = [
   'audio/mpeg',
+  'audio/aac',
   'audio/mp4',
   'audio/wav',
+  'audio/aiff',
+  'audio/x-caf',
+  'audio/amr',
   'audio/ogg',
   'audio/flac',
 ];
@@ -86,16 +90,26 @@ function base64AsBlob(base64: string, mimeType: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
+// A blob whose `type` is the media type WE resolved. It routinely is not the
+// platform's: Android hands a voice memo over as `application/octet-stream`, and
+// the data URL built from such a blob will not play in an <audio> element even
+// though the bytes are a perfect recording.
+function retyped(blob: Blob, mediaType: string): Blob {
+  return blob.type === mediaType ? blob : new Blob([blob], { type: mediaType });
+}
+
 // The picker hands back whichever of data/blob/path the platform had; the rest
 // of this module only ever wants a Blob, because that is what decodes.
-async function pickedFileBlob(file: PickedFile): Promise<Blob> {
-  if (file.blob) return file.blob;
-  if (file.data)
-    return base64AsBlob(file.data, file.mimeType || 'application/octet-stream');
+async function pickedFileBlob(
+  file: PickedFile,
+  mediaType: string,
+): Promise<Blob> {
+  if (file.blob) return retyped(file.blob, mediaType);
+  if (file.data) return base64AsBlob(file.data, mediaType);
   if (file.path) {
     const response = await fetch(file.path);
     if (!response.ok) throw new Error(`Could not read ${file.name}`);
-    return response.blob();
+    return retyped(await response.blob(), mediaType);
   }
   throw new Error(`Could not read ${file.name}`);
 }
@@ -222,25 +236,45 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   ogg: 'audio/ogg',
   oga: 'audio/ogg',
   flac: 'audio/flac',
+  aac: 'audio/aac',
+  m4b: 'audio/mp4',
+  aif: 'audio/aiff',
+  aiff: 'audio/aiff',
+  aifc: 'audio/aiff',
+  caf: 'audio/x-caf',
+  amr: 'audio/amr',
+  opus: 'audio/ogg',
 };
+
+// A claim of "some bytes" is no claim at all. Android's document provider
+// answers `application/octet-stream` for anything its MIME table does not know —
+// a voice memo, a recording synced from a desktop — and believing that word
+// costs the user the file, since the gate then refuses a format the gateway
+// takes. The extension is the better guess, and the gateway's magic-byte sniff
+// is the verdict either way.
+const UNNAMED_MEDIA_TYPES = ['application/octet-stream', 'binary/octet-stream'];
 
 /** What a picked file CLAIMS to be: the platform's word, else its extension. */
 export function candidateMediaType(
   name: string,
   declared: string | null | undefined,
 ): string {
-  if (declared) return declared;
+  const claim = (declared ?? '').trim().toLowerCase();
+  if (claim && !UNNAMED_MEDIA_TYPES.includes(claim)) return claim;
   const extension = (name.split('.').pop() ?? '').toLowerCase();
-  return EXTENSION_MEDIA_TYPES[extension] ?? '';
+  return EXTENSION_MEDIA_TYPES[extension] ?? claim;
 }
 
 /** Picker entries as candidates — the one shape every chooser funnels into. */
 function pickedCandidates(files: PickedFile[]): MediaCandidate[] {
-  return files.map((file) => ({
-    name: file.name,
-    mimeType: candidateMediaType(file.name, file.mimeType),
-    blob: () => pickedFileBlob(file),
-  }));
+  return files.map((file) => {
+    const mimeType = candidateMediaType(file.name, file.mimeType);
+    return {
+      name: file.name,
+      mimeType,
+      blob: () => pickedFileBlob(file, mimeType),
+    };
+  });
 }
 
 export async function pickMediaAttachments(
@@ -331,17 +365,20 @@ export async function attachmentsFromFiles(
   limits: AttachmentLimits = {},
 ): Promise<PickAttachmentResult> {
   return collectAttachments(
-    files.map((file) => ({
-      name:
-        file.name ||
-        (isVideoMediaType(file.type)
-          ? 'pasted-clip'
-          : isAudioMediaType(file.type)
-            ? 'pasted-recording'
-            : 'pasted-image'),
-      mimeType: candidateMediaType(file.name, file.type),
-      blob: async () => file,
-    })),
+    files.map((file) => {
+      const mimeType = candidateMediaType(file.name, file.type);
+      return {
+        name:
+          file.name ||
+          (isVideoMediaType(mimeType)
+            ? 'pasted-clip'
+            : isAudioMediaType(mimeType)
+              ? 'pasted-recording'
+              : 'pasted-image'),
+        mimeType,
+        blob: async () => retyped(file, mimeType),
+      };
+    }),
     limits,
   );
 }
