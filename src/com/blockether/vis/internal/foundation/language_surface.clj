@@ -512,7 +512,18 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the selector every language shares; `::<test-name>` alone finds that test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace name, or `ns/var` for one test) and resolves it the same way, and runs `*_test.cljs` through the project's own shadow-cljs build (`build` names which one when several could); `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `runner` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
+  "Run through a pack: `run_tests(language,arg)`. NOTHING is required: omit `arg` to
+   run every test, and `language` is inferred from the paths and the workspace. `arg`
+   is a path string or a map: `paths` (files, directories, or `<path>::<test-name>`
+   node ids — the selector every language shares; `::<test-name>` alone finds that
+   test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace
+   name, or `ns/var` for one test) and resolves it the same way, and runs
+   `*_test.cljs` through the project's own shadow-cljs build (`build` names which one
+   when several could); `include` / `exclude` narrow by metadata tag; `cwd` — or
+   `project`, the SAME key — chooses the project and defaults to the WORKSPACE ROOT,
+   which is where a relative `paths` entry resolves; `runner` picks the python backend
+   (`\"project\"` for the project interpreter's own pytest, else the hermetic sandbox).
+   List selectors stay lists, even one."
   [env & args]
   (let [started-at
         (System/nanoTime)
@@ -628,13 +639,16 @@
           "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
           "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
           "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
-          "`include`/`exclude` narrow by tag, `cwd` chooses the project; `runner` (python) "
-          "selects `project` — the interpreter's own pytest — over the hermetic sandbox. "
-          "Omit `paths` to run everything.")
-     :params [{:name "language"} {:name "paths"}
-              {:name "ns" :note "clojure — namespace or `ns/var`"} {:name "include"}
-              {:name "exclude"} {:name "cwd" :note "the project directory, or spell it `project`"}
-              {:name "runner" :note "python — \"project\" for the interpreter's own pytest"}]
+          "`include`/`exclude` narrow by tag; `cwd` — or `project`, the SAME key — chooses "
+          "the project and defaults to the WORKSPACE ROOT, which is where a relative `paths` "
+          "entry resolves; `runner` (python) selects `project` — the interpreter's own pytest "
+          "— over the hermetic sandbox. NOTHING is required: omit `paths` to run everything.")
+     :params
+     [{:name "language" :note "optional — inferred from the paths and the workspace"}
+      {:name "paths" :note "optional — omit to run every test"}
+      {:name "ns" :note "clojure — namespace or `ns/var`"} {:name "include"} {:name "exclude"}
+      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
+      {:name "runner" :note "python — \"project\" for the interpreter's own pytest"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -653,8 +667,9 @@
      (str
        "Evaluate `code` in an already-running project REPL — "
        "`repl_eval({\"language\": \"clojure\", \"code\": \"(+ 1 1)\"})`. `code` is REQUIRED and "
-       "`language` may lead the call; `id`/`repl_id` picks one of several REPLs, `cwd` — or "
-       "`project`, the SAME key — its project directory, "
+       "`language` may lead the call; nothing else is: `id`/`repl_id` picks one of several "
+       "REPLs, `cwd` — or `project`, the SAME key — its project directory (default the "
+       "WORKSPACE ROOT, not the project you meant), "
        "`timeout_ms` its budget. Lifecycle is `repl_start` / `repl_status` / `repl_stop`. A REPL attached to a "
        "shadow-cljs `build` evaluates ClojureScript inside that build's JS runtime and the result "
        "names the `build` it landed in.")

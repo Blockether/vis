@@ -247,28 +247,43 @@
                  (try (language-surface/repl-start env {"cwd" "ext" "project" "other"})
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
-  (it "states each REPL verb's required keys and the `project` spelling of `cwd`"
-      (let [keys-of
-            (fn [sym]
-              (into {} (map (juxt :name identity)) (:ext.symbol/params sym)))
+  (it
+    "states each REPL and run_tests key's requiredness and the `project` spelling of `cwd`"
+    (let [keys-of
+          (fn [sym]
+            (into {} (map (juxt :name identity)) (:ext.symbol/params sym)))
 
-            start
-            (keys-of language-surface/repl-start-symbol)
+          start
+          (keys-of language-surface/repl-start-symbol)
 
-            evaluate
-            (keys-of language-surface/repl-eval-symbol)]
+          evaluate
+          (keys-of language-surface/repl-eval-symbol)
 
-        (expect (true? (:required? (get evaluate "code"))))
-        (expect (str/includes? (:note (get start "cwd")) "project"))
-        (expect (str/includes? (:note (get evaluate "cwd")) "project"))
-        (expect (str/includes? (:note (get (keys-of language-surface/repl-status-symbol) "cwd"))
-                               "project"))
-        (expect (str/includes? (:note (get (keys-of language-surface/repl-stop-symbol) "id"))
-                               "REQUIRED"))
-        (expect (str/includes? (:note (get (keys-of language-surface/connect-repl-symbol) "port"))
-                               "REQUIRED"))
-        (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
-                               "WORKSPACE ROOT"))))
+          tests
+          (keys-of language-surface/test-symbol)]
+
+      (expect (true? (:required? (get evaluate "code"))))
+      (expect (str/includes? (:note (get start "cwd")) "project"))
+      (expect (str/includes? (:note (get evaluate "cwd")) "project"))
+      (expect (str/includes? (:note (get (keys-of language-surface/repl-status-symbol) "cwd"))
+                             "project"))
+      (expect (str/includes? (:note (get (keys-of language-surface/repl-stop-symbol) "id"))
+                             "REQUIRED"))
+      (expect (str/includes? (:note (get (keys-of language-surface/connect-repl-symbol) "port"))
+                             "REQUIRED"))
+      ;; run_tests and repl_eval are the two verbs a session calls without reading
+      ;; the page first: what they REQUIRE, and where they run when `cwd` is
+      ;; omitted, has to be on their own params.
+      (expect (str/includes? (:note (get tests "cwd")) "project"))
+      (expect (str/includes? (:note (get tests "cwd")) "workspace ROOT"))
+      (expect (str/includes? (:note (get tests "paths")) "optional"))
+      (expect (nil? (some :required? (vals tests))))
+      (expect (str/includes? (:ext.symbol/description language-surface/test-symbol)
+                             "NOTHING is required"))
+      (expect (str/includes? (:ext.symbol/description language-surface/repl-eval-symbol)
+                             "WORKSPACE ROOT"))
+      (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
+                             "WORKSPACE ROOT"))))
   ;; Regression, issue #repl-enumerate: repl_status answered for the pack's own
   ;; directory alone, so a REPL under another cwd — or a shadow-cljs attachment beside
   ;; the JVM one — was invisible, while the verb's doc promised it was the only way to
