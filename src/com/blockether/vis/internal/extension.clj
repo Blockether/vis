@@ -760,8 +760,14 @@
 ;; LLM providers exported by this extension. Each entry mirrors the
 ;; canonical provider shape; we accept any IFn (or absence) for the
 ;; optional runtime fns so a minimal provider doesn't ship no-op stubs.
-(let [or-nil-or-fn (fn [k]
-                     #(let [v (get % k ::absent)] (or (= v ::absent) (ifn? v))))]
+(let [or-nil-or-fn
+      (fn [k]
+        #(let [v (get % k ::absent)] (or (= v ::absent) (ifn? v))))
+
+      or-absent-boolean
+      (fn [k]
+        #(let [v (get % k ::absent)] (or (= v ::absent) (boolean? v))))]
+
   (s/def ::provider-entry
     (s/and map?
            #(not (contains? % :provider/prompt-fn))
@@ -775,7 +781,8 @@
            (or-nil-or-fn :provider/refresh-token-fn)
            (or-nil-or-fn :provider/limits-fn)
            (or-nil-or-fn :provider/enrich-models-fn)
-           (or-nil-or-fn :provider/on-selected-fn))))
+           (or-nil-or-fn :provider/on-selected-fn)
+           (or-absent-boolean :provider/is-managed))))
 
 (s/def :ext/providers (s/coll-of ::provider-entry :kind vector?))
 ;; Persistence backends exported by this extension.

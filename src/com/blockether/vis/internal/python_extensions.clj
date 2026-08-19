@@ -941,6 +941,15 @@
 
 (defn- as-bool [v] (when (some? v) (boolean v)))
 
+(defn- as-flag
+  "A DECLARED Python boolean: true only when the author actually wrote `True`. A
+   polyglot value is asked for its boolean rather than coerced by truthiness — a
+   `Value` wrapping `False` is still an object, so `(boolean v)` would say yes."
+  [v]
+  (cond (boolean? v) v
+        (instance? Value v) (and (.isBoolean ^Value v) (.asBoolean ^Value v))
+        :else false))
+
 (defn- as-long [v] (when (number? v) (long v)))
 
 (defn- as-num [v] (when (number? v) v))
@@ -1179,6 +1188,11 @@
              :provider/label (str (get spec "label"))}
       (seq preset)
       (assoc :provider/preset preset)
+
+      ;; MANAGED: the runtime issues this provider's credential, so no channel
+      ;; may ever ask for a key and no `Add provider` step is needed.
+      (as-flag (get spec "is_managed"))
+      (assoc :provider/is-managed true)
 
       (adapt "get_token_fn" token-fields)
       (assoc :provider/get-token-fn (adapt "get_token_fn" token-fields))

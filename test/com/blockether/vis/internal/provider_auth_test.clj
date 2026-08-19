@@ -419,3 +419,22 @@
                                (constantly :api-key)]
 
                    (expect (= true (pauth/supported? :corp))))))
+
+(defdescribe provider-auth-managed-test
+             ;; A provider its extension declares MANAGED has its credential issued by the
+             ;; runtime. The daemon still minted an `api-key` flow for it, so any client —
+             ;; the TUI band, the companion — collected a key that could never be used.
+             (it "refuses to start a flow for a provider declared managed"
+                 (with-redefs [providers/configured-providers-cached
+                               (constantly [{:id :corp}])
+
+                               registry/provider-by-id
+                               (constantly {:provider/id :corp
+                                            :provider/label "Corp"
+                                            :provider/is-managed true})]
+
+                   (expect (= false (pauth/supported? :corp)))
+                   (let [result (pauth/start-auth! :corp)]
+                     (expect (= false (:ok? result)))
+                     (expect (= :auth-managed (:error result)))
+                     (expect (str/includes? (:message result) "managed"))))))

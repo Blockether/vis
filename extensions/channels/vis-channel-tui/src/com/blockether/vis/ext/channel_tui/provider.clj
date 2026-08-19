@@ -429,8 +429,12 @@
                                 (vis/provider-status-md provider status limits))))
 
 (defn- provider-supports-auth?
+  "A row whose credential a HUMAN can actually supply. A local runtime needs
+   none, and a MANAGED provider's credential is issued by the runtime — offering
+   `Authenticate` on either only advertises a verb that has to refuse."
   [provider]
-  (not (contains? local-no-auth-provider-ids (:id provider))))
+  (and (not (contains? local-no-auth-provider-ids (:id provider)))
+       (not (vis/provider-managed? (:id provider)))))
 
 
 (defn provider-action-items
@@ -772,6 +776,16 @@
                  (str label
                       " mints its own credential — its api_key_command helper runs for every"
                       " request, so change that instead of typing a key."))
+               nil)
+           (vis/provider-managed? pid)
+           ;; MANAGED: the runtime issues the credential. There is no key to
+           ;; type and none to change, so SAY it — painting a field whose
+           ;; submit the daemon can only refuse is the loop this came from.
+           (do ((:note! q)
+                 (str label " Authentication")
+                 (str label
+                      " is managed — its credential is issued for you, so there is no key to"
+                      " enter or change here."))
                nil)
            (github-copilot-provider? pid) (when (gateway-device-login! q pid label force?) provider)
            (= :openai-codex pid) (when (codex-oauth-ready! q force?) provider)

@@ -182,6 +182,12 @@
 
 (s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :is-hidden
 
+;; The RUNTIME issues this provider's credential (a corporate gateway, a device
+;; policy, an already-signed-in host): no key is ever typed, pasted, rotated or
+;; persisted for it, and it needs no `Add provider` step — it binds as soon as
+;; the extension is loaded. `providers/managed?` is the one reader.
+(s/def :provider/is-managed boolean?)
+
 (s/def :provider/on-selected-fn ifn?) ;; ({:provider :previous-provider :config :source}) -> nil
 
 (s/def ::provider
@@ -190,7 +196,8 @@
                  :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
                        :provider/auth-start-fn :provider/auth-complete-fn :provider/auth-await-fn
                        :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn
-                       :provider/enrich-models-fn :provider/preset :provider/on-selected-fn])))
+                       :provider/enrich-models-fn :provider/preset :provider/on-selected-fn
+                       :provider/is-managed])))
 
 (defn provider
   "Build and validate a provider descriptor."

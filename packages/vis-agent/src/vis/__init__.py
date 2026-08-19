@@ -247,6 +247,7 @@ def provider(
     id,
     label,
     preset=None,
+    is_managed=False,
     get_token_fn=None,
     detect_fn=None,
     status_fn=None,
@@ -281,6 +282,9 @@ def provider(
         "id": id,
         "label": label,
         "preset": dict(preset or {}),
+        # MANAGED: the runtime issues this provider's credential, so vis never
+        # asks for an API key and never needs an "Add provider" step for it.
+        "is_managed": bool(is_managed),
         "get_token_fn": get_token_fn,
         "detect_fn": detect_fn,
         "status_fn": status_fn,

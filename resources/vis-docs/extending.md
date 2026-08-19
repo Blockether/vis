@@ -893,6 +893,17 @@ returns `is_authenticated` (Python can't spell the trailing `?`), which the
 runtime consumes as `:is-authenticated`. `vis-agent providers auth/status/limits
 <id>` work against it like any other provider.
 
+**A MANAGED provider is never asked for a key, and never has to be added.**
+`is_managed=True` (`:provider/is-managed true` in Clojure) declares that the
+RUNTIME issues that provider's credential — a company gateway, a device policy,
+a host the user is already signed into. Vis then refuses every key-collecting
+path for it: `auth/start` answers `auth-managed`, the TUI row drops its
+*Authenticate* verb, and the provider never appears in *Add Provider* — there is
+nothing a human could add. Instead it BINDS ITSELF as soon as the extension
+loads and stands in the model picker beside the configured fleet, so give it a
+`get_token_fn` (that is where the issued credential comes from) and `preset`
+`default_models` for it to be routable.
+
 Where a slot's output lands differs. `status_fn` answers *am I connected*: the host
 reads `is_authenticated` (plus an optional `error`) for the provider dot and for
 routing, and any extra key you return is shown in the status dialog only. **Live

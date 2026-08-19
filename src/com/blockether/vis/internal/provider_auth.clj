@@ -193,6 +193,12 @@
            :message (str
                       (name provider-id)
                       " mints its own credential with api_key_command — there is no key to enter")}
+          (providers/managed? provider-id)
+          {:ok? false
+           :error :auth-managed
+           :message (str (name provider-id)
+                         " is managed — its credential is issued by the runtime, so there is no key"
+                         " to enter or change")}
           (nil? (provider-descriptor provider-id))
           {:ok? false :error :unknown-provider :message (str "no registered provider " provider-id)}
           (and (nil? start) (not (api-key-leg? provider-id)))

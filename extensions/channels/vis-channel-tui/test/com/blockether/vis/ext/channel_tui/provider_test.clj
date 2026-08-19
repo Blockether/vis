@@ -1451,3 +1451,32 @@
                  ;; offers `c` — Clear Fallback — in place of Set as Fallback.
                  (settings-provider-band-frames 100 30 [:enter \c :esc])
                  (expect (= [[:fallback]] @settings-router-writes))))
+
+(defdescribe managed-provider-key-refusal-test
+             ;; A provider its extension declares MANAGED has its credential issued by the
+             ;; runtime. Its row still offered `Authenticate`, and pressing it painted the
+             ;; API-key band — a key nobody could supply, submitted to a daemon that can
+             ;; only refuse it.
+             (it "offers no Authenticate verb on a managed provider's row"
+                 (with-redefs [vis/provider-managed? (fn [pid]
+                                                       (= :corp pid))]
+                   (let [ids (fn [pid]
+                               (into #{} (map :id) (provider/provider-action-items {:id pid} {})))]
+                     (expect (not (contains? (ids :corp) :authenticate)))
+                     (expect (contains? (ids :other) :authenticate)))))
+             (it "says the credential is issued for you instead of reading a key"
+                 (let [note (atom nil)]
+                   (with-redefs [vis/provider-managed? (fn [pid]
+                                                         (= :corp pid))
+                                 dlg/host-band-region (fn [_screen region]
+                                                        region)
+                                 dlg/band-questions
+                                 (fn [& _]
+                                   {:note! (fn [title line]
+                                             (reset! note [title line]))
+                                    :transient!
+                                    (fn [& _]
+                                      (throw (ex-info "a managed provider asked for a key" {})))})]
+
+                     (expect (nil? (provider/authenticate-provider! nil nil nil {:id :corp})))
+                     (expect (str/includes? (str @note) "managed"))))))

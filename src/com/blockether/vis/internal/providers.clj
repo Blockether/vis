@@ -52,10 +52,23 @@
   [provider]
   (some? (:api-key-command provider)))
 
+(defn managed?
+  "True when the extension that registered `provider-id` declares
+   `:provider/is-managed`: the RUNTIME issues that provider's credential — a
+   corporate gateway, a device policy, a host the user is already signed into —
+   so there is no key for a human to type, paste or rotate, and no `Add
+   provider` step to run. A managed provider binds itself as soon as its
+   extension is loaded ([[authenticated-preset-providers]]) and every key-taking
+   path refuses it (`provider-auth/start-auth!`, the channels' auth verbs)."
+  [provider-id]
+  (boolean (:provider/is-managed (registry/provider-by-id provider-id))))
+
 (defn auth-kind
   "How a provider authenticates: `:command` (an `api_key_command` mints the
    credential — never prompt), `:oauth` (interactive flow owned by the
-   provider extension), `:none` (local, no credentials), or `:api-key`.
+   provider extension), `:managed` (the extension declares
+   `:provider/is-managed`, so the runtime issues the credential and there is
+   nothing to type), `:none` (local, no credentials), or `:api-key`.
 
    The 1-arity classifies by id alone and therefore can never see a
    command-minted provider; pass the configured provider map when the
@@ -63,6 +76,7 @@
   ([pid] (auth-kind pid nil))
   ([pid provider]
    (cond (command-minted? provider) :command
+         (managed? pid) :managed
          (contains? oauth-provider-ids pid) :oauth
          (contains? local-no-auth-provider-ids pid) :none
          :else :api-key)))
@@ -755,10 +769,15 @@
 
 (defn available-presets
   "Provider presets not yet in the configured fleet — the 'Add
-   Provider' picker contents."
+   Provider' picker contents.
+
+   A MANAGED provider is never offered here: it carries no credential a human
+   supplies and it binds itself, so an `Add provider` row for it could only ask
+   for a key that every seam below must refuse."
   []
   (let [configured (into #{} (map :id) (configured-providers))]
-    (vec (remove #(contains? configured (:id %)) (config/provider-presets)))))
+    (vec (remove #(or (contains? configured (:id %)) (managed? (:id %)))
+           (config/provider-presets)))))
 
 (defn ensure-base-url
   [provider]
@@ -792,21 +811,26 @@
        vec))
 
 (defn authenticated-preset-providers
-  "Registered OAuth / auto-detect providers whose credentials are present
-   (each provider's LOCAL `:provider/detect-fn`, no network) but which are
-   NOT in the persisted fleet. Shaped as minimal picker rows —
-   `{:id … :models …}` carrying the preset's default catalog models — so a
-   channel's model picker lists creds that live OUTSIDE config (OAuth token
-   files / keychain). Providers with no detect-fn (local no-auth) or no
-   default models are skipped."
+  "Registered providers that BIND THEMSELVES — the credential lives OUTSIDE the
+   persisted fleet, so the provider is usable with no `Add provider` step at all.
+   Shaped as minimal picker rows (`{:id … :models …}` carrying the preset's
+   default catalog models) and appended by [[picker-fleet]].
+
+   Two ways in. A MANAGED provider ([[managed?]]) binds because its runtime
+   issues the credential: there is nothing local to probe and nothing a human
+   could add. Every other provider binds only when its OWN `:provider/detect-fn`
+   (local, no network) finds one — an OAuth token file, a keychain entry.
+
+   A provider with neither, or with no default models, is skipped."
   []
   (let [configured (into #{} (map :id) (configured-providers))]
     (into []
-          (keep (fn [{:provider/keys [id detect-fn]}]
+          (keep (fn [{:provider/keys [id detect-fn is-managed]}]
                   (when (and id
                              (not (contains? configured id))
-                             detect-fn
-                             (try (boolean (detect-fn)) (catch Throwable _ false)))
+                             (or is-managed
+                                 (and detect-fn
+                                      (try (boolean (detect-fn)) (catch Throwable _ false)))))
                     (let [tmpl (config/provider-template id)
                           models (default-model-configs tmpl)]
 
