@@ -1641,6 +1641,14 @@
   [sid]
   (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/human-input")) "requests")))
 
+(defn live-views
+  "The live views session `sid` is SHOWING in the daemon right now, oldest first,
+   in canonical wire shape. The `human_input.live.*` events are the fast path; this
+   is how a client that attached MID-RUN paints the whole picture at once instead
+   of waiting for the next patch to tell it a view exists."
+  [sid]
+  (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/human-input/live")) "views")))
+
 (defn submit-human-input!
   "Answer the DAEMON-side request `request-id` of `sid` with a raw
    `field id -> value` map. Same verdict shape as the in-process

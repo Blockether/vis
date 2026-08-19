@@ -261,11 +261,18 @@
 (defn patched
   "The pane one patch leaves behind. The view is advanced by the ENGINE's own
    `live/apply-patch`, never by a second interpreter here: the terminal and the
-   phone disagreeing about a row is the one bug this primitive cannot afford."
+   phone disagreeing about a row is the one bug this primitive cannot afford.
+
+   A patch that does not ADVANCE the view is dropped rather than refused. A view
+   opened in THIS process reaches the tab on two routes — the in-process channel
+   bus and the session event the gateway journals — and the journalled frame
+   coalesces ops the bus already applied one at a time."
   [pane patch]
-  (-> pane
-      (update :view live/apply-patch patch)
-      (assoc :fresh (touched patch))))
+  (if (<= (long (or (:seq patch) 0)) (long (or (get-in pane [:view :seq]) 0)))
+    pane
+    (-> pane
+        (update :view live/apply-patch patch)
+        (assoc :fresh (touched patch)))))
 
 (defn settled
   "The pane a close leaves behind — the run's FINAL picture and the verdict that

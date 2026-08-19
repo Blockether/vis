@@ -2952,17 +2952,23 @@
               ;; is what made a watched log unreachable, and the band keeping one line
               ;; forever is what made a finished run look like it was still going.
               (fn [db [_ view-id result]]
-                (across-tabs
-                  db
-                  (fn [w]
-                    (if-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views w)))]
-                      (let [settled (lv/settled pane result)]
-                        (-> w
-                            (update :live-views
-                                    (fn [panes]
-                                      (mapv #(if (= view-id (lv/view-id %)) settled %) panes)))
-                            (file-run-row settled)))
-                      w)))))
+                (across-tabs db
+                             (fn [w]
+                               ;; A close reaches a tab TWICE whenever the view was opened in
+                               ;; this process — the in-process bus and the journalled session
+                               ;; event — and settling a second time would file the run's
+                               ;; transcript row twice.
+                               (if-let [pane (first (filter #(and (= view-id (lv/view-id %))
+                                                                  (not (lv/settled? %)))
+                                                            (:live-views w)))]
+                                 (let [settled (lv/settled pane result)]
+                                   (-> w
+                                       (update :live-views
+                                               (fn [panes]
+                                                 (mapv #(if (= view-id (lv/view-id %)) settled %)
+                                                       panes)))
+                                       (file-run-row settled)))
+                                 w)))))
 
 (reg-event-db :live-view-reopen
               ;; The collapsed line of a settled view is a CONTROL: pressing it reads

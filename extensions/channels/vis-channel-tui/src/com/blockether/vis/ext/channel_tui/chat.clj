@@ -1162,6 +1162,26 @@
                            str)
        :reason (event-get event :reason)}
 
+      ;; The PICTURE crosses the same border as the form, and for the same reason:
+      ;; a run SHOWING its work from the serve daemon publishes on a `:tui` bus that
+      ;; never leaves that JVM, so the terminal painted nothing while the phone drew
+      ;; the whole view from these very events.
+      "human_input.live.open"
+      {:phase :live-view-open :view (event-get event :view)}
+
+      ;; COALESCED by the gateway before it journals them: one frame carries every
+      ;; op accepted since the last, under the seq of the last one it folded in.
+      "human_input.live.patch"
+      {:phase :live-view-patch :patch (event-get event :patch)}
+
+      ;; Close arrives for EVERY ending — done, interrupted, timed out, the run that
+      ;; raised it dying — so a pane can never outlive the work it reports on.
+      "human_input.live.close"
+      {:phase :live-view-close
+       :view-id (some-> (event-get event :view-id)
+                        str)
+       :result (event-get event :result)}
+
       ;; The mux's synthetic `gateway.connected` / `gateway.disconnected` transport
       ;; edges are deliberately NOT projected: the edge alone is no evidence of a
       ;; gap (the mux resubscribes at this client's cursor, so the ordinary

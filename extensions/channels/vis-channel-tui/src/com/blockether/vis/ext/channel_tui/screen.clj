@@ -671,6 +671,19 @@
            (state/dispatch [:human-input-open (hi/init-form request)])))
        (catch Throwable _ nil)))
 
+(defn- replay-live-views!
+  "Mount every live view `session-id` is SHOWING right now, oldest first.
+
+   A view can be opened BEFORE this tab attaches — a run watched from the daemon,
+   or a stream whose replay ring already rolled past the open — and a patch for a
+   pane nothing ever mounted paints nothing at all. The gateway answers with the
+   materialized views, so a terminal joining mid-run gets the whole picture rather
+   than the rest of it. Deduped by `:live-view-open` against the live event."
+  [session-id]
+  (try (doseq [wire (vis/gateway-live-views session-id)]
+         (when-let [view (hi/live-view<-wire wire)]
+           (state/dispatch [:live-view-open view])))
+       (catch Throwable _ nil)))
 (defn- human-input-key!
   "Feed one keystroke to the open human-input dialog and act on its verdict.
 
@@ -4226,6 +4239,26 @@
                   :human-input-close
                   (state/dispatch [:human-input-close (:request-id chunk)])
 
+                  ;; The PICTURE takes the same route out of the daemon as the form,
+                  ;; and the terminal has had panes for it all along — it just never
+                  ;; heard about a view raised in ANOTHER process, so a watched run
+                  ;; painted on the phone and nowhere in the terminal. Every dispatch
+                  ;; here is idempotent (open by view id, patch by seq, close by
+                  ;; settled pane), so a view raised in THIS process — which arrives
+                  ;; on both routes — is still painted exactly once.
+                  :live-view-open
+                  (when-let [view (hi/live-view<-wire (:view chunk))]
+                    (state/dispatch [:live-view-open view]))
+
+                  :live-view-patch
+                  (when-let [patch (hi/live-patch<-wire (:patch chunk))]
+                    (state/dispatch [:live-view-patch patch]))
+
+                  :live-view-close
+                  (when-let [view-id (:view-id chunk)]
+                    (state/dispatch [:live-view-close view-id
+                                     (hi/live-result<-wire (:result chunk))]))
+
                   ;; The server's `subscription.ready` verdict: it names the turn the
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
@@ -4236,11 +4269,14 @@
           (catch Throwable _
             (fn [])))
 
-        ;; REPLAY. Ask the gateway what this session is blocked on right now and
-        ;; surface ALL of it, so a form is drawn instead of a turn that never
-        ;; moves. See [[replay-human-input!]].
+        ;; REPLAY. Ask the gateway what this session is blocked on AND what it is
+        ;; showing right now, and surface all of it: a form is drawn instead of a
+        ;; turn that never moves, and a run watched from the daemon paints its whole
+        ;; picture instead of the rest of it. See [[replay-human-input!]] and
+        ;; [[replay-live-views!]].
         _
-        (vis/worker-future "tui-human-input-replay" #(replay-human-input! session-id))
+        (vis/worker-future "tui-human-input-replay"
+                           #(do (replay-human-input! session-id) (replay-live-views! session-id)))
 
         cleanup
         #(do (vis/remove-title-listener! session-id listener)

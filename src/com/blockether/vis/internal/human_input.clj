@@ -1540,6 +1540,113 @@
       (merge (request->view (normalize-request (apply dissoc wire (keys request-stamps))))
              stamps))))
 
+;; A live view crossing a process boundary
+;;
+;; The request inverse above RE-PARSES, because a request is a declaration and the
+;; parser is the only reader of that vocabulary. A materialized view cannot be: it
+;; carries what the ENGINE stamped (its own id, the `:seq` every surface orders by,
+;; a log's `:total-lines`) and everything the patches have already put in it, none
+;; of which a spec may write — re-parsing one would mint a second id and drop the
+;; counters. So this inverse is MECHANICAL: the closed key sets give the spelling
+;; back, the closed term tables give the keywords back, and what comes out is
+;; checked against the same spec the materializer itself answers to.
+
+(def ^:private live-wire-keys
+  "Wire spelling -> engine key, for every key a live view, a patch or a verdict may
+   carry. Derived from the closed sets `hi-spec` declares, exactly as [[wire-keys]]
+   is: a second copy of the vocabulary is a copy that drifts."
+  (into {}
+        (map (juxt snake-key identity))
+        (reduce into
+                #{}
+                [hi-spec/live-view-keys hi-spec/live-node-keys hi-spec/live-group-keys
+                 hi-spec/live-column-keys hi-spec/live-row-keys hi-spec/live-stat-keys
+                 hi-spec/live-step-keys hi-spec/live-link-keys hi-spec/live-sorted-keys
+                 hi-spec/live-patch-keys hi-spec/live-op-keys hi-spec/live-result-keys
+                 hi-spec/live-picture-keys hi-spec/live-elided-keys])))
+
+(def ^:private live-wire-terms
+  "The CLOSED table each keyword-valued key takes its value from. A term outside its
+   table stays the text it arrived as, so the spec check refuses the frame instead
+   of minting a keyword no surface knows how to paint."
+  {:type (assoc hi-spec/live-node-types hi-spec/group-type-name hi-spec/group-type)
+   :tone hi-spec/live-tones
+   :op hi-spec/live-ops
+   :order hi-spec/live-orders
+   :dir hi-spec/live-sort-dirs
+   :align hi-spec/live-aligns
+   :direction hi-spec/group-directions
+   :target-kind hi-spec/link-targets
+   :reason hi-spec/live-reasons})
+
+(defn- live<-wire
+  "One decoded live value as the engine holds it: canonical keys back to their
+   engine keywords, closed vocabularies back to their terms, everything else the
+   data it already is."
+  [x]
+  (cond (map? x) (persistent!
+                   (reduce-kv
+                     (fn [m k v]
+                       (let [canonical
+                             (snake-key k)
+
+                             k*
+                             (or (get live-wire-keys canonical) (keyword (kebab-key canonical)))
+
+                             table
+                             (get live-wire-terms k*)]
+
+                         (assoc! m
+                                 k*
+                                 (cond (and table (string? v)) (get table v v)
+                                       ;; The channels the view was published on: keywords on
+                                       ;; both sides, rendered as their names by the encoder.
+                                       (and (= :channel-ids k*) (sequential? v)) (mapv keyword v)
+                                       :else (live<-wire v)))))
+                     (transient {})
+                     x))
+        (sequential? x) (mapv live<-wire x)
+        :else x))
+
+(defn- live<-wire-checked
+  "`wire` as the engine's own `what`, or nil when it is not one this engine could
+   have published. A frame a surface cannot paint is dropped SAYING SO: half a
+   frame is how a pane starts disagreeing with the phone about a row."
+  [what error-of wire]
+  (when (map? wire)
+    (let [value (live<-wire wire)]
+      (if-let [why (error-of value)]
+        (do (tel/log! {:level :warn
+                       :id ::live-frame-unreadable
+                       :data {:what what :reason why}
+                       :msg (str "Dropped an unreadable live-view " what " from another process")})
+            nil)
+        value))))
+
+(defn live-view<-wire
+  "Inverse of the wire projection for a MATERIALIZED live view — the canonical
+   snake_case map a `human_input.live.open` session event carries, and the shape
+   the live-views resync answers with.
+
+   A run SHOWING its work inside `vis-agent serve` publishes on an in-process channel
+   bus that never leaves that JVM, so for every other process this event IS the
+   view. [[view<-wire]] is the same door for a form."
+  [wire]
+  (live<-wire-checked "view" hi-spec/live-view-error wire))
+
+(defn live-patch<-wire
+  "Inverse of the wire projection for one accepted patch — what a
+   `human_input.live.patch` session event carries. The gateway COALESCES patches
+   before it journals them, so `:seq` names the last engine patch the frame folded
+   in, and a surface that already applied it can tell."
+  [wire]
+  (live<-wire-checked "patch" hi-spec/live-patch-error wire))
+
+(defn live-result<-wire
+  "Inverse of the wire projection for a view's VERDICT — what a
+   `human_input.live.close` session event carries."
+  [wire]
+  (live<-wire-checked "verdict" hi-spec/live-result-error wire))
 (defn- publish!
   "Publish `event` on every channel in `channel-ids` and return how many
    listeners it actually reached across all of them."

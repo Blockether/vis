@@ -127,6 +127,7 @@
              [gateway-submit-human-input! gateway-client/submit-human-input!]
              [gateway-cancel-human-input! gateway-client/cancel-human-input!]
              [gateway-interrupt-live-view! gateway-client/interrupt-live-view!]
+             [gateway-live-views gateway-client/live-views]
              [gateway-get-turn gateway-client/get-turn]
              [gateway-list-turns gateway-client/list-turns]
              [gateway-transcript gateway-client/transcript]

@@ -17,6 +17,7 @@
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
+            [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.internal.gateway.human-input :as gw]
@@ -784,6 +785,110 @@
       (finally (reset! state/app-db {:render-version 0})))))
 
 
+;; A live view raised in the SERVE DAEMON
+;;
+;; The picture crosses the same border as the form, and used to die at the same
+;; wall. `open-live!` publishes on the in-process `:tui` bus, that bus does not
+;; cross a JVM, and a run SHOWING its work inside `vis-agent serve` therefore
+;; reached no terminal at all — while the gateway bridge journalled
+;; `human_input.live.open` / `.patch` / `.close` and the companion painted the whole
+;; view from them. `chat/gateway-event->chunk`, the ONE projection of that stream
+;; into the terminal, had no case for any of the three.
+
+(defn- live-events-of
+  "Every collected event of `type` naming `view-id`. Scoped by view id so a sibling
+   test's traffic can never satisfy an assertion here."
+  [seen type view-id]
+  (filterv (fn [[_ event]]
+             (and (= type (get event "type")) (= view-id (get event "view_id"))))
+    @seen))
+
+(defn- chunk-of
+  "What the terminal's ONE projection of the session stream makes of `event`."
+  [[_ event]]
+  (#'chat/gateway-event->chunk event))
+
+;; Regression: a live view opened by a run in the serve daemon never reached the
+;; terminal at all — the three `human_input.live.*` session events projected to nil,
+;; so the band stayed empty for the whole run while the companion painted the same
+;; view frame by frame, and Escape had nothing to interrupt.
+(deftest a-daemon-side-live-view-reaches-the-terminal-test
+  (with-surfaces!
+    (fn [seen]
+      (attach! "s-live")
+      (let [view
+            (engine/open-live! {:session-id "s-live"
+                                :title "CI · deploy"
+                                ;; Only the gateway is listening: exactly what a view opened inside
+                                ;; `vis-agent serve` looks like from a terminal in another process.
+                                :channel-ids [:app]
+                                :nodes [{:id "now" :type "status" :text "Polling the run"}
+                                        {:id "out" :type "log"}]})
+
+            vid
+            (:id view)]
+
+        (try (testing "the in-process bus reached no terminal — that IS the bug"
+               (is (empty? (:live-views @state/app-db))))
+             (is (await-true #(seq (live-events-of seen gw/live-open-event vid))))
+             (testing "the open PROJECTS, and rehydrates the ENGINE's own materialized view"
+               (let [chunk (chunk-of (first (live-events-of seen gw/live-open-event vid)))]
+                 (is (= :live-view-open (:phase chunk)))
+                 (is (= view (hi/live-view<-wire (:view chunk)))
+                     "byte for byte the view the in-process channel event carried")
+                 (state/dispatch [:live-view-open (hi/live-view<-wire (:view chunk))])
+                 (is (= [vid] (mapv lv/view-id (:live-views @state/app-db))))))
+             (testing "a patch advances the pane exactly as it advanced the engine's view"
+               (let [advanced (engine/patch-live!
+                                vid
+                                [{:op :set :node-id "now" :text "Deploying"}
+                                 {:op :append :node-id "out" :lines ["one" "two"]}])]
+                 (gw/flush-live-patches!)
+                 (is (await-true #(seq (live-events-of seen gw/live-patch-event vid))))
+                 (let [chunk (chunk-of (first (live-events-of seen gw/live-patch-event vid)))]
+                   (is (= :live-view-patch (:phase chunk)))
+                   (state/dispatch [:live-view-patch (hi/live-patch<-wire (:patch chunk))])
+                   (is (= advanced (:view (first (:live-views @state/app-db))))
+                       "the terminal never interprets a patch itself"))))
+             (testing "and the close settles the pane with the verdict the model reads"
+               (engine/close-live! vid {:reason :completed})
+               (is (await-true #(seq (live-events-of seen gw/live-close-event vid))))
+               (let [chunk (chunk-of (first (live-events-of seen gw/live-close-event vid)))]
+                 (is (= :live-view-close (:phase chunk)))
+                 (is (= vid (:view-id chunk)))
+                 (let [result (hi/live-result<-wire (:result chunk))]
+                   (is (= :completed (:reason result)))
+                   (state/dispatch [:live-view-close (:view-id chunk) result]))
+                 (is (lv/settled? (first (:live-views @state/app-db))))))
+             (finally (engine/close-live! vid {:reason :failed})))))))
+
+;; Regression: with the daemon route wired, a view opened in THIS process arrives
+;; twice — once on the in-process `:tui` bus and once as the gateway's own journalled
+;; session event, which COALESCES ops the bus already applied one at a time. The
+;; second copy re-applied a patch the pane had folded (refused by `live/apply-patch`)
+;; and settled the same view a second time, filing the finished run's transcript row
+;; twice.
+(deftest a-live-view-that-arrives-on-both-routes-paints-once-test
+  (reset! state/app-db {:render-version 0 :session {:id "s1"} :messages [{:role :assistant}]})
+  (try (let [view
+             (engine/normalize-live-view
+               {:session-id "s1" :title "CI" :nodes [{:id "now" :type "status" :text "Polling"}]})
+
+             patch
+             (engine/normalize-patch view [{:op :set :node-id "now" :text "Done"}])]
+
+         (state/dispatch [:live-view-open view])
+         (state/dispatch [:live-view-open view])
+         (is (= 1 (count (:live-views @state/app-db))))
+         (state/dispatch [:live-view-patch patch])
+         (state/dispatch [:live-view-patch patch])
+         (is (= "Done" (:text (first (:nodes (:view (first (:live-views @state/app-db))))))))
+         (state/dispatch [:live-view-close (:id view) {:reason :completed}])
+         (state/dispatch [:live-view-close (:id view) {:reason :completed}])
+         (is (lv/settled? (first (:live-views @state/app-db))))
+         (is (= 1 (count (get-in @state/app-db [:messages 0 :runs])))
+             "one finished run is ONE row of the transcript, however many routes carried it"))
+       (finally (reset! state/app-db {:render-version 0}))))
 ;; A live view crosses the same border and hits the same compile-time wall:
 ;; `apps/vis-companion/src/lib/live-view.ts` declares the engine's closed tables a
 ;; second time so the phone can FOLD patches itself. A node type the engine gains

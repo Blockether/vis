@@ -207,6 +207,23 @@
   [wire]
   (engine/view<-wire wire))
 
+(defn live-view<-wire
+  "Rehydrate a MATERIALIZED live view from the canonical snake_case map a
+   `human_input.live.open` session event carries — the only shape a view takes when
+   the run showing it lives in the serve daemon instead of this process. The ENGINE
+   owns that inverse; the terminal never keeps a second node vocabulary."
+  [wire]
+  (engine/live-view<-wire wire))
+
+(defn live-patch<-wire
+  "Rehydrate one accepted patch from a `human_input.live.patch` session event."
+  [wire]
+  (engine/live-patch<-wire wire))
+
+(defn live-result<-wire
+  "Rehydrate a view's verdict from a `human_input.live.close` session event."
+  [wire]
+  (engine/live-result<-wire wire))
 (defn session-id
   "The gateway session whose run this form parks, or nil. A form built from a
    session event must be answered over the gateway that owns it."
