@@ -248,7 +248,7 @@
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it
-    "states each REPL and run_tests key's requiredness and the `project` spelling of `cwd`"
+    "states each verb's real requiredness: only repl_eval's `code`, never `language`"
     (let [keys-of
           (fn [sym]
             (into {} (map (juxt :name identity)) (:ext.symbol/params sym)))
@@ -260,17 +260,42 @@
           (keys-of language-surface/repl-eval-symbol)
 
           tests
-          (keys-of language-surface/test-symbol)]
+          (keys-of language-surface/test-symbol)
+
+          stop
+          (keys-of language-surface/repl-stop-symbol)
+
+          connect
+          (keys-of language-surface/connect-repl-symbol)]
 
       (expect (true? (:required? (get evaluate "code"))))
       (expect (str/includes? (:note (get start "cwd")) "project"))
       (expect (str/includes? (:note (get evaluate "cwd")) "project"))
       (expect (str/includes? (:note (get (keys-of language-surface/repl-status-symbol) "cwd"))
                              "project"))
-      (expect (str/includes? (:note (get (keys-of language-surface/repl-stop-symbol) "id"))
-                             "REQUIRED"))
-      (expect (str/includes? (:note (get (keys-of language-surface/connect-repl-symbol) "port"))
-                             "REQUIRED"))
+      ;; `language` is INFERRED on every verb (choose-handler falls back to the
+      ;; workspace's candidate languages and to a single active pack), and
+      ;; repl_stop needs no `id` when the pack's REPL under `cwd` is the target:
+      ;; nothing on this surface is required except repl_eval's `code`.
+      (expect (nil? (some :required? (vals stop))))
+      (expect (str/includes? (:note (get stop "language")) "optional"))
+      (expect (str/includes? (:note (get stop "cwd")) "project"))
+      (expect (str/includes? (:ext.symbol/description language-surface/repl-stop-symbol)
+                             "NOTHING is required"))
+      (expect (str/includes? (:note (get start "language")) "optional"))
+      (expect (str/includes? (:note (get tests "language")) "optional"))
+      ;; `port` is the ONE key a pack refuses without (clojure repl_connect, and
+      ;; only clojure attaches at all), so it stays marked.
+      (expect (str/includes? (:note (get connect "port")) "REQUIRED"))
+      (expect (str/includes? (:ext.symbol/description language-surface/connect-repl-symbol)
+                             "CLOJURE only"))
+      ;; `build` selects a shadow-cljs build to ATTACH to or to run cljs tests
+      ;; in — it never starts one, so it is a repl_connect/run_tests key.
+      (expect (contains? connect "build"))
+      (expect (contains? tests "build"))
+      (expect (not (contains? start "build")))
+      (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
+                             "`repl_connect`"))
       ;; run_tests and repl_eval are the two verbs a session calls without reading
       ;; the page first: what they REQUIRE, and where they run when `cwd` is
       ;; omitted, has to be on their own params.
