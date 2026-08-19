@@ -336,6 +336,67 @@
              (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
+  machine-store-never-holds-project-config-test
+  "`~/.vis/state.yml` is the PERSON's tier and merges OVER `<cwd>/vis.yml`, so a
+   block that describes a REPOSITORY has no business in it: it would decide for
+   every other checkout on the machine, and the project's own file would stop
+   mattering."
+  ;; Regression, user report: whole-store writers handed `save-config!` the MERGED
+  ;; config, so filesystem grants, the jail and the environment of whichever
+  ;; project happened to be open were copied into `~/.vis/state.yml` — from where
+  ;; the machine tier outranked every project's own vis.yml, on every repository.
+  (it
+    "drops project-scoped blocks on read and never writes them back"
+    (let [tmp
+          (str (System/getProperty "java.io.tmpdir") "/vis-cfg-project-scope-" (System/nanoTime))
+
+          path
+          (str tmp "/state.yml")
+
+          project
+          (str tmp "/vis.yml")]
+
+      (try (.mkdirs (io/file tmp))
+           (spit
+             path
+             (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
+                  "environment:\n  FROM_STORE: 'yes'\n"
+                  "workspace:\n  filesystem:\n    - id: other-repo\n      path: /tmp/other-repo\n"))
+           (spit project
+                 "workspace:\n  filesystem:\n    - id: this-repo\n      path: /tmp/this-repo\n")
+           (with-redefs [config/config-dir
+                         (constantly tmp)
+
+                         config/state-path
+                         (constantly path)
+
+                         config/global-config-yaml-paths
+                         (constantly [])
+
+                         config/project-root-yaml-paths
+                         (constantly [project])
+
+                         config/project-config-yaml-paths
+                         (constantly [(str tmp "/none/.vis/config.yml")])]
+
+             (config/invalidate-config-cache!)
+             (let [store (config/load-global-config-raw)]
+               (expect (nil? (get store "workspace")))
+               (expect (nil? (get store "environment")))
+               (expect (= ["prov-a"] (mapv #(get % "id") (get store "providers")))))
+             ;; the project's own file decides its grants again
+             (expect (= ["this-repo"]
+                        (mapv #(get % "id")
+                              (get-in (config/load-config-raw) ["workspace" "filesystem"]))))
+             ;; and a whole-store write cannot put them back
+             (config/save-config! (config/load-config-raw))
+             (config/invalidate-config-cache!)
+             (let [written (slurp path)]
+               (expect (not (str/includes? written "workspace")))
+               (expect (not (str/includes? written "this-repo")))
+               (expect (str/includes? written "prov-a"))))
+           (finally (rm-rf! (io/file tmp)))))))
+(defdescribe
   provider-persistence-test
   "save-config! / load-config round-trip backing onboarding. The first-run
    welcome and the provider manager BOTH write ~/.vis/state.yml so a connected
@@ -835,19 +896,34 @@
 
 (defdescribe
   provider-compatibility-test
-  "`compatibility:` is the user-facing wire dialect (anthropic / openai /
-   openai-responses). It resolves to svar's low-level `:api-style`, so a custom
-   or self-hosted endpoint needs one obvious word instead of an internal svar
-   enum. Raw `api_style` stays the escape hatch and wins when both are set."
+  "`compatibility:` is the user-facing wire dialect and `api_style:` the same
+   value under svar's own name. ONE forgiving vocabulary
+   (`config-spec/api-style-aliases`) resolves both onto the `:api-style` svar
+   dispatches on; anything outside it is refused by config validation rather
+   than silently meaning chat completions."
+  ;; Regression, issue #152: an unknown-to-svar spelling (`openai_responses`,
+  ;; `responses`, `openai`) was keywordized verbatim and svar's `case` fell
+  ;; through to `/chat/completions`, so an endpoint declared as Responses was
+  ;; served on the chat wire without a word.
   (it "maps every accepted value onto an svar api-style"
       (expect (= :anthropic (config/compatibility-api-style :anthropic)))
       (expect (= :openai-compatible-chat (config/compatibility-api-style :openai)))
       (expect (= :openai-compatible-responses (config/compatibility-api-style :openai-responses)))
       (expect (= :openai-compatible-responses (config/compatibility-api-style :openai_responses))
               "underscore spelling from YAML keywordization resolves identically"))
-  (it "returns nil for absent or unknown values"
+  (it "resolves every documented alias, whatever the spelling"
+      (expect (= [:anthropic :anthropic :anthropic]
+                 (mapv config/compatibility-api-style ["anthropic" "Claude" :anthropic-messages])))
+      (expect (= [:openai-compatible-chat :openai-compatible-chat :openai-compatible-chat]
+                 (mapv config/compatibility-api-style
+                       ["openai" "chat_completions" :openai-compatible-chat])))
+      (expect (= [:openai-compatible-responses :openai-compatible-responses]
+                 (mapv config/compatibility-api-style ["responses" " OpenAI_Responses "])))
+      (expect (= :gemini (config/compatibility-api-style "google-gemini"))))
+  (it "returns nil for absent or unnameable values"
       (expect (nil? (config/compatibility-api-style nil)))
-      (expect (nil? (config/compatibility-api-style :gemini))))
+      (expect (nil? (config/compatibility-api-style :openai-responses-v2)))
+      (expect (nil? (config/compatibility-api-style 7))))
   (it "keywordizes `compatibility` off the YAML surface"
       (expect (= :openai
                  (:compatibility
@@ -860,6 +936,23 @@
                                                       :base-url "https://llm.internal/v1"
                                                       :compatibility :openai
                                                       :models [{:name "m"}]})))))
+  (it
+    "normalizes a raw `api_style` on its way to svar"
+    (expect
+      (= :openai-compatible-responses
+         (:api-style (config/->svar-provider {:id :gw
+                                              :api-key "k"
+                                              :base-url "https://llm.internal/v1"
+                                              :api-style :openai_responses
+                                              :models [{:name "m"}]})))
+      "the Responses dialect a user declared must never reach svar as a
+               value its `case` falls through to chat completions"))
+  (it "normalizes a per-model `api_style` override too"
+      (expect (= [{:name "m" :api-style :openai-compatible-responses}]
+                 (:models (config/->svar-provider {:id :gw
+                                                   :api-key "k"
+                                                   :base-url "https://llm.internal/v1"
+                                                   :models [{:name "m" :api-style :responses}]})))))
   (it "lets an explicit api_style win over compatibility"
       (expect (= :gemini
                  (config/provider-api-style {:id :gw :compatibility :openai :api-style :gemini}

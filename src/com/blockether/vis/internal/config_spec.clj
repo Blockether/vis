@@ -85,17 +85,63 @@
   #{"id" "api_key" "api_key_command" "models" "base_url" "compatibility" "api_style"
     "responses_path" "llm_headers" "extra_body" "is_stateless" "is_image_input"})
 
-(def compatibility-values
-  "The wire dialects a provider may declare. `api_style` remains the raw svar
-   escape hatch for anything outside this two-dialect world (e.g. `gemini`)."
-  #{"anthropic" "openai" "openai-responses"})
+(def api-style-aliases
+  "Every spelling Vis accepts for a wire dialect -> the `:api-style` svar
+   dispatches on. Forgiving in, exact out: a value is normalized (trimmed,
+   lower-cased, `_`/whitespace -> `-`) and must land in this table.
+
+   svar `case`s the api-style and every value it does not recognise falls
+   through to `/chat/completions`, so a near-miss like `openai_responses` would
+   otherwise SILENTLY post a Responses history to the chat wire. This table is
+   how a near-miss becomes the right dialect, and [[api-style?]] is how anything
+   else becomes a refused config instead of a wrong endpoint.
+
+   ONE vocabulary for both keys: `compatibility` is the word a user is taught,
+   `api_style` the same value under svar's own name."
+  {"anthropic" :anthropic
+   "anthropic-messages" :anthropic
+   "claude" :anthropic
+   "messages" :anthropic
+   "openai" :openai-compatible-chat
+   "openai-chat" :openai-compatible-chat
+   "openai-compatible" :openai-compatible-chat
+   "openai-compatible-chat" :openai-compatible-chat
+   "chat" :openai-compatible-chat
+   "chat-completions" :openai-compatible-chat
+   "openai-responses" :openai-compatible-responses
+   "openai-compatible-responses" :openai-compatible-responses
+   "responses" :openai-compatible-responses
+   "gemini" :gemini
+   "google" :gemini
+   "google-gemini" :gemini})
+
+(def api-style-values
+  "The dialects a config may name, in the spelling the documentation teaches.
+   Every other key of [[api-style-aliases]] is an accepted alias of one of these."
+  ["anthropic" "openai" "openai-responses" "gemini"])
+
+(defn normalize-api-style
+  "`v` (string or keyword, in any accepted spelling) -> svar's `:api-style`,
+   or nil when it names no dialect."
+  [v]
+  (when (or (string? v) (keyword? v) (symbol? v))
+    (get api-style-aliases
+         (-> (if (or (keyword? v) (symbol? v)) (name v) v)
+             str/trim
+             str/lower-case
+             (str/replace #"[_\s]+" "-")))))
+
+(defn api-style?
+  "True when `x` names a wire dialect Vis can hand svar."
+  [x]
+  (and (non-blank-string? x) (some? (normalize-api-style x))))
 
 (def model-schema
   {"name" non-blank-string?
    "context" positive-int?
    "output_limit" positive-int?
    "is_tool_call" boolean?
-   "api_style" non-blank-string?})
+   "api_style" api-style?})
 
 (s/def ::api-key-command
   ;; Structured argv, never a shell string: the helper is exec'd directly, so a
@@ -118,8 +164,8 @@
    "api_key_command" (spec-pred ::api-key-command)
    "models" (spec-pred ::models)
    "base_url" non-blank-string?
-   "compatibility" (one-of compatibility-values)
-   "api_style" non-blank-string?
+   "compatibility" api-style?
+   "api_style" api-style?
    "responses_path" non-blank-string?
    "llm_headers" string-map?
    "extra_body" yaml-map?
@@ -645,6 +691,21 @@
 
 (defn- field-label [path] (str/join "." path))
 
+(defn- value-rejection
+  "Why one leaf value was rejected. Generic by default; a key whose vocabulary
+   cannot be guessed from the key name spells its accepted values out, because
+   \"value rejected by the api_style contract\" is exactly the message that leaves
+   a near-miss dialect to be re-typed at random."
+  [k v]
+  (case k
+    ("api_style" "compatibility")
+    (str (pr-str v)
+         " is not a wire dialect - use one of "
+         (str/join ", " api-style-values)
+         " (aliases such as openai_responses, responses, chat or claude are accepted too)")
+
+    (str "value rejected by the " k " contract")))
+
 (defn- schema-problems
   "Every reason a string-keyed `m` fails `schema`, each naming its dotted field
    path. Recurses through `nested-schemas` so the offending LEAF is reported."
@@ -696,7 +757,7 @@
                                 v))
 
                             nil)))
-                      [(str label ": value rejected by the " k " contract")])))))
+                      [(str label ": " (value-rejection k v))])))))
       m)))
 
 (defn explain-problems
@@ -720,6 +781,31 @@
    fleet, never something a person typed."
   #{"vision_memory"})
 
+(def project-scoped-config-keys
+  "The ACCESS surface of a checkout — its filesystem grants, its jail and its
+   environment — and never a property of a person or a machine, so these keys may
+   never live in the machine store `~/.vis/state.yml`. Each belongs to the checkout
+   it was read from (`<cwd>/vis.yml` or the `<cwd>/.vis/config.yml` overlay), and
+   the machine tier merges OVER both. A prompt, a model or a toggle is a person's
+   and stays legal here.
+
+   A build that handed the MERGED config to a whole-store write copied these blocks
+   out of a project's own files into the machine store, where the machine tier then
+   OUTRANKED the files they came from: one repository's grants became the grants of
+   every other checkout on the machine, and editing that repository's own YAML
+   stopped changing anything. Writers now touch one key each, and these keys are
+   dropped on read and on write so a store poisoned earlier heals itself."
+  #{"workspace" "jail" "environment"})
+
+(defn without-project-scoped
+  "`config` with every `project-scoped-config-keys` block dropped, plus the set that
+   was dropped: `[config dropped]`. Nothing else is touched — a person-owned key
+   stays exactly as it was written."
+  [config]
+  (if-not (map? config)
+    [config #{}]
+    (let [dropped (into #{} (filter #(contains? config %)) project-scoped-config-keys)]
+      [(apply dissoc config dropped) dropped])))
 (defn- problem-key
   "The top-level key one `explain-problems` line blames: the first segment of its
    dotted field path."

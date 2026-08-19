@@ -405,30 +405,22 @@
       (boolean (visible? catalog-id model-id))
       true)))
 
-(def compatibility->api-style
-  "The user-facing `compatibility:` knob -> svar's low-level `:api-style`.
-
-   A provider speaks exactly one wire dialect, and that is all a user should
-   have to state: Anthropic Messages, or OpenAI-compatible (chat completions by
-   default, the Responses API when the endpoint serves only that). `api_style`
-   stays as the raw svar escape hatch and wins when both are set."
-  {:anthropic :anthropic
-   :openai :openai-compatible-chat
-   :openai-responses :openai-compatible-responses})
-
 (defn compatibility-api-style
-  "`:api-style` implied by a provider's `compatibility` value. nil when absent or
-   unknown - config validation rejects unknown values long before this."
+  "`:api-style` implied by a provider's `compatibility` value, resolved through
+   the ONE dialect vocabulary (`config-spec/api-style-aliases`). nil when absent
+   or unnameable - config validation rejects an unknown value long before this."
   [compatibility]
-  (when compatibility
-    (get compatibility->api-style (keyword (str/replace (name compatibility) "_" "-")))))
+  (config-spec/normalize-api-style compatibility))
 
 (defn provider-api-style
-  "Effective `:api-style` for a provider map: explicit `api_style` first (raw
-   svar value), then the `compatibility` alias, then catalog/preset metadata."
+  "Effective `:api-style` for a provider map: explicit `api_style` first, then the
+   `compatibility` alias, then catalog/preset metadata. Both user-facing keys are
+   NORMALIZED here (`openai` -> `:openai-compatible-chat`, `openai_responses` ->
+   `:openai-compatible-responses`) because svar `case`s the api-style and any
+   value it does not know silently means `/chat/completions`."
   ([provider] (provider-api-style provider (provider-template (:id provider))))
   ([provider template]
-   (or (:api-style provider)
+   (or (config-spec/normalize-api-style (:api-style provider))
        (compatibility-api-style (:compatibility provider))
        (:api-style template))))
 
@@ -472,13 +464,16 @@
          (some? (:tool-call? m))
          (assoc :tool-call? (:tool-call? m))
 
-         ;; Per-model `:api-style` override. svar reads `(or (:api-style
+         ;; Per-model `:api-style` override, normalized through the same dialect
+         ;; vocabulary as the provider key: svar reads `(or (:api-style
          ;; model-map) (:api-style provider))` at request build, so a single
          ;; provider can serve models on DIFFERENT wires (e.g. one endpoint that
          ;; routes some models to /chat/completions and others to /messages).
-         ;; Without this carry-through the override is silently dropped.
+         ;; Without this carry-through the override is silently dropped; without
+         ;; the normalization a near-miss spelling silently means chat.
          (some? (:api-style m))
-         (assoc :api-style (:api-style m)))))))
+         (assoc :api-style
+           (or (config-spec/normalize-api-style (:api-style m)) (:api-style m))))))))
 
 (def ^:private boot-token-timeout-ms
   "Upper bound on a synchronous boot-time token fetch (OAuth `get-token-fn`).
@@ -1098,19 +1093,33 @@
    A DERIVED block the contract rejects is dropped here rather than handed on
    (`config-spec/without-invalid-derived`): every writer read-modify-writes this
    whole map, so a malformed row in a cache Vis wrote itself would otherwise
-   refuse the person's own next write and leave the store read-only."
+   refuse the person's own next write and leave the store read-only.
+
+   A PROJECT-scoped block is dropped the same way (`without-project-scoped`): this
+   tier merges OVER `<cwd>/vis.yml`, so filesystem grants or an environment an
+   older build folded in here would outrank — silently, in every other checkout on
+   this machine — the project files they were copied out of."
   []
   (let [raw
         (read-yaml-config-map-lenient (state-path))
 
         [config dropped]
-        (config-spec/without-invalid-derived raw)]
+        (config-spec/without-invalid-derived raw)
+
+        [config project-scoped]
+        (config-spec/without-project-scoped config)]
 
     (when (seq dropped)
       (tel/log! {:level :warn
                  :id ::derived-store-block-dropped
                  :data {:keys (vec (sort dropped)) :path (state-path)}}
                 "Ignoring a machine-written memory block the config contract rejects"))
+    (when (seq project-scoped)
+      (tel/log!
+        {:level :warn
+         :id ::project-scoped-store-block-dropped
+         :data {:keys (vec (sort project-scoped)) :path (state-path)}}
+        "Ignoring a project-scoped block in the machine store; it belongs to the project's own vis.yml"))
     config))
 
 (defn load-global-yaml-config-raw
@@ -1470,7 +1479,11 @@
    ;; `restore-env-refs` FIRST: a caller may hand us a map that travelled through
    ;; `load-config`, where `${NAME}` was already resolved. Writing that verbatim
    ;; would bake the secret into `state.yml` and quietly destroy the reference.
-   (let [wire-config (restore-env-refs (->yaml-safe config))]
+   ;; The machine store is the PERSON's tier and merges over the project's own
+   ;; files, so a caller that built this map from the MERGED config would copy a
+   ;; repository's grants in here and make them global. Drop those keys.
+   (let [wire-config (first (config-spec/without-project-scoped (restore-env-refs (->yaml-safe
+                                                                                    config))))]
      (config-spec/assert-config! wire-config (state-path))
      (let [previous-provider (some-> (active-provider-entry (load-global-config-raw))
                                      runtime-config)
