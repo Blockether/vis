@@ -30,9 +30,8 @@ vi.mock('@capacitor/preferences', () => ({
 import {
   applyGatewayNotify,
   drainPushRevocations,
-  syncPushRegistrations,
-  warmNotifyVerdicts,
-  type PushRegistrar,
+  syncFleetPush,
+  type FleetPush,
 } from './notify';
 import {
   getGatewayNotify,
@@ -77,24 +76,56 @@ const paired: GatewayConn[] = [
   { url: BUILDBOX, token: 'b' },
 ];
 
-/** A registrar that records every call, and can fail for chosen gateways. */
-const recorder = (broken: string[] = []) => {
-  const calls = { registered: [] as string[], unregistered: [] as string[] };
+/**
+ * A fleet whose machines answer with the device rows named, recording every
+ * call — so a test can pin not only WHAT the sweep asserted but how many
+ * requests that took the fleet.
+ */
+const fleetOf = (
+  holding: Record<string, string[]> = {},
+  broken: string[] = [],
+  refusing: string[] = [],
+) => {
+  const calls = {
+    read: [] as string[],
+    registered: [] as string[],
+    unregistered: [] as string[],
+  };
   const guard = (conn: GatewayConn) => {
     if (broken.includes(conn.url)) throw new Error('machine unreachable');
   };
-  const registrar: PushRegistrar = {
+  const refuse = (conn: GatewayConn) => {
+    if (refusing.includes(conn.url)) throw new Error('machine refused');
+  };
+  const fleet: FleetPush = {
+    read: async (conn) => {
+      guard(conn);
+      calls.read.push(conn.url);
+      return { devices: (holding[conn.url] ?? []).map(device) };
+    },
     register: async (conn) => {
       guard(conn);
       calls.registered.push(conn.url);
+      refuse(conn);
     },
     unregister: async (conn) => {
       guard(conn);
       calls.unregistered.push(conn.url);
+      refuse(conn);
     },
   };
-  return { calls, registrar };
+  return { calls, fleet };
 };
+
+const device = (preview: string): PushDevice =>
+  ({ token_preview: preview, platform: 'ios', is_relayed: false }) as PushDevice;
+
+/** Everything the sweep asked of the fleet, counted. */
+const requests = (calls: {
+  read: string[];
+  registered: string[];
+  unregistered: string[];
+}) => calls.read.length + calls.registered.length + calls.unregistered.length;
 
 beforeEach(() => {
   native.store.clear();
@@ -143,46 +174,86 @@ describe('per-gateway notification switch', () => {
   });
 });
 
-describe('syncPushRegistrations', () => {
+describe('syncFleetPush', () => {
   it('registers nothing for a machine that was only paired', async () => {
-    const { calls, registrar } = recorder();
-    const result = await syncPushRegistrations(paired, 'tok', registrar);
+    const { calls, fleet } = fleetOf();
+    const result = await syncFleetPush(paired, fleet, ['mine'], false);
     expect(calls.registered).toEqual([]);
-    expect(result.registered).toEqual([]);
-    expect(calls.unregistered).toEqual([LAPTOP, BUILDBOX]);
+    // ...and takes nothing off a machine that is not holding this device: a
+    // DELETE per never-connected machine, per launch, asserted nothing at all.
+    expect(calls.unregistered).toEqual([]);
+    expect(result.unchanged).toEqual([LAPTOP, BUILDBOX]);
   });
 
-  it('registers the machines this device connected, and only those', async () => {
+  // Regression, user report (paraphrased: "it cannot be four or five requests
+  // per machine — it has to be one"): every launch asked each paired machine
+  // for its push status, posted a registration it was already holding, asked
+  // for its device list again to warm the row, and the panel asked a fourth
+  // time the moment it was opened.
+  it('costs a fleet that already agrees ONE request per machine', async () => {
     await setGatewayNotify(LAPTOP, true);
-    const { calls, registrar } = recorder();
-    await syncPushRegistrations(paired, 'tok', registrar);
-    expect(calls.registered).toEqual([LAPTOP]);
-    expect(calls.unregistered).toEqual([BUILDBOX]);
+    await setGatewayNotify(BUILDBOX, true);
+    const { calls, fleet } = fleetOf({
+      [LAPTOP]: ['mine'],
+      [BUILDBOX]: ['mine'],
+    });
+
+    const result = await syncFleetPush(paired, fleet, ['mine'], false);
+
+    expect(requests(calls)).toBe(paired.length);
+    expect(calls.read).toEqual([LAPTOP, BUILDBOX]);
+    expect(result.unchanged).toEqual([LAPTOP, BUILDBOX]);
   });
 
-  it('keeps a silenced machine silenced across relaunches', async () => {
+  it('registers the machine this device connected, and only that one', async () => {
+    await setGatewayNotify(LAPTOP, true);
+    const { calls, fleet } = fleetOf();
+    await syncFleetPush(paired, fleet, ['mine'], false);
+    expect(calls.registered).toEqual([LAPTOP]);
+    expect(calls.unregistered).toEqual([]);
+  });
+
+  it('keeps a silenced machine silenced, and stops asking after once', async () => {
     await setGatewayNotify(LAPTOP, true);
     await setGatewayNotify(BUILDBOX, false);
-    for (const _ of [1, 2]) {
-      const { calls, registrar } = recorder();
-      await syncPushRegistrations(paired, 'tok', registrar);
-      expect(calls.registered).toEqual([LAPTOP]);
-      expect(calls.unregistered).toEqual([BUILDBOX]);
-    }
+    const first = fleetOf({ [LAPTOP]: ['mine'], [BUILDBOX]: ['mine'] });
+    await syncFleetPush(paired, first.fleet, ['mine'], false);
+    expect(first.calls.unregistered).toEqual([BUILDBOX]);
+
+    // The next launch finds that machine no longer holding this device, so it
+    // is left alone instead of being sent the same DELETE for good.
+    const next = fleetOf({ [LAPTOP]: ['mine'] });
+    await syncFleetPush(paired, next.fleet, ['mine'], false);
+    expect(next.calls.unregistered).toEqual([]);
+    expect(requests(next.calls)).toBe(paired.length);
+  });
+
+  // A grant carries its own expiry, so agreement is not enough: the machine
+  // holding a lapsed one would go quiet on a device that never changed its mind.
+  it('re-registers a machine whose relay grant is about to lapse', async () => {
+    await setGatewayNotify(LAPTOP, true);
+    const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
+    await syncFleetPush(
+      [paired[0]],
+      { ...fleet, isRenewalDue: async () => true },
+      ['mine'],
+      false,
+    );
+    expect(calls.registered).toEqual([LAPTOP]);
   });
 
   it('registers a machine the app does not currently have open', async () => {
     await setGatewayNotify(BUILDBOX, true);
-    const { calls, registrar } = recorder();
-    await syncPushRegistrations([paired[1]], 'tok', registrar);
+    const { calls, fleet } = fleetOf();
+    await syncFleetPush([paired[1]], fleet, ['mine'], false);
     expect(calls.registered).toEqual([BUILDBOX]);
   });
 
   it('lets one unreachable machine fail without silencing the rest', async () => {
     await setGatewayNotify(LAPTOP, true);
     await setGatewayNotify(BUILDBOX, true);
-    const { calls, registrar } = recorder([LAPTOP]);
-    const result = await syncPushRegistrations(paired, 'tok', registrar);
+    const { calls, fleet } = fleetOf({}, [LAPTOP]);
+    const result = await syncFleetPush(paired, fleet, ['mine'], false);
     expect(result.failed).toEqual([LAPTOP]);
     expect(calls.registered).toEqual([BUILDBOX]);
   });
@@ -190,13 +261,13 @@ describe('syncPushRegistrations', () => {
   it('sweeps each machine once and stops when the app tears the sweep down', async () => {
     await setGatewayNotify(LAPTOP, true);
     await setGatewayNotify(BUILDBOX, true);
-    const { calls, registrar } = recorder();
-    await syncPushRegistrations([...paired, { url: LAPTOP }], 'tok', registrar);
+    const { calls, fleet } = fleetOf();
+    await syncFleetPush([...paired, { url: LAPTOP }], fleet, ['mine'], false);
     expect(calls.registered).toEqual([LAPTOP, BUILDBOX]);
 
-    const second = recorder();
-    await syncPushRegistrations(paired, 'tok', second.registrar, () => true);
-    expect(second.calls.registered).toEqual([]);
+    const second = fleetOf();
+    await syncFleetPush(paired, second.fleet, ['mine'], false, () => true);
+    expect(requests(second.calls)).toBe(0);
   });
 });
 
@@ -213,8 +284,8 @@ describe('applyGatewayNotify', () => {
     expect(await getGatewayNotify(BUILDBOX)).toBe(false);
 
     // ...and the next sweep is what finally lands it on that machine.
-    const { calls, registrar } = recorder();
-    await syncPushRegistrations(paired, 'tok', registrar);
+    const { calls, fleet } = fleetOf({ [BUILDBOX]: ['mine'] });
+    await syncFleetPush(paired, fleet, ['mine'], false);
     expect(calls.unregistered).toEqual([BUILDBOX]);
     expect(calls.registered).toEqual([LAPTOP]);
   });
@@ -248,11 +319,11 @@ describe('forgetting a machine', () => {
     await setGatewayNotify(LAPTOP, true);
     await setGatewayNotify(BUILDBOX, true);
     await removeConnection(BUILDBOX);
-    const { calls, registrar } = recorder();
+    const { calls, fleet } = fleetOf();
     // A relaunch: the sweep over what is still paired, then the revocations
     // this device still owes.
-    await syncPushRegistrations(await loadConnections(), 'tok', registrar);
-    await drainPushRevocations('tok', registrar.unregister);
+    await syncFleetPush(await loadConnections(), fleet, ['mine'], false);
+    await drainPushRevocations('tok', fleet.unregister);
     expect(calls.registered).toEqual([LAPTOP]);
     expect(calls.unregistered).toEqual([BUILDBOX]);
     expect(await pendingRevocations()).toEqual([]);
@@ -271,11 +342,11 @@ describe('forgetting a machine', () => {
   it('keeps owing the revocation until that machine accepts it', async () => {
     await saveConnections(paired);
     await removeConnection(BUILDBOX);
-    const unreachable = recorder([BUILDBOX]);
-    await drainPushRevocations('tok', unreachable.registrar.unregister);
+    const unreachable = fleetOf({}, [BUILDBOX]);
+    await drainPushRevocations('tok', unreachable.fleet.unregister);
     expect((await pendingRevocations()).map((c) => c.url)).toEqual([BUILDBOX]);
-    const back = recorder();
-    await drainPushRevocations('tok', back.registrar.unregister);
+    const back = fleetOf();
+    await drainPushRevocations('tok', back.fleet.unregister);
     expect(back.calls.unregistered).toEqual([BUILDBOX]);
     expect(await pendingRevocations()).toEqual([]);
   });
@@ -284,8 +355,8 @@ describe('forgetting a machine', () => {
     await saveConnections(paired);
     await removeConnection(BUILDBOX);
     await upsertConnection({ url: BUILDBOX, token: 'b' });
-    const { calls, registrar } = recorder();
-    await drainPushRevocations('tok', registrar.unregister);
+    const { calls, fleet } = fleetOf();
+    await drainPushRevocations('tok', fleet.unregister);
     expect(calls.unregistered).toEqual([]);
     expect(await pendingRevocations()).toEqual([]);
   });
@@ -297,73 +368,69 @@ describe('forgetting a machine', () => {
 // Notifications panel had settled, so the FIRST open of every paired machine —
 // and every open after a device that had never been there — still painted a
 // pulsing amber `Connect` labelled `Checking…` before settling.
-describe('warmNotifyVerdicts', () => {
-  const listing = (devices: PushDevice[]) => async () => ({ devices });
-  const device = (preview: string): PushDevice =>
-    ({ token_preview: preview, platform: 'ios', is_relayed: false }) as PushDevice;
-
+describe('the verdict a row opens on', () => {
   it('answers a machine before its panel is ever opened', async () => {
     await setGatewayNotify(LAPTOP, true);
+    const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
 
-    await warmNotifyVerdicts(
+    await syncFleetPush([{ url: LAPTOP, token: 'a' }], fleet, ['mine'], false);
+
+    expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
+    expect(requests(calls)).toBe(1);
+  });
+
+  it('says no for a machine that would not take this device', async () => {
+    await setGatewayNotify(LAPTOP, true);
+    const { fleet } = fleetOf({ [LAPTOP]: ['someone-else'] }, [], [LAPTOP]);
+
+    const result = await syncFleetPush(
       [{ url: LAPTOP, token: 'a' }],
-      listing([device('mine')]),
+      fleet,
       ['mine'],
       false,
     );
 
-    expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
-  });
-
-  it('says no for a machine that is not holding this device', async () => {
-    await setGatewayNotify(LAPTOP, true);
-
-    await warmNotifyVerdicts(paired, listing([device('someone-else')]), ['mine'], false);
-
+    expect(result.failed).toEqual([LAPTOP]);
     expect(cachedNotifyVerdict(LAPTOP)).toBe(false);
   });
 
   it('answers each paired machine from its own switch', async () => {
     await setGatewayNotify(LAPTOP, true);
+    const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
 
-    await warmNotifyVerdicts(paired, listing([device('mine')]), ['mine'], false);
+    await syncFleetPush(paired, fleet, ['mine'], false);
 
     expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
     expect(cachedNotifyVerdict(BUILDBOX)).toBe(false);
+    expect(requests(calls)).toBe(paired.length);
   });
 
   it('leaves an unreachable machine with the verdict it settled on', async () => {
     rememberNotifyVerdict(LAPTOP, true);
     await setGatewayNotify(LAPTOP, true);
+    const { fleet } = fleetOf({}, [LAPTOP]);
 
-    const settled = await warmNotifyVerdicts(
+    const result = await syncFleetPush(
       [{ url: LAPTOP, token: 'a' }],
-      async () => {
-        throw new Error('machine unreachable');
-      },
+      fleet,
       ['mine'],
       false,
     );
 
-    expect(settled).toEqual([]);
+    expect(result.failed).toEqual([LAPTOP]);
     expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
   });
 
-  it('needs no round trip once the OS has silenced this app', async () => {
+  it('needs no round trip at all once the OS has silenced this app', async () => {
     await setGatewayNotify(LAPTOP, true);
-    let asked = 0;
+    const { calls, fleet } = fleetOf({
+      [LAPTOP]: ['mine'],
+      [BUILDBOX]: ['mine'],
+    });
 
-    await warmNotifyVerdicts(
-      paired,
-      async () => {
-        asked += 1;
-        return { devices: [device('mine')] };
-      },
-      ['mine'],
-      true,
-    );
+    await syncFleetPush(paired, fleet, ['mine'], true);
 
-    expect(asked).toBe(0);
+    expect(requests(calls)).toBe(0);
     expect(cachedNotifyVerdict(LAPTOP)).toBe(false);
     expect(cachedNotifyVerdict(BUILDBOX)).toBe(false);
   });
@@ -371,16 +438,11 @@ describe('warmNotifyVerdicts', () => {
   it('stops where the effect was torn down', async () => {
     await setGatewayNotify(LAPTOP, true);
     await setGatewayNotify(BUILDBOX, true);
+    const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
 
-    const settled = await warmNotifyVerdicts(
-      paired,
-      listing([device('mine')]),
-      ['mine'],
-      false,
-      () => true,
-    );
+    await syncFleetPush(paired, fleet, ['mine'], false, () => true);
 
-    expect(settled).toEqual([]);
+    expect(requests(calls)).toBe(0);
     expect(cachedNotifyVerdict(LAPTOP)).toBeNull();
   });
 });

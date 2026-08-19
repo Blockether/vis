@@ -591,3 +591,63 @@ describe('GatewayClient voice engines', () => {
     });
   });
 });
+
+// Regression, user report (paraphrased: "it cannot fire four or five requests at
+// every machine — it has to be one"): the same device list was fetched by the
+// launch sweep, again by push registration asking whether that machine can sign
+// for this device, again to answer the notifications row in advance, and again
+// by the panel the moment it was opened.
+describe('GatewayClient device list', () => {
+  const listing = () => ({
+    devices: [],
+    push: { is_available: true, provider: 'apns', devices: 0 },
+  });
+
+  it('answers every caller of one machine from a single request', async () => {
+    const asked = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify(listing()))),
+      );
+    vi.stubGlobal('fetch', asked);
+    const mod = await import('./gateway');
+    const client = new mod.GatewayClient(conn);
+
+    // Two callers overlapping (the sweep and a panel opening on top of it),
+    // then a third arriving after they settled, then push registration asking
+    // the same machine whether it can sign at all.
+    const [first, second] = await Promise.all([
+      client.devices(),
+      client.devices(),
+    ]);
+    const third = await client.devices();
+    await new mod.GatewayClient(conn).pushTarget().status();
+
+    expect(asked).toHaveBeenCalledOnce();
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+  });
+
+  it('asks again once this device is taken off that machine', async () => {
+    const asked = vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            init?.method === 'DELETE' ? { is_removed: true } : listing(),
+          ),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', asked);
+    const mod = await import('./gateway');
+    const client = new mod.GatewayClient(conn);
+
+    await client.devices();
+    await client.unregisterDevice('device-token');
+    await client.devices();
+
+    // The read, the delete, and the read that is no longer allowed to answer
+    // from a list this app itself just changed.
+    expect(asked).toHaveBeenCalledTimes(3);
+  });
+});

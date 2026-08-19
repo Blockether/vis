@@ -69,12 +69,9 @@ import {
   maskToken,
   onPushTap,
   pushPermission,
+  pushPlatform,
 } from "./lib/push";
-import {
-  drainPushRevocations,
-  syncPushRegistrations,
-  warmNotifyVerdicts,
-} from "./lib/notify";
+import { drainPushRevocations, syncFleetPush } from "./lib/notify";
 import {
   drainWebPushRevocations,
   isWebNotificationsPlatform,
@@ -82,8 +79,10 @@ import {
   syncWebPushRegistrations,
 } from "./lib/web-push";
 import {
+  isGrantFresh,
   registerForPush,
   registeredIds,
+  relayUrlFor,
   unregisterFromPush,
 } from "./lib/relay";
 import { isShellChromeVisible, shellScreen } from "./lib/shell";
@@ -743,50 +742,55 @@ export function App() {
     // of a token (see lib/relay.ts).
     const revoke = (conn: GatewayConn, tok: string) =>
       unregisterFromPush(tok, new GatewayClient(conn).pushTarget());
-    const assertRegistrations = async () => {
+    const sweep = async () => {
+      const permission = await pushPermission();
+      // An OS that silenced this app answers for the whole fleet at once, and
+      // answers it without asking a single machine anything.
+      const isBlocked = permission === "denied";
       let token = cachedPushToken() ?? "";
-      try {
-        token = await acquirePushToken();
-      } catch {
-        // An OS that withheld the token is not a reason to degrade the session
-        // UI — and a machine this device was taken off is still named by the
-        // relay grant it was registered under, which is stored on this device.
+      if (permission === "granted") {
+        try {
+          token = await acquirePushToken();
+        } catch {
+          // An OS that withheld the token is not a reason to degrade the session
+          // UI — and a machine this device was taken off is still named by the
+          // relay grant it was registered under, which is stored on this device.
+        }
       }
       if (cancelled) return;
       // What is OWED comes first: a machine that was forgotten is no longer in
       // the swept set, so this is the only thing left that can stop it pushing.
       await drainPushRevocations(token, revoke, () => cancelled);
-      if (cancelled || !token || notifyTargets.length === 0) return;
-      await syncPushRegistrations(
+      if (cancelled || notifyTargets.length === 0) return;
+      const ids = await registeredIds(token);
+      if (cancelled) return;
+      await syncFleetPush(
         notifyTargets,
-        token,
         {
-          register: (conn, tok) =>
-            registerForPush(
-              deviceRegistration(tok),
+          // The one request each machine is asked for. It is also what the
+          // notifications row and its push banners are painted from, so opening
+          // that machine's Settings on top of this sweep asks it nothing.
+          read: (conn) => new GatewayClient(conn).devices(),
+          register: async (conn) => {
+            // The OS withheld the token this run: there is nothing to hand over,
+            // and an empty id must never be posted. The next wake tries again.
+            if (!token) throw new Error("This device has no push token yet.");
+            await registerForPush(
+              deviceRegistration(token),
               new GatewayClient(conn).pushTarget(),
-            ),
-          unregister: revoke,
+            );
+          },
+          unregister: (conn) =>
+            unregisterFromPush(token, new GatewayClient(conn).pushTarget()),
+          // A relay grant nearing its expiry is the one reason to write to a
+          // machine that already agrees — and this device can tell on its own.
+          isRenewalDue: async (_conn, push) => {
+            const relayUrl = relayUrlFor(push, pushPlatform());
+            return relayUrl ? !(await isGrantFresh(relayUrl, token)) : false;
+          },
         },
-        () => cancelled,
-      );
-    };
-
-    // Every paired machine's Notifications row is answered HERE, in front of the
-    // whole fleet — the sweep is already standing in front of all of them, and a
-    // machine whose Settings this device has never opened would otherwise open on
-    // `Checking…` while it asked (`lib/notify.ts`).
-    const sweep = async () => {
-      const permission = await pushPermission();
-      if (permission === "granted") await assertRegistrations();
-      if (cancelled) return;
-      const ids = await registeredIds(cachedPushToken() ?? "");
-      if (cancelled) return;
-      await warmNotifyVerdicts(
-        notifyTargets,
-        (conn) => new GatewayClient(conn).devices(),
         ids.map(maskToken),
-        permission === "denied",
+        isBlocked,
         () => cancelled,
       );
     };

@@ -191,6 +191,24 @@ export async function grantFor(
   return minted.grant;
 }
 
+/**
+ * Whether the grant this device already holds for one relay is still worth
+ * presenting, WITHOUT minting or asking anyone.
+ *
+ * The fleet sweep asserts a registration only when the machine disagrees with
+ * this device's switch — but a grant carries its own expiry, so a machine that
+ * is holding one has to be handed a fresh grant before that expiry, or it goes
+ * quiet on a device that never changed its mind. This is the local half of that
+ * decision: the answer is on this device, so deciding it costs no request.
+ */
+export async function isGrantFresh(
+  relayUrl: string,
+  token: string,
+  now: number = Date.now(),
+): Promise<boolean> {
+  return isUsable(await getRelayGrant(relayUrl), token, now);
+}
+
 /** One gateway, reduced to what push registration needs of it. */
 export interface PushGateway {
   status: () => Promise<PushStatus>;

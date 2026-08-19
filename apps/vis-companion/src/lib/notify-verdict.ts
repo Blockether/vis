@@ -71,22 +71,29 @@ export function forgetNotifyVerdict(url: string): void {
 }
 
 /**
- * The verdict itself, assembled from the answers the panel and the fleet sweep
- * both hold: that machine is holding one of the ids this device is registered
- * under, this device still wants that machine's alerts, and the OS has not
- * silenced this app.
+ * Whether one machine's list holds this device — under either name it may be
+ * filed under: its OS push token, or the relay grant it was registered with.
+ */
+export function isHeldBy(
+  devices: readonly PushDevice[],
+  ids: readonly string[],
+): boolean {
+  return devices.some((device) => ids.includes(device.token_preview));
+}
+
+/**
+ * The verdict itself, assembled from the three answers the panel and the fleet
+ * sweep both hold: that machine is holding this device, this device still wants
+ * that machine's alerts, and the OS has not silenced this app.
  *
  * ONE function, because the answer the sweep leaves for a machine has to be the
  * answer that machine's own Notifications row would have settled on had it been
  * opened — a warm cache that disagrees with the panel is worse than none.
  */
 export function notifyVerdict(input: {
-  devices: readonly PushDevice[];
-  /** Masked ids this device may appear under: its push token, and any relay grant. */
-  ids: readonly string[];
+  isHeld: boolean;
   isWanted: boolean;
   isBlocked: boolean;
 }): boolean {
-  if (input.isBlocked || !input.isWanted) return false;
-  return input.devices.some((device) => input.ids.includes(device.token_preview));
+  return !input.isBlocked && input.isWanted && input.isHeld;
 }

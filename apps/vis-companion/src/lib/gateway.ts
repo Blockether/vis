@@ -295,6 +295,32 @@ const routerInflight = new Map<string, Promise<RouterProvider[]>>();
 const snapshots = new Map<string, unknown>();
 
 /**
+ * One machine's push facts: who it will wake, and whether it can wake anyone.
+ */
+export interface DevicesState {
+  devices: PushDevice[];
+  push: PushStatus;
+}
+
+/**
+ * How long ONE read of a machine's device list answers for every caller.
+ *
+ * Reported as: every paired machine is hit with four or five requests before a
+ * single row is painted. Three of them were this one question asked by three
+ * callers — the launch sweep, push registration asking whether the machine can
+ * sign for this device at all, and the notifications panel the moment it opens.
+ * So it is asked once and shared. A minute is far shorter than anything that
+ * can change the answer: only this app puts this device on that list or takes
+ * it off, and both of those invalidate the window here.
+ */
+const DEVICES_FRESH_MS = 60_000;
+
+/** When each gateway's device list was last read, keyed like its snapshot. */
+const deviceReads = new Map<string, number>();
+
+/** A device-list read already in the air, so overlapping callers share it. */
+const deviceFlights = new Map<string, Promise<DevicesState>>();
+/**
  * Freshness stamp of the transcript snapshot we hold, per gateway+session. A
  * long session's transcript is TENS OF MEGABYTES; refetching it on a timer, or
  * on every re-entry, is by far the most expensive thing this client can do. The
@@ -840,39 +866,87 @@ export class GatewayClient {
 
   // ── Native push devices ─────────────────────────────────────────
   /**
-   * Devices this gateway will push to (tokens masked), plus whether it can
-   * push at all — the app needs both to tell "push impossible here" apart from
-   * "push possible, this phone just isn't registered".
-   */
-  /**
    * Last device list seen for THIS gateway. The notifications panel is opened over
    * and over on an answer that rarely changes, so it paints this and revalidates
    * instead of asking `Checking…` every time (see `lib/notify-verdict.ts`).
    */
-  cachedDevices(): { devices: PushDevice[]; push: PushStatus } | null {
+  cachedDevices(): DevicesState | null {
     return readSnapshot(this.snapshotKey("devices"));
   }
 
-  async devices(
-    signal?: AbortSignal,
-  ): Promise<{ devices: PushDevice[]; push: PushStatus }> {
-    const response = await this.request<{
-      devices: PushDevice[];
-      push: PushStatus;
-    }>("GET", "/v1/devices", undefined, signal);
-    writeSnapshot(this.snapshotKey("devices"), response);
+  /**
+   * `GET /v1/devices` — one question per machine, however many callers ask it.
+   *
+   * A read younger than `DEVICES_FRESH_MS` is answered from the snapshot and a
+   * read already in flight is joined rather than duplicated, so the launch
+   * sweep, push registration and the panel that opens on top of them cost the
+   * machine a single request between them.
+   */
+  async devices(signal?: AbortSignal): Promise<DevicesState> {
+    const key = this.snapshotKey("devices");
+    const held = readSnapshot<DevicesState>(key);
+    if (held && Date.now() - (deviceReads.get(key) ?? 0) < DEVICES_FRESH_MS) {
+      return held;
+    }
+    const flight = deviceFlights.get(key);
+    if (flight) return flight;
+    const reading = this.request<DevicesState>(
+      "GET",
+      "/v1/devices",
+      undefined,
+      signal,
+    )
+      .then((response) => {
+        writeSnapshot(key, response);
+        deviceReads.set(key, Date.now());
+        return response;
+      })
+      .finally(() => {
+        deviceFlights.delete(key);
+      });
+    deviceFlights.set(key, reading);
+    return reading;
+  }
+
+  /**
+   * Idempotent: re-registering the same token refreshes it, never duplicates.
+   *
+   * The answer names the row that was just written, so it is merged into the
+   * held list instead of being re-read: the panel reloading after a press asks
+   * this machine nothing.
+   */
+  async registerDevice(
+    input: PushDeviceInput,
+  ): Promise<{ device: PushDevice; push: PushStatus }> {
+    const response = await this.request<{ device: PushDevice; push: PushStatus }>(
+      "POST",
+      "/v1/devices",
+      input,
+    );
+    const key = this.snapshotKey("devices");
+    const held = readSnapshot<DevicesState>(key);
+    if (held) {
+      writeSnapshot(key, {
+        devices: [
+          ...held.devices.filter(
+            (device) => device.token_preview !== response.device.token_preview,
+          ),
+          response.device,
+        ],
+        push: response.push,
+      });
+    }
     return response;
   }
 
-  /** Idempotent: re-registering the same token refreshes it, never duplicates. */
-  registerDevice(
-    input: PushDeviceInput,
-  ): Promise<{ device: PushDevice; push: PushStatus }> {
-    return this.request("POST", "/v1/devices", input);
-  }
-
-  unregisterDevice(token: string): Promise<{ is_removed: boolean }> {
-    return this.request("DELETE", `/v1/devices/${encodeURIComponent(token)}`);
+  /** What the list says has changed, so the next read of it asks again. */
+  async unregisterDevice(token: string): Promise<{ is_removed: boolean }> {
+    const response = await this.request<{ is_removed: boolean }>(
+      "DELETE",
+      `/v1/devices/${encodeURIComponent(token)}`,
+    );
+    deviceReads.delete(this.snapshotKey("devices"));
+    return response;
   }
 
   /**

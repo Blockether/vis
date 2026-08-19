@@ -52,6 +52,7 @@ import { applyTheme } from "../lib/theme";
 import { applyGatewayNotify, applyWebGatewayNotify } from "../lib/notify";
 import {
   cachedNotifyVerdict,
+  isHeldBy,
   notifyVerdict,
   rememberNotifyVerdict,
 } from "../lib/notify-verdict";
@@ -2361,17 +2362,20 @@ export function NativeNotificationsPanel({
   // The OS outranks everything else: a machine can hold this device's token and
   // still reach nobody, so a blocked permission is never reported as connected.
   const blocked = supported && perm === "denied";
-  // THE ROW NEVER FLASHES. Its verdict is assembled from four asynchronous
-  // answers, so its honest first frame used to be `Checking…` on every open —
-  // an amber `Connect` that turned into a quiet `Disconnect` a moment later, on
-  // a question whose answer had not changed since the last time this dialog was
-  // opened. Reported as: the settings screen flickers. So the settled verdict is
-  // remembered per machine and painted first, and this pass revalidates it.
+  // THE ROW NEVER FLASHES, AND OPENING IT COSTS NOTHING. Its verdict is
+  // assembled from asynchronous answers, so its honest first frame used to be
+  // `Checking…` on every open — an amber `Connect` that turned into a quiet
+  // `Disconnect` a moment later, on a question whose answer had not changed
+  // since the last time this dialog was opened. Reported as: the settings
+  // screen flickers, and every paired machine is asked the same thing four or
+  // five times over. So the launch/wake sweep settles this verdict for the
+  // WHOLE fleet at one request each (`lib/notify.ts`), the row paints from
+  // there, and the revalidating read below is answered by that same request
+  // (`gateway.ts`).
   const isSettled = devices !== null && areMasksRead;
   const live = isSettled
     ? notifyVerdict({
-        devices: devices ?? [],
-        ids: masks,
+        isHeld: isHeldBy(devices ?? [], masks),
         isWanted: notify,
         isBlocked: blocked,
       })
