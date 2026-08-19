@@ -1137,6 +1137,55 @@ await patch({'path': css})" "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "('released', 'produced', [0, 1, 2], 'handed over', ['fast', 'slow'])"
                    (clojure.string/trim (str (:stdout r)))))))
+    ;; Regression, issue #155: ownership was threading's acquire-PROBE, which only
+    ;; answers "held by anyone". Across gather children that let a NON-holder's
+    ;; `notify_all()` through while a sibling held the lock, and a non-holder's
+    ;; `wait()`/`release()` drop the lock that sibling owned - after which the true
+    ;; owner's own notify died with the threading-internal "cannot notify on
+    ;; un-acquired lock", the child waiting for that notify never woke, and the turn
+    ;; stayed running with nothing to attribute the failure to.
+    (it
+      "a condition refuses notify / wait / release from a child that does not hold it"
+      (let [r (ep/run-python-block
+                (mk-threaded)
+                (str
+                  "import asyncio\n"
+                  "\n" "cond = asyncio.Condition()\n"
+                  "state = {'ready': False}\n" "seen = []\n"
+                  "\n" "\n"
+                  "async def holder():\n" "    async with cond:\n"
+                  "        await asyncio.sleep(0.2)\n" "    return 'held'\n"
+                  "\n" "\n"
+                  "async def stray():\n" "    await asyncio.sleep(0.05)\n"
+                  "    for name in ('notify_all', 'notify', 'release'):\n" "        try:\n"
+                  "            getattr(cond, name)()\n"
+                  "            seen.append(name + ':allowed')\n"
+                  "        except RuntimeError as exc:\n"
+                  "            seen.append(name + ':' + str(exc).split(':')[0])\n"
+                  "    try:\n" "        await asyncio.wait_for(cond.wait(), 1)\n"
+                  "        seen.append('wait:allowed')\n" "    except RuntimeError as exc:\n"
+                  "        seen.append('wait:' + str(exc).split(':')[0])\n" "    return 'stray'\n"
+                  "\n" "\n"
+                  "async def waiter():\n" "    async with cond:\n"
+                  "        await asyncio.wait_for(cond.wait_for(lambda: state['ready']), 5)\n"
+                  "    return 'woke'\n"
+                  "\n" "\n"
+                  "async def signaller():\n" "    await asyncio.sleep(0.3)\n"
+                  "    async with cond:\n" "        state['ready'] = True\n"
+                  "        cond.notify_all()\n" "    return 'signalled'\n"
+                  "\n" "\n"
+                  "async def main():\n"
+                  "    values = await asyncio.gather(holder(), stray(), waiter(), signaller())\n"
+                  "    return values, seen\n" "\n"
+                  "\n" "print(asyncio.run(main()))")
+                "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= (str "(['held', 'stray', 'woke', 'signalled'], "
+                        "['notify_all:cannot notify on un-acquired lock', "
+                        "'notify:cannot notify on un-acquired lock', "
+                        "'release:cannot release un-acquired lock', "
+                        "'wait:cannot wait on un-acquired lock'])")
+                   (clojure.string/trim (str (:stdout r)))))))
     (it "an event-loop-only name refuses BY NAME and leaves hasattr answering"
         (let [r (ep/run-python-block
                   (mk)

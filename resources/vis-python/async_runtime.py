@@ -1774,19 +1774,36 @@ class __vis_Blocking__:
         return result
 
 
+def __vis_ident__():
+    # WHICH gather child is calling. Ownership of a guest lock or condition is
+    # per THREAD here, because `gather` settles its children on the host's real
+    # platform pool - there is no single loop thread that could stand in for it.
+    return __vis_sync_mod__().get_ident()
+
+
 class __vis_Lock__:
     # asyncio.Lock over one guest lock: an uncontended acquire returns at once, a
-    # contended one blocks until the holding sibling releases it.
-    __slots__ = ("_lock",)
+    # contended one blocks until the holding sibling releases it. The OWNER is
+    # tracked here, by thread ident: a guest lock is not owner-aware, so without
+    # this a child could release a lock a SIBLING holds (issue #155).
+    __slots__ = ("_lock", "_owner")
 
     def __init__(self):
         self._lock = __vis_sync_mod__().Lock()
+        self._owner = None
 
     def locked(self):
         return self._lock.locked()
 
+    def _is_owner(self):
+        # Only the owner ever writes `_owner`, and it writes None before it
+        # releases, so a sibling reading it can never see a stale ident.
+        owner = self._owner
+        return owner is not None and owner == __vis_ident__()
+
     def _acquire(self, timeout=None):
         if self._lock.acquire(True, -1.0 if timeout is None else float(timeout)):
+            self._owner = __vis_ident__()
             return True
         raise TimeoutError()
 
@@ -1794,7 +1811,14 @@ class __vis_Lock__:
         return __vis_Blocking__(self._acquire)
 
     def release(self):
-        # A guest lock refuses an unowned release exactly as asyncio's does.
+        # A guest lock refuses an unowned release exactly as asyncio's does - but
+        # the guest lock underneath refuses only a FULLY unlocked one, so the
+        # cross-child case is refused here.
+        if not self._is_owner():
+            raise RuntimeError(
+                "cannot release un-acquired lock: this gather child does not hold it"
+            )
+        self._owner = None
         self._lock.release()
 
     async def __aenter__(self):
@@ -1802,7 +1826,7 @@ class __vis_Lock__:
         return None
 
     async def __aexit__(self, typ, val, tb):
-        self._lock.release()
+        self.release()
         return False
 
 
@@ -1875,33 +1899,55 @@ class __vis_Condition__:
     # Built on a plain guest lock, never threading's default RLock: asyncio's
     # condition is NOT reentrant, and a reentrant one would answer `locked()`
     # with False on the very thread that holds it.
-    __slots__ = ("_cond",)
+    #
+    # Ownership is tracked by `__vis_Lock__`, never left to
+    # `threading.Condition._is_owned()`. That one is an acquire-PROBE - it
+    # answers "is this lock held by ANYONE" - which means nothing once `gather`
+    # settles children on real threads: a non-owner's `notify()` passed the
+    # probe while a SIBLING held the lock, and a non-owner's `wait()` passed it
+    # too and then released that sibling's lock, after which the true owner's
+    # own `notify()` died with threading's internal "cannot notify on
+    # un-acquired lock" while the waiting child blocked forever. Owner-checked,
+    # each of those is one clean refusal, raised in the child that made the call.
+    __slots__ = ("_lock", "_cond")
 
     def __init__(self, lock=None):
-        mod = __vis_sync_mod__()
-        self._cond = mod.Condition(
-            lock._lock if isinstance(lock, __vis_Lock__) else mod.Lock()
-        )
+        self._lock = lock if isinstance(lock, __vis_Lock__) else __vis_Lock__()
+        self._cond = __vis_sync_mod__().Condition(self._lock._lock)
 
     def locked(self):
-        if self._cond.acquire(False):
-            self._cond.release()
-            return False
-        return True
+        return self._lock.locked()
 
     def _acquire(self, timeout=None):
-        if self._cond.acquire(True, -1.0 if timeout is None else float(timeout)):
-            return True
-        raise TimeoutError()
+        return self._lock._acquire(timeout)
 
     def acquire(self):
         return __vis_Blocking__(self._acquire)
 
     def release(self):
-        self._cond.release()
+        self._lock.release()
+
+    def _require_owner(self, verb):
+        if not self._lock._is_owner():
+            raise RuntimeError(
+                "cannot "
+                + verb
+                + " on un-acquired lock: this gather child must hold the condition"
+                + " (`async with cond:`) around the call"
+            )
+
+    def _wait_raw(self, timeout=None):
+        self._require_owner("wait")
+        # The wait RELEASES the lock and re-acquires it before returning, on the
+        # error path too - so ownership is dropped and restored around it.
+        self._lock._owner = None
+        try:
+            return self._cond.wait(timeout)
+        finally:
+            self._lock._owner = __vis_ident__()
 
     def _wait(self, timeout=None):
-        if self._cond.wait(timeout):
+        if self._wait_raw(timeout):
             return True
         raise TimeoutError()
 
@@ -1909,7 +1955,21 @@ class __vis_Condition__:
         return __vis_Blocking__(self._wait)
 
     def _wait_for(self, predicate, timeout=None):
-        result = self._cond.wait_for(predicate, timeout)
+        # threading's own `wait_for` loop, re-expressed on `_wait_raw` so every
+        # slice keeps the ownership bookkeeping above.
+        endtime = None
+        waittime = timeout
+        result = predicate()
+        while not result:
+            if waittime is not None:
+                if endtime is None:
+                    endtime = __vis_time__.monotonic() + waittime
+                else:
+                    waittime = endtime - __vis_time__.monotonic()
+                    if waittime <= 0:
+                        break
+            self._wait_raw(waittime)
+            result = predicate()
         if not result:
             raise TimeoutError()
         return result
@@ -1918,9 +1978,11 @@ class __vis_Condition__:
         return __vis_Blocking__(lambda timeout, p=predicate: self._wait_for(p, timeout))
 
     def notify(self, n=1):
+        self._require_owner("notify")
         self._cond.notify(n)
 
     def notify_all(self):
+        self._require_owner("notify")
         self._cond.notify_all()
 
     async def __aenter__(self):
@@ -1928,7 +1990,7 @@ class __vis_Condition__:
         return None
 
     async def __aexit__(self, typ, val, tb):
-        self._cond.release()
+        self._lock.release()
         return False
 
 
