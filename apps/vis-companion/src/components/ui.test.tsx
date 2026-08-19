@@ -22,6 +22,7 @@ import routerSource from "../screens/RouterScreen.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
+import notifyVerdictSource from "../lib/notify-verdict.ts?raw";
 
 import { DraftIcon, PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
@@ -3107,9 +3108,11 @@ describe("the session screen and the settings dialog spell no control out", () =
       "No devices registered with this machine.",
     );
     expect(settingsSource).not.toContain("Checking registered devices…");
-    // The list is still READ — matching this device's masks against it is how the
-    // panel knows it is registered at all — it is simply never rendered.
-    expect(settingsSource).toContain("masks.includes(d.token_preview)");
+    // The list is still READ — this device's masked ids are matched against it,
+    // by the one verdict the fleet sweep settles for every machine ahead of the
+    // first open (`lib/notify-verdict.ts`) — it is simply never rendered.
+    expect(settingsSource).toContain("notifyVerdict({");
+    expect(notifyVerdictSource).toContain("ids.includes(device.token_preview)");
   });
 
   it("picks a saved machine with the one pressable row", () => {

@@ -17,6 +17,8 @@
 // `snapshot-store.ts`). It is a cache — a browser that has none simply goes back
 // to `Checking…`.
 
+import type { PushDevice } from './types';
+
 const STORAGE_KEY = 'vis.notify-verdicts.v1';
 
 function readAll(): Record<string, boolean> {
@@ -66,4 +68,25 @@ export function forgetNotifyVerdict(url: string): void {
   if (!(url in all)) return;
   delete all[url];
   writeAll(all);
+}
+
+/**
+ * The verdict itself, assembled from the answers the panel and the fleet sweep
+ * both hold: that machine is holding one of the ids this device is registered
+ * under, this device still wants that machine's alerts, and the OS has not
+ * silenced this app.
+ *
+ * ONE function, because the answer the sweep leaves for a machine has to be the
+ * answer that machine's own Notifications row would have settled on had it been
+ * opened — a warm cache that disagrees with the panel is worse than none.
+ */
+export function notifyVerdict(input: {
+  devices: readonly PushDevice[];
+  /** Masked ids this device may appear under: its push token, and any relay grant. */
+  ids: readonly string[];
+  isWanted: boolean;
+  isBlocked: boolean;
+}): boolean {
+  if (input.isBlocked || !input.isWanted) return false;
+  return input.devices.some((device) => input.ids.includes(device.token_preview));
 }

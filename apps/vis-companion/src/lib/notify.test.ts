@@ -31,6 +31,7 @@ import {
   applyGatewayNotify,
   drainPushRevocations,
   syncPushRegistrations,
+  warmNotifyVerdicts,
   type PushRegistrar,
 } from './notify';
 import {
@@ -43,7 +44,11 @@ import {
   switchConnectionUrl,
   upsertConnection,
 } from './storage';
-import type { GatewayConn } from './types';
+import {
+  cachedNotifyVerdict,
+  rememberNotifyVerdict,
+} from './notify-verdict';
+import type { GatewayConn, PushDevice } from './types';
 
 const makeLocalStorage = () => {
   const map = new Map<string, string>();
@@ -283,5 +288,99 @@ describe('forgetting a machine', () => {
     await drainPushRevocations('tok', registrar.unregister);
     expect(calls.unregistered).toEqual([]);
     expect(await pendingRevocations()).toEqual([]);
+  });
+});
+
+// Regression, user report ("the notification thing flickers every time, on every
+// machine I am connected to — can it not fetch the settings for all of them
+// before I tap one?"): the verdict was only remembered once a machine's own
+// Notifications panel had settled, so the FIRST open of every paired machine —
+// and every open after a device that had never been there — still painted a
+// pulsing amber `Connect` labelled `Checking…` before settling.
+describe('warmNotifyVerdicts', () => {
+  const listing = (devices: PushDevice[]) => async () => ({ devices });
+  const device = (preview: string): PushDevice =>
+    ({ token_preview: preview, platform: 'ios', is_relayed: false }) as PushDevice;
+
+  it('answers a machine before its panel is ever opened', async () => {
+    await setGatewayNotify(LAPTOP, true);
+
+    await warmNotifyVerdicts(
+      [{ url: LAPTOP, token: 'a' }],
+      listing([device('mine')]),
+      ['mine'],
+      false,
+    );
+
+    expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
+  });
+
+  it('says no for a machine that is not holding this device', async () => {
+    await setGatewayNotify(LAPTOP, true);
+
+    await warmNotifyVerdicts(paired, listing([device('someone-else')]), ['mine'], false);
+
+    expect(cachedNotifyVerdict(LAPTOP)).toBe(false);
+  });
+
+  it('answers each paired machine from its own switch', async () => {
+    await setGatewayNotify(LAPTOP, true);
+
+    await warmNotifyVerdicts(paired, listing([device('mine')]), ['mine'], false);
+
+    expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
+    expect(cachedNotifyVerdict(BUILDBOX)).toBe(false);
+  });
+
+  it('leaves an unreachable machine with the verdict it settled on', async () => {
+    rememberNotifyVerdict(LAPTOP, true);
+    await setGatewayNotify(LAPTOP, true);
+
+    const settled = await warmNotifyVerdicts(
+      [{ url: LAPTOP, token: 'a' }],
+      async () => {
+        throw new Error('machine unreachable');
+      },
+      ['mine'],
+      false,
+    );
+
+    expect(settled).toEqual([]);
+    expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
+  });
+
+  it('needs no round trip once the OS has silenced this app', async () => {
+    await setGatewayNotify(LAPTOP, true);
+    let asked = 0;
+
+    await warmNotifyVerdicts(
+      paired,
+      async () => {
+        asked += 1;
+        return { devices: [device('mine')] };
+      },
+      ['mine'],
+      true,
+    );
+
+    expect(asked).toBe(0);
+    expect(cachedNotifyVerdict(LAPTOP)).toBe(false);
+    expect(cachedNotifyVerdict(BUILDBOX)).toBe(false);
+  });
+
+  it('stops where the effect was torn down', async () => {
+    await setGatewayNotify(LAPTOP, true);
+    await setGatewayNotify(BUILDBOX, true);
+
+    const settled = await warmNotifyVerdicts(
+      paired,
+      listing([device('mine')]),
+      ['mine'],
+      false,
+      () => true,
+    );
+
+    expect(settled).toEqual([]);
+    expect(cachedNotifyVerdict(LAPTOP)).toBeNull();
   });
 });

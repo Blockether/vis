@@ -66,17 +66,26 @@ import {
   deviceRegistration,
   ensureAndroidChannel,
   isPushSupported,
+  maskToken,
   onPushTap,
   pushPermission,
 } from "./lib/push";
-import { drainPushRevocations, syncPushRegistrations } from "./lib/notify";
+import {
+  drainPushRevocations,
+  syncPushRegistrations,
+  warmNotifyVerdicts,
+} from "./lib/notify";
 import {
   drainWebPushRevocations,
   isWebNotificationsPlatform,
   registerWebServiceWorker,
   syncWebPushRegistrations,
 } from "./lib/web-push";
-import { registerForPush, unregisterFromPush } from "./lib/relay";
+import {
+  registerForPush,
+  registeredIds,
+  unregisterFromPush,
+} from "./lib/relay";
 import { isShellChromeVisible, shellScreen } from "./lib/shell";
 import {
   pushIntentFrom,
@@ -734,8 +743,7 @@ export function App() {
     // of a token (see lib/relay.ts).
     const revoke = (conn: GatewayConn, tok: string) =>
       unregisterFromPush(tok, new GatewayClient(conn).pushTarget());
-    const sweep = async () => {
-      if ((await pushPermission()) !== "granted") return;
+    const assertRegistrations = async () => {
       let token = cachedPushToken() ?? "";
       try {
         token = await acquirePushToken();
@@ -760,6 +768,25 @@ export function App() {
             ),
           unregister: revoke,
         },
+        () => cancelled,
+      );
+    };
+
+    // Every paired machine's Notifications row is answered HERE, in front of the
+    // whole fleet — the sweep is already standing in front of all of them, and a
+    // machine whose Settings this device has never opened would otherwise open on
+    // `Checking…` while it asked (`lib/notify.ts`).
+    const sweep = async () => {
+      const permission = await pushPermission();
+      if (permission === "granted") await assertRegistrations();
+      if (cancelled) return;
+      const ids = await registeredIds(cachedPushToken() ?? "");
+      if (cancelled) return;
+      await warmNotifyVerdicts(
+        notifyTargets,
+        (conn) => new GatewayClient(conn).devices(),
+        ids.map(maskToken),
+        permission === "denied",
         () => cancelled,
       );
     };

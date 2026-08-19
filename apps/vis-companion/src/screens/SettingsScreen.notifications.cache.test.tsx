@@ -45,6 +45,8 @@ vi.mock("../lib/push", async (importOriginal) => ({
 
 import { NativeNotificationsPanel } from "./SettingsScreen";
 import { maskToken } from "../lib/push";
+import { warmNotifyVerdicts } from "../lib/notify";
+import { setGatewayNotify } from "../lib/storage";
 import {
   cachedNotifyVerdict,
   rememberNotifyVerdict,
@@ -149,5 +151,26 @@ describe("reopening the notifications panel", () => {
     rememberNotifyVerdict(MACHINE, false);
 
     expect(cachedNotifyVerdict(MACHINE)).toBe(false);
+  });
+
+  // The whole fleet is answered by the launch sweep, so a machine whose Settings
+  // this device has NEVER opened is settled on its first open too.
+  it("paints a machine the fleet sweep answered for, never opened here", async () => {
+    await setGatewayNotify(MACHINE, true);
+    await warmNotifyVerdicts(
+      [{ url: MACHINE }],
+      async () => held,
+      [maskToken("device-token")],
+      false,
+    );
+
+    open(held);
+
+    expect(
+      screen.getByRole("button", {
+        name: "Disconnect notifications from buildbox",
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Checking…")).toBeNull();
   });
 });

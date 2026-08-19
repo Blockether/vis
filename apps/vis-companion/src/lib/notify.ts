@@ -24,7 +24,8 @@ import {
   pendingRevocations,
   setGatewayNotify,
 } from './storage';
-import type { GatewayConn } from './types';
+import { notifyVerdict, rememberNotifyVerdict } from './notify-verdict';
+import type { GatewayConn, PushDevice } from './types';
 
 /** How this device's token is handed to (or taken from) one gateway. */
 export interface PushRegistrar {
@@ -133,4 +134,50 @@ export async function applyGatewayNotify(
 /** Store the web tab's per-gateway switch without contacting the native push API. */
 export async function applyWebGatewayNotify(url: string, on: boolean): Promise<void> {
   await setGatewayNotify(url, on);
+}
+
+/**
+ * Answer every paired machine's Notifications row BEFORE it is opened.
+ *
+ * That row assembles its verdict from four asynchronous answers, so on a machine
+ * this device had never opened Settings on the first frame could only be
+ * `Checking…` — a pulsing amber `Connect` that settled into a quiet `Disconnect`
+ * a moment later. Reported as: it flickers on every machine, every time.
+ *
+ * The sweep above already stands in front of the WHOLE fleet on launch and on
+ * wake, which makes it the one place that can answer for a machine before the
+ * user asks. So each paired machine's device list is fetched here — the same
+ * `/v1/devices` the panel would have asked for, cached per gateway so the panel
+ * paints its push status too — and the verdict it implies is left where the row
+ * reads it synchronously (`lib/notify-verdict.ts`).
+ *
+ * A machine that does not answer keeps whatever it last settled on: a warm cache
+ * is a frame, never a claim, and a guess would be painted as a fact.
+ */
+export async function warmNotifyVerdicts(
+  conns: readonly GatewayConn[],
+  read: (conn: GatewayConn) => Promise<{ devices: PushDevice[] }>,
+  ids: readonly string[],
+  isBlocked: boolean,
+  isCancelled: () => boolean = () => false,
+): Promise<string[]> {
+  const settled: string[] = [];
+  const seen = new Set<string>();
+  for (const conn of conns) {
+    if (isCancelled()) break;
+    if (!conn.url || seen.has(conn.url)) continue;
+    seen.add(conn.url);
+    try {
+      const isWanted = await getGatewayNotify(conn.url);
+      // An OS that silenced this app answers for every machine at once: nothing
+      // any of them is holding can reach this device, so none is asked.
+      const devices = isBlocked ? [] : (await read(conn)).devices;
+      if (isCancelled()) break;
+      rememberNotifyVerdict(conn.url, notifyVerdict({ devices, ids, isWanted, isBlocked }));
+      settled.push(conn.url);
+    } catch {
+      // Unreachable machine: it keeps the verdict it last settled on.
+    }
+  }
+  return settled;
 }

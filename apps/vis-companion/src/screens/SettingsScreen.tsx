@@ -52,6 +52,7 @@ import { applyTheme } from "../lib/theme";
 import { applyGatewayNotify, applyWebGatewayNotify } from "../lib/notify";
 import {
   cachedNotifyVerdict,
+  notifyVerdict,
   rememberNotifyVerdict,
 } from "../lib/notify-verdict";
 import {
@@ -2296,11 +2297,6 @@ export function NativeNotificationsPanel({
       stale = true;
     };
   }, [token, devices]);
-  const mine = (devices ?? []).find((d) => masks.includes(d.token_preview));
-  const registered = Boolean(mine);
-  // Both halves have to agree: this machine holds the token AND this device
-  // still wants alerts from it.
-  const notifying = registered && notify;
   const supported = isPushSupported();
 
   const enable = useCallback(async () => {
@@ -2372,7 +2368,14 @@ export function NativeNotificationsPanel({
   // opened. Reported as: the settings screen flickers. So the settled verdict is
   // remembered per machine and painted first, and this pass revalidates it.
   const isSettled = devices !== null && areMasksRead;
-  const live = isSettled ? notifying && !blocked : null;
+  const live = isSettled
+    ? notifyVerdict({
+        devices: devices ?? [],
+        ids: masks,
+        isWanted: notify,
+        isBlocked: blocked,
+      })
+    : null;
   const remembered = useMemo(
     () => cachedNotifyVerdict(gateway.url),
     [gateway.url],
