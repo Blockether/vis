@@ -433,6 +433,14 @@ export interface GatewayAttachment {
   filename: string;
   media_type: string;
   base64: string;
+  /**
+   * What a RECORDING says, in words — transcribed once by the gateway's own speech
+   * engine on the turn that carried it, and stored beside the bytes. Absent for
+   * everything that is not audio, and for a memo nothing could read. The player
+   * offers it under itself; the model was given the same string in its manifest,
+   * because no provider wire carries audio.
+   */
+  transcription?: string;
 }
 
 /**
@@ -456,6 +464,8 @@ export interface IterationAttachment {
    */
   version?: number;
   size?: number;
+  /** {@link GatewayAttachment.transcription} for a PRODUCED recording. */
+  transcription?: string;
 }
 
 /**

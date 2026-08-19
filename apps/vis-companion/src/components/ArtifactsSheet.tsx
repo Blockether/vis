@@ -43,6 +43,7 @@ import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
 import { LiveArtifact } from "./LiveArtifact";
 import { MarkdownArtifact } from "./MarkdownArtifact";
+import { MediaRecording } from "./Media";
 import { PdfAnnotator } from "./PdfArtifact";
 import { readArtifactText } from "./TextArtifact";
 import { AlertIcon, ClipIcon, MicIcon, PlayIcon } from "./icons";
@@ -787,7 +788,11 @@ function ArtifactDetail({
     return (
       <DetailOverlay name={artifact.name} onClose={onClose}>
         <div className="p-3">
-          <audio src={url} controls preload="metadata" className="h-11 w-full" />
+          {/* The same row the transcript paints, so the words a memo carries are one
+              press away here too rather than only in the message it arrived on. */}
+          <MediaRecording transcription={artifact.transcription}>
+            <audio src={url} controls preload="metadata" className="h-11 w-full" />
+          </MediaRecording>
         </div>
       </DetailOverlay>
     );

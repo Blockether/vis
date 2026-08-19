@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { artifactMedia, attachmentBytes } from "../lib/artifacts";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../lib/media-frame";
 import { ImageGallery } from "../lib/gallery";
 import { MicIcon } from "./icons";
+import { Disclosure } from "./ui";
 
 /**
  * ONE picture on its own plate: the reserved frame from `lib/media-frame` with
@@ -54,31 +55,64 @@ export function MediaPlate({
 }
 
 /**
- * ONE recording as a ROW: the platform's own player, and the file name under it.
+ * ONE recording as a ROW: the platform's own player, the file name under it, and —
+ * when something could read the audio — its TRANSCRIPTION, folded away.
  *
  * A voice memo has no picture, so the reserved 4:3 box a still or a clip stands in
  * would be a frame around silence — and a poster frame that cannot be started is a
  * picture that lies. What identifies a recording is its NAME; what the reader wants
  * is the control that starts it, at the width of the column and at a height a thumb
  * can hit.
+ *
+ * The transcript is FOLDED because of what it is: the same words the reader can hear,
+ * and the same words the model was given. Open, it answers "what does this say?"
+ * without a playback; shut, a two-minute memo stays one row. It is a `Disclosure` at
+ * band weight, so it opens exactly like the THINKING band and the tool step above it
+ * rather than inventing a fourth chevron for the same question.
  */
 export function MediaRecording({
   name,
   meta,
+  transcription,
   children,
 }: {
   /** The caption's file name. Without one the row carries no caption at all. */
   name?: string;
   /** The caption's right half, e.g. `M4A · 412KB`. */
   meta?: string;
+  /**
+   * What the recording SAYS, transcribed once by the gateway's own speech engine on
+   * the turn that carried it. Absent means nothing read it — no engine, or audio it
+   * could not decode — and the row shows the player alone rather than an empty band.
+   */
+  transcription?: string;
   children: ReactNode;
 }) {
+  const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
+  const transcript = transcription?.trim() ?? "";
   return (
     <figure className="mt-2.5 min-w-0 first:mt-0">
       <div className="flex min-w-0 items-center gap-2 border border-code-edge bg-code px-2 py-2">
         <MicIcon className="size-4 shrink-0 text-dialog-hint" />
         <div className="min-w-0 flex-1">{children}</div>
       </div>
+      {transcript ? (
+        <div className="min-w-0">
+          <Disclosure
+            isOpen={isTranscriptOpen}
+            tone="step"
+            bleed
+            onClick={() => setIsTranscriptOpen(!isTranscriptOpen)}
+          >
+            TRANSCRIPTION
+          </Disclosure>
+          {isTranscriptOpen ? (
+            <p className="min-w-0 whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 font-mono text-meta text-dialog-hint">
+              {transcript}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {name ? (
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>

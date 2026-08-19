@@ -159,4 +159,36 @@ describe("MediaRecording", () => {
     expect(html).toContain("memo.m4a");
     expect(html).toContain("M4A · 8B");
   });
+
+  // The words a memo carries are the only thing a reader can SKIM, and the same
+  // string the model was given — but a minute of speech is a paragraph, so the row
+  // stays one line until it is asked.
+  it("folds the transcription away behind its own band", () => {
+    const withWords = renderToStaticMarkup(
+      <MediaRecording
+        name="memo.m4a"
+        meta="M4A · 8B"
+        transcription="buy milk and call back"
+      >
+        <audio controls />
+      </MediaRecording>,
+    );
+    expect(withWords).toContain("TRANSCRIPTION");
+    expect(withWords).toContain('aria-expanded="false"');
+    expect(withWords).not.toContain("buy milk and call back");
+  });
+
+  it("shows no band at all when nothing could read the recording", () => {
+    expect(html).not.toContain("TRANSCRIPTION");
+    expect(html).not.toContain("aria-expanded");
+  });
+
+  it("ignores a transcript that is only whitespace", () => {
+    const blank = renderToStaticMarkup(
+      <MediaRecording name="memo.m4a" transcription="   ">
+        <audio controls />
+      </MediaRecording>,
+    );
+    expect(blank).not.toContain("TRANSCRIPTION");
+  });
 });

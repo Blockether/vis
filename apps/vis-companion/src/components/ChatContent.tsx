@@ -1681,7 +1681,11 @@ const AttachmentTile = memo(function AttachmentTile({
   // control that starts it.
   if (isAudio) {
     return (
-      <MediaRecording name={name} meta={mediaMeta(attachment)}>
+      <MediaRecording
+        name={name}
+        meta={mediaMeta(attachment)}
+        transcription={attachment.transcription}
+      >
         {failed ? (
           <span className="flex min-w-0 items-center gap-1.5 font-mono text-chip text-footer-muted">
             <AlertIcon className="size-3" />
@@ -3227,6 +3231,7 @@ export const UserMessage = memo(function UserMessage({
               key={att.id ?? `rec-${index}`}
               name={att.filename}
               meta={mediaMeta(att)}
+              transcription={att.transcription}
             >
               <audio
                 src={attachmentSrc(att)}

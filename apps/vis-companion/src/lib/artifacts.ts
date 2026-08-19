@@ -219,6 +219,12 @@ export interface SessionArtifact {
   /** Which cut of this NAME it is, 1-based; 1 when the row carries no version. */
   version: number;
   /**
+   * What a RECORDING says, when the gateway's speech engine could read it. Carried
+   * on the row so the sheet can offer the words under the player without fetching a
+   * single audio byte.
+   */
+  transcription?: string;
+  /**
    * Every cut of this artifact, NEWEST FIRST and including this one — present
    * only on a collapsed list (`collapseArtifactVersions`). The primary view is
    * always the head; the rest is the history behind it.
@@ -251,6 +257,7 @@ function toArtifact(
     iterationId: where.iterationId,
     index,
     version: attachment.version ?? 1,
+    transcription: attachment.transcription,
   };
 }
 
