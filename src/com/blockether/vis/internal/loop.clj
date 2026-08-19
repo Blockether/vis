@@ -52,7 +52,7 @@
   (:import [java.util.concurrent ExecutionException ExecutorService Future SynchronousQueue
             ThreadFactory ThreadPoolExecutor TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
-           [org.graalvm.polyglot Context Value]))
+           [org.graalvm.polyglot Value]))
 
 (def ^:private gather-max-threads
   "Hard ceiling on concurrent `gather` worker threads. A GraalPy `Value.execute`

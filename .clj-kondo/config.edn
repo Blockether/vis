@@ -8,7 +8,14 @@
   com.blockether.vis.core/validator-fn clojure.core/fn
   ;; `fff-index/with-index` leases a pooled fff index: `[binding (lease …)]`,
   ;; exactly a `let` binding pair, so kondo resolves the bound index symbol.
-  com.blockether.vis.internal.fff-index/with-index clojure.core/let}
+  com.blockether.vis.internal.fff-index/with-index clojure.core/let
+  ;; Four sandbox LEASES, each `[binding (create …)] & body` — exactly a `let`
+  ;; binding pair, so kondo resolves the bound symbol (and a destructuring map)
+  ;; in the body instead of calling every use of it an unresolved symbol.
+  com.blockether.vis.test-python-context/with-own clojure.core/let
+  com.blockether.vis.test-python-context/with-own-env clojure.core/let
+  com.blockether.vis.internal.sandbox-resources/with-sandbox clojure.core/let
+  com.blockether.vis.internal.sandbox-resources/keeping-sandbox clojure.core/let}
 
  ;; `with-python-context` (sandbox-shim tests) is an anaphoric macro that binds
  ;; `python-context`; tell kondo the symbol is intentional, not a typo.

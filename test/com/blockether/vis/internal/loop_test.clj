@@ -551,7 +551,7 @@
           code
           (str "try:\n"
                "    rows = ls(" (pr-str outside)
-               ")\n" "    print('listed', isinstance(rows, list))\n"
+                ")\n" "    print('listed', isinstance(rows, str) and len(rows) > 0)\n"
                "except Exception as e:\n" "    print('refused', e)\n")
 
           env-with
