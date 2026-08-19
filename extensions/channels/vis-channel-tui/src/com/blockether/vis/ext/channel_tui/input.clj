@@ -1245,14 +1245,14 @@
 
 (def ^:private image-path-content-regex
   "A single-line paste whose sole payload is a filesystem path ending in a known
-   still-image or CLIP extension. Case-insensitive; trailing whitespace tolerated. Used to
+   still-image, CLIP or RECORDING extension. Case-insensitive; trailing whitespace tolerated. Used to
    recognise an image paste the paste-time probe MISSED — e.g. the terminal pasted
    the path a beat before it finished writing the temp file, so `probe-paste-image`
    saw no readable image yet and filed it as a plain `:content` paste. By send time
    the file exists, but a plain `:content` paste expands WITHOUT newline isolation
    and glues onto adjacent text, so the engine's extension-anchored scanner drops
    it and the image never attaches."
-  #"(?i)^\s*\S+\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov)\s*$")
+  #"(?i)^\s*\S+\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)\s*$")
 
 (defn- image-path-content?
   "True when `s` is a lone single-line image-extension path (see

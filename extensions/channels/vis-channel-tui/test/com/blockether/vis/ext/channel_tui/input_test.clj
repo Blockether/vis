@@ -639,7 +639,17 @@
       ;; A non-path payload is left untouched (no spurious newlines).
       (expect (= "x echo hi y"
                  (input/expand-paste-placeholders "x [Pasted #1: 1 line, 7B] y"
-                                                  {1 {:id 1 :content "echo hi"}}))))))
+                                                  {1 {:id 1 :content "echo hi"}})))))
+  (it "a dropped voice memo is isolated the same way — the terminal's only door for one"
+      ;; The TUI has no picker: a memo dropped on the terminal arrives as a bare
+      ;; path in the message, and this list named pictures and clips only, so the
+      ;; path glued onto the next word and the engine's scanner never saw a file.
+      (let [pastes {1 {:id 1 :content "/tmp/memo.m4a"}}]
+        (expect (= "hear \n/tmp/memo.m4a\nin tui"
+                   (input/expand-paste-placeholders "hear [Pasted #1: 1 line, 13B]in tui" pastes)))
+        (expect (= "\n/tmp/notes.mp3\n"
+                   (input/expand-paste-placeholders "[Pasted #1: 1 line, 14B]"
+                                                    {1 {:id 1 :content "/tmp/notes.mp3"}}))))))
 
 (defdescribe placeholder-smart-delete-test
              (it "placeholder-id-before-cursor returns the id when cursor sits right after `]`"
