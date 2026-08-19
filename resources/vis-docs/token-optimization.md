@@ -77,6 +77,8 @@ root = Path(session["workspace"]["root"])
 src, tests = root / "src", root / "test"
 ```
 
+A tool takes that `Path` itself: every path argument crosses the sandbox boundary as its filesystem string, so `cat(src / "core.clj")` is the same call as `cat` on the path text. Wrapping a path in `str(...)` before handing it to a tool buys nothing.
+
 Write a small helper the first time a shape repeats, then CALL it from every later block — a function defined in an earlier block is still bound, and redefining it is a paste the context pays for twice:
 
 ```python

@@ -142,8 +142,9 @@ shell analogue of `/slash`, and works the same way in the **TUI** and the
   offset), `sh.type("y")`,
   `sh.stop()`. Every answer already carries that shell's status — running or exited,
   since when, its `log_path`, and the live `cpu_ms`/`cpu_percent`/`rss_bytes` of its
-  process tree — so nothing has to ask again. There is no `wait` knob on the request — a request cannot select a
-  mode. Every shell keeps its log by id for the session, so a finished run is
+  process tree — so nothing has to ask again.
+- There is no `wait` knob on the request — a request cannot select a mode. Every
+  shell keeps its log by id for the session, so a finished run is
   still readable a turn later.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
   LLM turn.
