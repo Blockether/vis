@@ -7,6 +7,27 @@
             [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- wav-path
+  "A REAL (empty) 16-bit PCM WAV on disk, deleted when the JVM exits.
+
+   The engine now converts anything that is not RIFF/WAVE before it reaches the
+   model (`transcode/with-wav`), so a made-up `\"clip.wav\"` no longer reaches the
+   stub below — it reaches ffmpeg, which correctly refuses a file that does not
+   exist. What these tests are about is the recorder's OWN output, which is a wav."
+  ^String []
+  (let [file
+        (java.io.File/createTempFile "vis-engine-test" ".wav")
+
+        header
+        (byte-array 46)]
+
+    (.deleteOnExit file)
+    (System/arraycopy (.getBytes "RIFF" "US-ASCII") 0 header 0 4)
+    (System/arraycopy (.getBytes "WAVE" "US-ASCII") 0 header 8 4)
+    (with-open [out (java.io.FileOutputStream. file)]
+      (.write out header))
+    (.getPath file)))
+
 (defn- answers
   "A `model-state` that walks a script and then stays on its last answer."
   [script]
@@ -49,7 +70,7 @@
                       (constantly true)]
 
           (expect (= "it speaks again"
-                     (engine/transcribe {:audio-path "clip.wav"
+                     (engine/transcribe {:audio-path (wav-path)
                                          :on-progress (fn [m]
                                                         (swap! phases conj (:phase m)))})))
           (expect (= 1 @downloads) "the retry is a real new download, not a re-read of the verdict")
@@ -71,7 +92,7 @@
                     sherpa/ensure-native!
                     (constantly true)]
 
-        (let [thrown (try (engine/transcribe {:audio-path "clip.wav"}) nil (catch Throwable t t))]
+        (let [thrown (try (engine/transcribe {:audio-path (wav-path)}) nil (catch Throwable t t))]
           (expect (some? thrown))
           (expect (= :voice-asr/model-download-failed (:type (ex-data thrown))))
           (expect (str/includes? (ex-message thrown) "connection reset"))))))
@@ -95,7 +116,7 @@
                     sherpa/ensure-native!
                     (constantly true)]
 
-        (let [thrown (try (engine/transcribe {:audio-path "clip.wav"}) nil (catch Throwable t t))]
+        (let [thrown (try (engine/transcribe {:audio-path (wav-path)}) nil (catch Throwable t t))]
           (expect (some? thrown))
           (expect (= :voice/native-unavailable (:type (ex-data thrown))))
           (expect (true? (:is-restart-required (ex-data thrown))))

@@ -110,7 +110,8 @@
     {:level :info :check-id ::ffmpeg :message "ffmpeg: installed"}
     {:level :warn
      :check-id ::ffmpeg
-     :message "ffmpeg: missing; voice input cannot convert .oga/.opus to WAV for ASR."
+     :message
+     "ffmpeg: missing; anything but 16-bit PCM WAV — a voice memo, an .mp3, an .oga/.opus — cannot be transcribed."
      :remediation "Install ffmpeg and ensure it is on PATH for the Vis process."}))
 
 (defn- model-message

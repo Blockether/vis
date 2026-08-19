@@ -682,6 +682,13 @@ CREATE TABLE session_attachment (
   audience                  TEXT NOT NULL DEFAULT 'both'
                             CHECK (audience IN ('both', 'user', 'model')),
 
+  -- TRANSCRIPTION: what a RECORDING says, in words. No provider wire carries
+  -- audio, so a voice memo is transcribed once by the local speech engine on the
+  -- turn that carried it and the words are stored beside the bytes: the model
+  -- reads them in the manifest, every player offers them under itself, and a
+  -- resumed session re-renders both without transcribing anything again. NULL for
+  -- every attachment that is not a recording, and for one nothing could read.
+  transcription             TEXT,
   bytes                     BLOB,
   storage_uri               TEXT,
 

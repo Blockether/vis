@@ -9,6 +9,26 @@
             [com.blockether.vis.internal.voice :as vcore]
             [lazytest.core :refer [defdescribe it expect]]))
 
+(defn- wav-path
+  "A REAL (empty) 16-bit PCM WAV on disk, the shape the recorder itself writes.
+
+   Voice input converts anything that is NOT RIFF/WAVE before the model sees it
+   (`transcode/with-wav`), so a stand-in path now reaches ffmpeg rather than the
+   stub below. What these tests are about is what the recorder hands over."
+  ^String []
+  (let [file
+        (java.io.File/createTempFile "vis-input-test" ".wav")
+
+        header
+        (byte-array 46)]
+
+    (.deleteOnExit file)
+    (System/arraycopy (.getBytes "RIFF" "US-ASCII") 0 header 0 4)
+    (System/arraycopy (.getBytes "WAVE" "US-ASCII") 0 header 8 4)
+    (with-open [out (java.io.FileOutputStream. file)]
+      (.write out header))
+    (.getPath file)))
+
 (defdescribe
   voice-input-test
   (it "registers /voice as a declarative slash command"
@@ -46,11 +66,11 @@
 
                     recorder/stop!
                     (fn [_]
-                      :audio-file)
+                      (wav-path))
 
                     vcore/transcribe!
                     (fn [{audio-file :audio-path}]
-                      (expect (= ":audio-file" audio-file))
+                      (expect (str/ends-with? (str audio-file) ".wav"))
                       "Parakeet translation")
 
                     vis/publish-channel-event!
@@ -118,7 +138,7 @@
 
                            recorder/stop!
                            (fn [_]
-                             :audio-file)
+                             (wav-path))
 
                            asr/model-state
                            (fn []
@@ -130,7 +150,7 @@
 
                            asr/transcribe-file!
                            (fn [_dir audio-path _opts]
-                             (expect (= ":audio-file" audio-path))
+                             (expect (str/ends-with? (str audio-path) ".wav"))
                              "uh add add this this to to the prompt")
 
                            vis/publish-channel-event!

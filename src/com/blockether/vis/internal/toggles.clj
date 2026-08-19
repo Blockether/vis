@@ -634,6 +634,21 @@
        :owner :vis
        :group :provider
        :persist? true})
+    ;; No provider wire carries audio, so a voice memo is stored, played for the
+    ;; human and merely NAMED to the model. The speech engine this build already
+    ;; carries turns it into its own words locally - no quota, no bytes on anybody
+    ;; else's wire - and the transcript rides the manifest where the recording
+    ;; cannot. Off means today's behaviour; a build with no engine pays nothing
+    ;; either way, so this defaults ON.
+    (register-toggle! {:id "audio_transcribe_attachments"
+                       :label "Transcribe attached recordings"
+                       :description
+                       "Transcribe attached voice recordings locally and give the model the words."
+                       :type :boolean
+                       :default true
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
     ;; Automatic fallback is a COST decision the human owns: a rescue on another
     ;; provider answers in a model they did not pick and starts that provider's
     ;; prompt cache from cold (~4x input spend for the rest of the session,

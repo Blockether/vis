@@ -11,6 +11,7 @@
     [com.blockether.svar.internal.router :as svar-router]
     [com.blockether.svar.internal.util :as util]
     [com.blockether.vis.internal.attachments :as attachments]
+    [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.config :as config]
     [com.blockether.vis.internal.security-policy :as security-policy]
     [com.blockether.vis.internal.cancellation :as cancellation]
@@ -6947,7 +6948,11 @@
           ;; INLINE (web/API) uploads — validated in prepare-turn-context and
           ;; carried on the env — ride AHEAD of disk-scanned images; both feed
           ;; the same multimodal assemble seam.
-          {:attached (into (vec (:user/attachments environment)) (:attached disk))
+          ;; A RECORDING carries no pixels and no wire takes it, so the local
+          ;; speech engine turns it into its own words here — once, content-keyed,
+          ;; and the manifest quotes them where the audio cannot go.
+          {:attached (audio-transcribe/transcribe-attachments
+                       (into (vec (:user/attachments environment)) (:attached disk)))
            :skipped (into (vec (:user/skipped-attachments environment)) (:skipped disk))})
 
         _
@@ -8462,8 +8467,12 @@
                  {:level :warn :id ::turn-image-persist-scan-failed :data {:error (ex-message t)}})
                nil))
 
+        ;; The transcript of a voice memo is persisted WITH the recording (the same
+        ;; content-keyed pass the prompt reads), so the player in every surface can
+        ;; open its transcript and a resumed session still has the words.
         turn-attachments
-        (into (vec (:user/attachments env)) disk-attachments)
+        (audio-transcribe/transcribe-attachments (into (vec (:user/attachments env))
+                                                       disk-attachments))
 
         session-turn-id
         (persistance/db-store-session-turn!

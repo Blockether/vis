@@ -2776,6 +2776,9 @@
                                     :filename (:filename att)
                                     :version (next-version (:filename att))
                                     :audience (attachments/normalize-audience (:audience att))
+                                    ;; The recording's own words, transcribed once on
+                                    ;; the way in - see the column's comment in V1.
+                                    :transcription (not-empty (str (:transcription att)))
                                     :created_at now}
                                    payload)]})))))
 
@@ -2868,6 +2871,9 @@
      ;; but never a wire image block; "model" is sent and never shown. Normalized
      ;; on read so the send-time gate never sees a legacy or NULL value.
      :audience (attachments/normalize-audience (:audience row))
+     ;; TRANSCRIPTION: what a recording SAYS. Present only for audio, and only when
+     ;; something could read it; every other row carries nil rather than "".
+     :transcription (not-empty (str (:transcription row)))
      :storage-uri (:storage_uri row)
      :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
      :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
@@ -2969,7 +2975,7 @@
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :version :audience :storage_uri :size_bytes
+   :filename :version :audience :storage_uri :size_bytes :transcription
    [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
@@ -3090,7 +3096,8 @@
          [:a.session_turn_iteration_id :session_turn_iteration_id] [:a.tool_call_id :tool_call_id]
          [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
          [:a.version :version] [:a.audience :audience] [:a.storage_uri :storage_uri]
-         [:a.size_bytes :size_bytes] [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
+         [:a.transcription :transcription] [:a.size_bytes :size_bytes]
+         [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
         [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))
 
 (defn db-list-session-attachments-meta
@@ -3422,6 +3429,7 @@
                                       ;; producer was told which cut this is.
                                       :version (or (:version att) (next-version (:filename att)))
                                       :audience (attachments/normalize-audience (:audience att))
+                                      :transcription (not-empty (str (:transcription att)))
                                       :created_at now}
                                      payload)]}))))))
 

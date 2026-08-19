@@ -14,7 +14,8 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.ext.foundation-voice.assets :as assets])
+            [com.blockether.vis.ext.foundation-voice.assets :as assets]
+            [com.blockether.vis.ext.foundation-voice.transcode :as transcode])
   (:import (java.io File)
            (java.nio ByteBuffer ByteOrder)
            (java.nio.charset StandardCharsets)
@@ -68,17 +69,6 @@
   ^ByteBuffer [^bytes data]
   (doto (ByteBuffer/wrap data) (.order ByteOrder/LITTLE_ENDIAN)))
 
-(defn wav?
-  "Is this file a RIFF/WAVE container at all? Cheap enough to ask before
-   deciding whether a converter is needed."
-  [^File file]
-  (and (.isFile file)
-       (> (.length file) 44)
-       (with-open [in (io/input-stream file)]
-         (let [head (byte-array 12)]
-           (and (= 12 (.read in head 0 12))
-                (= "RIFF" (four-cc head 0))
-                (= "WAVE" (four-cc head 8)))))))
 
 (defn- unsupported-encoding!
   [detail]
@@ -271,45 +261,11 @@
          vec)))
 
 (defn- source-clip!
-  "The recording to import, as a 16-bit PCM WAV Vis can read. A container Vis
-   does not decode is handed to ffmpeg when the machine has it - a phone records
-   .m4a, and refusing that outright would be refusing the most likely file."
+  "The recording to import, as a 16-bit PCM WAV Vis can read. A container Vis does
+   not decode is converted ([[transcode/with-wav]]) - a phone records .m4a, and
+   refusing that outright would be refusing the most likely file."
   [^File file]
-  (if (wav? file)
-    (decode-wav file)
-    (let [ffmpeg
-          (some #(let [f (io/file % "ffmpeg")] (when (.canExecute f) (str f)))
-                (str/split (str (System/getenv "PATH")) (re-pattern File/pathSeparator)))
-
-          converted
-          (File/createTempFile "vis-voice-import" ".wav")]
-
-      (when-not ffmpeg
-        (.delete converted)
-        (throw (ex-info (str "That recording is not a WAV file, and this machine has no ffmpeg"
-                             " to convert it. Convert it first:"
-                             " ffmpeg -i "
-                             (.getName file)
-                             " -ac 1 -c:a pcm_s16le clip.wav")
-                        {:type :voice-tts/clip-not-wav :path (str file)})))
-      (try (let [^java.util.List command
-                 [ffmpeg "-v" "error" "-y" "-i" (str file) "-ac" "1" "-c:a" "pcm_s16le"
-                  (str converted)]
-
-                 ^Process process
-                 (.start (doto (ProcessBuilder. command) (.redirectErrorStream true)))
-
-                 output
-                 (slurp (.getInputStream process))
-
-                 code
-                 (.waitFor process)]
-
-             (when-not (zero? code)
-               (throw (ex-info (str "ffmpeg could not read that recording: " (str/trim output))
-                               {:type :voice-tts/clip-unreadable :exit code})))
-             (decode-wav converted))
-           (finally (.delete converted))))))
+  (transcode/with-wav file decode-wav))
 
 (defn import!
   "Take the recording at `:path` as a voice and return what it became.

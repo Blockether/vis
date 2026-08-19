@@ -7,9 +7,12 @@
    a whisper.cpp server is therefore an extension that calls
    `voice/register-engine!` with its own `:transcribe`, and zero lines change
    anywhere else."
-  (:require [com.blockether.vis.ext.foundation-voice.asr :as asr]
+  (:require [clojure.java.io :as io]
+            [com.blockether.vis.ext.foundation-voice.asr :as asr]
             [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
-            [com.blockether.vis.internal.voice :as voice]))
+            [com.blockether.vis.ext.foundation-voice.transcode :as transcode]
+            [com.blockether.vis.internal.voice :as voice])
+  (:import [java.io File]))
 
 (set! *warn-on-reflection* true)
 
@@ -61,13 +64,21 @@
     (str text)))
 
 (defn transcribe
-  "The engine fn: `{:audio-path :on-progress}` -> transcript."
+  "The engine fn: `{:audio-path :on-progress}` -> transcript.
+
+   The container is normalized FIRST ([[transcode/with-wav]]): sherpa-onnx reads
+   16-bit PCM WAV and nothing else, while the recordings people actually hand Vis
+   are `.m4a` memos and `.mp3` shares. Doing it here rather than at each surface
+   is what makes an ATTACHED voice memo and the TUI's own microphone one path."
   [{:keys [audio-path on-progress]}]
   (let [report (fn [m]
                  (when on-progress (try (on-progress m) (catch Throwable _ nil))))]
     (await-model! report)
-    (sherpa/call-native
-      #(clean-text (asr/transcribe-file! (asr/model-dir) audio-path {:on-progress on-progress})))))
+    (transcode/with-wav
+      (io/file (str audio-path))
+      (fn [^File wav]
+        (sherpa/call-native
+          #(clean-text (asr/transcribe-file! (asr/model-dir) (str wav) {:on-progress on-progress})))))))
 
 (defn register!
   "Idempotent — [[voice/register-engine!]] replaces by id. `:model-state` and

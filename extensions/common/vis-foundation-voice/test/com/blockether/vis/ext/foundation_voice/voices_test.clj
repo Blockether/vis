@@ -5,6 +5,7 @@
    refuses to treat as a voice at all."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.ext.foundation-voice.transcode :as transcode]
             [com.blockether.vis.ext.foundation-voice.voices :as voices]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -138,9 +139,9 @@
             (expect (= :voice-tts/clip-too-short
                        (:type (ex-data-of #(voices/import! {:path (str (wav! 0.2 24000 1))
                                                             :voice-name "Blip"})))))
-            (expect (false? (voices/wav? garbage)))
+            (expect (false? (transcode/wav? garbage)))
             ;; ffmpeg converts what Vis cannot decode, so the refusal depends on the
             ;; machine - but it is always a NAMED refusal about the recording
-            (expect (contains? #{:voice-tts/clip-not-wav :voice-tts/clip-unreadable}
+            (expect (contains? #{:voice/no-ffmpeg :voice/unreadable}
                                (:type (ex-data-of #(voices/import! {:path (str garbage)
                                                                     :voice-name "Garbage"}))))))))))

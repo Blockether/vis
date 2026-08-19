@@ -3026,6 +3026,52 @@
       (expect (every? #(= b64 (:base64 %)) (concat user-atts tool-atts))))))
 
 (defdescribe
+  attachment-transcription-round-trip-test
+  (it "a recording's transcript is stored beside its bytes and comes back on every read"
+      ;; No provider wire carries audio, so the WORDS are the only thing a later turn
+      ;; (or a resumed session, or a second device) can show and send. If they did not
+      ;; survive storage the engine would have to transcribe the same memo forever.
+      (let [s
+            (h/store)
+
+            cid
+            (h/store-session! s {:channel :cli})
+
+            b64
+            (.encodeToString (java.util.Base64/getEncoder)
+                             (byte-array (map unchecked-byte [1 2 3])))
+
+            tid
+            (vis/db-store-session-turn!
+              s
+              {:parent-session-id cid
+               :user-request "listen to this"
+               :attachments
+               [{:media-type "audio/mp4"
+                 :base64 b64
+                 :filename "memo.m4a"
+                 :size 3
+                 :source :user
+                 :transcription "buy milk"}
+                {:media-type "image/png" :base64 b64 :filename "shot.png" :size 3 :source :user}]})
+
+            rows
+            (vis/db-list-turn-attachments s tid)
+
+            by-name
+            (into {} (map (juxt :filename identity)) rows)]
+
+        (expect (= "buy milk" (:transcription (get by-name "memo.m4a"))))
+        ;; A picture has nothing to say: nil, never "".
+        (expect (nil? (:transcription (get by-name "shot.png"))))
+        ;; The BYTE-FREE readers carry it too — a client offering "Transcription"
+        ;; under the player must not have to download the audio to find the words.
+        (expect (= "buy milk"
+                   (:transcription (first (filter #(= "memo.m4a" (:filename %))
+                                                  (vis/db-list-session-attachments-meta s cid))))))
+        (expect (= "buy milk"
+                   (:transcription (vis/db-read-attachment s (:id (get by-name "memo.m4a")))))))))
+(defdescribe
   session-model-pin-rides-the-session-row-test
   "`db-get-session` already selects the whole `session_soul` row, so the per-session
    model PIN comes back with it — a session list can name the model each row runs

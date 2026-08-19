@@ -725,6 +725,12 @@
 (def ^:private recording-reason
   "Why a voice memo or a music file is named to the model instead of sent to it."
   "a recording for the human — open the file to hear it, it is never an image block")
+
+(def ^:private transcribed-recording-reason
+  "The same refusal once the words are known: the bytes still cannot ride the wire,
+   but nothing is missing from the turn, so the model must not be told to go and
+   open a file it has already been given the contents of."
+  "a recording for the human — its transcript is quoted below, so it is not attached")
 (def audiences
   "The CLOSED vocabulary of an attachment's AUDIENCE — who the artifact is for:
 
@@ -1087,10 +1093,17 @@
                    :skipped
                    conj
                    {:path label
-                    :reason (cond (audio-media-type? media-type) recording-reason
+                    :reason (cond (audio-media-type? media-type) (if (str/blank?
+                                                                       (str (:transcription att)))
+                                                                   recording-reason
+                                                                   transcribed-recording-reason)
                                   (human-only-media-type? media-type) human-only-doc-reason
                                   :else user-only-reason)
-                    :readable-blind? true})
+                    :readable-blind? true
+                    ;; The recording's own WORDS, when something transcribed it
+                    ;; ([[com.blockether.vis.internal.audio-transcribe]]). The manifest
+                    ;; quotes them where the audio cannot go.
+                    :transcription (not-empty (str (:transcription att)))})
            (not vision?)
            (update acc :skipped conj {:path label :reason no-vision-reason :readable-blind? true})
            :else
