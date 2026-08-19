@@ -1521,27 +1521,15 @@
     {:dir dest :code-sha (code-sha dest)}))
 
 (defn ^:no-doc close-context!
-  "Close a GraalPy context AND the engine it owns, swallowing what either
-   throws. Every close in this namespace tears down a context that is already
-   superseded, dead or being replaced, so a failing close must never take the
-   load - or the failure being reported - down with it.
+  "Tear down a context this namespace owns. Thin wrapper over
+   `sandbox-resources/dispose!`, which is where the ORDER lives — scope, then
+   Context, then Engine — so no teardown site has to remember it.
 
-   The engine goes too, and it has to: closing only the Context frees nothing
-   while its Engine lives (see `env-python/new-engine!`). `build-context` gives
-   every context an Engine of its OWN, so `.getEngine` here can only ever reach
-   this context's engine — never a shared one.
-
-   Public because `build-context` has callers outside this namespace, and
-   closing only the Context is not enough: the threads go, but the Engine keeps
-   everything ever built on it."
+   Every close here tears down a context that is already superseded, dead or
+   being replaced, so a failing close must never take the load, or the failure
+   being reported, down with it."
   [ctx]
-  (when ctx
-    (let [engine (try (.getEngine ^Context ctx) (catch Throwable _ nil))]
-      ;; Host objects this context's guest opened, before it stops being able to
-      ;; hand them back (see `sandbox-resources/release-scope!`).
-      (try (res/release-scope! ctx) (catch Throwable _ nil))
-      (try (.close ^Context ctx true) (catch Throwable _ nil))
-      (when engine (try (.close ^Engine engine true) (catch Throwable _ nil))))))
+  (res/dispose! ctx))
 
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the

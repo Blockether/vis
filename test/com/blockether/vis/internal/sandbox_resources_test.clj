@@ -9,12 +9,14 @@
    a thing the next author forgets — silently, because a leaked image or socket
    fails nothing until a gateway has been up for a day."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.env-python :as ep]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.shim-paramiko]
             [com.blockether.vis.internal.foundation.shim-pil]
             [com.blockether.vis.internal.foundation.shim-sqlite3]
             [com.blockether.vis.internal.sandbox-resources :as res]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it throws?]])
+  (:import (org.graalvm.polyglot Context)))
 
 ;; ── the mechanism ─────────────────────────────────────────────────────────
 
@@ -206,3 +208,107 @@
                             :com.blockether.vis.internal.foundation.shim-paramiko/sftp
                             :com.blockether.vis.internal.foundation.shim-paramiko/servers]]
                    (expect (res/declared? k) (str k " is not declared — nothing would free it")))))
+
+;; ── the canonical teardown ────────────────────────────────────────────────
+
+(defn- fresh-sandbox
+  []
+  (let [engine (ep/new-engine!)
+        ctx (-> (Context/newBuilder (into-array String ["python"]))
+                (.engine engine)
+                (.allowAllAccess true)
+                (.build))]
+    (.eval ctx "python" "import os, sys")
+    {:python-context ctx :python-engine engine}))
+
+(defdescribe dispose-closes-the-sandbox-test
+  ;; What `dispose!` frees, and why the order is not arbitrary:
+  ;;
+  ;;   scope   — the host objects the guest still holds, while they are live
+  ;;   Context — which reaps GraalPy's per-context action threads. Measured
+  ;;             separately: three contexts create ten such threads and they drop
+  ;;             to zero once the Contexts close, engines still open. Leaving them
+  ;;             is not a thread problem but a permanent one — a running thread is
+  ;;             a GC root, so it pins the Context, its Engine and the whole
+  ;;             Python heap; three abandoned contexts kept theirs through two
+  ;;             full GCs and the count went UP.
+  ;;   Engine  — which returns that heap, since an Engine retains everything ever
+  ;;             built on it.
+  ;;
+  ;; The thread count itself is deliberately NOT asserted here: the suite runs
+  ;; many namespaces in one JVM and most of them hold sandboxes they never close,
+  ;; so it is a global number this test does not control. What IS asserted is the
+  ;; part `dispose!` owns.
+  (it "leaves the context dead"
+    (let [box (fresh-sandbox)]
+      (expect (some? (.eval ^Context (:python-context box) "python" "1+1"))
+              "sanity: a fresh sandbox evaluates")
+      (res/dispose! box)
+      (expect (throws? Exception #(.eval ^Context (:python-context box) "python" "1"))
+              "a disposed context must not still evaluate"))))
+
+(defdescribe dispose-takes-either-shape-test
+  (it "accepts the create-python-context map or a bare Context"
+    (let [box (fresh-sandbox)]
+      ;; bare Context: the Engine is derived, so a caller holding only a Context
+      ;; still gets the full teardown rather than half of it.
+      (res/dispose! (:python-context box))
+      (expect (throws? Exception #(.eval ^Context (:python-context box) "python" "1"))))
+    (res/dispose! nil)
+    (expect true "disposing nil must be a no-op, not a throw")))
+
+(defdescribe with-sandbox-test
+  (it "disposes when the body returns AND when it throws"
+    (let
+      [box
+       (atom nil)
+
+       v
+       (res/with-sandbox [b (fresh-sandbox)] (reset! box b) :done)]
+
+      (expect (= :done v))
+      (expect (throws? Exception #(.eval ^Context (:python-context @box) "python" "1"))
+              "with-sandbox left the sandbox open after a normal return"))
+
+    (let
+      [box
+       (atom nil)
+
+       thrown
+       (try (res/with-sandbox [b (fresh-sandbox)]
+              (reset! box b)
+              (throw (RuntimeException. "boom")))
+            nil
+            (catch RuntimeException e e))]
+
+      (expect (some? thrown) "with-sandbox must not swallow the body's throw")
+      (expect (throws? Exception #(.eval ^Context (:python-context @box) "python" "1"))
+              "with-sandbox left the sandbox open after a throw"))))
+
+(defdescribe keeping-sandbox-test
+  ;; The other half: a sandbox meant to OUTLIVE the block that builds it, where
+  ;; everything between creating it and handing it over can still fail.
+  (it "keeps the sandbox on success and disposes it only on a throw"
+    (let
+      [box
+       (res/keeping-sandbox [b (fresh-sandbox)] b)]
+
+      (expect (some? (.eval ^Context (:python-context box) "python" "1+1"))
+              "keeping-sandbox disposed a sandbox the body returned successfully")
+      (res/dispose! box))
+
+    (let
+      [box
+       (atom nil)
+
+       thrown
+       (try (res/keeping-sandbox [b (fresh-sandbox)]
+              (reset! box b)
+              (throw (RuntimeException. "setup failed")))
+            nil
+            (catch RuntimeException e e))]
+
+      (expect (some? thrown) "keeping-sandbox must rethrow")
+      (expect (throws? Exception #(.eval ^Context (:python-context @box) "python" "1"))
+              (str "keeping-sandbox abandoned the sandbox on the failure path —"
+                   " an abandoned sandbox is never collected")))))

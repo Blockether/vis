@@ -16,7 +16,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.python-extensions :as pyx])
+            [com.blockether.vis.internal.python-extensions :as pyx]
+            [com.blockether.vis.internal.sandbox-resources :as res])
   (:import [java.io File]
            [org.graalvm.polyglot Context Value]))
 
@@ -166,7 +167,7 @@
              {:import-roots []
               :testpaths []
               :warning (str "project layout not read: " (throwable-msg t))})
-           (finally (try (pyx/close-context! ctx) (catch Throwable _)))))))
+           (finally (res/dispose! ctx))))))
 
 (defn project-layout
   "`{:import-roots [abs…] :testpaths [abs…]}` for `dir`, read in a THROWAWAY

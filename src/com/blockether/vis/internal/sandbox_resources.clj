@@ -41,7 +41,8 @@
    process-global map would pin it, and a pinned Context is exactly the leak
    `env-python/new-engine!` exists to prevent, since an Engine retains every
    Context ever built on it."
-  (:require [taoensso.telemere :as tel]))
+  (:require [taoensso.telemere :as tel])
+  (:import (org.graalvm.polyglot Context Engine)))
 
 (defonce ^:private kinds
   ;; kind -> {:resource/release :resource/label :resource/max}. Declared by the
@@ -187,6 +188,62 @@
         (when-let [v (forget! kind h)]
           (release! kind h v)))))
   nil)
+
+(defn dispose!
+  "Tear ONE sandbox down completely, in the only order that works:
+
+     1. hand back the host objects its guest still holds ([[release-scope!]]),
+        while the handles are still live
+     2. close the Context — which is what reaps GraalPy's per-context action
+        threads. Leave them and the sandbox becomes IMMORTAL: a running thread
+        is a GC root, so it pins the Context, its Engine and the whole Python
+        heap, and no amount of collecting gets them back
+     3. close the Engine — which is what returns that heap. An Engine retains
+        everything ever built on it, so closing only the Context frees nothing
+
+  Miss any step and you lose a different thing, which is why this exists once
+  rather than being spelled out at each teardown. Accepts either the map a
+  `create-python-context` returns or a bare Context (its Engine is derived).
+  Best-effort throughout: teardown must never throw."
+  [sandbox]
+  (when sandbox
+    (let
+      [ctx
+       (if (map? sandbox) (:python-context sandbox) sandbox)
+
+       engine
+       (if (map? sandbox)
+         (:python-engine sandbox)
+         (try (.getEngine ^Context sandbox) (catch Throwable _ nil)))]
+
+      (when ctx
+        (try (release-scope! ctx) (catch Throwable _ nil))
+        (try (.close ^Context ctx true) (catch Throwable _ nil)))
+      (when engine (try (.close ^Engine engine true) (catch Throwable _ nil)))))
+  nil)
+
+(defmacro with-sandbox
+  "Bind `sym` to what `create-expr` returns and [[dispose!]] it when the body
+   leaves, however it leaves. For a sandbox whose life IS this block: a test
+   runner, a one-shot probe, a project-metadata read."
+  [[sym create-expr] & body]
+  `(let [~sym ~create-expr]
+     (try ~@body
+          (finally (dispose! ~sym)))))
+
+(defmacro keeping-sandbox
+  "Bind `sym` to what `create-expr` returns, and [[dispose!]] it ONLY if the body
+   throws. On success the body's value owns it.
+
+   For the other half of the problem: a sandbox meant to OUTLIVE the block that
+   builds it — a session env — where everything between creating it and handing
+   it over can still fail. Without this, a throw in that stretch abandons the
+   sandbox, and an abandoned sandbox is never collected (see [[dispose!]]), so
+   the failure path leaks worse than the success path ever could."
+  [[sym create-expr] & body]
+  `(let [~sym ~create-expr]
+     (try ~@body
+          (catch Throwable t# (dispose! ~sym) (throw t#)))))
 
 (defn live-count
   "How many handles of `kind` are live. For tests and diagnostics."

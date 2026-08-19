@@ -9685,19 +9685,12 @@
   ;; `env-python/forget-session-defs!`).
   (when-let [sid (:session-id environment)]
     (try (env/forget-session-defs! sid) (catch Throwable _ nil)))
-  (when-let [python-context (:python-context environment)]
-    ;; BEFORE the close, so a release that still needs a live handle has one:
-    ;; hand back every host object this session's guest opened and never closed
-    ;; (images, DB connections, SSH sessions). Without it they outlive the
-    ;; Context, the Engine and the session itself.
-    (try (res/release-scope! python-context) (catch Throwable _ nil))
-    (try (.close ^Context python-context true) (catch Throwable _ nil)))
-  ;; AFTER the context, and never skipped: a GraalPy Engine retains every Context
-  ;; ever built on it, so closing the context alone gives back NOTHING. This close
-  ;; is what actually returns the session's Python heap (see
-  ;; `env-python/new-engine!`).
-  (when-let [engine (:python-engine environment)]
-    (try (.close ^org.graalvm.polyglot.Engine engine true) (catch Throwable _ nil)))
+  ;; The whole sandbox, in the one order that works — host handles, Context,
+  ;; Engine. `sandbox-resources/dispose!` owns that order so no teardown site
+  ;; has to restate it, and each step gives back something different: the
+  ;; handles, the action threads that would otherwise root this Context
+  ;; forever, and the Python heap the Engine retains.
+  (res/dispose! environment)
   (when (:db-info environment) (persistance/db-dispose-connection! (:db-info environment))))
 
 (defonce ^:private last-good-security-snapshot

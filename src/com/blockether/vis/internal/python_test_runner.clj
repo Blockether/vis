@@ -19,7 +19,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.python-extensions :as pyx])
+            [com.blockether.vis.internal.python-extensions :as pyx]
+            [com.blockether.vis.internal.sandbox-resources :as res])
   (:import [java.io File]
            [org.graalvm.polyglot Context]))
 
@@ -198,7 +199,7 @@
             :output ""
             :tests [{:nodeid (.getName test-file) :outcome :errored :message (ex-message t)}]
             :error (ex-message t)})
-         (finally (try (pyx/close-context! ctx) (catch Throwable _))))))
+         (finally (res/dispose! ctx)))))
 
 (defn test-python-extensions!
   "Discover and run every Python test (`test_*.py` / `*_test.py`) across the
