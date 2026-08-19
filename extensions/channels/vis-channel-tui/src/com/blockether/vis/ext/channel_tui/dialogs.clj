@@ -4295,6 +4295,48 @@
 
     (nth choices (mod (inc (long (if (neg? idx) 0 idx))) (count choices)))))
 
+(defn- apply-registry-toggle
+  [values {:keys [toggle-id]}]
+  (try
+    (let [spec
+          (vis/toggle-spec toggle-id)
+
+          remote-row
+          (case (:type spec)
+            :boolean
+            (vis/gateway-toggle-setting! toggle-id)
+
+            :enum
+            (vis/gateway-cycle-setting! toggle-id)
+
+            (throw (ex-info "Unsupported registry setting type"
+                            {:toggle-id toggle-id :type (:type spec)})))
+
+          remote-value
+          (case (:type spec)
+            :boolean
+            (if (and (= "boolean" (get remote-row "type")) (contains? remote-row "enabled"))
+              (get remote-row "enabled")
+              (throw (ex-info "Gateway returned an invalid boolean setting row"
+                              {:toggle-id toggle-id})))
+
+            :enum
+            (if (and (= "enum" (get remote-row "type")) (contains? remote-row "value"))
+              (get remote-row "value")
+              (throw (ex-info "Gateway returned an invalid enum setting row"
+                              {:toggle-id toggle-id}))))]
+
+      ;; The daemon owns the effective value and atomically changes it. Mirror its
+      ;; answer only after success so the Settings glyph never promises a local
+      ;; preference the session runtime did not receive.
+      (vis/toggle-set-value! toggle-id remote-value)
+      values)
+    (catch Throwable t
+      (vis/notify! (str "Setting was not changed: " (or (ex-message t) "gateway request failed"))
+                   :level :error
+                   :ttl-ms 5000)
+      values)))
+
 (defn- apply-settings-option
   [values {:keys [key type choices set-key item-id toggle-id]}]
   (case type
@@ -4312,10 +4354,7 @@
                 (if (contains? s item-id) (disj s item-id) (conj s item-id)))))
 
     :registry-toggle
-    (do (if (= :enum (:type (vis/toggle-spec toggle-id)))
-          (vis/toggle-cycle-value! toggle-id)
-          (vis/toggle-set-enabled! toggle-id (not (vis/toggle-enabled? toggle-id))))
-        values)
+    (apply-registry-toggle values {:toggle-id toggle-id})
 
     values))
 

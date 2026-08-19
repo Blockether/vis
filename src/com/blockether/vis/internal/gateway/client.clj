@@ -1008,6 +1008,19 @@
                path
                opts))))
 
+(defn toggle-setting!
+  "Atomically flip one boolean setting in the gateway and return its refreshed
+   string-keyed settings row. The gateway owns both persistence and live runtime
+   fan-out; clients must not mutate a process-local toggle registry instead."
+  [id]
+  (send-json! "POST" "/v1/settings" {:id id :action "toggle"}))
+
+(defn cycle-setting!
+  "Atomically advance one enum setting in the gateway and return its refreshed
+   string-keyed settings row."
+  [id]
+  (send-json! "POST" "/v1/settings" {:id id :action "cycle"}))
+
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
 
 (defn soul

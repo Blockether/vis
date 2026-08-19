@@ -1049,6 +1049,21 @@
         (is (= {:provider "zai" :model "glm"} (:val (get @@cache "sid-w")))
             "the PATCHed pref lands in the footer cache immediately")))))
 
+(deftest setting-actions-proxy-to-the-daemon
+  (let [calls (atom [])]
+    (with-redefs-fn {(rv 'send-json!) (fn [method path body]
+                                        (swap! calls conj [method path body])
+                                        (if (= "cycle" (:action body))
+                                          {"id" (:id body) "type" "enum" "value" "deep"}
+                                          {"id" (:id body) "type" "boolean" "enabled" true}))}
+      (fn []
+        (is (= {"id" "shell" "type" "boolean" "enabled" true} (client/toggle-setting! "shell")))
+        (is (= {"id" "reasoning_level" "type" "enum" "value" "deep"}
+               (client/cycle-setting! "reasoning_level")))
+        (is (= [["POST" "/v1/settings" {:id "shell" :action "toggle"}]
+                ["POST" "/v1/settings" {:id "reasoning_level" :action "cycle"}]]
+               @calls))))))
+
 (deftest provider-models-proxies-to-daemon-catalog-route
   (testing
     "provider-models asks the DAEMON for the catalog instead of building a token-resolving router client-side"

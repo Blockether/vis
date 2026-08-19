@@ -150,6 +150,8 @@
              [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes])
 
 (import-vars [gateway-events-since gateway-client/events-since]
+             [gateway-toggle-setting! gateway-client/toggle-setting!]
+             [gateway-cycle-setting! gateway-client/cycle-setting!]
              [gateway-session-model gateway-client/session-model]
              [gateway-session-model-cached gateway-client/session-model-cached]
              [gateway-set-session-model! gateway-client/set-session-model!]

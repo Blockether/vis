@@ -8,8 +8,8 @@
             [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.core :as vis]
-            ;; Loaded for its side effect: registers the :shell/enabled toggle
-            ;; (internal foundation, at ns load), which the settings-rows test asserts.
+            ;; Loaded for its side effect: registers the `shell` toggle (internal
+            ;; foundation, at ns load), which the settings-rows test asserts.
             [com.blockether.vis.internal.foundation.shell])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -694,64 +694,80 @@
         (expect (= {:show-thinking false}
                    (apply-settings-option {:show-thinking true}
                                           {:key :show-thinking :type :toggle})))))
-  (it "registry-toggle rows route through the toggles registry, not the local settings map"
-      ;; Use a throwaway test toggle so we don't disturb the canonical
-      ;; host toggles. Settings map stays UNTOUCHED: registry rows are
-      ;; side-effecting and the apply path returns `values` unchanged.
-      (let [apply-settings-option
-            (var-get #'dlg/apply-settings-option)
+  ;; Regression, issue #106: Settings mutated only the TUI process's toggle, so
+  ;; the gateway kept `shell` absent from already-open sessions until `/reload`.
+  (it
+    "registry-toggle rows change daemon state before mirroring it locally"
+    (let [apply-settings-option
+          (var-get #'dlg/apply-settings-option)
 
-            settings-row-mark
-            (var-get #'dlg/settings-row-mark)
+          settings-row-mark
+          (var-get #'dlg/settings-row-mark)
 
-            id
-            "dialogs_test_registry_row"
+          id
+          "dialogs_test_registry_row"
 
-            _
-            (vis/register-toggle! {:id id :label "Test" :default false})]
+          called
+          (atom [])
 
-        (try (expect (false? (vis/toggle-enabled? id)))
+          _
+          (vis/register-toggle! {:id id :label "Test" :default false})]
+
+      (try (expect (false? (vis/toggle-enabled? id)))
+           (with-redefs [vis/gateway-toggle-setting!
+                         (fn [toggle-id]
+                           (swap! called conj toggle-id)
+                           {"id" toggle-id "type" "boolean" "enabled" true})]
              (let [out (apply-settings-option {:something "else"}
                                               {:type :registry-toggle :toggle-id id})]
                (expect (= {:something "else"} out))
-               (expect (true? (vis/toggle-enabled? id))))
-             ;; Boolean state is now carried by the leading status glyph (●/○), not
-             ;; "(on)/(off)" text in the label.
-             (let [[on-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
-               (expect (= "●" on-glyph)))
-             (vis/toggle-reset-to-default! id)
-             (let [[off-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
-               (expect (= "○" off-glyph)))
-             (finally (vis/toggle-reset-to-default! id)))))
+               (expect (= [id] @called))
+               (expect (true? (vis/toggle-enabled? id)))))
+           ;; Boolean state is carried by the leading status glyph (●/○), not
+           ;; "(on)/(off)" text in the label.
+           (let [[on-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+             (expect (= "●" on-glyph)))
+           (vis/toggle-reset-to-default! id)
+           (let [[off-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+             (expect (= "○" off-glyph)))
+           (finally (vis/toggle-reset-to-default! id)))))
   ;; NOTE: the old "registry rows normalize fallback labels instead of
   ;; leaking raw ids" case was retired — the toggles registry now
   ;; REQUIRES a :label (register-toggle! rejects label-less specs), so the
   ;; id-derived fallback-label path no longer exists.
-  (it "registry enum rows cycle through the toggles registry"
-      (let [apply-settings-option
-            (var-get #'dlg/apply-settings-option)
+  (it
+    "registry enum rows adopt the value cycled by the daemon"
+    (let [apply-settings-option
+          (var-get #'dlg/apply-settings-option)
 
-            settings-option-label
-            (var-get #'dlg/settings-option-label)
+          settings-option-label
+          (var-get #'dlg/settings-option-label)
 
-            id
-            "dialogs_test_registry_enum"]
+          id
+          "dialogs_test_registry_enum"
 
-        (vis/register-toggle!
-          {:id id :label "Enum Test" :type :enum :choices [:low :medium :high] :default :low})
-        (try (expect (= "Enum Test: low"
-                        (settings-option-label
-                          {:type :registry-toggle :toggle-id id :label "Enum Test"}
-                          {})))
-             (let [out (apply-settings-option {:something "else"}
-                                              {:type :registry-toggle :toggle-id id})]
-               (expect (= {:something "else"} out))
-               (expect (= "medium" (vis/toggle-value id)))
-               (expect (= "Enum Test: medium"
-                          (settings-option-label
-                            {:type :registry-toggle :toggle-id id :label "Enum Test"}
-                            {}))))
-             (finally (vis/toggle-reset-to-default! id)))))
+          called
+          (atom [])]
+
+      (vis/register-toggle!
+        {:id id :label "Enum Test" :type :enum :choices [:low :medium :high] :default :low})
+      (try
+        (expect (= "Enum Test: low"
+                   (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"}
+                                          {})))
+        (with-redefs [vis/gateway-cycle-setting! (fn [toggle-id]
+                                                   (swap! called conj toggle-id)
+                                                   {"id" toggle-id "type" "enum" "value" "high"})]
+          (let [out (apply-settings-option {:something "else"}
+                                           {:type :registry-toggle :toggle-id id})]
+            (expect (= {:something "else"} out))
+            (expect (= [id] @called))
+            (expect (= "high" (vis/toggle-value id)))
+            (expect (= "Enum Test: high"
+                       (settings-option-label
+                         {:type :registry-toggle :toggle-id id :label "Enum Test"}
+                         {})))))
+        (finally (vis/toggle-reset-to-default! id)))))
   (it "choice rows cycle quick -> balanced -> deep -> quick"
       (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
         (expect (= {:reasoning-level :balanced}
