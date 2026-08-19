@@ -504,12 +504,12 @@
       "full suite"))
 
 (defn format-code
-  "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Omit code/paths for default source paths recursively."
+  "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Omit code/paths for default source paths recursively. python also takes ruff's own `line_length` and `config`."
   [env & args]
   (dispatch! env :format-fn args))
 
 (defn lint-code
-  "Lint through a pack: `lint_code(language,arg)`; omit `language` only for file/workspace inference. Source/`{\"code\":...}` lints a snippet; `{\"paths\":[...]}` (always a list) lints disk. Omit code/paths for defaults. Returns findings and severity counts."
+  "Lint through a pack: `lint_code(language,arg)`; omit `language` only for file/workspace inference. Source/`{\"code\":...}` lints a snippet; `{\"paths\":[...]}` (always a list) lints disk. Omit code/paths for defaults. Returns findings and severity counts. python also takes ruff's own `select`, `ignore`, `line_length` and `config` for this call."
   [env & args]
   (dispatch! env :lint-fn args))
 
@@ -562,7 +562,9 @@
   "Eval in an already-running project REPL: `repl_eval(language,{code,cwd,id,timeout_ms})`.
    `code` is the one REQUIRED key; `language` may lead the call; `cwd` — or `project`, the
    same key — chooses the project (default the workspace root), `id`/`repl_id` picks one of
-   several REPLs and `timeout_ms` its budget."
+    several REPLs and `timeout_ms` its budget. Clojure also reads `ns` (the namespace the
+    form is read in) and `port`/`host`, which dial an nREPL directly instead of a REPL this
+    session owns."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
@@ -603,14 +605,15 @@
        "inferred from the paths and the workspace, and needed only when several packs match. `paths` "
        "(ALWAYS a list) formats files and directories in place, recursively, and answers per-file "
        "changes; `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
-       "both to format the pack's default source paths.")
+       "both to format the pack's default source paths. python also takes ruff's own "
+       "knobs: `line_length` overrides the discovered config, `config` pins one file.")
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
-     :params [{:name "language"
-               :note
-               "optional — inferred from the workspace; name it only when several packs match"}
-              {:name "paths" :note "ALWAYS a list; omit for the pack's default source paths"}
-              {:name "code" :note "one snippet instead of paths"}]
+     :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "paths" :note "ALWAYS a list"}
+              {:name "code" :note "one snippet instead of `paths`"}
+              {:name "line_length" :note "python — overrides ruff config"}
+              {:name "config" :note "python — pin one ruff config"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
@@ -630,12 +633,16 @@
        "`lint_code(\"python\", {\"code\": src})`. `language` leads the call and is optional: it is "
        "inferred from the paths and the workspace, and needed only when several packs match. `paths` "
        "(ALWAYS a list) lints disk, `code` lints one snippet, and omitting both lints the pack's "
-       "defaults across the workspace. Answers findings plus severity counts.")
-     :params [{:name "language"
-               :note
-               "optional — inferred from the workspace; name it only when several packs match"}
-              {:name "paths" :note "ALWAYS a list; omit to lint the pack's defaults"}
-              {:name "code" :note "one snippet instead of paths"}]
+       "defaults across the workspace. Answers findings plus severity counts. python also "
+       "takes ruff's own knobs for this call: `select`/`ignore` choose rules, `line_length` "
+       "overrides the discovered config, `config` pins one file.")
+     :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "paths" :note "ALWAYS a list"}
+              {:name "code" :note "one snippet instead of `paths`"}
+              {:name "select" :note "python — ruff rules to keep"}
+              {:name "ignore" :note "python — ruff rules to drop"}
+              {:name "line_length" :note "python — overrides ruff config"}
+              {:name "config" :note "python — pin one ruff config"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :observation}))
@@ -660,25 +667,23 @@
        "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
        "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
        "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
-       "`include`/`exclude` narrow by tag; `cwd` — or `project`, the SAME key — chooses "
-       "the project and defaults to the WORKSPACE ROOT, which is where a relative `paths` "
-       "entry resolves; `runner` (python) selects `project` — the interpreter's own pytest "
-       "entry resolves; `runner` (python) selects `project` — the interpreter's own pytest "
+       "`include`/`exclude` (clojure) narrow by metadata tag; `cwd` — or `project`, the "
+       "SAME key — chooses the project and defaults to the WORKSPACE ROOT, which is where a "
+       "relative `paths` entry resolves; `runner` (python) selects `project` — the "
+       "interpreter's own pytest "
        "— over the hermetic sandbox. `aliases` (clojure) ADDS deps.edn aliases to the clean-JVM "
        "`clojure -M:test:<name>` when `:test` alone does not carry the classpath the tests need; "
        "a run that REUSED a REPL cannot apply them and says so. "
        "NOTHING is required: omit `paths` to run everything.")
-     :params
-     [{:name "language" :note "optional — inferred from the paths and the workspace"}
-      {:name "paths" :note "optional — omit to run every test"}
-      {:name "ns" :note "clojure — namespace or `ns/var`; `nses`/`var`/`only` read the same"}
-      {:name "include" :note "optional — keep only tests carrying these metadata tags"}
-      {:name "exclude" :note "optional — drop tests carrying these metadata tags"}
-      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
-      {:name "build" :note "clojure — which shadow-cljs build runs the `*_test.cljs`"}
-      {:name "aliases"
-       :note "clojure — EXTRA deps.edn aliases added to `-M:test`; clean-JVM runs only"}
-      {:name "runner" :note "python — \"project\" for the interpreter's own pytest"}]
+     :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "paths" :note "omit to run every test"}
+              {:name "ns" :note "clojure — namespace, or `ns/var`"}
+              {:name "include" :note "clojure — keep these metadata tags"}
+              {:name "exclude" :note "clojure — drop these metadata tags"}
+              {:name "cwd" :note "or `project`; default workspace ROOT"}
+              {:name "build" :note "clojure — shadow-cljs build id"}
+              {:name "aliases" :note "clojure — EXTRA deps.edn aliases"}
+              {:name "runner" :note "python — \"project\" for its pytest"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -702,13 +707,16 @@
        "WORKSPACE ROOT, not the project you meant), "
        "`timeout_ms` its budget. Lifecycle is `repl_start` / `repl_status` / `repl_stop`. A REPL attached to a "
        "shadow-cljs `build` evaluates ClojureScript inside that build's JS runtime and the result "
-       "names the `build` it landed in.")
-     :params
-     [{:name "language"
-       :note "optional — inferred from the workspace; name it only when several packs match"}
-      {:name "code" :required? true} {:name "id" :note "or `repl_id`, when a project holds several"}
-      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
-      {:name "timeout_ms" :note "optional — this eval's budget, over the pack's default"}]
+       "names the `build` it landed in. Clojure also reads `ns` — the namespace the form is "
+       "read in — and `port`/`host`, which dial an nREPL DIRECTLY instead of a REPL this "
+       "session owns.")
+     :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "code" :required? true} {:name "id" :note "or `repl_id`, among several"}
+              {:name "cwd" :note "or `project`; default workspace ROOT"}
+              {:name "ns" :note "clojure — read the form here"}
+              {:name "port" :note "clojure — dial that nREPL directly"}
+              {:name "host" :note "clojure — with `port`; default localhost"}
+              {:name "timeout_ms" :note "this eval's budget"}]
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, five minutes); dispatch it directly in
@@ -751,15 +759,11 @@
        "— and that env BELONGS to the REPL: a start naming a different one is refused by the keys "
        "that differ, since there is no restart. `repl_eval` never takes `env`: a live process' "
        "environment is its own.")
-     :params
-     [{:name "language"
-       :note "optional — inferred from the workspace; name it only when several packs match"}
-      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
-      {:name "id"
-       :note "python/bun — a LABEL for a second REPL in one project; a clojure id comes from `cwd`"}
-      {:name "aliases"
-       :note "clojure — EXTRA deps.edn aliases, ADDED to the always-on [\"dev\" \"test\"]"}
-      {:name "env" :note "THIS REPL's variables, over the project's"}]
+     :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "cwd" :note "or `project`; default workspace ROOT"}
+              {:name "id" :note "python/bun — label a second REPL"}
+              {:name "aliases" :note "clojure — EXTRA deps.edn aliases"}
+              {:name "env" :note "THIS REPL's variables, over the project's"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
@@ -784,11 +788,9 @@
        "`resources` beside it names every REPL this "
        "session owns, so one running under another directory is never invisible. An `id` — leading "
        "or in the options — reports that REPL alone.")
-     :params
-     [{:name "language"
-       :note "optional — inferred from the workspace; name it only when several packs match"}
-      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
-      {:name "id" :note "optional — reports that REPL alone"}]
+     :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "cwd" :note "or `project`; default workspace ROOT"}
+              {:name "id" :note "reports that REPL alone"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :observation}))
@@ -811,12 +813,11 @@
        "managed JVM REPL for the same `cwd`, each under its own id (`nrepl:~/proj` and "
        "`nrepl:~/proj#app`). Vis registers it for eval, tests and context but never owns or kills it, "
        "so stopping it only detaches.")
-     :params
-     [{:name "language" :note "optional — clojure is the only pack that attaches"}
-      {:name "port" :note "REQUIRED unless `build` names one"}
-      {:name "host" :note "optional — default localhost"}
-      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
-      {:name "build" :note "clojure — shadow-cljs build to attach + select, instead of `port`"}]
+     :params [{:name "language" :note "clojure — the only pack that attaches"}
+              {:name "port" :required? true :note "or `build` names one"}
+              {:name "host" :note "default localhost"}
+              {:name "cwd" :note "or `project`; default workspace ROOT"}
+              {:name "build" :note "clojure — shadow-cljs build attached"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
@@ -839,14 +840,10 @@
        "shadow-cljs attachment.")
      ;; repl_stop(id) — one positional id, or the language-led form the other
      ;; lifecycle verbs take.
-     :params
-     [{:name "id"
-       :note
-       "the exact id `repl_start`/`repl_status` answered with; without it the pack's REPL under `cwd` is stopped"}
-      {:name "language"
-       :note "optional — inferred from the workspace; name it only when several packs match"}
-      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
-      {:name "build" :note "clojure — detaches just that shadow-cljs attachment"}]
+     :params [{:name "id" :note "the exact id `repl_status` answered"}
+              {:name "language" :note "inferred; name it when ambiguous"}
+              {:name "cwd" :note "or `project`; default workspace ROOT"}
+              {:name "build" :note "clojure — detaches that attachment only"}]
      :call {:lead-opt "id" :rest :always}
      :inject-env? true
      :tag :mutation}))

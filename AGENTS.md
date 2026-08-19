@@ -25,6 +25,7 @@ Read the skill before working in its area — each one is the full contract, kep
 - **All outbound HTTP in production Clojure uses `babashka.http-client`** — timeouts, HTTP versions, streaming, headers, non-throwing status. Never the JDK HTTP client, `URLConnection` or `HttpURLConnection`; keep direct JDK networking to URIs, sockets and embedded servers.
 - **Never introduce Clojure `declare`.** Order definitions so every dependency precedes its consumers; refactor cycles instead of forward-declaring Vars.
 - **Feature toggles** use snake_case string IDs and hydrate from merged config so `/reload` respects project overrides; test registry, coercion and wire round-trips.
+- **A tool's doc page has ONE shape** — `:description` (what it does, what it REQUIRES, what an omitted key defaults to), `:result` (the raw value Python receives) and `:params` (every wire key a handler reads, in call order). Requiredness is `:required? true` and nothing else; a `:note` is a six-word label, prefixed `<pack> — ` when only one pack reads that key. The contract lives beside the spec in `src/com/blockether/vis/internal/extension.clj` (`:ext.symbol/params`) and `test/com/blockether/vis/internal/extension_test.clj` enforces it over every live tool.
 
 ## Clojure tests: Lazytest, not `clojure.test`
 

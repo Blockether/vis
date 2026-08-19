@@ -278,15 +278,16 @@
       ;; repl_stop needs no `id` when the pack's REPL under `cwd` is the target:
       ;; nothing on this surface is required except repl_eval's `code`.
       (expect (nil? (some :required? (vals stop))))
-      (expect (str/includes? (:note (get stop "language")) "optional"))
+      (expect (str/includes? (:note (get stop "language")) "inferred"))
       (expect (str/includes? (:note (get stop "cwd")) "project"))
       (expect (str/includes? (:ext.symbol/description language-surface/repl-stop-symbol)
                              "NOTHING is required"))
-      (expect (str/includes? (:note (get start "language")) "optional"))
-      (expect (str/includes? (:note (get tests "language")) "optional"))
+      (expect (str/includes? (:note (get start "language")) "inferred"))
+      (expect (str/includes? (:note (get tests "language")) "inferred"))
       ;; `port` is the ONE key a pack refuses without (clojure repl_connect, and
       ;; only clojure attaches at all), so it stays marked.
-      (expect (str/includes? (:note (get connect "port")) "REQUIRED"))
+      (expect (true? (:required? (get connect "port"))))
+      (expect (str/includes? (:note (get connect "port")) "build"))
       (expect (str/includes? (:ext.symbol/description language-surface/connect-repl-symbol)
                              "CLOJURE only"))
       ;; `build` selects a shadow-cljs build to ATTACH to or to run cljs tests
@@ -300,8 +301,10 @@
       ;; :dev/:test and drops the test alias off its own classpath.
       (expect (contains? start "aliases"))
       (expect (contains? tests "aliases"))
-      (expect (str/includes? (:note (get start "aliases")) "ADDED"))
-      (expect (str/includes? (:note (get tests "aliases")) "-M:test"))
+      (expect (str/includes? (:note (get start "aliases")) "EXTRA"))
+      (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol) "ADDS"))
+      (expect (str/includes? (:note (get tests "aliases")) "EXTRA"))
+      (expect (str/includes? (:ext.symbol/description language-surface/test-symbol) "-M:test"))
       (expect (nil? (:required? (get tests "aliases"))))
       (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
                              "`repl_connect`"))
@@ -310,7 +313,7 @@
       ;; omitted, has to be on their own params.
       (expect (str/includes? (:note (get tests "cwd")) "project"))
       (expect (str/includes? (:note (get tests "cwd")) "workspace ROOT"))
-      (expect (str/includes? (:note (get tests "paths")) "optional"))
+      (expect (str/includes? (:note (get tests "paths")) "omit"))
       (expect (nil? (some :required? (vals tests))))
       (expect (str/includes? (:ext.symbol/description language-surface/test-symbol)
                              "NOTHING is required"))
@@ -318,6 +321,60 @@
                              "WORKSPACE ROOT"))
       (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
                              "WORKSPACE ROOT"))))
+  ;; Cross-validated against the packs, not from memory: a key a handler READS is a
+  ;; key the page declares. These were read and undeclared — ruff's own knobs
+  ;; (language_python/ruff.clj `call-opts`) and clojure's direct-dial eval keys
+  ;; (language_clojure/core.clj `clj-eval-fn`) — so a caller could not reach them.
+  (it
+    "declares the pack-only keys the handlers actually read, each naming its pack"
+    (let [keys-of
+          (fn [sym]
+            (into {} (map (juxt :name identity)) (:ext.symbol/params sym)))
+
+          fmt
+          (keys-of language-surface/format-symbol)
+
+          lint
+          (keys-of language-surface/lint-symbol)
+
+          evaluate
+          (keys-of language-surface/repl-eval-symbol)
+
+          tests
+          (keys-of language-surface/test-symbol)
+
+          scoped?
+          (fn [params k pack]
+            (str/starts-with? (str (:note (get params k))) (str pack " — ")))]
+
+      (doseq [k ["line_length" "config"]]
+        (expect (contains? fmt k) (str "format_code hides " k))
+        (expect (scoped? fmt k "python") (str "format_code " k)))
+      (doseq [k ["select" "ignore" "line_length" "config"]]
+        (expect (contains? lint k) (str "lint_code hides " k))
+        (expect (scoped? lint k "python") (str "lint_code " k)))
+      (doseq [k ["ns" "port" "host"]]
+        (expect (contains? evaluate k) (str "repl_eval hides " k))
+        (expect (scoped? evaluate k "clojure") (str "repl_eval " k)))
+      ;; Only the clojure runner reads metadata tags; python's pytest never sees them.
+      (doseq [k ["include" "exclude" "ns" "build" "aliases"]]
+        (expect (scoped? tests k "clojure") (str "run_tests " k)))
+      (expect (scoped? tests "runner" "python"))))
+  ;; Regression: run_tests' description carried the same clause twice — two `str`
+  ;; lines of a multi-line description are trivially duplicated, and the page read as
+  ;; a stutter to every caller.
+  (it "never repeats a phrase inside one description"
+      (doseq [sym language-surface/symbols]
+        (let [words (str/split (str (:ext.symbol/description sym)) #"\s+")
+              windows (map #(str/join " " %) (partition 6 1 words))]
+
+          (expect (= (count windows) (count (distinct windows)))
+                  (str (:ext.symbol/symbol sym)
+                       " repeats: "
+                       (first (for [[w n] (frequencies windows)
+                                    :when (> n 1)]
+
+                                w)))))))
   ;; Regression, issue #repl-enumerate: repl_status answered for the pack's own
   ;; directory alone, so a REPL under another cwd — or a shadow-cljs attachment beside
   ;; the JVM one — was invisible, while the verb's doc promised it was the only way to

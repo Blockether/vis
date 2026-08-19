@@ -443,15 +443,33 @@
 (s/def :ext.symbol/result non-blank-string?)
 (s/def :ext.symbol.param/name non-blank-string?)
 (s/def :ext.symbol.param/required? boolean?)
+;; A tool's model-facing page has ONE shape, and these three keys are all of it:
+;; `:description` (what the verb does, what it REQUIRES, what an omitted key
+;; silently defaults to), `:result` (the raw value Python receives) and
+;; `:params` (the key vocabulary). Prose belongs in `:description`; a `:note`
+;; is a label, never a second description.
+;;
 ;; Six words at most: the ONE thing the key's name does not already say
-;; ("or one per `nodes` entry"), never a second description.
+;; ("or one per `nodes` entry"), never a second description. A key whose name
+;; says everything carries NO note. A note NEVER spells requiredness —
+;; `:required?` is the machine-readable statement and `doc(name)` renders it.
+;; A key only one pack/dialect reads leads with that pack and an em dash
+;; ("clojure — shadow-cljs build id"); the prefix is not charged against the six.
 (s/def :ext.symbol.param/note non-blank-string?)
 ;; The OPTIONS-DICT key vocabulary, in the order a caller should think about it:
 ;; `[{:name "paths" :required? true} {:name "ranges"} …]`. A tool whose `:call`
 ;; shape ends in a dict has its WHOLE contract inside that dict, where a Python
 ;; signature can say no more than `**kwargs` — so this is the only place
 ;; requiredness is machine-readable, and `doc(name)` renders it as the `Keys:`
-;; line. Names are the WIRE keys, spelled exactly as the model types them.
+;; line. Names are the WIRE keys, spelled exactly as the model types them, and
+;; EVERY key a handler reads is declared — an undeclared key is invisible, a
+;; declared key no code reads is a lie. Order is the CALL's order: the `:call`
+;; lead/positional key first, then what cannot be omitted, then the rest.
+;; A conditionally required key is `:required? true` plus the alternative in its
+;; note (`{:name "port" :required? true :note "or `build` names one"}`), because
+;; "sometimes required" is still a key the caller must think about.
+;; `test/com/blockether/vis/internal/extension_test.clj` enforces this shape over
+;; every live tool.
 (s/def :ext.symbol/params
   (s/and (s/every (s/keys :req-un [:ext.symbol.param/name]
                           :opt-un [:ext.symbol.param/required? :ext.symbol.param/note])

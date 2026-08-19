@@ -594,6 +594,54 @@
             (expect (= (distinct names) (seq names)) (str sym " repeats a key: " names))
             (doseq [n names]
               (expect (re-matches #"[a-z][a-z0-9_]*" n) (str sym " key " n)))))))
+  ;; The doc page's SHAPE is a contract (`:ext.symbol/params`, extension.clj): a note
+  ;; is a six-word label for the ONE thing the key's name does not say, requiredness
+  ;; is machine-readable and nowhere else, and a key only one pack reads says so.
+  (it "keeps every param note a six-word label, the pack prefix aside"
+      (doseq [entry
+              (live-tool-entries)
+
+              {nm :name note :note}
+              (:ext.symbol/params entry)
+
+              :when note]
+
+        (let [words (-> note
+                        (str/replace #"^[a-z][a-z0-9_/]*\s+—\s+" "")
+                        str/trim
+                        (str/split #"\s+")
+                        count)]
+          (expect (<= words 6)
+                  (str (:ext.symbol/symbol entry) " key " nm " — " words " words: " note)))))
+  (it "states requiredness in :required? alone, never as note prose"
+      (doseq [entry
+              (live-tool-entries)
+
+              {nm :name note :note}
+              (:ext.symbol/params entry)
+
+              :when note]
+
+        (expect (not (re-find #"(?i)\boptional\b" note))
+                (str (:ext.symbol/symbol entry) " key " nm ": " note))
+        (expect (not (re-find #"(?i)^required\b" note))
+                (str (:ext.symbol/symbol entry) " key " nm ": " note))))
+  (it "declares the keys in the CALL's order: the lead key first, then what cannot be omitted"
+      (doseq [entry (filter options-dict-entry? (live-tool-entries))]
+        (let [sym (:ext.symbol/symbol entry)
+              params (:ext.symbol/params entry)
+              names (mapv :name params)
+              lead (:lead-opt (:ext.symbol/call entry))
+              tail (if (and lead (some #{lead} names))
+                     (vec (remove #(= lead (:name %)) params))
+                     (vec params))
+              flags (mapv (comp boolean :required?) tail)]
+
+          (when (and lead (some #{lead} names))
+            (expect (= lead (first names))
+                    (str sym " leads the call with " lead " but declares " names)))
+          (expect (= flags (vec (concat (filter true? flags) (remove true? flags))))
+                  (str sym " declares an optional key before a required one: " names)))))
   (it "renders the keys line in declared order, marking what cannot be omitted"
       (expect (= "Keys: paths (REQUIRED) · at (REQUIRED — or a node line) · ranges"
                  (extension/symbol-keys-line

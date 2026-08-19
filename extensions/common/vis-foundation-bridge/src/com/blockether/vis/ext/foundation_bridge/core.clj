@@ -764,10 +764,7 @@
      {:before-fn inject-env
       :tag :mutation
       :arglists '([] [opts])
-      :params
-      [{:name "root"
-        :note
-        "absolute path of the repository to configure; required when the workspace holds several"}]
+      :params [{:name "root" :note "the repository; required when several"}]
       :description (str
                      "Bootstrap Bridge for this workspace and answer the resulting configuration. "
                      "An already-configured workspace is reported, never rewritten.")
@@ -796,7 +793,7 @@
      {:before-fn inject-env
       :tag :observation
       :arglists '([] [opts])
-      :params [{:name "is_index" :note "check the index instead of the worktree"}
+      :params [{:name "is_index" :note "the index, not the worktree"}
                {:name "tree" :note "pin the candidate's tree"}
                {:name "frontier" :note "pin the candidate's frontier"}
                {:name "is_approve" :note "approve a clear candidate"}
@@ -829,8 +826,8 @@
      {:before-fn inject-env
       :tag :mutation
       :arglists '([id] [id opts])
-      :params [{:name "is_dry_run" :note "preview the command instead of running it"}
-               {:name "is_index" :note "run against the index instead of the worktree"}
+      :params [{:name "is_dry_run" :note "preview, do not run"}
+               {:name "is_index" :note "the index, not the worktree"}
                {:name "tree" :note "pin the candidate's tree"}
                {:name "frontier" :note "pin the candidate's frontier"}
                {:name "out" :note "receipt file path"} {:name "out_dir" :note "receipt directory"}
