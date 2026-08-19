@@ -4341,7 +4341,7 @@
         ;; Section padding is untouched: exactly ONE blank row above the label.
         (expect (= "" (nth lines (dec msg-idx))))
         (expect (not= "" (nth lines (- msg-idx 2))))))
-  (it "keeps a blank line the shell wrote inside its STDOUT"
+  (it "keeps a blank line the shell wrote inside its OUT"
       (let [lines
             (mapv card-plain
                   (format-iteration-entry
@@ -4349,9 +4349,9 @@
                      :forms [{:op "shell"
                               :code "shell({\"command\": \"run.sh\"})"
                               :result-summary "$ run.sh"
-                              :result-render
-                              (str "**COMMAND**\n```bash\nrun.sh\n```\n\n"
-                                   "**STDOUT**\n```\nphase one ok\n\nphase two ok\n```\n")
+                              :result-render (str
+                                               "**COMMAND**\n```bash\nrun.sh\n```\n\n"
+                                               "**OUT**\n```\nphase one ok\n\nphase two ok\n```\n")
                               :started-at-ms 1000
                               :success? true}]}
                     80
@@ -4359,7 +4359,7 @@
                     {:now-ms 2500}))
 
             out-idx
-            (card-index-of lines "STDOUT")]
+            (card-index-of lines "OUT")]
 
         (expect (some? out-idx) (str "got: " lines))
         (expect (= ["phase one ok" "" "phase two ok"] (subvec lines (inc out-idx) (+ out-idx 4))))

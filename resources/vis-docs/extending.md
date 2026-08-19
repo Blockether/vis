@@ -703,7 +703,7 @@ def poll(run_id):
     done = vis.shell(
         {"op": "background", "id": "gh", "command": f"gh run view {run_id} --json jobs,status,url"}
     ).wait(60)
-    return json.loads(done["stdout"])
+    return json.loads(done["out"])
 
 
 def watch_run(run_id):

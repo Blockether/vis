@@ -107,7 +107,7 @@
           (expect (= "shell" (:vis/tool-name form)))
           (expect (= "await shell({\"command\": \"echo hi-from-bang\"})" (:src form)))
           ;; ONE call is ONE command: the output is at the TOP level of the result.
-          (expect (= "hi-from-bang\n" (get (:result form) "stdout")))
+          (expect (= "hi-from-bang\n" (get (:result form) "out")))
           (expect (= 0 (get (:result form) "exit"))))))))
 
 ;; Regression: a `!`/`!&` bang turn ran in the PROCESS cwd instead of the
@@ -143,7 +143,7 @@
 
                        (expect (= :success (:status result)))
                        (expect (= root (get shell-result "cwd")))
-                       (expect (= root (str/trim (get shell-result "stdout")))))))))
+                       (expect (= root (str/trim (get shell-result "out")))))))))
 
 (defdescribe run-turn-bang-disabled-test
              (it "refuses when the shell layer is OFF, without running the command"

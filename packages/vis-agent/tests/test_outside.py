@@ -184,10 +184,10 @@ def test_log_and_notify_go_to_stderr(capsys):
 def test_shell_runs_a_command_and_answers_the_engine_shape():
     run = vis.shell({"command": "printf hello"}).wait(10)
     assert run["exit"] == 0
-    assert run["stdout"] == "hello"
+    assert run["out"] == "hello"
     assert run["status"] == "exited"
     assert set(run) == set(_outside._SHELL_RESULT_KEYS)
-    assert run.logs()["stdout"] == "hello"
+    assert run.logs()["out"] == "hello"
 
 
 def test_a_shell_handle_stops_what_it_started():
@@ -200,7 +200,7 @@ def test_a_shell_handle_stops_what_it_started():
 
 def test_shell_reads_the_last_lines_from_a_negative_offset():
     run = vis.shell({"command": "printf 'one\ntwo\nthree\n'"}).wait(10)
-    assert run.logs(-2)["stdout"].splitlines() == ["two", "three"]
+    assert run.logs(-2)["out"].splitlines() == ["two", "three"]
 
 
 @pytest.mark.parametrize("op", CONTRACT["shell"]["spawn_ops"])
@@ -211,7 +211,7 @@ def test_every_spawn_op_the_engine_speaks_starts_a_process(op):
     assert started["stage"] == op
     run = started.wait(10)
     assert run["exit"] == 0
-    assert run["stdout"] == "hi"
+    assert run["out"] == "hi"
 
 
 def test_a_named_spawn_answers_the_same_handle_the_next_call_reaches():

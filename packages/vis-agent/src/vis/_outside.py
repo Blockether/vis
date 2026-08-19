@@ -214,8 +214,8 @@ _SHELL_RESULT_KEYS = (
     "rss_bytes",
     "timed_out",
     "timeout_secs",
-    "stdout",
-    "stdout_omitted_chars",
+    "out",
+    "out_omitted_chars",
     "offset",
     "next_offset",
     "is_eof",
@@ -304,7 +304,7 @@ def _result(run, stage, **extra):
     code = run.poll()
     now = time.time()
     result = dict.fromkeys(_SHELL_RESULT_KEYS)
-    stdout, next_offset, omitted = run.read(
+    out, next_offset, omitted = run.read(
         extra.pop("_offset", None), extra.pop("_limit", None)
     )
     result.update(
@@ -331,8 +331,8 @@ def _result(run, stage, **extra):
             "log_path": run.log_path,
             "timed_out": run.timed_out,
             "timeout_secs": run.timeout_secs,
-            "stdout": stdout,
-            "stdout_omitted_chars": omitted,
+            "out": out,
+            "out_omitted_chars": omitted,
             "offset": 0,
             "next_offset": next_offset,
             "is_eof": code is not None,

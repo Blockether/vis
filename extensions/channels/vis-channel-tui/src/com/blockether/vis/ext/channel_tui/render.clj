@@ -4717,7 +4717,7 @@
         (recur (conj acc [i entry]) (+ (long i) (long run)) (subvec remaining run))))))
 
 (defn- section-label-entry?
-  "A body row that is a whole-line **LABEL** heading (COMMAND / STATUS / STDOUT /
+  "A body row that is a whole-line **LABEL** heading (COMMAND / STATUS / OUT /
    RESULT …): after its structural marker + indent the first visible glyph is the
    bold sentinel. Used to reinstate exactly ONE separator row before each section."
   [entry]

@@ -15,7 +15,7 @@
 
    1. `sh = await shell(\"ls\")` — `bash -lc` in the workspace root, spawned under
       a REAL pty, its merged output streamed verbatim to a log FILE and registered
-      as a session RESOURCE. `sh.wait(30)` is what fills `exit`/`stdout`. Output is
+      as a session RESOURCE. `sh.wait(30)` is what fills `exit`/`out`. Output is
       bounded at READ time to a head+tail budget per stream, so only the MIDDLE of a
       huge stream is dropped, never its start or end. A non-zero exit is DATA the
       model reads, not an error.
@@ -108,7 +108,7 @@
    head+tail is the CAPTURE budget, NOT the display budget. The old 4k+12k pair
    mangled every ordinary machine-readable payload above 16k chars: a plain
    `gh issue list --json …` (21k chars) came back with the omitted-marker spliced
-   at char 4000, so `json.loads(r[\"stdout\"])` died on
+   at char 4000, so `json.loads(r[\"out\"])` died on
    \"Invalid control character\" EVERY time. Cards clip separately
    ([[clip-stream]]) and the loop clips the wire, so capturing a parseable
    stream costs context nothing."
@@ -208,7 +208,7 @@
   [out]
   (let [n (long (or (:omitted out) 0))]
     (when (pos? n)
-      (str "stdout truncated · "
+      (str "output truncated · "
            n
            " chars dropped from the middle"
            " — the text carries an inline marker and no longer parses; narrow the output"
@@ -383,7 +383,7 @@
   "The ONE reading of a PTY capture, shared by every consumer: ANSI/VT escapes and
    non-printing controls removed, tabs and line feeds kept, and a redrawn line
    resolved to the frame the terminal was left showing. What a human sitting at
-   that terminal SAW is what `stdout` carries and what the card prints —
+   that terminal SAW is what `out` carries and what the card prints —
    a colour reset git wrote ONLY because our pty made isatty() true is invisible
    to a human and a literal `[m` to everyone reading the string, and half-cleaning
    it left the two readings disagreeing. The raw stream stays whole on disk at
@@ -599,7 +599,7 @@
    pty HANDLE MAP (`:pid :in :send :wait :alive? :destroy`) that the pump /
    kill-tree! / wait path below consume. stdout+stderr share the one PTY stream
    — a real terminal has no separate error channel, which is why a shell result
-   has no `stderr` field at all.
+   carries ONE `out` field and no `stderr` at all.
    `policy` is the jail policy value applied to this spawn; a fresh-config policy
    carries an idempotent cleanup callback retained for the process lifetime."
   [cmd ^File dir policy]
@@ -699,7 +699,7 @@
   "The ONE result shape of the whole shell family — every stage, every tool.
 
    `shell` itself, each handle op (`sh.logs`, `sh.type`, `sh.stop`, `sh.wait`) and
-   an argv run all answer THIS key set, so a caller reads `r[\"exit\"]`, `r[\"stdout\"]`,
+   an argv run all answer THIS key set, so a caller reads `r[\"exit\"]`, `r[\"out\"]`,
    `r[\"command\"]` and `r[\"status\"]` the same way whatever produced the map and no
    key can KeyError. `stage` NAMES the producer (`run` / `background` / `logs` /
    `send` / `stop`) — it is the only thing that varies, and it varies as DATA, not
@@ -746,16 +746,16 @@
    "rss_bytes" nil
    "timed_out" false
    "timeout_secs" nil
-   ;; OUTPUT, under ONE name everywhere: what a run captured, and what a log read
-   ;; returned. There is no second spelling of \"the bytes\" to learn — and no
-   ;; `stderr`: every command runs under a real pty, where stdout and stderr ARE
-   ;; ONE stream, so a second field could only ever answer nil and be misread as
-   ;; \"nothing went wrong\".
-   "stdout" nil
+   ;; OUTPUT, under ONE name everywhere: `out` — what a run captured, and what a
+   ;; log read returned. Named for what it HOLDS, not for one of the two fds it
+   ;; arrived on: every command runs under a real pty, where stdout and stderr ARE
+   ;; ONE stream, so a `stdout`/`stderr` pair would be a choice with only one
+   ;; answer — the second field nil, and misread as \"nothing went wrong\".
+   "out" nil
    ;; A truncated stream has an inline \"…[N chars omitted]…\" marker spliced into
    ;; its MIDDLE, so it no longer parses — the count says exactly how much is gone,
    ;; and 0 means nothing was.
-   "stdout_omitted_chars" 0
+   "out_omitted_chars" 0
    ;; The log CURSOR: a read is a window on a file and the caller owns the cursor.
    "offset" 0
    "next_offset" 0
@@ -876,7 +876,7 @@
          (with-meta (shell-result "run"
                                   ;; TOTAL shape ([[shell-result-base]]). The old "lean" map dropped a
                                   ;; key whenever it carried no signal, so ordinary model Python
-                                  ;; (`c[\"stdout\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
+                                  ;; (`c[\"out\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
                                   ;; "the tool broke", retried with cosmetic variations, and spun.
                                   {"command" cmd
                                    ;; The OS pid of the spawned child — `(:pid p)` here read a
@@ -890,7 +890,7 @@
                                    "status" (if finished? "exited" "running")
                                    ;; What the terminal SHOWED, not the control stream that
                                    ;; painted it: `log_path` still holds every byte.
-                                   "stdout" (normalize-terminal-output (:text out))
+                                   "out" (normalize-terminal-output (:text out))
                                    "exit" exit
                                    "duration_ms" (- t1 t0)
                                    "started_at" t0
@@ -898,7 +898,7 @@
                                    "timed_out" (not finished?)
                                    ;; 0 exactly when nothing was dropped, so no truncation flag is owed
                                    ;; beside it.
-                                   "stdout_omitted_chars" (long (or (:omitted out) 0))
+                                   "out_omitted_chars" (long (or (:omitted out) 0))
                                    ;; A dropped middle makes the stream unparseable: name it here rather
                                    ;; than let a caller's parser fail with an opaque message.
                                    "note" (command-note env out)})
@@ -1817,7 +1817,7 @@
 (defn run-blocking
   "INTERNAL blocking runner — NOT the tool. Run ONE bounded foreground command and answer the tool's own total result: the
    command's own `run`-stage map with the handle's identity merged on, so `r[\"exit\"]`,
-   `r[\"stdout\"]` and `r[\"command\"]` are read at the top level and there is no
+   `r[\"out\"]` and `r[\"command\"]` are read at the top level and there is no
    entry to index into. One call is one command — an ordered batch is what `&&`
    and a second call are for — so there is no shared budget to divide and no
    \"never started\" entry to explain.
@@ -2036,7 +2036,7 @@
 
        (extension/success
          ;; Sharing `bg-core`'s identity keys with every other stage: `exit` None
-         ;; while running. `stdout` is the window this read returned, already joined
+         ;; while running. `out` is the window this read returned, already joined
          ;; — the SAME key a foreground run puts its bytes under, so "what did it
          ;; print" is one field whether the call waited or came back for it later.
          {:result (assoc (if entry (bg-core "logs" id entry) (retired-log-core env session id))
@@ -2045,7 +2045,7 @@
                     ;; sent because isatty() was true. The model reads TEXT, so this window
                     ;; is the terminal's own reading of those bytes — the raw stream stays
                     ;; whole on disk at `log_path` for anyone who wants it.
-                    "stdout" (normalize-terminal-output (:text chunk))
+                    "out" (normalize-terminal-output (:text chunk))
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk))
@@ -2097,7 +2097,7 @@
    reached. A child that has exited is drained to quiet before the wait reports,
    so the last line the pump wrote after the exit is never lost.
 
-   `stdout` is everything printed since this wait's own cursor, under the same key
+   `out` is everything printed since this wait's own cursor, under the same key
    a log read answers with, and `timed_out` says which of the two ended it: the
    deadline (true, the process runs on under its id) or the process (false).
 
@@ -2133,8 +2133,8 @@
                          "stage" "wait"
                          "offset" start
                          "next_offset" nxt
-                         "stdout" (:text snap)
-                         "stdout_omitted_chars" (long (or (:omitted snap) 0))
+                         "out" (:text snap)
+                         "out_omitted_chars" (long (or (:omitted snap) 0))
                          ;; The WAIT expired, not the process: a still-running child means
                          ;; the deadline ended this call and the shell keeps its id.
                          "timed_out" (= "running" (get res "status"))
@@ -2165,7 +2165,7 @@
             (:result (shell-logs-impl env id {:offset off :limit wait-chunk-limit}))
 
             text
-            (or (get res "stdout") "")
+            (or (get res "out") "")
 
             nxt
             (long (or (get res "next_offset") off))
@@ -2718,7 +2718,7 @@
 
 (defn shell-wait
   "`sh.wait(secs)` — the ONLY wait there is. Block until the shell exits or the
-   deadline passes, and answer the accumulated `stdout` plus the final `exit`.
+   deadline passes, and answer the accumulated `out` plus the final `exit`.
    `timed_out` true means the WAIT expired; the process runs on under its id."
   {:arglists '([id] [id seconds] [id seconds opts])}
   [env & args]
@@ -2788,7 +2788,7 @@
   "DISPLAY clip for a captured stream: keep the head and the tail, splice a
    visible omitted-count marker into the middle. The RESULT keeps the whole
    capture (up to [[max-sync-head-chars]]+[[max-sync-tail-chars]]) so
-   `json.loads(r[\"stdout\"])` works; only the card is clipped."
+   `json.loads(r[\"out\"])` works; only the card is clipped."
   [s]
   (let [head
         (long card-head-chars)
@@ -2947,7 +2947,7 @@
 
    Collapsed: `$ npm test (success) · 1.2s` or
    `$ grep x missing (failure) · exit 2 · 34ms`.
-   Expanded: labeled COMMAND / STATUS / STDOUT sections. The body is
+   Expanded: labeled COMMAND / STATUS / OUT sections. The body is
    always present so shell cards are collapsible even when the command produced no
    output; the full command and metadata stay available behind the disclosure."
   [r]
@@ -2977,14 +2977,14 @@
                    ;; Truncation is REAL data loss, but `*_omitted_chars` is 0 unless the
                    ;; middle-excision actually dropped something — the count IS the flag,
                    ;; so name the stream and the exact number of characters lost.
-                   ["stdout"
-                    (let [n (get r "stdout_omitted_chars")]
+                   ["out"
+                    (let [n (get r "out_omitted_chars")]
                       (when (and n (pos? (long n))) (str "truncated · " n " chars omitted")))]])
 
         body
         (->> [(shell-section "COMMAND" (format-shell-command (get r "command")) "bash")
               (shell-section "STATUS" status)
-              (shell-section "STDOUT" (clip-stream (get r "stdout")) "bash")]
+              (shell-section "OUT" (clip-stream (get r "out")) "bash")]
              (remove nil?)
              (str/join "\n\n"))]
 
@@ -3098,11 +3098,11 @@
      :name "shell"
      :result
      (str "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
-          "status, exit, stdout, duration_ms, timed_out, offset, next_offset, is_eof, "
+          "status, exit, out, duration_ms, timed_out, offset, next_offset, is_eof, "
           "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
-          "methods below. A fresh run has no `exit`; nonzero exit is data. `stdout` is the "
-          "pty's ONE stream: a terminal has no second channel, so whatever the command wrote "
-          "to stderr is IN it, in order — there is no `stderr` key, and asking for one raises.")
+          "methods below. A fresh run has no `exit`; nonzero exit is data. `out` is the "
+          "pty's ONE stream: stdout and stderr are the same channel there, so whatever the "
+          "command wrote to either is IN it, in order — one name, and no `stderr` key.")
      :description
      (str
        "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
@@ -3121,7 +3121,7 @@
        "`env` carries THIS run's variables over the project's — a literal for a switch, a "
        "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}, since a "
        "literal stays in the transcript for good), null to unset. "
-       "`print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"stdout\"])`.")
+       "`print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"out\"])`.")
      :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
               {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}]
      :ticker-fn (shell-ticker "run")
@@ -3136,7 +3136,7 @@
     {:symbol '_shell-logs
      :name "_shell_logs"
      :result
-     (str "The same shell result shape as every other stage (`stage` is \"logs\"): `stdout` is the "
+     (str "The same shell result shape as every other stage (`stage` is \"logs\"): `out` is the "
           "window this read returned; feed `next_offset` back to continue, and `is_eof` false "
           "means read again now.")
      :description
@@ -3161,7 +3161,7 @@
     {:symbol '_shell-wait
      :name "_shell_wait"
      :result
-     (str "The same shell result shape (`stage` \"wait\"): `stdout` is everything printed since "
+     (str "The same shell result shape (`stage` \"wait\"): `out` is everything printed since "
           "this wait's cursor, `exit`/`status` are final unless `timed_out` is true, which means "
           "the WAIT expired and the shell keeps running under its id.")
      :description

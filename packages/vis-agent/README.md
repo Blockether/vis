@@ -23,7 +23,7 @@ def deploy(env):
         return vis.err("cancelled", answer.reason)
     run = vis.shell({"command": "./deploy.sh " + answer["env"]}).wait(600)
     vis.state["last_env"] = answer["env"]
-    return vis.ok("deployed " + answer["env"], run["stdout"])
+    return vis.ok("deployed " + answer["env"], run["out"])
 
 
 vis.extension(

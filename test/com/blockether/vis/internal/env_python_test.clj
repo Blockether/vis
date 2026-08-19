@@ -1021,10 +1021,10 @@
     (it "the handle verbs carry their raw-result contract in doc"
         (let [out (run (str "print('LOGS<'+doc('_shell_logs')+'>')\n"
                             "print('STOP<'+doc('_shell_stop')+'>')"))]
-          ;; ONE shell result shape: `logs` fills `stdout` like a foreground run does,
+          ;; ONE shell result shape: `logs` fills `out` like a foreground run does,
           ;; and `stop` answers the same keys — never a stage-scoped subset.
           (expect (str/includes? out "The same shell result shape as every other stage"))
-          (expect (str/includes? out "`stdout` is the window this read returned"))
+          (expect (str/includes? out "`out` is the window this read returned"))
           (expect (str/includes? out "(`stage` \"stop\"): `status` \"stopped\", `exit`."))))))
 
 ;; ONE corpus, two verbs. `apropos` SEARCHES every document the session can

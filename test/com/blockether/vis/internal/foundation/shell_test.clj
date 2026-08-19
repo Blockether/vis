@@ -42,7 +42,7 @@
           (:result (shell-logs* env id {:offset offset}))
 
           acc
-          (str acc (get r "stdout"))
+          (str acc (get r "out"))
 
           next-offset
           (long (get r "next_offset"))]
@@ -130,7 +130,7 @@
    (loop [n 1]
      (let [r (wait* env id 30)
            status (str (get r "status"))
-           out (str (get r "stdout"))]
+           out (str (get r "out"))]
 
        (if (or (>= n (long attempts)) (and (not= "running" status) (not (str/blank? out))))
          {:out out :status status :exit (get r "exit")}
@@ -154,7 +154,7 @@
         (let [r (shell-run* {:session-id "t" :jail-policy-fn (constantly {:disabled? true})}
                             "printf explicit-opt-out")]
           (expect (= 0 (get r "exit")))
-          (expect (= "explicit-opt-out" (get r "stdout"))))))
+          (expect (= "explicit-opt-out" (get r "out"))))))
   ;; `jail.env` is gone: the ONE `environment:` declaration carries the VALUE,
   ;; so a name only `.env`, a keychain item or a helper command knows reaches a
   ;; spawned tool even though the shell that launched Vis never exported it.
@@ -166,7 +166,7 @@
                              :jail-policy-fn (constantly {:disabled? true :env-values declared})}
                             "printf %s \"$VIS_TEST_DECLARED\"")]
 
-          (expect (= "from-declaration" (get r "stdout")))
+          (expect (= "from-declaration" (get r "out")))
           (expect (= declared
                      (process-jail/child-env-additions {:disabled? true :env-values declared}))))))
   ;; The workspace's own `.env` needs no declaration at all: it is loaded whole
@@ -186,7 +186,7 @@
                                     (constantly {:disabled? true
                                                  :env-values (config/child-environment-values)})}
                                    "printf %s \"$VIS_TEST_DOTENV\"")]
-                 (expect (= "from-the-project-file" (get r "stdout")))))
+                 (expect (= "from-the-project-file" (get r "out")))))
              (finally (io/delete-file env-path true))))))
 
 
@@ -210,7 +210,7 @@
            {"env" {"VIS_TEST_DECLARED" "from-the-call"
                    "VIS_TEST_CALL" "only-this-run"
                    "VIS_TEST_DROPPED" nil}})]
-        (expect (= "from-the-call|only-this-run|unset" (get r "stdout"))))))
+        (expect (= "from-the-call|only-this-run|unset" (get r "out"))))))
   (it "a value may name its SOURCE instead of carrying a secret into the transcript"
       (binding [workspace/*workspace-root*
                 (workspace/trunk-root)
@@ -221,7 +221,7 @@
         (let [r (shell-run* {:session-id "t" :jail-policy-fn (constantly {:disabled? true})}
                             "printf %s \"$VIS_TEST_SOURCED\""
                             {"env" {"VIS_TEST_SOURCED" {"env" "SOME_HOST_NAME"}}})]
-          (expect (= "resolved-elsewhere" (get r "stdout"))))))
+          (expect (= "resolved-elsewhere" (get r "out"))))))
   (it "a name that would run code before the jail exists is refused BY NAME, not dropped"
       (let [msg (throw-message #(shell-run* {:session-id "t"
                                              :jail-policy-fn (constantly {:disabled? true})}
@@ -239,7 +239,7 @@
   shell-git-optional-locks-test
   (it "hands a SYNC child GIT_OPTIONAL_LOCKS=0, so an agent git read takes no index lock"
       (let [r (shell-run* {} "printf 'locks=[%s]\\n' \"$GIT_OPTIONAL_LOCKS\"")]
-        (expect (str/includes? (str (get r "stdout")) "locks=[0]"))))
+        (expect (str/includes? (str (get r "out")) "locks=[0]"))))
   (it "hands the PTY child the same, pager and all"
       (with-shell-on
         (fn []
@@ -301,55 +301,55 @@
             (let [r (shell-run* {}
                                 "printf '\\033[33mcoloured\\033[m\\n'; printf 'first\\rlast\\n'")]
               ;; A tool colours and redraws ONLY because our pty makes isatty() true.
-              ;; Stripping that on the card alone left the escapes in the `stdout` the
+              ;; Stripping that on the card alone left the escapes in the `out` the
               ;; caller actually prints, which is where the artifact was reported.
-              (expect (= "coloured\nlast" (str/trim (get r "stdout"))))
-              (expect (not (str/includes? (get r "stdout") "\u001b")))))))))
+              (expect (= "coloured\nlast" (str/trim (get r "out"))))
+              (expect (not (str/includes? (get r "out") "\u001b")))))))))
 
 ;; Regression: a `git push` came back as 28 lines of `Counting objects: N%` and 11
 ;; more of `Compressing objects: N%`, because every bare carriage return was expanded
 ;; into a newline. The animation filled the capped capture window, so the rendered
 ;; card cut the answer the caller actually wanted — mid-word.
-(defdescribe shell-pty-progress-test
-             (it "resolves a redrawn progress line to the ONE frame the terminal was showing"
-                 (let [lf
-                       @#'shell/lf
+(defdescribe
+  shell-pty-progress-test
+  (it "resolves a redrawn progress line to the ONE frame the terminal was showing"
+      (let [lf
+            @#'shell/lf
 
-                       ;; Byte-for-byte what git writes down a pty while pushing.
-                       pushed
-                       (lf (str "Enumerating objects: 28, done.\r\n"
-                                "Counting objects:   3% (1/28)\r" "Counting objects:  82% (23/28)\r"
-                                "Counting objects: 100% (28/28), done.\r\n"
-                                "Delta compression using up to 14 threads\r\n"))]
+            ;; Byte-for-byte what git writes down a pty while pushing.
+            pushed
+            (lf (str "Enumerating objects: 28, done.\r\n"
+                     "Counting objects:   3% (1/28)\r" "Counting objects:  82% (23/28)\r"
+                     "Counting objects: 100% (28/28), done.\r\n"
+                     "Delta compression using up to 14 threads\r\n"))]
 
-                   (expect (= (str "Enumerating objects: 28, done.\n"
-                                   "Counting objects: 100% (28/28), done.\n"
-                                   "Delta compression using up to 14 threads\n")
-                              pushed))))
-             (it "keeps the last frame when the capture ends on a bare carriage return"
-                 (let [lf @#'shell/lf]
-                   (expect (= "Receiving objects:  40% (12/28)"
-                              (lf "Receiving objects:  40% (12/28)\r")))
-                   ;; A CR that only homes the cursor is a move, not a blank frame.
-                   (expect (= "--- status ---" (lf "\r--- status ---")))))
-             (it "renders one progress line on the card instead of the whole animation"
-                 (let [card (render-shell-run-result
-                              {"command" "git push"
-                               "exit" 0
-                               "stdout" (str "Compressing objects:   9% (1/11)\r"
-                                             "Compressing objects: 100% (11/11), done.\r\n"
-                                             "To github.com:example/repo.git\r\n")})]
-                   (expect (str/includes? (:body card) "Compressing objects: 100% (11/11), done."))
-                   (expect (not (str/includes? (:body card) "9% (1/11)"))))))
+        (expect (= (str "Enumerating objects: 28, done.\n"
+                        "Counting objects: 100% (28/28), done.\n"
+                        "Delta compression using up to 14 threads\n")
+                   pushed))))
+  (it "keeps the last frame when the capture ends on a bare carriage return"
+      (let [lf @#'shell/lf]
+        (expect (= "Receiving objects:  40% (12/28)" (lf "Receiving objects:  40% (12/28)\r")))
+        ;; A CR that only homes the cursor is a move, not a blank frame.
+        (expect (= "--- status ---" (lf "\r--- status ---")))))
+  (it "renders one progress line on the card instead of the whole animation"
+      (let [card (render-shell-run-result {"command" "git push"
+                                           "exit" 0
+                                           "out" (str "Compressing objects:   9% (1/11)\r"
+                                                      "Compressing objects: 100% (11/11), done.\r\n"
+                                                      "To github.com:example/repo.git\r\n")})]
+        (expect (str/includes? (:body card) "Compressing objects: 100% (11/11), done."))
+        (expect (not (str/includes? (:body card) "9% (1/11)"))))))
 
 (defdescribe shell-doc-page-test
              ;; Regression, issue #137: the result carried no `stderr` field and the DOC PAGE the
              ;; model reads never said so, so a caller reached for `sh.logs(-20)["stderr"]`, hit a
              ;; KeyError and lost the whole block that was printing around it.
-             (it "tells the reader of the result shape that the pty merges stderr into stdout"
-                 (let [result (:ext.symbol/result shell/shell-symbol)]
-                   (expect (str/includes? result "stderr"))
-                   (expect (str/includes? result "no `stderr` key")))))
+             (it
+               "tells the reader of the result shape that the pty merges stderr into the one `out`"
+               (let [result (:ext.symbol/result shell/shell-symbol)]
+                 (expect (str/includes? result "stderr"))
+                 (expect (str/includes? result "no `stderr` key")))))
 
 (defdescribe
   shell-run-sync-test
@@ -360,10 +360,10 @@
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           ;; Regression, issue #137: the result carried a `stderr` key that was
           ;; ALWAYS nil — every command runs under a pty, so what a command wrote
-          ;; to fd 2 arrived on `stdout` — and a caller reading `stderr` to
+          ;; to fd 2 arrived on `out` — and a caller reading `stderr` to
           ;; diagnose a failure silently got nothing.
           (let [r (shell-run* {} "echo out; echo err 1>&2; exit 3")]
-            (expect (= "out\nerr\n" (get r "stdout")))
+            (expect (= "out\nerr\n" (get r "out")))
             (expect (not (contains? r "stderr")))
             (expect (not (contains? r "stderr_omitted_chars")))
             (expect (= 3 (get r "exit")))
@@ -373,7 +373,7 @@
             ;; never branches on which shape came back.
             (expect (some? (get r "pid")))
             (expect (false? (get r "timed_out")))
-            (expect (= 0 (get r "stdout_omitted_chars")))
+            (expect (= 0 (get r "out_omitted_chars")))
             ;; Request scope rides the SAME map — one shape, no envelope to unwrap.
             (expect (contains? r "cwd"))
             (expect (contains? r "timeout_secs"))
@@ -384,17 +384,17 @@
             ;; `keys`, and `socket` was the bridge behind `attach`.
             (expect (not-any? #(contains? r %)
                               ["started" "stopped" "is_truncated" "sent" "socket"]))
-            (expect (not (contains? r "stdout_truncated")))
+            (expect (not (contains? r "out_truncated")))
             (expect (= rt/DEFAULT_SHELL_TIMEOUT_SECS (:timeout-secs (meta r))))
             (expect (string? (:dir (meta r)))))))))
-  (it "always carries a TOTAL stdout/exit (no output is \"\", not a missing key) and a real cwd"
+  (it "always carries a TOTAL out/exit (no output is \"\", not a missing key) and a real cwd"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (let [r (shell-run* {} "echo only-out")]
-                           (expect (= "only-out\n" (get r "stdout")))
-                           ;; TOTAL shape: model Python indexes r["stdout"]/r["exit"]
+                           (expect (= "only-out\n" (get r "out")))
+                           ;; TOTAL shape: model Python indexes r["out"]/r["exit"]
                            ;; directly — a missing key used to KeyError and spin.
-                           (expect (contains? r "stdout"))
+                           (expect (contains? r "out"))
                            (expect (= 0 (get r "exit"))))
                          (let [r (shell-run* {} "pwd" {"cwd" "src"})]
                            (expect (string? (:dir (meta r))))
@@ -404,7 +404,7 @@
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          ;; shell-run-impl answers the command's own entry, never a tool
                          ;; envelope: a non-zero exit is data ON THAT ENTRY, so a model
-                         ;; reading its stdout/exit never branches on shape.
+                         ;; reading its out/exit never branches on shape.
                          (let [r (shell-run* {} "exit 42")]
                            (expect (= 42 (get r "exit")))
                            (expect (some? (get r "pid"))))))))
@@ -424,16 +424,16 @@
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
             ;; ~45k chars of JSON — the size of one ordinary `gh … --json` reply. The
             ;; old 4k+12k capture spliced its omitted-marker at char 4000, so every
-            ;; `json.loads(r["stdout"])` died with "Invalid control
+            ;; `json.loads(r["out"])` died with "Invalid control
             ;; character" on output a caller could trivially hold.
             (let [r (shell-run*
                       {}
                       (str "printf '['; for i in $(seq 1 1000); do "
                            "printf '{\"n\":%s,\"pad\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}' \"$i\"; "
                            "[ \"$i\" -lt 1000 ] && printf ','; done; printf ']'"))
-                  out (get r "stdout")]
+                  out (get r "out")]
 
-              (expect (= 0 (get r "stdout_omitted_chars")))
+              (expect (= 0 (get r "out_omitted_chars")))
               (expect (nil? (get r "note")))
               (expect (> (count out) 40000))
               ;; whole and well-formed: both ends present and every element survived
@@ -445,14 +445,14 @@
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            ;; ~700k chars of stdout — far over the head+tail capture budget.
+            ;; ~700k chars of output — far over the head+tail capture budget.
             (let [r (shell-run* {}
                                 (str "echo HEAD_MARKER; " "for i in $(seq 1 12000); do "
                                      "echo 'filler-filler-filler-filler-filler-filler'; done; "
                                      "echo TAIL_MARKER"))
-                  out (get r "stdout")]
+                  out (get r "out")]
 
-              (expect (pos? (get r "stdout_omitted_chars")))
+              (expect (pos? (get r "out_omitted_chars")))
               ;; the opening line is NO LONGER swallowed (the old tail-only cap ate it)
               (expect (str/includes? out "HEAD_MARKER"))
               ;; the closing summary still survives
@@ -460,7 +460,7 @@
               ;; and the drop is made visible, not silent
               (expect (str/includes? out "chars omitted"))
               ;; …including WHY a parser will now choke on it
-              (expect (str/includes? (get r "note") "stdout truncated"))
+              (expect (str/includes? (get r "note") "output truncated"))
               (expect (str/includes? (get r "note") "no longer parses")))))))
   (it "defaults and caps the wait at thirty minutes"
       ;; `timeout_secs` is group scope on the envelope now, so the clamp is
@@ -507,7 +507,7 @@
                        nil]
 
                (let [r (shell-run* env "pwd" {"cwd" "../svar"})]
-                 (expect (= (.getCanonicalPath sibling) (str/trim (get r "stdout"))))
+                 (expect (= (.getCanonicalPath sibling) (str/trim (get r "out"))))
                  (expect (= (.getCanonicalPath sibling) (:dir (meta r))))))
              (finally (io/delete-file sibling true)
                       (io/delete-file primary true)
@@ -527,7 +527,7 @@
                 nil]
 
         (let [r (shell-run* env "pwd" {"cwd" home})]
-          (expect (= home (str/trim (get r "stdout"))))
+          (expect (= home (str/trim (get r "out"))))
           (expect (= home (:dir (meta r))))))))
   (it "accepts the HOME-relative paths advertised in session access"
       (let [home
@@ -544,7 +544,7 @@
 
           ;; `cwd` is the ONLY spelling — `~` expands against the home root.
           (let [r (shell-run* env "pwd" {"cwd" "~"})]
-            (expect (= home (str/trim (get r "stdout"))))
+            (expect (= home (str/trim (get r "out"))))
             (expect (= home (:dir (meta r))))))))
   (it "accepts an ABSOLUTE cwd that lands inside a workspace root"
       (with-shell-on (fn []
@@ -585,11 +585,11 @@
                    (expect (= "shell" (get (first rs) "kind")))
                    (expect (true? (get (first rs) "can_stop"))))
                  (let [r (poll #(:result (shell-logs* env "worker"))
-                               #(>= (count (str/split-lines (str (get % "stdout")))) 2))]
+                               #(>= (count (str/split-lines (str (get % "out")))) 2))]
                    ;; `text` is the bytes as they were printed and `offset`/
                    ;; `next_offset` are the cursor into them — one copy plus a
                    ;; place to continue, never a window that forgot its head.
-                   (expect (str/starts-with? (get r "stdout") "l1"))
+                   (expect (str/starts-with? (get r "out") "l1"))
                    (expect (= 0 (get r "offset")))
                    (expect (pos? (get r "next_offset")))
                    (expect (true? (get r "is_eof")))
@@ -601,7 +601,7 @@
                    ;; The registry entry is gone, but the LOG is the session's, not the
                    ;; process's: a stopped shell still reads back by id, as exited.
                    (let [r (:result (shell-logs* env "worker" {:offset 0}))]
-                     (expect (str/starts-with? (get r "stdout") "l1"))
+                     (expect (str/starts-with? (get r "out") "l1"))
                      (expect (= "exited" (get r "status"))))
                    (expect (threw? #(shell-logs* env "no-such-shell"))))
                  (finally (resources/stop-all! sid))))))))
@@ -617,14 +617,14 @@
 
               (try (shell-bg* env "tail" "for i in $(seq 1 200); do echo line-$i; done; sleep 60")
                    (let [r (poll #(:result (shell-logs* env "tail" {:offset -3}))
-                                 #(str/includes? (str (get % "stdout")) "line-200"))]
+                                 #(str/includes? (str (get % "out")) "line-200"))]
                      (expect (= ["line-198" "line-199" "line-200"]
-                                (str/split-lines (str/trim (str (get r "stdout"))))))
+                                (str/split-lines (str/trim (str (get r "out"))))))
                      ;; The offset it answers with is a real line boundary: fed back as
                      ;; a POSITIVE cursor it reads exactly the same bytes.
-                     (expect (= (get r "stdout")
+                     (expect (= (get r "out")
                                 (get (:result (shell-logs* env "tail" {:offset (get r "offset")}))
-                                     "stdout"))))
+                                     "out"))))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "keeps an exited process listed (status :exited) with readable logs + exit"
       (with-shell-on
@@ -637,7 +637,7 @@
                    (let [r (poll #(:result (shell-logs* env "quick"))
                                  #(= "exited" (get % "status")))]
                      (expect (= 7 (get r "exit")))
-                     (expect (str/includes? (get r "stdout") "done"))
+                     (expect (str/includes? (get r "out") "done"))
                      (expect (nil? (get r "lines"))))
                    ;; The LOG's status and the REGISTRY's are two
                    ;; stores: exit finalization publishes the failed
@@ -670,7 +670,7 @@
                    ;; A read past the end is empty and still at the end, so a
                    ;; polling loop terminates instead of re-reading the tail.
                    (let [end (:result (shell-logs* env "long" {:offset 1000000000}))]
-                     (expect (= "" (get end "stdout")))
+                     (expect (= "" (get end "out")))
                      (expect (true? (get end "is_eof")))
                      (expect (= (get end "offset") (get end "next_offset"))))
                    (finally (resources/stop-all! sid))))))))
@@ -792,12 +792,12 @@
 
                            (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
                                   ;; The schema advertises `cwd` for run AND bg; a bg that silently
-                                  (poll #(get (:result (shell-logs* env "c")) "stdout")
+                                  (poll #(get (:result (shell-logs* env "c")) "out")
                                         #(str/includes? (str %) "/src")
                                         20)
                                   (let [r (:result (shell-logs* env "c"))]
                                     (expect (= (get b "cwd") (get r "cwd")))
-                                    (expect (str/includes? (get r "stdout") "/src"))))
+                                    (expect (str/includes? (get r "out") "/src"))))
                                 (finally (resources/stop-all! sid))))))))
   (it "stops promptly even when the command double-forks a detached daemon"
       (with-shell-on
@@ -923,11 +923,11 @@
                                 (expect (= "running" (get snt "status")))
                                 ;; The card must be able to show WHAT was typed, not
                                 ;; just how many chars it was — and the keystrokes are
-                                ;; the LABEL, never a second spelling of `stdout`.
-                                (expect (nil? (get snt "stdout")))
+                                ;; the LABEL, never a second spelling of `out`.
+                                (expect (nil? (get snt "out")))
                                 (expect (= "\"hi-there\" ↵" (get snt "keys"))))
                               (let [hit? (fn [r]
-                                           (str/includes? (str (get r "stdout")) "GOT:hi-there"))
+                                           (str/includes? (str (get r "out")) "GOT:hi-there"))
                                     r (poll #(:result (shell-logs* env "echoer")) hit?)]
 
                                 (expect (hit? r)))
@@ -974,7 +974,7 @@
                    (let [r (:result (shell* {} {"command" "echo mapped"}))]
                      (expect (= "run" (get r "stage")))
                      (expect (= "echo mapped" (get r "command")))
-                     (expect (= "mapped\n" (get (wait* {} (get r "id")) "stdout"))))
+                     (expect (= "mapped\n" (get (wait* {} (get r "id")) "out"))))
                    (expect (threw? #(shell* {} "echo positional")))
                    (expect (threw? #(shell* {} ["echo positional"])))
                    (expect (threw? #(shell* {} {"cmd" "echo legacy"})))
@@ -1000,11 +1000,11 @@
   shell-render-test
   (it "renders the run op like a REPL-style collapsible card"
       (let [card (render-shell-run-result
-                   {"command" "echo hi" "exit" 0 "duration_ms" 12 "stdout" "hi"})]
+                   {"command" "echo hi" "exit" 0 "duration_ms" 12 "out" "hi"})]
         (expect (= "$ echo hi (success) · 12ms" (:summary card)))
         (expect (str/includes? (:body card) "**COMMAND**"))
         (expect (str/includes? (:body card) "**STATUS**"))
-        (expect (str/includes? (:body card) "**STDOUT**"))))
+        (expect (str/includes? (:body card) "**OUT**"))))
   (it "separates a compound command onto its own lines in the COMMAND card"
       (let [card (render-shell-run-result {"command" "a; b && c" "exit" 0 "duration_ms" 1})]
         (expect (str/includes? (:body card) "a;\nb &&\nc"))))
@@ -1045,16 +1045,16 @@
                                                                  "duration_ms" 5000}))
                              "$ make test (failure) · timed out after 5s · 5.0s")))
   (it "normalizes terminal controls in rendered output without changing the native result"
-      (let [stdout
+      (let [out
             "\u001b[0;32m✓ PASS\u001b[0m\rnext\b!"
 
             result
-            {"command" "tests" "exit" 0 "stdout" stdout}
+            {"command" "tests" "exit" 0 "out" out}
 
             run-card
             (render-shell-run-result result)]
 
-        (expect (= stdout (get result "stdout")))
+        (expect (= out (get result "out")))
         ;; The CR REDREW the line, so the frame the terminal was left showing is the
         ;; only one a reader is owed.
         (expect (str/includes? (:body run-card) "next!"))
@@ -1157,7 +1157,7 @@
 
                        (expect (= 0 (get w "exit")))
                        (expect (false? (get w "timed_out")))
-                       (expect (str/includes? (str (get w "stdout")) "hi"))
+                       (expect (str/includes? (str (get w "out")) "hi"))
                        ;; The bytes are all there AND the caller is not held past the
                        ;; exit: everything after `finished_at` is pure wait overhead.
                        ;; The bound is generous on purpose — this proves the wait does
@@ -1188,7 +1188,7 @@
             late-pump
             (fn [_env _id _opts]
               (let [n (swap! reads inc)]
-                {:result {"stdout" (if (= 6 n) "late-line" "")
+                {:result {"out" (if (= 6 n) "late-line" "")
                           "status" "exited"
                           "exit" 0
                           "is_eof" true
@@ -1197,7 +1197,7 @@
         (with-redefs-fn {#'shell/shell-logs-impl late-pump}
           (fn []
             (let [w (:result (shell-wait* {} "late" {:seconds 5}))]
-              (expect (= "late-line" (get w "stdout")))
+              (expect (= "late-line" (get w "out")))
               (expect (false? (get w "timed_out")))
               ;; Confirming silence costs the drain window, never the budget.
               (expect (< (long (get w "duration_ms")) 1000)))))))
@@ -1269,8 +1269,8 @@
                               (mapv #(get % "stage") [run bg logs2 logs waited sent stopped git])))
                    ;; The bytes have ONE name, whether the call waited for them or
                    ;; came back for them later.
-                   (expect (= "hi\n" (get waited "stdout")))
-                   (expect (contains? logs "stdout")))
+                   (expect (= "hi\n" (get waited "out")))
+                   (expect (contains? logs "out")))
                  (finally (resources/stop-all! sid)))))))))
 
 (defdescribe
@@ -1315,8 +1315,8 @@
 
                                   (expect (true? (get r "timed_out")))
                                   (expect (= "running" (get r "status")))
-                                  (expect (< (count (get r "stdout")) 500000))
-                                  (expect (pos? (long (get r "stdout_omitted_chars")))))
+                                  (expect (< (count (get r "out")) 500000))
+                                  (expect (pos? (long (get r "out_omitted_chars")))))
                                 (finally (resources/stop-all! sid))))))))
   (it "answers from the LOG once the process is gone, and moves no cursor twice"
       (with-shell-on
@@ -1334,14 +1334,14 @@
                                                       {:seconds 5
                                                        :offset (get first-wait "next_offset")}))]
 
-                     (expect (= "a\nb\n" (get first-wait "stdout")))
+                     (expect (= "a\nb\n" (get first-wait "out")))
                      (expect (= 0 (get first-wait "exit")))
                      (expect (false? (get first-wait "timed_out")))
                      ;; A second wait from the start replays the same log — the file is
                      ;; the truth and a finished shell keeps answering by id.
-                     (expect (= "a\nb\n" (get again "stdout")))
+                     (expect (= "a\nb\n" (get again "out")))
                      ;; From the cursor the first wait returned, there is nothing new.
-                     (expect (= "" (get onward "stdout"))))
+                     (expect (= "" (get onward "out"))))
                    (finally (resources/stop-all! sid))))))))
   (it "refuses an unknown id, another origin's shell and a nonsense duration"
       (with-shell-on
@@ -1378,7 +1378,7 @@
                                       r (wait* env (get sh "id") 10)]
 
                                   (expect (false? (get r "timed_out")))
-                                  (expect (str/includes? (get r "stdout") "before-stop")))
+                                  (expect (str/includes? (get r "out") "before-stop")))
                                 (finally (resources/stop-all! sid))))))))
   (it "unwinds at once when the turn is cancelled, leaving the shell alive"
       ;; A wait is HOST code now, so a cancelled turn must interrupt it promptly
@@ -1435,7 +1435,7 @@
                                                             {"command" (str "echo burst-" i)
                                                              "id" (str "burst" i)}))]
                                     (expect (= (str "burst-" i "\n")
-                                               (get (wait* env (get sh "id") 20) "stdout")))))
+                                               (get (wait* env (get sh "id") 20) "out")))))
                                 (finally (resources/stop-all! sid)))
                            (Thread/sleep 500)
                            (expect (<= (shell-thread-count) base))))))))
@@ -1522,7 +1522,7 @@
                                   (get (:result
                                          (shell* {} {"command" "printf first && printf second"}))
                                        "id"))]
-                     (expect (= "firstsecond" (str/trim (get r "stdout"))))
+                     (expect (= "firstsecond" (str/trim (get r "out"))))
                      (expect (not (contains? r "commands"))))))
              (it "rejects missing, blank, and non-map process requests"
                  (expect (threw? #(shell* {} {})))
@@ -1534,7 +1534,7 @@
                  (binding [workspace/*workspace-root* (workspace/trunk-root)]
                    (let [r (:result (shell* {} {"command" ["printf" "%s" "two words"]}))]
                      (expect (= "printf %s 'two words'" (get r "command")))
-                     (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "stdout"))))))))
+                     (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "out"))))))))
 
 (defdescribe shell-mistaken-shape-test
              ;; Both of these were got wrong by a caller mid-task, not imagined: the argv
@@ -1552,7 +1552,7 @@
                          r (:result (shell* {} {"command" argv}))]
 
                      (expect (= "printf %s 'two words'" (get r "command")))
-                     (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "stdout"))))))))
+                     (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "out"))))))))
 
 (defdescribe
   shell-native-contract-test
@@ -1638,17 +1638,17 @@
         (try (binding [workspace/*workspace-root* (.getCanonicalPath ws)]
                (let [started (:result (shell-bg* env "pty" cmd))
                      ready? (fn [r]
-                              (str/includes? (str (get r "stdout")) "READY"))
+                              (str/includes? (str (get r "out")) "READY"))
                      before (poll #(:result (shell-logs* env "pty")) ready?)]
 
-                 (expect (str/includes? (get before "stdout") "TTY_OK"))
-                 (expect (str/includes? (get before "stdout") "NESTED_SEALED"))
-                 (expect (not (str/includes? (get before "stdout") "ESCAPED")))
+                 (expect (str/includes? (get before "out") "TTY_OK"))
+                 (expect (str/includes? (get before "out") "NESTED_SEALED"))
+                 (expect (not (str/includes? (get before "out") "ESCAPED")))
                  (expect (string? (get started "attach")))
                  (shell-send* env "pty" "hello")
                  (let [after (poll #(:result (shell-logs* env "pty"))
-                                   #(str/includes? (str (get % "stdout")) "GOT:hello"))]
-                   (expect (str/includes? (get after "stdout") "GOT:hello")))))
+                                   #(str/includes? (str (get % "out")) "GOT:hello"))]
+                   (expect (str/includes? (get after "out") "GOT:hello")))))
              (finally (resources/stop-all! sid)
                       (io/delete-file secret true)
                       (io/delete-file ws true)))))))
@@ -1695,7 +1695,7 @@
         (try (expect (= ["wait" "hi" "echo hi"]
                         (py c
                             (str "r = __vis_settle__(shell('echo hi')).wait(20)\n"
-                                 "[r['stage'], r['stdout'].strip(), r['command']]"))))
+                                 "[r['stage'], r['out'].strip(), r['command']]"))))
              (expect (= ["run" "logs" "stop"]
                         (py c
                             (str
@@ -1737,7 +1737,7 @@
                               "sh.type('ready')\n"
                               "w = sh.wait(30)\n" "sh.stop()\n"
                               "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
-                              " 'got ready' in w['stdout'], w['status'], w['timed_out']]"))))
+                              " 'got ready' in w['out'], w['status'], w['timed_out']]"))))
              (finally (resources/stop-all! sid)))))
   (it "reads a LINE window on the handle, folds `n`, and refuses a keyword by name"
       ;; A near-miss keyword used to cross as an unread key: `sh.logs(n=10)` came
@@ -1758,10 +1758,9 @@
                                  "try:\n" "    sh.logs(nlines=3)\n"
                                  "    refusal = 'nothing was refused'\n" "except TypeError as e:\n"
                                  "    refusal = str(e)\n" "sh.stop()\n"
-                                 "[a['stdout'].strip().splitlines() =="
+                                 "[a['out'].strip().splitlines() =="
                                  " ['line-38', 'line-39', 'line-40'],"
-                                 " a['stdout'] == b['stdout'],"
-                                 " head['stdout'].strip().splitlines() =="
+                                 " a['out'] == b['out']," " head['out'].strip().splitlines() =="
                                  " ['line-%d' % i for i in range(1, 11)],"
                                  " refusal.startswith(\"logs: no keyword 'nlines'\")]"))))
              (finally (resources/stop-all! sid)))))
@@ -1781,9 +1780,9 @@
                                  "down = sh.logs(0, 10)\n"
                                  "further = sh.logs(down['next_offset'], 10)\n"
                                  "up = sh.logs(down['next_offset'], -10)\n" "sh.stop()\n"
-                                 "[further['stdout'].strip().splitlines() =="
+                                 "[further['out'].strip().splitlines() =="
                                  " ['line-%d' % i for i in range(11, 21)],"
-                                 " up['stdout'] == down['stdout'],"
+                                 " up['out'] == down['out'],"
                                  " up['next_offset'] == down['next_offset']]"))))
              (finally (resources/stop-all! sid)))))
   (it "reports the shell's status on the run's OWN answer, with no second call"
@@ -2063,7 +2062,7 @@
           (fn []
             (binding [workspace/*workspace-root* (workspace/trunk-root)]
               (let [r (shell-run* {} "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"; exit 5")
-                    [pid pgid] (str/split (str/trim (get r "stdout")) #"\s+")]
+                    [pid pgid] (str/split (str/trim (get r "out")) #"\s+")]
 
                 (expect (= pid pgid))
                 ;; the detacher execs, so the command's own status survives
@@ -2097,17 +2096,17 @@
                      (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (let [probe (shell-run* {} "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"")
-                               [pid pgid] (str/split (str/trim (get probe "stdout")) #"\s+")
+                               [pid pgid] (str/split (str/trim (get probe "out")) #"\s+")
                                mine (own-pgid)]
 
                            (expect (= pid pgid))
                            (expect (not= pgid mine))
                            (when (and (= pid pgid) (some? pgid) (not= pgid mine))
                              (let [r (shell-run* {} "kill -TERM 0; sleep 5; echo survived")]
-                               (expect (not (str/includes? (str (get r "stdout")) "survived")))
+                               (expect (not (str/includes? (str (get r "out")) "survived")))
                                (expect (not= 0 (get r "exit")))))
                            ;; Still running after the group signal — the whole point.
-                           (expect (= "alive\n" (get (shell-run* {} "echo alive") "stdout"))))))))))
+                           (expect (= "alive\n" (get (shell-run* {} "echo alive") "out"))))))))))
 
 ;; ── Keychain advisory (#90) ──────────────────────────────────────────────────
 ;; A confined `gh`/`git`/`security` fails with an opaque Security-framework line
@@ -2155,8 +2154,8 @@
                 (expect (seq id))
                 ;; Everything the call could not have seen arrives on the handle.
                 (let [w (wait* env id)]
-                  (expect (str/includes? (get w "stdout") "early"))
-                  (expect (str/includes? (get w "stdout") "late"))
+                  (expect (str/includes? (get w "out") "early"))
+                  (expect (str/includes? (get w "out") "late"))
                   (expect (= 0 (get w "exit"))))
                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "keeps a finished run's log readable by id after the process is gone"
@@ -2168,12 +2167,12 @@
                                id (get r "id")]
 
                            (try (expect (seq id))
-                                (expect (= "done\n" (get (wait* env id) "stdout")))
+                                (expect (= "done\n" (get (wait* env id) "out")))
                                 ;; No live process is left to account for, yet the bytes are still
                                 ;; readable by id: the log belongs to the session, not to the child.
                                 ;; Retention IS the feature — nothing reaps it behind the caller.
                                 (let [logs (:result (shell-logs* env id {:offset 0}))]
-                                  (expect (str/includes? (get logs "stdout") "done"))
+                                  (expect (str/includes? (get logs "out") "done"))
                                   (expect (= "exited" (get logs "status"))))
                                 (finally (resources/stop-all! sid)
                                          (shell-log/delete-session-logs! sid)))))))))
@@ -2208,7 +2207,7 @@
                                  (do (Thread/sleep 100) (recur (inc n))))))]
                   (expect (str/includes? text "up")))
                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  (it "the handle's wait is what fills exit and stdout"
+  (it "the handle's wait is what fills exit and out"
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -2224,7 +2223,7 @@
 
               (try (expect (nil? (get r "exit")))
                    (expect (= 7 (get w "exit")))
-                   (expect (str/includes? (get w "stdout") "done"))
+                   (expect (str/includes? (get w "out") "done"))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "re-issuing a live id answers with THAT shell instead of starting a second one"
       (with-shell-on (fn []
@@ -2291,7 +2290,7 @@
 
                      (expect (= 127 (get r "exit")))
                      (expect (= "exited" (get r "status")))
-                     (expect (str/includes? (get r "stdout") "command not found"))
+                     (expect (str/includes? (get r "out") "command not found"))
                      (expect (false? (get r "timed_out"))))
                    (finally (resources/stop-all! sid))))))))
   (it "carries a non-zero exit and, on the ONE stream, the fd-2 line that explains it"
@@ -2305,8 +2304,8 @@
                          r (wait* env "e3")]
 
                      (expect (= 3 (get r "exit")))
-                     (expect (str/includes? (get r "stdout") "out"))
-                     (expect (str/includes? (get r "stdout") "boom")))
+                     (expect (str/includes? (get r "out") "out"))
+                     (expect (str/includes? (get r "out") "boom")))
                    (finally (resources/stop-all! sid))))))))
   (it "says it is RUNNING, with the pid, the moment it spawns"
       ;; The run stage rebuilt its map from scratch and dropped `pid`, `status` and
@@ -2341,26 +2340,25 @@
             (let [sid "shell-stop-kills-tree"
                   env {:session-id sid}]
 
-              (try (let [_ (shell* env
-                                   {"command" "sleep 300 & echo CHILD=$!; sleep 300" "id" "tree"})
-                         child (poll #(some->> (get (:result (shell-logs* env "tree" {:offset 0}))
-                                                    "stdout")
-                                               (re-find #"CHILD=(\d+)")
-                                               second
-                                               parse-long)
-                                     some?)
-                         parent (get (:result (shell-logs* env "tree" {:offset 0})) "pid")
-                         stopped (:result (shell-stop* env "tree"))]
+              (try
+                (let [_ (shell* env {"command" "sleep 300 & echo CHILD=$!; sleep 300" "id" "tree"})
+                      child (poll #(some->> (get (:result (shell-logs* env "tree" {:offset 0}))
+                                                 "out")
+                                            (re-find #"CHILD=(\d+)")
+                                            second
+                                            parse-long)
+                                  some?)
+                      parent (get (:result (shell-logs* env "tree" {:offset 0})) "pid")
+                      stopped (:result (shell-stop* env "tree"))]
 
-                     (expect (= "stopped" (get stopped "status")))
-                     (expect (some? (get stopped "exit")))
-                     (expect (nil? (poll #(when (alive-pid? child) :alive) nil? 30)))
-                     (expect (nil? (poll #(when (alive-pid? parent) :alive) nil? 30)))
-                     ;; The log outlives the kill: the id still reads back.
-                     (expect (str/includes? (get (:result (shell-logs* env "tree" {:offset 0}))
-                                                 "stdout")
-                                            "CHILD=")))
-                   (finally (resources/stop-all! sid))))))))
+                  (expect (= "stopped" (get stopped "status")))
+                  (expect (some? (get stopped "exit")))
+                  (expect (nil? (poll #(when (alive-pid? child) :alive) nil? 30)))
+                  (expect (nil? (poll #(when (alive-pid? parent) :alive) nil? 30)))
+                  ;; The log outlives the kill: the id still reads back.
+                  (expect (str/includes? (get (:result (shell-logs* env "tree" {:offset 0})) "out")
+                                         "CHILD=")))
+                (finally (resources/stop-all! sid))))))))
   (it "leaves no thread of its own behind once the command is gone"
       ;; Every run owns a pump, a PTY reader and an attach acceptor. They are daemons,
       ;; so a leak is invisible until a long session has hundreds of them.
@@ -2438,9 +2436,9 @@
 
               (try (shell-bg* env "lines" "for i in $(seq 1 40); do echo line-$i; done")
                    (poll #(:result (shell* env {"op" "logs" "id" "lines"}))
-                         #(str/includes? (str (get % "stdout")) "line-40"))
+                         #(str/includes? (str (get % "out")) "line-40"))
                    (let [lines-of (fn [r]
-                                    (str/split-lines (str/trim (str (get r "stdout")))))
+                                    (str/split-lines (str/trim (str (get r "out")))))
                          last-three (:result (shell* env {"op" "logs" "id" "lines" "lines" 3}))
                          by-alias (:result (shell* env {"op" "logs" "id" "lines" "n" 3}))
                          head (:result (shell* env
@@ -2452,7 +2450,7 @@
                                                     "tail" 10}))]
 
                      (expect (= ["line-38" "line-39" "line-40"] (lines-of last-three)))
-                     (expect (= (get last-three "stdout") (get by-alias "stdout")))
+                     (expect (= (get last-three "out") (get by-alias "out")))
                      (expect (= (mapv #(str "line-" %) (range 1 11)) (lines-of head)))
                      (expect (= (mapv #(str "line-" %) (range 11 21)) (lines-of next-ten)))
                      ;; The window closed the chunk early, so the reader is told there
@@ -2469,5 +2467,5 @@
                                 (let [r (:result (shell* env {"op" "wait" "id" "quick" "secs" 20}))]
                                   (expect (= 0 (get r "exit")))
                                   (expect (false? (get r "timed_out")))
-                                  (expect (str/includes? (str (get r "stdout")) "done")))
+                                  (expect (str/includes? (str (get r "out")) "done")))
                                 (finally (resources/stop-all! sid)))))))))
