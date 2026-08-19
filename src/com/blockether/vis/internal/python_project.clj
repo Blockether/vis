@@ -166,7 +166,7 @@
              {:import-roots []
               :testpaths []
               :warning (str "project layout not read: " (throwable-msg t))})
-           (finally (try (.close ctx true) (catch Throwable _)))))))
+           (finally (try (pyx/close-context! ctx) (catch Throwable _)))))))
 
 (defn project-layout
   "`{:import-roots [abs…] :testpaths [abs…]}` for `dir`, read in a THROWAWAY

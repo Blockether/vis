@@ -1520,7 +1520,7 @@
         (io/copy f t)))
     {:dir dest :code-sha (code-sha dest)}))
 
-(defn- close-quietly!
+(defn ^:no-doc close-context!
   "Close a GraalPy context AND the engine it owns, swallowing what either
    throws. Every close in this namespace tears down a context that is already
    superseded, dead or being replaced, so a failing close must never take the
@@ -1529,7 +1529,11 @@
    The engine goes too, and it has to: closing only the Context frees nothing
    while its Engine lives (see `env-python/new-engine!`). `build-context` gives
    every context an Engine of its OWN, so `.getEngine` here can only ever reach
-   this context's engine — never a shared one."
+   this context's engine — never a shared one.
+
+   Public because `build-context` has callers outside this namespace, and
+   closing only the Context is not enough: the threads go, but the Engine keeps
+   everything ever built on it."
   [ctx]
   (when ctx
     (let [engine (try (.getEngine ^Context ctx) (catch Throwable _ nil))]
@@ -1617,7 +1621,7 @@
                :ext-name (:ext/name spec)
                :ext validated
                :context ctx}))
-          (catch Throwable t (close-quietly! ctx) (throw t))))))
+          (catch Throwable t (close-context! ctx) (throw t))))))
 
 (defn- live-symbol-fn
   "The CURRENTLY registered fn for `[ext-name sym]`, after `dead-ctx` was torn
@@ -1665,7 +1669,7 @@
                                             (when (.isDirectory snap)
                                               {:dir snap :code-sha (:code-sha entry)})))]
                   (swap! loaded assoc path (dissoc rebuilt :path))
-                  (close-quietly! dead-ctx)
+                  (close-context! dead-ctx)
                   (tel/log! {:level :info
                              :id ::context-rebuilt
                              :data {:extension ext-name :file path :symbol (str sym)}
@@ -1765,10 +1769,10 @@
                     (doseq [[opath {oname :ext-name ^Context octx :context}] @loaded
                             :when (and (= oname ext-name) (not= opath path))]
 
-                      (close-quietly! octx)
+                      (close-context! octx)
                       (swap! loaded dissoc opath))
                     (swap! loaded assoc path (dissoc entry :path))
-                    (close-quietly! prev-ctx))
+                    (close-context! prev-ctx))
                   (catch Throwable t
                     (tel/log! {:level :warn
                                :id ::load-failed
@@ -1784,7 +1788,7 @@
                  :when (not (scanned opath))]
 
            (try (extension/deregister-extension! ext-name) (catch Throwable _))
-           (close-quietly! (:context e))
+           (close-context! (:context e))
            (swap! loaded dissoc opath))
          ;; Frozen code this process no longer serves. A retained last-good entry
          ;; (its own reload failed) still points at its snapshot, so only trees

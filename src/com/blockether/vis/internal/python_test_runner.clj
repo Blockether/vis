@@ -198,7 +198,7 @@
             :output ""
             :tests [{:nodeid (.getName test-file) :outcome :errored :message (ex-message t)}]
             :error (ex-message t)})
-         (finally (try (.close ctx true) (catch Throwable _))))))
+         (finally (try (pyx/close-context! ctx) (catch Throwable _))))))
 
 (defn test-python-extensions!
   "Discover and run every Python test (`test_*.py` / `*_test.py`) across the
