@@ -116,7 +116,10 @@ jobs:
           # Both runners need an explicit heap: macOS starts smaller than the full
           # Truffle suite needs, and Linux's default (a quarter of RAM) ran the
           # suite out of heap. Leave headroom for native allocations and children.
-          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx6g' }}
+          # Each keyed sandbox (`test-python-context`) pins a whole GraalPy heap
+          # for the life of the JVM, so the suite's floor rises with the number
+          # of namespaces: 6g died at namespace 75 of 169 on a 16 GB runner.
+          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx12g' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale
