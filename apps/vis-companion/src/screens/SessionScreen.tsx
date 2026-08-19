@@ -5891,7 +5891,7 @@ export function SessionScreen({
                   voicePhase === "recording"
                     ? "Listening…"
                     : running
-                      ? "Message Vis — queues behind the running turn"
+                      ? "Message Vis — queues next"
                       : "Message Vis or type / or @"
                 }
                 aria-label="Message Vis"

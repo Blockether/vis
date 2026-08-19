@@ -139,4 +139,33 @@ describe("composer height", () => {
     act(() => resize(composer));
     expect(composer.style.height).toBe("");
   });
+
+  // Regression, user report ("it goes outside of the input"): while a turn ran the
+  // composer read "Message Vis — queues behind the running turn" — 43 characters in
+  // a box that holds 36, so the placeholder wrapped to a second line that the box,
+  // which deliberately never grows around text nobody typed, then clipped.
+  it("says a message queues in the one line the composer keeps", () => {
+    installLayout();
+    installObserver();
+    renderSessionScreen({
+      session: sessionFixture({ id: "busy", status: "running" }),
+      client: {
+        cachedLiveTurn: () => ({
+          turn: {
+            id: "t1",
+            request: "check the logs",
+            answer: "",
+            iterations: [],
+            startedAt: Date.now(),
+            status: "running" as const,
+          },
+          seq: 1,
+        }),
+      },
+    });
+
+    const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
+    expect(composer.placeholder).toContain("queues");
+    expect(composer.scrollHeight).toBe(composer.clientHeight);
+  });
 });
