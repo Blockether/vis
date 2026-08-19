@@ -1185,3 +1185,285 @@
                               "a = (d / 'via_path.png').read_bytes()\n"
                               "b = (d / 'via_str.png').read_bytes()\n"
                               "[Image.open(d / 'via_path.png').format, a == b, len(a) > 0]"))))))))
+
+;; Regression: `resize`/`reduce` accepted `box=` and then ignored it, and
+;; `rotate` ignored `center=` and `translate=`, so every one of those calls
+;; silently answered the whole image rotated about its own middle.
+(defdescribe
+  pil-geometry-argument-regression-test
+  (it "resizes out of the requested box, not out of the whole image"
+      (with-python-context
+        (expect (= [30 40 35]
+                   (ev python-context
+                       (str "from PIL import Image\n" "im = Image.new('L',(4,1))\n"
+                            "for x, v in enumerate([10,20,30,40]): im.putpixel((x,0), v)\n"
+                            "r = im.resize((2,1), Image.NEAREST, box=(2,0,4,1))\n"
+                            "q = im.reduce(2, box=(2,0,4,1))\n"
+                            "[r.getpixel((0,0)), r.getpixel((1,0)), q.getpixel((0,0))]"))))))
+  (it "shifts the picture by `translate` and turns it about `center`"
+      (with-python-context
+        (expect (= [200 0 255 0 0]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "im = Image.new('L',(3,3))\n" "im.putpixel((0,0), 200)\n"
+                            "t = im.rotate(0, translate=(1,1))\n"
+                            "c = Image.new('L',(3,3),255).rotate(180, center=(0,0))\n"
+                            "[t.getpixel((1,1)), t.getpixel((0,0)),\n"
+                            " c.getpixel((0,0)), c.getpixel((1,1)), c.getpixel((2,2))]")))))))
+
+;; Regression: `convert` dropped its `matrix=` and `dither=` arguments on the
+;; floor — a colour matrix was a no-op and every `convert('1')` dithered, so
+;; `dither=Image.NONE` could not produce a flat threshold.
+(defdescribe pil-convert-argument-regression-test
+             (it "applies a 12-entry colour matrix, and a 4-entry one to make 'L'"
+                 (with-python-context
+                   (expect (= [[30 20 10] 10]
+                              (ev python-context
+                                  (str
+                                    "from PIL import Image\n"
+                                    "im = Image.new('RGB',(1,1),(10,20,30))\n"
+                                    "swap = im.convert('RGB', matrix=(0,0,1,0, 0,1,0,0, 1,0,0,0))\n"
+                                    "gray = im.convert('L', matrix=(1,0,0,0))\n"
+                                    "[list(swap.getpixel((0,0))), gray.getpixel((0,0))]"))))))
+             (it "thresholds a flat gray when dithering is off, and dithers when it is on"
+                 (with-python-context
+                   (expect (= [1 true]
+                              (ev python-context
+                                  (str "from PIL import Image\n"
+                                       "flat = Image.new('L',(8,8),100)\n"
+                                       "n = flat.convert('1', dither=Image.NONE)\n"
+                                       "d = flat.convert('1')\n"
+                                       "[len(set(n.getdata())), len(set(d.getdata())) > 1]")))))))
+
+;; Regression: CMYK was a three-band lie — the host raster had no K, so a CMYK
+;; pixel came back as a 3-tuple, `tobytes` was a quarter short, and converting
+;; to or from RGB raised or dropped the black plate.
+(defdescribe
+  pil-cmyk-regression-test
+  (it "keeps four bands in a CMYK pixel, its bytes and its band names"
+      (with-python-context
+        (expect (= [[10 20 30 40] 4 ["C" "M" "Y" "K"]]
+                   (ev python-context
+                       (str
+                         "from PIL import Image\n"
+                         "im = Image.new('CMYK',(1,1),(10,20,30,40))\n"
+                         "[list(im.getpixel((0,0))), len(im.tobytes()), list(im.getbands())]"))))))
+  (it "converts RGB to CMYK and back the way Pillow does"
+      (with-python-context
+        (expect (= [[245 235 225 0] [205 195 185]]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "to = Image.new('RGB',(1,1),(10,20,30)).convert('CMYK')\n"
+                            "back = Image.new('CMYK',(1,1),(10,20,30,40)).convert('RGB')\n"
+                            "[list(to.getpixel((0,0))), list(back.getpixel((0,0)))]")))))))
+
+;; Regression: the wide modes lied about their raw bytes — 'I' and 'F' packed
+;; one byte a pixel instead of four, `tobitmap` did not exist, `getpixel`
+;; answered `None` outside the image instead of raising, and `split` handed
+;; back 'L' bands for an 'I' image.
+(defdescribe
+  pil-raw-data-regression-test
+  (it "packs 'I' and 'F' four bytes to the pixel, and reads 'F' as a float"
+      (with-python-context
+        (expect (= [24 24 "float"]
+                   (ev python-context
+                       (str "from PIL import Image\n" "[len(Image.new('I',(2,3),0).tobytes()),\n"
+                            " len(Image.new('F',(2,3),0).tobytes()),\n"
+                            " type(Image.new('F',(1,1),4.0).getpixel((0,0))).__name__]"))))))
+  (it "raises IndexError outside the image instead of answering nothing"
+      (with-python-context (expect
+                             (= "IndexError"
+                                (ev python-context
+                                    (str "from PIL import Image\n" "def err(f):\n"
+                                         " try:\n" "  f()\n"
+                                         "  return 'none'\n" " except Exception as e:\n"
+                                         "  return type(e).__name__\n"
+                                         "err(lambda: Image.new('L',(2,2)).getpixel((2,0)))"))))))
+  (it "writes an XBM bitmap, and keeps the mode of the bands it splits"
+      (with-python-context (expect (= ["#define" ["I"] ["L" "A"]]
+                                      (ev python-context
+                                          (str "from PIL import Image\n"
+                                               "[Image.new('1',(8,8),1).tobitmap().decode()[:7],\n"
+                                               " [b.mode for b in Image.new('I',(1,1)).split()],\n"
+                                               " list(Image.new('LA',(1,1)).getbands())]")))))))
+
+;; Regression: `point` took one lookup table for the whole image — a 768-entry
+;; per-band table was refused, a callable ran on band 0 only, the `mode`
+;; argument was ignored, and a table of the wrong length was applied anyway.
+(defdescribe
+  pil-point-regression-test
+  (it "applies a per-band table and a callable to every band"
+      (with-python-context (expect (= [[0 255 0] 10]
+                                      (ev python-context
+                                          (str
+                                            "from PIL import Image\n"
+                                            "lut = [0]*256 + [255]*256 + [0]*256\n"
+                                            "rgb = Image.new('RGB',(1,1),(10,20,30)).point(lut)\n"
+                                            "one = Image.new('L',(1,1),5).point(lambda v: v*2)\n"
+                                            "[list(rgb.getpixel((0,0))), one.getpixel((0,0))]"))))))
+  (it "honours the mode argument and refuses a table of the wrong length"
+      (with-python-context
+        (expect
+          (= [255 "ValueError"]
+             (ev python-context
+                 (str "from PIL import Image\n"
+                      "def err(f):\n" " try:\n"
+                      "  f()\n" "  return 'none'\n"
+                      " except Exception as e:\n" "  return type(e).__name__\n"
+                      "bw = Image.new('L',(1,1),5).point(lambda v: v > 0, '1')\n"
+                      "[bw.getpixel((0,0)), err(lambda: Image.new('L',(1,1)).point([0]*10))]")))))))
+
+;; Regression: the guard rails were missing — `alpha_composite` blended
+;; non-RGBA images, `frombytes` accepted a buffer too small for the size,
+;; `new` invented unknown modes, and opening a non-image raised a bare
+;; exception no `except UnidentifiedImageError` could catch.
+(defdescribe
+  pil-input-validation-regression-test
+  (it "refuses the calls Pillow refuses, with the error Pillow raises"
+      (with-python-context
+        (expect (= ["ValueError" "ValueError" "ValueError" "UnidentifiedImageError"]
+                   (ev python-context
+                       (str "import io\n"
+                            "from PIL import Image\n" "def err(f):\n"
+                            " try:\n" "  f()\n"
+                            "  return 'none'\n" " except Exception as e:\n"
+                            "  return type(e).__name__\n" "rgb = Image.new('RGB',(1,1))\n"
+                            "[err(lambda: Image.alpha_composite(rgb, rgb)),\n"
+                            " err(lambda: Image.frombytes('RGB',(2,2), bytes([0,1,2]))),\n"
+                            " err(lambda: Image.new('XYZ',(1,1))),\n"
+                            " err(lambda: Image.open(io.BytesIO(bytes([1,2,3,4,5,6,7,8]))))]"))))))
+  (it "publishes the module surface a caller checks before it opens a file"
+      (with-python-context
+        (expect (= ["PNG" true true true]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "[Image.registered_extensions()['.png'],\n"
+                            " isinstance(Image.MAX_IMAGE_PIXELS, int),\n"
+                            " Image.isImageType(Image.new('L',(1,1))),\n"
+                            " issubclass(Image.UnidentifiedImageError, OSError)]")))))))
+
+;; Regression: `thumbnail` ignored `resample`/`reducing_gap`, rounded the
+;; aspect ratio its own way, and enlarged an image already smaller than the
+;; box; `histogram` ignored its mask and counted every pixel.
+(defdescribe
+  pil-thumbnail-and-histogram-regression-test
+  (it "keeps the aspect ratio, and leaves an image that already fits alone"
+      (with-python-context
+        (expect (= [[10 5] [4 4]]
+                   (ev python-context
+                       (str "from PIL import Image\n" "big = Image.new('RGB',(100,50))\n"
+                            "big.thumbnail((10,10), Image.LANCZOS, reducing_gap=2.0)\n"
+                            "small = Image.new('RGB',(4,4))\n"
+                            "small.thumbnail((10,10))\n" "[list(big.size), list(small.size)]"))))))
+  (it "counts only the pixels the mask lets through"
+      (with-python-context
+        (expect (= [1 1 0]
+                   (ev python-context
+                       (str "from PIL import Image\n" "im = Image.new('L',(2,1))\n"
+                            "im.putpixel((0,0), 10)\n" "im.putpixel((1,0), 200)\n"
+                            "mask = Image.new('L',(2,1),0)\n" "mask.putpixel((0,0), 255)\n"
+                            "h = im.histogram(mask)\n" "[sum(h), h[10], h[200]]")))))))
+
+;; Regression: the operation modules answered the wrong picture — `ImageChops`
+;; add/subtract dropped `scale`/`offset` and `invert` only touched one band,
+;; `ImageOps.autocontrast/posterize/solarize` worked off a single band, and
+;; `ImageEnhance.Contrast(im).enhance(0)` blended toward RED instead of the
+;; image's own mean gray.
+(defdescribe
+  pil-operation-module-regression-test
+  (it "scales and offsets a chops arithmetic, and inverts every band"
+      (with-python-context
+        (expect (= [110 [255 245 235]]
+                   (ev python-context
+                       (str "from PIL import Image, ImageChops\n"
+                            "a = Image.new('L',(1,1),100)\n"
+                            "s = ImageChops.add(a, a, scale=2.0, offset=10)\n"
+                            "inv = ImageChops.invert(Image.new('RGB',(1,1),(0,10,20)))\n"
+                            "[s.getpixel((0,0)), list(inv.getpixel((0,0)))]"))))))
+  (it "posterizes, solarizes and stretches contrast the way Pillow does"
+      (with-python-context
+        (expect (= [192 55 [0 255] "OSError"]
+                   (ev python-context
+                       (str "from PIL import Image, ImageOps\n"
+                            "def err(f):\n" " try:\n"
+                            "  f()\n" "  return 'none'\n"
+                            " except Exception as e:\n" "  return type(e).__name__\n"
+                            "im = Image.new('L',(2,1))\n" "im.putpixel((0,0), 50)\n"
+                            "im.putpixel((1,0), 200)\n" "auto = ImageOps.autocontrast(im)\n"
+                            "[ImageOps.posterize(Image.new('L',(1,1),200), 2).getpixel((0,0)),\n"
+                            " ImageOps.solarize(Image.new('L',(1,1),200), 128).getpixel((0,0)),\n"
+                            " [auto.getpixel((0,0)), auto.getpixel((1,0))],\n"
+                            " err(lambda: ImageOps.invert(Image.new('RGBA',(1,1))))]"))))))
+  (it "drops contrast toward the image's own mean gray, not toward red"
+      (with-python-context
+        (expect
+          (= [[50 50] 0]
+             (ev python-context
+                 (str "from PIL import Image, ImageEnhance\n" "im = Image.new('L',(2,1))\n"
+                      "im.putpixel((1,0), 100)\n" "flat = ImageEnhance.Contrast(im).enhance(0.0)\n"
+                      "dark = ImageEnhance.Brightness(Image.new('L',(1,1),200)).enhance(0.0)\n"
+                      "[[flat.getpixel((0,0)), flat.getpixel((1,0))], dark.getpixel((0,0))]")))))))
+
+;; Regression: whole modules were missing or took the wrong argument —
+;; `ImageMath.lambda_eval` wanted a string instead of a callable, and
+;; `ImageMorph`, `ImagePath` and `ImageFile.Parser` did not exist at all, so
+;; `from PIL import ImageMorph` raised ImportError.
+(defdescribe
+  pil-missing-module-regression-test
+  (it "evaluates an image expression from a callable"
+      (with-python-context
+        (expect (= 15
+                   (ev python-context
+                       (str "from PIL import Image, ImageMath\n"
+                            "out = ImageMath.lambda_eval(lambda args: args['a'] + 10,\n"
+                            "                            a=Image.new('L',(1,1),5))\n"
+                            "out.getpixel((0,0))"))))))
+  (it "dilates one lit pixel into the four-neighbourhood plus"
+      (with-python-context
+        (expect
+          (= [4 255 255 0]
+             (ev python-context
+                 (str "from PIL import Image, ImageMorph\n"
+                      "im = Image.new('L',(5,5),0)\n" "im.putpixel((2,2), 255)\n"
+                      "count, out = ImageMorph.MorphOp(op_name='dilation4').apply(im)\n"
+                      "[count, out.getpixel((1,2)), out.getpixel((2,1)), out.getpixel((1,1))]"))))))
+  (it "measures an ImagePath and parses a file fed to it in pieces"
+      (with-python-context
+        (expect
+          (= [2 true [4 4] "RGB"]
+             (ev python-context
+                 (str "import io\n"
+                      "from PIL import Image, ImageFile, ImagePath\n"
+                      "p = ImagePath.Path([0.0,0.0, 10.0,10.0])\n"
+                      "buf = io.BytesIO()\n" "Image.new('RGB',(4,4),(1,2,3)).save(buf, 'PNG')\n"
+                      "data = buf.getvalue()\n" "parser = ImageFile.Parser()\n"
+                      "parser.feed(data[:20])\n" "parser.feed(data[20:])\n"
+                      "im = parser.close()\n"
+                      "[len(p), p.getbbox() == (0.0,0.0,10.0,10.0), list(im.size), im.mode]")))))))
+
+;; Regression: `im.save(..., 'PPM')` raised `OSError: no image writer for
+;; format ppm` although the host encoder speaks netpbm, and a PPM written
+;; there could not be sniffed back because `_sniff_format` knew nothing of
+;; the P1..P7 magic.
+(defdescribe
+  pil-netpbm-round-trip-regression-test
+  (it "saves a PPM and opens it again by its magic number"
+      (let [dir (tmp-dir)]
+        (with-fs-context
+          dir
+          (expect (= [[3 2] true]
+                     (ev python-context
+                         (str "import pathlib\n" "from PIL import Image\n"
+                              "d = pathlib.Path('" dir
+                              "')\n" "Image.new('RGB',(3,2),(10,20,30)).save(d / 'out.ppm')\n"
+                              "im = Image.open(d / 'out.ppm')\n"
+                              "[list(im.size), im.getpixel((0,0))[:3] == (10,20,30)]")))))))
+  (it "reports a text length as a float, the way Pillow measures one"
+      (with-python-context
+        (expect
+          (= ["float" "float"]
+             (ev python-context
+                 (str "from PIL import Image, ImageDraw, ImageFont\n"
+                      "d = ImageDraw.Draw(Image.new('RGB',(40,20)))\n"
+                      "f = ImageFont.load_default()\n"
+                      "[type(d.textlength('hi')).__name__, type(f.getlength('hi')).__name__]")))))))

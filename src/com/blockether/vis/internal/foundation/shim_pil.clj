@@ -150,7 +150,7 @@
    in band order. Storage is always four components; the bands a mode ANSWERS are
    Pillow's own, so 'LA' is (gray, alpha) -- TWO -- and every op that reports bands
    (`getpixel`, `tobytes`, `split`, `histogram`) counts them here instead of
-   lumping 'LA' in with 'RGBA'."
+   lumping 'LA' in with 'RGBA'. 'CMYK' answers FOUR, its K ink in the fourth byte."
   [mode]
   (case (str mode)
     ("L" "1" "I" "F" "P")
@@ -159,7 +159,7 @@
     "LA"
     [16 24]
 
-    "RGBA"
+    ("RGBA" "CMYK")
     [16 8 0 24]
 
     [16 8 0]))
@@ -169,9 +169,17 @@
   [^Raster m band bitmap? x y]
   (let [v (ch (.getRGB m (long x) (long y)) (long band))]
     (if bitmap? (if (zero? v) 0 255) v)))
+(defn- four-band?
+  "Modes whose FOURTH stored byte carries DATA -- alpha for 'RGBA'/'LA', the K ink
+   for 'CMYK'. Their rasters start zeroed and keep no opaque alpha mask, so that
+   byte reads back exactly as it was written."
+  [mode]
+  (or (alpha-mode? mode) (= "CMYK" (str mode))))
+
 (defn- new-raster
-  "A blank raster for `mode`: transparent for the alpha modes, opaque black
-   otherwise -- the same starting state `new BufferedImage(...)` used to give."
+  "A blank raster for `mode`: transparent for the alpha modes, every ink zero (white)
+   for 'CMYK', opaque black otherwise -- the same starting state
+   `new BufferedImage(...)` used to give."
   ^Raster [mode w h]
   (let [w
         (long w)
@@ -180,12 +188,53 @@
         (long h)
 
         a?
-        (alpha-mode? mode)]
+        (four-band? mode)]
 
     (Raster. (int-array (* w h) (if a? (int 0) (unchecked-int 0xff000000)))
              w
              h
              (if a? 0 0xff000000))))
+
+(defn- map-raster
+  "A fresh `mode` raster carrying `f` over every packed pixel of `src`."
+  ^Raster [^Raster src mode f]
+  (let [w
+        (.getWidth src)
+
+        hh
+        (.getHeight src)
+
+        out
+        (new-raster mode w hh)]
+
+    (dotimes [y hh]
+      (dotimes [x w]
+        (.setRGB out x y (unchecked-int (long (f (.getRGB src x y)))))))
+    out))
+
+(defn- cmyk->rgb
+  "One CMYK sample -- C, M, Y in the colour bytes and K in the fourth -- as packed
+   sRGB, Pillow's own inversion: `r = 255 - min(255, c + k)`."
+  ^long [^long p]
+  (let [k (ch p 24)]
+    (argb 255
+          (- 255 (min 255 (+ (ch p 16) k)))
+          (- 255 (min 255 (+ (ch p 8) k)))
+          (- 255 (min 255 (+ (ch p 0) k))))))
+
+(defn- rgb->cmyk
+  "Packed sRGB -> CMYK storage. Pillow separates WITHOUT black generation: K stays
+   0 and the inks are plain complements, so `convert('CMYK').convert('RGB')` is a
+   round trip."
+  ^long [^long p]
+  (argb 0 (- 255 (ch p 16)) (- 255 (ch p 8)) (- 255 (ch p 0))))
+
+(defn- rgb-raster
+  "The raster `imaging` can take: 'CMYK' is separated INK, not colour -- no codec
+   here writes it, and reading its K byte as alpha would encode a transparent
+   picture -- so it comes back to colour first. Every other mode is already sRGB."
+  ^Raster [^Raster r mode]
+  (if (= "CMYK" (str mode)) (map-raster r "RGB" cmyk->rgb) r))
 
 (def ^:private encodable-formats
   "Formats `imaging` can write. Anything else is a PIL-visible error."
@@ -494,6 +543,11 @@
           "jpg"
           "jpeg"
 
+          ;; Pillow's netpbm family is ONE `imaging` codec: PBM/PGM/PPM are the
+          ;; bilevel/gray/colour flavours of PNM, picked by the content.
+          ("ppm" "pgm" "pbm" "pnm")
+          "pnm"
+
           fmt)]
 
     (when-not (contains? encodable-formats fmt)
@@ -515,11 +569,14 @@
    is Pillow's flag of the same name: a second, LOSSLESS pass through the
    format's real optimiser."
   [h fmt quality optimize]
-  (let [{:keys [^Raster img]}
+  (let [{:keys [^Raster img mode]}
         (entry h)
 
         fmt
         (normalise-format fmt)
+
+        ^Raster img
+        (rgb-raster img mode)
 
         img
         (if (and (#{"jpeg" "bmp"} fmt) (has-alpha? img)) (flatten-rgb img) img)
@@ -879,13 +936,15 @@
     (.encodeToString (Base64/getEncoder) (if optimize (optimised raw) raw))))
 
 (defn- op-convert
-  [h target]
+  [h target dither]
   (let [{:keys [^Raster img mode]} (entry h)]
     (if (= mode (str target))
       (op-copy h)
-      (let [w (.getWidth img)
-            hh (.getHeight img)
-            target (str target)]
+      (let [target (str target)
+            ;; a CMYK source is separated ink; every conversion below reads sRGB.
+            ^Raster img (rgb-raster img mode)
+            w (.getWidth img)
+            hh (.getHeight img)]
 
         (case target
           ;; P: an adaptive median-cut palette (Pillow's default here is the web
@@ -902,12 +961,37 @@
                 (.setRGB out x y (unchecked-int (gray-argb (lum (.getRGB img x y)))))))
             (meta-of (put-img! out target)))
 
+          ;; '1': Pillow DITHERS by default (Floyd-Steinberg over the luminance
+          ;; plane) and only thresholds when the caller passes `dither=NONE`. Always
+          ;; thresholding turned a gradient into two flat blocks.
           "1"
-          (let [out (new-raster "1" w hh)]
-            (dotimes [y hh]
-              (dotimes [x w]
-                (let [v (if (>= (lum (.getRGB img x y)) 128) 255 0)]
-                  (.setRGB out x y (unchecked-int (gray-argb v))))))
+          (let [out (new-raster "1" w hh)
+                gray (fn ^double [^long x ^long y]
+                       (double (lum (.getRGB img (int x) (int y)))))]
+
+            (if (zero? (long dither))
+              (dotimes [y hh]
+                (dotimes [x w]
+                  (let [v (if (>= (double (gray x y)) 128.0) 255 0)]
+                    (.setRGB out x y (unchecked-int (gray-argb v))))))
+              (let [err (double-array (* (long w) (long hh)))
+                    spill (fn [^long x ^long y ^double e ^double f]
+                            (when (and (< -1 x w) (< -1 y hh))
+                              (let [i (+ (* y (long w)) x)]
+                                (aset err i (+ (aget err i) (* e f))))))]
+
+                (dotimes [y hh]
+                  (dotimes [x w]
+                    (let [v (+ (double (gray x y))
+                               (double (aget err (+ (* (long y) (long w)) (long x)))))
+                          q (if (>= v 128.0) 255 0)
+                          e (- v (double q))]
+
+                      (.setRGB out x y (unchecked-int (gray-argb q)))
+                      (spill (inc x) y e 0.4375)
+                      (spill (dec x) (inc y) e 0.1875)
+                      (spill x (inc y) e 0.3125)
+                      (spill (inc x) (inc y) e 0.0625))))))
             (meta-of (put-img! out "1")))
 
           "LA"
@@ -919,6 +1003,9 @@
 
                   (.setRGB out x y (unchecked-int (argb (ch p 24) v v v))))))
             (meta-of (put-img! out "LA")))
+
+          "CMYK"
+          (meta-of (put-img! (map-raster img "CMYK" rgb->cmyk) "CMYK"))
 
           ;; RGB / RGBA: a straight channel copy (drawImage preserves sRGB).
           (let [out (new-raster target w hh)]
@@ -1055,9 +1142,21 @@
       [(aget minx 0) (aget miny 0) (inc (aget maxx 0)) (inc (aget maxy 0))])))
 
 (defn- op-histogram
-  [h]
+  "PIL's `histogram`, MASK included: with a mask only the pixels it marks non-zero
+   are counted -- what `ImageStat.Stat(im, mask)` measures. The mask used to be
+   dropped on the Python side, so every masked statistic described the whole image."
+  [h mask]
   (let [{:keys [^Raster img mode]}
         (entry h)
+
+        {^Raster m :img mmode :mode}
+        (when mask (entry mask))
+
+        mband
+        (when m (mask-band mmode))
+
+        bitmap?
+        (= "1" (str mmode))
 
         w
         (.getWidth img)
@@ -1074,14 +1173,17 @@
         bins
         (int-array (* 256 nch))]
 
+    (when (and m (or (not= w (.getWidth m)) (not= hh (.getHeight m))))
+      (throw (ex-info "mask size does not match image size" {})))
     (dotimes [y hh]
       (dotimes [x w]
-        (let [p (.getRGB img x y)]
-          (dotimes [c nch]
-            (let [v (ch p (long (nth chans c)))
-                  idx (+ (* c 256) v)]
+        (when (or (nil? m) (pos? (long (mask-at m mband bitmap? x y))))
+          (let [p (.getRGB img x y)]
+            (dotimes [c nch]
+              (let [v (ch p (long (nth chans c)))
+                    idx (+ (* c 256) v)]
 
-              (aset bins idx (inc (aget bins idx))))))))
+                (aset bins idx (inc (aget bins idx)))))))))
     (vec bins)))
 
 (defn- op-tobytes
@@ -2207,8 +2309,8 @@
                             (env #(op-rotate h ang exp fill)))
      "__vis_pil_transpose__" (fn [h m]
                                (env #(op-transpose h m)))
-     "__vis_pil_convert__" (fn [h t]
-                             (env #(op-convert h t)))
+     "__vis_pil_convert__" (fn [h t dither]
+                             (env #(op-convert h t (if (nil? dither) 3 (long dither)))))
      "__vis_pil_getpixel__" (fn [h x y]
                               (env #(op-getpixel h x y)))
      "__vis_pil_putpixel__" (fn [h x y c]
@@ -2217,8 +2319,8 @@
                            (env #(op-paste d s x y m)))
      "__vis_pil_getbbox__" (fn [h]
                              (env #(op-getbbox h)))
-     "__vis_pil_histogram__" (fn [h]
-                               (env #(op-histogram h)))
+     "__vis_pil_histogram__" (fn [h mask]
+                               (env #(op-histogram h mask)))
      "__vis_pil_tobytes__" (fn [h]
                              (env #(op-tobytes h)))
      "__vis_pil_frombytes__" (fn [mode w h b64]
@@ -2272,8 +2374,9 @@
        (str
          "Pillow-compatible `PIL` (Image, ImageDraw, ImageFilter, ImageOps, ImageColor, "
          "ImageEnhance, ImageChops, ImageFont, animated GIF, EXIF, quality and quantization), "
-         "Rust-backed without java.desktop. Rejects images over 512 MiB RGBA. Not supported: some "
-         "color conversions and `Image.transform` methods (`ValueError`).")
+         "Rust-backed without java.desktop. Rejects images over 512 MiB RGBA. Samples are 8-bit, "
+         "so 'I'/'F' pixels clamp to 0-255, drawing is antialiased where Pillow is hard-edged, "
+         "and a saved file reopens as 'RGB'/'RGBA'. Not supported: `ImageCms`.")
        :shim/bindings pil-bridge-bindings
        :shim/resources {::images {:resource/label "PIL image"
                                   ;; A decoded image is an on-heap int[] of w*h*4 — 48 MB for one
