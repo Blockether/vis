@@ -5,6 +5,7 @@ def __vis_install_matplotlib__():
     import sys
     import types
     import base64
+    import os as _os
 
     _COLORS = set("bgrcmykw")
     _MARKERS = set("o.,x+*sdv^<>ph")
@@ -2107,6 +2108,12 @@ def __vis_install_matplotlib__():
         }
 
     def savefig(fname, format=None, dpi=None, **kwargs):
+        # A path in ANY spelling, BEFORE the extension chooses the renderer: an
+        # os.PathLike (pathlib.Path) that stayed an object made
+        # `savefig(d / 'plot.txt')` write PNG bytes into a .txt file that only
+        # the str spelling of the same path rendered as ASCII.
+        if hasattr(fname, "__fspath__"):
+            fname = _os.fspath(fname)
         # Text targets (.txt/.asc filename, or format 'ascii'/'txt') get the
         # pure-Python ASCII render; everything else goes through the host imaging PNG
         # backend and writes the returned bytes.

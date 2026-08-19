@@ -13,10 +13,24 @@
             [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.util Arrays Base64]
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
+           [java.util Arrays Base64]
            [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
+
+(defn- tmp-dir
+  "A directory this sandbox may open: Python's `open` refuses everything outside
+   the Context's roots, so a file a test SAVES has to live under one."
+  ^String []
+  (str (Files/createTempDirectory "vis-pil-" (make-array FileAttribute 0))))
+
+(defmacro ^:private with-fs-context
+  [dir & body]
+  `(let [~(with-meta 'python-context {:tag `Context})
+         (:python-context (ep/create-python-context {} (constantly [~dir])))]
+     (try ~@body (finally (.close ~'python-context)))))
 
 (def ^:private images-kind :com.blockether.vis.internal.foundation.shim-pil/images)
 
@@ -1098,4 +1112,24 @@
                             "im = Image.frombytes('1',(9,2), bytes([0b10100000,0b10000000,0,0]))\n"
                             "[im.getpixel((0,0)), im.getpixel((1,0)), im.getpixel((2,0)),\n"
                             " im.getpixel((8,0)), im.getpixel((0,1)),\n"
-                            " list(Image.new('1',(3,2),1).getdata())]")))))))
+                             " list(Image.new('1',(3,2),1).getdata())]")))))))
+
+;; Regression: `im.save(pathlib.Path(...))` raised
+;; `AttributeError: 'PosixPath' object has no attribute 'write'` — `save` knew
+;; only the str spelling of a path and took every other value for a file object,
+;; so the same file named as a Path could not be written at all.
+(defdescribe save-takes-a-path-object-test
+  (it "saves to an os.PathLike exactly like the str spelling of that path"
+      (let [dir (tmp-dir)]
+        (with-fs-context dir
+          (expect (= ["PNG" true true]
+                     (ev python-context
+                         (str "import pathlib\n"
+                              "from PIL import Image\n"
+                              "d = pathlib.Path('" dir "')\n"
+                              "im = Image.new('RGB',(3,3),(1,2,3))\n"
+                              "im.save(d / 'via_path.png')\n"
+                              "im.save(str(d / 'via_str.png'))\n"
+                              "a = (d / 'via_path.png').read_bytes()\n"
+                              "b = (d / 'via_str.png').read_bytes()\n"
+                              "[Image.open(d / 'via_path.png').format, a == b, len(a) > 0]"))))))))

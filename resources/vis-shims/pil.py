@@ -12,7 +12,7 @@
 
 
 def __vis_install_pil__():
-    import sys, types, base64, math, struct, builtins as _builtins
+    import sys, types, base64, math, struct, os as _os, builtins as _builtins
 
     def _H(name, *args):
         if _draw_queue:
@@ -608,6 +608,12 @@ def __vis_install_pil__():
             _H("__vis_pil_paste__", self._handle, im._handle, x, y, int(mh))
 
         def save(self, fp, format=None, **kw):
+            # A path is a path in ANY spelling: an os.PathLike (pathlib.Path,
+            # os.DirEntry) becomes its filesystem string HERE, so the extension
+            # still picks the format and the bytes still reach the file. Left an
+            # object it fell to the file-object branch and died on `.write`.
+            if hasattr(fp, "__fspath__"):
+                fp = _os.fspath(fp)
             fmt = (format or "").upper()
             name = fp if isinstance(fp, str) else getattr(fp, "name", "")
             if not fmt and isinstance(name, str) and "." in name:
@@ -642,11 +648,11 @@ def __vis_install_pil__():
             else:
                 b64 = _H("__vis_pil_save__", self._handle, fmt, quality, optimize)
             data = base64.b64decode(b64)
-            if isinstance(fp, str):
+            if hasattr(fp, "write"):
+                fp.write(data)
+            else:
                 with open(fp, "wb") as f:
                     f.write(data)
-            else:
-                fp.write(data)
 
         def show(self, title=None, **kw):
             try:

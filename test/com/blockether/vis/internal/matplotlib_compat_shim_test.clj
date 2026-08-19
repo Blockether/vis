@@ -9,9 +9,23 @@
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]))
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
+           [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
+
+(defn- tmp-dir
+  "A directory this sandbox may open: Python's `open` refuses everything outside
+   the Context's roots, so a figure SAVED to a real path has to land under one."
+  ^String []
+  (str (Files/createTempDirectory "vis-mpl-" (make-array FileAttribute 0))))
+
+(defmacro ^:private with-fs-context
+  [dir & body]
+  `(let [~(with-meta 'python-context {:tag `Context})
+         (:python-context (ep/create-python-context {} (constantly [~dir])))]
+     (try ~@body (finally (.close ~'python-context)))))
 
 (defn- png-len
   "Render `plot-code` (pyplot calls) to a PNG in an in-memory buffer and return
@@ -717,3 +731,23 @@ _run()
                                  "ax.add_patch(Rectangle((0, 0), 1, 2, facecolor='#101014'))\n"
                                  "ax.xaxis.set_major_locator(MultipleLocator(0.5))\n"
                                  "ax.plot([1, 2, 3], [3, 1, 2])")))))))
+
+;; Regression: `savefig(pathlib.Path('plot.txt'))` wrote PNG BYTES into the .txt.
+;; Only a str filename was tested for the .txt/.asc suffix, so one path in two
+;; spellings produced two different formats and neither call complained.
+(defdescribe savefig-takes-a-path-object-test
+  (it "reads the ASCII suffix off an os.PathLike, like the str spelling of it"
+      (let [dir (tmp-dir)]
+        (with-fs-context dir
+          (expect (= [true true]
+                     (ev python-context
+                         (str "import pathlib\n"
+                              "import matplotlib.pyplot as plt\n"
+                              "d = pathlib.Path('" dir "')\n"
+                              "plt.clf()\n"
+                              "plt.plot([1, 2, 3], [3, 1, 2])\n"
+                              "plt.savefig(d / 'via_path.txt')\n"
+                              "plt.savefig(str(d / 'via_str.txt'))\n"
+                              "a = (d / 'via_path.txt').read_bytes()\n"
+                              ;; 137 is the first byte of the PNG signature.
+                              "[a[0] != 137, a == (d / 'via_str.txt').read_bytes()]"))))))))
