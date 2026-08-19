@@ -2,6 +2,58 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.40 (4508) — 2026-08-19
+<!-- commit: 057697b52fb6875584d6a565351226d15335c360 -->
+
+- Ask each machine once for its notifications state
+- Take a pathlib.Path wherever a shim takes a path
+- Answer every machine's notifications row before it is opened
+- Dispose three more single-test sandboxes
+- Let a gh watch run as long as the run does
+- Format every namespace with the canonical formatter
+- Keep the formatter alive on a binding form inside #()
+- Retire a client lease that stopped talking
+- Identify a source build by its commit alone
+- Stop billing a watched run any deadline at all
+- Say which build the gateway is running, and what replaces it
+- Let a live view own the wall of the block watching it
+- Read a failed REPL start the same way in every language
+- Refuse a status this build cannot read
+- Identify a dev build by its commit, not by "dev"
+- Pick up a new build when nobody is using the old daemon
+- One REPL lifecycle contract for every language
+- Let a managed daemon die when nothing is watching it
+- Read pack test counts by their contract names
+- Refuse a bare string where repl options belong
+
+## 0.1.40 (4488) — 2026-08-18
+<!-- commit: 3bf0134120b93be902f54e59d2b0331d1106a619 -->
+
+- Keep repl_stop(id) an id, whatever trails it
+- Point whole-store writers at update-machine-config!
+- Dispose the sandboxes this suite builds for itself
+- Paint the stored palette on the first frame
+- Close the Engine with the sandbox it belongs to
+- Cover removed_providers in the exhaustive config fixture
+- Make deleting a provider actually delete it
+- Give a sandbox the lifetime of the test that needs it
+- Say why a provider cannot be deleted instead of silently refusing
+- Name the four repl lifecycle verbs
+- Describe ls's tree string where the sandbox reads it
+- Count folds from the turn ctx ledger
+- Let /projects/overview and /projects/:pid coexist
+- Paint project counts from the gateway's own overview
+
+## 0.1.40 (4474) — 2026-08-18
+<!-- commit: e192628bdc20a226e146900263e14e0629646e0f -->
+
+- Render ls as one compact tree string
+- Inset every panel verb instead of running it full bleed
+- Format _outside.py the way ruff 0.16.3 does
+- Match the notification verb to the panel action box
+- Show a just-created session without tapping the pill
+- Correct the remote-target claims to what the code does
+
 ## 0.1.40 (4468) — 2026-08-18
 <!-- commit: f6c4265518a97932a824d004263011eafbf794e6 -->
 
