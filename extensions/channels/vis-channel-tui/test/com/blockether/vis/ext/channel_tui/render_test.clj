@@ -1668,6 +1668,41 @@
         (expect (str/includes? (spinner [{:activity :provider-call}])
                                "Vis is calling the provider (iter 1)")))))
 
+;; Regression, issue #152: a run SHOWING its work on the band was reported as
+;; "Vis is thinking (iter 30)... 10m 1s" — the live panel and its Interrupt sat
+;; right under that row, so the ticker read as a hang for the whole run.
+(defdescribe
+  spinner-live-view-test
+  (let [extra
+        (fn [live-title]
+          {:now-ms 1700000000000 :turn-start-ms 1700000000000 :live-title live-title})
+
+        spinner
+        (fn [live-title iterations]
+          (first (filter #(str/includes? (str %) "Esc to cancel")
+                         (:lines (render/progress->lines-data {:iterations iterations}
+                                                              130
+                                                              {}
+                                                              (extra live-title))))))]
+
+    (it "names the live view instead of saying Vis is thinking"
+        (expect (str/includes? (spinner "CI · run 32234046276" [{:thinking "weighing it"}])
+                               "Vis is showing CI · run 32234046276 — live (iter 1)")))
+    (it "says thinking again once nothing is on the band"
+        (expect (str/includes? (spinner nil [{:thinking "weighing it"}])
+                               "Vis is thinking (iter 1)")))
+    (it "still yields to a turn being cancelled"
+        (expect (str/includes? (first (filter #(str/includes? (str %) "Esc to cancel")
+                                              (:lines (render/progress->lines-data
+                                                        {:iterations [{:thinking "weighing it"}]}
+                                                        130
+                                                        {}
+                                                        (assoc (extra "CI") :cancelling? true)))))
+                               "Vis is cancelling")))
+    (it "shortens a title too long for the row"
+        (expect (str/includes? (spinner (apply str (repeat 90 "x")) [{:thinking "weighing it"}])
+                               (str "Vis is showing " (apply str (repeat 61 "x")) "… — live"))))))
+
 (defdescribe
   live-body-throttle-test
   ;; VIS_LIVE_BODY_THROTTLE_MS debounces the heavy live re-projection: within

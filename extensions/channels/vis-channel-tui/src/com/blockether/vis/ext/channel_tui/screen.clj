@@ -2307,7 +2307,8 @@
          :cancelling? (boolean cancelling?)
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
-         :queue-paused (:queue-paused db)}
+         :queue-paused (:queue-paused db)
+         :live-title (lv/watching-title (:live-views db))}
 
         ;; Single virtualized layout pass: cheap height estimate for
         ;; every message, full projection + real height ONLY for
@@ -3009,7 +3010,8 @@
          :cancelling? (boolean cancelling?)
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
-         :queue-paused (:queue-paused db)}
+         :queue-paused (:queue-paused db)
+         :live-title (lv/watching-title (:live-views db))}
 
         layout
         (virtual/layout messages
@@ -3363,7 +3365,8 @@
          :cancelling? false
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
-         :queue-paused (:queue-paused db)}
+         :queue-paused (:queue-paused db)
+         :live-title (lv/watching-title (:live-views db))}
 
         layout
         (virtual/layout messages

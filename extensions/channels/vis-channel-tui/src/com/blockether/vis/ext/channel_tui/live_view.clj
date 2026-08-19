@@ -332,6 +332,15 @@
      :lines (long lines)
      :elapsed-ms (max 0 (- (long (or ended-at 0)) (long (or (:created-at view) ended-at 0))))}))
 
+(defn watching-title
+  "The title of the view the band is PAINTING right now, or nil when the band is
+   empty. A settled pane has left the band for the transcript, so it never names
+   the ticker: what this returns is a run the human can still stop."
+  [panes]
+  (when-let [pane (last (remove dormant? panes))]
+    (let [title (flat-text (get-in pane [:view :title]))]
+      (when-not (str/blank? title) title))))
+
 (defn- max-offset
   "The last row the viewport may start on, from what the last paint measured."
   ^long [pane]

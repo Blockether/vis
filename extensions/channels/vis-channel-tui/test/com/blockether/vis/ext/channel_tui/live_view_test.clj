@@ -882,6 +882,19 @@
           "a stop can only reach work that is still running")
       (is (nil? (lv/interruptible [done]))
           "and with nothing running there is nothing left to interrupt")))
+  (testing "the ticker names the run the band is painting, and only while it runs"
+    (let [running
+          (pane :id "running-1")
+
+          done
+          (ended (pane :id "done-1"))]
+
+      (is (str/includes? (str (lv/watching-title [done running]))
+                         "fix(loop): move the session pick")
+          "the sentence over the bubble says which run the human is looking at")
+      (is (nil? (lv/watching-title [done]))
+          "a finished run is a row of the transcript, never the phase of the turn")
+      (is (nil? (lv/watching-title [])) "and an empty band names nothing")))
   (testing "the ops the channel carries: a close settles the pane, it does not drop it"
     (with-db (fn []
                (let [view (assoc (ci-view) :session-id "s1")]

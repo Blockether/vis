@@ -5671,10 +5671,14 @@
    wall-clock is already shown right next to this string in the
    spinner row, the user can read the seconds themselves.
 
+   A LIVE view on the band outranks every other phase: the panel under this row
+   shows its own work and is the human's to stop, so `Vis is thinking` over an
+   open run reads as a hang for exactly as long as the run lasts.
+
    A `!`/`!&` bang turn carries `{:activity :shell-run|:shell-bg}` and
    `:shell/cmd` on its single iteration; the shell branches read those
    so the bubble says `Vis is running: <cmd>` while the shell blocks."
-  [iterations cancelling? command-label]
+  [iterations cancelling? command-label live-title]
   (let [n
         (count iterations)
 
@@ -5695,6 +5699,13 @@
 
         activity-label
         (let [s (some-> (:tool/label last-iteration)
+                        str
+                        str/trim)]
+          (when-not (str/blank? (or s "")) (if (> (count s) 64) (str (subs s 0 61) "…") s)))
+
+        ;; The title of the view the band is painting right now, when one is up.
+        live-label
+        (let [s (some-> live-title
                         str
                         str/trim)]
           (when-not (str/blank? (or s "")) (if (> (count s) 64) (str (subs s 0 61) "…") s)))
@@ -5743,6 +5754,7 @@
     (cond cancelling? "Vis is cancelling"
           errored? "Vis is retrying"
           (zero? n) (or command-label "Vis is calling the provider")
+          live-label (str "Vis is showing " live-label " — live (iter " n ")")
           (= :shell-run activity) (str "Vis is running: " shell-label)
           (= :shell-bg activity) (str "Vis is starting: " shell-label)
           (= :slash activity) (str "Vis is running: " slash-label)
@@ -6140,7 +6152,8 @@
      :cancelling?    - true once Esc was pressed
      :session-id - current session id; enables live detail rows
      :session-turn-id - optional turn id, when known
-     :detail-expansions - detail expansion state keyed by session/node"
+     :detail-expansions - detail expansion state keyed by session/node
+     :live-title - title of the live view the band paints, when one is up"
   ([progress bubble-w settings] (progress->lines-data progress bubble-w settings nil))
   ([progress bubble-w settings extra]
    (let [raw-iterations
@@ -6153,7 +6166,7 @@
          (max 10 (- (long bubble-w) 4))
 
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-                 viewport-rows pending-sends command-label queue-paused]}
+                 viewport-rows pending-sends command-label queue-paused live-title]}
          extra
 
          now-ms
@@ -6195,7 +6208,7 @@
                 "  Send a message to continue.")
            (str (spinner-frame now-ms)
                 "  "
-                (progress-phase iterations cancelling? command-label)
+                (progress-phase iterations cancelling? command-label live-title)
                 "...  "
                 elapsed-str
                 (or (progress-error-segment iterations) "")
