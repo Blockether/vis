@@ -134,6 +134,40 @@
         (map? arg) arg
         :else {:arg arg}))
 
+;; `project` is the SAME selection as `cwd` — the directory a call acts in. A
+;; caller who wrote `{"project": repo}` was answered by a REPL started at the
+;; WORKSPACE ROOT, because the key rode through unread, so the alias resolves
+;; HERE, once, for every verb on this surface. Two DIFFERENT directories in one
+;; call are refused rather than silently reduced to one.
+(defn- project->cwd
+  "The call's options with `project` read as `cwd`. Non-maps pass through."
+  [m]
+  (if-not (map? m)
+    m
+    (let [project
+          (some-> (get m "project")
+                  str
+                  str/trim
+                  not-empty)
+
+          cwd
+          (some-> (get m "cwd")
+                  str
+                  str/trim
+                  not-empty)]
+
+      (cond (nil? project) (dissoc m "project")
+            (and cwd (not= cwd project))
+            (throw (ex-info (str "A call names ONE directory: `cwd` "
+                                 (pr-str cwd)
+                                 " and `project` "
+                                 (pr-str project)
+                                 " disagree.")
+                            {:type :language-surface/bad-args :cwd cwd :project project}))
+            :else (-> m
+                      (assoc "cwd" project)
+                      (dissoc "project"))))))
+
 (defn- opts-language [opts] (get opts "language"))
 
 (def ^:private language-aliases
@@ -238,11 +272,16 @@
     {:opts {} :payload {}}
 
     1
-    (let [arg (first args)]
+    (let [arg (project->cwd (first args))]
       {:opts (coerce-opts arg) :payload arg})
 
     2
-    (let [[language payload] args]
+    (let [[language raw]
+          args
+
+          payload
+          (project->cwd raw)]
+
       (if (language-like? language)
         {:opts (assoc (coerce-opts payload) "language" language) :payload payload}
         (throw (ex-info "Expected language as first arg, e.g. repl_eval(language, ...)."
@@ -330,7 +369,7 @@
     (when (next more)
       (throw (ex-info "A REPL lifecycle call takes at most (language?, {options})."
                       {:type :language-surface/bad-args :got args})))
-    (let [opts (or opts {})]
+    (let [opts (project->cwd (or opts {}))]
       [(or lead-id
            (let [oid (opts-id opts)]
              (when (id? oid) oid))) language opts])))
@@ -374,8 +413,9 @@
          vec)))
 
 (defn repl-stop
-  "Stop a REPL: `repl_stop(id)` by session resource id, or `repl_stop(language,{cwd})`
-   for the pack's REPL under that directory."
+  "Stop a REPL: `repl_stop(id)` by session resource id — REQUIRED unless
+   `repl_stop(language,{cwd})` names the pack's REPL under a directory
+   (`cwd` and `project` are ONE key)."
   [env & args]
   (let [[id language opts] (repl-call env args)]
     (if id
@@ -396,7 +436,9 @@
 (defn repl-status
   "Report REPL state: `repl_status(language,{cwd})` — the pack's answer for that
    project PLUS `resources`, every live REPL of this session whatever directory it
-   runs in. A REPL id answers for that one REPL alone."
+   runs in. Nothing is required; `cwd` — or `project`, the same key — chooses the
+   project and defaults to the workspace root. A REPL id answers for that one REPL
+   alone."
   [env & args]
   (let [[id language opts]
         (repl-call env args)
@@ -500,17 +542,26 @@
                    envelope)))))
 
 (defn repl-eval
-  "Eval in an already-running project REPL: `repl_eval(language,arg)`. Pass `language` first; `arg` may set `id`/`repl_id`, `cwd` (root default), and `timeout_ms`."
+  "Eval in an already-running project REPL: `repl_eval(language,{code,cwd,id,timeout_ms})`.
+   `code` is the one REQUIRED key; `language` may lead the call; `cwd` — or `project`, the
+   same key — chooses the project (default the workspace root), `id`/`repl_id` picks one of
+   several REPLs and `timeout_ms` its budget."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
 (defn repl-start
-  "Start a language REPL resource: `repl_start(language,{cwd,env,...})`. There is no restart: `repl_stop`, then `repl_start`."
+  "Start a language REPL resource: `repl_start(language,{cwd,id,aliases,env})`.
+   NOTHING is required: `cwd` — or `project`, the same key — chooses the project and
+   defaults to the WORKSPACE ROOT. There is no restart: `repl_stop`, then `repl_start`."
   [env & args]
   (dispatch-repl-call! env "start" args))
 
 (defn connect-repl
-  "Attach to an external running REPL: `repl_connect(language,{port|build,host?,cwd?})`. A `build` attaches to the project's `shadow-cljs watch` and selects it, making eval ClojureScript. Registers it for eval, tests, and context but never owns or kills its process; stop only detaches."
+  "Attach to an external running REPL: `repl_connect(language,{port|build,host?,cwd?})`.
+   `port` is REQUIRED unless `build` names a shadow-cljs build — that attaches to the
+   project's `shadow-cljs watch` and selects it, making eval ClojureScript; `cwd` — or
+   `project`, the same key — says where it lives. Registers it for eval, tests, and context
+   but never owns or kills its process; stop only detaches."
   [env & args]
   (dispatch-repl-call! env "connect" args))
 
@@ -582,7 +633,7 @@
           "Omit `paths` to run everything.")
      :params [{:name "language"} {:name "paths"}
               {:name "ns" :note "clojure — namespace or `ns/var`"} {:name "include"}
-              {:name "exclude"} {:name "cwd"}
+              {:name "exclude"} {:name "cwd" :note "the project directory, or spell it `project`"}
               {:name "runner" :note "python — \"project\" for the interpreter's own pytest"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
@@ -602,12 +653,16 @@
      (str
        "Evaluate `code` in an already-running project REPL — "
        "`repl_eval({\"language\": \"clojure\", \"code\": \"(+ 1 1)\"})`. `code` is REQUIRED and "
-       "`language` may lead the call; `id`/`repl_id` picks one of several REPLs, `cwd` its project, "
+       "`language` may lead the call; `id`/`repl_id` picks one of several REPLs, `cwd` — or "
+       "`project`, the SAME key — its project directory, "
        "`timeout_ms` its budget. Lifecycle is `repl_start` / `repl_status` / `repl_stop`. A REPL attached to a "
        "shadow-cljs `build` evaluates ClojureScript inside that build's JS runtime and the result "
        "names the `build` it landed in.")
-     :params [{:name "language"} {:name "code" :required? true} {:name "id" :note "or `repl_id`"}
-              {:name "cwd"} {:name "timeout_ms"}]
+     :params
+     [{:name "language" :note "optional — inferred when one pack matches"}
+      {:name "code" :required? true} {:name "id" :note "or `repl_id`, when a project holds several"}
+      {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
+      {:name "timeout_ms"}]
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, five minutes); dispatch it directly in
@@ -630,8 +685,10 @@
      :description
      (str
        "Start a project REPL — `repl_start(\"clojure\")`, or "
-       "`repl_start({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. `cwd` chooses the "
-       "project. Nothing lists live REPLs for you: `repl_status` is the only answer — reuse `up`, "
+       "`repl_start({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. NOTHING is required. "
+       "`cwd` chooses the project — spell it `cwd` or `project`, they are the SAME key — and "
+       "omitting it starts the REPL at the WORKSPACE ROOT, not at the project you meant. "
+       "Nothing lists live REPLs for you: `repl_status` is the only answer — reuse `up`, "
        "recheck `starting`, start when absent/down/failed. A LIVE REPL IS REUSED, never replaced: "
        "a second start answers `already-running` in every language, because that process' state is "
        "the work you are standing on. There is NO restart: a wedged REPL is `repl_stop` then "
@@ -641,7 +698,9 @@
        "— and that env BELONGS to the REPL: a start naming a different one is refused by the keys "
        "that differ, since there is no restart. `repl_eval` never takes `env`: a live process' "
        "environment is its own.")
-     :params [{:name "language"} {:name "cwd"}
+     :params [{:name "language" :note "optional — inferred when one pack matches"}
+              {:name "cwd"
+               :note "the project directory, or spell it `project`; default the workspace ROOT"}
               {:name "id" :note "a label for THIS REPL, when a project holds several"}
               {:name "aliases" :note "clojure — deps aliases, default [\"dev\" \"test\"]"}
               {:name "env" :note "THIS REPL's variables, over the project's"}]
@@ -665,10 +724,14 @@
        "State of the project's REPL — `repl_status(\"clojure\")`, or "
        "`repl_status({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. Nothing else lists "
        "live REPLs: this is the only answer — reuse `up`, recheck `starting`, `repl_start` when "
-       "absent/down/failed. `cwd` chooses the project; `resources` beside it names every REPL this "
+       "absent/down/failed. `cwd` — or `project`, the same key — chooses the project; "
+       "`resources` beside it names every REPL this "
        "session owns, so one running under another directory is never invisible. An `id` — leading "
        "or in the options — reports that REPL alone.")
-     :params [{:name "language"} {:name "cwd"} {:name "id"}]
+     :params [{:name "language" :note "optional — inferred when one pack matches"}
+              {:name "cwd"
+               :note "the project directory, or spell it `project`; default the workspace ROOT"}
+              {:name "id" :note "reports that REPL alone"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :observation}))
@@ -683,13 +746,18 @@
      :description
      (str
        "Attach an external running REPL — `repl_connect(\"clojure\", {\"port\": 56428})`. `port` names "
-       "it, `host` (default localhost) and `cwd` say where it lives. `build` instead attaches to the "
+       "it — REQUIRED unless `build` does — `host` (default localhost) and `cwd` (or `project`, "
+       "the same key) say where it lives. `build` instead attaches to the "
        "`shadow-cljs watch` under `cwd` — it publishes its own port, so `port` is optional there — and "
        "selects that build, making `repl_eval` ClojureScript in its JS runtime. It rides BESIDE the "
        "managed JVM REPL for the same `cwd`, each under its own id (`nrepl:~/proj` and "
        "`nrepl:~/proj#app`). Vis registers it for eval, tests and context but never owns or kills it, "
        "so stopping it only detaches.")
-     :params [{:name "language"} {:name "port" :note "or `build`"} {:name "host"} {:name "cwd"}
+     :params [{:name "language" :note "optional — inferred when one pack matches"}
+              {:name "port" :note "REQUIRED unless `build` names one"}
+              {:name "host" :note "default localhost"}
+              {:name "cwd"
+               :note "the project directory, or spell it `project`; default the workspace ROOT"}
               {:name "build" :note "shadow-cljs build to attach + select"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
@@ -705,12 +773,15 @@
      :description
      (str
        "Stop a REPL after verification, so nothing is left running — `repl_stop(id)` with the exact "
-       "id `repl_start`/`repl_status` answered with, or `repl_stop(\"clojure\", {\"cwd\": \"…\"})` for "
-       "the pack's REPL under that directory. A REPL attached by `repl_connect` is only detached, "
+       "id `repl_start`/`repl_status` answered with — REQUIRED unless `language` + `cwd` (or "
+       "`project`, the same key) name the pack's REPL under a directory, as "
+       "`repl_stop(\"clojure\", {\"cwd\": \"…\"})`. A REPL attached by `repl_connect` is only detached, "
        "never killed. `build` detaches just that shadow-cljs attachment.")
      ;; repl_stop(id) — one positional id, or the language-led form the other
      ;; lifecycle verbs take.
-     :params [{:name "id"} {:name "language"} {:name "cwd"} {:name "build"}]
+     :params [{:name "id" :note "REQUIRED unless `language` + `cwd` name the pack's REPL"}
+              {:name "language"} {:name "cwd" :note "the project directory, or spell it `project`"}
+              {:name "build" :note "detaches just that shadow-cljs attachment"}]
      :call {:lead-opt "id" :rest :always}
      :inject-env? true
      :tag :mutation}))

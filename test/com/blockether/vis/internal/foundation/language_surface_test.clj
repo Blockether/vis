@@ -209,6 +209,66 @@
                  (refuses language-surface/repl-stop "clojure" "extensions/foo")))
       (expect (= :language-surface/bad-args
                  (refuses language-surface/connect-repl "clojure" "extensions/foo")))))
+  ;; Regression, issue #repl-cwd: a call that spelled the directory `project` —
+  ;; `repl_start({"language": "clojure", "project": repo})` — reported success while
+  ;; starting the REPL at the WORKSPACE ROOT, because the key rode through unread.
+  (it
+    "reads `project` as `cwd` on every verb, and refuses two DIFFERENT directories"
+    (let [seen
+          (atom nil)
+
+          env
+          (fake-env [{:language "clojure"
+                      :start-repl-fn (fn [_ op opts]
+                                       {:success? true :result {:op op :opts opts}})
+                      :test-fn (fn [_ arg]
+                                 (reset! seen arg)
+                                 {:success? true :result {"pass" 0}})
+                      :repl-eval-fn (fn [_ arg]
+                                      (reset! seen arg)
+                                      {:success? true :result {:value "3"}})}])]
+
+      (expect (= {:op "start" :opts {"language" "clojure" "cwd" "repositories/plc3"}}
+                 (:result (language-surface/repl-start env
+                                                       {"language" "clojure"
+                                                        "project" "repositories/plc3"}))))
+      (expect (= {:op "status" :opts {"cwd" "ext"} "resources" []}
+                 (:result (language-surface/repl-status env "clojure" {"project" "ext"}))))
+      (expect (= {:op "stop" :opts {"cwd" "ext"}}
+                 (:result (language-surface/repl-stop env "clojure" {"project" "ext"}))))
+      (language-surface/repl-eval env "clojure" {"code" "(+ 1 2)" "project" "ext"})
+      (expect (= {"code" "(+ 1 2)" "cwd" "ext"} @seen))
+      (language-surface/run-tests env {"project" "ext"})
+      (expect (= {"cwd" "ext"} @seen))
+      ;; The same directory twice is ONE selection; two different ones are refused.
+      (expect (= {:op "start" :opts {"cwd" "ext"}}
+                 (:result (language-surface/repl-start env {"cwd" "ext" "project" "ext"}))))
+      (expect (= :language-surface/bad-args
+                 (try (language-surface/repl-start env {"cwd" "ext" "project" "other"})
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+  (it "states each REPL verb's required keys and the `project` spelling of `cwd`"
+      (let [keys-of
+            (fn [sym]
+              (into {} (map (juxt :name identity)) (:ext.symbol/params sym)))
+
+            start
+            (keys-of language-surface/repl-start-symbol)
+
+            evaluate
+            (keys-of language-surface/repl-eval-symbol)]
+
+        (expect (true? (:required? (get evaluate "code"))))
+        (expect (str/includes? (:note (get start "cwd")) "project"))
+        (expect (str/includes? (:note (get evaluate "cwd")) "project"))
+        (expect (str/includes? (:note (get (keys-of language-surface/repl-status-symbol) "cwd"))
+                               "project"))
+        (expect (str/includes? (:note (get (keys-of language-surface/repl-stop-symbol) "id"))
+                               "REQUIRED"))
+        (expect (str/includes? (:note (get (keys-of language-surface/connect-repl-symbol) "port"))
+                               "REQUIRED"))
+        (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
+                               "WORKSPACE ROOT"))))
   ;; Regression, issue #repl-enumerate: repl_status answered for the pack's own
   ;; directory alone, so a REPL under another cwd — or a shadow-cljs attachment beside
   ;; the JVM one — was invisible, while the verb's doc promised it was the only way to
