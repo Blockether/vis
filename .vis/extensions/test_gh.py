@@ -26,8 +26,8 @@ DESCRIPTION = "docs(release): record the TestFlight build testers now have · pu
 TAIL_LINES = 6
 
 
-def job_log():
-    return gh.log_window((FIXTURES / "job-log.txt").read_text(), TAIL_LINES)
+def failing_log(lines=TAIL_LINES):
+    return gh.log_window((FIXTURES / "job-log.txt").read_text(), lines)
 
 
 def fixture(name):
@@ -79,12 +79,19 @@ def recorder(monkeypatch):
 def watched(recorder):
     """One whole watch: the mid poll, then the final one, through the real live view."""
     polls = [fixture("run-mid.json"), fixture("run-final.json")]
+    asked = []
+
+    def log_of(job_id, lines):
+        asked.append((job_id, lines))
+        return failing_log()
+
     verdict = gh.watch(
         TITLE,
         DESCRIPTION,
         lambda: polls.pop(0) if len(polls) > 1 else polls[0],
-        log_tail=lambda job_id: job_log(),
+        log_of,
     )
+    recorder.asked = asked
     return recorder, verdict
 
 
@@ -210,14 +217,62 @@ def test_the_log_window_ends_where_the_job_failed():
     assert all(line.startswith("2026-08-18T") for line in window)
 
 
-def test_the_log_arrives_only_when_the_run_is_over(watched):
+def test_a_job_that_failed_shows_its_log_before_the_run_ends(watched):
+    recorder, _ = watched
+    written = [op for op in recorder.patched() if op.get("node_id") == "output"]
+
+    # Regression: the pane opened with "GitHub serves a job's log when the run finishes" and
+    # stayed empty for the whole run, because `gh run view --job N --log` refuses until the RUN
+    # is over. The job that had already failed in the FIRST poll owes its log THEN.
+    assert written[0]["lines"] == ["· what moves is written here as it happens"]
+    assert written[1]["lines"][0] == "── tests / vis-agent + vis-contract (PyPI packages) · log"
+    assert written[1]["lines"][1:] == failing_log()
+    assert recorder.asked[0] == ("95742028770", gh.FAILED_TAIL_LINES)
+
+
+def test_the_feed_says_what_moved_between_two_polls():
+    lines = gh.feed_lines(
+        gh.run_shape(fixture("run-mid.json")), gh.run_shape(fixture("run-final.json"))
+    )
+
+    # Only the two jobs that were still running and are now over: the four that did not move say
+    # nothing, and no step of the new job in focus dumps a checklist the `failing` node paints.
+    assert lines == [
+        "✓ tests / macos-latest · success · 28m 33s",
+        "✓ tests / ubuntu-latest · success · 12m 54s",
+    ]
+
+
+def test_the_settled_pane_is_one_photograph(watched):
     recorder, verdict = watched
     lines = node(verdict["view"], "output")["lines"]
-
-    assert lines == job_log()
     written = [op for op in recorder.patched() if op.get("node_id") == "output"]
-    assert written[0]["lines"] == ["· GitHub serves a job's log when the run finishes"]
+
+    # The feed is the story WHILE it runs; what is LEFT is the log of the job that has to be
+    # acted on, asked for at the model's own budget. The record still holds every line.
     assert any(op["op"] == "clear" for op in written)
+    assert lines[0] == "── tests / vis-agent + vis-contract (PyPI packages) · log"
+    assert lines[1:] == failing_log()
+    assert recorder.asked[-1] == ("95742028770", gh.LOG_TAIL_LINES)
+
+
+def test_a_log_is_asked_of_the_job_not_of_the_run(monkeypatch):
+    asked = []
+
+    def capture(command, seconds=120):
+        asked.append(command)
+        return 0, (FIXTURES / "job-log.txt").read_text()
+
+    monkeypatch.setattr(gh, "_capture", capture)
+    tail = gh.job_log(gh.repo_of(fixture("run-mid.json")), "95742028770", TAIL_LINES)
+
+    assert asked == ["gh api repos/Blockether/vis/actions/jobs/95742028770/logs"]
+    assert tail == failing_log()
+    # A run names its own repository, and nothing is asked without one.
+    assert gh.repo_of(fixture("run-mid.json")) == "Blockether/vis"
+    assert gh.repo_of({"url": "https://github.com/o/r/actions/runs/1"}, "other/name") == "other/name"
+    assert gh.job_log("", "95742028770") is None
+    assert gh.job_log("Blockether/vis", "") is None
 
 
 def test_the_picture_is_the_one_the_human_watched(watched):
@@ -341,3 +396,4 @@ def test_a_pull_requests_checks_read_as_the_same_run():
     settled = gh.checks_payload([dict(one, bucket="pass") for one in rows], "1421")
     assert gh.run_shape(settled)["is_over"] is True
     assert gh.run_shape(settled)["tone"] == "ok"
+

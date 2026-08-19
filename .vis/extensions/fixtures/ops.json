@@ -2,12 +2,12 @@
   {
     "op": "open",
     "view": {
-      "description": "docs(release): record the TestFlight build testers now have \u00b7 push",
-      "title": "CI \u00b7 run 32146686161",
+      "description": "docs(release): record the TestFlight build testers now have · push",
+      "title": "CI · run 32146686161",
       "nodes": [
         {
           "tone": "running",
-          "detail": "workflow **CI** on `main` \u00b7 in focus **tests / macos-latest**",
+          "detail": "workflow **CI** on `main` · in focus **tests / macos-latest**",
           "text": "4 of 6 jobs finished, 1 failed",
           "type": "status",
           "id": "run"
@@ -56,7 +56,7 @@
               "cells": [
                 "tests / macos-latest",
                 "in progress",
-                "\u00b7"
+                "·"
               ]
             },
             {
@@ -74,7 +74,7 @@
               "cells": [
                 "tests / ubuntu-latest",
                 "in progress",
-                "\u00b7"
+                "·"
               ]
             },
             {
@@ -208,7 +208,7 @@
             },
             {
               "id": "95742028770",
-              "label": "Failed \u00b7 tests / vis-agent + vis-contract (PyPI packages)",
+              "label": "Failed · tests / vis-agent + vis-contract (PyPI packages)",
               "target": "https://github.com/Blockether/vis/actions/runs/32146686161/job/95742028770"
             }
           ],
@@ -224,7 +224,27 @@
       "ops": [
         {
           "lines": [
-            "\u00b7 GitHub serves a job's log when the run finishes"
+            "· what moves is written here as it happens"
+          ],
+          "op": "append",
+          "node_id": "output"
+        }
+      ]
+    }
+  },
+  {
+    "op": "patch",
+    "patch": {
+      "ops": [
+        {
+          "lines": [
+            "── tests / vis-agent + vis-contract (PyPI packages) · log",
+            "2026-08-18T14:10:24.6255054Z     [",
+            "2026-08-18T14:10:24.6255326Z         'open',",
+            "2026-08-18T14:10:24.6255617Z   -     'patch',",
+            "2026-08-18T14:10:24.6255911Z     ]",
+            "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
+            "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
           ],
           "op": "append",
           "node_id": "output"
@@ -242,7 +262,7 @@
         {
           "text": "6 of 6 jobs finished, 1 failed",
           "tone": "error",
-          "detail": "workflow **CI** on `main` \u00b7 in focus **tests / vis-agent + vis-contract (PyPI packages)**",
+          "detail": "workflow **CI** on `main` · in focus **tests / vis-agent + vis-contract (PyPI packages)**",
           "op": "set",
           "node_id": "run"
         },
@@ -355,11 +375,20 @@
           "node_id": "failing"
         },
         {
+          "lines": [
+            "✓ tests / macos-latest · success · 28m 33s",
+            "✓ tests / ubuntu-latest · success · 12m 54s"
+          ],
+          "op": "append",
+          "node_id": "output"
+        },
+        {
           "op": "clear",
           "node_id": "output"
         },
         {
           "lines": [
+            "── tests / vis-agent + vis-contract (PyPI packages) · log",
             "2026-08-18T14:10:24.6255054Z     [",
             "2026-08-18T14:10:24.6255326Z         'open',",
             "2026-08-18T14:10:24.6255617Z   -     'patch',",
@@ -376,7 +405,7 @@
   {
     "op": "close",
     "ending": {
-      "summary": "6 of 6 jobs finished, 1 failed \u2014 workflow **CI** on `main` \u00b7 in focus **tests / vis-agent + vis-contract (PyPI packages)**, finished \u00b7 https://github.com/Blockether/vis/actions/runs/32146686161"
+      "summary": "6 of 6 jobs finished, 1 failed — workflow **CI** on `main` · in focus **tests / vis-agent + vis-contract (PyPI packages)**, finished · https://github.com/Blockether/vis/actions/runs/32146686161"
     }
   }
 ]

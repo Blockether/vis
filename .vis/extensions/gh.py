@@ -16,10 +16,13 @@ Seven nodes, one per question a person asks about a run: what is happening (`run
 else is `error`. Rows are upserted by the job's `databaseId`, so a job that changes state keeps its
 slot and the eye keeps its place, and only what CHANGED since the last poll crosses the wire.
 
-GitHub serves a job's log only once the whole RUN is complete — `gh run view --job N --log` answers
-"still in progress" until then — so the log node carries one line while the run is live and fills
-with the tail of the job in focus when it ends. The tail is what the model reads; the view's record
-keeps every line that was written.
+GitHub serves a log per JOB, not per run: `gh run view --job N --log` refuses with "run … is
+still in progress" until the whole run is over, while the REST endpoint `actions/jobs/N/logs`
+answers the moment THAT job ends. So a job that fails eight minutes into a twenty-minute matrix
+shows its log eight minutes in, and until then the pane is a feed of what MOVED — every job that
+changed state, every step of the job in focus. The tail is what the model reads; the view's
+record keeps every line that was written, and the settled pane is one photograph of the log that
+matters rather than the hour of feed that led to it.
 """
 
 import json
@@ -32,13 +35,18 @@ import vis
 # `gh run view --json <these>` is the whole payload the view is built from: one call per poll.
 RUN_FIELDS = "jobs,status,conclusion,workflowName,headBranch,url,displayTitle,number,event,databaseId"
 
-# The tick a person can watch without it costing anything, and the one a long run settles into.
-FAST_TICK_S = 5.0
-SLOW_TICK_S = 15.0
+# The tick a person watches things move on, and the one a long run settles into. Three seconds is
+# the slowest tick a counter still reads as LIVE on; a poll is one `gh run view --json` call, so
+# even an hour of watching stays far inside a person's own rate limit.
+FAST_TICK_S = 3.0
+SLOW_TICK_S = 8.0
 BACKOFF_AFTER_S = 300.0
 
-# The model's copy of a failing job's log is a TAIL: the whole log stays in the view's record.
-LOG_TAIL_LINES = 200
+# The model's copy of a log is a TAIL: the whole log stays in the view's record. The settled tail
+# is the engine's own model budget for a log node, so the picture elides nothing; a job that fails
+# mid-run says less, because the run is not over and the story is still moving.
+LOG_TAIL_LINES = 120
+FAILED_TAIL_LINES = 40
 
 _RUNNING_STATES = ("queued", "in_progress", "waiting", "requested", "pending")
 
@@ -317,13 +325,29 @@ def log_window(text, lines=LOG_TAIL_LINES):
     return written[max(0, end - int(lines)) : end]
 
 
-def job_log_tail(run_id, job_id, repo=None, lines=LOG_TAIL_LINES):
-    """The tail of one job's log, or nil while GitHub still refuses to serve it."""
-    if not job_id:
+def repo_of(payload, repo=None):
+    """`owner/name` for the run — the flag when one was given, else read off the run's own URL.
+
+    The log endpoint is addressed by repository, and the payload already carries the one the run
+    belongs to, so a watch stays at one `gh` call per poll.
+    """
+    if repo:
+        return str(repo)
+    parts = [one for one in str(payload.get("url") or "").split("/") if one]
+    at = parts.index("github.com") if "github.com" in parts else -1
+    return "/".join(parts[at + 1 : at + 3]) if 0 <= at < len(parts) - 2 else ""
+
+
+def job_log(repo, job_id, lines=LOG_TAIL_LINES):
+    """The tail of ONE job's log the moment that job is over — nil while it is still writing.
+
+    `gh run view --job N --log` answers "run … is still in progress" until the whole RUN
+    completes, which is why a job that failed early used to stay silent for as long as the rest of
+    the matrix took. The REST endpoint is per JOB: 404 while it runs, the whole log once it ends.
+    """
+    if not repo or not job_id:
         return None
-    exit_code, text = _capture(
-        f"gh run view {run_id}{_repo_flag(repo)} --job {job_id} --log", 180
-    )
+    exit_code, text = _capture(f"gh api repos/{repo}/actions/jobs/{job_id}/logs", 180)
     if exit_code != 0:
         return None
     return log_window(text, lines)
@@ -343,7 +367,63 @@ def _summary(shape):
     )
 
 
-def watch(title, description, poll, log_tail=None):
+# The mark a tone wears in the feed: what a person scans for when a run is long.
+_MARKS = {"ok": "✓", "error": "✗", "running": "▶", "idle": "–"}
+
+
+def feed_lines(before, after):
+    """What APPEARED between two polls: every job that changed state, every step that moved.
+
+    A twenty-minute run with one number ticking reads as a hang. These lines are the run's story
+    as it happens, and they cost nothing: they are read out of the poll the view is patched from.
+
+    A job seen for the first time is news; a STEP is not, or every focus change would dump the
+    whole checklist the `failing` node already paints.
+    """
+    was = {row["id"]: row for row in before.get("rows") or []}
+    lines = []
+    for row in after.get("rows") or []:
+        older = was.get(row["id"])
+        if older is not None and older["cells"][1] == row["cells"][1]:
+            continue
+        took = row["cells"][2]
+        lines.append(
+            "{} {} · {}{}".format(
+                _MARKS.get(row["tone"], "·"),
+                row["cells"][0],
+                row["cells"][1],
+                f" · {took}" if took and took != "·" else "",
+            )
+        )
+    steps = (
+        {one["id"]: one for one in before.get("steps") or []}
+        if before.get("focus_id") == after.get("focus_id")
+        else {}
+    )
+    for step in after.get("steps") or []:
+        older = steps.get(step["id"])
+        if older is None or older["tone"] == step["tone"]:
+            continue
+        lines.append("  {} {}".format(_MARKS.get(step["tone"], "·"), step["label"]))
+    return lines
+
+
+def _file_logs(view, shape, logged, log_of):
+    """Write the log of every job that has FAILED and has not been shown yet.
+
+    Attempted once per job: a log GitHub would not serve is not re-asked every three seconds, and
+    the job in focus is fetched again when the run ends anyway.
+    """
+    for row in shape.get("rows") or []:
+        if row["tone"] != "error" or row["id"] in logged:
+            continue
+        logged.add(row["id"])
+        tail = log_of(row["id"], FAILED_TAIL_LINES)
+        if tail:
+            view["output"].write(f"── {row['cells'][0]} · log", *tail)
+
+
+def watch(title, description, poll, log_of=None):
     """Open the view on the first poll, patch it until the run ends, answer the picture.
 
     Whatever ends it, the model gets the same shape: a human's stop answers the state they were
@@ -357,9 +437,12 @@ def watch(title, description, poll, log_tail=None):
     """
     shape = run_shape(poll())
     began = time.monotonic()
+    logged = set()
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
-            view["output"].write("· GitHub serves a job's log when the run finishes")
+            view["output"].write("· what moves is written here as it happens")
+            if log_of:
+                _file_logs(view, shape, logged, log_of)
             while not shape["is_over"]:
                 if view.is_interrupted:
                     break
@@ -370,12 +453,19 @@ def watch(title, description, poll, log_tail=None):
                     view["run"].set(str(failure)[:200], tone="error")
                     break
                 push_changes(view, shape, fresh)
+                moved = feed_lines(shape, fresh)
+                if moved:
+                    view["output"].write(*moved)
+                if log_of:
+                    _file_logs(view, fresh, logged, log_of)
                 shape = fresh
-            if shape["is_over"]:
-                tail = log_tail(shape["focus_id"]) if log_tail else None
+            if shape["is_over"] and log_of:
+                # The settled pane is ONE photograph: the log of the job that must be acted on,
+                # not the feed that led there. The record still holds every line of it.
+                tail = log_of(shape["focus_id"], LOG_TAIL_LINES)
                 if tail:
                     view["output"].clear()
-                    view["output"].write(*tail)
+                    view["output"].write(f"── {shape['focus']} · log", *tail)
         except vis.Interrupted:
             # The human stopped watching. The view already holds its verdict, `close` answers
             # it, and `shape` is the last poll that reached them — which is the picture they
@@ -387,11 +477,13 @@ def watch(title, description, poll, log_tail=None):
 def gh_watch_run(run=None, repo=None):
     """What is this CI run doing, and how did it end? Watch a GitHub Actions run to its verdict.
 
-    Opens a live view a person can watch (and stop) while it polls `gh run view` every five
-    seconds, easing to fifteen past the first five minutes, and answers the picture at the end:
-    the jobs, the score, the failing job's steps and the tail of its log. `run` is a run id or
-    URL; without one, the newest run on the current branch. `repo` is `owner/name` for a repo
-    other than the working directory's.
+    Opens a live view a person can watch (and stop) while it polls `gh run view` every three
+    seconds, easing to eight past the first five minutes, and answers the picture at the end: the
+    jobs, the score, the failing job's steps and the tail of its log. Every job that moves is
+    written into the log pane as it moves, and a job that FAILS shows its log the moment it
+    fails — the rest of the matrix is not waited for. `run` is a run id or URL; without one, the
+    newest run on the current branch. `repo` is `owner/name` for a repo other than the working
+    directory's.
     """
     require_gh()
     run_id = run or newest_run(repo)
@@ -400,11 +492,12 @@ def gh_watch_run(run=None, repo=None):
     described = "{} · {}".format(
         first.get("displayTitle") or run_id, first.get("event") or ""
     )
+    owner = repo_of(first, repo)
     return watch(
         f"{title} · run {run_id}",
         described.strip(" ·"),
         lambda: fetch_run(run_id, repo),
-        lambda job_id: job_log_tail(run_id, job_id, repo),
+        lambda job_id, lines: job_log(owner, job_id, lines),
     )
 
 

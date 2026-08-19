@@ -90,8 +90,11 @@
       ;; The checklist follows the job in focus: the failing job's steps, not the running one's.
       (expect (= 10 (count (:steps (node view "failing")))))
       (expect (some #(= :error (:tone %)) (:steps (node view "failing"))))
-      ;; GitHub serves a job's log only once the run is over, so the tail lands at the end.
-      (expect (= 6 (count (:lines (node view "output")))))
+      ;; The settled pane is ONE photograph — the job named, then the tail of its log. The feed
+      ;; that ran while the jobs moved stays in the record, not in what the model reads.
+      (expect (= 7 (count (:lines (node view "output")))))
+      (expect (str/starts-with? (first (:lines (node view "output")))
+                                "── tests / vis-agent + vis-contract (PyPI packages) · log"))
       (expect (str/ends-with? (last (:lines (node view "output")))
                               "##[error]Process completed with exit code 1."))
       (expect (= ["run" "95742028770"] (mapv :id (:links (node view "links")))))))

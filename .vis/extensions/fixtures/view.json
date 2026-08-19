@@ -1,12 +1,12 @@
 {
-  "title": "CI \u00b7 run 32146686161",
+  "title": "CI · run 32146686161",
   "nodes": [
     {
       "id": "run",
       "type": "status",
       "text": "6 of 6 jobs finished, 1 failed",
       "tone": "error",
-      "detail": "workflow **CI** on `main` \u00b7 in focus **tests / vis-agent + vis-contract (PyPI packages)**"
+      "detail": "workflow **CI** on `main` · in focus **tests / vis-agent + vis-contract (PyPI packages)**"
     },
     {
       "id": "progress",
@@ -182,6 +182,7 @@
       "type": "log",
       "label": "Log of the job in focus",
       "lines": [
+        "── tests / vis-agent + vis-contract (PyPI packages) · log",
         "2026-08-18T14:10:24.6255054Z     [",
         "2026-08-18T14:10:24.6255326Z         'open',",
         "2026-08-18T14:10:24.6255617Z   -     'patch',",
@@ -190,7 +191,7 @@
         "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
       ],
       "window_lines": 2000,
-      "total_lines": 7
+      "total_lines": 17
     },
     {
       "id": "links",
@@ -204,12 +205,12 @@
         },
         {
           "id": "95742028770",
-          "label": "Failed \u00b7 tests / vis-agent + vis-contract (PyPI packages)",
+          "label": "Failed · tests / vis-agent + vis-contract (PyPI packages)",
           "target": "https://github.com/Blockether/vis/actions/runs/32146686161/job/95742028770",
           "target_kind": "url"
         }
       ]
     }
   ],
-  "description": "docs(release): record the TestFlight build testers now have \u00b7 push"
+  "description": "docs(release): record the TestFlight build testers now have · push"
 }
