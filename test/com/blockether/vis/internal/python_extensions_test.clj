@@ -13,7 +13,9 @@
             [com.blockether.vis.internal.human-input :as human-input]
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.provider-auth :as pauth]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
+            [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.foundation.shell :as shell]
@@ -1308,6 +1310,78 @@ vis.extension(
           (let [seen (symbol-fn ext (clojure.core/symbol "seen_selected"))]
             (expect (= {"source" "tui" "provider_id" "acme"} (get-in (seen) [:result])))))))))
 
+;; Regression: a MANAGED provider declared by a PYTHON extension was a flag that
+;; never crossed the host boundary - `is_managed=True` in `vis.provider(...)`
+;; reached the entry decoder and every credential seam below still saw an
+;; ordinary API-key provider: a key band, an `Add provider` row, a startable flow.
+(def ^:private managed-provider-py
+  "'''Corp gateway fixture - the runtime issues the credential.'''
+import vis
+
+
+def _token():
+    return {'token': 'issued-by-runtime', 'api_url': 'https://corp.test/v1'}
+
+
+vis.extension(
+    name='provider-corp',
+    description='Managed corporate gateway fixture.',
+    providers=[
+        vis.provider(
+            id='corp-managed',
+            label='Corp Gateway',
+            is_managed=True,
+            preset={'base_url': 'https://corp.test/v1',
+                    'api_style': 'openai',
+                    'default_models': ['corp-large']},
+            get_token_fn=_token,
+        ),
+        vis.provider(
+            id='corp-byok',
+            label='Corp BYOK',
+            preset={'base_url': 'https://corp.test/v1',
+                    'api_style': 'openai',
+                    'default_models': ['corp-large']},
+        ),
+    ],
+)
+")
+
+(defdescribe
+  python-managed-provider-test
+  (it "carries is_managed=True from vis.provider(...) to every credential seam"
+      (with-loaded {"corp.py" managed-provider-py}
+                   (fn [_ _]
+                     ;; The DECLARED flag reaches the registry entry; an undeclared one stays
+                     ;; absent rather than arriving as `false` by truthiness.
+                     (expect (true? (:provider/is-managed (registry/provider-by-id :corp-managed))))
+                     (expect (nil? (:provider/is-managed (registry/provider-by-id :corp-byok))))
+                     (expect (true? (providers/managed? :corp-managed)))
+                     (expect (= :managed (providers/auth-kind :corp-managed)))
+                     (expect (= :api-key (providers/auth-kind :corp-byok)))
+                     ;; No channel can ever post a key for it: the flow refuses to start.
+                     (let [refusal (pauth/start-auth! :corp-managed)]
+                       (expect (= false (:ok? refusal)))
+                       (expect (= :auth-managed (:error refusal)))
+                       (expect (= false (pauth/supported? :corp-managed))))
+                     ;; And nobody has to add it: absent from the `Add provider` picker, and
+                     ;; already standing in the fleet with no configuration at all.
+                     (with-redefs [providers/configured-providers
+                                   (constantly [])
+
+                                   providers/configured-providers-cached
+                                   (constantly [])]
+
+                       (let [offered
+                             (into #{} (map :id) (providers/available-presets))
+
+                             bound
+                             (into #{} (map :id) (providers/authenticated-preset-providers))]
+
+                         (expect (contains? offered :corp-byok))
+                         (expect (not (contains? offered :corp-managed)))
+                         (expect (contains? bound :corp-managed))
+                         (expect (not (contains? bound :corp-byok)))))))))
 ;; Regression, issue #113: ordinary extension process calls from process-level
 ;; provider callbacks were redirected into the session-only jail and returned nil.
 (defn- jail-wait
