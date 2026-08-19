@@ -791,6 +791,34 @@ vis.extension(
                      (expect (= 1 (:failed result)))
                      (expect (str/includes? (:error (first (pyx/load-failures))) "docstring"))))))
 
+;; Regression, issue #152: a preset's `api_style` was keywordized verbatim, so a
+;; near-miss spelling like `openai_responses` reached svar as a dialect its `case`
+;; does not know and silently meant `/chat/completions` — a Responses endpoint
+;; served on the chat wire, which is how a Responses-minted tool-call id ended up
+;; replayed to a chat provider.
+(defdescribe
+  provider-preset-dialect-test
+  (it "an accepted alias normalizes to svar's own api-style"
+      (with-loaded
+        {"dialect.py" (str "import vis\n"
+                           "vis.extension(name='dialect', description='d',\n"
+                           "              providers=[vis.provider(id='dialect', label='Dialect',\n"
+                           "                  preset={'base_url': 'https://dialect.test/v1',\n"
+                           "                          'api_style': 'openai_responses'})])\n")}
+        (fn [_ _]
+          (expect (= :openai-compatible-responses
+                     (:api-style (:provider/preset (registry/provider-by-id :dialect))))))))
+  (it "an api_style naming no wire dialect is refused, never keywordized"
+      (with-loaded {"baddialect.py"
+                    (str "import vis\n"
+                         "vis.extension(name='baddialect', description='d',\n"
+                         "              providers=[vis.provider(id='baddialect', label='Bad',\n"
+                         "                  preset={'base_url': 'https://bad.test/v1',\n"
+                         "                          'api_style': 'openai-responses-v2'})])\n")}
+                   (fn [result _]
+                     (expect (= 1 (:failed result)))
+                     (expect (str/includes? (:error (first (pyx/load-failures)))
+                                            "names no wire dialect"))))))
 ;; Reload + project-over-global precedence
 
 (defdescribe
@@ -1232,10 +1260,12 @@ vis.extension(
           (expect (some? p))
           (expect (= :acme (:provider/id p)))
           (expect (= "Acme AI" (:provider/label p)))
-          ;; preset: one snake_case spelling per key, api-style -> keyword
+          ;; preset: one snake_case spelling per key, and `api_style` resolves to
+          ;; svar's OWN dialect keyword (`openai` -> `:openai-compatible-chat`) —
+          ;; the value svar's `case` dispatches on, not the author's spelling.
           (let [preset (:provider/preset p)]
             (expect (= "https://acme.test/v1" (:base-url preset)))
-            (expect (= :openai (:api-style preset)))
+            (expect (= :openai-compatible-chat (:api-style preset)))
             (expect (= ["acme-large" "acme-small"] (:default-models preset)))
             ;; An UNDECLARED preset key is named through `wire/engine-key` and
             ;; its VALUE is never entered: `extra_body`/`llm_headers` are the

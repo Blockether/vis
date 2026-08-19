@@ -232,7 +232,7 @@ providers:
     models:
       - name: claude-sonnet-4-5-20250929
   - id: my-gateway
-    compatibility: openai        # anthropic | openai | openai-responses
+    compatibility: openai            # the wire dialect this endpoint speaks
     base_url: https://llm.internal/v1
     api_key: ${LLM_TOKEN}
     models:
@@ -240,11 +240,36 @@ providers:
         context: 262144          # input window
         output_limit: 32768      # max output tokens
         is_tool_call: true
+  - id: my-responses-gateway
+    compatibility: openai-responses  # this one serves the Responses API, not chat completions
+    base_url: https://gateway.example.com/v1
+    api_key: ${GATEWAY_TOKEN}
+    responses_path: /responses       # only when the endpoint serves it off another path
+    is_stateless: true               # load-balanced replicas: never replay server-minted item ids
+    models:
+      - name: gpt-5.6
 ```
 
 Per-model keys Vis honors: `context` (input window — the override for servers that can't report one), `output_limit` (max output tokens), `is_tool_call`, and `api_style` (a wire override when one provider routes different models through different APIs). Both limits are forwarded to the router, which uses them for pre-flight context checks and output capping, so filling them in makes routing decisions accurate instead of conservative.
 
-Per-provider keys: `compatibility`, `base_url`, `api_style`, `llm_headers`, `extra_body`. **`compatibility`** is the wire dialect the endpoint speaks — `anthropic` (Anthropic Messages), `openai` (OpenAI chat completions), or `openai-responses` (OpenAI Responses API) — and is all a custom or self-hosted endpoint normally needs. `api_style` remains the raw escape hatch for anything outside those dialects (e.g. `gemini`) and wins if both are set. Note that the dialect is normally a property of the **endpoint**, so it belongs on a provider; use a per-model `api_style` only when one endpoint deliberately routes models through different APIs. Providers with managed auth (Copilot, coding plans) resolve tokens through their extension at runtime — no `api_key` needed in the file.
+Per-provider keys: `compatibility`, `base_url`, `api_key`, `api_key_command`, `responses_path`, `api_style`, `llm_headers`, `extra_body`, `is_stateless`, `is_image_input`. Providers with managed auth (Copilot, coding plans) resolve tokens through their extension at runtime — no `api_key` needed in the file.
+
+### The wire dialect
+
+**`compatibility` is the wire dialect the endpoint speaks**, and it is all a custom or self-hosted endpoint normally needs. `api_style` is the same value under the router's own name and wins if both are set. One vocabulary serves both keys:
+
+| dialect | what Vis posts | also accepted |
+| --- | --- | --- |
+| `anthropic` | Anthropic Messages, `{base_url}/messages` | `claude`, `anthropic-messages`, `messages` |
+| `openai` | OpenAI chat completions, `{base_url}/chat/completions` | `openai-chat`, `openai-compatible`, `openai-compatible-chat`, `chat`, `chat-completions` |
+| `openai-responses` | OpenAI Responses, `{base_url}` + `responses_path` | `responses`, `openai-compatible-responses` |
+| `gemini` | Gemini `generateContent` | `google`, `google-gemini` |
+
+Spelling is forgiving — case, `_` versus `-`, and surrounding spaces all normalize, so `openai_responses`, `OpenAI-Responses` and `openai-responses` are one value. Anything **outside** the vocabulary is refused when the config loads, naming the accepted values: a dialect Vis does not recognise is never quietly treated as chat completions.
+
+That refusal matters more than it looks. A gateway (LiteLLM, or Azure behind one) often serves **both** wires, so declaring `openai` for an endpoint you use as Responses is accepted by the endpoint and wrong: Vis posts `/chat/completions`, the gateway maps `messages[].tool_call_id` onto `input[N].call_id` upstream, and a tool-call id minted on the Responses wire is rejected there — the turn dies on a 400 that nothing in your config points at. Declare the wire you actually use.
+
+The dialect is a property of the **endpoint**, so it belongs on the provider; use a per-model `api_style` only when one endpoint deliberately routes models through different APIs (one gateway serving both Anthropic-wire and OpenAI-wire models).
 
 **Model order is your order.** Models are offered in exactly the order you wrote them under a provider in `vis.yml`; anything discovered from the provider's live catalog is appended after them, sorted. With nothing else set, the first provider is the active one and its first model is the default.
 

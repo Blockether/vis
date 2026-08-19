@@ -883,7 +883,7 @@ vis.extension(
             id="acme",
             label="Acme AI",
             preset={"base_url": "https://api.acme.ai/v1",
-                    "api_style": "openai",
+                    "api_style": "openai",           # anthropic | openai | openai-responses | gemini
                     "default_models": ["acme-large", "acme-small"]},
             get_token_fn=_token,
             status_fn=_status,
@@ -900,11 +900,23 @@ slots — `get_token_fn`, `detect_fn`, `status_fn`, `logout_fn`, `limits_fn`,
 `on_selected_fn` — are all optional (every function-valued slot carries the
 `_fn` suffix); a static-key provider usually just
 needs `get_token_fn` + a `preset`. Dict keys may be snake_case or kebab (`api_url` ≡
-`:api-url`), `api_style` becomes a keyword, and a Python boolean-predicate key
+`:api-url`), and a Python boolean-predicate key
 written `is_<name>` maps to the `:<name>?` the host reads — so a `status_fn` result
 returns `is_authenticated` (Python can't spell the trailing `?`), which the
 runtime consumes as `:is-authenticated`. `vis-agent providers auth/status/limits
 <id>` work against it like any other provider.
+
+**`api_style` in a preset is the endpoint's wire dialect, and it is checked.** It
+takes the same vocabulary as a provider's `compatibility:` in `vis.yml` —
+`anthropic`, `openai`, `openai-responses`, `gemini`, with the aliases and the
+`_`/`-`/case forgiveness described under
+[Providers and models](configuration.md#providers-and-models) — and resolves to
+the dialect the router dispatches on. A value naming **no** dialect is a load
+failure for that extension (`vis-agent extensions` shows it), never a keyword
+passed through: an unrecognised dialect used to mean chat completions silently,
+which posts a Responses endpoint's history to `/chat/completions`. Say
+`"openai-responses"` whenever the endpoint serves the Responses API, even when
+the same gateway also answers `/chat/completions`.
 
 A provider whose credential the RUNTIME issues — a company gateway, a device
 policy — declares itself with `is_managed=True` and is never asked for a key at

@@ -560,6 +560,45 @@
           (expect (some #(.contains ^String % "Invalid Vis configuration in vis.yml") panel))
           (expect (some #(.contains ^String % "grep.include-gitignored-paths") panel))))))
 
+;; ── Provider wire dialect (#152) ─────────────────────────────────────────────
+;; Regression, issue #152: `api_style` was typed as "any non-blank string", so a
+;; near-miss like `openai_responses` validated and then reached svar as a dialect
+;; its `case` does not know — which silently means `/chat/completions`. Forgiving
+;; on every accepted spelling, refused with the vocabulary named otherwise.
+
+(defdescribe
+  provider-dialect-vocabulary-test
+  (it "accepts every spelling of a dialect, on the provider and on a model"
+      (doseq [v ["anthropic" "claude" "openai" "chat" "openai-responses" "openai_responses"
+                 "responses" "OpenAI-Compatible-Responses" "gemini"]]
+        (expect (= []
+                   (config-spec/explain-problems {"providers" [{"id" "p"
+                                                                "api_style" v
+                                                                "compatibility" v
+                                                                "models" [{"name" "m"
+                                                                           "api_style" v}]}]}))
+                (str v " must name a dialect"))))
+  (it "normalizes an accepted spelling onto svar's own api-style"
+      (expect (= :openai-compatible-responses (config-spec/normalize-api-style "openai_responses")))
+      (expect (= :openai-compatible-chat (config-spec/normalize-api-style :openai)))
+      (expect (= :anthropic (config-spec/normalize-api-style " Anthropic ")))
+      (expect (nil? (config-spec/normalize-api-style "openai-responses-v2")))
+      (expect (nil? (config-spec/normalize-api-style nil))))
+  (it "refuses an unknown dialect and names the accepted vocabulary"
+      (let [[problem :as problems] (config-spec/explain-problems
+                                     {"providers" [{"id" "p" "api_style" "openai-responses-v2"}]})]
+        (expect (= 1 (count problems)))
+        (expect (str/starts-with? problem "providers[0].api_style: "))
+        (expect (str/includes? problem "is not a wire dialect"))
+        (doseq [v config-spec/api-style-values]
+          (expect (str/includes? problem v) (str "the message must name " v))))
+      (expect (str/includes? (first (config-spec/explain-problems
+                                      {"providers" [{"id" "p" "compatibility" "openai-ish"}]}))
+                             "is not a wire dialect"))
+      (expect (str/includes? (first (config-spec/explain-problems
+                                      {"providers" [{"id" "p"
+                                                     "models" [{"name" "m" "api_style" "gpt"}]}]}))
+                             "is not a wire dialect"))))
 ;; ── Conditional mounts (#89) ─────────────────────────────────────────────────
 ;; One catalog is shared by every machine: a mac laptop, a Linux box, and a host
 ;; where half the sibling repos are simply not checked out.

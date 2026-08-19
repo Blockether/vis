@@ -14,9 +14,11 @@ optional.
     "not configured" path the CLI/TUI surfaces.
   * `status_fn`    — powers `vis-agent providers status acme`.
 
-Dict keys may be snake_case or kebab (`api_url` ≡ `:api-url`); `api_style`
-becomes a keyword host-side. Secrets come from the environment — extension
-contexts are trusted, so `os.environ` is real.
+Dict keys may be snake_case or kebab (`api_url` ≡ `:api-url`). `api_style` is
+the endpoint's wire dialect — `anthropic`, `openai`, `openai-responses` or
+`gemini` (aliases and `_`/`-`/case are forgiven, anything else fails the load
+instead of quietly meaning chat completions). Secrets come from the environment
+— extension contexts are trusted, so `os.environ` is real.
 """
 
 import os
@@ -47,7 +49,7 @@ vis.extension(
             label="Acme AI",
             preset={
                 "base_url": "https://api.acme.ai/v1",
-                "api_style": "openai",
+                "api_style": "openai",  # this endpoint speaks chat completions
                 "default_models": ["acme-large", "acme-small"],
             },
             get_token_fn=_token,
