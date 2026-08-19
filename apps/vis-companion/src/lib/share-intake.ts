@@ -209,6 +209,11 @@ type ShareListener = (share: SharedPayload | null) => void;
 
 const listeners = new Set<ShareListener>();
 let pending: SharedPayload | null = null;
+// A share names a payload, never a destination. Until the human has picked one —
+// a row in the list, a fresh session, a fork — no composer may take it, or the
+// session that happens to be mounted swallows the memo before the list can even
+// offer the choice.
+let claimed = false;
 let hydrated = false;
 let hydration: Promise<SharedPayload | null> | null = null;
 
@@ -297,6 +302,9 @@ export function receiveSharedText(share: SharedPayload): SharedPayload | null {
     ? mergeShares(pending, normalized)
     : { ...normalized, at: Date.now() };
   pending = merged;
+  // A new payload is a new question. Whatever destination was named applies to
+  // what was already taken, not to what just landed.
+  claimed = false;
   void flush();
   notify(merged);
   return merged;
@@ -310,16 +318,51 @@ export function peekPendingShare(): SharedPayload | null {
 function notify(share: SharedPayload | null): void {
   for (const listener of listeners) listener(share);
 }
-/** The share landed in a composer. Removes it so it is pasted exactly once. */
+/**
+ * The human named a destination for the parked share. Only after this may a
+ * composer take it; the notify is what lets the session that is ALREADY open
+ * drain without remounting.
+ */
+export function claimPendingShare(): SharedPayload | null {
+  if (!pending) return null;
+  claimed = true;
+  notify(pending);
+  return pending;
+}
+
+/**
+ * The share landed in a composer. Removes it so it is pasted exactly once, and
+ * answers null while no destination has been claimed.
+ */
 export function takePendingShare(): SharedPayload | null {
-  const share = pending;
-  pending = null;
   // Always through `flush()`, even on an empty take: a take can happen before the
   // cold-start read has landed, and `flush()` is what waits for it — returning
   // early here would leave a parked share unhydrated and lost.
+  if (!claimed) {
+    void flush();
+    return null;
+  }
+  const share = pending;
+  pending = null;
+  claimed = false;
   void flush();
   // No notify on an empty take, though: a listener that drains on notify would
   // answer its own message forever.
+  if (!share) return null;
+  notify(null);
+  return share;
+}
+
+/**
+ * The human threw the share away. Unlike a take this needs no claim — refusing
+ * a payload is a destination too — and it answers what was dropped so the staged
+ * copies can go with it.
+ */
+export function dropPendingShare(): SharedPayload | null {
+  const share = pending;
+  pending = null;
+  claimed = false;
+  void flush();
   if (!share) return null;
   notify(null);
   return share;
@@ -337,6 +380,7 @@ export function onSharedText(handler: ShareListener): () => void {
 export function resetShareIntakeForTests(): void {
   listeners.clear();
   pending = null;
+  claimed = false;
   hydrated = false;
   hydration = null;
 }

@@ -37,6 +37,8 @@ vi.mock('@capacitor/preferences', () => ({
 import {
   appendSharedText,
   formatShare,
+  claimPendingShare,
+  dropPendingShare,
   hydratePendingShare,
   onSharedText,
   parseShareLink,
@@ -260,6 +262,7 @@ describe('pending slot', () => {
 
   it('pastes exactly once', () => {
     receiveSharedText({ text: 'hi' });
+    claimPendingShare();
     expect(takePendingShare()?.text).toBe('hi');
     expect(takePendingShare()).toBeNull();
     expect(peekPendingShare()).toBeNull();
@@ -293,6 +296,7 @@ describe('pending slot', () => {
   it('clears both copies once taken', async () => {
     receiveSharedText({ url: 'https://e.com' });
     await settle();
+    claimPendingShare();
     takePendingShare();
     await settle();
     expect(native.store.has(KEY)).toBe(false);
@@ -300,6 +304,49 @@ describe('pending slot', () => {
   });
 });
 
+// Regression, cross-validated on the Android emulator: a memo shared from the
+// system sheet landed straight in whichever session happened to be open, and the
+// list never got to offer the choice.
+describe('destination claim', () => {
+  it('refuses every take until a destination is named', () => {
+    receiveSharedText({ text: 'memo' });
+    expect(takePendingShare()).toBeNull();
+    expect(peekPendingShare()?.text).toBe('memo');
+    claimPendingShare();
+    expect(takePendingShare()?.text).toBe('memo');
+  });
+
+  it('wakes a composer that is already mounted', () => {
+    const seen: Array<SharedPayload | null> = [];
+    receiveSharedText({ text: 'memo' });
+    onSharedText((share) => seen.push(share));
+    claimPendingShare();
+    expect(seen[0]?.text).toBe('memo');
+  });
+
+  it('claims nothing when nothing is parked', () => {
+    expect(claimPendingShare()).toBeNull();
+    expect(takePendingShare()).toBeNull();
+  });
+
+  it('makes a share that arrives after the claim ask again', () => {
+    receiveSharedText({ text: 'first' });
+    claimPendingShare();
+    receiveSharedText({ text: 'second' });
+    expect(takePendingShare()).toBeNull();
+    expect(peekPendingShare()?.text).toBe('first\nsecond');
+  });
+
+  it('drops without a claim, because refusing is a destination too', async () => {
+    receiveSharedText({ text: 'memo', files: [{ path: '/tmp/a.m4a', name: 'a.m4a' }] });
+    await settle();
+    const dropped = dropPendingShare();
+    expect(dropped?.files?.[0]?.path).toBe('/tmp/a.m4a');
+    expect(peekPendingShare()).toBeNull();
+    await settle();
+    expect(native.store.has(KEY)).toBe(false);
+  });
+});
 describe('hydration across a cold start', () => {
   it('picks up a share parked before this webview existed', async () => {
     native.store.set(KEY, JSON.stringify({ url: 'https://parked.com', at: Date.now() }));
@@ -362,6 +409,7 @@ describe('hydration across a cold start', () => {
   it('does not resurrect a share that was already taken', async () => {
     native.store.set(KEY, JSON.stringify({ text: 'parked', at: Date.now() }));
     await hydratePendingShare();
+    claimPendingShare();
     expect(takePendingShare()?.text).toBe('parked');
     await settle();
     expect(await hydratePendingShare()).toBeNull();

@@ -41,7 +41,8 @@ import {
   onSharedText,
   receiveSharedText,
   peekPendingShare,
-  takePendingShare,
+  claimPendingShare,
+  dropPendingShare,
   type SharedPayload,
 } from "./lib/share-intake";
 import { discardSharedFiles } from "./lib/share-files";
@@ -286,6 +287,18 @@ export function App() {
     [],
   );
 
+  // Opening a session from the LIST is the moment a parked share gets its
+  // destination: every door out of that screen — a row, a fresh session, a fork —
+  // arrives here. Claiming first is what lets the composer that mounts next take
+  // the payload, and what stops the session that merely happened to be open from
+  // taking it before the human chose.
+  const openSharedTarget = useCallback(
+    (conn: GatewayConn, sid: string, fresh = false) => {
+      claimPendingShare();
+      openGatewaySession(conn, sid, fresh);
+    },
+    [openGatewaySession],
+  );
   // Overlays are screen-scoped, and a navigation can land while one is up: see
   // `isSessionEntered`. Dismissing here covers every way in — list tap, deep
   // link, notification tap, share intake, and the create that finishes after
@@ -328,7 +341,7 @@ export function App() {
   // Dropping the share: the staged copies go with it, or a shared memo stays on
   // the device as megabytes nobody asked us to keep.
   const discardShare = useCallback(() => {
-    const share = takePendingShare();
+    const share = dropPendingShare();
     if (share?.files?.length) void discardSharedFiles(share.files);
   }, []);
 
@@ -1005,7 +1018,7 @@ export function App() {
               onQuery={setQuery}
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
-              onOpen={openGatewaySession}
+              onOpen={openSharedTarget}
               // A parked share turns this list into the chooser it already is:
               // the row the human taps IS the destination.
               share={pendingShare}
