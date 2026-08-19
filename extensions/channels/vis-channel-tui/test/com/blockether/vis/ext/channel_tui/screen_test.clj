@@ -79,6 +79,8 @@
 
 (def ^:private bubble-selectable-ranges (deref #'screen/bubble-selectable-ranges))
 
+(def ^:private bubble-copy-regions (deref #'screen/bubble-copy-regions))
+
 (def ^:private disclosure-copy-regions (deref #'screen/disclosure-copy-regions))
 
 (def ^:private bubble-copy-hit (deref #'screen/bubble-copy-hit))
@@ -1839,6 +1841,81 @@
       (expect (= [node-id node-id] [(hit-at first-body-row) (hit-at last-body-row)]))
       ;; And the fix did not slide the targets down onto the summary row.
       (expect (nil? (hit-at summary-row))))))
+
+;; Regression, Vis session 15315f1b-585f-4e78-97e9-71401915d092: a short
+;; THINKING band had no per-block copy target. Its one visible reasoning row was
+;; therefore almost always a whole-bubble hit, copying every iteration and the
+;; final answer instead of the reasoning block the user clicked.
+(defdescribe
+  short-thinking-copy-region-test
+  (it
+    "gives a short thinking row precedence over whole-assistant-bubble copy"
+    (let [text-top
+          3
+
+          top
+          2
+
+          first-thinking
+          "Planning UX review and code inspection"
+
+          second-thinking
+          "Searching TUI and settings commands"
+
+          raw-message
+          {:id "turn-1"
+           :role :assistant
+           :text "Final answer"
+           :traces [{:thinking first-thinking} {:thinking second-thinking}]}
+
+          opts
+          {:session-id "sid" :session-turn-id "turn-1" :detail-expansions {}}
+
+          payload
+          (render/format-answer-with-thinking-data (:text raw-message)
+                                                   (:traces raw-message)
+                                                   (- 80 (long render/MESSAGE_SIDE_PAD))
+                                                   {:show-thinking true :show-iterations true}
+                                                   nil
+                                                   false
+                                                   opts)
+
+          projected
+          (assoc raw-message
+            :prewrapped-lines (:lines payload)
+            :line-meta (:line-meta payload))
+
+          layout
+          {:visible [{:idx 0 :top top :height 50 :projected projected}]}
+
+          grid
+          (painted-bubble-grid projected (+ text-top top))
+
+          thinking-row
+          (first (keep-indexed (fn [i line]
+                                 (when (str/includes? line first-thinking) i))
+                               grid))
+
+          point
+          {:row thinking-row :col (inc (long render/MESSAGE_MARGIN_LEFT))}
+
+          disclosure-hit
+          (bubble-copy-hit point (disclosure-copy-regions layout text-top 80 80))
+
+          whole-bubble-hit
+          (bubble-copy-hit point
+                           (bubble-copy-regions layout
+                                                [raw-message]
+                                                text-top
+                                                80
+                                                80
+                                                {:show-thinking true :show-iterations true}
+                                                opts))]
+
+      (expect (= first-thinking (:text disclosure-hit)))
+      ;; The broad fallback really is the complete turn pasted in the report; the
+      ;; per-thinking hit above is what must win before it.
+      (expect (str/includes? (force (:text whole-bubble-hit)) second-thinking)))))
 
 ;; A `/draft …` line asks exactly what the draft band asks, so the BAND answers
 ;; it — inside the session's own frame, with the command the slash named already

@@ -3954,11 +3954,10 @@
           wrapped)))
 
 (defn- tag-copy-block-body
-  "Stamp every body row of an expanded disclosure with copy metadata so a
-   single click on the body lines copies the WHOLE disclosure body, not
-   the entire enclosing assistant message. Rows that already carry meta
-   (nested toggle-details, links, ...) keep theirs - those have their
-   own click handling and must not be hijacked."
+  "Stamp every body row of an independently copyable block so a single
+   click copies that block, not the entire enclosing assistant message. Rows
+   that already carry meta (nested toggle-details, links, ...) keep theirs -
+   those have their own click handling and must not be hijacked."
   [entries node-id text]
   (if (or (nil? node-id) (str/blank? (str text)))
     entries
@@ -4042,51 +4041,79 @@
 
    Returns the COMPLETE thinking band, used verbatim by the caller."
   [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
-  (let [entries (vec entries)]
-    (if (or (nil? session-id)
+  (let [entries
+        (vec entries)
+
+        detail-ctx
+        (when session-id
+          {:session-id session-id
+           :session-turn-id session-turn-id
+           :iteration-number iteration-number
+           :details-path nil
+           :section :thinking
+           :kind :reasoning})
+
+        node-id
+        (when detail-ctx (detail-node-id detail-ctx))
+
+        ;; The full reasoning is the copy payload whether the band is short,
+        ;; collapsed to a peek, or expanded.
+        full-copy
+        (entries->body-text entries)
+
+        inline?
+        (or (nil? session-id)
             (empty? entries)
             ;; Don't collapse a trace whose hidden remainder is tiny: a toggle
             ;; that reveals fewer than `reasoning-collapse-min-hidden` extra rows
             ;; is pure friction (uncollapse just to see one more line). Render
             ;; those inline in full.
             (< (- (count entries) (long reasoning-auto-collapse-line-threshold))
-               (long vis/reasoning-collapse-min-hidden)))
-      (thinking-padded-block entries)
-      (let [detail-ctx {:session-id session-id
-                        :session-turn-id session-turn-id
-                        :iteration-number iteration-number
-                        :details-path nil
-                        :section :thinking
-                        :kind :reasoning}
-            node-id (detail-node-id detail-ctx)
-            expanded? (detail-expanded? detail-expansions session-id node-id false)
+               (long vis/reasoning-collapse-min-hidden)))]
+
+    (if inline?
+      ;; A short band has no toggle summary, but it is still its own visual and
+      ;; clipboard block. Without row metadata its click falls through to the
+      ;; enclosing whole-assistant-bubble region.
+      (thinking-padded-block (tag-copy-block-body entries node-id full-copy))
+      (let [expanded?
+            (detail-expanded? detail-expansions session-id node-id false)
+
             ;; Accordion header at the TOP of the band: ▸ collapsed,
             ;; ▾ expanded (content reveals below the header).
-            chevron (if expanded? "▾" "▸")
-            ;; Full reasoning text is the copy payload for BOTH states
-            ;; (a peek still copies everything the model reasoned).
-            full-copy (entries->body-text entries)
+            chevron
+            (if expanded? "▾" "▸")
+
             ;; Collapsed shows the first-N PEEK; expanded shows all.
-            preview-n (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
-            hidden-n (max 0 (- (count entries) (long preview-n)))
-            shown (if expanded? entries (vec (take preview-n entries)))
+            preview-n
+            (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
+
+            hidden-n
+            (max 0 (- (count entries) (long preview-n)))
+
+            shown
+            (if expanded? entries (vec (take preview-n entries)))
+
             ;; The whole thinking band paints ITALIC, and `p/paint-styled-line!`
             ;; INHERITS the modifiers already active on the surface - so the bold
             ;; span on the name reads bold AND italic: the band's own voice, at
             ;; the weight of a control.
-            label (if (or expanded? (zero? hidden-n))
-                    (band-label "THINKING")
-                    (str (band-label "THINKING") "  +" hidden-n " more"))
+            label
+            (if (or expanded? (zero? hidden-n))
+              (band-label "THINKING")
+              (str (band-label "THINKING") "  +" hidden-n " more"))
+
             ;; Header is a THINKING-MARKER row → painted in the dim
             ;; band (so it sits INSIDE the bubble), and carries the
             ;; toggle-details meta the thinking-marker painter now
             ;; registers as a click region.
-            header {:line (str thinking-marker
-                               (ellipsize-cols (str chevron " " label) (max 1 (long (or max-w 1)))))
-                    :meta {:kind :toggle-details
-                           :session-id (str session-id)
-                           :node-id (str node-id)
-                           :collapsed? (not expanded?)}}]
+            header
+            {:line (str thinking-marker
+                        (ellipsize-cols (str chevron " " label) (max 1 (long (or max-w 1)))))
+             :meta {:kind :toggle-details
+                    :session-id (str session-id)
+                    :node-id (str node-id)
+                    :collapsed? (not expanded?)}}]
 
         ;; One neutral blank above, then the dim band: top edge, the
         ;; THINKING header, reasoning (peek or full), bottom edge — all one thinking bubble.
@@ -4104,17 +4131,23 @@
             ;; ellipsis row on its own line. The trimmed line keeps the
             ;; header's toggle-details meta so the painter registers it
             ;; as the SAME hit target. Expanded shows every row → none.
-            (let [body (vec (tag-copy-block-body shown node-id full-copy))
+            (let [body
+                  (vec (tag-copy-block-body shown node-id full-copy))
+
                   ;; A row is visually blank once its leading structural
                   ;; paint marker is stripped: thinking rows are prefixed
                   ;; with the zero-width thinking marker (`​`), which
                   ;; `str/blank?` does NOT count as whitespace, so the raw
                   ;; line always reads non-blank. Strip the marker first.
-                  blank-row? (fn [row]
-                               (let [line (:line row)
-                                     [_ rest] (split-structural-line-marker line)]
+                  blank-row?
+                  (fn [row]
+                    (let [line
+                          (:line row)
 
-                                 (str/blank? (or rest line))))]
+                          [_ rest]
+                          (split-structural-line-marker line)]
+
+                      (str/blank? (or rest line))))]
 
               (if (and (not expanded?) (pos? hidden-n) (seq body))
                 ;; Drop trailing visually-blank peek rows so " …" lands on
@@ -4122,9 +4155,12 @@
                 ;; paragraph separator (whose only glyph is the invisible
                 ;; thinking marker), which would make " …" appear to float
                 ;; on its own line.
-                (let [trimmed (loop [b body]
-                                (if (and (> (count b) 1) (blank-row? (peek b))) (recur (pop b)) b))
-                      last-i (dec (count trimmed))]
+                (let [trimmed
+                      (loop [b body]
+                        (if (and (> (count b) 1) (blank-row? (peek b))) (recur (pop b)) b))
+
+                      last-i
+                      (dec (count trimmed))]
 
                   (-> trimmed
                       (assoc-in [last-i :line]
