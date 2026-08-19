@@ -174,6 +174,54 @@
                            (str "from PIL import ImageColor\n"
                                 "tuple(ImageColor.getrgb('#ff8800')) == (255,136,0) "
                                 "and tuple(ImageColor.getrgb('navy')) == (0,0,128)"))))))
+  (it "ImageColor knows the CSS colour names and the hsl/hsv wheels"
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      (str "from PIL import ImageColor\n"
+                           "tuple(ImageColor.getrgb('darkslategray')) == (47,79,79) "
+                           "and tuple(ImageColor.getrgb('rebeccapurple')) == (102,51,153) "
+                           "and tuple(ImageColor.getrgb('lightgoldenrodyellow')) == (250,250,210) "
+                           "and len(ImageColor.colormap) >= 148"))))
+        (expect (true? (ev python-context
+                           (str
+                             "from PIL import ImageColor\n"
+                             "tuple(ImageColor.getrgb('hsl(120,100%,50%)')) == (0,255,0) "
+                             "and tuple(ImageColor.getrgb('hsv(0,100%,100%)')) == (255,0,0) "
+                             "and tuple(ImageColor.getrgb('hsb(240,100%,100%)')) == (0,0,255)"))))))
+  (it "Image.Transform carries the geometric method constants"
+      (with-python-context (expect (true? (ev python-context
+                                              (str "from PIL import Image\n"
+                                                   "Image.Transform.AFFINE == Image.AFFINE "
+                                                   "and Image.Transform.MESH == Image.MESH"))))))
+  (it "ImageFilter.RankFilter takes Pillow's (size, rank)"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image, ImageFilter\n"
+                                "im = Image.new('L',(5,5),10)\n"
+                                "im.putpixel((2,2),200)\n"
+                                "hi = im.filter(ImageFilter.RankFilter(3, 8))\n"
+                                "lo = im.filter(ImageFilter.RankFilter(size=3, rank=0))\n"
+                                "hi.getpixel((1,1)) == 200 and lo.getpixel((1,1)) == 10"))))))
+  (it "ModeFilter answers the most frequent value, not the median"
+      (with-python-context (expect (= [0 8]
+                                      (ev python-context
+                                          (str
+                                            "from PIL import Image, ImageFilter\n"
+                                            "px = [50,51,52,53,54, 55,0,0,0,56, 57,7,8,9,58, "
+                                            "59,10,11,12,60, 61,62,63,64,65]\n"
+                                            "im = Image.frombytes('L',(5,5), bytes(px))\n"
+                                            "mode = im.filter(ImageFilter.ModeFilter(3))\n"
+                                            "median = im.filter(ImageFilter.MedianFilter(3))\n"
+                                            "[mode.getpixel((2,2)), median.getpixel((2,2))]"))))))
+  (it "ModeFilter keeps a pixel whose window repeats nothing"
+      (with-python-context
+        (expect
+          (true? (ev python-context
+                     (str "from PIL import Image, ImageFilter\n"
+                          "px = list(range(20,45))\n" "im = Image.frombytes('L',(5,5), bytes(px))\n"
+                          "out = im.filter(ImageFilter.ModeFilter(3))\n"
+                          "out.size == (5,5) and out.getpixel((2,2)) == im.getpixel((2,2))"))))))
   (it "ImageFilter GaussianBlur and SHARPEN keep the size"
       (with-python-context
         (expect (true? (ev python-context
@@ -1112,21 +1160,25 @@
                             "im = Image.frombytes('1',(9,2), bytes([0b10100000,0b10000000,0,0]))\n"
                             "[im.getpixel((0,0)), im.getpixel((1,0)), im.getpixel((2,0)),\n"
                             " im.getpixel((8,0)), im.getpixel((0,1)),\n"
-                             " list(Image.new('1',(3,2),1).getdata())]")))))))
+                            " list(Image.new('1',(3,2),1).getdata())]")))))))
 
 ;; Regression: `im.save(pathlib.Path(...))` raised
 ;; `AttributeError: 'PosixPath' object has no attribute 'write'` — `save` knew
 ;; only the str spelling of a path and took every other value for a file object,
 ;; so the same file named as a Path could not be written at all.
-(defdescribe save-takes-a-path-object-test
+(defdescribe
+  save-takes-a-path-object-test
   (it "saves to an os.PathLike exactly like the str spelling of that path"
       (let [dir (tmp-dir)]
-        (with-fs-context dir
+        (with-fs-context
+          dir
           (expect (= ["PNG" true true]
                      (ev python-context
                          (str "import pathlib\n"
                               "from PIL import Image\n"
-                              "d = pathlib.Path('" dir "')\n"
+                              "d = pathlib.Path('"
+                              dir
+                              "')\n"
                               "im = Image.new('RGB',(3,3),(1,2,3))\n"
                               "im.save(d / 'via_path.png')\n"
                               "im.save(str(d / 'via_str.png'))\n"
