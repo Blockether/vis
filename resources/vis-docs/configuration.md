@@ -137,10 +137,11 @@ Within the dotenv files the usual rules apply — a later assignment wins, `.env
 beats `.env.local`, an explicit blank masks a lower one, and `NAME=value`,
 `export NAME=value`, quotes, comments, CRLF and a UTF-8 BOM are all understood.
 
-`environment:` is for **what a dotenv file cannot say**, and it names the source
-of each entry. It never carries the value itself: a literal is rejected, because
-every read-modify-write into `~/.vis/state.yml` passes the loaded config back
-through the writer, and a secret typed here would land on disk in plaintext.
+`environment:` is for **what a dotenv file cannot say**, and every entry either
+names the source of its value or writes that value down explicitly. A secret
+never appears in the file: a keychain item and a helper command hold no value
+there at all, and this block is project-scoped, so a machine-store write never
+copies it into `~/.vis/state.yml`.
 
 ```yaml
 environment:
@@ -158,12 +159,29 @@ environment:
   # 4. a helper command; its trimmed stdout IS the value
   GITHUB_TOKEN:
     command: [gh, auth, token]
+
+  # 5. a non-secret value, written down on purpose — never a bare scalar
+  VIS_MANAGED: {literal: "true"}
 ```
 
 Exactly one source per entry, and **that declaration is the only source for the
 name** — a declared name never falls back to `.env` or to the ambient
 environment. A blank value is no value, whatever produced it: an explicit `FOO=`
 means "not this one".
+
+`literal:` is the one entry that carries its value, and the wrapper is required
+so it can never be a slip: `VIS_MANAGED: "true"` (a bare scalar) is rejected, and
+so is a literal under a credential-looking name (`*_KEY`, `*_TOKEN`, `*_SECRET`,
+`*_PASSWORD`) — that value has a source, so name it. Literals are for process
+markers a child reads to know Vis started it:
+
+```clojure
+(when-not (= "true" (System/getenv "VIS_MANAGED"))
+  (start-portal))
+```
+
+A literal reaches managed REPLs, test runners, shell children and extensions
+exactly like every other resolved entry.
 
 So the resolution order for any variable is: **`environment:` declaration →
 workspace `.env`, then `.env.local` → the environment that started Vis.** It is
@@ -204,7 +222,7 @@ It is a **delta, not a replacement**: the workspace's `.env` and its
 collides, and `null` unsets one name for this child only.
 
 A value is either a **literal** — string, number or boolean — or the same
-`{env|dotenv|keychain|command}` source map `environment:` takes. That split
+`{env|dotenv|keychain|command|literal}` source map `environment:` takes. That split
 matters because, unlike a config file, this map is an *argument*: a literal is
 written into the session journal and stays in the transcript for good. Literals
 are for switches (`NODE_ENV`, `RUST_LOG`, `PYTHONHASHSEED`); a secret names its

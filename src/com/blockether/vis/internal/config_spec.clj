@@ -546,11 +546,17 @@
 ;; the dotenv files and over the ambient environment; below it there is one fixed
 ;; order and no per-entry precedence chain to remember.
 ;;
-;; The value itself is never carried here. A literal is refused on purpose: every
-;; read-modify-write into `~/.vis/state.yml` passes the loaded config back
-;; through `save-config!`, so a secret typed here would be persisted in plaintext
-;; — which is what `${NAME}` and `api_key_command` exist to prevent. A keychain
-;; item and a helper command never hold a value in the file at all.
+;; A SECRET never appears here. A keychain item and a helper command hold no value
+;; in the file at all, which is what `${NAME}` and `api_key_command` exist for, and
+;; `~/.vis/state.yml` never sees this block: `environment:` is project-scoped, so a
+;; whole-store write drops it (`project-scoped-config-keys`).
+;;
+;; `literal:` is the ONE entry that carries its own value, and it is spelled out so
+;; it can never be a slip: a bare scalar (`VIS_MANAGED: "true"`) stays refused, and
+;; a literal under a credential-looking name (`*_KEY`, `*_TOKEN`, `*_SECRET`,
+;; `*_PASSWORD`) is refused too. It is for a non-secret process marker a child reads
+;; to know Vis started it — the one thing a project's `.env` cannot own, because the
+;; marker belongs to Vis' configuration and not to the project's file.
 ;;
 ;; The project IS the exposure decision: a name in `.env` or written here is
 ;; resolved and handed to Vis' own children — Python extensions, the shell's
@@ -558,6 +564,18 @@
 ;; of the OPERATOR's environment reaches a CONFINED child; the names that run
 ;; code during another program's startup (`LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV`
 ;; …) are refused from either source (`process-jail/jailed-child-env`).
+
+(defn- env-literal?
+  "A literal `environment:` value: a non-blank string, a number or a boolean — the
+   same scalar domain one call's own `env` delta takes."
+  [v]
+  (or (non-blank-string? v) (number? v) (boolean? v)))
+
+(def ^:private credential-name-pattern
+  "A variable name that reads like a credential. A `literal:` is refused under one:
+   the wrapper exists for a non-secret marker, and the heuristic keeps a secret from
+   being typed into a file that is committed."
+  #"(?i)(.*_)?(KEY|TOKEN|SECRET|PASSWORD|PASSPHRASE|CREDENTIAL|CREDENTIALS)")
 
 (def environment-source-schema
   {;; The process environment, read under this name — also the rename knob.
@@ -570,11 +588,13 @@
    "account" non-blank-string?
    ;; Structured argv whose trimmed stdout IS the value, same shape and same
    ;; no-shell contract as `api_key_command`.
-   "command" (spec-pred ::api-key-command)})
+   "command" (spec-pred ::api-key-command)
+   ;; The value itself, written down on purpose — never a bare scalar.
+   "literal" env-literal?})
 
 (def ^:private environment-sources
-  "The four spellings of WHERE; exactly one of them makes an entry."
-  #{"env" "dotenv" "keychain" "command"})
+  "The five spellings of WHERE; exactly one of them makes an entry."
+  #{"env" "dotenv" "keychain" "command" "literal"})
 
 (s/def ::environment-source
   #(and (closed-map? environment-source-schema %)
@@ -585,9 +605,12 @@
 (s/def ::environment
   #(and (map? %)
         (every? env-var-name? (keys %))
-        (every? (fn [v]
-                  (s/valid? ::environment-source v))
-                (vals %))))
+        (every? (fn [[name entry]]
+                  (and (s/valid? ::environment-source entry)
+                       ;; A credential-looking name may not carry its own value.
+                       (or (not (contains? entry "literal"))
+                           (not (re-matches credential-name-pattern (str name))))))
+                %)))
 
 (def config-schema
   {"providers" (spec-pred ::providers)
@@ -703,6 +726,12 @@
          " is not a wire dialect - use one of "
          (str/join ", " api-style-values)
          " (aliases such as openai_responses, responses, chat or claude are accepted too)")
+
+    "environment"
+    (str "every entry names ONE source - {env: NAME}, {dotenv: NAME}, "
+         "{keychain: item} or {command: [argv ...]} - or carries a non-secret "
+         "value explicitly as {literal: value}, which a credential-looking name "
+         "(*_KEY, *_TOKEN, *_SECRET, *_PASSWORD) may not use")
 
     (str "value rejected by the " k " contract")))
 

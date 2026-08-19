@@ -1955,13 +1955,15 @@
 ;;   2. an `environment:` DECLARATION, which wins over both the dotenv files and
 ;;      the ambient process environment, and says WHERE its value comes from:
 ;;      another process variable (`env:`), a dotenv name (`dotenv:`, for a
-;;      RENAME), the OS keychain, or a helper command.
+;;      RENAME), the OS keychain, a helper command — or, for a value that is not a
+;;      secret at all, the value itself under `literal:`.
 ;;
-;; A declaration never carries the value: `config-spec/::environment` refuses a
-;; literal, because every read-modify-write into `~/.vis/state.yml` hands the
-;; loaded config back to `save-config!`. So the block exists for what `.env`
-;; cannot say — a rename, a keychain item, a helper command, or re-admitting an
-;; ambient host variable into a CONFINED child.
+;; Only `literal:` carries a value, and it is written that way so it cannot be a
+;; slip: `config-spec/::environment` refuses a bare scalar and refuses a literal
+;; under a credential-looking name. So the block exists for what `.env` cannot say
+;; — a rename, a keychain item, a helper command, a marker that belongs to Vis'
+;; configuration rather than to the project's file, or re-admitting an ambient host
+;; variable into a CONFINED child.
 ;;
 ;; `extension-env-status` is the ONE funnel — the extension host, the TUI's
 ;; env-var settings row and every builtin that reads a key go through it, so a
@@ -2037,12 +2039,19 @@
         dotenv-name
         (source-name "dotenv")
 
+        literal
+        (let [v (get entry "literal")]
+          (when (or (string? v) (number? v) (boolean? v)) (str v)))
+
         [fetcher argv]
-        (when (and entry (not env-name) (not dotenv-name)) (declared-fetcher entry))
+        (when (and entry (not env-name) (not dotenv-name) (not literal)) (declared-fetcher entry))
 
         [source value]
         (cond env-name [:env (*extension-getenv* env-name)]
               dotenv-name [:dotenv (dotenv-value dotenv-name)]
+              ;; The one source that IS the value — an explicit non-secret marker,
+              ;; never a bare scalar and never a credential-looking name.
+              literal [:literal literal]
               ;; Cached, single-flight and bounded by `credential-command`, so a keychain
               ;; prompt or a vault helper cannot be forked once per extension per turn.
               fetcher [fetcher (:token (cred/resolve! [::environment name] argv))]
@@ -2062,8 +2071,8 @@
    A blank value is no value, whatever produced it — an operator's explicit
    `FOO=` means \"not this one\".
 
-   `:source` is `:env`, `:dotenv`, `:keychain`, `:command` or `:unset`; `:value`
-   is nil unless that source produced a non-blank string."
+   `:source` is `:env`, `:dotenv`, `:keychain`, `:command`, `:literal` or
+   `:unset`; `:value` is nil unless that source produced a non-blank string."
   [name]
   (let [name' (str name)]
     (if-let [entry (get (declared-environment) name')]
@@ -2081,7 +2090,7 @@
 
 (defn inline-environment-value
   "Resolved value for ONE INLINE declaration — the same
-   `{env|dotenv|keychain|command}` map `environment:` takes, for a name nobody
+   `{env|dotenv|keychain|command|literal}` map `environment:` takes, for a name
    declared in the config at all. This is how a per-CALL `env` delta names a
    SOURCE instead of carrying a literal: the caller writes down where the value
    comes from, this block's own funnel produces it, and the value itself never

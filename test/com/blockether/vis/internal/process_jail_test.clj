@@ -1156,7 +1156,9 @@
     (is (= {} (pj/call-env-values nil)))
     (is (= {"TOKEN" "from-the-host"}
            (binding [config/*extension-getenv* (constantly "from-the-host")]
-             (pj/call-env-values {"TOKEN" {"env" "SOME_HOST_NAME"}})))))
+             (pj/call-env-values {"TOKEN" {"env" "SOME_HOST_NAME"}}))))
+    ;; Issue #156: `environment:`'s own `{literal: …}` spelling resolves here too.
+    (is (= {"VIS_MANAGED" "true"} (pj/call-env-values {"VIS_MANAGED" {"literal" "true"}}))))
   (testing "every refusal NAMES the key — a per-call delta is the author's own line of code"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"env DYLD_INSERT_LIBRARIES"

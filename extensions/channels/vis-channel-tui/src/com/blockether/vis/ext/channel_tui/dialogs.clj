@@ -4181,6 +4181,9 @@
     :dotenv
     "set in .env"
 
+    :literal
+    "set in vis.yml"
+
     :unset
     "unset"
 

@@ -892,7 +892,7 @@
 (def ^:private call-env-source-keys
   "Declaration keys ONE call's value may name — `environment:`'s own vocabulary,
    resolved by its own funnel (`config/inline-environment-value`)."
-  ["env" "dotenv" "keychain" "command"])
+  ["env" "dotenv" "keychain" "command" "literal"])
 
 (defn- refuse-call-env
   "Refuse the spawn and NAME the key. A per-call delta is the author's own line
@@ -943,7 +943,7 @@
    so a workspace `.env` still reaches a child whose call names one variable.
 
    A value is either a LITERAL (string/number/boolean) or a SOURCE map — the
-   same `{env|dotenv|keychain|command}` shape `environment:` declares. That
+   same `{env|dotenv|keychain|command|literal}` shape `environment:` declares. That
    split is not style: this map is an ARGUMENT, so a literal is written into the
    session journal and the transcript for good. Literals are for SWITCHES
    (`NODE_ENV`, `RUST_LOG`, `PYTHONHASHSEED`); a secret names its source and
@@ -956,11 +956,11 @@
    quiet `:unset` a standing declaration is allowed."
   [env]
   (cond (nil? env) {}
-        (not (map? env)) (throw (ex-info
-                                  (str "env must be a map of NAME → value (a literal, or"
-                                       " {\"env\"|\"dotenv\"|\"keychain\"|\"command\": …}), got "
-                                       (pr-str env))
-                                  {:type ::call-env-refused}))
+        (not (map? env))
+        (throw (ex-info (str "env must be a map of NAME → value (a literal, or"
+                             " {\"env\"|\"dotenv\"|\"keychain\"|\"command\"|\"literal\": …}), got "
+                             (pr-str env))
+                        {:type ::call-env-refused}))
         :else (into {}
                     (map (fn [[k v]]
                            (let [k (str/trim (str (if (keyword? k) (name k) k)))]

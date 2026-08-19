@@ -1144,14 +1144,26 @@
    resolves it through `extension-env-status`. The key used to be spec'd,
    documented and completely unread; wiring it to a hidden precedence chain would
    have left the same hole — a file that still does not state a name's source."
-  (it "requires exactly one named source and refuses a literal"
+  (it "requires exactly one named source and refuses a bare literal"
       (expect (s/valid? ::config-spec/environment {"A" {"env" "B"}}))
       (expect (s/valid? ::config-spec/environment {"A" {"dotenv" "A"}}))
       (expect (s/valid? ::config-spec/environment {"A" {"keychain" "vis-exa" "account" "alice"}}))
       (expect (s/valid? ::config-spec/environment {"A" {"command" ["gh" "auth" "token"]}}))
+      ;; Issue #156: a non-secret marker had no spelling at all, so a project had to
+      ;; put a Vis-owned variable into its own `.env`.
+      (expect (s/valid? ::config-spec/environment {"VIS_MANAGED" {"literal" "true"}}))
+      (expect (s/valid? ::config-spec/environment {"VIS_MANAGED" {"literal" true}}))
+      (expect (s/valid? ::config-spec/environment {"VIS_PORT" {"literal" 8080}}))
       (expect (not (s/valid? ::config-spec/environment {"A" "a-literal-value"})))
       (expect (not (s/valid? ::config-spec/environment {"A" "${B}"})))
       (expect (not (s/valid? ::config-spec/environment {"A" {}})))
+      (expect (not (s/valid? ::config-spec/environment {"A" {"literal" ""}})))
+      (expect (not (s/valid? ::config-spec/environment {"A" {"literal" "x" "env" "B"}})))
+      ;; The wrapper is for what is NOT a secret: a credential-looking name still
+      ;; has to say where its value comes from.
+      (expect (not (s/valid? ::config-spec/environment {"OPENAI_API_KEY" {"literal" "sk-live"}})))
+      (expect (not (s/valid? ::config-spec/environment {"GITHUB_TOKEN" {"literal" "ghp-1"}})))
+      (expect (not (s/valid? ::config-spec/environment {"DB_PASSWORD" {"literal" "hunter2"}})))
       (expect (not (s/valid? ::config-spec/environment {"A" {"env" "B" "dotenv" "B"}})))
       (expect (not (s/valid? ::config-spec/environment {"A" {"keychain" "k" "command" ["x"]}})))
       (expect (not (s/valid? ::config-spec/environment {"A" {"command" ["x"] "account" "alice"}})))
@@ -1173,6 +1185,15 @@
             (expect (= {:name "VIS_TEST_DECLARED_CMD" :source :command :value "token-from-helper"}
                        (config/extension-env-status "VIS_TEST_DECLARED_CMD")))
             (expect (= ["VIS_TEST_DECLARED_CMD"] (config/declared-environment-names)))))))
+  (it "a `literal:` declaration IS the value, and reaches every child"
+      (binding [config/*extension-getenv* (constantly nil)]
+        (with-declared-environment {"VIS_MANAGED" {"literal" "true"}
+                                    "VIS_TEST_PORT" {"literal" 8080}}
+                                   (fn []
+                                     (expect (= {:name "VIS_MANAGED" :source :literal :value "true"}
+                                                (config/extension-env-status "VIS_MANAGED")))
+                                     (expect (= {"VIS_MANAGED" "true" "VIS_TEST_PORT" "8080"}
+                                                (config/declared-environment-values)))))))
   (it "a declared source that produces nothing leaves the name unset"
       (binding [config/*extension-getenv* (constantly nil)]
         (with-declared-environment
