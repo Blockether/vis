@@ -885,7 +885,7 @@
         (- (long box-right) 1)
 
         x0
-        (- (long x1) (dec (count label)))
+        (- (long x1) (dec (p/display-width label)))
 
         hovered?
         @(.get ^ThreadLocal modal-close-hover)]
@@ -983,7 +983,7 @@
            (ellipsize (or title "") (max 0 (- inner-w 2)))
 
            tx
-           (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
+            (+ box-left 1 (quot (- inner-w (p/display-width title-text)) 2))]
 
        ;; Accent bar background
        (p/set-bg! g t/dialog-title-bg)
@@ -2143,7 +2143,7 @@
         (long col)
 
         w
-        (+ 2 (count label))
+        (+ 2 (p/display-width label))
 
         [fg bg]
         (cond is-focused [t/header-active-tab-fg t/header-active-tab-bg]
@@ -2170,7 +2170,7 @@
         "No"
 
         btn-w
-        (+ 2 (max (count btn-yes) (count btn-no)))
+        (+ 2 (max (p/display-width btn-yes) (p/display-width btn-no)))
 
         ;; " Yes " / " No  "
         btn-gap
@@ -4566,7 +4566,7 @@
         (max 0 (- (long inner-w) 2))
 
         filler
-        (apply str (repeat (max 0 (- (long available) (count prefix))) \─))]
+        (apply str (repeat (max 0 (- (long available) (p/display-width prefix))) \─))]
 
     (ellipsize (str prefix filler) available)))
 
@@ -6056,10 +6056,10 @@
         (str label)
 
         text-x
-        (+ (long x) 2 (count label) 2)
+        (+ (long x) 2 (p/display-width label) 2)
 
         available
-        (max 0 (- (long width) 4 (count label)))]
+        (max 0 (- (long width) 4 (p/display-width label)))]
 
     (p/set-colors! g (if (= role :user) t/user-role-fg t/ai-role-fg) t/dialog-bg)
     (p/styled g [p/BOLD] (p/put-str! g (+ (long x) 2) row label))

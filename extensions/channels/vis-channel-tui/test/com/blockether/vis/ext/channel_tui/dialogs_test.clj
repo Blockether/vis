@@ -2166,3 +2166,30 @@
                    (expect (= track-top (:thumb beside)))
                    (expect (= before (:row beside)))))
                (finally (.stopScreen screen))))))))
+
+(defdescribe
+  dialog-title-column-measure-test
+  ;; A dialog title is centred in terminal COLUMNS - the lanterna fork's own
+  ;; measure - never in Java chars. Dividing `(count title)` pushed a title
+  ;; carrying wide glyphs one column right per wide glyph, so a CJK or emoji
+  ;; title sat off-centre and ran under the close button.
+  (it "centres a wide-glyph title on the same column as an ASCII title of the same display width"
+      (let [first-title-col
+            (fn [title]
+              (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (term/virtual-screen)]
+                (try (let [g (.newTextGraphics screen)
+                           {:keys [left top inner-w]} (dlg/draw-dialog-chrome! g 80 30 title 6)
+                           row (inc (long top))]
+
+                       (.refresh screen)
+                       (first
+                         (filter (fn [x]
+                                   (let [ch (.getCharacter terminal
+                                                           (TerminalPosition. (int x) (int row)))]
+                                     (and ch (not (str/blank? (.getCharacterString ch))))))
+                                 (range (inc (long left)) (+ (inc (long left)) (long inner-w))))))
+                     (finally (.stopScreen screen)))))]
+        (expect (= 16 (p/display-width "日本語ダイアログ")))
+        (expect (= 16 (p/display-width "ABCDEFGHIJKLMNOP")))
+        (expect (= (first-title-col "ABCDEFGHIJKLMNOP") (first-title-col "日本語ダイアログ"))))))
