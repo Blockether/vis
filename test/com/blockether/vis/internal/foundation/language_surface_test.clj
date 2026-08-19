@@ -294,6 +294,15 @@
       (expect (contains? connect "build"))
       (expect (contains? tests "build"))
       (expect (not (contains? start "build")))
+      ;; `aliases` is the deps.edn escape hatch on BOTH verbs that boot a JVM:
+      ;; repl_start's REPL and run_tests' clean-JVM `clojure -M:test`. It ADDS —
+      ;; a note reading "default" invites a caller to believe naming one REPLACES
+      ;; :dev/:test and drops the test alias off its own classpath.
+      (expect (contains? start "aliases"))
+      (expect (contains? tests "aliases"))
+      (expect (str/includes? (:note (get start "aliases")) "ADDED"))
+      (expect (str/includes? (:note (get tests "aliases")) "-M:test"))
+      (expect (nil? (:required? (get tests "aliases"))))
       (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
                              "`repl_connect`"))
       ;; run_tests and repl_eval are the two verbs a session calls without reading

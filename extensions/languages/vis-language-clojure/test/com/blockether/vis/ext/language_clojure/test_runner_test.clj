@@ -505,7 +505,7 @@
   "Run the cli fallback against a canned shell result, with no project on disk."
   [{:keys [exit out]}]
   (with-redefs [com.blockether.vis.ext.language-clojure.test-runner/cli-command-for
-                (fn [_root _sel]
+                (fn [_root _sel _aliases]
                   {:tool :clj :cmd ["clojure" "-M:test"]})
 
                 shell/sh
@@ -921,3 +921,80 @@
         "{:builds {:test {:target :node-test :output-to \"target/node-tests.js\" :closure-defines {api #shadow/env \"API\"}}}}\n")
       (fn [root]
         (expect (= "test" (:build (shadow/run-steps root {}))))))))
+
+
+(def ^:private normalize-arg @#'com.blockether.vis.ext.language-clojure.test-runner/normalize-arg)
+(def ^:private cli-command-for
+  @#'com.blockether.vis.ext.language-clojure.test-runner/cli-command-for)
+(def ^:private note-unapplied-aliases
+  @#'com.blockether.vis.ext.language-clojure.test-runner/note-unapplied-aliases)
+
+;; A project whose tests need more than its `:test` alias declares had no way to
+;; say so: run_tests shelled a hardcoded `clojure -M:test`, and `aliases` existed
+;; only on repl_start.
+(defdescribe
+  run-tests-aliases-test
+  (it "reads `aliases` as alias NAMES — colon or not, scalar or list"
+      (expect (= ["bench"] (:aliases (normalize-arg {"aliases" "bench"}))))
+      (expect (= ["bench"] (:aliases (normalize-arg {"aliases" ":bench"}))))
+      (expect (= ["dev" "bench"] (:aliases (normalize-arg {"aliases" [":dev" "bench"]}))))
+      (expect (= [] (:aliases (normalize-arg {"paths" ["test"]})))))
+  (it "APPENDS them to the mandatory :test in the clean-JVM command"
+      (let [root
+            (temp-project! {"deps.edn" "{:deps {}}\n"})
+
+            picked
+            (cli-command-for (.getPath root) {} ["bench" "dev"])]
+
+        (expect (= :clj (:tool picked)))
+        (expect (some #{"-M:test:bench:dev"} (:cmd picked)))
+        ;; :test is the alias that MAINS the runner — never replaced.
+        (expect (not (some #{"-M:bench:dev"} (:cmd picked))))))
+  (it "leaves the command alone when no alias was asked for"
+      (let [root (temp-project! {"deps.edn" "{:deps {}}\n"})]
+        (expect (some #{"-M:test"} (:cmd (cli-command-for (.getPath root) {} []))))))
+  (it "refuses deps.edn aliases for a lein / bb project instead of running without them"
+      (with-redefs [com.blockether.vis.ext.language-clojure.test-runner/cli-command-for
+                    (fn [_root _sel _aliases]
+                      {:tool :lein :cmd ["lein" "test"]})]
+        (let [r (run-via-cli "/proj" {:nses ["a.core-test"] :aliases ["bench"]})]
+          (expect (nil? (get r "total")))
+          (expect (str/includes? (get r "error") "bench"))
+          (expect (str/includes? (get r "error") "lein")))))
+  (it "says the aliases did NOT apply when the run reused a REPL"
+      (let [r (note-unapplied-aliases ["bench"] {"mode" "repl" "is_pass" true})]
+        (expect (str/includes? (get r "note") "did NOT apply"))
+        (expect (str/includes? (get r "note") "repl_stop"))))
+  (it "stays silent on the clean-JVM path, and keeps a note it found"
+      (expect (= {"mode" "cli"} (note-unapplied-aliases ["bench"] {"mode" "cli"})))
+      (expect (= {"mode" "repl"} (note-unapplied-aliases [] {"mode" "repl"})))
+      (expect (str/includes? (get (note-unapplied-aliases ["bench"] {"mode" "shadow" "note" "kept"})
+                                  "note")
+                             "kept")))
+  ;; The seam that matters: the CALL's key must survive normalize-arg, the
+  ;; selector rebuild and the routing, and reach the shelled command.
+  (it "carries `aliases` from the CALL all the way into the clean-JVM command"
+      (let [root
+            (temp-project! {"deps.edn" "{:deps {}}\n"
+                            "test/vis/fixture/alias_test.clj"
+                            (str "(ns vis.fixture.alias-test\n"
+                                 "  (:require [lazytest.core :refer [defdescribe expect it]]))\n"
+                                 "(defdescribe adds-test (it \"adds\" (expect (= 2 (+ 1 1)))))\n")})
+
+            seen
+            (atom :never-called)]
+
+        (with-redefs [com.blockether.vis.ext.language-clojure.test-runner/cli-command-for
+                      (fn [_root _sel aliases]
+                        (reset! seen aliases)
+                        {:tool :clj :cmd ["clojure" "-M:test:bench"]})
+
+                      shell/sh
+                      (fn [& _]
+                        {:exit 0
+                         :out "Ran 1 test cases in 0.1 seconds.\n0 failures, 0 errors.\n"
+                         :err ""})]
+
+          (tr/clj-test-fn {:workspace/root (.getPath root)}
+                          {"paths" ["test/vis/fixture/alias_test.clj"] "aliases" [":bench"]}))
+        (expect (= ["bench"] @seen)))))

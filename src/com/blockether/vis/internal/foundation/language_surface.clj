@@ -525,6 +525,10 @@
    `project`, the SAME key — chooses the project and defaults to the WORKSPACE ROOT,
    which is where a relative `paths` entry resolves; `runner` picks the python backend
    (`\"project\"` for the project interpreter's own pytest, else the hermetic sandbox).
+   `aliases` (clojure) adds EXTRA deps.edn aliases to that clean-JVM command —
+   `clojure -M:test:<name>`, `:test` always kept — for a project whose tests need
+   more than `:test` declares; they cannot reach an already-running REPL, and a
+   run that reused one says so on its note.
    List selectors stay lists, even one."
   [env & args]
   (let [started-at
@@ -650,15 +654,20 @@
        "say what ran and how. A REPL that could not serve answers `repl_wedged`, `repl_unusable`, "
        "`recovered` and a `hint`; `timed_out`, `error`, `exit` carry the rest.")
      :description
-     (str "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "
-          "`run_tests(\"python\", {\"paths\": [...]})`. `language` leads the call and is optional "
-          "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
-          "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
-          "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
-          "`include`/`exclude` narrow by tag; `cwd` — or `project`, the SAME key — chooses "
-          "the project and defaults to the WORKSPACE ROOT, which is where a relative `paths` "
-          "entry resolves; `runner` (python) selects `project` — the interpreter's own pytest "
-          "— over the hermetic sandbox. NOTHING is required: omit `paths` to run everything.")
+     (str
+       "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "
+       "`run_tests(\"python\", {\"paths\": [...]})`. `language` leads the call and is optional "
+       "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
+       "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
+       "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
+       "`include`/`exclude` narrow by tag; `cwd` — or `project`, the SAME key — chooses "
+       "the project and defaults to the WORKSPACE ROOT, which is where a relative `paths` "
+       "entry resolves; `runner` (python) selects `project` — the interpreter's own pytest "
+       "entry resolves; `runner` (python) selects `project` — the interpreter's own pytest "
+       "— over the hermetic sandbox. `aliases` (clojure) ADDS deps.edn aliases to the clean-JVM "
+       "`clojure -M:test:<name>` when `:test` alone does not carry the classpath the tests need; "
+       "a run that REUSED a REPL cannot apply them and says so. "
+       "NOTHING is required: omit `paths` to run everything.")
      :params
      [{:name "language" :note "optional — inferred from the paths and the workspace"}
       {:name "paths" :note "optional — omit to run every test"}
@@ -667,6 +676,8 @@
       {:name "exclude" :note "optional — drop tests carrying these metadata tags"}
       {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
       {:name "build" :note "clojure — which shadow-cljs build runs the `*_test.cljs`"}
+      {:name "aliases"
+       :note "clojure — EXTRA deps.edn aliases added to `-M:test`; clean-JVM runs only"}
       {:name "runner" :note "python — \"project\" for the interpreter's own pytest"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
@@ -727,6 +738,9 @@
        "(the typescript pack refuses a bare start at a monorepo root for exactly that reason). "
        "Neither `port` nor `build` starts anything here: attaching to a process already running "
        "is `repl_connect`. "
+       "`aliases` (clojure) ADDS deps.edn aliases to the `:dev` + `:test` every managed REPL "
+       "already boots with — name the extra ones a project needs on its classpath; they never "
+       "replace the defaults, and a live REPL keeps the aliases it started with. "
        "Nothing lists live REPLs for you: `repl_status` is the only answer — reuse `up`, "
        "recheck `starting`, start when absent/down/failed. A LIVE REPL IS REUSED, never replaced: "
        "a second start answers `already-running` in every language, because that process' state is "
@@ -743,7 +757,8 @@
       {:name "cwd" :note "the project directory, or spell it `project`; default the workspace ROOT"}
       {:name "id"
        :note "python/bun — a LABEL for a second REPL in one project; a clojure id comes from `cwd`"}
-      {:name "aliases" :note "clojure — deps aliases, default [\"dev\" \"test\"]"}
+      {:name "aliases"
+       :note "clojure — EXTRA deps.edn aliases, ADDED to the always-on [\"dev\" \"test\"]"}
       {:name "env" :note "THIS REPL's variables, over the project's"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true

@@ -807,6 +807,18 @@
 
                  (split-selector-entry :var e)))))
 
+(defn- extra-aliases
+  "The deps.edn aliases a run_tests call ADDS to the project's own `:test`:
+   [\"bench\" \"dev\"], \"bench\" and \":bench\" all read as alias NAMES. A leading
+   colon is accepted and dropped — an alias crosses the strings-only boundary as
+   a name, spliced into `clojure -M:test:<name>` exactly like `repl_start`'s own
+   `aliases`, and `:test` itself is never replaced."
+  [arg]
+  (->> (contract/->str-vec (get arg "aliases"))
+       (mapv (fn [a]
+               (str/replace a #"^:+" "")))
+       (filterv (complement str/blank?))))
+
 (defn- normalize-arg
   "Coerce the raw run_tests arg (a path string or an opts dict) into the
    canonical selector map
@@ -822,8 +834,9 @@
    names a NAMESPACE is speaking `clojure -M:test --namespace` / `--var`, which
    is a real selection and not a mistake: `ns` / `nses` / `namespace` /
    `namespaces` and `var` / `vars` / `only` carry into `:ns-selectors` and run,
-   and `path` is read alongside `paths`. `build` names ONE shadow-cljs build
-   when a ClojureScript run could pick from several."
+    and `path` is read alongside `paths`. `build` names ONE shadow-cljs build
+   when a ClojureScript run could pick from several, and `aliases` names EXTRA
+   deps.edn aliases for the clean-JVM command (`-M:test:<name>`)."
   [arg]
   (cond
     (or (string? arg) (symbol? arg)) (contract/normalize-selectors {:paths [(str arg)]})
@@ -833,7 +846,8 @@
                                                      :include (get arg "include")
                                                      :exclude (get arg "exclude")})
                  :ns-selectors (selector-entries arg)
-                 :build (not-empty (str/trim (str (get arg "build")))))
+                 :build (not-empty (str/trim (str (get arg "build"))))
+                 :aliases (extra-aliases arg))
     :else
     (throw
       (ex-info
@@ -1039,8 +1053,13 @@
                     when the :test alias actually mains lazytest.main)
      project.clj -> lein test        (whole suite; selectors do NOT apply)
      bb.edn      -> bb test          (whole suite; selectors do NOT apply)
-   `sel` is the resolved selector map {:nses :vars :include :exclude}."
-  [root sel]
+   `sel` is the resolved selector map {:nses :vars :include :exclude}.
+   `aliases` are the caller's EXTRA deps.edn aliases: APPENDED to the mandatory
+   `:test` (never replacing it) so the command reads `-M:test:bench`, and their
+   own `:jvm-opts` are inherited alongside `:test`'s. deps.edn only — `lein test`
+   and `bb test` take no such vocabulary, which `run-via-cli` refuses rather than
+   running the suite without the classpath the caller asked for."
+  [root sel aliases]
   (let [present?
         (fn [n]
           (.isFile (io/file root n)))
@@ -1049,14 +1068,20 @@
         ;; the workspace's, passed as -J flags so the CLI suite runs with the same
         ;; JVM options as the managed nREPL (native-access / preview / unsafe-memory).
         jflags
-        (mapv #(str "-J" %) (repl-manager/inherited-jvm-opts (io/file root) [:test]))]
+        (mapv #(str "-J" %)
+              (repl-manager/inherited-jvm-opts (io/file root) (into [:test] (map keyword) aliases)))
+
+        ;; `:test` first and ALWAYS: caller aliases add deps/paths to the run,
+        ;; they never replace the alias that mains the test runner.
+        main-flag
+        (str "-M:test" (apply str (map #(str ":" %) aliases)))]
 
     (cond (present? "deps.edn")
           (if (lazytest-cli? root)
             {:tool :clj
-             :cmd (into (into ["clojure"] jflags) (into ["-M:test"] (lazytest-selector-args sel)))
+             :cmd (into (into ["clojure"] jflags) (into [main-flag] (lazytest-selector-args sel)))
              :selectors? true}
-            {:tool :clj :cmd (into (into ["clojure"] jflags) ["-M:test"]) :selectors? false})
+            {:tool :clj :cmd (into (into ["clojure"] jflags) [main-flag]) :selectors? false})
           (present? "project.clj") {:tool :lein :cmd ["lein" "test"] :selectors? false}
           (present? "bb.edn") {:tool :bb :cmd ["bb" "test"] :selectors? false}
           :else nil)))
@@ -1069,59 +1094,75 @@
    The full shell command lives on :command, and the runner's own summary line is
    read into the COUNTS every mode shares — :total, :fail and its erroring subset
    :errored — instead of being retold as a sentence the caller has to parse.
-   `norm` is the resolved selector map {:nses :vars :include :exclude}."
+   `norm` is the resolved selector map {:nses :vars :include :exclude}, plus the
+   :aliases the caller asked to add to `clojure -M:test`."
   [root norm]
   (let [ns-str
         (str/join " " (:nses norm))
 
         sel
-        (select-keys norm [:nses :vars :include :exclude])]
+        (select-keys norm [:nses :vars :include :exclude])
 
-    (if-let [{:keys [tool cmd]} (cli-command-for root sel)]
-      (let [res (try (apply shell/sh (concat cmd [:dir (str root)]))
-                     (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
-            out (str (:out res) (:err res))
-            exit (long (or (:exit res) -1))
-            ;; clojure.test and lazytest both close on "Ran N test…" plus an
-            ;; "F failures, E errors." line — the only tally a shelled runner
-            ;; offers, and the cli path reports it as the SAME counts the repl
-            ;; path does.
-            {:keys [cases fails errs]} (summary-counts out)
-            ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
-            ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
-            ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
-            ;; that as green silently hid whole suites (a real false green).
-            ran? (some? cases)]
+        aliases
+        (:aliases norm)]
 
-        ;; "is_pass" (exit-code verdict) is a DISTINCT key from the repl path's
-        ;; "pass" (a count) — render-test-result reads both.
-        (cond-> {"mode" "cli"
-                 "ns" ns-str
-                 "tool" (name tool)
-                 "command" (str/join " " cmd)
-                 "exit" exit
-                 "is_pass"
-                 (and (zero? exit) ran? (zero? (+ (long (or fails 0)) (long (or errs 0)))))
-                 "output" (cli-tail out)}
-          cases
-          (assoc "total" cases)
+    (if-let [{:keys [tool cmd]} (cli-command-for root sel aliases)]
+      (if (and (seq aliases) (not= :clj tool))
+        ;; deps.edn aliases mean nothing to `lein test` / `bb test`: shelling it
+        ;; anyway would answer green for a classpath the caller never got.
+        {"mode" "cli"
+         "ns" ns-str
+         "tool" (name tool)
+         "command" (str/join " " cmd)
+         "error" (str "aliases " (pr-str (vec aliases))
+                      " are deps.edn aliases, spliced into `clojure -M:test`, but " root
+                      " is a " (name tool)
+                      " project whose test command takes none — drop `aliases`, or point"
+                      " `cwd` at the deps.edn project that declares them.")}
+        (let [res (try (apply shell/sh (concat cmd [:dir (str root)]))
+                       (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
+              out (str (:out res) (:err res))
+              exit (long (or (:exit res) -1))
+              ;; clojure.test and lazytest both close on "Ran N test…" plus an
+              ;; "F failures, E errors." line — the only tally a shelled runner
+              ;; offers, and the cli path reports it as the SAME counts the repl
+              ;; path does.
+              {:keys [cases fails errs]} (summary-counts out)
+              ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
+              ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
+              ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
+              ;; that as green silently hid whole suites (a real false green).
+              ran? (some? cases)]
 
-          (or fails errs)
-          (assoc "fail" (+ (long (or fails 0)) (long (or errs 0))))
+          ;; "is_pass" (exit-code verdict) is a DISTINCT key from the repl path's
+          ;; "pass" (a count) — render-test-result reads both.
+          (cond-> {"mode" "cli"
+                   "ns" ns-str
+                   "tool" (name tool)
+                   "command" (str/join " " cmd)
+                   "exit" exit
+                   "is_pass"
+                   (and (zero? exit) ran? (zero? (+ (long (or fails 0)) (long (or errs 0)))))
+                   "output" (cli-tail out)}
+            cases
+            (assoc "total" cases)
 
-          errs
-          (assoc "errored" errs)
+            (or fails errs)
+            (assoc "fail" (+ (long (or fails 0)) (long (or errs 0))))
 
-          (and (zero? exit) (not ran?))
-          (assoc "error"
-            (str "test command exited 0 but printed no \"Ran N test…\" summary"
-                 " — no tests actually ran (often a missing/misconfigured "
-                 (name tool)
-                 " :test alias, so `"
-                 (str/join " " cmd)
-                 "` fell"
-                 " through to a bare REPL). Reported as NOT passing to avoid a"
-                 " false green."))))
+            errs
+            (assoc "errored" errs)
+
+            (and (zero? exit) (not ran?))
+            (assoc "error"
+              (str "test command exited 0 but printed no \"Ran N test…\" summary"
+                   " — no tests actually ran (often a missing/misconfigured "
+                   (name tool)
+                   " :test alias, so `"
+                   (str/join " " cmd)
+                   "` fell"
+                   " through to a bare REPL). Reported as NOT passing to avoid a"
+                   " false green.")))))
       {"mode" "cli"
        "ns" ns-str
        "error" (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in "
@@ -1316,6 +1357,35 @@
                              locations))]
     (if (= 1 (count roots)) (first roots) root)))
 
+(defn- note-unapplied-aliases
+  "run_tests `aliases` only reach the CLEAN-JVM path, where they are spliced into
+   `clojure -M:test`. A REUSED nREPL already booted with the aliases `repl_start`
+   gave it, and a shadow-cljs build reads shadow-cljs.edn — neither picks them up
+   mid-run. Such a run SAYS the aliases did not apply, instead of letting a green
+   result read as proof the alias was on the classpath."
+  [aliases result]
+  (if (or (empty? aliases) (= "cli" (get result "mode")))
+    result
+    (let [why
+          (case (str (get result "mode"))
+            "repl"
+            (str "the run REUSED this session's nREPL, which carries only the aliases"
+                 " `repl_start` booted it with — repl_stop(\"clojure\") first for a clean"
+                 " JVM, or restart that REPL with these aliases")
+
+            "shadow"
+            "a shadow-cljs build reads shadow-cljs.edn, not deps.edn aliases"
+
+            "this run did not shell `clojure -M:test`")
+
+          note
+          (str "aliases " (pr-str (vec aliases)) " did NOT apply: " why ".")]
+
+      (update result
+              "note"
+              (fn [n]
+                (if (str/blank? (str n)) note (str note " " n)))))))
+
 (defn clj-test-fn
   "Run clojure tests. The arg names PATHS — files, directories, or
    `<path>::<test-name>` node ids: this is where a path becomes a test namespace
@@ -1348,6 +1418,9 @@
    own build file. run_tests NEVER starts a REPL: it reuses THIS session's REPL for
    that project when one is already up, and otherwise shells the project's own test
    command in a clean JVM.
+   `aliases` adds EXTRA deps.edn aliases to that clean-JVM command
+   (`clojure -M:test:<name>`, `:test` always kept); they cannot reach a REUSED
+   nREPL or a shadow-cljs build, and a run that took either path says so on :note.
    The result :mode says which path ran; :language is always clojure so the result is self-describing
    across the language / framework / tool / mode axes."
   ([env arg]
@@ -1498,4 +1571,6 @@
              (if (seq failures) (assoc result' "by-cwd" (group-faults-by-cwd failures)) result'))]
 
        (extension/success {:result (surface/check :test-fn
-                                                  (assoc result'' "language" "clojure"))})))))
+                                                  (assoc (note-unapplied-aliases (:aliases norm)
+                                                                                 result'')
+                                                    "language" "clojure"))})))))
