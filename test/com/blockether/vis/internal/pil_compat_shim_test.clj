@@ -1467,3 +1467,154 @@
                       "d = ImageDraw.Draw(Image.new('RGB',(40,20)))\n"
                       "f = ImageFont.load_default()\n"
                       "[type(d.textlength('hi')).__name__, type(f.getlength('hi')).__name__]")))))))
+
+;; Regression: the EXIF/TIFF metadata tables were plain name->number dicts --
+;; `ExifTags.Base.Make` raised AttributeError, `ExifTags.GPS` and `ExifTags.IFD`
+;; did not exist and `TiffTags.lookup` was missing, so naming a tag the way
+;; Pillow documents it could not run at all.
+(defdescribe pil-metadata-table-regression-test
+             (it "names an EXIF tag through the Base, GPS and IFD enums"
+                 (with-python-context
+                   (expect (= [271 "Make" 2 34665 true]
+                              (ev python-context
+                                  (str "from PIL import ExifTags\n"
+                                       "[int(ExifTags.Base.Make), ExifTags.TAGS[271],\n"
+                                       " int(ExifTags.GPS.GPSLatitude), int(ExifTags.IFD.Exif),\n"
+                                       " ExifTags.Base.Make == 271]"))))))
+             (it "looks a TIFF tag up as a typed TagInfo and still names an unknown one"
+                 (with-python-context
+                   (expect (= ["ImageWidth" 4 "unknown"]
+                              (ev python-context
+                                  (str "from PIL import TiffTags\n"
+                                       "info = TiffTags.lookup(256)\n"
+                                       "[info.name, info.type, TiffTags.lookup(65000).name]")))))))
+
+;; Regression: `ImageFilter.UnsharpMask(threshold=...)` accepted the argument and
+;; DROPPED it, so a flat area was sharpened along with the edges the threshold
+;; exists to protect; and a builtin filter carried no `filterargs`, so
+;; `ImageFilter.BLUR.filterargs` raised for anyone describing or rebuilding a
+;; kernel, while `Color3DLUT.transform` -- the way Pillow documents deriving one
+;; LUT from another -- did not exist.
+(defdescribe
+  pil-filter-argument-regression-test
+  (it "leaves the picture alone when the unsharp threshold is above every difference"
+      (with-python-context
+        (expect (= [true true 7]
+                   (ev python-context
+                       (str
+                         "from PIL import Image, ImageFilter\n" "im = Image.new('L',(8,8),100)\n"
+                         "im.putpixel((4,4), 160)\n" "src = list(im.getdata())\n"
+                         "high = list(im.filter(ImageFilter.UnsharpMask(2, 200, 255)).getdata())\n"
+                         "low = list(im.filter(ImageFilter.UnsharpMask(2, 200, 0)).getdata())\n"
+                         "[high == src, low != src,\n"
+                         " ImageFilter.UnsharpMask(threshold=7).threshold]"))))))
+  (it "carries Pillow's kernel on every builtin filter"
+      (with-python-context
+        (expect (= [[5 5] 16 true true]
+                   (ev python-context
+                       (str "from PIL import ImageFilter\n"
+                            "size, scale, offset, kernel = ImageFilter.BLUR.filterargs\n"
+                            "[list(size), scale, len(kernel) == 25,\n"
+                            " issubclass(ImageFilter.SHARPEN, ImageFilter.MultibandFilter)]"))))))
+  (it "derives a LUT from another one through transform"
+      (with-python-context
+        (expect (= [3 [2 2 2] true]
+                   (ev python-context
+                       (str "from PIL import ImageFilter\n"
+                            "lut = ImageFilter.Color3DLUT.generate(2, lambda r, g, b: (r, g, b))\n"
+                            "swapped = lut.transform(lambda r, g, b: (b, g, r))\n"
+                            "[swapped.channels, list(swapped.size),\n"
+                            " swapped.table[3:6] == [0.0, 0.0, 1.0]]")))))))
+
+;; Regression: the helper modules were stubs -- `ImagePalette.sepia()` and
+;; `.negative()` did not exist, `ImageMath.ops` was missing, `features.check_module`
+;; answered False for a name it had never heard of instead of refusing it, an
+;; `ImageSequence.Iterator` kept its cursor under a name Pillow does not use, and
+;; a viewer registered with `ImageShow.register` was never asked to show anything.
+(defdescribe
+  pil-helper-module-regression-test
+  (it "builds a sepia and a negative palette"
+      (with-python-context
+        (expect (= ["RGB" 768 255 0]
+                   (ev python-context
+                       (str
+                         "from PIL import ImagePalette\n" "sepia = ImagePalette.sepia()\n"
+                         "neg = ImagePalette.negative()\n"
+                         "[sepia.mode, len(sepia.palette), neg.palette[0], neg.palette[-1]]"))))))
+  (it "refuses an unknown module name instead of answering False"
+      (with-python-context
+        (expect (= [true "ValueError" true]
+                   (ev python-context
+                       (str "from PIL import features\n" "try:\n"
+                            "    features.check_module('nope')\n" "    refused = 'none'\n"
+                            "except ValueError:\n" "    refused = 'ValueError'\n"
+                            "[features.check_module('pil'), refused,\n"
+                            " isinstance(features.version_module('pil'), str)]"))))))
+  (it "names the ImageMath ops table and walks a sequence by position"
+      (with-python-context
+        (expect (= [["convert" "equal" "float" "int" "max" "min" "notequal"] 0 1]
+                   (ev python-context
+                       (str "from PIL import Image, ImageMath, ImageSequence\n"
+                            "frames = ImageSequence.Iterator(Image.new('RGB',(2,2)))\n"
+                            "start = frames.position\n"
+                            "next(frames)\n" "[sorted(ImageMath.ops), start, frames.position]"))))))
+  (it "shows an image through a viewer registered with ImageShow.register"
+      (with-python-context
+        (expect (= [true 1 true]
+                   (ev python-context
+                       (str "from PIL import Image, ImageShow\n"
+                            "seen = []\n" "class _Recorder(ImageShow.Viewer):\n"
+                            "    def show(self, image, **options):\n"
+                            "        seen.append(image.size)\n"
+                            "        return 1\n" "before = len(ImageShow._viewers)\n"
+                            "ImageShow.register(_Recorder, -1)\n"
+                            "shown = ImageShow.show(Image.new('RGB',(3,3)))\n"
+                            "ImageShow._viewers.pop(0)\n"
+                            "[bool(shown), len(seen), len(ImageShow._viewers) == before]")))))))
+
+;; Regression: an `Image` compared by IDENTITY, so two pictures of the same pixels
+;; were never equal and `copy.deepcopy` was meaningless; `numpy.array(im)` saw a
+;; 0-d object array instead of a pixel matrix; `get_format_mimetype()` did not
+;; exist; `ImageFont.truetype(index=, encoding=)` dropped both arguments; and
+;; `ImageDraw.shape` plus `fontmode` were missing, so an `ImagePath` had no way
+;; through ImageDraw and text mode could not be read back.
+(defdescribe
+  pil-image-value-semantics-regression-test
+  (it "compares two images by value and stays hashable"
+      (with-python-context
+        (expect (= [true false false 2]
+                   (ev python-context
+                       (str
+                         "import copy\n"
+                         "from PIL import Image\n" "a = Image.new('RGB',(2,2),(1,2,3))\n"
+                         "b = copy.deepcopy(a)\n"
+                         "[a == b, a is b, a == Image.new('RGB',(2,2),(4,5,6)), len({a, b})]"))))))
+  (it "reports the format mimetype and a numpy-shaped array interface"
+      (with-python-context
+        (expect (= ["PNG" "image/png" [2 3 3]]
+                   (ev python-context
+                       (str "import base64, io\n"
+                            "from PIL import Image\n"
+                            "im = Image.open(io.BytesIO(base64.b64decode('"
+                            gray-png-b64
+                            "')))\n"
+                            "[im.format, im.get_format_mimetype(),\n"
+                            " list(Image.new('RGB',(3,2)).__array_interface__['shape'])]"))))))
+  (it "carries the truetype index and encoding onto the font and its variant"
+      (with-python-context
+        (expect (= [1 "unic" 1 "unic" 20]
+                   (ev python-context
+                       (str "from PIL import ImageFont\n"
+                            "f = ImageFont.truetype('Helvetica', 12, index=1, encoding='unic')\n"
+                            "v = f.font_variant(size=20)\n"
+                            "[f.index, f.encoding, v.index, v.encoding, v.size]"))))))
+  (it "closes an ImagePath through draw.shape and names the font mode"
+      (with-python-context
+        (expect (= ["L" "1" true 4]
+                   (ev python-context
+                       (str "from PIL import Image, ImageDraw, ImagePath\n"
+                            "im = Image.new('RGB',(10,10),(0,0,0))\n" "d = ImageDraw.Draw(im)\n"
+                            "p = ImagePath.Path([1.0,1.0, 8.0,1.0, 8.0,8.0])\n"
+                            "d.shape(p, fill=(255,0,0))\n"
+                            "[d.fontmode, ImageDraw.Draw(Image.new('P',(4,4))).fontmode,\n"
+                            " im.getpixel((6,4)) == (255,0,0), len(p)]")))))))

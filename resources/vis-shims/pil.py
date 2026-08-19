@@ -13,6 +13,7 @@
 
 def __vis_install_pil__():
     import sys, types, base64, math, re, struct, os as _os, builtins as _builtins
+    import collections as _collections, random as _random, logging as _logging
 
     def _H(name, *args):
         if _draw_queue:
@@ -570,11 +571,55 @@ def __vis_install_pil__():
             self.info = {}
             self.palette = None
             self.format = None
+            # Pillow carries a human-readable format name beside the code; the
+            # attribute simply did not exist, so `im.format_description` raised
+            # AttributeError on an image opened from a real file.
+            self.format_description = None
             self._pos = 0
             self._n_frames = 1
             self._delays = []
             self._exif = None
             _own(self)
+
+        def __eq__(self, other):
+            """Pillow compares images by VALUE -- class, mode, size, info, pixels.
+            Inheriting identity comparison answered False for two images holding
+            the very same picture."""
+            return (
+                isinstance(other, Image)
+                and self.mode == other.mode
+                and self.size == other.size
+                and self.info == other.info
+                and self.tobytes() == other.tobytes()
+            )
+
+        # Pillow's Image is unhashable BECAUSE it defines __eq__; here the host
+        # ownership registry holds images, so identity hashing has to stay.
+        __hash__ = object.__hash__
+
+        def __copy__(self):
+            return self.copy()
+
+        def __deepcopy__(self, memo):
+            return self.copy()
+
+        @property
+        def __array_interface__(self):
+            """What `numpy.array(im)` reads. Without it an image became a 0-d
+            object array instead of a pixel matrix."""
+            bands = len(self.getbands())
+            typestr = {"I": "<i4", "F": "<f4", "1": "|b1"}.get(self.mode, "|u1")
+            shape = (self._h, self._w) if bands == 1 else (self._h, self._w, bands)
+            return {
+                "shape": shape,
+                "typestr": typestr,
+                "version": 3,
+                "data": self.tobytes(),
+            }
+
+        def get_format_mimetype(self):
+            """Pillow's MIME type for the format this image was read from."""
+            return Image_mod.MIME.get(self.format) if self.format else None
 
         @property
         def size(self):
@@ -1292,6 +1337,25 @@ def __vis_install_pil__():
                 self._exif = ex
             return ex
 
+        def get_child_images(self):
+            """Pillow returns the thumbnails/previews stored in an image's EXIF
+            sub-IFDs. This host decodes the primary image only, so there are
+            never child images -- Pillow's own answer for a file without them,
+            and previously an AttributeError."""
+            return []
+
+        def getim(self):
+            """Pillow hands back a capsule pointing at the C image memory. The
+            pixels live on the JVM here, so the honest equivalent is the host
+            handle this Image wraps."""
+            return self._handle
+
+        def toqimage(self):
+            raise ImportError("Qt bindings are not installed")
+
+        def toqpixmap(self):
+            raise ImportError("Qt bindings are not installed")
+
         def _getexif(self):
             # the legacy accessor is FLAT: sub-IFD tags merged into one dict.
             ex = self.getexif()
@@ -1487,6 +1551,11 @@ def __vis_install_pil__():
         def __init__(self, top=None, ifds=None):
             dict.__init__(self, top or {})
             self._ifds = dict(ifds or {})
+            # Pillow's Exif carries the layout it was PARSED from; the shim held
+            # only the tags, so `exif.endian` / `exif.bigtiff` were AttributeErrors.
+            self.endian = None
+            self.bigtiff = False
+            self._loaded = True
 
         def load(self, data):
             top, ifds = _parse_exif_tiff(_exif_tiff_block(data) or b"")
@@ -1497,6 +1566,20 @@ def __vis_install_pil__():
 
         def get_ifd(self, tag):
             return dict(self._ifds.get(int(tag), {}))
+
+        def load_from_fp(self, fp, offset=None):
+            """Pillow reads the EXIF block straight out of an open file. Only
+            `load(bytes)` existed, so a caller holding a file object had to read
+            it themselves."""
+            if offset is not None:
+                fp.seek(offset)
+            return self.load(fp.read())
+
+        def hide_offsets(self):
+            """Pillow drops the sub-IFD POINTER tags, whose values are byte
+            offsets into a file that no longer exists once the tags are copied."""
+            for tag in (34665, 34853, 40965):
+                self.pop(tag, None)
 
         def tobytes(self, offset=8):
             raise NotImplementedError("vis PIL shim: Exif.tobytes() is not supported")
@@ -1850,6 +1933,16 @@ def __vis_install_pil__():
         from the start, so this only reports that the registry is loaded."""
         return 1
 
+    def _host_unavailable(name):
+        """Names a Pillow entry point this sandbox has no host for. Defined HERE
+        because the Image registry below is its first user; the GUI modules far
+        below share the one definition."""
+
+        def unavailable(*args, **kwargs):
+            raise NotImplementedError(name + " is unavailable in the vis sandbox")
+
+        return unavailable
+
     Image_mod.MAX_IMAGE_PIXELS = 89478485
     Image_mod.UnidentifiedImageError = UnidentifiedImageError
     Image_mod.DecompressionBombWarning = DecompressionBombWarning
@@ -1859,6 +1952,129 @@ def __vis_install_pil__():
     Image_mod.registered_extensions = lambda: dict(_EXTENSION)
     Image_mod.init = _init_plugins
     Image_mod.preinit = _init_plugins
+    Image_mod.USE_CFFI_ACCESS = False
+    Image_mod.module = Image_mod
+    Image_mod.logger = _logging.getLogger("PIL.Image")
+    Image_mod.MODES = [
+        "1",
+        "CMYK",
+        "F",
+        "HSV",
+        "I",
+        "L",
+        "LAB",
+        "P",
+        "RGB",
+        "RGBA",
+        "RGBX",
+        "YCbCr",
+    ]
+
+    # Pillow's plugin registry. The host decodes the formats itself, so these
+    # start populated from what it really reads and a plugin may still register
+    # into them -- they used to be missing entirely, so `Image.register_open`
+    # and every `Image.OPEN`-style lookup was an AttributeError.
+    Image_mod.ID = sorted(set(_EXTENSION.values()))
+    Image_mod.OPEN = {}
+    Image_mod.MIME = {
+        "BMP": "image/bmp",
+        "GIF": "image/gif",
+        "ICO": "image/x-icon",
+        "JPEG": "image/jpeg",
+        "PNG": "image/png",
+        "PPM": "image/x-portable-anymap",
+        "QOI": "image/qoi",
+        "TGA": "image/x-tga",
+        "TIFF": "image/tiff",
+        "WEBP": "image/webp",
+    }
+    Image_mod.SAVE = {}
+    Image_mod.SAVE_ALL = {}
+    Image_mod.DECODERS = {}
+    Image_mod.ENCODERS = {}
+
+    class ImagePointHandler:
+        """Pillow's mixin for a `point()` transform: an object carrying
+        `point(im)`. `Image.point` already accepts one; the NAME was missing, so
+        `isinstance(lut, Image.ImagePointHandler)` could not be written."""
+
+    class ImageTransformHandler:
+        """Pillow's mixin for a `transform()` geometry object -- what
+        `ImageTransform.Transform` derives from."""
+
+    Image_mod.ImagePointHandler = ImagePointHandler
+    Image_mod.ImageTransformHandler = ImageTransformHandler
+
+    def _register_open(id, factory, accept=None):
+        id = id.upper()
+        if id not in Image_mod.ID:
+            Image_mod.ID.insert(0, id)
+        Image_mod.OPEN[id] = (factory, accept)
+
+    def _register_mime(id, mimetype):
+        Image_mod.MIME[id.upper()] = mimetype
+
+    def _register_save(id, driver):
+        Image_mod.SAVE[id.upper()] = driver
+
+    def _register_save_all(id, driver):
+        Image_mod.SAVE_ALL[id.upper()] = driver
+
+    def _register_extension(id, extension):
+        _EXTENSION[extension.lower()] = id.upper()
+
+    def _register_extensions(id, extensions):
+        for extension in extensions:
+            _register_extension(id, extension)
+
+    Image_mod.register_open = _register_open
+    Image_mod.register_mime = _register_mime
+    Image_mod.register_save = _register_save
+    Image_mod.register_save_all = _register_save_all
+    Image_mod.register_extension = _register_extension
+    Image_mod.register_extensions = _register_extensions
+    Image_mod.register_decoder = lambda name, decoder: Image_mod.DECODERS.__setitem__(
+        name, decoder
+    )
+    Image_mod.register_encoder = lambda name, encoder: Image_mod.ENCODERS.__setitem__(
+        name, encoder
+    )
+
+    # Pillow answers "L" for anything grayscale and "RGB" for anything colour,
+    # and getmodetype names the storage of ONE band.
+    _MODE_BASE = {
+        "1": "L",
+        "L": "L",
+        "I": "L",
+        "F": "L",
+        "P": "RGB",
+        "RGB": "RGB",
+        "RGBX": "RGB",
+        "RGBA": "RGB",
+        "CMYK": "RGB",
+        "YCbCr": "RGB",
+        "LAB": "RGB",
+        "HSV": "RGB",
+        "LA": "L",
+        "PA": "RGB",
+        "La": "L",
+        "RGBa": "RGB",
+        "I;16": "L",
+        "I;16L": "L",
+        "I;16B": "L",
+    }
+    _MODE_TYPE = {"1": "L", "L": "L", "P": "L", "I": "I", "F": "F"}
+
+    def _getmodebase(mode):
+        return _MODE_BASE[str(mode)]
+
+    def _getmodetype(mode):
+        return _MODE_TYPE.get(str(mode), "L")
+
+    Image_mod.getmodebase = _getmodebase
+    Image_mod.getmodetype = _getmodetype
+    Image_mod.fromqimage = _host_unavailable("PIL.Image.fromqimage")
+    Image_mod.fromqpixmap = _host_unavailable("PIL.Image.fromqpixmap")
 
     def _fontname(font):
         # What `ImageFont.truetype` was handed -- a font file path or a family
@@ -1868,9 +2084,18 @@ def __vis_install_pil__():
 
     # -- ImageDraw -----------------------------------------------------------
     class _Draw:
+        # Pillow's per-instance default font, settable on the CLASS to change every
+        # future draw. It was missing, so `draw.font = f` then `draw.text(...)`
+        # silently kept rendering in the built-in font.
+        font = None
+
         def __init__(self, im, mode=None):
             self._im = im
             self.mode = im.mode
+            # Pillow's text antialiasing switch: "1" for bitmap-ish modes, "L"
+            # elsewhere. The host renderer always antialiases, so this is carried
+            # for code that READS it back instead of raising AttributeError.
+            self.fontmode = "1" if (mode or im.mode) in ("1", "P", "I", "F") else "L"
 
         def _emit(self, name, xy, keys, values):
             # ONE flat scalar record per op, appended to the shared draw queue. A
@@ -2075,8 +2300,26 @@ def __vis_install_pil__():
             bb = self.multiline_textbbox((0, 0), text, font=font, spacing=spacing)
             return (bb[2] - bb[0], bb[3] - bb[1])
 
+        def _getink(self, ink, fill=None):
+            """Pillow answers (ink, fill) already packed in the image's mode."""
+            if ink is not None:
+                ink = _packcol(ink, self.mode)
+            if fill is not None:
+                fill = _packcol(fill, self.mode)
+            return ink, fill
+
+        def shape(self, shape, fill=None, outline=None):
+            """Pillow's experimental path draw: CLOSE the path, then fill it and
+            stroke it. It was missing, so an `ImagePath.Path` had no way through
+            `ImageDraw` other than being re-flattened by hand."""
+            shape.close()
+            self.polygon(shape.tolist(), fill=fill, outline=outline)
+
         def getfont(self):
-            return _Font(12)
+            """Pillow's current default font, initialized on first use."""
+            if not self.font:
+                self.font = ImageFont.load_default()
+            return self.font
 
         def bitmap(self, xy, bitmap, fill=None):
             self._im.paste(bitmap, (int(xy[0]), int(xy[1])), bitmap)
@@ -2131,9 +2374,15 @@ def __vis_install_pil__():
 
     # -- ImageFont -----------------------------------------------------------
     class _Font:
-        def __init__(self, size=10, name=""):
+        def __init__(self, size=10, name="", index=0, encoding="", layout_engine=None):
             self.size = int(size)
             self.path = name
+            # Pillow keeps its constructor arguments on the font -- callers read
+            # `font.index` / `.encoding` / `.layout_engine` back and `font_variant`
+            # copies them. They used to be accepted and dropped.
+            self.index = int(index or 0)
+            self.encoding = encoding or ""
+            self.layout_engine = layout_engine
 
         def getbbox(self, text, *a, **k):
             b = _lst(_H("__vis_pil_textbbox__", str(text), int(self.size), self.path))
@@ -2157,104 +2406,223 @@ def __vis_install_pil__():
             _Draw(img).text((-b[0], -b[1]), text, fill=255, font=self)
             return img
 
-        def font_variant(self, font=None, size=None, index=None, encoding=None, **k):
-            return _Font(self.size if size is None else size, font or self.path)
+        def font_variant(
+            self,
+            font=None,
+            size=None,
+            index=None,
+            encoding=None,
+            layout_engine=None,
+            **k,
+        ):
+            return _Font(
+                self.size if size is None else size,
+                font or self.path,
+                self.index if index is None else index,
+                self.encoding if encoding is None else encoding,
+                self.layout_engine if layout_engine is None else layout_engine,
+            )
+
+        def getmetrics(self):
+            """Pillow's (ascent, descent) for the font. Measured off a glyph the
+            host really renders, since there is no FreeType face here."""
+            b = self.getbbox("Ay")
+            return (int(-b[1]) if b[1] < 0 else int(b[3] - b[1]), 0)
+
+        def getmask2(self, text, mode="L", *a, **k):
+            """Pillow returns (mask, offset); only `getmask` existed, so the
+            two-value spelling its own text renderer uses unpacked wrong."""
+            b = self.getbbox(text)
+            return (self.getmask(text, mode), (int(b[0]), int(b[1])))
+
+        def getname(self):
+            """Pillow answers (family, style)."""
+            name = _os.path.basename(self.path or "") or None
+            return (name, None)
+
+        def get_variation_names(self):
+            raise OSError("unsupported")
+
+        def get_variation_axes(self):
+            raise OSError("unsupported")
+
+        def set_variation_by_name(self, name):
+            raise OSError("unsupported")
+
+        def set_variation_by_axes(self, axes):
+            raise OSError("unsupported")
+
+    class _TransposedFont:
+        """Pillow's wrapper for rotated or mirrored text. It was missing, so
+        `ImageFont.TransposedFont` was an AttributeError."""
+
+        def __init__(self, font, orientation=None):
+            self.font = font
+            self.orientation = orientation
+
+        def getmask(self, text, mode="", *args, **kwargs):
+            im = self.font.getmask(text, mode, *args, **kwargs)
+            if self.orientation is not None:
+                return im.transpose(self.orientation)
+            return im
+
+        def getbbox(self, text, *args, **kwargs):
+            left, top, right, bottom = self.font.getbbox(text, *args, **kwargs)
+            width = right - left
+            height = bottom - top
+            if self.orientation in (ROTATE_90, ROTATE_270):
+                return (0, 0, height, width)
+            return (0, 0, width, height)
+
+        def getlength(self, text, *args, **kwargs):
+            if self.orientation in (ROTATE_90, ROTATE_270):
+                raise ValueError(
+                    "text length is undefined for text rotated by 90 or 270 degrees"
+                )
+            return self.font.getlength(text, *args, **kwargs)
 
     ImageFont = types.ModuleType("PIL.ImageFont")
     ImageFont.FreeTypeFont = _Font
     ImageFont.ImageFont = _Font
-    ImageFont.truetype = lambda font=None, size=10, *a, **k: _Font(
-        size, str(font) if font else ""
+    ImageFont.TransposedFont = _TransposedFont
+    # Pillow refuses a longer string rather than rendering it.
+    ImageFont.MAX_STRING_LENGTH = 1000000
+
+    class Layout:
+        """Pillow's text layout engines. RAQM (complex-script shaping) needs
+        libraqm, which this host does not carry, so BASIC is what renders."""
+
+        BASIC = 0
+        RAQM = 1
+
+    ImageFont.Layout = Layout
+    ImageFont.truetype = (
+        lambda font=None, size=10, index=0, encoding="", layout_engine=None: _Font(
+            size, str(font) if font else "", index, encoding, layout_engine
+        )
     )
     ImageFont.load_default = lambda size=None: _Font(size or 10)
     ImageFont.load = lambda filename: _Font(10, str(filename))
 
+    def _font_load_path(filename):
+        """Pillow searches `sys.path` for a bitmap font. Kept because a caller
+        that ships a font beside its module uses this and nothing else."""
+        for directory in sys.path:
+            try:
+                candidate = _os.path.join(directory, str(filename))
+            except (TypeError, ValueError):
+                continue
+            if _os.path.isfile(candidate):
+                return ImageFont.load(candidate)
+        raise OSError("cannot find font file")
+
+    ImageFont.load_path = _font_load_path
+
     # -- ImageFilter ---------------------------------------------------------
     ImageFilter = types.ModuleType("PIL.ImageFilter")
 
-    class _Kernel:
-        name = "Kernel"
+    class Filter:
+        """Pillow's abstract base: `isinstance(f, ImageFilter.Filter)` is a real
+        check callers make, and every filter below derives from it."""
 
-        def __init__(self, size, kernel, scale=None, offset=0):
-            self.size = size if isinstance(size, (tuple, list)) else (size, size)
-            self.kernel = list(kernel)
-            self.scale = scale if scale is not None else (sum(self.kernel) or 1)
-            self.offset = offset
+    class MultibandFilter(Filter):
+        """Pillow's marker for a filter that runs over all bands at once."""
+
+    class _BuiltinFilter(MultibandFilter):
+        """Pillow keeps a builtin's kernel in `filterargs` -- (size, scale, offset,
+        kernel) -- and callers READ that tuple to describe, scale or rebuild a
+        filter. It was missing, so `ImageFilter.BLUR.filterargs` raised."""
 
         def filter(self, image):
-            s = self.size[0]
+            size, scale, offset, kernel = self.filterargs
+            s = size[0] if isinstance(size, (tuple, list)) else size
             m = _H(
                 "__vis_pil_conv__",
                 image._handle,
                 int(s),
-                [float(x) for x in self.kernel],
-                float(self.scale),
-                float(self.offset),
+                [float(x) for x in kernel],
+                float(scale),
+                float(offset),
             )
             return _wrap(m)
 
-    class _BuiltinFilter(_Kernel):
-        def __init__(self):
-            _Kernel.__init__(self, self._size, self._kernel, self._scale, self._offset)
+    class _Kernel(_BuiltinFilter):
+        name = "Kernel"
 
-    def _mk_builtin(nm, size, scale, offset, kernel):
+        def __init__(self, size, kernel, scale=None, offset=0):
+            if not isinstance(size, (tuple, list)):
+                size = (size, size)
+            if scale is None:
+                # Pillow's default scale is the sum of the kernel weights.
+                scale = sum(kernel) or 1
+            if size[0] * size[1] != len(kernel):
+                raise ValueError("not enough coefficients in kernel")
+            self.filterargs = (tuple(size), scale, offset, tuple(kernel))
+
+    def _mk_builtin(nm, name, size, scale, offset, kernel):
+        """Pillow spells a builtin as a CLASS carrying `name` and `filterargs`."""
         return type(
             nm,
             (_BuiltinFilter,),
-            {
-                "name": nm,
-                "_size": size,
-                "_scale": scale,
-                "_offset": offset,
-                "_kernel": kernel,
-            },
+            {"name": name, "filterargs": (size, scale, offset, kernel)},
         )
 
     ImageFilter.Kernel = _Kernel
     ImageFilter.BuiltinFilter = _BuiltinFilter
-    # Pillow's abstract base -- `isinstance(f, ImageFilter.Filter)` is a real check
-    # callers make, and every filter here already derives from the kernel class.
-    ImageFilter.Filter = _Kernel
+    ImageFilter.Filter = Filter
+    ImageFilter.MultibandFilter = MultibandFilter
     ImageFilter.BLUR = _mk_builtin(
         "BLUR",
+        "Blur",
         (5, 5),
         16,
         0,
-        [1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1],
+        (1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1),
     )
     ImageFilter.SMOOTH = _mk_builtin(
-        "SMOOTH", (3, 3), 13, 0, [1, 1, 1, 1, 5, 1, 1, 1, 1]
+        "SMOOTH", "Smooth", (3, 3), 13, 0, (1, 1, 1, 1, 5, 1, 1, 1, 1)
     )
     ImageFilter.SMOOTH_MORE = _mk_builtin(
         "SMOOTH_MORE",
+        "Smooth More",
         (5, 5),
         100,
         0,
-        [1, 1, 1, 1, 1, 1, 5, 5, 5, 1, 1, 5, 44, 5, 1, 1, 5, 5, 5, 1, 1, 1, 1, 1, 1],
+        (1, 1, 1, 1, 1, 1, 5, 5, 5, 1, 1, 5, 44, 5, 1, 1, 5, 5, 5, 1, 1, 1, 1, 1, 1),
     )
     ImageFilter.SHARPEN = _mk_builtin(
-        "SHARPEN", (3, 3), 16, 0, [-2, -2, -2, -2, 32, -2, -2, -2, -2]
+        "SHARPEN", "Sharpen", (3, 3), 16, 0, (-2, -2, -2, -2, 32, -2, -2, -2, -2)
     )
     ImageFilter.DETAIL = _mk_builtin(
-        "DETAIL", (3, 3), 6, 0, [0, -1, 0, -1, 10, -1, 0, -1, 0]
+        "DETAIL", "Detail", (3, 3), 6, 0, (0, -1, 0, -1, 10, -1, 0, -1, 0)
     )
     ImageFilter.EDGE_ENHANCE = _mk_builtin(
-        "EDGE_ENHANCE", (3, 3), 2, 0, [-1, -1, -1, -1, 10, -1, -1, -1, -1]
+        "EDGE_ENHANCE",
+        "Edge-enhance",
+        (3, 3),
+        2,
+        0,
+        (-1, -1, -1, -1, 10, -1, -1, -1, -1),
     )
     ImageFilter.EDGE_ENHANCE_MORE = _mk_builtin(
-        "EDGE_ENHANCE_MORE", (3, 3), 1, 0, [-1, -1, -1, -1, 9, -1, -1, -1, -1]
+        "EDGE_ENHANCE_MORE",
+        "Edge-enhance More",
+        (3, 3),
+        1,
+        0,
+        (-1, -1, -1, -1, 9, -1, -1, -1, -1),
     )
     ImageFilter.FIND_EDGES = _mk_builtin(
-        "FIND_EDGES", (3, 3), 1, 0, [-1, -1, -1, -1, 8, -1, -1, -1, -1]
+        "FIND_EDGES", "Find Edges", (3, 3), 1, 0, (-1, -1, -1, -1, 8, -1, -1, -1, -1)
     )
     ImageFilter.EMBOSS = _mk_builtin(
-        "EMBOSS", (3, 3), 1, 128, [-1, 0, 0, 0, 1, 0, 0, 0, 0]
+        "EMBOSS", "Emboss", (3, 3), 1, 128, (-1, 0, 0, 0, 1, 0, 0, 0, 0)
     )
     ImageFilter.CONTOUR = _mk_builtin(
-        "CONTOUR", (3, 3), 1, 255, [-1, -1, -1, -1, 8, -1, -1, -1, -1]
+        "CONTOUR", "Contour", (3, 3), 1, 255, (-1, -1, -1, -1, 8, -1, -1, -1, -1)
     )
 
-    class GaussianBlur:
+    class GaussianBlur(MultibandFilter):
         name = "GaussianBlur"
 
         def __init__(self, radius=2):
@@ -2277,7 +2645,7 @@ def __vis_install_pil__():
             size = 2 * rad + 1
             return _wrap(_H("__vis_pil_conv__", image._handle, size, ker, s, 0.0))
 
-    class BoxBlur:
+    class BoxBlur(MultibandFilter):
         name = "BoxBlur"
 
         def __init__(self, radius=1):
@@ -2295,7 +2663,7 @@ def __vis_install_pil__():
                 _H("__vis_pil_conv__", image._handle, size, ker, float(n), 0.0)
             )
 
-    class RankFilter:
+    class RankFilter(Filter):
         """Pillow's `RankFilter(size, rank)`: the rank-th smallest value in the box.
 
         Pillow takes the rank as the SECOND argument -- `RankFilter(3, 4)` is the
@@ -2303,7 +2671,7 @@ def __vis_install_pil__():
         every Pillow example makes.
         """
 
-        name = "RankFilter"
+        name = "Rank"
 
         def __init__(self, size=3, rank=0):
             self.size = size
@@ -2315,24 +2683,24 @@ def __vis_install_pil__():
             )
 
     class MedianFilter(RankFilter):
-        name = "MedianFilter"
+        name = "Median"
 
         def __init__(self, size=3):
             RankFilter.__init__(self, size, (size * size) // 2)
 
     class MinFilter(RankFilter):
-        name = "MinFilter"
+        name = "Min"
 
         def __init__(self, size=3):
             RankFilter.__init__(self, size, 0)
 
     class MaxFilter(RankFilter):
-        name = "MaxFilter"
+        name = "Max"
 
         def __init__(self, size=3):
             RankFilter.__init__(self, size, size * size - 1)
 
-    class ModeFilter:
+    class ModeFilter(Filter):
         """Pillow's `ModeFilter`: the value that occurs MOST OFTEN in the box.
 
         A rank is not a mode. The median of a window agrees with its mode only by
@@ -2347,7 +2715,7 @@ def __vis_install_pil__():
         of the black border Pillow pads in, which paints a dark rim.
         """
 
-        name = "ModeFilter"
+        name = "Mode"
 
         def __init__(self, size=3):
             self.size = size
@@ -2390,18 +2758,45 @@ def __vis_install_pil__():
                             out[here + band] = best
             return Image_mod.frombytes(image.mode, (width, height), bytes(out))
 
-    class UnsharpMask:
+    class UnsharpMask(MultibandFilter):
         name = "UnsharpMask"
 
         def __init__(self, radius=2, percent=150, threshold=3):
             self.radius = radius
             self.percent = percent
+            self.threshold = threshold
 
         def filter(self, image):
             blurred = image.filter(GaussianBlur(self.radius))
             f = self.percent / 100.0
             # sharpened = image + f*(image - blurred) = blend(blurred, image, 1+f)
-            return Image_mod.blend(blurred, image, 1.0 + f)
+            out = Image_mod.blend(blurred, image, 1.0 + f)
+            if not self.threshold:
+                return out
+            # Pillow leaves a pixel ALONE where it differs from the blur by less
+            # than `threshold` -- that is how the mask avoids amplifying noise.
+            # The argument used to be accepted and dropped, so flat areas were
+            # sharpened too. The host has no unsharp kernel, so the pick happens
+            # here: O(w*h) in Python, the price of the picture being right.
+            t = int(self.threshold)
+            src = list(image.getdata())
+            blur = list(blurred.getdata())
+            sharp = list(out.getdata())
+            picked = []
+            for i in range(len(src)):
+                a, b, c = src[i], blur[i], sharp[i]
+                if isinstance(a, tuple):
+                    picked.append(
+                        tuple(
+                            c[j] if abs(a[j] - b[j]) >= t else a[j]
+                            for j in range(len(a))
+                        )
+                    )
+                else:
+                    picked.append(c if abs(a - b) >= t else a)
+            res = image.copy()
+            res.putdata(picked)
+            return res
 
     ImageFilter.GaussianBlur = GaussianBlur
     ImageFilter.BoxBlur = BoxBlur
@@ -2412,32 +2807,127 @@ def __vis_install_pil__():
     ImageFilter.RankFilter = RankFilter
     ImageFilter.UnsharpMask = UnsharpMask
 
-    class MultibandFilter(_Kernel):
-        pass
+    class Color3DLUT(MultibandFilter):
+        """Pillow's 3D lookup table. `transform()` was missing, so the one way
+        Pillow documents for deriving a LUT from another raised AttributeError."""
 
-    class Color3DLUT:
-        name = "Color3DLUT"
+        name = "Color 3D LUT"
 
         def __init__(self, size, table, channels=3, target_mode=None, **k):
-            self.size = size if isinstance(size, (tuple, list)) else (size, size, size)
-            self.table = list(table)
+            if channels not in (3, 4):
+                raise ValueError("Only 3 or 4 output channels are supported")
+            self.size = size = self._check_size(size)
             self.channels = channels
             self.mode = target_mode
+            if k.get("_copy_table", True):
+                table = list(table)
+            if table and isinstance(table[0], (list, tuple)):
+                flat = []
+                for pixel in table:
+                    if len(pixel) != channels:
+                        raise ValueError(
+                            "The elements of the table should "
+                            "have a length of {}.".format(channels)
+                        )
+                    flat.extend(pixel)
+                table = flat
+            items = size[0] * size[1] * size[2]
+            if len(table) != items * channels:
+                raise ValueError(
+                    "The table should have either channels * size**3 float items "
+                    "or size**3 items of channels-sized tuples with floats. "
+                    "Table should be: {}x{}x{}x{}. Actual length: {}".format(
+                        channels, size[0], size[1], size[2], len(table)
+                    )
+                )
+            self.table = table
+
+        @staticmethod
+        def _check_size(size):
+            try:
+                _, _, _ = size
+            except ValueError as e:
+                raise ValueError(
+                    "Size should be either an integer or a tuple of three integers."
+                ) from e
+            except TypeError:
+                size = (size, size, size)
+            size = [int(x) for x in size]
+            for size_1d in size:
+                if not 2 <= size_1d <= 65:
+                    raise ValueError("Size should be in [2, 65] range.")
+            return size
 
         @classmethod
         def generate(cls, size, callback, channels=3, target_mode=None):
-            sz = size if isinstance(size, (tuple, list)) else (size, size, size)
-            sr, sg, sb = sz
-            table = []
-            for b in range(sb):
-                for g in range(sg):
-                    for r in range(sr):
-                        table.extend(
-                            callback(
-                                r / (sr - 1 or 1), g / (sg - 1 or 1), b / (sb - 1 or 1)
-                            )
+            size_1d, size_2d, size_3d = cls._check_size(size)
+            if channels not in (3, 4):
+                raise ValueError("Only 3 or 4 output channels are supported")
+            table = [0] * (size_1d * size_2d * size_3d * channels)
+            idx = 0
+            for b in range(size_3d):
+                for g in range(size_2d):
+                    for r in range(size_1d):
+                        table[idx : idx + channels] = callback(
+                            r / (size_1d - 1), g / (size_2d - 1), b / (size_3d - 1)
                         )
-            return cls(sz, table, channels, target_mode)
+                        idx += channels
+            return cls(
+                (size_1d, size_2d, size_3d),
+                table,
+                channels=channels,
+                target_mode=target_mode,
+                _copy_table=False,
+            )
+
+        def transform(
+            self, callback, with_normals=False, channels=None, target_mode=None
+        ):
+            """Pillow derives a new LUT by running every entry through `callback`;
+            `with_normals` prepends the entry's own cube coordinates."""
+            if channels not in (None, 3, 4):
+                raise ValueError("Only 3 or 4 output channels are supported")
+            ch_in = self.channels
+            ch_out = channels or ch_in
+            size_1d, size_2d, size_3d = self.size
+            table = [0] * (size_1d * size_2d * size_3d * ch_out)
+            idx_in = 0
+            idx_out = 0
+            for b in range(size_3d):
+                for g in range(size_2d):
+                    for r in range(size_1d):
+                        values = self.table[idx_in : idx_in + ch_in]
+                        if with_normals:
+                            values = callback(
+                                r / (size_1d - 1),
+                                g / (size_2d - 1),
+                                b / (size_3d - 1),
+                                *values,
+                            )
+                        else:
+                            values = callback(*values)
+                        table[idx_out : idx_out + ch_out] = values
+                        idx_in += ch_in
+                        idx_out += ch_out
+            return type(self)(
+                self.size,
+                table,
+                channels=ch_out,
+                target_mode=target_mode or self.mode,
+                _copy_table=False,
+            )
+
+        def __repr__(self):
+            r = [
+                "{} from {}".format(
+                    self.__class__.__name__, self.table.__class__.__name__
+                ),
+                "size={:d}x{:d}x{:d}".format(*self.size),
+                "channels={:d}".format(self.channels),
+            ]
+            if self.mode:
+                r.append("target_mode=" + str(self.mode))
+            return "<{}>".format(" ".join(r))
 
         def filter(self, image):
             sr, sg, sb = self.size
@@ -2456,23 +2946,30 @@ def __vis_install_pil__():
                 _H("__vis_pil_frombytes__", "RGB", image.size[0], image.size[1], b64)
             )
 
-    ImageFilter.MultibandFilter = MultibandFilter
     ImageFilter.Color3DLUT = Color3DLUT
 
     # -- ImageChops ----------------------------------------------------------
     ImageChops = types.ModuleType("PIL.ImageChops")
 
     def _chop(op):
-        return lambda a, b: _wrap(_H("__vis_pil_chop__", op, a._handle, b._handle))
+        """Pillow names both operands `image1`/`image2`, and a caller who passes
+        them BY KEYWORD -- the spelling Pillow's own docs use -- used to get a
+        TypeError from this shim's `a`/`b`."""
+
+        def chop(image1, image2):
+            return _wrap(_H("__vis_pil_chop__", op, image1._handle, image2._handle))
+
+        chop.__name__ = op
+        return chop
 
     ImageChops.difference = _chop("difference")
 
-    def _chops_arith(op, a, b, scale, offset):
+    def _chops_arith(op, image1, image2, scale, offset):
         """Pillow's add/subtract: ``(a op b) / scale + offset``, clipped. The host op
         knows only the unscaled form, so a scale or an offset is applied here --
         they used to be accepted and dropped, answering a plain sum or difference."""
         if float(scale) == 1.0 and not offset:
-            return _wrap(_H("__vis_pil_chop__", op, a._handle, b._handle))
+            return _wrap(_H("__vis_pil_chop__", op, image1._handle, image2._handle))
         sc = float(scale)
         off = float(offset)
         plus = op == "add"
@@ -2480,22 +2977,24 @@ def __vis_install_pil__():
         def one(x, y):
             return _clip255((x + y if plus else x - y) / sc + off)
 
-        da = list(a.getdata())
-        db = list(b.getdata())
+        da = list(image1.getdata())
+        db = list(image2.getdata())
         if da and isinstance(da[0], tuple):
             out = [tuple(one(p, q) for p, q in zip(pa, pb)) for pa, pb in zip(da, db)]
         else:
             out = [one(pa, pb) for pa, pb in zip(da, db)]
-        res = a.copy()
+        res = image1.copy()
         res.putdata(out)
         return res
 
-    ImageChops.add = lambda a, b, scale=1.0, offset=0: _chops_arith(
-        "add", a, b, scale, offset
-    )
-    ImageChops.subtract = lambda a, b, scale=1.0, offset=0: _chops_arith(
-        "subtract", a, b, scale, offset
-    )
+    def _chops_add(image1, image2, scale=1.0, offset=0):
+        return _chops_arith("add", image1, image2, scale, offset)
+
+    def _chops_subtract(image1, image2, scale=1.0, offset=0):
+        return _chops_arith("subtract", image1, image2, scale, offset)
+
+    ImageChops.add = _chops_add
+    ImageChops.subtract = _chops_subtract
     ImageChops.multiply = _chop("multiply")
     ImageChops.screen = _chop("screen")
     ImageChops.lighter = _chop("lighter")
@@ -2505,7 +3004,6 @@ def __vis_install_pil__():
     ImageChops.logical_and = _chop("logical_and")
     ImageChops.logical_or = _chop("logical_or")
     ImageChops.logical_xor = _chop("logical_xor")
-    ImageChops.lighter = _chop("lighter")
     ImageChops.invert = lambda image: image.point(
         [255 - i for i in range(256)] * len(image.getbands())
     )
@@ -2514,8 +3012,8 @@ def __vis_install_pil__():
     ImageChops.overlay = _chop("overlay")
     ImageChops.soft_light = _chop("soft_light")
     ImageChops.hard_light = _chop("hard_light")
-    ImageChops.blend = lambda im1, im2, alpha: blend(im1, im2, alpha)
-    ImageChops.composite = lambda im1, im2, mask: composite(im1, im2, mask)
+    ImageChops.blend = lambda image1, image2, alpha: blend(image1, image2, alpha)
+    ImageChops.composite = lambda image1, image2, mask: composite(image1, image2, mask)
 
     def _chops_offset(image, xoffset, yoffset=None):
         if yoffset is None:
@@ -2882,9 +3380,28 @@ def __vis_install_pil__():
             return out
 
     ImageStat.Stat = _Stat
+    # Pillow's own compatibility alias -- documented, and absent here.
+    ImageStat.Global = _Stat
 
     # -- ImageMath -----------------------------------------------------------
     ImageMath = types.ModuleType("PIL.ImageMath")
+
+    def _operand_image(op):
+        """The Image behind an ImageMath operand, whichever spelling arrived."""
+        return op.im if isinstance(op, _Operand) else op
+
+    def _imagemath_pair(a, b, fn):
+        """Pillow's per-pixel two-operand ops (min/max/eq/ne). Both operands are
+        images or one is a scalar; the result is a new operand either way."""
+        left = _operand_image(a)
+        right = _operand_image(b)
+        if hasattr(right, "_handle"):
+            lhs = list(left.convert("L").getdata())
+            rhs = list(right.convert("L").getdata())
+            out = new("L", left.size, 0)
+            out.putdata([fn(int(x), int(y)) for x, y in zip(lhs, rhs)])
+            return _Operand(out)
+        return _Operand(left.point(lambda i: fn(int(i), right)))
 
     class _Operand:
         def __init__(self, im):
@@ -2961,6 +3478,31 @@ def __vis_install_pil__():
     ImageMath.eval = _imagemath_eval
     ImageMath.lambda_eval = _imagemath_lambda_eval
     ImageMath.unsafe_eval = _imagemath_eval
+    # Pillow exposes the expression operators as plain functions too, and builds
+    # `ops` out of them: `ImageMath.ops["convert"]` is a documented entry point
+    # that raised AttributeError here.
+    ImageMath.imagemath_int = lambda self: _Operand(_operand_image(self).convert("I"))
+    ImageMath.imagemath_float = lambda self: _Operand(_operand_image(self).convert("F"))
+    ImageMath.imagemath_convert = lambda self, mode: _Operand(
+        _operand_image(self).convert(mode)
+    )
+    ImageMath.imagemath_min = lambda self, other: _imagemath_pair(self, other, min)
+    ImageMath.imagemath_max = lambda self, other: _imagemath_pair(self, other, max)
+    ImageMath.imagemath_equal = lambda self, other: _imagemath_pair(
+        self, other, lambda a, b: 255 if a == b else 0
+    )
+    ImageMath.imagemath_notequal = lambda self, other: _imagemath_pair(
+        self, other, lambda a, b: 0 if a == b else 255
+    )
+    ImageMath.ops = {
+        "int": ImageMath.imagemath_int,
+        "float": ImageMath.imagemath_float,
+        "convert": ImageMath.imagemath_convert,
+        "min": ImageMath.imagemath_min,
+        "max": ImageMath.imagemath_max,
+        "equal": ImageMath.imagemath_equal,
+        "notequal": ImageMath.imagemath_notequal,
+    }
 
     # -- ImageSequence -------------------------------------------------------
     ImageSequence = types.ModuleType("PIL.ImageSequence")
@@ -2968,17 +3510,17 @@ def __vis_install_pil__():
     class _SeqIterator:
         def __init__(self, im):
             self.im = im
-            self.pos = 0
+            self.position = 0
 
         def __iter__(self):
             return self
 
         def __next__(self):
             try:
-                self.im.seek(self.pos)
+                self.im.seek(self.position)
             except EOFError:
                 raise StopIteration
-            self.pos += 1
+            self.position += 1
             return self.im
 
         def __getitem__(self, ix):
@@ -3012,22 +3554,123 @@ def __vis_install_pil__():
     class _Palette:
         def __init__(self, mode="RGB", palette=None, size=0):
             self.mode = mode
+            self.rawmode = None
+            self.dirty = None
             self.palette = (
                 list(palette)
                 if palette is not None
                 else [i for i in range(256) for _ in range(3)]
             )
 
+        @property
+        def colors(self):
+            """Pillow's `{colour tuple: index}` view of the palette. It only ever
+            existed as a plain attribute here, so a caller reading it -- the way
+            `getcolor` assigns through it -- hit AttributeError."""
+            bands = len(self.mode)
+            out = {}
+            for i in range(len(self.palette) // bands):
+                key = tuple(
+                    int(self.palette[i * bands + b]) & 255 for b in range(bands)
+                )
+                out.setdefault(key, i)
+            return out
+
+        def copy(self):
+            out = _Palette(self.mode, list(self.palette))
+            out.rawmode = self.rawmode
+            out.dirty = self.dirty
+            return out
+
         def getdata(self):
+            if self.rawmode is not None:
+                return (self.rawmode, self.palette)
             return (self.mode, bytes(bytearray(int(x) & 255 for x in self.palette)))
 
         def tobytes(self):
+            if self.rawmode is not None:
+                raise ValueError("palette contains raw palette data")
             return bytes(bytearray(int(x) & 255 for x in self.palette))
+
+        tostring = tobytes
+
+        def save(self, fp):
+            """Pillow writes the palette out as a GIMP palette file."""
+            if isinstance(fp, str):
+                fp = open(fp, "w")
+            fp.write("# Palette\n")
+            fp.write("# Mode: %s\n" % self.mode)
+            bands = len(self.mode)
+            for i in range(len(self.palette) // bands):
+                fp.write("%d" % i)
+                for b in range(bands):
+                    fp.write(" %d" % (int(self.palette[i * bands + b]) & 255))
+                fp.write("\n")
+            fp.close()
 
         def getcolor(self, color, image=None):
             return _getrgb(color)[0]
 
+    def _make_linear_lut(black, white):
+        if black != 0:
+            raise NotImplementedError("black must be 0")
+        return [white * i // 255 for i in range(256)]
+
+    def _make_gamma_lut(exp):
+        return [int(((i / 255.0) ** exp) * 255.0 + 0.5) for i in range(256)]
+
+    def _palette_raw(rawmode, data):
+        """Pillow's `ImagePalette.raw`: a palette holding UNDECODED bytes, which
+        `getdata` hands back verbatim instead of re-encoding."""
+        palette = _Palette()
+        palette.rawmode = rawmode
+        palette.palette = data
+        palette.dirty = 1
+        return palette
+
     ImagePalette.ImagePalette = _Palette
+    ImagePalette.raw = _palette_raw
+    ImagePalette.make_linear_lut = _make_linear_lut
+    ImagePalette.make_gamma_lut = _make_gamma_lut
+    ImagePalette.negative = lambda mode="RGB": _Palette(
+        mode, [i // len(mode) for i in reversed(range(256 * len(mode)))]
+    )
+    ImagePalette.random = lambda mode="RGB": _Palette(
+        mode, [_random.randint(0, 255) for _ in range(256 * len(mode))]
+    )
+    ImagePalette.sepia = lambda white="#fff0c0": _Palette(
+        "RGB",
+        [
+            [_make_linear_lut(0, band) for band in _getrgb(white)[:3]][i % 3][i // 3]
+            for i in range(256 * 3)
+        ],
+    )
+    ImagePalette.wedge = lambda mode="RGB": _Palette(
+        mode, [i // len(mode) for i in range(256 * len(mode))]
+    )
+
+    def _palette_load(filename):
+        """Pillow reads GIMP palette/gradient files here. Only the plain text
+        GIMP palette this shim can also WRITE is understood; anything else is
+        the OSError Pillow raises for a palette it cannot parse."""
+        lut = []
+        with open(filename, "r") as fp:
+            for line in fp:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                try:
+                    rgb = [int(x) for x in parts[-3:]]
+                except ValueError:
+                    continue
+                if len(rgb) == 3:
+                    lut.extend(rgb)
+        if not lut:
+            raise OSError("cannot load palette")
+        return bytes(bytearray(v & 255 for v in lut)), "RGB"
+
+    ImagePalette.load = _palette_load
 
     # -- ImageTransform ------------------------------------------------------
     ImageTransform = types.ModuleType("PIL.ImageTransform")
@@ -3038,6 +3681,14 @@ def __vis_install_pil__():
 
         def getdata(self):
             return (self.method, self.data)
+
+        def transform(self, size, image, **options):
+            """Pillow's `Transform.transform`: applying the transform IS the
+            object's own job, so `im.transform(size, tf)` and `tf.transform(size,
+            im)` are the same call. Only `getdata` existed, so the second
+            spelling -- the one Pillow's own docs use -- raised AttributeError."""
+            method, data = self.getdata()
+            return image.transform(size, method, data, **options)
 
     class AffineTransform(_Transform):
         method = AFFINE
@@ -3063,92 +3714,666 @@ def __vis_install_pil__():
 
     # -- PIL.features --------------------------------------------------------
     features = types.ModuleType("PIL.features")
-    _FEATURES = {
-        "jpg": True,
-        "zlib": True,
-        "libjpeg_turbo": False,
-        "freetype2": True,
-        "raqm": False,
-        "webp": False,
-        "transp_webp": False,
-        "jpg_2000": False,
+    # Pillow keys these three tables by name and `check()` dispatches on WHICH
+    # table holds the name; publishing only a flag dict meant `features.modules`
+    # and friends were missing and `check_codec`/`check_module` said True for
+    # anything at all, including a name Pillow rejects.
+    features.modules = {
+        "pil": ("PIL._imaging", "PILLOW_VERSION"),
+        "tkinter": ("PIL._tkinter_finder", "tk_version"),
+        "freetype2": ("PIL._imagingft", "freetype2_version"),
+        "littlecms2": ("PIL._imagingcms", "littlecms_version"),
+        "webp": ("PIL._webp", "webpdecoder_version"),
     }
-    features.check = lambda feature: bool(_FEATURES.get(feature, False))
-    features.check_feature = features.check
-    features.check_codec = lambda feature: True
-    features.check_module = lambda module: True
-    features.version = lambda feature: None
-    features.version_feature = lambda feature: None
-    features.version_codec = lambda feature: None
-    features.version_module = lambda module: None
-    features.get_supported = lambda: ["jpg", "zlib", "freetype2"]
-    features.get_supported_modules = lambda: ["freetype2"]
-    features.get_supported_codecs = lambda: ["jpg", "zlib"]
-    features.get_supported_features = lambda: []
-    features.pilinfo = lambda out=None, supported_formats=True: None
+    features.codecs = {
+        "jpg": ("jpeg", "jpeglib"),
+        "jpg_2000": ("jpeg2k", "jp2klib"),
+        "zlib": ("zip", "zlib"),
+        "libtiff": ("libtiff", "libtiff"),
+    }
+    features.features = {
+        "webp_anim": ("PIL._webp", "HAVE_WEBPANIM", None),
+        "webp_mux": ("PIL._webp", "HAVE_WEBPMUX", None),
+        "transp_webp": ("PIL._webp", "HAVE_TRANSPARENCY", None),
+        "raqm": ("PIL._imagingft", "HAVE_RAQM", "raqm_version"),
+        "fribidi": ("PIL._imagingft", "HAVE_FRIBIDI", "fribidi_version"),
+        "harfbuzz": ("PIL._imagingft", "HAVE_HARFBUZZ", "harfbuzz_version"),
+        "libjpeg_turbo": ("PIL._imaging", "HAVE_LIBJPEGTURBO", "libjpeg_turbo_version"),
+        "libimagequant": ("PIL._imaging", "HAVE_LIBIMAGEQUANT", "imagequant_version"),
+        "xcb": ("PIL._imaging", "HAVE_XCB", None),
+    }
+    # What this host's renderer really decodes and encodes.
+    _SUPPORTED_MODULES = ["pil", "freetype2"]
+    _SUPPORTED_CODECS = ["jpg", "zlib"]
+    _SUPPORTED_FEATURES = []
+
+    def _check_module(feature):
+        if feature not in features.modules:
+            raise ValueError("Unknown module %s" % (feature,))
+        return feature in _SUPPORTED_MODULES
+
+    def _check_codec(feature):
+        if feature not in features.codecs:
+            raise ValueError("Unknown codec %s" % (feature,))
+        return feature in _SUPPORTED_CODECS
+
+    def _check_feature(feature):
+        if feature not in features.features:
+            raise ValueError("Unknown feature %s" % (feature,))
+        return feature in _SUPPORTED_FEATURES
+
+    def _features_check(feature):
+        if feature in features.modules:
+            return _check_module(feature)
+        if feature in features.codecs:
+            return _check_codec(feature)
+        if feature in features.features:
+            return _check_feature(feature)
+        return False
+
+    features.check = _features_check
+    features.check_module = _check_module
+    features.check_codec = _check_codec
+    features.check_feature = _check_feature
+    features.version_module = lambda feature: (
+        Image_mod.__version__ if _check_module(feature) else None
+    )
+    features.version_codec = lambda feature: (
+        "vis-imaging" if _check_codec(feature) else None
+    )
+    features.version_feature = lambda feature: (
+        "vis-imaging" if _check_feature(feature) else None
+    )
+
+    def _features_version(feature):
+        if feature in features.modules:
+            return features.version_module(feature)
+        if feature in features.codecs:
+            return features.version_codec(feature)
+        if feature in features.features:
+            return features.version_feature(feature)
+        return None
+
+    features.version = _features_version
+    features.get_supported_modules = lambda: list(_SUPPORTED_MODULES)
+    features.get_supported_codecs = lambda: list(_SUPPORTED_CODECS)
+    features.get_supported_features = lambda: list(_SUPPORTED_FEATURES)
+    features.get_supported = lambda: (
+        list(_SUPPORTED_MODULES) + list(_SUPPORTED_CODECS) + list(_SUPPORTED_FEATURES)
+    )
+
+    def _pilinfo(out=None, supported_formats=True):
+        """Pillow PRINTS its build report here and returns None. The stub
+        returned None without printing, so `python -m PIL`-style diagnostics
+        came back blank."""
+        if out is None:
+            out = sys.stdout
+        out.write("-" * 68 + "\n")
+        out.write("Pillow %s\n" % (Image_mod.__version__,))
+        out.write("-" * 68 + "\n")
+        for name in features.get_supported():
+            out.write("--- %s support ok\n" % (name,))
+        if supported_formats:
+            for fmt in sorted(set(_EXTENSION.values())):
+                exts = sorted(k for k, v in _EXTENSION.items() if v == fmt)
+                out.write("%s\n" % (fmt,))
+                out.write("Extensions: %s\n" % (", ".join(exts),))
+        out.write("-" * 68 + "\n")
+
+    features.pilinfo = _pilinfo
 
     # -- ExifTags / TiffTags -------------------------------------------------
+    # Pillow's tag names come FROM the enums: `TAGS` is built out of `Base`, so
+    # publishing a stub class left `ExifTags.Base.Make` an AttributeError while
+    # `TAGS[271]` answered. One table, both spellings.
     ExifTags = types.ModuleType("PIL.ExifTags")
-    ExifTags.TAGS = {
-        256: "ImageWidth",
-        257: "ImageLength",
-        258: "BitsPerSample",
-        259: "Compression",
-        262: "PhotometricInterpretation",
-        271: "Make",
-        272: "Model",
-        274: "Orientation",
-        277: "SamplesPerPixel",
-        282: "XResolution",
-        283: "YResolution",
-        296: "ResolutionUnit",
-        305: "Software",
-        306: "DateTime",
-        315: "Artist",
-        316: "HostComputer",
-        33432: "Copyright",
-        34665: "ExifOffset",
-        36867: "DateTimeOriginal",
-        37377: "ShutterSpeedValue",
-        37378: "ApertureValue",
-        37386: "FocalLength",
-        40962: "PixelXDimension",
-        40963: "PixelYDimension",
-    }
-    ExifTags.GPSTAGS = {
-        0: "GPSVersionID",
-        1: "GPSLatitudeRef",
-        2: "GPSLatitude",
-        3: "GPSLongitudeRef",
-        4: "GPSLongitude",
-        5: "GPSAltitudeRef",
-        6: "GPSAltitude",
-        7: "GPSTimeStamp",
-    }
 
-    class _TagEnum:
-        pass
+    class _TagEnum(int):
+        """One member of a Pillow tag enum: an `int` that also knows its `name`,
+        so `ExifTags.Base.Orientation == 274` and `.name` both hold. Pillow uses
+        `enum.IntEnum`; this keeps the value semantics callers actually index
+        dicts with."""
 
-    ExifTags.Base = _TagEnum
-    ExifTags.GPS = _TagEnum
-    ExifTags.Interop = _TagEnum
-    ExifTags.IFD = _TagEnum
-    ExifTags.LightSource = _TagEnum
+        def __new__(cls, value, name):
+            self = int.__new__(cls, value)
+            self._name = name
+            return self
 
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def value(self):
+            return int(self)
+
+        def __repr__(self):
+            return "<%s: %d>" % (self._name, int(self))
+
+    def _tag_enum(cls_name, members):
+        """Build a Pillow-shaped tag enum: named members, iteration in
+        declaration order, and lookup by value like `IntEnum(value)`."""
+        ns = {}
+        order = []
+        for nm, val in members:
+            member = _TagEnum(val, nm)
+            ns[nm] = member
+            order.append(member)
+
+        def _iter(cls):
+            return iter(order)
+
+        def _call(cls, value):
+            for m in order:
+                if int(m) == int(value):
+                    return m
+            raise ValueError("%d is not a valid %s" % (value, cls_name))
+
+        meta = type(
+            cls_name + "Meta",
+            (type,),
+            {
+                "__iter__": lambda cls: _iter(cls),
+                "__call__": lambda cls, v: _call(cls, v),
+            },
+        )
+        ns["__doc__"] = "Pillow's PIL.ExifTags." + cls_name + " tag enum."
+        return meta(cls_name, (object,), ns)
+
+    _BASE_MEMBERS = (
+        ("InteropIndex", 1),
+        ("ProcessingSoftware", 11),
+        ("NewSubfileType", 254),
+        ("SubfileType", 255),
+        ("ImageWidth", 256),
+        ("ImageLength", 257),
+        ("BitsPerSample", 258),
+        ("Compression", 259),
+        ("PhotometricInterpretation", 262),
+        ("Thresholding", 263),
+        ("CellWidth", 264),
+        ("CellLength", 265),
+        ("FillOrder", 266),
+        ("DocumentName", 269),
+        ("ImageDescription", 270),
+        ("Make", 271),
+        ("Model", 272),
+        ("StripOffsets", 273),
+        ("Orientation", 274),
+        ("SamplesPerPixel", 277),
+        ("RowsPerStrip", 278),
+        ("StripByteCounts", 279),
+        ("MinSampleValue", 280),
+        ("MaxSampleValue", 281),
+        ("XResolution", 282),
+        ("YResolution", 283),
+        ("PlanarConfiguration", 284),
+        ("PageName", 285),
+        ("FreeOffsets", 288),
+        ("FreeByteCounts", 289),
+        ("GrayResponseUnit", 290),
+        ("GrayResponseCurve", 291),
+        ("T4Options", 292),
+        ("T6Options", 293),
+        ("ResolutionUnit", 296),
+        ("PageNumber", 297),
+        ("TransferFunction", 301),
+        ("Software", 305),
+        ("DateTime", 306),
+        ("Artist", 315),
+        ("HostComputer", 316),
+        ("Predictor", 317),
+        ("WhitePoint", 318),
+        ("PrimaryChromaticities", 319),
+        ("ColorMap", 320),
+        ("HalftoneHints", 321),
+        ("TileWidth", 322),
+        ("TileLength", 323),
+        ("TileOffsets", 324),
+        ("TileByteCounts", 325),
+        ("SubIFDs", 330),
+        ("InkSet", 332),
+        ("InkNames", 333),
+        ("NumberOfInks", 334),
+        ("DotRange", 336),
+        ("TargetPrinter", 337),
+        ("ExtraSamples", 338),
+        ("SampleFormat", 339),
+        ("SMinSampleValue", 340),
+        ("SMaxSampleValue", 341),
+        ("TransferRange", 342),
+        ("ClipPath", 343),
+        ("XClipPathUnits", 344),
+        ("YClipPathUnits", 345),
+        ("Indexed", 346),
+        ("JPEGTables", 347),
+        ("OPIProxy", 351),
+        ("JPEGProc", 512),
+        ("JpegIFOffset", 513),
+        ("JpegIFByteCount", 514),
+        ("JpegRestartInterval", 515),
+        ("JpegLosslessPredictors", 517),
+        ("JpegPointTransforms", 518),
+        ("JpegQTables", 519),
+        ("JpegDCTables", 520),
+        ("JpegACTables", 521),
+        ("YCbCrCoefficients", 529),
+        ("YCbCrSubSampling", 530),
+        ("YCbCrPositioning", 531),
+        ("ReferenceBlackWhite", 532),
+        ("XMLPacket", 700),
+        ("RelatedImageFileFormat", 4096),
+        ("RelatedImageWidth", 4097),
+        ("RelatedImageLength", 4098),
+        ("Rating", 18246),
+        ("RatingPercent", 18249),
+        ("ImageID", 32781),
+        ("CFARepeatPatternDim", 33421),
+        ("BatteryLevel", 33423),
+        ("Copyright", 33432),
+        ("ExposureTime", 33434),
+        ("FNumber", 33437),
+        ("IPTCNAA", 33723),
+        ("ImageResources", 34377),
+        ("ExifOffset", 34665),
+        ("InterColorProfile", 34675),
+        ("ExposureProgram", 34850),
+        ("SpectralSensitivity", 34852),
+        ("GPSInfo", 34853),
+        ("ISOSpeedRatings", 34855),
+        ("OECF", 34856),
+        ("Interlace", 34857),
+        ("TimeZoneOffset", 34858),
+        ("SelfTimerMode", 34859),
+        ("SensitivityType", 34864),
+        ("StandardOutputSensitivity", 34865),
+        ("RecommendedExposureIndex", 34866),
+        ("ISOSpeed", 34867),
+        ("ISOSpeedLatitudeyyy", 34868),
+        ("ISOSpeedLatitudezzz", 34869),
+        ("ExifVersion", 36864),
+        ("DateTimeOriginal", 36867),
+        ("DateTimeDigitized", 36868),
+        ("OffsetTime", 36880),
+        ("OffsetTimeOriginal", 36881),
+        ("OffsetTimeDigitized", 36882),
+        ("ComponentsConfiguration", 37121),
+        ("CompressedBitsPerPixel", 37122),
+        ("ShutterSpeedValue", 37377),
+        ("ApertureValue", 37378),
+        ("BrightnessValue", 37379),
+        ("ExposureBiasValue", 37380),
+        ("MaxApertureValue", 37381),
+        ("SubjectDistance", 37382),
+        ("MeteringMode", 37383),
+        ("LightSource", 37384),
+        ("Flash", 37385),
+        ("FocalLength", 37386),
+        ("Noise", 37389),
+        ("ImageNumber", 37393),
+        ("SecurityClassification", 37394),
+        ("ImageHistory", 37395),
+        ("TIFFEPStandardID", 37398),
+        ("MakerNote", 37500),
+        ("UserComment", 37510),
+        ("SubsecTime", 37520),
+        ("SubsecTimeOriginal", 37521),
+        ("SubsecTimeDigitized", 37522),
+        ("AmbientTemperature", 37888),
+        ("Humidity", 37889),
+        ("Pressure", 37890),
+        ("WaterDepth", 37891),
+        ("Acceleration", 37892),
+        ("CameraElevationAngle", 37893),
+        ("XPTitle", 40091),
+        ("XPComment", 40092),
+        ("XPAuthor", 40093),
+        ("XPKeywords", 40094),
+        ("XPSubject", 40095),
+        ("FlashPixVersion", 40960),
+        ("ColorSpace", 40961),
+        ("ExifImageWidth", 40962),
+        ("ExifImageHeight", 40963),
+        ("RelatedSoundFile", 40964),
+        ("ExifInteroperabilityOffset", 40965),
+        ("FlashEnergy", 41483),
+        ("SpatialFrequencyResponse", 41484),
+        ("FocalPlaneXResolution", 41486),
+        ("FocalPlaneYResolution", 41487),
+        ("FocalPlaneResolutionUnit", 41488),
+        ("SubjectLocation", 41492),
+        ("ExposureIndex", 41493),
+        ("SensingMethod", 41495),
+        ("FileSource", 41728),
+        ("SceneType", 41729),
+        ("CFAPattern", 41730),
+        ("CustomRendered", 41985),
+        ("ExposureMode", 41986),
+        ("WhiteBalance", 41987),
+        ("DigitalZoomRatio", 41988),
+        ("FocalLengthIn35mmFilm", 41989),
+        ("SceneCaptureType", 41990),
+        ("GainControl", 41991),
+        ("Contrast", 41992),
+        ("Saturation", 41993),
+        ("Sharpness", 41994),
+        ("DeviceSettingDescription", 41995),
+        ("SubjectDistanceRange", 41996),
+        ("ImageUniqueID", 42016),
+        ("CameraOwnerName", 42032),
+        ("BodySerialNumber", 42033),
+        ("LensSpecification", 42034),
+        ("LensMake", 42035),
+        ("LensModel", 42036),
+        ("LensSerialNumber", 42037),
+        ("CompositeImage", 42080),
+        ("CompositeImageCount", 42081),
+        ("CompositeImageExposureTimes", 42082),
+        ("Gamma", 42240),
+        ("PrintImageMatching", 50341),
+        ("DNGVersion", 50706),
+        ("DNGBackwardVersion", 50707),
+        ("UniqueCameraModel", 50708),
+        ("LocalizedCameraModel", 50709),
+        ("CFAPlaneColor", 50710),
+        ("CFALayout", 50711),
+        ("LinearizationTable", 50712),
+        ("BlackLevelRepeatDim", 50713),
+        ("BlackLevel", 50714),
+        ("BlackLevelDeltaH", 50715),
+        ("BlackLevelDeltaV", 50716),
+        ("WhiteLevel", 50717),
+        ("DefaultScale", 50718),
+        ("DefaultCropOrigin", 50719),
+        ("DefaultCropSize", 50720),
+        ("ColorMatrix1", 50721),
+        ("ColorMatrix2", 50722),
+        ("CameraCalibration1", 50723),
+        ("CameraCalibration2", 50724),
+        ("ReductionMatrix1", 50725),
+        ("ReductionMatrix2", 50726),
+        ("AnalogBalance", 50727),
+        ("AsShotNeutral", 50728),
+        ("AsShotWhiteXY", 50729),
+        ("BaselineExposure", 50730),
+        ("BaselineNoise", 50731),
+        ("BaselineSharpness", 50732),
+        ("BayerGreenSplit", 50733),
+        ("LinearResponseLimit", 50734),
+        ("CameraSerialNumber", 50735),
+        ("LensInfo", 50736),
+        ("ChromaBlurRadius", 50737),
+        ("AntiAliasStrength", 50738),
+        ("ShadowScale", 50739),
+        ("DNGPrivateData", 50740),
+        ("MakerNoteSafety", 50741),
+        ("CalibrationIlluminant1", 50778),
+        ("CalibrationIlluminant2", 50779),
+        ("BestQualityScale", 50780),
+        ("RawDataUniqueID", 50781),
+        ("OriginalRawFileName", 50827),
+        ("OriginalRawFileData", 50828),
+        ("ActiveArea", 50829),
+        ("MaskedAreas", 50830),
+        ("AsShotICCProfile", 50831),
+        ("AsShotPreProfileMatrix", 50832),
+        ("CurrentICCProfile", 50833),
+        ("CurrentPreProfileMatrix", 50834),
+        ("ColorimetricReference", 50879),
+        ("CameraCalibrationSignature", 50931),
+        ("ProfileCalibrationSignature", 50932),
+        ("AsShotProfileName", 50934),
+        ("NoiseReductionApplied", 50935),
+        ("ProfileName", 50936),
+        ("ProfileHueSatMapDims", 50937),
+        ("ProfileHueSatMapData1", 50938),
+        ("ProfileHueSatMapData2", 50939),
+        ("ProfileToneCurve", 50940),
+        ("ProfileEmbedPolicy", 50941),
+        ("ProfileCopyright", 50942),
+        ("ForwardMatrix1", 50964),
+        ("ForwardMatrix2", 50965),
+        ("PreviewApplicationName", 50966),
+        ("PreviewApplicationVersion", 50967),
+        ("PreviewSettingsName", 50968),
+        ("PreviewSettingsDigest", 50969),
+        ("PreviewColorSpace", 50970),
+        ("PreviewDateTime", 50971),
+        ("RawImageDigest", 50972),
+        ("OriginalRawFileDigest", 50973),
+        ("SubTileBlockSize", 50974),
+        ("RowInterleaveFactor", 50975),
+        ("ProfileLookTableDims", 50981),
+        ("ProfileLookTableData", 50982),
+        ("OpcodeList1", 51008),
+        ("OpcodeList2", 51009),
+        ("OpcodeList3", 51022),
+        ("NoiseProfile", 51041),
+    )
+
+    _GPS_MEMBERS = (
+        ("GPSVersionID", 0),
+        ("GPSLatitudeRef", 1),
+        ("GPSLatitude", 2),
+        ("GPSLongitudeRef", 3),
+        ("GPSLongitude", 4),
+        ("GPSAltitudeRef", 5),
+        ("GPSAltitude", 6),
+        ("GPSTimeStamp", 7),
+        ("GPSSatellites", 8),
+        ("GPSStatus", 9),
+        ("GPSMeasureMode", 10),
+        ("GPSDOP", 11),
+        ("GPSSpeedRef", 12),
+        ("GPSSpeed", 13),
+        ("GPSTrackRef", 14),
+        ("GPSTrack", 15),
+        ("GPSImgDirectionRef", 16),
+        ("GPSImgDirection", 17),
+        ("GPSMapDatum", 18),
+        ("GPSDestLatitudeRef", 19),
+        ("GPSDestLatitude", 20),
+        ("GPSDestLongitudeRef", 21),
+        ("GPSDestLongitude", 22),
+        ("GPSDestBearingRef", 23),
+        ("GPSDestBearing", 24),
+        ("GPSDestDistanceRef", 25),
+        ("GPSDestDistance", 26),
+        ("GPSProcessingMethod", 27),
+        ("GPSAreaInformation", 28),
+        ("GPSDateStamp", 29),
+        ("GPSDifferential", 30),
+        ("GPSHPositioningError", 31),
+    )
+
+    _INTEROP_MEMBERS = (
+        ("InteropIndex", 1),
+        ("InteropVersion", 2),
+        ("RelatedImageFileFormat", 4096),
+        ("RelatedImageWidth", 4097),
+        ("RleatedImageHeight", 4098),
+    )
+
+    _IFD_MEMBERS = (
+        ("Exif", 34665),
+        ("GPSInfo", 34853),
+        ("Makernote", 37500),
+        ("Interop", 40965),
+        ("IFD1", -1),
+    )
+
+    _LIGHTSOURCE_MEMBERS = (
+        ("Unknown", 0),
+        ("Daylight", 1),
+        ("Fluorescent", 2),
+        ("Tungsten", 3),
+        ("Flash", 4),
+        ("Fine", 9),
+        ("Cloudy", 10),
+        ("Shade", 11),
+        ("DaylightFluorescent", 12),
+        ("DayWhiteFluorescent", 13),
+        ("CoolWhiteFluorescent", 14),
+        ("WhiteFluorescent", 15),
+        ("StandardLightA", 17),
+        ("StandardLightB", 18),
+        ("StandardLightC", 19),
+        ("D55", 20),
+        ("D65", 21),
+        ("D75", 22),
+        ("D50", 23),
+        ("ISO", 24),
+        ("Other", 255),
+    )
+
+    ExifTags.Base = _tag_enum("Base", _BASE_MEMBERS)
+    ExifTags.GPS = _tag_enum("GPS", _GPS_MEMBERS)
+    ExifTags.Interop = _tag_enum("Interop", _INTEROP_MEMBERS)
+    ExifTags.IFD = _tag_enum("IFD", _IFD_MEMBERS)
+    ExifTags.LightSource = _tag_enum("LightSource", _LIGHTSOURCE_MEMBERS)
+
+    # Pillow: TAGS is the Base enum plus six tags it names differently there.
+    ExifTags.TAGS = dict((v, n) for n, v in _BASE_MEMBERS)
+    ExifTags.TAGS.update(
+        {
+            37388: "SpatialFrequencyResponse",
+            37396: "SubjectLocation",
+            37397: "ExposureIndex",
+            33422: "CFAPattern",
+            37387: "FlashEnergy",
+            37398: "TIFF/EPStandardID",
+        }
+    )
+    ExifTags.GPSTAGS = dict((v, n) for n, v in _GPS_MEMBERS)
+
+    # -- TiffTags --------------------------------------------------------------
     TiffTags = types.ModuleType("PIL.TiffTags")
+    TiffTags.BYTE = 1
+    TiffTags.ASCII = 2
+    TiffTags.SHORT = 3
+    TiffTags.LONG = 4
+    TiffTags.RATIONAL = 5
+    TiffTags.SIGNED_BYTE = 6
+    TiffTags.UNDEFINED = 7
+    TiffTags.SIGNED_SHORT = 8
+    TiffTags.SIGNED_LONG = 9
+    TiffTags.SIGNED_RATIONAL = 10
+    TiffTags.FLOAT = 11
+    TiffTags.DOUBLE = 12
+    TiffTags.IFD = 13
+    TiffTags.LONG8 = 16
+    TiffTags.TYPES = {}
+
+    class _TagInfo(_collections.namedtuple("_TagInfo", "value name type length enum")):
+        """Pillow's `TiffTags.TagInfo`: what `lookup()` answers. `cvt_enum` maps a
+        raw field value through the tag's own enum when it has one."""
+
+        __slots__ = ()
+
+        def __new__(cls, value=None, name="unknown", type=None, length=None, enum=None):
+            return super(_TagInfo, cls).__new__(
+                cls, value, name, type, length, enum or {}
+            )
+
+        def cvt_enum(self, value):
+            return self.enum.get(value, value) if self.enum else value
+
+    TiffTags.TagInfo = _TagInfo
     TiffTags.TAGS = dict(ExifTags.TAGS)
-    TiffTags.TAGS_V2 = {}
-    TiffTags.lookup = lambda tag, group=None: None
+    # Pillow's V2 table carries a type per tag; the tags this host actually reads
+    # out of a TIFF/EXIF block are typed here, and lookup() falls back to TAGS.
+    TiffTags.TAGS_V2 = {
+        256: _TagInfo(256, "ImageWidth", 4, 1),
+        257: _TagInfo(257, "ImageLength", 4, 1),
+        258: _TagInfo(258, "BitsPerSample", 3, 0),
+        259: _TagInfo(259, "Compression", 3, 1),
+        262: _TagInfo(262, "PhotometricInterpretation", 3, 1),
+        271: _TagInfo(271, "Make", 2, 1),
+        272: _TagInfo(272, "Model", 2, 1),
+        273: _TagInfo(273, "StripOffsets", 4, 0),
+        274: _TagInfo(274, "Orientation", 3, 1),
+        277: _TagInfo(277, "SamplesPerPixel", 3, 1),
+        278: _TagInfo(278, "RowsPerStrip", 4, 1),
+        279: _TagInfo(279, "StripByteCounts", 4, 0),
+        282: _TagInfo(282, "XResolution", 5, 1),
+        283: _TagInfo(283, "YResolution", 5, 1),
+        284: _TagInfo(284, "PlanarConfiguration", 3, 1),
+        296: _TagInfo(296, "ResolutionUnit", 3, 1),
+        305: _TagInfo(305, "Software", 2, 1),
+        306: _TagInfo(306, "DateTime", 2, 1),
+        315: _TagInfo(315, "Artist", 2, 1),
+        320: _TagInfo(320, "ColorMap", 3, 0),
+        33432: _TagInfo(33432, "Copyright", 2, 1),
+        34665: _TagInfo(34665, "ExifIFD", 4, 1),
+        34853: _TagInfo(34853, "GPSInfoIFD", 4, 1),
+    }
+    TiffTags.TAGS_V2_GROUPS = {
+        34665: {},
+        34853: {},
+        40965: {},
+    }
+    # libtiff writes these itself, so Pillow never adds them to a custom dict.
+    TiffTags.LIBTIFF_CORE = set(
+        [
+            255,
+            256,
+            257,
+            258,
+            259,
+            262,
+            263,
+            266,
+            269,
+            274,
+            277,
+            278,
+            280,
+            281,
+            282,
+            283,
+            284,
+            286,
+            287,
+            296,
+            297,
+            301,
+            320,
+            321,
+            322,
+            323,
+            330,
+            333,
+            338,
+            339,
+            340,
+            341,
+            530,
+            531,
+            532,
+            32995,
+            32996,
+            32997,
+            32998,
+            65537,
+        ]
+    )
+
+    def _tifftags_lookup(tag, group=None):
+        if group is not None:
+            info = (
+                TiffTags.TAGS_V2_GROUPS[group].get(tag)
+                if group in TiffTags.TAGS_V2_GROUPS
+                else None
+            )
+        else:
+            info = TiffTags.TAGS_V2.get(tag)
+        return info or _TagInfo(tag, TiffTags.TAGS.get(tag, "unknown"))
+
+    TiffTags.lookup = _tifftags_lookup
 
     # -- import-compatible modules for GUI/file-plugin entry points ----------
     # They are intentionally explicit about unavailable host integration instead
     # of making ``from PIL import ImageGrab`` fail as though Pillow were broken.
-    def _host_unavailable(name):
-        def unavailable(*args, **kwargs):
-            raise NotImplementedError(name + " is unavailable in the vis sandbox")
-
-        return unavailable
-
     class _Parser:
         """Pillow's incremental `ImageFile.Parser`. The host decoder is one-shot, so
         the fed chunks are buffered and the complete file is opened at `close()`;
@@ -3159,6 +4384,8 @@ def __vis_install_pil__():
             self.image = None
             self.offset = 0
             self.finished = 0
+            self.decoder = None
+            self.incremental = None
 
         def reset(self):
             self.data = b""
@@ -3170,6 +4397,16 @@ def __vis_install_pil__():
                 raise EOFError("cannot feed a closed parser")
             self.data += bytes(data)
 
+        def __enter__(self):
+            """Pillow's Parser is a context manager and its own docs use `with`;
+            only the plain call form worked, so `with ImageFile.Parser() as p`
+            raised AttributeError before a single byte was fed."""
+            return self
+
+        def __exit__(self, *exc):
+            self.close()
+            return False
+
         def close(self):
             self.finished = 1
             if self.image is None:
@@ -3179,33 +4416,396 @@ def __vis_install_pil__():
     def _raise_oserror(error):
         raise OSError("decoder error %s" % (error,))
 
+    class _PyCodec:
+        """Pillow's plugin codec base. A pure-Python plugin subclasses these and
+        registers it; there is no plugin decoder behind this host, so the shim
+        carries the SHAPE (`setimage`/`setfd`/`cleanup`) and refuses only the
+        step that would need one."""
+
+        def __init__(self, mode, *args):
+            self.im = None
+            self.state = _PyCodecState()
+            self.fd = None
+            self.mode = mode
+            self.init(args)
+
+        def init(self, args):
+            self.args = args
+
+        def cleanup(self):
+            pass
+
+        def setfd(self, fd):
+            self.fd = fd
+
+        def setimage(self, im, extents=None):
+            self.im = im
+            if extents:
+                (x0, y0, x1, y1) = extents
+            else:
+                (x0, y0, x1, y1) = (0, 0, 0, 0)
+            if x0 == 0 and x1 == 0:
+                self.state.xsize, self.state.ysize = getattr(im, "size", (0, 0))
+            else:
+                self.state.xoff = x0
+                self.state.yoff = y0
+                self.state.xsize = x1 - x0
+                self.state.ysize = y1 - y0
+            if self.state.xsize <= 0 or self.state.ysize <= 0:
+                raise ValueError("Size cannot be negative")
+
+    class _PyCodecState:
+        def __init__(self):
+            self.xsize = 0
+            self.ysize = 0
+            self.xoff = 0
+            self.yoff = 0
+
+        def extents(self):
+            return (
+                self.xoff,
+                self.yoff,
+                self.xoff + self.xsize,
+                self.yoff + self.ysize,
+            )
+
+    class _PyDecoder(_PyCodec):
+        _pulls_fd = False
+
+        @property
+        def pulls_fd(self):
+            return self._pulls_fd
+
+        def decode(self, buffer):
+            raise NotImplementedError()
+
+        def set_as_raw(self, data, rawmode=None):
+            raise NotImplementedError(
+                "vis PIL shim: a plugin decoder cannot write into the host raster"
+            )
+
+    class _PyEncoder(_PyCodec):
+        _pushes_fd = False
+
+        @property
+        def pushes_fd(self):
+            return self._pushes_fd
+
+        def encode(self, bufsize):
+            raise NotImplementedError()
+
+        def encode_to_pyfd(self):
+            if not self.pushes_fd:
+                return (0, -8)
+            bytes_consumed, errcode, data = self.encode(0)
+            if data:
+                self.fd.write(data)
+            return (bytes_consumed, errcode)
+
+        def encode_to_file(self, fh, bufsize):
+            errcode = 0
+            while errcode == 0:
+                status, errcode, buf = self.encode(bufsize)
+                if status > 0:
+                    _os.write(fh, buf[status:])
+            return errcode
+
     ImageFile = types.ModuleType("PIL.ImageFile")
     ImageFile.ImageFile = Image
     ImageFile.StubImageFile = Image
     ImageFile.Parser = _Parser
     ImageFile.raise_oserror = _raise_oserror
     ImageFile.LOAD_TRUNCATED_IMAGES = False
+    ImageFile.MAXBLOCK = 65536
+    ImageFile.SAFEBLOCK = 1024 * 1024
+    # The codes Pillow's own decoders report; `raise_oserror` names them.
+    ImageFile.ERRORS = {
+        -1: "image buffer overrun error",
+        -2: "decoding error",
+        -3: "unknown error",
+        -8: "bad configuration",
+        -9: "out of memory error",
+    }
+    ImageFile.PyCodec = _PyCodec
+    ImageFile.PyCodecState = _PyCodecState
+    ImageFile.PyDecoder = _PyDecoder
+    ImageFile.PyEncoder = _PyEncoder
     ImageGrab = types.ModuleType("PIL.ImageGrab")
     ImageGrab.grab = _host_unavailable("PIL.ImageGrab.grab")
     ImageGrab.grabclipboard = _host_unavailable("PIL.ImageGrab.grabclipboard")
+
+    def _unavailable_class(name, members=()):
+        """A GUI/plugin class Pillow defines but this sandbox has no host for.
+        Naming it with a FUNCTION made `issubclass(x, ImageShow.Viewer)` and
+        subclassing raise TypeError instead of the NotImplementedError that says
+        what is actually missing, so the shape is a class and only USING it
+        refuses."""
+
+        def _refuse(self, *args, **kwargs):
+            raise NotImplementedError(name + " is unavailable in the vis sandbox")
+
+        ns = {
+            "__doc__": "Pillow's " + name + "; unavailable in the vis sandbox.",
+            "__init__": _refuse,
+        }
+        for member in members:
+            ns[member] = _refuse
+        return type(name.rsplit(".", 1)[-1], (object,), ns)
+
     ImageTk = types.ModuleType("PIL.ImageTk")
-    ImageTk.PhotoImage = _host_unavailable("PIL.ImageTk.PhotoImage")
-    ImageTk.BitmapImage = _host_unavailable("PIL.ImageTk.BitmapImage")
+    ImageTk.PhotoImage = _unavailable_class(
+        "PIL.ImageTk.PhotoImage", ("paste", "width", "height", "__str__")
+    )
+    ImageTk.BitmapImage = _unavailable_class(
+        "PIL.ImageTk.BitmapImage", ("width", "height", "__str__")
+    )
     ImageTk.getimage = _host_unavailable("PIL.ImageTk.getimage")
+
     ImageWin = types.ModuleType("PIL.ImageWin")
-    ImageWin.Dib = _host_unavailable("PIL.ImageWin.Dib")
-    ImageWin.HDC = _host_unavailable("PIL.ImageWin.HDC")
-    ImageWin.Window = _host_unavailable("PIL.ImageWin.Window")
+    ImageWin.HDC = _unavailable_class("PIL.ImageWin.HDC", ("__int__",))
+    ImageWin.HWND = _unavailable_class("PIL.ImageWin.HWND", ("__int__",))
+    ImageWin.Dib = _unavailable_class(
+        "PIL.ImageWin.Dib",
+        ("expose", "draw", "query_palette", "paste", "frombytes", "tobytes"),
+    )
+    ImageWin.Window = _unavailable_class(
+        "PIL.ImageWin.Window", ("ui_handle_clear", "ui_handle_damage", "mainloop")
+    )
+    ImageWin.ImageWindow = _unavailable_class(
+        "PIL.ImageWin.ImageWindow", ("ui_handle_repair", "mainloop")
+    )
+
     ImageQt = types.ModuleType("PIL.ImageQt")
-    ImageQt.ImageQt = _host_unavailable("PIL.ImageQt.ImageQt")
+    ImageQt.qt_versions = [["6", "PyQt6"], ["side6", "PySide6"]]
+    ImageQt.qt_version = None
+    ImageQt.qt_is_installed = False
+    ImageQt.ImageQt = _unavailable_class("PIL.ImageQt.ImageQt")
     ImageQt.toqimage = _host_unavailable("PIL.ImageQt.toqimage")
     ImageQt.toqpixmap = _host_unavailable("PIL.ImageQt.toqpixmap")
+    ImageQt.fromqimage = _host_unavailable("PIL.ImageQt.fromqimage")
+    ImageQt.fromqpixmap = _host_unavailable("PIL.ImageQt.fromqpixmap")
+    ImageQt.rgb = lambda r, g, b, a=255: (
+        (
+            ((int(a) & 255) << 24)
+            | ((int(r) & 255) << 16)
+            | ((int(g) & 255) << 8)
+            | (int(b) & 255)
+        )
+        & 0xFFFFFFFF
+    )
+
+    def _align8to32(bytes, width, mode):
+        """Pillow pads each scanline out to a 4-byte boundary before handing
+        pixels to Qt. Pure arithmetic, so it works here even though no Qt does:
+        the module used to have nothing but refusals."""
+        bits_per_pixel = {"1": 1, "L": 8, "P": 8, "I;16": 16}[mode]
+        bits_per_line = bits_per_pixel * width
+        full_bytes_per_line, remaining_bits_per_line = divmod(bits_per_line, 8)
+        bytes_per_line = full_bytes_per_line + (1 if remaining_bits_per_line else 0)
+        extra_padding = -bytes_per_line % 4
+        if not extra_padding:
+            return bytes
+        return b"".join(
+            bytes[i * bytes_per_line : (i + 1) * bytes_per_line]
+            + b"\x00" * extra_padding
+            for i in range(len(bytes) // bytes_per_line)
+        )
+
+    ImageQt.align8to32 = _align8to32
+
     PSDraw = types.ModuleType("PIL.PSDraw")
-    PSDraw.PSDraw = _host_unavailable("PIL.PSDraw.PSDraw")
+
+    class _PSDraw:
+        """Pillow's PostScript writer. It only ever writes bytes to a file
+        object, so everything except `image()` -- which needs the EPS encoder
+        this host does not have -- works exactly as Pillow's does."""
+
+        def __init__(self, fp=None):
+            if not fp:
+                fp = getattr(sys.stdout, "buffer", sys.stdout)
+            self.fp = fp
+            self.isofont = {}
+
+        def begin_document(self, id=None):
+            self.fp.write(
+                b"%!PS-Adobe-3.0\n"
+                b"save\n"
+                b"/showpage { } def\n"
+                b"%%EndComments\n"
+                b"%%BeginDocument\n"
+            )
+            self.fp.write(PSDraw.EDROFF_PS)
+            self.fp.write(PSDraw.VDI_PS)
+            self.fp.write(b"%%EndProlog\n")
+            self.isofont = {}
+
+        def end_document(self):
+            self.fp.write(b"%%EndDocument\nrestore showpage\n%%End\n")
+            if hasattr(self.fp, "flush"):
+                self.fp.flush()
+
+        def setfont(self, font, size):
+            font = bytes(font, "UTF-8")
+            if font not in self.isofont:
+                self.fp.write(b"/PSDraw-%s ISOLatin1Encoding /%s E\n" % (font, font))
+                self.isofont[font] = 1
+            self.fp.write(b"/F0 %d /PSDraw-%s F\n" % (size, font))
+
+        def line(self, xy0, xy1):
+            self.fp.write(b"%d %d %d %d Vl\n" % (xy0[0], xy0[1], xy1[0], xy1[1]))
+
+        def rectangle(self, box):
+            self.fp.write(b"%d %d M 0 %d %d Vr\n" % tuple(box))
+
+        def text(self, xy, text):
+            text = bytes(text, "UTF-8")
+            text = b"\\(".join(text.split(b"("))
+            text = b"\\)".join(text.split(b")"))
+            self.fp.write(b"%d %d M (%s) S\n" % (xy[0], xy[1], text))
+
+        def image(self, box, im, dpi=None):
+            raise NotImplementedError(
+                "vis PIL shim: PSDraw.image() needs the EPS encoder, which this host "
+                "does not provide"
+            )
+
+    PSDraw.PSDraw = _PSDraw
+    # Pillow's PostScript prologues, which `begin_document` emits verbatim.
+    PSDraw.EDROFF_PS = (
+        b"/S { show } bind def\n"
+        b"/P { moveto show } bind def\n"
+        b"/M { moveto } bind def\n"
+        b"/X { 0 rmoveto } bind def\n"
+        b"/Y { 0 exch rmoveto } bind def\n"
+        b"/E {    findfont\n"
+        b"        dup maxlength dict begin\n"
+        b"        {\n"
+        b"                1 index /FID ne { def } { pop pop } ifelse\n"
+        b"        } forall\n"
+        b"        /Encoding exch def\n"
+        b"        dup /FontName exch def\n"
+        b"        currentdict end definefont pop\n"
+        b"} bind def\n"
+        b"/F {    findfont exch scalefont dup setfont\n"
+        b"        [ exch /setfont cvx ] cvx bind def\n"
+        b"} bind def\n"
+    )
+    PSDraw.VDI_PS = (
+        b"/Vm { moveto } bind def\n"
+        b"/Va { newpath arcn stroke } bind def\n"
+        b"/Vl { moveto lineto stroke } bind def\n"
+        b"/Vc { newpath 0 360 arc closepath } bind def\n"
+        b"/Vr {   exch dup 0 rlineto\n"
+        b"        exch dup 0 exch rlineto\n"
+        b"        exch neg 0 rlineto\n"
+        b"        0 exch neg rlineto\n"
+        b"        setgray fill } bind def\n"
+        b"/Tm matrix def\n"
+        b"/Ve {   Tm currentmatrix pop\n"
+        b"        translate scale newpath 0 0 .5 0 360 arc closepath\n"
+        b"        Tm setmatrix\n"
+        b"} bind def\n"
+        b"/Vf { currentgray exch setgray fill setgray } bind def\n"
+    )
+    PSDraw.ERROR_PS = (
+        b"/landscape false def\n"
+        b"/errorBUF 200 string def\n"
+        b"/errorNL { currentpoint 10 sub exch pop 72 exch moveto } def\n"
+    )
+
     ImageShow = types.ModuleType("PIL.ImageShow")
-    ImageShow.Viewer = _host_unavailable("PIL.ImageShow.Viewer")
-    ImageShow.register = _host_unavailable("PIL.ImageShow.register")
-    ImageShow.show = _host_unavailable("PIL.ImageShow.show")
+
+    class _Viewer:
+        """Pillow's viewer base class. `show()` is a real template method here --
+        a subclass that implements `show_file` works -- but no VIEWER is
+        registered, because this sandbox displays an image by ATTACHING it
+        (`Image.show()`), not by spawning a desktop program."""
+
+        format = None
+        options = {}
+
+        def show(self, image, **options):
+            if not (
+                image.mode in ("1", "RGBA")
+                or (self.format == "PNG" and image.mode in ("I;16", "LA"))
+            ):
+                base = Image_mod.getmodebase(image.mode)
+                if image.mode != base:
+                    image = image.convert(base)
+            return self.show_image(image, **options)
+
+        def get_format(self, image):
+            return self.format
+
+        def get_command(self, file, **options):
+            raise NotImplementedError
+
+        def save_image(self, image):
+            raise NotImplementedError(
+                "vis PIL shim: no viewer writes temp files; use Image.show() to attach"
+            )
+
+        def show_image(self, image, **options):
+            return self.show_file(self.save_image(image), **options)
+
+        def show_file(self, path, **options):
+            raise NotImplementedError(
+                "vis PIL shim: spawning a desktop viewer is unavailable"
+            )
+
+    ImageShow.Viewer = _Viewer
+    for _viewer_name in (
+        "WindowsViewer",
+        "MacViewer",
+        "UnixViewer",
+        "XDGViewer",
+        "DisplayViewer",
+        "GmDisplayViewer",
+        "EogViewer",
+        "XVViewer",
+        "IPythonViewer",
+    ):
+        setattr(
+            ImageShow,
+            _viewer_name,
+            type(
+                _viewer_name,
+                (_Viewer,),
+                {
+                    "__doc__": "Pillow's "
+                    + _viewer_name
+                    + "; no desktop viewer exists in the vis sandbox.",
+                    "format": "PNG",
+                },
+            ),
+        )
+
+    _viewers = []
+
+    def _imageshow_register(viewer, order=1):
+        try:
+            if issubclass(viewer, _Viewer):
+                viewer = viewer()
+        except TypeError:
+            pass
+        if order > 0:
+            _viewers.append(viewer)
+        else:
+            _viewers.insert(0, viewer)
+
+    def _imageshow_show(image, title=None, **options):
+        """Pillow returns True when SOME viewer displayed the image. Nothing is
+        registered here by default, so this answers False rather than raising --
+        `Image.show()` is the call that attaches."""
+        for viewer in _viewers:
+            if viewer.show(image, title=title, **options):
+                return True
+        return False
+
+    ImageShow.register = _imageshow_register
+    ImageShow.show = _imageshow_show
+    # Pillow's own registry list; `register` mutates it and callers read it.
+    ImageShow._viewers = _viewers
 
     # -- ImageMorph ------------------------------------------------------------
     ImageMorph = types.ModuleType("PIL.ImageMorph")
@@ -3443,6 +5043,12 @@ def __vis_install_pil__():
                     kept.append(p)
             self.xy = kept
             return dropped
+
+        def close(self):
+            """PIL closes a path by repeating its first point at the end. It was
+            missing, so `ImageDraw.shape()` on a Path could not close it."""
+            if self.xy and self.xy[0] != self.xy[-1]:
+                self.xy.append(self.xy[0])
 
         def map(self, function):
             self.xy = [tuple(function(x, y)) for x, y in self.xy]

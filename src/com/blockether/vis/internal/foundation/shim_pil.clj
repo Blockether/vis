@@ -2372,11 +2372,28 @@
        :shim/imports ["PIL"]
        :shim/description
        (str
-         "Pillow-compatible `PIL` (Image, ImageDraw, ImageFilter, ImageOps, ImageColor, "
-         "ImageEnhance, ImageChops, ImageFont, animated GIF, EXIF, quality and quantization), "
-         "Rust-backed without java.desktop. Rejects images over 512 MiB RGBA. Samples are 8-bit, "
-         "so 'I'/'F' pixels clamp to 0-255, drawing is antialiased where Pillow is hard-edged, "
-         "and a saved file reopens as 'RGB'/'RGBA'. Not supported: `ImageCms`.")
+         "Pillow-compatible `PIL` backed by a Rust renderer, no java.desktop or pip: Image, ImageDraw, "
+         "ImageFilter, ImageOps, ImageFont, ImageMath, ImagePalette, ExifTags/TiffTags and the rest of "
+         "Pillow 10's module set. Rejects images over 512 MiB RGBA; samples are 8-bit and a saved file "
+         "reopens as 'RGB'/'RGBA'. Full surface: `doc(\"pil\")`.")
+       :shim/docs
+       (str
+         "Pillow-compatible `PIL` published into `sys.modules`, backed by com.blockether/imaging's Rust "
+         "renderer -- no java.desktop, no pip, no native wheel. Pillow 10's module set is there: Image, "
+         "ImageDraw, ImageOps, ImageChops, ImageColor, ImageEnhance, ImageStat, ImageFilter (builtin "
+         "kernels carry `filterargs`, plus Kernel and Color3DLUT with `generate`/`transform`), ImageMath "
+         "(`lambda_eval`/`unsafe_eval` and the `ops` table), ImageFont, ImagePalette, ImagePath, "
+         "ImageMorph, ImageSequence, ImageFile (`Parser`, PyDecoder/PyEncoder), ExifTags and TiffTags as "
+         "real enums with a typed `lookup()`, `features`, ImageShow, ImageTk/ImageWin/ImageQt/PSDraw. "
+         "Transforms, compositing, drawing, text, filters, palettes, quantization, EXIF, JPEG/WebP "
+         "quality and animated GIF read/write all run on the host. `Image.show()` ATTACHES inline "
+         "instead of opening a desktop viewer, and no viewer is registered by default, so "
+         "`ImageShow.show()` answers False until `ImageShow.register` adds one. Images above 512 MiB "
+         "RGBA are rejected. Samples are 8-bit, so 'I'/'F' pixels clamp to 0-255, drawing is antialiased "
+         "where Pillow is hard-edged, and a saved file reopens as 'RGB'/'RGBA'. An image compares by "
+         "VALUE like Pillow's but stays hashable by identity, because the host resource registry holds "
+         "it. Not supported: `ImageCms`, the C `_imaging` internals (`im`, `tile`, `PyAccess`) and the "
+         "per-format plugin modules.")
        :shim/bindings pil-bridge-bindings
        :shim/resources {::images {:resource/label "PIL image"
                                   ;; A decoded image is an on-heap int[] of w*h*4 — 48 MB for one
