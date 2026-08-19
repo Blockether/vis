@@ -1092,13 +1092,154 @@ class __VisResultStr__(str):
         return []
 
 
-def __vis_as_result__(__vis_v__):
+def __vis_grep_next_offset__(__vis_text__):
+    # Line 1 of a search answer names the LITERAL next call whenever the sweep was
+    # capped:
+    #
+    #   grep 'q'  50 hits · 3 of 30 files  capped by limit → grep({…, "offset": 50})
+    #
+    # The renderer OWNS that sentence (`grep-summary-line`, pinned verbatim by
+    # `core_test`), so reading the offset back out of it reads the CONTRACT, not
+    # scraped prose. No cap, no arrow, no offset — and None then means this page
+    # already IS the whole answer.
+    __vis_head__ = __vis_text__.split("\n", 1)[0]
+    __vis_marker__ = '"offset": '
+    __vis_at__ = __vis_head__.rfind(__vis_marker__)
+    if __vis_at__ < 0:
+        return None
+    __vis_digits__ = ""
+    for __vis_ch__ in __vis_head__[__vis_at__ + len(__vis_marker__) :]:
+        if not __vis_ch__.isdigit():
+            break
+        __vis_digits__ += __vis_ch__
+    return int(__vis_digits__) if __vis_digits__ else None
+
+
+def __vis_paged_spec__(__vis_c__):
+    # What a PAGED search would need to continue itself — `(tool-name, options map)`
+    # — or None when this call is not one. Read BEFORE the call runs: `__vis_exec_call__`
+    # releases `fn`/`a`/`k` in its `finally` the moment it has an answer, so a spec
+    # taken from the settled thunk is always empty.
+    #
+    # grep takes exactly ONE options map (kwargs ARE that map, a positional query is
+    # refused), so the next page is that map plus `offset`. A call shaped any other
+    # way pages to None, and `more()` then refuses BY NAME instead of quietly
+    # searching for something else.
+    __vis_nm__ = getattr(__vis_c__, "nm", None)
+    if __vis_nm__ not in __vis_paged_tools__:
+        return None
+    __vis_a__ = getattr(__vis_c__, "a", None) or ()
+    __vis_k__ = getattr(__vis_c__, "k", None) or {}
+    if len(__vis_a__) == 1 and isinstance(__vis_a__[0], dict):
+        return (__vis_nm__, dict(__vis_a__[0]))
+    if __vis_k__ and not __vis_a__:
+        return (__vis_nm__, dict(__vis_k__))
+    return (__vis_nm__, None)
+
+
+class __VisGrep__(__VisResultStr__):
+    # A SEARCH ANSWER THAT KNOWS HOW TO CONTINUE. `limit` caps a page (50 hits by
+    # default), so a wide sweep answers a SLICE, and the only thing between the
+    # caller and the rest of it used to be retyping the whole call with `offset` —
+    # the step nobody takes, which is how a capped page gets read as "that is all
+    # there is". Line 1 still names that next call, because a printed block is
+    # head-clipped and the truncation must survive the clip; this makes the same
+    # fact a METHOD, so walking the rest costs no retyping and no arithmetic.
+    #
+    # It IS the text: every str operation, slice, `in`, `print`, `.startswith`
+    # behaves, and `.get`/`.keys` still answer the uniform result probe. `__iter__`
+    # is deliberately NOT overridden — iterating a string means CHARACTERS
+    # everywhere else in Python, and a page walk that quietly stole that would
+    # break `"".join(g)` and `list(g)`. Pages are walked by name:
+    #
+    #   g.next_offset          where the next page starts, None when complete
+    #   g.more()               the next page (a __VisGrep__ too), or None
+    #   for page in g.pages(): every page from this one, BOUNDED
+    #   g.all()                every page as ONE text, bounded, and it SAYS so
+    #
+    # Every page is a real host search, so the walk is bounded by default: an
+    # unbounded one would pour a whole tree into the block that asked for a slice.
+    __vis_page_cap__ = 10
+
+    def __vis_paged__(self, __vis_tool__, __vis_spec__):
+        self.__vis_tool__ = __vis_tool__
+        self.__vis_spec__ = __vis_spec__
+        self.next_offset = __vis_grep_next_offset__(self)
+        self.is_capped = self.next_offset is not None
+        return self
+
+    def more(self):
+        # The NEXT page, or None when this page already is the whole answer.
+        if self.next_offset is None:
+            return None
+        if self.__vis_spec__ is None:
+            raise RuntimeError(
+                self.__vis_tool__ + ": this page cannot continue itself — it did not"
+                " come from a single options map. Re-issue the search as"
+                ' grep({"query": q, ...}) and page from that result.'
+            )
+        __vis_fn__ = globals().get(self.__vis_tool__)
+        if __vis_fn__ is None:
+            raise RuntimeError(
+                self.__vis_tool__ + " is not available in this sandbox, so this page"
+                " cannot continue."
+            )
+        __vis_next__ = dict(self.__vis_spec__)
+        __vis_next__["offset"] = self.next_offset
+        return __vis_settle__(__vis_fn__(__vis_next__))
+
+    def pages(self, max_pages=None):
+        # This page, then each following one, up to `max_pages` (10 by default).
+        # A generator: stop early and the searches that would have followed are
+        # never run.
+        __vis_cap__ = self.__vis_page_cap__ if max_pages is None else int(max_pages)
+        __vis_page__ = self
+        __vis_seen__ = 0
+        while __vis_page__ is not None:
+            yield __vis_page__
+            __vis_seen__ += 1
+            if __vis_seen__ >= __vis_cap__:
+                break
+            __vis_page__ = __vis_page__.more()
+
+    def all(self, max_pages=None):
+        # Every page as ONE text. When the bound stops the walk before the search
+        # runs out, the last line SAYS so and names the call that continues —
+        # a silent stop here would be the very truncation this class exists to end.
+        __vis_cap__ = self.__vis_page_cap__ if max_pages is None else int(max_pages)
+        __vis_parts__ = []
+        __vis_last__ = None
+        for __vis_page__ in self.pages(__vis_cap__):
+            __vis_parts__.append(str(__vis_page__))
+            __vis_last__ = __vis_page__
+        __vis_text__ = "\n".join(__vis_parts__)
+        if __vis_last__ is not None and __vis_last__.next_offset is not None:
+            __vis_text__ += (
+                "\n… stopped after "
+                + str(__vis_cap__)
+                + " pages — more hits remain: "
+                + self.__vis_tool__
+                + '({…, "offset": '
+                + str(__vis_last__.next_offset)
+                + "}), a higher max_pages, or a narrower search."
+            )
+        return __VisResultStr__(__vis_text__)
+
+
+__vis_paged_tools__ = frozenset(("grep", "find_files", "find"))
+
+
+def __vis_as_result__(__vis_v__, __vis_paging__=None):
     # Normalize a tool result so EVERY value answers the dict probes
     # (.get/.keys/.items/.values) — the shape the model reaches for when it iterates the
     # store. A dict passes through untouched (a tool-result dict is already a
     # __VisResult__). A top-level list/tuple/str is re-typed to a probeable subclass that
     # KEEPS its native list/str behavior, so `res.get('op')` is safe on the whole set
     # without an isinstance guard. Rare scalars (int/float/None/bytes) pass through.
+    #
+    # `__vis_paging__` is `__vis_paged_spec__`'s answer for the call that produced this
+    # value: a PAGED search answers text that can continue itself (see __VisGrep__),
+    # and only the call knows the options map to continue WITH.
     if isinstance(__vis_v__, dict):
         return __vis_v__
     if isinstance(__vis_v__, (__VisResultList__, __VisResultStr__)):
@@ -1106,8 +1247,23 @@ def __vis_as_result__(__vis_v__):
     if isinstance(__vis_v__, (list, tuple)):
         return __VisResultList__(__vis_v__)
     if isinstance(__vis_v__, str):
+        if __vis_paging__ is not None:
+            return __VisGrep__(__vis_v__).__vis_paged__(
+                __vis_paging__[0], __vis_paging__[1]
+            )
         return __VisResultStr__(__vis_v__)
     return __vis_v__
+
+
+def __vis_settle_call__(__vis_c__):
+    # THE one place a deferred tool call becomes a result. The paging spec is read
+    # first, on purpose: `__vis_exec_call__` releases the callable and its arguments
+    # as soon as it has an answer, so anything the answer needs to know about its OWN
+    # call has to be taken while the call is still holding it.
+    __vis_paging__ = __vis_paged_spec__(__vis_c__)
+    return __vis_as_result__(
+        __vis_pyify__(__vis_exec_call__(__vis_c__)), __vis_paging__
+    )
 
 
 try:
@@ -1271,7 +1427,7 @@ def __vis_settle__(v):
         # LIST-shaped tool return was a PLAIN list, so the documented
         # uniform `res.get('op')` probe blew up with `'list' object has no attribute
         # 'get'` and the print-capture below could not recognise it as a result.
-        return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
+        return __vis_settle_call__(v)
     if isinstance(v, __vis_Gather__):
         return __vis_settle_gather__(v)
     if isinstance(v, __vis_Future__):
@@ -1391,7 +1547,7 @@ def __vis_drive__(coro):
             # (Null receiver values are not supported by libraries) instead of a
             # normal python error.
             if isinstance(y, __vis_Call__):
-                send = __vis_as_result__(__vis_pyify__(__vis_exec_call__(y)))
+                send = __vis_settle_call__(y)
             elif isinstance(y, __vis_Gather__):
                 send = __vis_settle_gather__(y)
             else:
