@@ -12,6 +12,29 @@
    per-artifact auto-discovery native-image config uses), so an extension adds a
    page by dropping a markdown file + a manifest entry — no central registry.
 
+   THE PAGE CONTRACT — one canonical shape for every page, enforced by
+   `docs-test/docs-page-canon-test`:
+
+     * The manifest `:title` IS the page's `# H1`, spelled identically, on the
+       FIRST line of the file: the sidebar, the browser tab and the page itself
+       must never disagree about a page's name. `index.md` is the ONE exception —
+       the landing page's title is the themed hero, so it carries no `#` at all.
+     * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
+       covers, so a reader who stops there still knows what they found.
+     * `##` and `###` only. A deeper heading gets no `id` and no on-this-page
+       entry (see `anchors+toc`), so nothing — not even this page — can link to it.
+     * Anchors are unique within a page, and every relative `page.md#anchor` link
+       resolves against the TARGET page's own toc.
+     * Every fenced block declares a language, one of `bash`, `clojure`, `edn`,
+       `ini`, `json`, `markdown`, `python`, `text`, `toml`, `yaml`.
+     * `index.md` is the MAP: it links every other page under `## Learn more`,
+       with that page's title as the link text, so a page nobody can reach from
+       the landing page does not exist for a reader.
+     * The last `##` of every page is `See also` — two or more sibling pages, each
+       with the reason to follow it. That web is what keeps ONE topic in ONE page:
+       a topic explained twice is a cross-link somebody never wrote.
+     * Every manifest entry carries a `:blurb`, the one sentence the sidebar and
+       the index cards show.
    One renderer, two outputs:
      * `build-site!` writes a static, themed HTML bundle (for GitHub Pages).
      * `handle` serves the same pages live (HTMX nav), mountable on the gateway

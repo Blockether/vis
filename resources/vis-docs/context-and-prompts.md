@@ -93,14 +93,14 @@ for the model to pick it. Skills stay out of the initial `/` list, while palette
 search indexes the unprefixed skill name: searching for `setup-pre-commit`
 returns the canonical prefixed command.
 
-```
+```text
 /skill:setup-pre-commit          # name the skill, follow its instructions
 /skill:setup-pre-commit for husky  # name it with a task appended
 ```
 
 The expansion is a POINTER, not a copy — one sentence in that user message:
 
-```
+```text
 Use the skill "setup-pre-commit" for this task: read it with doc("setup-pre-commit")
 unless its SKILL.md is already in this conversation, then follow it as written.
 
@@ -122,7 +122,7 @@ A line that starts with `!` is a shell escape — the command runs directly,
 shell analogue of `/slash`, and works the same way in the **TUI** and the
 **companion** app:
 
-```
+```text
 !git status            # run and print its output (blocks)
 !&npm run dev          # spawn and return immediately, under a resource id
 ```
@@ -162,3 +162,9 @@ Both shortcuts require the **shell layer** to be enabled — the user-owned
 `shell` toggle (settings dialog → *Shell commands*). When it's off, the
 shortcut refuses cleanly with a note on how to
 turn it on, and nothing runs.
+
+## See also
+
+- [Skills](skills.md) — instructions loaded on demand, and how `/skill:<name>` expands.
+- [Configuration → System prompt](configuration.md#system-prompt) — the config keys these files override.
+- [Extending Vis → Slash commands](extending.md#slash-commands) — adding a command of your own.

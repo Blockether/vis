@@ -41,3 +41,9 @@ clojure -T:build native
 Already have a keystore? Use it verbatim with `VIS_TRUSTSTORE=/path/store.p12`, plus `VIS_TRUSTSTORE_PASSWORD` and `VIS_TRUSTSTORE_TYPE` (defaults: `changeit`, `PKCS12`).
 
 The distribution is not selectable: vis builds on GraalVM **Community Edition** at the exact version in `.graalvm-version`. Oracle GraalVM would relicense the shipped binary under GFTC, and a different version is hard-rejected by the pinned Truffle/SVM jars.
+
+## See also
+
+- [Runtime distributions](distributions.md) — which of the two runtimes you are actually running.
+- [Configuration](configuration.md) — the config the image carries and the config it reads.
+- [Extending Vis → Native image rules](extending.md#native-image-rules) — what a Clojure extension must avoid to stay AOT-safe.

@@ -31,3 +31,10 @@ GraalPy ships substantial native-image configuration (build-time initialization,
 ## Internal resources cache
 
 GraalPy's Python stdlib ships as "internal resources" — inside the language jar on the JVM, and, in the compiled native binary, in a `resources/` directory **beside the executable** (`-H:-IncludeLanguageResources -H:+CopyLanguageResources`; `PythonHome` is never used). Release bundles carry it as `vis-agent-resources/` and the launcher passes `-Dpolyglot.engine.resourcePath` at startup, so nothing is extracted at runtime; `VIS_NATIVE_RESOURCES` points at a different copy. On the JVM they are extracted at **runtime** into `$XDG_CACHE_HOME/org.graalvm.polyglot` (default `~/.cache/org.graalvm.polyglot`). When that root is unwritable (confined process, read-only home), the first stdlib import fails with `ModuleNotFoundError: No module named 'ast'` — the same error a native bundle gives when its resources directory is missing. Vis redirects the cache to a writable fallback automatically, and the root is configurable: `python.resource_cache` in `vis.yml`, or the `-Dpolyglot.engine.userResourceCache` system property, which always wins. Read once per process — restart, don't `/reload`. See [Configuration](configuration.md#graalpy-internal-resource-cache).
+
+## See also
+
+- [Token optimization](token-optimization.md) — what the sandbox buys, measured in context.
+- [Process jail & egress](jail.md) — the filesystem and network policy the sandbox runs under.
+- [Configuration → Python import roots](configuration.md#python-import-roots) — making your own modules importable in the sandbox.
+- [Extending Vis → Batteries in the model's sandbox](extending.md#batteries-in-the-model-s-sandbox) — the shim modules that are already there.

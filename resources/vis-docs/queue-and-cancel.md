@@ -92,3 +92,9 @@ That last row is the important one: after you hit **Esc** to cancel, the turn
 stays marked "cancelling…" until the daemon confirms it. During that window a
 second **Ctrl+C** no longer re-fires the cancel and makes you wait — it quits
 right away, firing the cancel token on the way out so nothing is left running.
+
+## See also
+
+- [Gateway, pairing & remote access](gateway.md) — queueing and cancelling from the companion or another machine.
+- [Drafts](drafts.md) — parking speculative work instead of cancelling it.
+- [Content-block protocol](content-blocks.md) — what a cancelled or interrupted turn leaves behind.

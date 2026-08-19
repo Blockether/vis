@@ -21,7 +21,7 @@ A skill is a directory containing a `SKILL.md` file with YAML-ish `---`
 frontmatter plus a body of instructions, alongside any bundled resource files
 (scripts, templates, reference docs):
 
-```
+```text
 my-skill/
 ├── SKILL.md              # required: frontmatter + instructions
 ├── scripts/
@@ -117,7 +117,7 @@ The model picks skills from the prompt listing on its own, but you can force
 one: every skill is also a prompt template named `skill:<name>`, so typing
 `/skill:setup-pre-commit for husky` in any channel expands to
 
-```
+```text
 Use the skill "setup-pre-commit" for this task: read it with doc("setup-pre-commit")
 unless its SKILL.md is already in this conversation, then follow it as written.
 
@@ -145,3 +145,9 @@ Because discovery already scans Claude Code, pi, the agents standard, and
 opencode roots, skills you authored for any of those tools are reused as-is —
 there is nothing vis-specific to add. To make a skill vis-first, put it under
 `.vis/skills/` (project) so it wins on precedence.
+
+## See also
+
+- [Context files & prompts](context-and-prompts.md) — the project context a skill is read alongside.
+- [Extending Vis](extending.md) — when a task needs a tool rather than instructions.
+- [Configuration](configuration.md) — where skill roots and toggles are declared.

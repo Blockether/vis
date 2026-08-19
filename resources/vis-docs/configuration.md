@@ -32,7 +32,7 @@ Every MCP admin action above is also a CLI verb, talking to the gateway already 
 
 Step-by-step for a remote OAuth server (e.g. Linear's `https://mcp.linear.app/mcp`):
 
-```sh
+```bash
 # 1. A gateway must already be running (vis-agent gateway start, or the one
 #    Vis starts for you). Then save the server -- a URL alone infers
 #    Streamable HTTP:
@@ -53,7 +53,7 @@ vis-agent gateway mcp list
 
 Read-only access is a URL, not a flag: point `--url` at Linear's `/mcp/readonly` endpoint instead. A static API key/bearer token (Linear's non-interactive alternative) skips `auth-start` entirely: pass it as a header instead --
 
-```sh
+```bash
 vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp --headers "Authorization=Bearer <TOKEN>"
 ```
 
@@ -96,7 +96,7 @@ A bad config is a *user error*, not a crash. Vis prints a panel that names every
 offending field by its full path — no stack trace, no log file to open — and exits
 with status 2:
 
-```
+```text
   Invalid Vis configuration in /project/.vis/config.yml:
 
   - providers[0].models[0].contxt: unknown key (config is closed) — did you mean "providers[0].models[0].context"?
@@ -259,6 +259,10 @@ vis-agent --model glm-5.2 "task"                      # bare name: selects on th
 
 The named provider is promoted to the router root for that run only, and it does not have to exist in `vis.yml` yet — an unconfigured one is synthesized from its built-in preset, so a provider that already has managed auth (a coding plan, Copilot) is usable without touching config. Nothing is persisted. A provider Vis cannot resolve is reported as a user error naming it, before the first request.
 
+Registering a provider Vis does not ship with is
+[Extending Vis → LLM providers](extending.md#llm-providers); one whose credential
+the runtime issues, so nobody is ever asked for a key, is
+[Managed providers](extending.md#managed-providers).
 ### The default selection is ONE pair
 
 Picking a model in the TUI provider manager, the gateway, or the companion app writes exactly two top-level keys:
@@ -388,6 +392,8 @@ casual message — `hi`, `thanks` — is sent with no reasoning parameter at all
 
 Append project house rules to the core prompt, or replace it outright:
 
+File-based overrides — a project's `SYSTEM.md` or `APPEND_SYSTEM.md` — are
+[Context files & prompts](context-and-prompts.md#system-prompt-files-system-md-append-system-md).
 ```yaml
 # addendum (string form)
 system_prompt: Prefer restructuredText docstrings. Never touch generated/.
@@ -437,6 +443,9 @@ under the OS jail (Seatbelt on macOS, bubblewrap on Linux) and use the gateway
 egress proxy. Shell access has a separate `toggles.shell` switch. Unsupported hosts
 currently have no OS boundary and a requested `jail.enabled: true` fails loud.
 
+This section is the KEY reference. The policy itself — what each root admits, the
+egress proxy, programmable network filters, and the verification runs — is
+[Process jail & egress](jail.md).
 Filesystem roots are declared once in the `workspace.filesystem` catalog (`id`,
 `path`, optional `description`, `access` = `read-write`/`read-only`, `search`,
 `draft`, plus the conditional-mount keys `when` and `optional`), and
@@ -591,6 +600,7 @@ to steps 3–4 rather than failing startup.
 `vis-agent python -m pytest tests/` imports a `src/` layout the same way an explicit
 `PYTHONPATH=src` invocation would.
 
+The sandbox those roots serve is the [GraalPython sandbox](graalpython.md).
 The roots are read from the project's packaging metadata with Python's own
 parsers — `tomllib` for `pyproject.toml`, `configparser` for `setup.cfg`,
 `pytest.ini` and `tox.ini` — never by pattern-matching the file text. Inference
@@ -661,7 +671,7 @@ still wins — the same spelling the result's `runner` key reports.
 
 Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` itself — the file only says where to fetch them. Resolution is the one order described under [`environment:`](#environment): a declaration first, then the workspace's `.env` / `.env.local`, then the environment that started Vis. An extension receives the names it declared plus the project's own — everything in `environment:` and in `.env` — and nothing else of the host environment. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:
 
-```dotenv
+```ini
 ANTHROPIC_API_KEY=…
 ```
 
@@ -802,3 +812,10 @@ Semantics:
   one ignore filename ripgrep's `ignore` crate does not pick up on its own
   (`.gitignore`, `.ignore`, `.git/info/exclude` and the global gitignore
   are native).
+
+## See also
+
+- [Process jail & egress](jail.md) — the long form of the `jail` block, with verification.
+- [Context files & prompts](context-and-prompts.md) — AGENTS.md, SYSTEM.md and prompt templates, which are files rather than keys.
+- [Extending Vis](extending.md) — adding providers, tools and toggles that this config then names.
+- [Gateway, pairing & remote access](gateway.md) — the gateway keys and the token model behind them.

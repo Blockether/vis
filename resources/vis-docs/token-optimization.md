@@ -149,3 +149,9 @@ The efficient path is:
 6. Fold completed prior-turn noise while preserving durable evidence.
 
 Vis spends context on decisions and proof, not repeated catalogs, whole files, intermediate results, or dead history.
+
+## See also
+
+- [GraalPython sandbox](graalpython.md) — the runtime the model's one tool executes in.
+- [Extending Vis](extending.md) — adding your own tools, so a step costs one call instead of five.
+- [Skills](skills.md) — instructions pulled on demand instead of pushed into every request.

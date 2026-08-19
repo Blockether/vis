@@ -128,3 +128,9 @@ screen recording — it replays the real session.
 
 That report contains no credential, no client, and no proprietary code — and it
 is enough to fix the bug.
+
+## See also
+
+- [Exporting sessions](exporting-sessions.md) — producing the export a report attaches.
+- [Process jail & egress](jail.md) — reproducing a policy refusal before you file it.
+- [Configuration](configuration.md) — the settings a report should name.

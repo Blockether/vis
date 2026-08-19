@@ -26,6 +26,19 @@ Both flavors converge on the same contracts:
    what `apropos` searches and `doc(name)` returns; prompt fragments only for
    dynamic routing or catalogs.
 
+Everything on this page, by what you are trying to do:
+
+| I want to… | Python | Clojure |
+| --- | --- | --- |
+| add a tool the model can call | [Tools](#tools) | [Tools: symbols](#tools-symbols) |
+| add a `/command` for the user | [Slash commands](#slash-commands) | [Slash commands (Clojure)](#slash-commands-clojure) |
+| ask the human something mid-turn | [Asking the human](#asking-the-human) | [Asking the human (Clojure)](#asking-the-human-clojure) |
+| show live progress while work runs | [Showing the human live work](#showing-the-human-live-work) | — |
+| guard or block a file operation | [Op hooks](#op-hooks) | — |
+| register an LLM provider | [LLM providers](#llm-providers), [Managed providers](#managed-providers) | — |
+| keep data across restarts | [Durable state](#durable-state) | — |
+| publish a page for `doc(name)` | [Your page and your `apropos` row](#your-page-and-your-apropos-row) | [Shipping doc pages](#shipping-doc-pages) |
+| check and test what I wrote | [Checking an extension before it runs](#checking-an-extension-before-it-runs), [Testing your Python extension](#testing-your-python-extension) | [Testing and verification](#testing-and-verification) |
 ---
 
 ## Python extensions
@@ -34,7 +47,7 @@ Single `.py` files you drop into a directory, loaded at startup and reloadable i
 place with `/reload` — no rebuild, identical behavior on the JVM and in the
 native binary.
 
-```
+```text
 ~/.vis/extensions/           global — loads in every project
 <project>/.vis/extensions/   project-local — loads for that project only
 ```
@@ -390,7 +403,7 @@ Two node types are not fields at all, because nothing answers them: a `group`
 LAYS OUT the nodes under it (`fields`, `direction`) and a `heading` or
 `paragraph` is pure DECORATION carrying `text` alone. Both are described below.
 
-#### Toggles: exclusive `select`, inclusive `multiselect` and `checkbox`
+### Toggles: exclusive `select`, inclusive `multiselect` and `checkbox`
 
 There are two kinds of toggle, and every surface says which one it is drawing
 before the person touches it:
@@ -893,16 +906,9 @@ returns `is_authenticated` (Python can't spell the trailing `?`), which the
 runtime consumes as `:is-authenticated`. `vis-agent providers auth/status/limits
 <id>` work against it like any other provider.
 
-**A MANAGED provider is never asked for a key, and never has to be added.**
-`is_managed=True` (`:provider/is-managed true` in Clojure) declares that the
-RUNTIME issues that provider's credential — a company gateway, a device policy,
-a host the user is already signed into. Vis then refuses every key-collecting
-path for it: `auth/start` answers `auth-managed`, the TUI row drops its
-*Authenticate* verb, and the provider never appears in *Add Provider* — there is
-nothing a human could add. Instead it BINDS ITSELF as soon as the extension
-loads and stands in the model picker beside the configured fleet, so give it a
-`get_token_fn` (that is where the issued credential comes from) and `preset`
-`default_models` for it to be routable.
+A provider whose credential the RUNTIME issues — a company gateway, a device
+policy — declares itself with `is_managed=True` and is never asked for a key at
+all: see [Managed providers](#managed-providers) below.
 
 Where a slot's output lands differs. `status_fn` answers *am I connected*: the host
 reads `is_authenticated` (plus an optional `error`) for the provider dot and for
@@ -947,6 +953,45 @@ persisted; the `event` carries `previous_provider` / `provider` / `config` /
 `source`. Both fail soft — a throw is logged and never blocks router build or
 selection.
 
+### Managed providers
+
+Some providers are not the user's to sign in to: a company gateway mints the token,
+a device policy carries it, the host is already signed in. `is_managed=True`
+(`:provider/is-managed true` in Clojure) declares exactly that — **the runtime
+issues the credential, so Vis never asks a human for one and never makes anyone
+add the provider**.
+
+```python
+vis.extension(
+    name="provider-corp",
+    description="The gateway this machine is already entitled to.",
+    providers=[
+        vis.provider(
+            id="corp-gateway",
+            label="Corp Gateway",
+            is_managed=True,
+            preset={"base_url": "https://llm.internal/v1",
+                    "api_style": "openai",
+                    "default_models": ["corp-large", "corp-small"]},
+            get_token_fn=_issued_token,   # where the issued credential comes from
+        ),
+    ],
+)
+```
+
+What the flag changes:
+
+| seam | ordinary provider | `is_managed=True` |
+| --- | --- | --- |
+| `auth/start` — `vis-agent providers auth <id>`, the gateway route, the companion | starts an API-key or OAuth flow | refuses with `auth-managed`, so no channel can post a key |
+| auth kind | `api-key` / `oauth` | `managed` |
+| *Add Provider* picker | listed | never listed — there is nothing a human could add |
+| the fleet | appears once someone configures it | **binds itself as soon as the extension loads**, and stands in the model picker beside the configured providers |
+| TUI provider row | offers *Authenticate* | the verb is gone; the row explains the runtime owns the credential |
+
+Two slots make it routable: `get_token_fn` (the issued credential) and a `preset`
+with `default_models` (what the picker offers). A managed provider missing either
+still loads — it just has nothing to route to.
 ### Execution model and trust
 
 Extension files run in **trusted GraalPy contexts** — one per file, separate
@@ -1053,7 +1098,7 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
 A single `.py` file is the simplest extension. For anything larger, drop a
 **package directory** whose `extension.py` is the entry point:
 
-```
+```text
 ~/.vis/extensions/
   my_ext/
     extension.py      # the entry — calls vis.extension(...)
@@ -1076,7 +1121,7 @@ So an ordinary Python project becomes a Vis extension by adding one
 
 ### Checking an extension before it runs
 
-```
+```bash
 vis-agent extension check                       # every file that would load
 vis-agent extension check .vis/extensions/deploy.py
 ```
@@ -1104,7 +1149,7 @@ here for the same reason `vis.ask` refuses them. A validator that arrives from
 somewhere the parse tree cannot see is assumed to be the ordinary one value
 shape rather than reported.
 
-```
+```text
 FAIL .vis/extensions/deploy.py  (2 forms checked, 1 skipped)
   .vis/extensions/deploy.py:31:12: invalid-request: Invalid human-input field env: select needs at least one option
   .vis/extensions/deploy.py:44:12: unknown-attribute: the vis module has no plaintxt
@@ -1136,7 +1181,7 @@ def test_add():
 
 Run them:
 
-```
+```text
 /test            # in a session — inline pass/fail report
 vis-agent extension test     # from the shell — prints a report, exits non-zero on failure
 ```
@@ -1212,7 +1257,7 @@ shim's `:shim/description` names what it does NOT support, and the authoring
 contract lives in [Sandbox shims and autoloads](#sandbox-shims-and-autoloads)
 below — a Clojure-extension capability, since a shim needs host callables.
 
-#### Asking a document a question — `anydoc`
+### Asking a document a question — `anydoc`
 
 `anydoc` converts anything the native `imaging` cdylib reads (PDF, DOCX, XLSX,
 PPTX, HTML, CSV, EPUB, Markdown, …) and answers questions **about** it with
@@ -1302,7 +1347,7 @@ every surface Vis has.
 
 Discovery is classpath-wide and manifest-driven. Each extension jar ships **one resource**:
 
-```
+```text
 resources/META-INF/vis-extension/vis.edn
 ```
 
@@ -1319,7 +1364,7 @@ Getting on the classpath:
 
 ### Anatomy
 
-```
+```text
 my-extension/
 ├── deps.edn
 ├── src/com/acme/ext/weather/core.clj
@@ -1435,7 +1480,7 @@ the whole reason a fragment must not restate them.
 Those two renderings ARE the contract, and both are built from the entry — so
 writing a tool is writing them. `doc("grep")` answers:
 
-```
+```text
 # grep  ·  callable                                       <- the sandbox name
 
 grep(options, **kwargs)                                   <- STRUCTURE: `:call`, else the real arglists
@@ -1574,7 +1619,7 @@ free of Clojure escaping hazards.
 
 `:ext/prompt-fn` rides in a labeled `;; -- EXTENSION <alias> --` block only while the extension is active. Use it only for facts unavailable from a symbol's own documentation—for example, a dynamic capability matrix or a catalog that changes per turn.
 
-```
+```text
 Weather service configured for this workspace; live lookups are available.
 ```
 
@@ -1759,3 +1804,11 @@ Vis uses [lazytest](https://github.com/NoahTheDuke/lazytest); test tool function
 ```
 
 Before shipping, run `clojure -M:format check`, `clojure -M:lint src extensions test build.clj`, and the relevant tests.
+
+## See also
+
+- [Skills](skills.md) — instructions, when the answer is not code.
+- [Configuration](configuration.md) — the keys an extension's providers, toggles and env end up in.
+- [Runtime distributions](distributions.md) — shipping a Clojure extension to other people.
+- [GraalPython sandbox](graalpython.md) — the runtime your Python tools execute in.
+- [Content-block protocol](content-blocks.md) — the blocks a tool's output becomes.

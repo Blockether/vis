@@ -12,7 +12,7 @@ Tailscale.
 
 When you run a client such as:
 
-```sh
+```bash
 vis-agent tui
 ```
 
@@ -38,7 +38,7 @@ it will not self-reap when clients come and go.
 
 To run it detached yourself, background it explicitly:
 
-```sh
+```bash
 # quick-and-dirty
 nohup vis-agent gateway start --host 0.0.0.0 --require-token > ~/.vis/gateway.out 2>&1 &
 
@@ -48,7 +48,7 @@ vis-agent tui
 
 Inspect and control the daemon:
 
-```sh
+```bash
 vis-agent gateway status          # pid, url, db, client count, auth mode
 vis-agent gateway stop            # ask it to exit; if it stopped answering, escalate
                                   # to the pid its own registry names (SIGTERM, then
@@ -91,7 +91,7 @@ handed the token — that is what pairing does.
 
 If you ever see:
 
-```
+```text
 vis-agent: fatal error - gateway HTTP 401
 {:error {:type "unauthorized", :message "missing or invalid bearer token"}}
 ```
@@ -107,7 +107,7 @@ gateway, re-pair the remote client, or restart the gateway on loopback
 Every gateway call of an invocation — the TUI's whole session included — goes to
 whichever gateway two **root flags** name, in front of the command itself:
 
-```sh
+```bash
 vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
 vis-agent --gateway 10.0.0.5:7899 --gateway-token "$TOKEN" providers status
 vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
@@ -122,7 +122,7 @@ The token is the one that gateway printed when it started (`~/.vis/gateway.token
 on **its** machine, or its `--token-file`). Drop `--gateway-token` when the target
 needs none — a loopback daemon you reached through an SSH tunnel:
 
-```sh
+```bash
 ssh -N -L 7890:127.0.0.1:7890 you@10.0.0.5 &
 vis-agent --gateway 127.0.0.1 tui
 ```
@@ -181,13 +181,13 @@ for **your** gateway, so until you pair one it shows only the pairing screen.
 
 Start the gateway on a reachable host and print a pairing QR:
 
-```sh
+```bash
 vis-agent gateway start --host 0.0.0.0 --require-token --pair
 ```
 
 `--pair` prints a terminal QR encoding a tiny URL payload:
 
-```
+```text
 vis://gateway?url=http%3A%2F%2F<host>%3A7890&token=<bearer-token>
 ```
 
@@ -223,7 +223,7 @@ The TUI (and other channels) auto-spawn a **loopback** gateway on first launch,
 so there is usually one running already — but bound to `127.0.0.1`, which a
 phone can never reach. To pair a running daemon **without a start flag**, use:
 
-```sh
+```bash
 vis-agent gateway pair
 ```
 
@@ -249,7 +249,7 @@ your phone off-LAN, put both devices on a [Tailscale](https://tailscale.com)
 tailnet and bind/advertise the machine's Tailscale IP (the `100.64.0.0/10`
 range):
 
-```sh
+```bash
 # with tailscale up on this machine
 vis-agent gateway start --host 0.0.0.0 --require-token --pair
 ```
@@ -365,7 +365,7 @@ The way around the wall above is to hand the gateway a **capability** instead of
 credential. The signing key stays on a relay the app's publisher runs; the device
 asks that relay for an opaque **grant** and gives the grant to the gateway.
 
-```
+```text
 app     -> POST   /v1/grants        {device_token}   => a grant
 app     -> hands the grant to this gateway on "notify this device"
 gateway -> POST   /v1/push          Bearer <grant>   => the relay signs and sends
@@ -634,3 +634,10 @@ ring values fall back to their defaults. `GET /metrics` exposes active/waiting
 turns, queue depth, replay retention, environment-cache size, JVM heap/GC/thread
 gauges, process RSS, and memory-pressure state in Prometheus format (or JSON
 when requested with `Accept: application/json`).
+
+## See also
+
+- [Process jail & egress](jail.md) — the egress proxy and the policy it enforces.
+- [Drafts](drafts.md) — draft workspaces over the gateway API.
+- [Configuration](configuration.md) — every `gateway` key, and the token model in config form.
+- [Runtime distributions](distributions.md) — which runtime the daemon you are talking to is.

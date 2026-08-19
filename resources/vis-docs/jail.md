@@ -1,4 +1,4 @@
-# Process jail and gateway egress
+# Process jail & egress
 
 Vis treats model-started processes as untrusted. On macOS, every managed shell,
 nested shell, Python `subprocess`, managed Clojure/Python/Bun REPL, and project
@@ -466,7 +466,7 @@ A filter runs in the gateway's trusted context, so a bug shows up only as "traff
 closed**). Use `/net-probe` to see, without touching the network, exactly what the
 host gate and every registered filter decide for a synthetic request:
 
-```
+```text
 /net-probe POST https://api.github.com/repos    # HTTP: method + path visible
 /net-probe github.com:22                         # bare host:port -> SOCKS phase
 ```
@@ -692,3 +692,9 @@ The focused suites cover:
 Run the relevant namespaces through the Clojure language pack or the full CI job.
 A test JVM already started by a jailed session validates its inherited profile
 but cannot substitute for the unconfined enforcement run.
+
+## See also
+
+- [Configuration → Jail, filesystem, and network](configuration.md#jail-filesystem-and-network) — every key this page's policy is written with.
+- [Gateway, pairing & remote access](gateway.md) — the daemon whose egress proxy enforces the network half.
+- [GraalPython sandbox](graalpython.md) — what the confined process is actually running.

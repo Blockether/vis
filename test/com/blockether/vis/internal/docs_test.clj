@@ -104,3 +104,180 @@
         (doseq [needle ["vis.row(" "vis.column(" "inline markdown" "wraps and justifies"
                         "stay verbatim" "`Escape` or `Enter` sends the stop"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))
+
+;;; ── The page contract ───────────────────────────────────────────────────────
+;; Every rule below is one the RENDERER already assumes (see the `docs` ns
+;; docstring, which states the contract): a title that disagrees with the
+;; sidebar, a heading too deep to be given an anchor, a `#fragment` pointing at
+;; nothing and a page nothing links to are all invisible until a reader walks
+;; into them.
+
+(def ^:private fence-languages
+  "Languages a fenced block may declare. ONE set, so the same kind of block is
+   highlighted the same way on every page."
+  #{"bash" "clojure" "edn" "ini" "json" "markdown" "python" "text" "toml" "yaml"})
+
+(defn- scan
+  "PURE: `{:headings [[line level text] …] :fences [[line info] …]}` for `md`.
+   Fenced blocks are skipped, so a `#` comment inside a shell example is not
+   mistaken for a heading."
+  [^String md]
+  (loop [ls
+         (str/split-lines md)
+
+         n
+         1
+
+         in-fence?
+         false
+
+         acc
+         {:headings [] :fences []}]
+
+    (if-let [l (first ls)]
+      (cond (str/starts-with? l "```")
+            (recur (rest ls)
+                   (inc n)
+                   (not in-fence?)
+                   (if in-fence? acc (update acc :fences conj [n (str/trim (subs l 3))])))
+            in-fence? (recur (rest ls) (inc n) in-fence? acc)
+            :else (if-let [[_ hashes text] (re-matches #"(#{1,6}) (.*)" l)]
+                    (recur (rest ls)
+                           (inc n)
+                           in-fence?
+                           (update acc :headings conj [n (count hashes) (str/trim text)]))
+                    (recur (rest ls) (inc n) in-fence? acc)))
+      acc)))
+
+(defn- lead-paragraph
+  "PURE: the prose between a page's H1 and its first `##`."
+  [^String md]
+  (->> (str/split-lines md)
+       (drop-while #(not (str/starts-with? % "# ")))
+       (drop 1)
+       (take-while #(not (str/starts-with? % "## ")))
+       (str/join "\n")
+       str/trim))
+
+(defn- see-also-links
+  "PURE: the relative page links under a page's `## See also` heading."
+  [^String md]
+  (let [tail (second (str/split md #"(?m)^## See also$" 2))]
+    (re-seq #"\]\(([A-Za-z0-9._-]+\.md)" (str tail))))
+
+(defn- page-canon
+  "PURE: every way `page` breaks the page contract, as reader-facing lines.
+   `anchors` is `{slug #{anchor-id}}` for the whole site, so a cross-page
+   fragment is checked against the toc of the page it points AT, and `pages` is
+   the whole page list, which the landing page has to be a map of."
+  [{:keys [slug title md blurb toc]} anchors pages]
+  (let [home?
+        (= "index" slug)
+
+        {:keys [headings fences]}
+        (scan md)
+
+        h1s
+        (filter (fn [[_ lvl _]]
+                  (= 1 lvl))
+                headings)
+
+        h2-texts
+        (keep (fn [[_ lvl text]]
+                (when (= 2 lvl) text))
+              headings)
+
+        first-line
+        (str/trim (str (first (remove str/blank? (str/split-lines md)))))
+
+        ids
+        (map :id toc)
+
+        say
+        (fn [& parts]
+          (str slug ": " (apply str parts)))]
+
+    (concat
+      (if home?
+        (concat (when (seq h1s)
+                  [(say
+                     "the landing page carries no H1 of its own — the themed hero is its title")])
+                (for [{other-slug :slug other-title :title}
+                      pages
+
+                      :when (not= "index" other-slug)
+                      :let [link
+                            (str "[" other-title "](" other-slug ".md)")]
+                      :when (not (str/includes? md link))]
+
+                  (say "the landing page never links " link " — it is the map of this manual")))
+        (concat
+          (when-not (= 1 (count h1s)) [(say "wants exactly one H1, has " (count h1s))])
+          (when-not (= (str "# " title) first-line)
+            [(say "opens with " (pr-str first-line)
+                  ", not with its manifest title " (pr-str (str "# " title)))])
+          (when (< (count (lead-paragraph md)) 60)
+            [(say "has no lead paragraph between its H1 and the first `##`")])
+          (when-not (= "See also" (last h2-texts))
+            [(say "ends on `## " (last h2-texts) "` — the last `##` of a page is `See also`")])
+          (when (< (count (see-also-links md)) 2)
+            [(say "`See also` names fewer than two sibling pages")])))
+      (for [[line lvl text]
+            headings
+
+            :when (> (long lvl) 3)]
+
+        (say "line " line " is an h" lvl " (" text ") — too deep to be given an anchor"))
+      (->> headings
+           (map (fn [[_ lvl _]]
+                  lvl))
+           (partition 2 1)
+           (keep (fn [[a b]]
+                   (when (> (long b) (inc (long a))) (say "a heading jumps h" a " → h" b)))))
+      (for [[id n]
+            (frequencies ids)
+
+            :when (> (long n) 1)]
+
+        (say "anchor #" id " is claimed " n " times"))
+      (for [[line lang]
+            fences
+
+            :when (not (contains? fence-languages lang))]
+
+        (say "the fence on line " line
+             " declares " (if (str/blank? lang) "no language" (pr-str lang))))
+      (when (str/blank? (str blurb)) [(say "has no `:blurb` in the manifest")])
+      (for [[_ target frag]
+            (re-seq #"\]\((?!https?:|/|#)([A-Za-z0-9._-]+\.md)(#[A-Za-z0-9._-]+)?\)" md)
+
+            :let [target-slug
+                  (str/replace target #"\.md$" "")]
+            :when (or (not (contains? anchors target-slug))
+                      (and frag (not (contains? (get anchors target-slug) (subs frag 1)))))]
+
+        (say "links to " target (str frag) ", which no page answers"))
+      (for [[_ frag]
+            (re-seq #"\]\((#[A-Za-z0-9._-]+)\)" md)
+
+            :when (not (contains? (set ids) (subs frag 1)))]
+
+        (say "links to " frag " on this page, which is not a heading here")))))
+
+(defdescribe
+  docs-page-canon-test
+  "One canonical page shape, so the pages read as ONE manual instead of sixteen
+   documents: the contract is stated in the `docs` ns docstring and checked here."
+  (it "every page keeps it"
+      (let [{:keys [pages]}
+            (docs/collect)
+
+            anchors
+            (into {} (map (juxt :slug #(set (map :id (:toc %))))) pages)
+
+            broken
+            (mapcat #(page-canon % anchors pages) pages)]
+
+        (expect (seq pages))
+        (expect (empty? broken)
+                (str/join "\n" (cons "pages that break the docs page contract:" broken))))))

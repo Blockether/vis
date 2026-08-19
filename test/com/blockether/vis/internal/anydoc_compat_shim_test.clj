@@ -699,7 +699,7 @@
 
 (def ^:private docs-anydoc-section
   "The `anydoc` part of the docs page a human reads — heading to the next rule."
-  (delay (or (re-find #"(?s)#### Asking a document a question.*?(?=\n---|\n#)"
+  (delay (or (re-find #"(?s)### Asking a document a question.*?(?=\n---|\n#)"
                       (slurp (io/resource "vis-docs/extending.md")))
              (throw (ex-info "extending.md no longer documents anydoc" {})))))
 

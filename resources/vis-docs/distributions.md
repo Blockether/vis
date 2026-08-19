@@ -215,3 +215,9 @@ engine.
 
 On a platform with no published bundle, run the source runtime, or build a
 sidecar locally with `vis-agent update --rebuild`.
+
+## See also
+
+- [JVM & native-image](jvm-native-image.md) — how the native binary is built and what travels inside it.
+- [Configuration](configuration.md) — what each runtime reads at startup.
+- [Gateway, pairing & remote access](gateway.md) — the daemon a distribution starts for you.

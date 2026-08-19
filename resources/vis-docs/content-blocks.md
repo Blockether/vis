@@ -1,4 +1,4 @@
-# Content blocks
+# Content-block protocol
 
 Vis has one answer model: a role-labelled message containing an ordered array of
 typed content blocks. The same JSON-ready shape is used by persistence, gateway
@@ -222,3 +222,9 @@ The implementation must prove that:
    restart rendering are covered.
 4. A completed answer survives restart using only `content`.
 5. Restart never resubmits pending or interrupted user requests.
+
+## See also
+
+- [Exporting sessions](exporting-sessions.md) — the same blocks rendered to Markdown, HTML or a screencast.
+- [Gateway, pairing & remote access](gateway.md) — the SSE stream these blocks travel on.
+- [Extending Vis](extending.md) — producing blocks from an extension.

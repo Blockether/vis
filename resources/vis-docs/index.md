@@ -59,7 +59,7 @@ function docstring, documentation page, skill body and MCP tool description, and
 `doc(name)` returns the authoritative contract for one of them. From there,
 `grep` → `cat` → `patch` is the whole editing path: locate it, read the region
 you will change, then spend the anchor that read handed back. See [Token
-optimization](token-optimization.md) and [Extending Vis](extending.md#one-tool-and-it-is-python_execution).
+optimization](token-optimization.md) and [Extending Vis](extending.md#one-tool-and-it-is-python-execution).
 
 ```text
       ONE TOOL PER RESULT                 PYTHON SANDBOX
@@ -174,15 +174,33 @@ because its native-image analysis does not converge within memory.
 
 ## Learn more
 
-- **[Token optimization](token-optimization.md)**: the context-as-environment model and the tools that make it cheap.
-- **[GraalPython sandbox](graalpython.md)**: the in-process interpreter that executes the agent's actions.
-- **[Process jail and gateway egress](jail.md)**: Seatbelt, filesystem/network policy, MITM, managed processes, trust boundaries, and verification.
-- **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes the wrapper's private native runtime.
-- **[Runtime distributions](distributions.md)**: wrapper bundles, runtime selection, and platform builds.
-- **[Gateway & pairing](gateway.md)**: the daemon every session runs through, companion pairing, and pointing any command — the TUI included — at a gateway on another machine with `--gateway`.
-- **[Configuration](configuration.md)**: providers and models, system_prompt overrides, router tuning, the database.
-- **[Extending Vis](extending.md)**: one guide to both flavors — drop-in [Python extensions](extending.md#python-extensions) (`.py` in `.vis/extensions/`, no rebuild, `/reload`able, Vis can write them for itself mid-session) and [Clojure extensions](extending.md#clojure-extensions) (the full-surface path: tools, channels, providers, slash commands, doc pages, compiled into the binary).
-- **[Content-block protocol](content-blocks.md)**: the canonical role-labelled message, typed block, persistence, and streaming contract.
-- **[Reporting bugs](reporting-bugs.md)**: filing an issue that is reproducible for us and safe for you — what to include, what never to paste, and how to sanitize a session export.
+Every page of this manual, in the order the sidebar lists them.
+
+### How it works
+
+- [Token optimization](token-optimization.md) — the context-as-environment model, and the working habits that make it cheap.
+- [GraalPython sandbox](graalpython.md) — the in-process interpreter that executes the agent's actions.
+- [Process jail & egress](jail.md) — Seatbelt/bubblewrap confinement, filesystem and network policy, managed processes, and how to verify them.
+- [Content-block protocol](content-blocks.md) — the canonical role-labelled message, typed block, persistence and streaming contract.
+
+### Runtime
+
+- [JVM & native-image](jvm-native-image.md) — how the Clojure core becomes the wrapper's private native runtime.
+- [Runtime distributions](distributions.md) — runtime selection, update channels, wrapper bundles and platform builds.
+
+### Using Vis
+
+- [Configuration](configuration.md) — config files, providers and models, the router, the jail block, the database.
+- [Context files & prompts](context-and-prompts.md) — AGENTS.md/CLAUDE.md, system-prompt files, prompt templates, shell shortcuts.
+- [Exporting sessions](exporting-sessions.md) — a past session as Markdown, HTML or an MP4 screencast.
+- [Skills](skills.md) — instructions the agent pulls only when a task needs them.
+- [Queue, cancel & quit](queue-and-cancel.md) — queueing follow-ups, auto-drain on resume, cancelling a turn, Ctrl+C.
+- [Drafts](drafts.md) — isolated workspaces for speculative changes: create, apply, park, resume, abandon.
+- [Gateway, pairing & remote access](gateway.md) — the daemon every session runs through, companion pairing, and driving a gateway on another machine with `--gateway`.
+- [Reporting bugs safely](reporting-bugs.md) — an issue that is reproducible for us and safe for you.
+
+### Extensions
+
+- [Extending Vis](extending.md) — one guide to both flavors: drop-in [Python extensions](extending.md#python-extensions) (a `.py` in `.vis/extensions/`, no rebuild, `/reload`able, and Vis can write them for itself mid-session) and [Clojure extensions](extending.md#clojure-extensions) (tools, channels, providers, slash commands, doc pages, compiled into the binary).
 
 Vis can also answer these questions itself: ask a running `vis-agent` how to configure or extend it and it reads these same pages through `apropos(text)` and `doc(slug)` — they are documents in the same corpus as every function contract.

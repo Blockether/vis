@@ -86,3 +86,9 @@ vis-agent sessions export 3a7b2c1d --html out.html
 # Humanized MP4 screencast (extension auto-added)
 vis-agent sessions export 3a7b2c1d --mp4 demo
 ```
+
+## See also
+
+- [Content-block protocol](content-blocks.md) — the block contract every export renders from.
+- [Reporting bugs safely](reporting-bugs.md) — sanitizing an export before you share it.
+- [Gateway, pairing & remote access](gateway.md) — exporting a session that lives on another machine.

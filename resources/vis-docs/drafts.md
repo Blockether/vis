@@ -478,3 +478,9 @@ active draft in the session's current repo—for example, after apply/abandon or
 while another session pins it. The gateway client exposes the corresponding
 `list-drafts`, `create-draft!`, `stash-draft!`, `resume-draft!`, and
 `abandon-draft!` operations.
+
+## See also
+
+- [Gateway, pairing & remote access](gateway.md) — who owns a draft when the daemon restarts.
+- [Configuration](configuration.md) — the workspace and jail keys a draft inherits.
+- [Queue, cancel & quit](queue-and-cancel.md) — what happens to queued work when you leave a draft.
