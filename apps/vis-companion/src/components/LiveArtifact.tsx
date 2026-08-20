@@ -17,7 +17,13 @@
  * file server-side, one window at a time.
  */
 
-import { memo, useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { attachmentBytes } from "../lib/artifacts";
 import type { GatewayClient } from "../lib/gateway";
@@ -153,9 +159,7 @@ export function LiveArtifact({
     </p>
   );
 
-  return (
-    <>{chrome({ subtitle: record ? liveVerdictLine(record) : "", body })}</>
-  );
+  return <>{chrome({ subtitle: record ? liveVerdictLine(record) : "", body })}</>;
 }
 
 /**
@@ -261,7 +265,11 @@ export const LiveRunRow = memo(function LiveRunRow({
               sid={sid}
               url={url}
               chrome={({ subtitle, body }) => (
-                <OverlayScreen title={name} subtitle={subtitle} onClose={close}>
+                <OverlayScreen
+                  title={name}
+                  subtitle={subtitle}
+                  onClose={close}
+                >
                   {body}
                 </OverlayScreen>
               )}
