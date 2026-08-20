@@ -2867,48 +2867,54 @@
   (it "grep carries an observation tag (registry-resolvable)"
       (expect (= :observation (:ext.symbol/tag editing/grep-symbol)))))
 
-(defdescribe empty-search-paths-default-test
-             "grep scopes are directories; empty scope still means the workspace root."
-             (let [coerce-find
-                   (private-fn "coerce-find-spec")
+(defdescribe
+  empty-search-paths-default-test
+  "grep scopes are directories; empty scope still means the workspace root."
+  (let [coerce-find
+        (private-fn "coerce-find-spec")
 
-                   coerce-rg
-                   (private-fn "coerce-rg-spec")
+        coerce-rg
+        (private-fn "coerce-rg-spec")
 
-                   find-paths
-                   (private-fn "find-arg-paths")]
+        find-paths
+        (private-fn "find-arg-paths")]
 
-               (it
-                 "grep defaults empty paths to current directory in validation and path protection"
-                 (let [spec {"query" "resource-config" "paths" []}]
-                   (expect (= ["."] (:paths (coerce-find [spec]))))
-                   (expect (= ["."] (find-paths [spec])))))
-               (it "normalizes an existing filename scope to its parent directory everywhere"
-                   (let [dir
-                         (temp-dir-path "find-dir-scope")
+    (it "grep defaults empty paths to current directory in validation and path protection"
+        (let [spec {"query" "resource-config" "paths" []}]
+          (expect (= ["."] (:paths (coerce-find [spec]))))
+          (expect (= ["."] (find-paths [spec])))))
+    (it "coerce-find normalizes file to parent dir, find-arg-paths keeps the file for gate checking"
+        (let [dir
+              (temp-dir-path "find-dir-scope")
 
-                         file
-                         (str dir "/one.clj")
+              file
+              (str dir "/one.clj")
 
-                         expected
-                         ((private-fn "rel-path") (fs/file dir))
+              expected-dir
+              ((private-fn "rel-path") (fs/file dir))
 
-                         spec
-                         {"query" "needle" "paths" [file]}]
+              expected-file
+              ((private-fn "rel-path") (fs/file file))
 
-                     (spit (fs/file file) "needle\n")
-                     (expect (= [expected] (:paths (coerce-find [spec]))))
-                     (expect (= [expected] (find-paths [spec])))))
-               (it "accepts context-lines and rejects a negative/non-integer one"
-                   (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
-                   (expect (= 0 (:context (coerce-find [{"query" "needle"}]))))
-                   (expect (throws? clojure.lang.ExceptionInfo
-                                    #(coerce-find [{"query" "needle" "context" -1}])))
-                   (expect (throws? clojure.lang.ExceptionInfo
-                                    #(coerce-find [{"query" "needle" "context" {"before" 1}}]))))
-               (it "rg keeps its own empty-path and file-path semantics"
-                   (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
-                     (expect (= ["."] (:paths (coerce-rg spec))))))))
+              spec
+              {"query" "needle" "paths" [file]}]
+
+          (spit (fs/file file) "needle\n")
+          ;; coerce-find (actual search) normalizes file→dir
+          (expect (= [expected-dir] (:paths (coerce-find [spec]))))
+          ;; find-arg-paths (gate checking) keeps the file so
+          ;; .bridge/ephemeral/x.yaml is authorized as that file, not .bridge/ephemeral/
+          (expect (= [expected-file] (find-paths [spec])))))
+    (it "accepts context-lines and rejects a negative/non-integer one"
+        (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
+        (expect (= 0 (:context (coerce-find [{"query" "needle"}]))))
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(coerce-find [{"query" "needle" "context" -1}])))
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(coerce-find [{"query" "needle" "context" {"before" 1}}]))))
+    (it "rg keeps its own empty-path and file-path semantics"
+        (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
+          (expect (= ["."] (:paths (coerce-rg spec))))))))
 
 (defdescribe grep-max-results-alias-test
              ;; Models sometimes write `max_results` where grep's knob is `limit`; the call

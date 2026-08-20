@@ -816,7 +816,15 @@
               (sequential? paths) paths
               :else [paths])]
 
-    (mapv normalize-find-dir-path paths)))
+    ;; Gate-check paths as given, not normalized to parent directories.
+    ;; grep's actual search uses resolve-search-roots which handles file→dir
+    ;; normalization internally. The gate must see .bridge/profile.yaml, not
+    ;; .bridge/, so a rule on .bridge/ also blocks explicit file access.
+    ;; Missing paths are still resolved to their nearest existing ancestor.
+    (mapv (fn [p]
+            (let [^File f (safe-path p)]
+              (if (.exists f) (rel-path f) (normalize-find-dir-path p))))
+          paths)))
 
 (defn- gate-refusal-failure
   "Turn a `:fs/access` refusal into the tool failure the model reads. The gate's

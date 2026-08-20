@@ -3,8 +3,9 @@ policy-id: vis-bridge-v1
 bridge-path-sandbox:
   enforce?: true
   rules:
-    - path-pattern: .bridge/
+    - path-pattern: .bridge/ephemeral/
       access: none
+      reason: Runtime artifacts and receipts should not be edited directly
 rules:
 - scope:
     subsystems:
