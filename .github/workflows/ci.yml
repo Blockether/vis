@@ -23,15 +23,44 @@ jobs:
   # not upgradable) via ./.github/actions/setup-graalvm-25, i.e. the exact JDK the
   # native binary is built with. Never Oracle GraalVM (GFTC) and never a stock JDK.
   # fail-fast false so each OS reports independently. Windows is not supported.
+  #
+  # macOS RUNS ON OUR OWN APPLE-SILICON MACHINE — the `vis-macos-arm64` label
+  # native-release.yml already builds on, so the suite runs on the hardware the
+  # release is cut from instead of a 3-core / 7 GiB hosted Mac that starved it.
+  # Three consequences, all deliberate:
+  #   * a pull request from a FORK stays on hosted `macos-latest`. Untrusted code
+  #     must never execute on a workstation, and hosted macOS is free here;
+  #   * that machine serves ONE job at a time, so a release build makes this job
+  #     queue behind it and the reverse. Register a second runner with the same
+  #     label if that ever costs more than it saves;
+  #   * when the Mac is off or busy, the repository variable VIS_MACOS_ARM64_RUNNER
+  #     (Settings -> Secrets and variables -> Actions -> Variables) set to
+  #     `macos-latest` — or a cloud label — sends this job AND native-release.yml
+  #     back to a hosted runner with no edit here. A label that matches no ONLINE
+  #     runner queues for 24 h before it fails, so that variable is the fire exit.
   tests:
-    name: tests / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: tests / ${{ matrix.name }}
+    runs-on: ${{ matrix.host }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - { name: linux, host: ubuntu-latest }
+          - { name: macos, host: "${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64') || 'macos-latest' }}" }
     steps:
       - uses: actions/checkout@v7
+      # THE SELF-HOSTED MAC IS SOMEBODY'S WORKSTATION, and $HOME there is a real
+      # home: the seed step below writes ~/.vis/state.yml and ~/.claude fixtures,
+      # and the suite writes sessions and drafts under ~/.vis. Against the human's
+      # own home that overwrites their provider config. Give the job a home of its
+      # own under the runner workspace — it survives between runs, so ~/.m2 and
+      # ~/.gitlibs stay warm, and every `~` below (cache paths included) follows it.
+      - name: Give the job a home of its own
+        if: runner.os == 'macOS' && runner.environment == 'self-hosted'
+        run: |
+          CI_HOME="$RUNNER_WORKSPACE/ci-home"
+          mkdir -p "$CI_HOME"
+          echo "HOME=$CI_HOME" >> "$GITHUB_ENV"
       # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free
       # download channel) and setup-graalvm's CE resolver predates the 25.1
       # innovation naming, so we install the pinned graalvm-ce-builds asset
@@ -121,8 +150,10 @@ jobs:
           # (`env-python/new-engine!`) and an Engine retains what was built on it.
           # That, not the test count, set the floor: before the leaked sandboxes
           # were closed (`tpc/with-own`) even 11g died here after ~19 min. With
-          # them closed the whole suite finishes in ~5.5 min and survives 9g.
-          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx10g' }}
+          # them closed the whole suite finishes in ~5.5 min and survives 9g. Our own
+          # Apple-silicon runner has 32 GiB, so the 5g there was a hosted-Mac limit,
+          # not a suite limit — only a hosted macOS box still gets it.
+          JAVA_TOOL_OPTIONS: ${{ runner.os != 'macOS' && '-Xmx10g' || runner.environment == 'self-hosted' && '-Xmx9g' || '-Xmx5g' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale

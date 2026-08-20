@@ -67,6 +67,10 @@ on:
         type: choice
         options: [all, internal]
         default: all
+      runner:
+        description: "Runner label for the iOS job (empty = VIS_IOS_RUNNER, then our own vis-macos-arm64 Mac)"
+        type: string
+        default: ''
 
 concurrency:
   group: mobile-release-${{ github.ref }}
@@ -93,8 +97,18 @@ jobs:
   ios:
     # A tag ships to TestFlight; a manual run only when iOS was asked for.
     if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
-    # App Store Connect requires apps uploaded after April 2026 to use the iOS 26 SDK.
-    runs-on: macos-26
+    # OUR OWN APPLE-SILICON MAC BUILDS THIS — the same `vis-macos-arm64` runner
+    # native-release.yml uses. Xcode 26 (iOS 26 SDK) is the floor, because App Store
+    # Connect rejects anything uploaded after April 2026 built against less, and that
+    # machine has it and archives in a fraction of a hosted Mac's time.
+    # Two things follow. This job holds SIGNING material on a workstation, so the
+    # keychain steps below record the machine's own keychain state and put it back.
+    # And when the Mac is off, point the job elsewhere: the `runner` dispatch input
+    # for ONE run, or the repository variable VIS_IOS_RUNNER (Settings -> Secrets and
+    # variables -> Actions -> Variables) set to `macos-26` for every run. It is a
+    # variable of its OWN, not the CI/native one, so a fire exit for the test suite
+    # can never send a store build to a Mac without the iOS 26 SDK.
+    runs-on: ${{ inputs.runner || vars.VIS_IOS_RUNNER || 'vis-macos-arm64' }}
     timeout-minutes: 90
     steps:
       # Version code is `git rev-list --count HEAD`, so a shallow clone would produce a
@@ -158,8 +172,8 @@ jobs:
           KEY: ${{ secrets.VIS_ASC_KEY }}
         run: echo "ok=${{ env.KEY != '' }}" >> "$GITHUB_OUTPUT"
 
-      # xcodebuild and altool both insist on a FILE. Keep it in RUNNER_TEMP (wiped with the
-      # runner) with 0600, never in the workspace where an artifact upload could catch it.
+      # xcodebuild and altool both insist on a FILE. Keep it in RUNNER_TEMP with 0600, never in
+      # the workspace where an artifact upload could catch it; the restore step below deletes it.
       - name: Materialise the App Store Connect key
         if: steps.creds.outputs.ok == 'true'
         env:
@@ -168,10 +182,13 @@ jobs:
           umask 077
           printf '%s\n' "$VIS_ASC_KEY" > "$RUNNER_TEMP/AuthKey_${{ secrets.VIS_ASC_KEY_ID }}.p8"
 
-      # App Store Connect API auth can fetch profiles, but GitHub runners have no signing
-      # identity. Import our dedicated API-created distribution certificate into an ephemeral
-      # keychain; the runner and every decrypted byte disappear when the job ends.
+      # App Store Connect API auth can fetch profiles, but no runner arrives with a signing
+      # identity. Import our dedicated API-created distribution certificate into a keychain of
+      # this job's own. A hosted runner takes that keychain to the grave with it; OUR Mac keeps
+      # everything, and the user-domain search list and default keychain are the human's real,
+      # shared state — so they are recorded here and restored by the step after the build.
       - name: Install the iOS distribution certificate
+        id: keychain
         if: steps.creds.outputs.ok == 'true'
         env:
           P12_BASE64: ${{ secrets.VIS_IOS_DISTRIBUTION_P12 }}
@@ -184,13 +201,17 @@ jobs:
           CERTIFICATE_PATH="$RUNNER_TEMP/vis-distribution.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/vis-signing.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          security list-keychain -d user | tr -d '"' | xargs > "$RUNNER_TEMP/vis-keychains-before"
+          security default-keychain -d user | tr -d '"' | xargs > "$RUNNER_TEMP/vis-default-keychain-before"
           printf '%s' "$P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          # Prepend, never replace: the login keychain has to stay searchable on a machine
+          # somebody logs into.
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(cat "$RUNNER_TEMP/vis-keychains-before")
           security default-keychain -d user -s "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
@@ -203,6 +224,19 @@ jobs:
         run: |
           export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
           npm run release:ios:store -- --audience ${{ inputs.audience || 'all' }}
+
+      # The signing keychain, the decrypted .p12 and the .p8 outlive a job on a machine that is
+      # not thrown away — and a default keychain left pointing at a deleted file locks the human
+      # out of their own login items. Undo all of it, whether the build passed or failed.
+      - name: Restore the machine's keychain state
+        if: always() && steps.keychain.outcome == 'success'
+        run: |
+          set +e
+          security default-keychain -d user -s $(cat "$RUNNER_TEMP/vis-default-keychain-before")
+          security list-keychain -d user -s $(cat "$RUNNER_TEMP/vis-keychains-before")
+          security delete-keychain "$RUNNER_TEMP/vis-signing.keychain-db"
+          rm -f "$RUNNER_TEMP/vis-distribution.p12" "$RUNNER_TEMP"/AuthKey_*.p8 \
+                "$RUNNER_TEMP/vis-keychains-before" "$RUNNER_TEMP/vis-default-keychain-before"
 
       - name: No iOS credentials
         if: steps.creds.outputs.ok != 'true'
