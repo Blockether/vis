@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.40 (4615) — 2026-08-20
+<!-- commit: e2cd4f701d5aca9ef808feb2929eb5847fced1be -->
+
+- Consume parinferish closer relocation
+- Carry Windows trust through WSL
+- Discover system certificate stores
+- Anchor finished live runs
+- Add clj-parinferish workspace root
+- Isolate live views from test runs
+- Keep short responses beside composer
+- Show GitHub run start time
+- Load session totals with list
+- Harden GitHub watches and name NDJSON
+- Keep composer pinned during keyboard dismissal
+- Collapse repeated live run cuts
+- Stop watching superseded CI runs
+- Preserve interrupted live records
+- Show live CI job activity
+- Use GitHub-hosted macOS runners
+- Refresh dependency audit
+- Bump svar to 0.7.125
+- Minimize active live views
+- Expand and focus live CI jobs
+
 ## 0.1.40 (4546) — 2026-08-19
 <!-- commit: ac9e2bde25e37e0a1bbb61e2c8ffb9f44bc86201 -->
 
