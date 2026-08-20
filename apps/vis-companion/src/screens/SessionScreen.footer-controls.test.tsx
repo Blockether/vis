@@ -17,7 +17,7 @@ describe("composer response controls", () => {
   it("keeps verbosity beside fast mode for a Codex session and cycles it", async () => {
     const user = userEvent.setup();
     const reasoning = toggle("reasoning_level", "Reasoning effort", "balanced", [
-      "quick",
+      "low",
       "balanced",
       "deep",
     ]);

@@ -593,7 +593,7 @@
                        :label "Reasoning effort"
                        :description "Reasoning budget hint passed to reasoning-capable models."
                        :type :enum
-                       :choices ["quick" "balanced" "deep"]
+                       :choices ["low" "balanced" "deep"]
                        ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
                        ;; dialog — `:settings? false` keeps it registered + persisted but out
                        ;; of every channel's Settings list.

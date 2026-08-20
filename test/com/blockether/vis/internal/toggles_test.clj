@@ -196,6 +196,7 @@
                  (let [spec (t/toggle-spec "reasoning_level")]
                    (expect (some? spec))
                    (expect (= :enum (:type spec)))
+                   (expect (= ["low" "balanced" "deep"] (:choices spec)))
                    (expect (= "balanced" (:default spec)))))
              (it "retired display toggles do not exist (code always shows)"
                  ;; Render-fn op cards were removed — tool output is now stdout, and the TUI
