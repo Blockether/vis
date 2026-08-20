@@ -11180,23 +11180,44 @@
 
    So the wait is a POLL. Each round re-reads the session's CURRENT entry, and a
    CONDEMNED one is detached and rebuilt rather than waited on; `tryLock` is
-   interruptible, so a queued turn's own cancel finally reaches it."
+   interruptible, so a queued turn's own cancel finally reaches it.
+
+   A FREE lock is not enough. The turn that a stop button cancels unwinds and
+   releases this lock normally, but the guest thread it abandoned inside GraalPy
+   dies OWNING the GIL (`env-python/context-enterable?`), and that context can
+   never be entered again. The next turn then took the lock, walked into the
+   engine, and parked in `PythonContext.acquireGil` before its first iteration:
+   the same wedge one level in, and one cancel bricked the session for every
+   message the user sent afterwards — each new turn started, produced nothing,
+   and was buried by the stall watchdog two minutes later. So an entry is only
+   handed back once its context PROVES it can still be entered; an unenterable
+   one is detached and rebuilt. Nothing is disposed: closing a context requires
+   entering it, which is the one thing nobody can do here. The rescue is taken at
+   most once per acquisition — a FRESH context that still refuses is a real
+   failure for the turn to report, not a reason to keep minting interpreters."
   [id]
   (let [k (cache-key id)]
-    (loop []
-
+    (loop [rescued? false]
       (let [{:keys [^java.util.concurrent.locks.ReentrantLock lock
                     ^java.util.concurrent.atomic.AtomicBoolean condemned]
              :as entry}
             (ensure-env! id)]
         (if (.tryLock lock (long ENGINE_LOCK_POLL_MS) java.util.concurrent.TimeUnit/MILLISECONDS)
-          (do (when condemned (.set condemned false)) entry)
+          (if (or rescued? (env/context-enterable? (:environment entry)))
+            (do (when condemned (.set condemned false)) entry)
+            (do
+              (.unlock lock)
+              (detach-entry! k entry)
+              (tel/log!
+                {:level :warn :id ::engine-unenterable :data {:session k}}
+                "Session Python context can no longer be entered - a cancelled turn left its GIL owned by a dead thread; starting a fresh context")
+              (recur true)))
           (do
             (when (and condemned (.get condemned) (detach-entry! k entry))
               (tel/log!
                 {:level :warn :id ::engine-abandoned :data {:session k}}
                 "Session engine abandoned: its turn was declared over but its thread never returned - starting a fresh context"))
-            (recur)))))))
+            (recur rescued?)))))))
 
 (defn db-info
   "Return the process-wide shared DB connection bound to

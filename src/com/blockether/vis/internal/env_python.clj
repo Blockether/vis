@@ -2565,8 +2565,8 @@
 
 (defn- run-detached-guest-work!
   "Run `work-fn` on a daemon thread named `thread-name` and wait at most
-   [[gil-budget-ms]] for its value; nil when the budget expires or an earlier run for
-   `key` is still parked.
+   `budget-ms` - [[gil-budget-ms]] by default - for its value; nil when the budget
+   expires or an earlier run for `key` is still parked.
 
    THE guard for best-effort guest work that sits between the engine unwinding and
    `gateway.state/run-turn!` appending the turn's terminal event. `.eval` first acquires
@@ -2584,19 +2584,56 @@
    panel that Esc could not close. So give it a budget and walk away; the abandoned
    daemon thread finishes whenever the GIL frees. `rt/guest-safepoint!` is what keeps a
    cancel from leaking one in the first place."
-  [key thread-name work-fn]
-  (when (.add ^java.util.Set detached-guest-work key)
-    (let [done (promise)]
-      (doto (Thread. ^Runnable
-                     (fn []
-                       (try (deliver done (work-fn))
-                            (catch Throwable _ nil)
-                            (finally (.remove ^java.util.Set detached-guest-work key)
-                                     (deliver done nil))))
-                     ^String thread-name)
-        (.setDaemon true)
-        (.start))
-      (deref done gil-budget-ms nil))))
+  ([key thread-name work-fn] (run-detached-guest-work! key thread-name gil-budget-ms work-fn))
+  ([key thread-name budget-ms work-fn]
+   (when (.add ^java.util.Set detached-guest-work key)
+     (let [done (promise)]
+       (doto (Thread. ^Runnable
+                      (fn []
+                        (try (deliver done (work-fn))
+                             (catch Throwable _ nil)
+                             (finally (.remove ^java.util.Set detached-guest-work key)
+                                      (deliver done nil))))
+                      ^String thread-name)
+         (.setDaemon true)
+         (.start))
+       (deref done (long budget-ms) nil)))))
+
+(def ^:private context-probe-budget-ms
+  "How long the START of a turn waits for proof that its session's Python context
+   can still be ENTERED.
+
+   Ten times [[gil-budget-ms]], because the two answers cost different things.
+   Best-effort work that gives up loses a `gc.collect`; giving up here throws the
+   session's whole interpreter away, so a context that is merely BUSY - a detached
+   collect still finishing, a sibling shim mid-call - must never be read as dead. A
+   LEAKED GIL is never released by anyone, so no budget is too short to catch it."
+  20000)
+
+(defn context-enterable?
+  "Bounded proof that `environment`'s Python context can still be ENTERED - that
+   its GIL still has a living owner.
+
+   TRUE when a trivial guest evaluation answers inside [[context-probe-budget-ms]],
+   and TRUE for an environment carrying no context at all: there is nothing to
+   enter, so there is nothing wedged. A context that is CLOSED answers by throwing,
+   which is still an answer - only silence means the GIL is LEAKED (see
+   [[run-detached-guest-work!]]).
+
+   FALSE is terminal, and it is why this exists: nothing will ever enter that
+   context again, so a caller must ABANDON it instead of parking on it. A turn that
+   parks there is deaf to its own cancel forever - the stop button lands the
+   gateway's synthetic terminal, the thread stays parked for the life of the
+   daemon, and every later message the user sends parks behind it too."
+  [environment]
+  (if-let [^Context ctx (:python-context environment)]
+    (boolean (run-detached-guest-work! [(System/identityHashCode ctx) :enterable]
+                                       "vis-python-probe"
+                                       context-probe-budget-ms
+                                       (fn []
+                                         (try (.eval ctx "python" "None") (catch Throwable _ nil))
+                                         true)))
+    true))
 
 (defn collect-garbage!
   "Best-effort GC between turns. Two steps, because GraalPy reclaims

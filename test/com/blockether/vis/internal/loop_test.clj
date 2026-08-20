@@ -532,49 +532,61 @@
                                     (finally (try (.close ^org.graalvm.polyglot.Context pc true)
                                                   (catch Throwable _ nil)))))))
 
-(defdescribe python-block-runs-in-the-session-context-test
-             ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
-             ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
-             ;; AMBIENT context (an extension SYMBOL installs its own around every call),
-             ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
-             ;; extra filesystem root — "escapes the allowed workspace roots" — while
-             ;; `cat`/`grep` on the very same path answered normally.
-             (it
-               "gives a shim bridge the filesystem roots the session actually bound"
-               (tpc/with-own
-                 [pc {}]
-                 (let [;; Outside the primary cwd and outside every always-on root
-                       ;; (temp dirs, `~/.vis`) — reachable ONLY as a bound root.
-                       outside
-                       (System/getProperty "user.home")
+(defdescribe
+  python-block-runs-in-the-session-context-test
+  ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
+  ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
+  ;; AMBIENT context (an extension SYMBOL installs its own around every call),
+  ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
+  ;; extra filesystem root — "escapes the allowed workspace roots" — while
+  ;; `cat`/`grep` on the very same path answered normally.
+  (it
+    "gives a shim bridge the filesystem roots the session actually bound"
+    (tpc/with-own
+      [pc {}]
+      (let [;; Outside the primary cwd and outside every always-on root
+            ;; (temp dirs, `~/.vis`) - reachable ONLY as a bound root. An empty
+            ;; directory of its own, never the whole home: the guest `ls` COUNTS
+            ;; what it lists, so a home-sized walk outlives the block's eval wall,
+            ;; and the abandoned guest thread is still inside that native call when
+            ;; the teardown below closes the context - a close that then waits for
+            ;; it forever.
+            outside
+            (let [dir (java.io.File. (System/getProperty "user.home")
+                                     (str "vis-loop-outside-" (System/nanoTime)))]
+              (.mkdirs dir)
+              (spit (java.io.File. dir "marker.txt") "marker\n")
+              (.getAbsolutePath dir))
 
-                       code
-                       (str "try:\n"
-                            "    rows = ls(" (pr-str outside)
-                            ")\n" "    print('listed', isinstance(rows, str) and len(rows) > 0)\n"
-                            "except Exception as e:\n" "    print('refused', e)\n")
+            code
+            (str "try:\n"
+                 "    rows = ls(" (pr-str outside)
+                 ")\n" "    print('listed', isinstance(rows, str) and len(rows) > 0)\n"
+                 "except Exception as e:\n" "    print('refused', e)\n")
 
-                       env-with
-                       (fn [roots]
-                         {:workspace/root (System/getProperty "user.dir")
-                          :workspace {:repo-root (System/getProperty "user.dir")
-                                      :root (System/getProperty "user.dir")}
-                          :security-policy {:jail-enabled true}
-                          :security/filesystem-roots roots
-                          :security/no-search-roots []})
+            env-with
+            (fn [roots]
+              {:workspace/root (System/getProperty "user.dir")
+               :workspace {:repo-root (System/getProperty "user.dir")
+                           :root (System/getProperty "user.dir")}
+               :security-policy {:jail-enabled true}
+               :security/filesystem-roots roots
+               :security/no-search-roots []})
 
-                       listing
-                       (fn [roots]
-                         (str (:stdout
-                                ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
+            listing
+            (fn [roots]
+              (str (:stdout ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
 
-                   (try
-                     ;; The path is genuinely outside what confinement grants by itself...
-                     (expect (str/starts-with? (listing []) "refused"))
-                     ;; ...and the moment the session binds it, the block's own `ls` reaches it.
-                     (expect (str/starts-with? (listing [outside]) "listed True"))
-                     (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                   (catch Throwable _ nil))))))))
+        (try
+          ;; The path is genuinely outside what confinement grants by itself...
+          (expect (str/starts-with? (listing []) "refused"))
+          ;; ...and the moment the session binds it, the block's own `ls` reaches it.
+          (expect (str/starts-with? (listing [outside]) "listed True"))
+          (finally
+            (try (doseq [^java.io.File f (reverse (file-seq (java.io.File. ^String outside)))]
+                   (.delete f))
+                 (catch Throwable _ nil))
+            (try (.close ^org.graalvm.polyglot.Context pc true) (catch Throwable _ nil))))))))
 
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`
@@ -6238,7 +6250,85 @@
                    (.join waiter 1000))))
              (finally (deliver (:release ghost) true)
                       (.join ^Thread (:thread ghost) 2000)
-                      (swap! env-cache dissoc k)))))))
+                      (swap! env-cache dissoc k)))))
+    ;; Regression, session 6e214dfd-6653-42a6-b45a-710864b0ccbd: the user pressed stop
+    ;; on a live view. The cancelled turn unwound and released the engine lock, but the
+    ;; guest thread it abandoned died OWNING GraalPy's GIL, so the context could never
+    ;; be entered again. The NEXT turn took the free lock, walked into the engine and
+    ;; parked in `PythonContext.acquireGil` before its first iteration — `turn.started`,
+    ;; zero iterations, buried by the stall watchdog two minutes later, and the same for
+    ;; every message sent afterwards. One stop bricked the session for the life of the
+    ;; daemon.
+    (it
+      "abandons an engine whose Python context can no longer be ENTERED"
+      (let [id
+            "wedge-test/unenterable"
+
+            k
+            (cache-key id)
+
+            entry
+            (new-cache-entry {:marker :ghost})
+
+            opened
+            (atom 0)
+
+            got
+            (promise)]
+
+        (swap! env-cache assoc k entry)
+        (try (with-redefs-fn {#'lp/open-env! (fn [_ _]
+                                               (swap! opened inc)
+                                               {:marker :fresh})
+                              ;; the leaked GIL: nothing will ever enter this context
+                              #'env/context-enterable? (fn [_]
+                                                         false)}
+               (fn []
+                 (let [waiter (Thread. ^Runnable
+                                       (fn []
+                                         (let [e (acquire-turn-lock! id)]
+                                           (.unlock ^java.util.concurrent.locks.ReentrantLock
+                                                    (:lock e))
+                                           (deliver got e)))
+                                       "wedged-context-test-waiter")]
+                   (.setDaemon waiter true)
+                   (.start waiter)
+                   (let [fresh (deref got 5000 ::parked)]
+                     ;; the turn RUNS instead of parking on a context nobody owns
+                     (expect (not= ::parked fresh))
+                     (expect (= {:marker :fresh} (:environment fresh)))
+                     (expect (not (identical? (:lock entry) (:lock fresh))))
+                     ;; ...and the rescue is taken ONCE: a fresh context that still
+                     ;; refuses is a failure to report, not a reason to mint another
+                     (expect (= 1 @opened)))
+                   (.join waiter 1000))))
+             (finally (swap! env-cache dissoc k)))))
+    (it "keeps the SAME engine when its context still answers"
+        (let [id
+              "wedge-test/enterable"
+
+              k
+              (cache-key id)
+
+              entry
+              (new-cache-entry {:marker :live})
+
+              opened
+              (atom 0)]
+
+          (swap! env-cache assoc k entry)
+          (try (with-redefs-fn {#'lp/open-env! (fn [_ _]
+                                                 (swap! opened inc)
+                                                 {:marker :fresh})
+                                #'env/context-enterable? (fn [_]
+                                                           true)}
+                 (fn []
+                   (let [e (acquire-turn-lock! id)]
+                     (.unlock ^java.util.concurrent.locks.ReentrantLock (:lock e))
+                     ;; a healthy context is never thrown away: same entry, same globals
+                     (expect (identical? entry e))
+                     (expect (zero? @opened)))))
+               (finally (swap! env-cache dissoc k)))))))
 (defdescribe voice-projection-prompt-test
              (it "activates the voice projection instructions only for the requested turn"
                  (let [projected (#'lp/voice-system-prompt "base" {"voice_projection" true})]
