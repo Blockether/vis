@@ -24,6 +24,7 @@
     [com.blockether.vis.internal.egress-proxy :as egress]
     [com.blockether.vis.internal.form :as form]
     [com.blockether.vis.internal.human-input :as human-input]
+    [com.blockether.vis.internal.human-input.live :as live]
     [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
     [com.blockether.vis.internal.process-jail :as process-jail]
     [com.blockether.vis.internal.attachment-storage :as attachment-storage]
@@ -878,6 +879,30 @@
       (:iteration-id a) :tool-call-id
       (:tool-call-id a))))
 
+(defn- envelope-with-settled-views
+  "Fold the live views a block ABANDONED onto its envelope.
+
+   The record of each one rides as an `:attachments` row — listed and stored
+   exactly as a close inside the block would have stored it — and the picture it
+   ended on is appended to what the block printed, because the run never reached
+   its own `close` and nothing else will ever say how the view ended. Without
+   both halves a wall or a cancel answers a bare error, and the twenty minutes a
+   human spent watching survive only as a file on disk that nothing points at."
+  [envelope swept]
+  (if-not swept
+    envelope
+    (let [document (str/join "\n\n"
+                             (mapv (fn [verdict]
+                                     (live/->markdown (:view verdict) {:result verdict}))
+                                   (:verdicts swept)))]
+      (cond-> envelope
+        (seq (:attachments swept))
+        (update :attachments (fnil into []) (:attachments swept))
+
+        (not (str/blank? document))
+        (update :stdout
+                (fn [printed]
+                  (if (str/blank? (str printed)) document (str printed "\n\n" document))))))))
 
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
@@ -960,15 +985,24 @@
         ;; A view the block opened and never closed. Sweeping it is the run's last
         ;; act, so a wall or a cancel cannot leave a pane painting a picture that
         ;; will never move again. Never at the cost of the block's own answer.
+        ;; The close lands HERE, on the loop thread, because the guest is unwinding and
+        ;; can no longer reach the host — so the record a settled view files would go
+        ;; to the collector this block has already drained: a row listed nowhere, and
+        ;; the picture the human watched lost at the moment they stopped watching. The
+        ;; sweep carries a collector of its own and hands back both halves — the rows
+        ;; to store, and the verdict every view it closed ended on.
         sweep-abandoned!
         (fn [ending]
-          (try (seq (human-input/close-abandoned! views-before ending))
-               (catch Throwable t
-                 (tel/log! {:level :warn
-                            :id ::abandoned-live-sweep-failed
-                            :error t
-                            :msg "Could not close the live views this block abandoned"})
-                 nil)))
+          (let [sink (atom [])]
+            (try (when-let [verdicts (seq (binding [mpl-capture/*attachment-sink* sink]
+                                            (human-input/close-abandoned! views-before ending)))]
+                   {:verdicts (vec verdicts) :attachments (mpl-capture/drain sink)})
+                 (catch Throwable t
+                   (tel/log! {:level :warn
+                              :id ::abandoned-live-sweep-failed
+                              :error t
+                              :msg "Could not close the live views this block abandoned"})
+                   nil))))
 
         exec-future
         (cancellation/worker-future
@@ -1046,17 +1080,19 @@
           ;; The unwinding guest cannot reach the host any more, so its `with` never
           ;; closes: the wall that killed the block ends its views too, and the model
           ;; still reads the picture they held.
-          (sweep-abandoned! {:reason :timeout
-                             :error (str "the run watching this view was stopped at its "
-                                         (/ timeout-ms 1000)
-                                         "s wall")})
-          ;; What the block PRINTED before the wall is real work — progress lines
-          ;; of a fetch loop, results already computed. The guest never reaches
-          ;; its own `{:stdout}` outcome here, so drain the capture buffer onto
-          ;; the envelope instead of answering with a bare `Timeout` and
-          ;; nothing else: that is unactionable, and the model re-runs the whole
-          ;; block blind.
-          (let [envelope
+          (let [swept
+                (sweep-abandoned! {:reason :timeout
+                                   :error (str "the run watching this view was stopped at its "
+                                               (/ timeout-ms 1000)
+                                               "s wall")})
+
+                ;; What the block PRINTED before the wall is real work — progress lines
+                ;; of a fetch loop, results already computed. The guest never reaches
+                ;; its own `{:stdout}` outcome here, so drain the capture buffer onto
+                ;; the envelope instead of answering with a bare `Timeout` and
+                ;; nothing else: that is unactionable, and the model re-runs the whole
+                ;; block blind.
+                envelope
                 {:result nil
                  :lru {}
                  :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
@@ -1065,17 +1101,31 @@
                 out
                 (env/partial-stdout python-context)]
 
-            (cond-> envelope
-              out
-              (assoc :stdout out))))
-      (do (when (:error execution-result)
-            ;; A cancel unwinds the same way a wall does. An ordinary Python
+            (envelope-with-settled-views (cond-> envelope
+                                           out
+                                           (assoc :stdout out))
+                                         swept)))
+      (let [;; A cancel unwinds the same way a wall does. An ordinary Python
             ;; exception does NOT — `with vis.live` closes on its way out — so this
             ;; finds nothing to sweep and says nothing.
-            (sweep-abandoned! {:reason :failed
-                               :error (or (:message (:error execution-result))
-                                          "the run that opened this view ended")}))
-          execution-result))))
+            swept
+            (when (:error execution-result)
+              (sweep-abandoned! {:reason :failed
+                                 :error (or (:message (:error execution-result))
+                                            "the run that opened this view ended")}))
+
+            ;; A cancel kills the block from OUTSIDE the guest, so it never reaches its
+            ;; own `{:stdout}` outcome and every line it printed dies with the frame —
+            ;; the same loss the wall drains the capture buffer for. A Python exception
+            ;; carries its own stdout already and is left alone.
+            printed
+            (when (and (:error execution-result) (nil? (:stdout execution-result)))
+              (env/partial-stdout python-context))]
+
+        (envelope-with-settled-views (cond-> execution-result
+                                       printed
+                                       (assoc :stdout printed))
+                                     swept)))))
 
 (defn- run-with-timing
   [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]

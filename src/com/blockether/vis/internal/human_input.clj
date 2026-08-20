@@ -2104,7 +2104,8 @@
 
 (defn close-abandoned!
   "Close every live view open right now whose id is NOT in `known`, with
-   `ending`. Returns the ids it closed, oldest first.
+   `ending`. Returns the VERDICT of each one, oldest first — the finished picture
+   included, because the run that would have read it is the one that died.
 
    The run that opens a view is the one that ends it — `with vis.live` closes on
    the way out. A block killed at its eval wall or cancelled mid-flight reaches
@@ -2117,7 +2118,7 @@
   (let [known (set known)]
     (into []
           (keep (fn [view-id]
-                  (when (close-live! view-id ending) view-id)))
+                  (close-live! view-id ending)))
           (remove known (mapv :id (live-views))))))
 
 (defn pending-request

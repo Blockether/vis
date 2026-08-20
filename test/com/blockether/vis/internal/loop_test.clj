@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.human-input :as hi]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.provider-error :as perr]
@@ -5761,6 +5762,43 @@
                                     (try (.close ^org.graalvm.polyglot.Context pc true)
                                          (catch Throwable _ nil)))))))))
 
+(defn- cancelled-watching-block
+  "The same block as [[watching-block]], stopped the way a person's Cancel stops
+   one: the turn's cancellation token is fired the moment the view is up, and the
+   guest is killed from outside without ever reaching its own close."
+  [code]
+  (with-redefs-fn {live-views-dir (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
+                                                             (str "vis-views-" (random-uuid))))}
+    (fn []
+      (tpc/with-own
+        [pc {}]
+        (let [_
+              (python-extensions/bind-host! pc "loop-test")
+
+              before
+              (hi/open-live-ids)
+
+              left
+              #(remove before (hi/open-live-ids))
+
+              token
+              (cancellation/cancellation-token)
+
+              ;; The human watches for a moment, then presses Cancel.
+              stopper
+              (future (loop [n 0]
+                        (if (seq (left))
+                          (do (Thread/sleep 200) (cancellation/cancel! token :client-cancel-turn))
+                          (when (< n 400) (Thread/sleep 10) (recur (inc n))))))]
+
+          (try [(binding [rt/*eval-timeout-ms* rt/MIN_EVAL_TIMEOUT_MS]
+                  ((deref #'lp/run-python-code) pc code :env {:cancel-token token})) (vec (left))]
+               (finally (deref stopper 5000 nil)
+                        (doseq [view-id (left)]
+                          (hi/close-live! view-id))
+                        (try (.close ^org.graalvm.polyglot.Context pc true)
+                             (catch Throwable _ nil)))))))))
+
 (defdescribe live-view-owns-the-eval-wall-test
              ;; Regression, reported from the app: watching a CI run died at `Timeout (300s)` with the
              ;; build still going — five minutes is the eval backstop, and a run worth
@@ -5783,7 +5821,42 @@
                                                  (str (open-a-view)
                                                       "raise RuntimeError('the poll blew up')\n"))]
                              (expect (some? (:error result)))
-                             (expect (= [] left))))))
+                             (expect (= [] left))
+                             ;; Both halves reach the block that died holding it: the record
+                             ;; as a row, the picture in what the block printed.
+                             (expect (= 1 (count (:attachments result))))
+                             (expect (str/includes? (str (:stdout result)) "# Watching"))))))
+
+(defdescribe live-view-outlives-the-block-that-showed-it-test
+             ;; Regression, reported from the app: a `gh` watch of a CI run was cancelled
+             ;; two hours in. The pane went away, which is right — but nothing of it
+             ;; reached the transcript. The block answered a bare
+             ;; `java.lang.InterruptedException`, no attachment row was ever filed, and
+             ;; everything the human had been watching survived only as an NDJSON record
+             ;; on disk that nothing pointed at.
+             (describe "a stopped block still hands over what it was SHOWING"
+                       (it "answers the record and the picture of the view a cancel killed"
+                           (let [[result left]
+                                 (cancelled-watching-block (str (open-a-view)
+                                                                "import time\n"
+                                                                "print('polled once')\n"
+                                                                "time.sleep(30)\n"))
+
+                                 row
+                                 (first (:attachments result))]
+
+                             (expect (= [] left))
+                             ;; The human's half: the record is a ROW, so the gallery and the
+                             ;; database hold what they watched.
+                             (expect (= 1 (count (:attachments result))))
+                             (expect (= "file" (:kind row)))
+                             (expect (str/ends-with? (str (:filename row)) ".live.json"))
+                             ;; The model's half: the picture the view ended on, and the lines
+                             ;; the block printed before the stop.
+                             (expect (str/includes? (str (:stdout result)) "# Watching"))
+                             (expect (str/includes? (str (:stdout result)) "did not finish"))
+                             (expect (str/includes? (str (:stdout result)) "polled once"))))))
+
 (defdescribe normalize-tool-input-strings-only-test
              (describe "model-drift and extension EDN are stringified, keys AND values"
                        (it "stringifies keyword/symbol values at every depth"
