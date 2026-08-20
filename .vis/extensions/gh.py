@@ -2,36 +2,32 @@
 
 A CI run is the archetype a live view exists for: it takes fifteen minutes, the extension can see
 exactly when it ends, a person wants to WATCH it, and the model needs one paragraph afterwards.
-Today that run is observed the expensive way — a log poll per provider round trip — or not at all.
 
 **Everything GitHub is the `gh` CLI through the sandbox shell verb.** No hand-built HTTPS, no token
 read, copied or printed: authentication is the operator's own `gh` session, and a missing or
 unauthenticated `gh` refuses in ONE line before any view opens — nothing to watch beats an empty
 pane.
 
-Eight nodes, one per question a person asks about a run: what is happening (`run`), how far
-(`progress`), how many of each (`score`), which jobs (`jobs`), which steps belong to the focused
-jobs (`steps`), what moved (`activity`), what the focused jobs printed (`output`), and where to
-open it (`links`). Job rows are controls: all concurrently running jobs are focused by default;
-with none running, the last failed job (or simply the last job) is focused. A tap replaces that
-focus in shared live state, so the extension, terminal, and every Companion agree on the steps and
-logs below it. One mapping serves all nodes: every unfinished status is `running`, `success` is `ok`,
-`skipped` and `neutral` are `idle`, and every unsuccessful conclusion is `error`. Rows are
-upserted by the job's `databaseId`, so a job that changes state keeps its slot and the eye keeps its
-place, and only what CHANGED since the last poll crosses the wire.
+Seven nodes answer distinct questions about a run: status (`run`), completion (`progress`), outcome
+counts (`score`), jobs (`jobs`), the selected job's steps (`steps`) and log (`output`), and where to
+open it (`links`). Job rows are controls: all concurrently running jobs are focused by default; with
+none running, the last failed job (or simply the last job) is focused. A tap replaces that focus in
+shared live state, so the extension, terminal, and every Companion agree on the steps and log below
+it. One mapping serves all nodes: every unfinished status is `running`, `success` is `ok`, `skipped`
+and `neutral` are `idle`, and every unsuccessful conclusion is `error`. Rows are upserted by the
+job's `databaseId`, so a job that changes state keeps its slot and the eye keeps its place, and only
+what CHANGED since the last poll crosses the wire.
 
-GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs` returns 404
-while that job is writing, then answers with the whole log the moment the job ends. A running
-selection therefore shows its current step and live elapsed time; that pulse is replaced by the raw
-log as soon as GitHub publishes it. Activity starts with the work already underway instead of an
-empty promise, then records every later job and step transition. Temporary CLI, network, malformed
-JSON, rate-limit, and provider failures retain that last good picture and retry visibly; three
-consecutive failures settle the view as failed instead of turning an outage or deleted run into an
-infinite watch. A missing job log is never cached as final. When an implicitly selected run is
-overtaken by a newer commit for
-the same workflow, branch and event, the obsolete watch closes and links to its replacement instead
-of polling work that no longer matters. A check set with no checks settles neutral rather than
-waiting forever.
+GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs` returns 404 while
+that job is writing, then answers with the whole log the moment the job ends. A running selection
+therefore shows its current step and live elapsed time; that pulse is replaced by the raw log as soon
+as GitHub publishes it. Temporary CLI, network, malformed JSON, rate-limit, and provider failures
+retain the last good picture and retry visibly in the run status; three consecutive failures settle
+the view as failed instead of turning an outage or deleted run into an infinite watch. A missing job
+log is never cached as final. When an implicitly selected run is overtaken by a newer commit for the
+same workflow, branch and event, the obsolete watch closes and links to its replacement instead of
+polling work that no longer matters. A check set with no checks settles neutral rather than waiting
+forever.
 """
 
 import calendar
@@ -312,7 +308,6 @@ def declared_nodes(shape):
             steps=[dict(one) for one in shape["steps"]],
             label="Selected job steps",
         ),
-        vis.output("activity", label="Run activity · all jobs"),
         vis.output("output", label="Selected job log"),
         vis.link("links", links=[dict(one) for one in shape["links"]]),
     ]
@@ -552,77 +547,6 @@ def _summary(shape, superseded=None, failure=None):
     )
 
 
-# The mark a tone wears in the feed: what a person scans for when a run is long.
-_MARKS = {"ok": "✓", "error": "✗", "running": "▶", "idle": "–"}
-
-
-def feed_lines(before, after):
-    """What APPEARED between two polls: every job that changed state, every step that moved.
-
-    A twenty-minute run with one number ticking reads as a hang. These lines are the run's story
-    as it happens, and they cost nothing: they are read out of the poll the view is patched from.
-
-    A job seen for the first time is news; a STEP is not, or every focus change would dump the
-    whole checklist the `steps` node already paints.
-    """
-    was = {row["id"]: row for row in before.get("rows") or []}
-    lines = []
-    for row in after.get("rows") or []:
-        older = was.get(row["id"])
-        if older is not None and older["cells"][1] == row["cells"][1]:
-            continue
-        took = row["cells"][2]
-        lines.append(
-            "{} {} · {}{}".format(
-                _MARKS.get(row["tone"], "·"),
-                row["cells"][0],
-                row["cells"][1],
-                f" · {took}" if took and took != "·" else "",
-            )
-        )
-    steps = (
-        {one["id"]: one for one in before.get("steps") or []}
-        if before.get("focus_ids") == after.get("focus_ids")
-        else {}
-    )
-    for step in after.get("steps") or []:
-        older = steps.get(step["id"])
-        if older is None or older["tone"] == step["tone"]:
-            continue
-        lines.append("  {} {}".format(_MARKS.get(step["tone"], "·"), step["label"]))
-    return lines
-
-
-def active_lines(shape):
-    """The focused work already underway when this poll landed."""
-    rows = {row["id"]: row for row in shape.get("rows") or []}
-    active_ids = set(shape.get("active_step_ids") or [])
-    active_by_job = {}
-    for step in shape.get("steps") or []:
-        if step["id"] in active_ids:
-            active_by_job.setdefault(step["id"].split(":", 1)[0], []).append(step)
-    lines = []
-    for job_id in shape.get("focus_ids") or []:
-        row = rows.get(job_id)
-        if not row or row["tone"] != "running":
-            continue
-        job_name = str(row["cells"][0])
-        active = active_by_job.get(job_id) or []
-        if not active:
-            lines.append(f"▶ {job_name} · waiting to start")
-            continue
-        for step in active:
-            label = step["label"].removeprefix(f"{job_name} · ")
-            lines.append(f"▶ {job_name} · {label}")
-    if lines:
-        return lines
-    return (
-        ["✓ Run finished"]
-        if shape.get("is_over")
-        else ["· job and step changes appear here as they happen"]
-    )
-
-
 def _focus_signature(shape):
     """The focused rows and the state that decides whether their logs are ready."""
     rows = {row["id"]: row for row in shape.get("rows") or []}
@@ -694,26 +618,6 @@ def _focus_log_lines(shape, log_of, cache, lines):
     return shown or ["· No job is focused"]
 
 
-def _new_failure_log_lines(shape, filed, log_of, cache):
-    """Newly failed jobs and their immediate tails, ready for the Activity history."""
-    added = []
-    for row in shape.get("rows") or []:
-        if row["tone"] != "error" or row["id"] in filed:
-            continue
-        filed.add(row["id"])
-        tail = _job_log_tail(row["id"], FAILED_TAIL_LINES, log_of, cache)
-        if tail:
-            added.extend([f"── {row['cells'][0]} · failed log", *tail])
-    return added
-
-
-def _show_activity(view, current, history, clear=True):
-    """Replace Activity's live pulse while preserving its finite transition history."""
-    if clear:
-        view["activity"].clear()
-    view["activity"].write(*current, *history)
-
-
 def _show_focus_logs(view, shape, log_of, cache, lines, clear=True):
     """Replace the output pane with one combined photograph of focused job logs."""
     if clear:
@@ -750,18 +654,11 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     began = time.monotonic()
     manual_focus = None
     log_cache = {}
-    filed_failures = set()
-    activity_history = []
     superseded = None
     unavailable_attempts = 0
     terminal_failure = None
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
-            current_activity = active_lines(shape)
-            activity_history.extend(
-                _new_failure_log_lines(shape, filed_failures, log_of, log_cache)
-            )
-            _show_activity(view, current_activity, activity_history, clear=False)
             _show_focus_logs(
                 view, shape, log_of, log_cache, FAILED_TAIL_LINES, clear=False
             )
@@ -796,13 +693,6 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                             tone="idle",
                             detail="Stopped watching obsolete work after a newer commit started",
                         )
-                        _show_activity(
-                            view,
-                            [
-                                f"– Stopped: newer run {run_id} started for this workflow"
-                            ],
-                            activity_history,
-                        )
                         _show_focus_logs(
                             view, shape, log_of, log_cache, FAILED_TAIL_LINES
                         )
@@ -814,8 +704,6 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                     payload = poll()
                 except RuntimeError as failure:
                     unavailable_attempts += 1
-                    if unavailable_attempts == 1:
-                        activity_history.append("▶ GitHub unavailable; retrying")
                     message = str(failure).splitlines()[0][:160]
                     if unavailable_attempts >= MAX_CONSECUTIVE_POLL_FAILURES:
                         terminal_failure = message
@@ -824,34 +712,14 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                             tone="error",
                             detail=message,
                         )
-                        _show_activity(
-                            view,
-                            [
-                                f"✗ Stopped after {unavailable_attempts} failed GitHub polls"
-                            ],
-                            activity_history,
-                        )
                         break
                     view["run"].set(
                         "GitHub temporarily unavailable; retrying",
                         tone="running",
                         detail=message,
                     )
-                    _show_activity(
-                        view,
-                        [
-                            f"▶ GitHub unavailable (attempt {unavailable_attempts}); retrying"
-                        ],
-                        activity_history,
-                    )
-                    current_activity = [
-                        f"▶ GitHub unavailable (attempt {unavailable_attempts}); retrying"
-                    ]
                     continue
                 if unavailable_attempts:
-                    activity_history.append(
-                        f"✓ GitHub recovered after {unavailable_attempts} attempts"
-                    )
                     unavailable_attempts = 0
                     view["run"].set(
                         shape["headline"], tone=shape["tone"], detail=shape["detail"]
@@ -866,16 +734,6 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                     manual_focus = selected
                 fresh = run_shape(payload, focus_ids=manual_focus, now=_wall_time())
                 push_changes(view, shape, fresh)
-                moved = feed_lines(shape, fresh)
-                failures = _new_failure_log_lines(
-                    fresh, filed_failures, log_of, log_cache
-                )
-                activity_history.extend(moved)
-                activity_history.extend(failures)
-                fresh_activity = active_lines(fresh)
-                if fresh_activity != current_activity or moved or failures:
-                    _show_activity(view, fresh_activity, activity_history)
-                    current_activity = fresh_activity
                 fresh_focus = _focus_signature(fresh)
                 if fresh_focus != shown_focus and not fresh["is_over"]:
                     _show_focus_logs(view, fresh, log_of, log_cache, FAILED_TAIL_LINES)

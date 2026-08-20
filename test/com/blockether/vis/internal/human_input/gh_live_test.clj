@@ -80,11 +80,10 @@
       (expect (every? :is-open (butlast answers)))
       (expect (= :completed (:reason verdict)))
       (expect (str/starts-with? (:summary verdict) "6 of 6 jobs finished, 1 failed"))
-      ;; Eight nodes: seven current answers plus the in-view activity history.
-      (expect (= ["run" "progress" "score" "jobs" "steps" "activity" "output" "links"]
+      ;; Seven distinct answers: overview, selected-job details, and the run link.
+      (expect (= ["run" "progress" "score" "jobs" "steps" "output" "links"]
                  (mapv :id (:nodes view))))
-      (expect (= [:status :progress :stat :table :steps :log :log :link]
-                 (mapv :type (:nodes view))))
+      (expect (= [:status :progress :stat :table :steps :log :link] (mapv :type (:nodes view))))
       (expect (= "6 of 6 jobs finished, 1 failed" (:text (node view "run"))))
       (expect (= :error (:tone (node view "run"))))
       (expect (= [6 6] ((juxt :done :total) (node view "progress"))))
@@ -112,18 +111,13 @@
       ;; The checklist follows the job in focus: the failing job's steps, not the running one's.
       (expect (= 10 (count (:steps (node view "steps")))))
       (expect (some #(= :error (:tone %)) (:steps (node view "steps"))))
-      ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: Activity used to stay
-      ;; blank until a state transition, so a long-running step looked stalled before raw logs existed.
+      ;; The selected-job log proves running work is moving before GitHub publishes raw logs.
       (expect (some (fn [op]
-                      (and (= "activity" (get op "node_id"))
-                           (some #(= "▶ tests / macos-latest · Run test suite · 10m 00s" %)
-                                 (get op "lines"))))
+                      (and (= "output" (get op "node_id"))
+                           (some #(= "▶ Run test suite · 10m 00s" %) (get op "lines"))))
                     patch-ops))
-      ;; The pulse is replaced rather than appended forever; the settled feed keeps a finite ending,
-      ;; every immediate failure tail and the transitions that followed it.
-      (expect (= 10 (count (:lines (node view "activity")))))
-      (expect (= "✓ Run finished" (first (:lines (node view "activity")))))
-      (expect (str/includes? (str/join "\n" (:lines (node view "activity"))) "· failed log"))
+      ;; The run-wide Activity duplicate is not part of the extension contract.
+      (expect (not-any? #(= "activity" (get % "node_id")) patch-ops))
       (expect (= 7 (count (:lines (node view "output")))))
       (expect (str/starts-with? (first (:lines (node view "output")))
                                 "── tests / vis-agent + vis-contract (PyPI packages) · log"))
@@ -172,5 +166,5 @@
                   (json/read-json (hi/live-json! (json/write-json-str envelope)) :key-fn identity)]
 
               (expect (true? (get answer "is_open")))
-              (expect (= ["run" "progress" "score" "jobs" "steps" "activity" "output" "links"]
+              (expect (= ["run" "progress" "score" "jobs" "steps" "output" "links"]
                          (mapv #(get % "id") (get-in answer ["view" "nodes"]))))))))))

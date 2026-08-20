@@ -87,7 +87,7 @@ def test_a_job_state_is_one_tone_everywhere():
     assert gh.tone_of("mystery_pending_state", "") == "running"
 
 
-def test_a_poll_reads_as_the_eight_answers():
+def test_a_poll_reads_as_the_seven_answers():
     shape = gh.run_shape(fixture("run-mid.json"))
 
     assert shape["is_over"] is False
@@ -167,6 +167,8 @@ def test_the_view_opens_declared_from_the_first_poll(watched):
     recorder, _ = watched
     opened = recorder.said[0]
 
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: GitHub exposed both selected
+    # job details and a second run-wide activity feed that repeated the table and steps.
     assert opened["op"] == "open"
     assert opened["view"]["title"] == TITLE
     assert [one["id"] for one in opened["view"]["nodes"]] == [
@@ -175,7 +177,6 @@ def test_the_view_opens_declared_from_the_first_poll(watched):
         "score",
         "jobs",
         "steps",
-        "activity",
         "output",
         "links",
     ]
@@ -185,7 +186,6 @@ def test_the_view_opens_declared_from_the_first_poll(watched):
         "stat",
         "table",
         "steps",
-        "log",
         "log",
         "link",
     ]
@@ -245,31 +245,22 @@ def test_running_focus_shows_current_step_before_raw_logs_exist():
     )
     lines = gh._focus_log_lines(shape, None, {}, gh.FAILED_TAIL_LINES)
 
-    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a running job left both
-    # activity panes static while GitHub withheld its raw log until the job completed.
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a running job left its
+    # focused details static while GitHub withheld the raw log until the job completed.
     assert shape["rows"][0]["cells"][2] == "10m 34s"
-    assert gh.active_lines(shape) == [
-        "▶ tests / macos-latest · Run test suite · 10m 00s"
-    ]
     assert lines == [
         "── tests / macos-latest · live progress",
         "▶ Run test suite · 10m 00s",
         "· GitHub publishes the raw job log when this job ends",
     ]
     assert later["rows"][0]["cells"][2] == "10m 37s"
-    assert gh.active_lines(later) == [
-        "▶ tests / macos-latest · Run test suite · 10m 03s"
-    ]
     assert gh._focus_signature(shape) != gh._focus_signature(later)
 
 
-def test_running_focus_waits_while_a_failed_log_stays_visible_in_activity(watched):
+def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
     recorder, _ = watched
     output = [op for op in recorder.patched() if op.get("node_id") == "output"]
-    activity = [op for op in recorder.patched() if op.get("node_id") == "activity"]
 
-    # A running matrix starts with every running job selected. Before GitHub publishes raw logs,
-    # both panes identify the exact work underway and the current step keeps a live timer.
     assert output[0]["lines"] == [
         "── tests / macos-latest · live progress",
         "▶ Run test suite · 10m 00s",
@@ -278,36 +269,7 @@ def test_running_focus_waits_while_a_failed_log_stays_visible_in_activity(watche
         "▶ Waiting for this job to start",
         "· GitHub publishes the raw job log when this job ends",
     ]
-    assert activity[0]["lines"][:2] == [
-        "▶ tests / macos-latest · Run test suite · 10m 00s",
-        "▶ tests / ubuntu-latest · waiting to start",
-    ]
-    activity_lines = [line for op in activity for line in op.get("lines", [])]
-    # Preserve the original live-watch promise: a job that fails is filed immediately,
-    # even while the focused running jobs have no logs of their own yet.
-    assert (
-        "── tests / vis-agent + vis-contract (PyPI packages) · failed log"
-        in activity_lines
-    )
-    assert any("1 failed, 58 passed" in line for line in activity_lines)
-    assert any("macos-latest · success" in line for line in activity_lines)
-    assert recorder.asked == [
-        ("95742028770", gh.FAILED_TAIL_LINES),
-        ("95742028770", gh.LOG_TAIL_LINES),
-    ]
-
-
-def test_the_feed_says_what_moved_between_two_polls():
-    lines = gh.feed_lines(
-        gh.run_shape(fixture("run-mid.json")), gh.run_shape(fixture("run-final.json"))
-    )
-
-    # Only the two jobs that were still running and are now over: the four that did not move say
-    # nothing, and no step of the new job in focus dumps a checklist the `steps` node paints.
-    assert lines == [
-        "✓ tests / macos-latest · success · 28m 33s",
-        "✓ tests / ubuntu-latest · success · 12m 54s",
-    ]
+    assert recorder.asked == [("95742028770", gh.LOG_TAIL_LINES)]
 
 
 def test_the_settled_pane_is_one_photograph(watched):
@@ -398,10 +360,7 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
         "── lint / clj-kondo · log",
         f"log for {selected}",
     ]
-    assert asked == [
-        ("95742028770", gh.FAILED_TAIL_LINES),
-        (selected, gh.LOG_TAIL_LINES),
-    ]
+    assert asked == [(selected, gh.LOG_TAIL_LINES)]
 
 
 def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recorder):
@@ -511,9 +470,6 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
         "label": "queued",
         "tone": "idle",
     }
-    assert node(verdict["view"], "activity")["lines"][0] == (
-        "– Stopped: newer run 32146699999 started for this workflow"
-    )
     assert node(verdict["view"], "links")["links"][-1]["id"] == "newer-run"
 
 
@@ -537,9 +493,7 @@ def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
 
     assert verdict["is_completed"] is True
     assert not polls
-    activity = node(verdict["view"], "activity")["lines"]
-    assert any("GitHub unavailable; retrying" in line for line in activity)
-    assert any("GitHub recovered after 2 attempts" in line for line in activity)
+    assert all(one["id"] != "activity" for one in verdict["view"]["nodes"])
     assert node(verdict["view"], "run")["text"].startswith("6 of 6 jobs finished")
 
 

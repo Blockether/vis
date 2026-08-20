@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- refactor(extensions): the GitHub live view no longer renders a run-wide Activity feed that duplicated job states and selected-job steps. The job table remains the run overview, while selecting a row gives that job's steps and log; provider retries remain visible in the run status.
+
 - refactor(extensions): live-view extension tests now use the generic `vis.testing.LiveRecorder` library harness for isolated open/patch/state/focus/close materialization and exact view-golden comparison. GitHub tests retain only GitHub polling, fixtures and projections instead of owning a private copy of generic live-host behavior.
 
 - fix(live,companion,extensions): a GitHub watch superseded by a newer commit now closes with the explicit `superseded` verdict instead of calling its settled record `finished`. Every job still queued or in progress in the final provider snapshot is settled as `superseded`, its running step and focused-log pulse stop, and the queued counter clears, so the archived card cannot claim both that it ended and that stale actions are still running.

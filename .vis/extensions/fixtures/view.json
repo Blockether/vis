@@ -179,25 +179,6 @@
       "id": "steps"
     },
     {
-      "label": "Run activity · all jobs",
-      "type": "log",
-      "id": "activity",
-      "lines": [
-        "✓ Run finished",
-        "── tests / vis-agent + vis-contract (PyPI packages) · failed log",
-        "2026-08-18T14:10:24.6255054Z     [",
-        "2026-08-18T14:10:24.6255326Z         'open',",
-        "2026-08-18T14:10:24.6255617Z   -     'patch',",
-        "2026-08-18T14:10:24.6255911Z     ]",
-        "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
-        "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1.",
-        "✓ tests / macos-latest · success · 28m 33s",
-        "✓ tests / ubuntu-latest · success · 12m 54s"
-      ],
-      "total_lines": 19,
-      "window_lines": 2000
-    },
-    {
       "label": "Selected job log",
       "type": "log",
       "id": "output",
