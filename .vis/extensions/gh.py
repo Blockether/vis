@@ -94,6 +94,31 @@ def _timestamp(value):
         return None
 
 
+_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+def _display_started(value):
+    """A compact, timezone-explicit start instant for the run status detail."""
+    instant = _timestamp(value)
+    if instant is None:
+        return None
+    utc = time.gmtime(instant)
+    return f"{utc.tm_mday} {_MONTHS[utc.tm_mon - 1]} {utc.tm_year}, {utc.tm_hour:02d}:{utc.tm_min:02d} UTC"
+
+
 def _wall_time():
     """Current epoch seconds behind a deterministic test seam."""
     return time.time()
@@ -208,9 +233,14 @@ def run_shape(payload, focus_ids=None, now=None):
         "is_over": is_over,
         "run_url": str(payload.get("url") or ""),
         "headline": headline,
-        "detail": "workflow **{}** on `{}` · in focus **{}**".format(
+        "detail": "workflow **{}** on `{}`{} · in focus **{}**".format(
             payload.get("workflowName") or "?",
             payload.get("headBranch") or "?",
+            (
+                f" · started **{started}**"
+                if (started := _display_started(payload.get("startedAt")))
+                else ""
+            ),
             focus_detail,
         ),
         "tone": tone_of(payload.get("status"), payload.get("conclusion")),

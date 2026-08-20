@@ -4,7 +4,7 @@
   "nodes": [
     {
       "tone": "error",
-      "detail": "workflow **CI** on `main` · in focus **tests / vis-agent + vis-contract (PyPI packages)**",
+      "detail": "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **tests / vis-agent + vis-contract (PyPI packages)**",
       "text": "6 of 6 jobs finished, 1 failed",
       "type": "status",
       "id": "run"

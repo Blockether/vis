@@ -139,6 +139,12 @@ def test_a_poll_reads_as_the_eight_answers():
 
     assert shape["is_over"] is False
     assert shape["headline"] == "4 of 6 jobs finished, 1 failed"
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed
+    # progress and elapsed durations but not the calendar date and time it began.
+    assert shape["detail"] == (
+        "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · "
+        "in focus **2 jobs**"
+    )
     assert (shape["done"], shape["total"]) == (4, 6)
     assert shape["tone"] == "running"
     assert {one["id"]: one["value_text"] for one in shape["score"]} == {

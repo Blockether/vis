@@ -7,7 +7,7 @@
       "nodes": [
         {
           "tone": "running",
-          "detail": "workflow **CI** on `main` · in focus **2 jobs**",
+          "detail": "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **2 jobs**",
           "text": "4 of 6 jobs finished, 1 failed",
           "type": "status",
           "id": "run"
@@ -297,7 +297,7 @@
         {
           "text": "6 of 6 jobs finished, 1 failed",
           "tone": "error",
-          "detail": "workflow **CI** on `main` · in focus **tests / vis-agent + vis-contract (PyPI packages)**",
+          "detail": "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **tests / vis-agent + vis-contract (PyPI packages)**",
           "op": "set",
           "node_id": "run"
         },
@@ -459,7 +459,7 @@
   {
     "op": "close",
     "ending": {
-      "summary": "6 of 6 jobs finished, 1 failed — workflow **CI** on `main` · in focus **tests / vis-agent + vis-contract (PyPI packages)**, finished · https://github.com/Blockether/vis/actions/runs/32146686161"
+      "summary": "6 of 6 jobs finished, 1 failed — workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **tests / vis-agent + vis-contract (PyPI packages)**, finished · https://github.com/Blockether/vis/actions/runs/32146686161"
     }
   }
 ]

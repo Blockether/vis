@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- fix(extensions): GitHub watch status now shows the run's calendar start date and time in UTC alongside workflow, branch, and focus, so live elapsed progress has an absolute time reference.
+
 - fix(live,extensions): settled live-view records now tell the truth at both boundaries: the attachment filename is `*.live.ndjson` and its media type is `application/vnd.vis.live+ndjson`, matching the append-only `open` / `patch` / `close` stream already stored on disk instead of pretending it is one JSON snapshot. GitHub watches now preserve the last good picture and visibly retry through temporary CLI, network, rate-limit, provider, and malformed-JSON failures, then settle failed after three consecutive bad polls instead of watching a lasting outage or deleted run forever; unknown unfinished states remain running, an unpublished job log is retried instead of cached as absent, and a pull request with no checks settles neutral instead of watching forever.
 - fix(companion): repeated saved cuts of one settled live run now render as one `RUN` row in the transcript, using the newest cut, instead of one identical row per version.
 - fix(extensions): an implicit GitHub watch now stops when a newer commit starts the same workflow on the same branch and event. The live card marks the old run as superseded, links to its replacement, and returns that reason to the model instead of polling obsolete work indefinitely; a caller that explicitly names a historical run still watches exactly that run.
