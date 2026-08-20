@@ -8549,13 +8549,13 @@
         result
         (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
 
-        ;; Deferred auto-title: the LLM naming call happens HERE, after the
-        ;; foreground turn is done, so it can never take a rate-limited
-        ;; gateway's slot away from the user's own request (Blockether/vis#71).
-        ;; A no-op unless `titling.mode` is `llm`; the deterministic title is
-        ;; already on the session either way.
+        ;; Deferred auto-title: only a successful foreground turn earns a cosmetic
+        ;; provider call. Cancellation and failure must stay terminal without
+        ;; starting new provider work. The call remains deferred so it cannot take
+        ;; a rate-limited gateway's slot away from the user's request
+        ;; (Blockether/vis#71). A no-op unless `titling.mode` is `llm`.
         _
-        (titling/after-turn-auto-title! env user-request)
+        (when (= :success (:status result)) (titling/after-turn-auto-title! env user-request))
 
         prior-outcome
         (:status result)

@@ -1259,6 +1259,44 @@
         (let [result (run-normal-turn! env "follow up" {})]
           (expect (= "turn-3" (:session-turn-id result)))
           (expect (= "turn-3" (:turn-id @seen))))))))
+;; Regression, issue #71: cancelling a foreground turn launched the deferred LLM title request.
+(defdescribe
+  cancelled-turn-titling-test
+  (it
+    "does not launch an LLM title request after cancellation"
+    (let [title-requests
+          (atom 0)
+
+          env
+          {:db-info ::db :session-id "s1" :turn-state-atom (ctx-loop/make-turn-state-atom)}]
+
+      (with-redefs [persistance/db-store-session-turn!
+                    (fn [_db _opts]
+                      "turn-1")
+
+                    persistance/db-update-session-turn!
+                    (fn [& _]
+                      nil)
+
+                    lp/session-turn-position
+                    (fn [& _]
+                      1)
+
+                    lp/iteration-loop
+                    (fn [& _]
+                      {:status :cancelled :iteration-count 0 :duration-ms 0})
+
+                    titling/maybe-auto-title!
+                    (fn [& _]
+                      nil)
+
+                    titling/after-turn-auto-title!
+                    (fn [& _]
+                      (swap! title-requests inc))]
+
+        (let [result (run-normal-turn! env "cancel this" {})]
+          (expect (= :cancelled (:status result)))
+          (expect (zero? @title-requests)))))))
 
 (defdescribe max-tokens-exceeded-retry-test
              (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
