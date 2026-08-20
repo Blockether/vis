@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.40 (4618) — 2026-08-20
+<!-- commit: 02602989fb71b323fdec8a263673da962d3c9d77 -->
+
+- Record parinferish 0.1.1 in audit
+- Sync selected GitHub job
+- Record TestFlight build 4615
+
 ## 0.1.40 (4615) — 2026-08-20
 <!-- commit: e2cd4f701d5aca9ef808feb2929eb5847fced1be -->
 
