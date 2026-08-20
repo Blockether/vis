@@ -345,18 +345,18 @@ describe('isEnterSendPlatform', () => {
   });
 });
 
-// Regression: tapping Send left the software keyboard standing over the answer
-// the message had just asked for.
+// Regression, user report: blurring the native composer dropped it to the bottom
+// while iOS was still animating its software keyboard away.
 describe('dismissSoftKeyboard', () => {
-  it('takes the keyboard down with the composer on a phone', () => {
+  it('lets the native keyboard dismissal own the animation', () => {
     platform = 'ios';
     hide.mockClear();
     const { element, document, log } = composer();
 
     dismissSoftKeyboard(element);
 
-    expect(log).toEqual(['blur']);
-    expect(document.activeElement).toBeNull();
+    expect(log).toEqual([]);
+    expect(document.activeElement).toBe(element);
     expect(hide).toHaveBeenCalledTimes(1);
     platform = 'web';
   });

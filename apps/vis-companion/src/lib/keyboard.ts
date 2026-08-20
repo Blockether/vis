@@ -160,18 +160,18 @@ export function isEnterSendPlatform(
 }
 
 /**
- * Puts the software keyboard away with the field that raised it.
+ * Puts the native software keyboard away without moving the composer first.
  *
- * Sending is the end of writing, so the keyboard goes down with the message —
- * on the phone it used to stay up over the answer the user just asked for. The
- * blur is what the webview understands; `Keyboard.hide()` covers the native
- * shell, where the composer can keep DOM focus while UIKit still shows the IME.
+ * The native keyboard events keep the app shell pinned throughout the dismissal
+ * animation. Blurring the field eagerly breaks that ownership: the composer can
+ * fall to the physical bottom while UIKit is still drawing the keyboard over it.
+ * Keeping DOM focus is harmless — the native plugin resigns the input — and lets
+ * the keyboard's will/did-hide sequence release the shell at the right frame.
  * A no-op with a hardware keyboard, where nothing is covering anything.
  */
 export function dismissSoftKeyboard(
-  element: HTMLElement | null | undefined,
+  _element: HTMLElement | null | undefined,
 ): void {
   if (isEnterSendPlatform()) return;
-  if (element && element.ownerDocument?.activeElement === element) element.blur();
   if (Capacitor.isNativePlatform()) void Keyboard.hide().catch(() => undefined);
 }
