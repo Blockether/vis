@@ -25,6 +25,8 @@ const changelogPath = join(appDir, 'CHANGELOG.md');
 // App Store Connect caps "What to Test" at 4000 characters and silently rejects more.
 const WHATS_NEW_LIMIT = 4000;
 const MAX_BULLETS = 20;
+// Release notes describe the app, not unrelated work elsewhere in the monorepo.
+export const COMPANION_SCOPE = ['apps/vis-companion'];
 // No CHANGELOG yet (first ever run): summarise this many commits rather than the whole history.
 const FALLBACK_COMMITS = 15;
 
@@ -45,17 +47,20 @@ const tidy = (subject) => {
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 };
 
-/** Commit subjects since `sinceSha` (exclusive), newest first, de-noised and de-duplicated. */
-export const collectCommits = (sinceSha, scope = []) => {
+/** Git arguments for Companion commit subjects since `sinceSha`, newest first. */
+export const gitLogArgs = (sinceSha, scope = COMPANION_SCOPE, known = false) => {
   const args = ['log', '--no-merges', '--pretty=format:%H\u001f%s'];
-  // A CHANGELOG sha can outlive its commit (rebase, shallow clone) — verify, never assume.
-  const known = sinceSha && sinceSha.length >= 7 && spawnSync('git', ['cat-file', '-e', `${sinceSha}^{commit}`], { cwd: repoRoot }).status === 0;
-  if (known) {
-    args.push(`${sinceSha}..HEAD`);
-  } else {
-    args.push('-n', String(FALLBACK_COMMITS));
-  }
+  if (known) args.push(`${sinceSha}..HEAD`);
+  else args.push('-n', String(FALLBACK_COMMITS));
   if (scope.length) args.push('--', ...scope);
+  return args;
+};
+
+/** Commit subjects since `sinceSha` (exclusive), newest first, de-noised and de-duplicated. */
+export const collectCommits = (sinceSha, scope = COMPANION_SCOPE) => {
+  // A CHANGELOG sha can outlive its commit (rebase, shallow clone) — verify, never assume.
+  const known = Boolean(sinceSha && sinceSha.length >= 7 && spawnSync('git', ['cat-file', '-e', `${sinceSha}^{commit}`], { cwd: repoRoot }).status === 0);
+  const args = gitLogArgs(sinceSha, scope, known);
 
   const out = capture('git', args);
   const seen = new Set();
@@ -105,7 +110,7 @@ const renderEntry = ({ version, build, bullets, sha, date }) =>
  * Notes for this build. Reuses an existing CHANGELOG entry verbatim (hand edits win);
  * otherwise generates from the commits since the previous entry and prepends a new one.
  */
-export const buildNotes = ({ version, build, scope = [], write = true } = {}) => {
+export const buildNotes = ({ version, build, scope = COMPANION_SCOPE, write = true } = {}) => {
   const entries = readChangelog();
   const existing = entries.find((e) => e.version === version && e.build === build);
   if (existing?.bullets.length) return { bullets: existing.bullets, text: toWhatsNew(existing.bullets), reused: true };
@@ -210,7 +215,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   // Repo-root VIS_VERSION is the source of truth; npm metadata mirrors it.
   const version = flag('version') ?? syncPackageVersion();
   const build = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
-  const scope = flag('scope') ? [flag('scope')] : [];
+  const scope = flag('scope') ? [flag('scope')] : undefined;
 
   const { bullets, text, reused } = buildNotes({ version, build, scope, write: !has('no-changelog') });
   if (!bullets.length) {

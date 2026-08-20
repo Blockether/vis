@@ -142,7 +142,7 @@ const notes = has('no-notes')
   : buildNotes({
       version: marketingVersion,
       build: buildNumber,
-      scope: flag('notes-scope') ? [flag('notes-scope')] : [],
+      scope: flag('notes-scope') ? [flag('notes-scope')] : undefined,
       write: !has('no-changelog'),
     });
 if (notes.text) console.log(`\nWhat to Test${notes.reused ? ' (from CHANGELOG.md)' : ''}:\n${notes.text}\n`);

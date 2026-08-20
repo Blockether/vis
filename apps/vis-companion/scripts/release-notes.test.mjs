@@ -20,7 +20,7 @@ vi.mock('./asc.mjs', () => ({
   },
 }));
 
-import { publishNotes } from './release-notes.mjs';
+import { COMPANION_SCOPE, gitLogArgs, publishNotes } from './release-notes.mjs';
 
 const publish = (notes = '• Something a tester can see') =>
   publishNotes({
@@ -39,6 +39,19 @@ const reset = () => {
   localizations = [];
 };
 
+describe('gitLogArgs', () => {
+  it('limits generated release notes to Companion changes by default', () => {
+    expect(COMPANION_SCOPE).toEqual(['apps/vis-companion']);
+    expect(gitLogArgs('abc1234', undefined, true)).toEqual([
+      'log',
+      '--no-merges',
+      '--pretty=format:%H\u001f%s',
+      'abc1234..HEAD',
+      '--',
+      'apps/vis-companion',
+    ]);
+  });
+});
 describe('publishNotes', () => {
   it('rewrites the en-US What to Test the build already has', async () => {
     reset();
