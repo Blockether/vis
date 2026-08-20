@@ -24,12 +24,15 @@ GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs
 while that job is writing, then answers with the whole log the moment the job ends. A running
 selection therefore shows its current step and live elapsed time; that pulse is replaced by the raw
 log as soon as GitHub publishes it. Activity starts with the work already underway instead of an
-empty promise, then records every later job and step transition.
+empty promise, then records every later job and step transition. When an implicitly selected run is
+overtaken by a newer commit for the same workflow, branch and event, the obsolete watch closes and
+links to its replacement instead of polling work that no longer matters.
 """
 
 import calendar
 import json
 import os
+import shlex
 import tempfile
 import time
 
@@ -384,6 +387,37 @@ def newest_run(repo=None):
     return rows[0]["databaseId"]
 
 
+def newer_run(payload, repo=None):
+    """A later run of this workflow/branch/event, or None while this run is still newest."""
+    workflow = str(payload.get("workflowName") or "")
+    branch = str(payload.get("headBranch") or "")
+    event = str(payload.get("event") or "")
+    current = payload.get("databaseId")
+    if not workflow or not current:
+        return None
+    flags = f" --workflow {shlex.quote(workflow)}"
+    if branch:
+        flags += f" --branch {shlex.quote(branch)}"
+    if event:
+        flags += f" --event {shlex.quote(event)}"
+    exit_code, text = _capture(
+        f"gh run list{_repo_flag(repo)}{flags} -L 1 --json databaseId,url,displayTitle"
+    )
+    if exit_code != 0:
+        return None
+    try:
+        rows = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    latest = rows[0] if isinstance(rows, list) and rows else None
+    if not isinstance(latest, dict):
+        return None
+    try:
+        return latest if int(latest.get("databaseId") or 0) > int(current) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def log_window(text, lines=LOG_TAIL_LINES):
     """The lines worth showing out of a job's whole log.
 
@@ -436,7 +470,13 @@ def _tick(since):
     return FAST_TICK_S if since < BACKOFF_AFTER_S else SLOW_TICK_S
 
 
-def _summary(shape):
+def _summary(shape, superseded=None):
+    if superseded:
+        return "Superseded by run {} — {} · {}".format(
+            superseded.get("databaseId") or "?",
+            superseded.get("displayTitle") or "newer workflow run",
+            superseded.get("url") or shape["run_url"],
+        )
     ending = "finished" if shape["is_over"] else "still running"
     return "{} — {}, {} · {}".format(
         shape["headline"], shape["detail"], ending, shape["run_url"]
@@ -609,15 +649,15 @@ def _show_focus_logs(view, shape, log_of, cache, lines, clear=True):
     view["output"].write(*_focus_log_lines(shape, log_of, cache, lines))
 
 
-def watch(title, description, poll, log_of=None):
+def watch(title, description, poll, log_of=None, superseded_by=None):
     """Open a selectable CI view, patch it until the run ends, answer its picture.
 
     Job focus is shared live state. Each tick reads it before deriving the next shape, so a
     Companion tap changes the steps and logs the extension writes; absent a tap, all parallel
     running jobs follow together, then the last failed (or last) job becomes the default.
 
-    There is no clock here. The loop ends when GitHub says the run is over, when `gh` stops
-    answering, or when the human presses Interrupt — never on a duration this extension invented.
+    The loop ends when GitHub says the run is over, when a later commit starts the same workflow,
+    when `gh` stops answering, or when the human presses Interrupt — never on an invented duration.
     """
     shape = run_shape(poll(), now=_wall_time())
     began = time.monotonic()
@@ -625,6 +665,7 @@ def watch(title, description, poll, log_of=None):
     log_cache = {}
     filed_failures = set()
     activity_history = []
+    superseded = None
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
             current_activity = active_lines(shape)
@@ -640,6 +681,26 @@ def watch(title, description, poll, log_of=None):
                 if view.is_interrupted:
                     break
                 time.sleep(_tick(time.monotonic() - began))
+                if superseded_by:
+                    superseded = superseded_by()
+                    if superseded:
+                        run_id = str(superseded.get("databaseId") or "?")
+                        view["run"].set(
+                            f"Superseded by newer run {run_id}",
+                            tone="idle",
+                            detail="Stopped watching obsolete work after a newer commit started",
+                        )
+                        _show_activity(
+                            view,
+                            [
+                                f"– Stopped: newer run {run_id} started for this workflow"
+                            ],
+                            activity_history,
+                        )
+                        target = str(superseded.get("url") or "")
+                        if target:
+                            view["links"].add("newer-run", "Newer run", target)
+                        break
                 try:
                     payload = poll()
                 except RuntimeError as failure:
@@ -676,7 +737,7 @@ def watch(title, description, poll, log_of=None):
             # The human stopped watching. The view already holds its verdict, `close` answers
             # it, and `shape` is the last poll that reached them.
             pass
-        return view.close(summary=_summary(shape))
+        return view.close(summary=_summary(shape, superseded))
 
 
 def gh_watch_run(run=None, repo=None):
@@ -687,10 +748,12 @@ def gh_watch_run(run=None, repo=None):
     parallel are focused initially; tap one to replace the steps and output below with that job.
     With none running, the last failed job (or the last job) is focused. While a selected job runs,
     its current step and elapsed time keep moving; GitHub's raw log replaces that pulse the moment
-    the job ends. `run` is a run id or URL; without one, the newest run on the current branch.
-    `repo` is `owner/name` for a repository other than the working directory's.
+    the job ends. `run` is a run id or URL; without one, the newest run on the current branch is
+    watched until it ends or a newer commit starts the same workflow, branch and event. An explicit
+    run is never replaced. `repo` is `owner/name` for a repository other than the working directory's.
     """
     require_gh()
+    implicit = run is None
     run_id = run or newest_run(repo)
     first = fetch_run(run_id, repo)
     title = str(first.get("workflowName") or "GitHub Actions")
@@ -703,6 +766,7 @@ def gh_watch_run(run=None, repo=None):
         described.strip(" ·"),
         lambda: fetch_run(run_id, repo),
         lambda job_id, lines: job_log(owner, job_id, lines),
+        (lambda: newer_run(first, repo)) if implicit else None,
     )
 
 

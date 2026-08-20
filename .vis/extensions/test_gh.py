@@ -491,6 +491,33 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
     assert node(verdict["view"], "progress")["done"] == 4
 
 
+def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
+    polls = []
+    newer = {
+        "databaseId": 32146699999,
+        "url": "https://github.com/Blockether/vis/actions/runs/32146699999",
+        "displayTitle": "fix(tui): replace the watched commit",
+    }
+
+    def poll():
+        polls.append(True)
+        return fixture("run-mid.json")
+
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: when a later push
+    # overtook a running CI run, the live view kept polling obsolete work indefinitely.
+    verdict = gh.watch(TITLE, DESCRIPTION, poll, superseded_by=lambda: newer)
+
+    assert len(polls) == 1
+    assert verdict["is_completed"] is True
+    assert verdict["summary"].startswith("Superseded by run 32146699999")
+    assert node(verdict["view"], "run")["text"] == "Superseded by newer run 32146699999"
+    assert node(verdict["view"], "run")["tone"] == "idle"
+    assert node(verdict["view"], "activity")["lines"][0] == (
+        "– Stopped: newer run 32146699999 started for this workflow"
+    )
+    assert node(verdict["view"], "links")["links"][-1]["id"] == "newer-run"
+
+
 def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):
     # Regression: a watch stopped itself after 90 minutes it invented, so a longer CI run was
     # abandoned mid-flight and the model was told "still running" about a run it never saw end.
@@ -530,6 +557,32 @@ def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):
     assert len(polls) >= 6
     assert verdict["reason"] == "interrupted"
     assert verdict["is_completed"] is False
+
+
+def test_a_newer_run_is_matched_to_the_same_workflow_branch_and_event(monkeypatch):
+    payload = fixture("run-mid.json")
+    payload["databaseId"] = 32146686161
+    asked = []
+
+    def capture(command, seconds=120):
+        asked.append(command)
+        return 0, json.dumps(
+            [
+                {
+                    "databaseId": 32146699999,
+                    "url": "https://github.com/Blockether/vis/actions/runs/32146699999",
+                    "displayTitle": "newer push",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(gh, "_capture", capture)
+
+    assert gh.newer_run(payload)["databaseId"] == 32146699999
+    assert asked == [
+        "gh run list --workflow CI --branch main --event push -L 1 "
+        "--json databaseId,url,displayTitle"
+    ]
 
 
 def test_a_missing_gh_refuses_in_one_line_before_a_view_opens(recorder, monkeypatch):
