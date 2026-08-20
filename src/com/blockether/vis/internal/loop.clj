@@ -6360,6 +6360,17 @@
       (token-limit (:input-limit pinned-model))
       (token-limit (:context pinned-model))
       200000))
+
+(defn- context-fold-budget
+  "Soft folding threshold for a known input window. Windows below the normal 200K
+   operating budget keep a 10% provider-rejection reserve. Unknown and >=200K windows
+   retain the historical 200K threshold."
+  [context-limit]
+  (if-let [limit (token-limit context-limit)]
+    (if (< limit ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
+      (max 1 (quot (* limit 9) 10))
+      ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
+    ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
 (defn router-for-model
   "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,
    so svar's router picks + falls back accordingly — WE don't pick one model, we
@@ -6807,7 +6818,8 @@
                               (ctx-engine/utilization (:input-tokens overflow)
                                                       (:max-input-tokens overflow)
                                                       turn-input-tokens
-                                                      ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
+                                                      (context-fold-budget
+                                                        (:max-input-tokens overflow))))
           (when-let [projection (emergency-fold-projection
                                   base-messages
                                   trailer-iters
@@ -7030,12 +7042,15 @@
             (:context initial-resolved-model)
             200000)
 
+        initial-fold-budget
+        (context-fold-budget initial-context-limit)
+
         _initial-utilization
         (when-let [ctx-atom (:ctx-atom environment)]
           (if-let [measured (ctx-engine/utilization (:last-request-tokens previous-usage)
                                                     initial-context-limit
                                                     0
-                                                    ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)]
+                                                    initial-fold-budget)]
             (stamp-utilization! ctx-atom measured)
             (swap! ctx-atom (fn [ctx]
                               (if (get ctx "engine_utilization")
@@ -7044,7 +7059,7 @@
                                   "engine_utilization"
                                   {"last_request_tokens" 0
                                    "turn_total_tokens" 0
-                                   "auto_compress_above" ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS
+                                   "auto_compress_above" initial-fold-budget
                                    "model_input_limit" (long initial-context-limit)
                                    "saturation" 0
                                    "headroom_tokens" (long initial-context-limit)
@@ -7449,6 +7464,8 @@
                  served-model (turn-served-model environment)
                  effective-context-limit
                  (iteration-context-limit max-context-tokens served-model pre-resolved-model)
+                 effective-fold-budget
+                 (context-fold-budget effective-context-limit)
                  _llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
                                                                   (some-> (:name pre-resolved-model)
                                                                           str))
@@ -7505,7 +7522,7 @@
                                                        req
                                                        effective-context-limit
                                                        (:input-tokens u)
-                                                       ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))))
+                                                       effective-fold-budget))))
                  ;; Standing context render + budget guard.
                  ;;
                  ;; Canonical history stays intact. The model owns semantic folds;
@@ -8147,7 +8164,7 @@
                                                          req
                                                          effective-context-limit
                                                          (:input-tokens u)
-                                                         ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
+                                                         effective-fold-budget)
                                                        (some-> (:ctx-atom environment)
                                                                deref
                                                                (get
@@ -8200,7 +8217,7 @@
                                                 req
                                                 effective-context-limit
                                                 (:input-tokens u)
-                                                ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
+                                                effective-fold-budget)
                                               (some-> (:ctx-atom environment)
                                                       deref
                                                       (get ctx-engine/cache-samples-key))))}
