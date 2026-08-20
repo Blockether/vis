@@ -1814,11 +1814,12 @@
   ^String [payload]
   (weak-etag [(:total payload) (:limit payload) (:root payload) (:after payload)
               (mapv #(dissoc % "server_time_ms") (:sessions payload))
-              ;; The parked strip rides the same answer, so it must ride the
-              ;; same validator: a run that starts or stops waiting on its
-              ;; operator changes nothing in `sessions`, and hashing only those
-              ;; rows would hide the demand behind a 304.
-              (mapv #(dissoc % "server_time_ms") (:awaiting payload))]))
+              ;; The parked strip and project totals ride the same HEAD answer,
+              ;; so both must ride its validator. Either can change while the
+              ;; visible session rows remain byte-for-byte identical.
+              (mapv #(dissoc % "server_time_ms") (:awaiting payload))
+              (some-> (:overview payload)
+                      (dissoc :server_time_ms))]))
 
 (defn- list-sessions-handler
   "GET /v1/sessions[?limit=&after=&root=] — sessions in navigator order, WINDOWED on
@@ -1831,6 +1832,11 @@
    page of a 448-session store costs roughly a fifth of the ~257ms full build and
    a fifth of its ~300KB — the app paints its first screen without waiting for
    the tail.
+
+   The HEAD also carries `overview`: every project's stable counts from the same
+   gateway snapshot. Rows and totals therefore land in one response and one React
+   patch instead of racing two requests and repainting the list as pages arrive.
+   Tail windows omit it; the head is always read first.
 
    A window is addressed by a CURSOR, never an offset: `after` is the
    `next_cursor` of the previous answer, which names the last ROW the client
@@ -1879,17 +1885,21 @@
             (state/list-sessions-page :all {:limit limit :after after :root root})
 
             payload
-            {:sessions (:sessions page)
-             ;; Beside the window, never inside it: `state/list-sessions-page`.
-             :awaiting (:awaiting page)
-             :root root
-             :total (:total page)
-             :limit (:limit page)
-             ;; Echoed so the validator identifies WHICH window these rows are, and
-             ;; handed on so the next request is the client's own last row.
-             :after after
-             :next-cursor (:next-cursor page)
-             :has-more (:has-more page)}
+            (cond-> {:sessions (:sessions page)
+                     ;; Beside the window, never inside it: `state/list-sessions-page`.
+                     :awaiting (:awaiting page)
+                     :root root
+                     :total (:total page)
+                     :limit (:limit page)
+                     ;; Echoed so the validator identifies WHICH window these rows are, and
+                     ;; handed on so the next request is the client's own last row.
+                     :after after
+                     :next-cursor (:next-cursor page)
+                     :has-more (:has-more page)}
+              ;; One request owns the first paint. Recomputing this for every tail
+              ;; window would add work while conveying the same fleet-wide fact.
+              (nil? after)
+              (assoc :overview (state/projects-overview)))
 
             etag
             (sessions-etag payload)

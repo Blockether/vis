@@ -98,6 +98,28 @@ function listCursor(row: Session): string {
   const millis = stamp ? Date.parse(String(stamp)) : 0;
   return `${Number.isFinite(millis) ? millis : 0}:${row.id}`;
 }
+
+/** The stable totals the real gateway carries beside its session-list head. */
+function overviewFor(rows: Session[]) {
+  const byRoot = new Map<string, Session[]>();
+  for (const row of rows)
+    byRoot.set(projectPath(row), [...(byRoot.get(projectPath(row)) ?? []), row]);
+  return {
+    projects: [...byRoot.entries()].map(([root, group]) => ({
+      root,
+      project_id: null,
+      name: "",
+      session_count: group.length,
+      live_count: group.filter(sessionIsLive).length,
+      awaiting_count: group.filter((row) => row.is_awaiting_input === true).length,
+      last_activity_ms: 0,
+    })),
+    project_count: byRoot.size,
+    session_count: rows.length,
+    live_count: rows.filter(sessionIsLive).length,
+    awaiting_count: rows.filter((row) => row.is_awaiting_input === true).length,
+  };
+}
 export function renderSessionsScreen({
   machines = [{}] as MachineFixture[],
   query = "",
@@ -182,34 +204,13 @@ export function renderSessionsScreen({
       signal: init?.signal,
     });
     if (!machine) return answer({});
-    // The header row's numbers come from the GATEWAY (`/v1/projects/overview`), so a
-    // fake gateway tallies its own fixture rows the way a real one tallies its store.
-    // It is NOT one of this machine's reads: `heals` and `hangs` count the list reads
-    // a test is watching, and an extra request would answer the wrong one.
+    // Kept as an explicit fixture seam for endpoint-specific tests. The screen itself
+    // receives these same totals on the session-list head below.
     if (url.pathname === "/v1/projects/overview") {
       if (machine.down || machine.hangs) throw new TypeError("Failed to fetch");
-      // A test that wants to prove the header reads the GATEWAY's numbers, and not
-      // its own rows, states them here (`routes`).
       if (machine.routes && url.pathname in machine.routes)
         return answer(machine.routes[url.pathname]);
-      const rows = machine.sessions ?? [];
-      const byRoot = new Map<string, Session[]>();
-      for (const row of rows) byRoot.set(projectPath(row), [...(byRoot.get(projectPath(row)) ?? []), row]);
-      return answer({
-        projects: [...byRoot.entries()].map(([root, group]) => ({
-          root,
-          project_id: null,
-          name: "",
-          session_count: group.length,
-          live_count: group.filter(sessionIsLive).length,
-          awaiting_count: group.filter((row) => row.is_awaiting_input === true).length,
-          last_activity_ms: 0,
-        })),
-        project_count: byRoot.size,
-        session_count: rows.length,
-        live_count: rows.filter(sessionIsLive).length,
-        awaiting_count: rows.filter((row) => row.is_awaiting_input === true).length,
-      });
+      return answer(overviewFor(machine.sessions ?? []));
     }
     const seen = (reads.get(url.origin) ?? 0) + 1;
     reads.set(url.origin, seen);
@@ -273,10 +274,10 @@ export function renderSessionsScreen({
         total: sessions.length,
         has_more: from + window.length < sessions.length,
         next_cursor: from + window.length < sessions.length && last ? listCursor(last) : null,
-        // The real gateway answers the parked runs BESIDE the window and COMPLETE,
-        // however deep in the fleet they sit (`state/list-sessions-page`), because the
-        // ordering no longer lifts them into the first page.
+        // The real gateway answers parked runs and stable project totals BESIDE
+        // the head window, complete however deep the fleet sits.
         awaiting: sessions.filter((session) => session.is_awaiting_input === true),
+        ...(after ? {} : { overview: overviewFor(sessions) }),
       });
     }
     if (url.pathname === "/v1/sessions/actions/search") return answer({ matches: [] });

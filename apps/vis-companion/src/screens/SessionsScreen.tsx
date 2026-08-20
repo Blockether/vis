@@ -660,48 +660,34 @@ export function SessionsScreen({
             (machine) => machineKey(machine.conn) === key,
           );
           const merged = reconcileSessions(held?.sessions ?? null, rows);
-          // The parked rows arrive BESIDE the window (`parkedSessions`), so a demand
-          // that appeared or was answered is news even when the window's own rows are
-          // word for word what is already on screen.
+          // Parked rows and stable project totals arrive BESIDE the head window.
+          // Adopt all three in one patch so no intermediate frame tallies whichever
+          // session pages happened to land first.
           const parked = reconcileSessions(held?.awaiting ?? null, api.parkedSessions());
+          const reportedOverview = api.projectsOverview();
+          const overview =
+            reportedOverview && held?.overview && sameOverview(held.overview, reportedOverview)
+              ? held.overview
+              : reportedOverview;
           if (
             held &&
             held.error === null &&
             held.answered &&
             merged === held.sessions &&
-            parked === held.awaiting
+            parked === held.awaiting &&
+            overview === held.overview
           )
             return;
           patchMachine(key, (machine) => ({
             ...machine,
             sessions: merged,
             awaiting: parked,
+            overview,
             error: null,
             answered: true,
             isRemembered: false,
           }));
         };
-        // The header row's numbers, in ONE request, beside the window — never a
-        // tally of the rows that happen to have landed. It rides the same load so
-        // a poll refreshes counts and rows together; an overview that fails is not
-        // a failed load (the list is still the answer), it just leaves the last
-        // numbers standing.
-        //
-        // AN OVERVIEW THAT SAYS NOTHING NEW IS NOT NEWS (the same rule `settle`
-        // keeps): patching regardless handed the list a fresh fleet array every
-        // poll, and with it every memo built from it, for numbers that had not
-        // moved.
-        void api
-          .projectsOverview(signal)
-          .then((overview) => {
-            if (signal?.aborted) return;
-            const held = machinesRef.current.find(
-              (machine) => machineKey(machine.conn) === key,
-            );
-            if (held?.overview && sameOverview(held.overview, overview)) return;
-            patchMachine(key, (machine) => ({ ...machine, overview }));
-          })
-          .catch(() => {});
         // Paint the first page the moment it lands instead of waiting for the whole
         // fleet to drain. Only ever called on a cold load (see `listSessions`).
         const next = await api.listSessions(signal, (partial) => {

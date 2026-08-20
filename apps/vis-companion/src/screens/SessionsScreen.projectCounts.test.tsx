@@ -12,29 +12,35 @@ afterEach(() => restore());
 // windows this device had paged in, so a project of 400 read `1` until the whole
 // list had drained, and re-derived itself on every gateway switch.
 describe("what a project header counts", () => {
-  it("reports what the GATEWAY holds, not the rows this device has paged in", async () => {
+  it("gets rows and stable gateway totals in one list request", async () => {
+    const overview = {
+      projects: [
+        {
+          root: "/Users/dev/project",
+          project_id: "p-a",
+          name: "project",
+          session_count: 400,
+          live_count: 3,
+          awaiting_count: 0,
+          last_activity_ms: 1,
+        },
+      ],
+      project_count: 1,
+      session_count: 400,
+      live_count: 3,
+      awaiting_count: 0,
+    };
     const view = renderSessionsScreen({
       machines: [
         {
           label: "alpha",
           sessions: [listSession({ id: "a1", title: "First" })],
           routes: {
-            "/v1/projects/overview": {
-              projects: [
-                {
-                  root: "/Users/dev/project",
-                  project_id: "p-a",
-                  name: "project",
-                  session_count: 400,
-                  live_count: 3,
-                  awaiting_count: 0,
-                  last_activity_ms: 1,
-                },
-              ],
-              project_count: 1,
-              session_count: 400,
-              live_count: 3,
-              awaiting_count: 0,
+            "/v1/sessions": {
+              sessions: [listSession({ id: "a1", title: "First" })],
+              total: 1,
+              has_more: false,
+              overview,
             },
           },
         },
@@ -46,5 +52,7 @@ describe("what a project header counts", () => {
     // One row is on screen; the header still says what the project holds.
     expect(await screen.findByText("400 sessions")).toBeTruthy();
     expect(screen.getAllByText(/3 live/).length).toBeGreaterThan(0);
+    expect(view.requests.filter(({ path }) => path.startsWith("/v1/sessions?"))).toHaveLength(1);
+    expect(view.requests.some(({ path }) => path === "/v1/projects/overview")).toBe(false);
   });
 });

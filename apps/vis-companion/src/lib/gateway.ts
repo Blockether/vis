@@ -468,8 +468,9 @@ function sameJson(a: unknown, b: unknown): boolean {
 /**
  * One page of the session list, pinned to the exact rows its ETag was issued for.
  *
- * The gateway hashes `[total limit root after rows awaiting]` into the validator, so a
- * 304 revalidates the whole record — the counts may be reused, not just the rows.
+ * The gateway hashes `[total limit root after rows awaiting overview]` into the
+ * validator, so a 304 revalidates the whole record — the counts may be reused,
+ * not just the rows.
  */
 type SessionsWindow = {
   etag: string;
@@ -489,6 +490,8 @@ type SessionsWindow = {
    * same validator as the rows, so a 304 says the demand is unchanged too.
    */
   awaiting: Session[];
+  /** Stable project and fleet totals, present on the head window only. */
+  overview: GatewayOverview | null;
 };
 
 /**
@@ -638,11 +641,13 @@ export class GatewayClient {
     { full: Session[]; windows: Map<string, SessionsWindow> }
   >();
 
-  /** Backing store of `parkedSessions`, refreshed by every list read. */
+  /** Backing stores refreshed by the head of every list read. */
   private parked: Session[] = [];
+  private overview: GatewayOverview | null;
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
     this.token = conn.token;
+    this.overview = this.cachedProjectsOverview();
   }
 
   /** Cache key for one of this gateway's snapshot-able payloads. */
@@ -838,30 +843,14 @@ export class GatewayClient {
 
   // ── Projects overview ───────────────────────────────────────────
 
-  /**
-   * Last projects overview seen for THIS gateway — paint it, then revalidate.
-   *
-   * This is the whole cure for the flicker: coming back to a gateway, the header
-   * row is drawn from the numbers this device last saw for it, in the first
-   * frame, instead of being re-tallied from session windows as they arrive.
-   */
+  /** Last project totals seen for THIS gateway — paint them before revalidation. */
   cachedProjectsOverview(): GatewayOverview | null {
     return readSnapshot<GatewayOverview>(this.snapshotKey("projects-overview"));
   }
 
-  /**
-   * `GET /v1/projects/overview` — every project with its counts and the
-   * gateway's totals, tallied by the process that already holds the facts.
-   */
-  async projectsOverview(signal?: AbortSignal): Promise<GatewayOverview> {
-    const response = await this.request<GatewayOverview>(
-      "GET",
-      "/v1/projects/overview",
-      undefined,
-      signal,
-    );
-    writeSnapshot(this.snapshotKey("projects-overview"), response);
-    return response;
+  /** Project totals carried by the most recent session-list head. */
+  projectsOverview(): GatewayOverview | null {
+    return this.overview;
   }
 
   // ── Native push devices ─────────────────────────────────────────
@@ -2234,8 +2223,10 @@ export class GatewayClient {
                 nextCursor: HEAD_CURSOR,
                 // The remembered pin says nothing about who is waiting on a human: a
                 // demand is a fact of the CURRENT answer, so it starts empty and the
-                // first read fills it.
+                // first read fills it. Its overview is durable and was issued beside
+                // the same head validator.
                 awaiting: [],
+                overview: this.overview,
               },
             ],
           ]),
@@ -2258,6 +2249,7 @@ export class GatewayClient {
         has_more?: boolean;
         next_cursor?: string | null;
         awaiting?: Session[];
+        overview?: GatewayOverview;
       }>(
         "GET",
         `/v1/sessions?limit=${SESSIONS_PAGE}${
@@ -2270,6 +2262,11 @@ export class GatewayClient {
       if (res.status === 304 && pin) return pin;
       const rows = res.data?.sessions ?? [];
       const awaiting = res.data?.awaiting ?? [];
+      const overview = after === HEAD_CURSOR ? (res.data?.overview ?? null) : null;
+      if (after === HEAD_CURSOR) {
+        this.overview = overview;
+        writeSnapshot(this.snapshotKey("projects-overview"), overview);
+      }
       // Every row names the model it runs on, so opening any of them paints the
       // right chip on the FIRST frame instead of after a per-session round trip. A
       // parked row is one a reader opens FIRST, and it may not be in `rows` at all.
@@ -2282,13 +2279,15 @@ export class GatewayClient {
         hasMore: Boolean(res.data?.has_more),
         nextCursor: res.data?.next_cursor ?? HEAD_CURSOR,
         awaiting,
+        overview,
       };
     };
 
     const head = await fetchWindow(HEAD_CURSOR);
-    // The demand is answered by the HEAD and is complete there, so it is known before
-    // the walk below decides whether there is anything left to read.
+    // Demand and stable project totals are answered by the HEAD and are complete
+    // there, before the walk decides whether there is anything left to read.
     this.parked = head.awaiting;
+    this.overview = head.overview;
     const headPin = known.get(HEAD_CURSOR);
     const holdsWholeList = cached !== null && cached.length === head.total;
 

@@ -2733,6 +2733,60 @@
           ((rv 'list-sessions-handler) {:query-params {}})
           (is (nil? (:root (second @seen)))))))))
 
+;; Regression, user report (paraphrased: "session totals grow as the list loads and the
+;; whole list flashes again after leaving a session"): rows and project totals were two
+;; competing requests, so React painted whichever answer or page happened to land next.
+(deftest sessions-head-carries-project-overview-in-the-same-answer
+  (let [page
+        {:sessions [{"id" "a" "server_time_ms" 1}]
+         :awaiting []
+         :total 1
+         :limit 20
+         :next-cursor nil
+         :has-more false}
+
+        overview
+        {:projects [{:root "/workspace" :session_count 400}]
+         :project-count 1
+         :session-count 400
+         :live-count 3
+         :awaiting-count 0}
+
+        answer
+        (fn [value]
+          (with-redefs [state/list-sessions-page
+                        (fn [_ _]
+                          page)
+
+                        state/projects-overview
+                        (constantly value)]
+
+            ((rv 'list-sessions-handler) {:query-params {"limit" "20"}})))
+
+        first-answer
+        (answer overview)
+
+        changed-answer
+        (answer (assoc overview :live-count 4))]
+
+    (testing "the head returns the stable totals beside its rows"
+      (is (= 400 (get-in (wire/parse-json (:body first-answer)) ["overview" "session_count"]))))
+    (testing "the totals are covered by the head validator"
+      (is (not= (get-in first-answer [:headers "ETag"]) (get-in changed-answer [:headers "ETag"]))))
+    (testing "a tail window neither repeats nor recomputes the fleet-wide totals"
+      (with-redefs [state/list-sessions-page
+                    (fn [_ _]
+                      page)
+
+                    state/projects-overview
+                    (fn []
+                      (throw (ex-info "tail recomputed overview" {})))]
+
+        (let [response ((rv 'list-sessions-handler)
+                         {:query-params {"limit" "20" "after" "4000:a"}})]
+          (is (= 200 (:status response)))
+          (is (nil? (get (wire/parse-json (:body response)) "overview"))))))))
+
 ;; Regression, user report (paraphrased: "the list keeps jumping while I read it"): the
 ;; navigator key used to LEAD with a band, so a run parked on a human was lifted into
 ;; the first window - moving every row under the reader and pushing another session out
