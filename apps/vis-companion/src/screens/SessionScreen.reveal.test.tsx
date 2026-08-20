@@ -35,4 +35,32 @@ describe("opening a session", () => {
       expect(screen.queryByText(/Loading session/)).not.toBeInTheDocument(),
     );
   });
+
+  // Regression, user report: a response shorter than the transcript viewport stayed
+  // against the header and left most of the phone as an empty band above the composer.
+  // The transcript's minimum viewport height must give that spare height to its TOP,
+  // keeping the newest response beside the composer where subsequent chunks arrive.
+  it("bottom-aligns a short response instead of leaving a blank lower viewport", async () => {
+    renderSessionScreen({
+      client: {
+        transcript: () =>
+          Promise.resolve([
+            {
+              id: "t-short",
+              user_request: "Give me the short answer",
+              status: "completed",
+              iterations: [],
+            },
+          ]),
+      },
+    });
+
+    expect(await screen.findByText("Give me the short answer")).toBeInTheDocument();
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    expect(viewport.firstElementChild).toHaveClass(
+      "flex",
+      "flex-col",
+      "justify-end",
+    );
+  });
 });

@@ -5272,7 +5272,7 @@ export function SessionScreen({
               className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
                 !turns.length && !liveTurn
                   ? "flex flex-col pb-4 sm:pb-6"
-                  : "pb-10"
+                  : "flex flex-col justify-end pb-10"
               }`}
             >
               {error && <Banner kind="err">{error}</Banner>}
