@@ -128,10 +128,14 @@
                 (or (:start (auth-kinds provider-id)) (api-key-leg? provider-id)))))
 
 (defn- refresh-fleet!
-  "Auth changed the credential file, so every cached status/limits view is
-   stale. Invalidate before the caller re-reads `/v1/router`."
+  "Auth changed the credential file, so every cached status/limits view is stale —
+   and so is the shared ROUTER, which SKIPS a provider whose credential could not be
+   resolved when it was built. Rebuild it here or a sign-in never reaches routing:
+   the provider stays absent, and a session pinned to it degrades onto whatever other
+   vendor advertises the same model name. Invalidate before the caller re-reads
+   `/v1/router`."
   []
-  (try (providers/invalidate-configured-providers!) (catch Throwable _ nil)))
+  (try (providers/rebuild-shared-router!) (catch Throwable _ nil)))
 
 (defn- public-view
   "The ONLY fields that may cross the wire. Allowlisted on purpose: the

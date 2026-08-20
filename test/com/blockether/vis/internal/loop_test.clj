@@ -3110,6 +3110,48 @@
           (expect (= router (hoist router :not-configured)))
           (expect (= router (hoist router nil)))))))
 
+;; Regression: a session pinned to openai-codex/gpt-5.6-sol RAN on
+;; github-copilot-individual. The pinned provider was missing from the router (its
+;; credential failed to build), so the pin degraded to model-only routing and the
+;; other vendor advertising the same model NAME took the conversation — then 400d.
+(defdescribe
+  pinned-provider-missing-from-router-test
+  (describe
+    "a pin whose PROVIDER the router cannot serve is never re-homed onto another vendor"
+    (let [;; openai-codex dropped at router build (expired credential); Copilot
+          ;; advertises the very same `gpt-5.6-*` names.
+          router
+          {:providers [{:id :anthropic-coding-plan :models [{:name "claude-opus-5"}]}
+                       {:id :github-copilot-individual
+                        :models [{:name "gpt-5.6-sol"} {:name "claude-opus-5"}]}]}
+
+          forced
+          #'lp/forced-routing-for-pref
+
+          prepare
+          #'lp/prepare-turn-context
+
+          env
+          {:db-info ::db :session-id "session-1" :router router}
+
+          messages
+          [{:role "user" :content "hello"}]]
+
+      (it "forces NOTHING for the absent provider — Copilot never inherits the pick"
+          (expect (= {} (forced router "openai-codex" "gpt-5.6-sol"))))
+      (it "a pin that names NO provider still routes by model alone"
+          (expect (= {:model "gpt-5.6-sol"} (forced router nil "gpt-5.6-sol"))))
+      (it "the turn fails naming the pinned provider instead of calling another one"
+          (with-redefs-fn {#'session-model/model-of (fn [& _]
+                                                      {:provider "openai-codex"
+                                                       :model "gpt-5.6-sol"})}
+            #(let [thrown (try (prepare env messages {}) nil (catch Exception e e)) data
+                   (ex-data thrown)] (expect (some? thrown)) (expect
+                                                               (= :vis/pinned-provider-unavailable
+                                                                  (:type data)))
+               (expect (true? (:vis/user-error data))) (expect (str/includes? (ex-message thrown)
+                                                                              "openai-codex"))
+               (expect (str/includes? (ex-message thrown) "gpt-5.6-sol"))))))))
 (defdescribe
   prepare-turn-model-preference-test
   (let [prepare

@@ -8994,9 +8994,15 @@
    degrades instead of throwing (resolve-routing throws on an unknown
    provider):
      - provider+model both present & valid -> {:provider <kw> :model <str>}
-     - model present & owned by some provider -> {:model <str>}
+     - a provider NAMED but absent from `router` -> {} (see below)
+     - model alone, owned by some provider -> {:model <str>}
        (force-model restricts candidates to providers that expose it)
      - otherwise -> {} (no override; default `:strategy :root` runs)
+
+   A pin that NAMED a provider binds THAT provider or nothing. Model NAMES are not
+   unique across vendors — GitHub Copilot serves `gpt-5.6-*` too — so falling through
+   to the model-only branch handed a session pinned to OpenAI Codex over to Copilot,
+   which took the conversation and 400d on a model that endpoint never had.
 
    `provider` accepts a string id (`\"zai-coding-plan\"`, as stored in the DB
    pref) or keyword; `model` is the model name string."
@@ -9020,6 +9026,10 @@
           (and model (some #(= (:name %) model) (:models p))))]
 
     (cond (and model prov (owns? prov)) {:provider prov-kw :model model}
+          ;; Named a provider this router cannot serve: force NOTHING.
+          ;; `prepare-turn-context` turns that into a user-fixable failure rather
+          ;; than a silent hop to another vendor sharing the model name.
+          prov-kw {}
           (and model (some owns? (:providers router))) {:model model}
           :else {})))
 
@@ -9156,6 +9166,26 @@
           ;; validates away and the turn silently runs the default model.
           pref-router (router-with-pinned-model (:router env) pref-provider model)
           pref-forced (forced-routing-for-pref pref-router pref-provider model)
+          ;; The pin names a provider this router cannot serve — its build failed
+          ;; (absent or expired credential) or it left the fleet. FAIL the turn:
+          ;; `router-for-model` below would otherwise hoist whatever OTHER provider
+          ;; lists the same model NAME and hand the conversation to a vendor the
+          ;; user never picked.
+          _ (when (and model pref-provider (nil? (:provider pref-forced)))
+              (throw (ex-info (str "Session is pinned to "
+                                   pref-provider
+                                   "/"
+                                   model
+                                   ", but "
+                                   pref-provider
+                                   " is not available on this router — its credential could not be"
+                                   " resolved. Re-authenticate it (`vis-agent providers auth "
+                                   pref-provider
+                                   "`) or pick another model.")
+                              {:type :vis/pinned-provider-unavailable
+                               :vis/user-error true
+                               :provider pref-provider
+                               :model model})))
           ;; Cancellation TOKEN carries the cooperative flag AND the
           ;; on-cancel! callback registry that hard-cancels Python /
           ;; provider futures. Callers create one via

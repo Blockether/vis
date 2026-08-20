@@ -126,6 +126,33 @@
           (let [{:keys [flow]} (pauth/start-auth! :fake-device)]
             (expect (eventually #(= "error" (:status (pauth/poll-auth! (:flow-id flow)))))))))))
 
+;; Regression: signing a provider back in did not rebuild the shared router, so a
+;; provider skipped at build time (its credential could not be resolved) stayed
+;; unroutable for the whole daemon lifetime — sessions pinned to it silently ran
+;; on another vendor that advertised the same model name.
+(defdescribe
+  provider-auth-router-rebuild-test
+  (it "a landed sign-in rebuilds the shared router, not just the fleet snapshot"
+      (let [rebuilds
+            (atom 0)
+
+            descriptor
+            {:provider/auth-start-fn
+             (fn []
+               {:kind :pkce :url "https://auth.example/x" :flow {:state "st"}})
+             :provider/auth-complete-fn (fn [_flow _input]
+                                          {:status :ok})}]
+
+        (with-redefs [registry/provider-by-id
+                      (constantly descriptor)
+
+                      providers/rebuild-shared-router!
+                      (fn []
+                        (swap! rebuilds inc))]
+
+          (let [{:keys [flow]} (pauth/start-auth! :fake-pkce)]
+            (expect (= true (:ok? (pauth/complete-auth! (:flow-id flow) "https://cb?code=abc"))))
+            (expect (= 1 @rebuilds)))))))
 (defdescribe provider-auth-lifecycle-test
              (it "cancels a flow idempotently"
                  (with-redefs [registry/provider-by-id
@@ -196,7 +223,7 @@
                     (fn [pid k]
                       (reset! saved [pid k]))
 
-                    providers/invalidate-configured-providers!
+                    providers/rebuild-shared-router!
                     (constantly nil)]
 
         (expect (= true (pauth/supported? :fake-key)))

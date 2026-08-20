@@ -722,12 +722,16 @@
   []
   @router-rebuild-hook)
 
-(defn- rebuild-shared-router!
+(defn rebuild-shared-router!
   "Drop the configured-provider cache, then fire the registered router-rebuild
   hook best-effort so the shared router (and every cached session env that
   snapshotted it) rebuilds from current config. No-op before `loop` registers
   (early boot) or when the router was never built — `reload-router!` guards the
-  latter on `router-initialized?`."
+  latter on `router-initialized?`.
+
+  PUBLIC because AUTH needs it too: a provider whose credential cannot be resolved
+  is skipped at router build, so signing in must rebuild or the daemon keeps
+  routing as though that provider did not exist."
   []
   (invalidate-configured-providers!)
   (when-let [f @router-rebuild-hook]
