@@ -606,6 +606,52 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
     ]
 
 
+def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recorder):
+    """A local selection is live state; a failed provider poll must not freeze its details."""
+    first = fixture("run-mid.json")
+    selected = "95742028770"
+    calls = 0
+
+    def poll():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return first
+        if calls == 2:
+            recorder.host_live(
+                json.dumps(
+                    {
+                        "op": "patch",
+                        "view_id": recorder.view_id,
+                        "patch": {
+                            "ops": [
+                                {
+                                    "op": "set",
+                                    "node_id": "jobs",
+                                    "focused_ids": [selected],
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        raise RuntimeError("GitHub unavailable in regression fixture")
+
+    verdict = gh.watch(
+        TITLE,
+        DESCRIPTION,
+        poll,
+        lambda job_id, _lines: [f"log for {job_id}"],
+    )
+
+    assert recorder._node("jobs")["focused_ids"] == [selected]
+    assert node(verdict["view"], "steps")["steps"][0]["label"] == "Set up job"
+    assert node(verdict["view"], "output")["lines"] == [
+        "── tests / vis-agent + vis-contract (PyPI packages) · log",
+        f"log for {selected}",
+    ]
+
+
 def test_the_picture_is_the_one_the_human_watched(watched):
     _, verdict = watched
 

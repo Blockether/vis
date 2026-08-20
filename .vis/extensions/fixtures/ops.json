@@ -128,7 +128,7 @@
           "id": "jobs"
         },
         {
-          "label": "Steps of focused jobs",
+          "label": "Selected job steps",
           "steps": [
             {
               "id": "95742028721:1",
@@ -215,12 +215,12 @@
           "id": "steps"
         },
         {
-          "label": "Activity",
+          "label": "Run activity · all jobs",
           "type": "log",
           "id": "activity"
         },
         {
-          "label": "Logs of focused jobs",
+          "label": "Selected job log",
           "type": "log",
           "id": "output"
         },
@@ -283,6 +283,9 @@
         }
       ]
     }
+  },
+  {
+    "op": "state"
   },
   {
     "op": "state"

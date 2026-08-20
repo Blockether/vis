@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type HTMLAttributes,
   type InputHTMLAttributes,
   type MouseEvent,
   type PointerEvent,
@@ -346,6 +347,26 @@ export const Chip = forwardRef<
 });
 
 /**
+ * A selectable live-table row owns the selection wash across every cell. The
+ * button in its first cell remains the control and the leading selection mark.
+ */
+export const TableFocusRow = forwardRef<
+  HTMLTableRowElement,
+  HTMLAttributes<HTMLTableRowElement> & { isFocused?: boolean }
+>(function TableFocusRow({ isFocused = false, className = '', ...props }, ref) {
+  return (
+    <tr
+      ref={ref}
+      aria-selected={isFocused}
+      className={`transition-colors duration-150 motion-reduce:transition-none ${
+        isFocused ? 'bg-accent/10' : ''
+      } ${className}`}
+      {...props}
+    />
+  );
+});
+
+/**
  * A live table row which CHANGES the detail below it. Selection is shared engine
  * state, not navigation: `aria-pressed` admits several concurrently running rows,
  * while the full-width 44px face gives a phone thumb the whole first cell.
@@ -361,7 +382,7 @@ export const TableFocusButton = forwardRef<
       aria-pressed={isFocused}
       className={`flex min-h-11 w-full min-w-0 items-center gap-1.5 border-l-2 px-1.5 py-1 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-8 ${
         isFocused
-          ? 'border-accent bg-accent/10 text-accent-ink'
+          ? 'border-accent text-accent-ink'
           : 'border-transparent text-inherit hover:bg-hover'
       } ${className}`}
       {...props}

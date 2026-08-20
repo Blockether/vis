@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, LoadMore, Meter, PROSE, Spinner, TableFocusButton } from './ui';
+import { Button, Input, LoadMore, Meter, PROSE, Spinner, TableFocusButton, TableFocusRow } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -290,33 +290,37 @@ function TableRows({
               </td>
             </tr>
           )}
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              className={`${TONE_INK[row.tone]} ${node.is_focusable ? 'cursor-pointer' : ''}`}
-              onClick={node.is_focusable ? () => onFocus?.(node.id, [row.id]) : undefined}
-            >
-              {node.columns.map((column, cell) => (
-                <td
-                  key={column.id}
-                  className={`border border-dialog-edge align-top ${
-                    node.is_focusable && cell === 0 ? 'p-0' : 'px-1.5 py-1'
-                  } ${column.align === 'right' ? 'text-right tabular-nums' : 'text-left'}`}
-                >
-                  {node.is_focusable && cell === 0 ? (
-                    <TableFocusButton
-                      isFocused={focused.has(row.id)}
-                      aria-label={`Focus ${row.cells[cell] || row.id}`}
-                    >
+          {rows.map((row) => {
+            const isFocused = focused.has(row.id);
+            return (
+              <TableFocusRow
+                key={row.id}
+                isFocused={isFocused}
+                className={`${TONE_INK[row.tone]} ${node.is_focusable ? 'cursor-pointer' : ''}`}
+                onClick={node.is_focusable ? () => onFocus?.(node.id, [row.id]) : undefined}
+              >
+                {node.columns.map((column, cell) => (
+                  <td
+                    key={column.id}
+                    className={`border border-dialog-edge align-top ${
+                      node.is_focusable && cell === 0 ? 'p-0' : 'px-1.5 py-1'
+                    } ${column.align === 'right' ? 'text-right tabular-nums' : 'text-left'}`}
+                  >
+                    {node.is_focusable && cell === 0 ? (
+                      <TableFocusButton
+                        isFocused={isFocused}
+                        aria-label={`Focus ${row.cells[cell] || row.id}`}
+                      >
+                        <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
+                      </TableFocusButton>
+                    ) : (
                       <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
-                    </TableFocusButton>
-                  ) : (
-                    <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
-                  )}
-                </td>
-              ))}
-            </tr>
-          ))}
+                    )}
+                  </td>
+                ))}
+              </TableFocusRow>
+            );
+          })}
         </tbody>
       </table>
     </div>

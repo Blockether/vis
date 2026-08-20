@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- fix(companion,extensions): selecting a GitHub Actions job now highlights every cell in its row and refreshes the selected job's steps and log from shared live state before the next GitHub request, so a slow or unavailable provider cannot leave stale details under a newly selected row. The labels now distinguish run-wide activity from the selected job's detail.
+
 - fix(tui): a finished live run now settles beside the exact Python form that opened it instead of collecting below the final answer. Its transcript chevron flips with the read-only record, so clicking `▸ RUN` visibly opens the record in the live band and clicking `▾ RUN` collapses it again.
 
 - fix(extensions): `run_tests` no longer lets Python extension tests publish `vis.live` views into the active user session or file their NDJSON records as conversation artifacts. The GitHub watch suite now materializes its envelopes against an in-memory host, while the hermetic Python test boundary refuses any accidental live-session call so another test cannot reintroduce the leak.

@@ -310,10 +310,10 @@ def declared_nodes(shape):
         vis.steps(
             "steps",
             steps=[dict(one) for one in shape["steps"]],
-            label="Steps of focused jobs",
+            label="Selected job steps",
         ),
-        vis.output("activity", label="Activity"),
-        vis.output("output", label="Logs of focused jobs"),
+        vis.output("activity", label="Run activity · all jobs"),
+        vis.output("output", label="Selected job log"),
         vis.link("links", links=[dict(one) for one in shape["links"]]),
     ]
 
@@ -694,6 +694,20 @@ def _show_focus_logs(view, shape, log_of, cache, lines, clear=True):
     view["output"].write(*_focus_log_lines(shape, log_of, cache, lines))
 
 
+def _sync_surface_focus(view, payload, shape, manual_focus, log_of, cache, shown_focus):
+    """Apply a surface selection from shared state without waiting for GitHub to answer."""
+    selected = _focused_ids_from_state(view.state())
+    if selected == shape["focus_ids"]:
+        return shape, manual_focus, shown_focus
+    manual_focus = selected
+    focused = run_shape(payload, focus_ids=manual_focus, now=_wall_time())
+    push_changes(view, shape, focused)
+    fresh_focus = _focus_signature(focused)
+    if fresh_focus != shown_focus and not focused["is_over"]:
+        _show_focus_logs(view, focused, log_of, cache, FAILED_TAIL_LINES)
+    return focused, manual_focus, fresh_focus
+
+
 def watch(title, description, poll, log_of=None, superseded_by=None):
     """Open a selectable CI view, patch it until the run ends, answer its picture.
 
@@ -704,7 +718,8 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     The loop ends when GitHub says the run is over, when a later commit starts the same workflow,
     when `gh` stops answering, or when the human presses Interrupt — never on an invented duration.
     """
-    shape = run_shape(poll(), now=_wall_time())
+    payload = poll()
+    shape = run_shape(payload, now=_wall_time())
     began = time.monotonic()
     manual_focus = None
     log_cache = {}
@@ -728,6 +743,20 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 if view.is_interrupted:
                     break
                 time.sleep(_tick(time.monotonic() - began))
+                try:
+                    # Selection is local shared state, not provider data. Apply it BEFORE a
+                    # network call so a slow or unavailable GitHub cannot freeze the details.
+                    shape, manual_focus, shown_focus = _sync_surface_focus(
+                        view,
+                        payload,
+                        shape,
+                        manual_focus,
+                        log_of,
+                        log_cache,
+                        shown_focus,
+                    )
+                except vis.Interrupted:
+                    break
                 if superseded_by:
                     superseded = superseded_by()
                     if superseded:

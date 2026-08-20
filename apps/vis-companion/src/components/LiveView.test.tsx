@@ -150,6 +150,17 @@ describe('focusing a table row', () => {
     expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
   });
 
+  // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: selecting a job only
+  // tinted its first cell, so the table looked like a cell picker instead of a row picker.
+  it('paints the selected state across the whole job row', () => {
+    paint({ view: focusableView(), onFocus: vi.fn() });
+
+    const selected = screen.getByRole('button', { name: 'Focus db-2' });
+    const row = selected.closest('tr') as HTMLTableRowElement;
+    expect(row.className).toContain('bg-accent/10');
+    expect(row.getAttribute('aria-selected')).toBe('true');
+  });
+
   it('sends the row through the gateway rather than keeping selection in the component', () => {
     const view = focusableView();
     const focusLiveView = vi.fn(async () => ({

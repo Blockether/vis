@@ -54,6 +54,7 @@ import {
   LiveCount,
   LoadMore,
   TableFocusButton,
+  TableFocusRow,
   Meter,
   LiveTally,
   LIST_EDGE,
@@ -2414,6 +2415,21 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html(true))).toContain("mouse:min-h-8");
     });
   });
+
+    it("washes the whole selected row while the button keeps the leading mark", () => {
+      const row = renderToStaticMarkup(
+        <table>
+          <tbody>
+            <TableFocusRow isFocused>
+              <td>job</td>
+              <td>success</td>
+            </TableFocusRow>
+          </tbody>
+        </table>,
+      );
+      expect(row).toContain('aria-selected="true"');
+      expect(row).toContain("bg-accent/10");
+    });
 
   describe("LoadMore", () => {
     const html = () =>
