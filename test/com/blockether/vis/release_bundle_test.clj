@@ -558,11 +558,11 @@
                     (map second (re-seq #"(?:&&|\|\|)\s*'([^']+)'" value))
                     [(str/trim value)])]
           (expect (contains? tracks t) (str wf ": " value))))))
-  ;; A hosted Apple-silicon fallback is only useful if it can FINISH: the free
+  ;; A low-memory override is only useful if it can finish: GitHub's free
   ;; macOS arm64 class is 3 cores / 7 GiB RAM / 14 GiB disk, so a heap above
   ;; physical RAM has no volume to swap into and native-image exits on the
-  ;; first OutOfMemoryError. The fallback shrinks the build, not the promise.
-  (it "sizes the hosted macOS fallback to fit the free runner instead of swapping"
+  ;; first OutOfMemoryError. An explicit override shrinks the build, not the promise.
+  (it "sizes an explicitly selected low-memory macOS runner instead of swapping"
       (let [stable
             (slurp ".github/workflows/native-release.yml")
 
@@ -578,16 +578,15 @@
         ;; Quick build produces a slower binary, so it is for dry runs only.
         (expect (str/includes? fallback "-Ob") fallback)
         (expect (str/includes? fallback "steps.target.outputs.publish") fallback)
-        ;; One dispatch input moves the job to a bigger CLOUD label for a
-        ;; single run, without touching the repository variable.
-        (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)))
-  ;; Regression, release v0.1.40: the macOS asset was defaulted onto GitHub's
-  ;; free hosted Mac, where native-image ran 5 h 51 min and was killed by the
-  ;; job's own timeout — the tag published with no macOS asset at all. It builds
-  ;; on OUR labelled Apple-silicon builder; the silence a hosted default was
-  ;; bought to remove — a job queueing 24 h when the builder is asleep — is
-  ;; removed by watching that queue from a free runner instead.
-  (it "builds the macOS asset on our own builder, and fails fast when it sleeps"
+        ;; One dispatch input can still select a different runner for a targeted
+        ;; experiment without changing the Blacksmith default.
+        (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)
+        (expect (str/includes? stable "'blacksmith-6vcpu-macos-26'") stable)))
+  ;; Regression, release v0.1.40: GitHub's free hosted Mac spent 5 h 51 min in
+  ;; native-image before the timeout killed it, so the tag had no macOS asset.
+  ;; Blacksmith's smallest Apple-silicon runner has the 24 GiB needed by the
+  ;; measured ~13.7 GiB analysis live set.
+  (it "builds the macOS asset on Blacksmith, and fails fast if it does not start"
       (let [stable
             (slurp ".github/workflows/native-release.yml")
 
@@ -603,33 +602,42 @@
                  (take 25)
                  (str/join "\n"))]
 
-        (expect (str/includes? macos-job "vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64'")
+        (expect (str/includes? macos-job
+                               "vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26'")
                 macos-job)
-        ;; Six hours was the hosted Mac's price for not finishing; a hung build
-        ;; has to give the workstation back the same morning. (The Linux matrix
-        ;; keeps its 6 h cap: a swapping analysis there is slow, not stuck.)
+        ;; Six hours was the undersized hosted Mac's price for not finishing;
+        ;; a stalled cloud build should still return capacity the same morning.
+        ;; (The Linux matrix keeps its 6 h cap: a swapping analysis there is slow.)
         (expect (not (str/includes? macos-job "timeout-minutes: 350")) macos-job)
         (expect (seq pickup) "no job watches the macOS queue")
-        ;; The watchdog must never wait on the machine it is watching.
+        ;; The watchdog must never wait on the runner class it is watching.
         (expect (str/includes? pickup "runs-on: ubuntu-latest") pickup)
         ;; `contents: write` at the top of that file REPLACES the default token
         ;; scopes, so reading this run's job list has to be granted explicitly.
         (expect (str/includes? pickup "actions: read") pickup)
         (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
         (expect (str/includes? stable "::error::No runner labelled") stable)))
-  ;; The builder belongs to the STABLE macOS asset alone: a build pins every
-  ;; core and ~15 GiB, so no other workflow may take the workstation away.
-  (it "names the Apple-silicon builder in the native release only"
-      (doseq [workflow (->> (file-seq (io/file ".github/workflows"))
-                            (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
-                            (remove #(= "native-release.yml" (.getName ^java.io.File %))))]
-        (let [directives (->> (str/split-lines (slurp workflow))
-                              (remove #(str/starts-with? (str/triml %) "#"))
-                              (str/join "\n")
-                              str/lower-case)]
-          (expect (not (str/includes? directives "self-hosted")) (.getPath ^java.io.File workflow))
-          (expect (not (str/includes? directives "vis-macos-arm64"))
-                  (.getPath ^java.io.File workflow)))))
+  ;; Scope guard: no test, iOS or Linux job should move when the native macOS
+  ;; image moves. Exactly one runs-on directive names a Blacksmith macOS runner.
+  (it
+    "targets Blacksmith macOS only for the native release image"
+    (let [directives (->> (file-seq (io/file ".github/workflows"))
+                          (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
+                          (mapcat (fn [workflow]
+                                    (for [line (str/split-lines (slurp workflow))
+                                          :let [directive (str/trim line)]
+                                          :when (and (str/starts-with? directive "runs-on:")
+                                                     (str/includes? directive "blacksmith-")
+                                                     (str/includes? directive "-macos-"))]
+
+                                      [(.getName ^java.io.File workflow) directive])))
+                          set)]
+      (expect
+        (=
+          #{["native-release.yml"
+             "runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26' }}"]}
+          directives)
+        (pr-str directives))))
   ;; The tuning history in native-release.yml records runs labelled "no extra
   ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
   ;; native-image's OWN sizing has never actually been measured for this image.
