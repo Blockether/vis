@@ -1000,6 +1000,15 @@ class __VisShell__(__VisResult__):
     }
     __vis_log_page_cap__ = 10
 
+    def __getitem__(self, __vis_key__):
+        # A LOG PAGE is the map that carries status and cursors, but its payload is
+        # text. Tail-clipping that text is common at the print boundary, so a slice
+        # addresses `out` directly while every string key and ordinary dict operation
+        # keeps mapping semantics. Other shell stages stay nonsliceable result maps.
+        if isinstance(__vis_key__, slice) and dict.get(self, "op") == "_shell_logs":
+            return dict.__getitem__(self, "out")[__vis_key__]
+        return super().__getitem__(__vis_key__)
+
     def __vis_log_page__(self, __vis_args__):
         __vis_page__ = self.__vis_op__("_shell_logs", __vis_args__)
         __vis_page__.__vis_logs_spec__ = dict(__vis_args__)
