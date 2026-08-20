@@ -510,6 +510,33 @@ def _tick(since):
     return FAST_TICK_S if since < BACKOFF_AFTER_S else SLOW_TICK_S
 
 
+def superseded_shape(shape):
+    """Settle unfinished snapshot rows when this watch yields to a newer run."""
+    settled = dict(shape)
+    settled["rows"] = [
+        {
+            **row,
+            "cells": [row["cells"][0], "superseded", row["cells"][2]],
+            "tone": "idle",
+        }
+        if row.get("tone") == "running"
+        else row
+        for row in shape.get("rows") or []
+    ]
+    settled["steps"] = [
+        {**step, "tone": "idle"} if step.get("tone") == "running" else step
+        for step in shape.get("steps") or []
+    ]
+    settled["active_step_ids"] = []
+    settled["score"] = [
+        {**stat, "value_text": "0", "tone": "idle"}
+        if stat.get("id") == "queued"
+        else stat
+        for stat in shape.get("score") or []
+    ]
+    return settled
+
+
 def _summary(shape, superseded=None, failure=None):
     if superseded:
         return "Superseded by run {} — {} · {}".format(
@@ -761,6 +788,9 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                     superseded = superseded_by()
                     if superseded:
                         run_id = str(superseded.get("databaseId") or "?")
+                        settled = superseded_shape(shape)
+                        push_changes(view, shape, settled)
+                        shape = settled
                         view["run"].set(
                             f"Superseded by newer run {run_id}",
                             tone="idle",
@@ -772,6 +802,9 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                                 f"– Stopped: newer run {run_id} started for this workflow"
                             ],
                             activity_history,
+                        )
+                        _show_focus_logs(
+                            view, shape, log_of, log_cache, FAILED_TAIL_LINES
                         )
                         target = str(superseded.get("url") or "")
                         if target:
@@ -860,7 +893,9 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 summary=_summary(shape, superseded, terminal_failure),
                 error=terminal_failure,
             )
-        return view.close(summary=_summary(shape, superseded))
+        if superseded:
+            return view.close(reason="superseded", summary=_summary(shape, superseded))
+        return view.close(summary=_summary(shape))
 
 
 def gh_watch_run(run=None, repo=None):

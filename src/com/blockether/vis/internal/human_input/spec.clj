@@ -191,7 +191,8 @@
    "interrupted" :interrupted
    "timeout" :timeout
    "undeliverable" :undeliverable
-   "failed" :failed})
+   "failed" :failed
+   "superseded" :superseded})
 
 (def note-chars
   "The most characters a human's stop note carries. Stopping a view is ALWAYS

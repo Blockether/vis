@@ -17,13 +17,7 @@
  * file server-side, one window at a time.
  */
 
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { memo, useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { attachmentBytes } from "../lib/artifacts";
 import type { GatewayClient } from "../lib/gateway";
@@ -51,6 +45,7 @@ const REASON_WORDS: Record<string, string> = {
   timeout: "timed out",
   undeliverable: "lost its surface",
   failed: "failed",
+  superseded: "superseded",
 };
 
 /** How the run ended, and the comment whoever stopped it left. */
@@ -158,7 +153,9 @@ export function LiveArtifact({
     </p>
   );
 
-  return <>{chrome({ subtitle: record ? liveVerdictLine(record) : "", body })}</>;
+  return (
+    <>{chrome({ subtitle: record ? liveVerdictLine(record) : "", body })}</>
+  );
 }
 
 /**
@@ -264,11 +261,7 @@ export const LiveRunRow = memo(function LiveRunRow({
               sid={sid}
               url={url}
               chrome={({ subtitle, body }) => (
-                <OverlayScreen
-                  title={name}
-                  subtitle={subtitle}
-                  onClose={close}
-                >
+                <OverlayScreen title={name} subtitle={subtitle} onClose={close}>
                   {body}
                 </OverlayScreen>
               )}

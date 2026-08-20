@@ -712,14 +712,31 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
         return fixture("run-mid.json")
 
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: when a later push
-    # overtook a running CI run, the live view kept polling obsolete work indefinitely.
+    # overtook a running CI run, the settled record said "finished" while its rows
+    # remained queued/in progress forever. Close it as superseded and make every
+    # unfinished row explicitly superseded instead of preserving a stale action state.
     verdict = gh.watch(TITLE, DESCRIPTION, poll, superseded_by=lambda: newer)
 
     assert len(polls) == 1
-    assert verdict["is_completed"] is True
+    assert verdict["is_completed"] is False
+    assert verdict["reason"] == "superseded"
     assert verdict["summary"].startswith("Superseded by run 32146699999")
     assert node(verdict["view"], "run")["text"] == "Superseded by newer run 32146699999"
     assert node(verdict["view"], "run")["tone"] == "idle"
+    rows = node(verdict["view"], "jobs")["rows"]
+    assert [
+        row["cells"][1] for row in rows if row["id"] in {"95742028721", "95742028781"}
+    ] == [
+        "superseded",
+        "superseded",
+    ]
+    assert all(row["tone"] != "running" for row in rows)
+    assert node(verdict["view"], "score")["stats"][-1] == {
+        "id": "queued",
+        "value_text": "0",
+        "label": "queued",
+        "tone": "idle",
+    }
     assert node(verdict["view"], "activity")["lines"][0] == (
         "– Stopped: newer run 32146699999 started for this workflow"
     )
