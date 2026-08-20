@@ -3526,11 +3526,14 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment display-code display-language render-segments result-render result-summary
-           result-kind result-detail error success? silent?]}]
+           result-kind result-detail error success? silent? runs]}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
+   ;; A settled live view joins this exact form after it closes, and reopening
+   ;; changes its chevron. Both transitions must invalidate the iteration cache.
+   (mapv #(select-keys % [:view-id :title :reason :lines :elapsed-ms :is-reopened]) runs)
    ;; What a RUNNING block paints before its result lands: the formatted code band
    ;; (`:display-code`/`:display-language`). `:code` alone can't stand in for it —
    ;; the block renders differently once the formatted display lands, and without
@@ -4955,6 +4958,64 @@
                      body-rows
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
+(defn- run-row-entries
+  "Finished-run disclosures. Anchored rows sit directly after their executing
+   form; unplaced legacy rows receive one leading transcript margin."
+  ([runs max-w session-id] (run-row-entries runs max-w session-id true))
+  ([runs max-w session-id leading-margin?]
+   (if (empty? runs)
+     []
+     (into (if leading-margin? [{:line "" :meta nil}] [])
+           (map
+             (fn [{:keys [view-id title reason lines elapsed-ms is-reopened]}]
+               (let [verdict
+                     (some-> reason
+                             name)
+
+                     verdict
+                     (if (contains? #{:failed :interrupted} reason)
+                       (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
+                       verdict)
+
+                     parts
+                     (remove str/blank?
+                       [title verdict
+                        (when (pos? (long (or lines 0)))
+                          (str lines (if (= 1 (long lines)) " line" " lines")))
+                        (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])]
+
+                 {:line
+                  (ellipsize-cols
+                    (str (if is-reopened " ▾ " " ▸ ") (band-label "RUN") " " (str/join " · " parts))
+                    (max 1 (long max-w)))
+                  :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}))
+             runs)))))
+
+(defn- place-run-rows
+  "Attach run rows to their captured zero-based iteration/form positions.
+   Returns unplaced legacy rows separately so no record becomes unreachable."
+  [iterations runs]
+  (reduce (fn [{:keys [iterations] :as layout} run]
+            (let [{:keys [iteration-index form-index]}
+                  (:anchor run)
+
+                  forms
+                  (when (and (integer? iteration-index) (not (neg? (long iteration-index))))
+                    (get-in iterations [(long iteration-index) :forms]))]
+
+              (if (and (integer? form-index)
+                       (not (neg? (long form-index)))
+                       (< (long form-index) (count forms)))
+                (update layout
+                        :iterations
+                        update-in
+                        [(long iteration-index) :forms (long form-index) :runs]
+                        (fnil conj [])
+                        run)
+                (update layout :unplaced conj run))))
+          {:iterations (vec (or iterations [])) :unplaced []}
+          (or runs [])))
+
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?]
@@ -5183,7 +5244,7 @@
         form-lines
         (fn [form block-number]
           (let [{:keys [code display-code display-language comment error success? started-at-ms
-                        duration-ms]}
+                        duration-ms runs]}
                 form
 
                 is-error?
@@ -5570,9 +5631,10 @@
             ;; band while it ran and only grew its badge once it finished: the same
             ;; call reading as two different components. A COMPLETED call keeps code
             ;; above its result — the reading order of a program and its output.
-            (vec (if (and running? (seq result-block))
-                   (concat result-block code-block)
-                   (concat code-block result-block)))))
+            (vec (concat (if (and running? (seq result-block))
+                           (concat result-block code-block)
+                           (concat code-block result-block))
+                         (run-row-entries runs fill-w session-id false)))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result
@@ -6423,49 +6485,22 @@
                           (str/includes? answer explanation)))))
                trace))))
 
-(defn- run-row-entries
-  "The rail of FINISHED RUNS under a turn — one collapsed row per live view the
-   turn watched to its end.
-
-   A settled run is an ARTIFACT of the turn and reads like one: a row that says
-   how the run ended, how much record it left and how long it took, and opens
-   the record read-only in the band when pressed. It lives here, in the
-   transcript, because the band is for work that is still happening — a finished
-   run left on the band either lies about being live or is retired by the next
-   one, and then the log the human watched is gone."
-  [runs max-w session-id]
-  (if (empty? runs)
-    []
-    (into [{:line "" :meta nil}]
-          (map
-            (fn [{:keys [view-id title reason lines elapsed-ms]}]
-              (let [verdict
-                    (some-> reason
-                            name)
-
-                    verdict
-                    (if (contains? #{:failed :interrupted} reason)
-                      (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
-                      verdict)
-
-                    parts
-                    (remove str/blank?
-                      [title verdict
-                       (when (pos? (long (or lines 0)))
-                         (str lines (if (= 1 (long lines)) " line" " lines")))
-                       (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])]
-
-                {:line (ellipsize-cols (str " ▸ " (band-label "RUN") " " (str/join " · " parts))
-                                       (max 1 (long max-w)))
-                 :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}})))
-          runs)))
 
 (defn format-answer-with-thinking-data*
   "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with the
    already-wrapped lines."
   [answer trace bubble-w settings _confidence cancelled? opts]
-  (let [content-w
+  (let [run-layout
+        (place-run-rows trace (:runs opts))
+
+        trace
+        (:iterations run-layout)
+
+        unplaced-runs
+        (:unplaced run-layout)
+
+        content-w
         (max 10 (- (long bubble-w) 4))
 
         fill-w
@@ -6489,6 +6524,9 @@
                                :session-turn-id (:session-turn-id opts)
                                :detail-expansions (:detail-expansions opts)
                                :suppress-trace? suppress-trace?})
+
+        trace-entries
+        (into (vec trace-entries) (run-row-entries unplaced-runs content-w (:session-id opts)))
 
         ans-entries
         (if (markdown-non-empty? answer)
@@ -6593,11 +6631,6 @@
 
         entries
         (if has-trace? (vec (concat trace-entries trailer)) (vec trailer))
-
-        ;; The runs the turn watched, LAST: an artifact of a turn is read after
-        ;; what the turn said, and a finished run is exactly that.
-        entries
-        (into entries (run-row-entries (:runs opts) content-w (:session-id opts)))
 
         ;; One more coalesce pass across the WHOLE bubble (trace +
         ;; trailer). The trace half is already collapsed by

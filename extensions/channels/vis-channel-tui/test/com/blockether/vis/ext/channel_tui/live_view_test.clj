@@ -1045,25 +1045,35 @@
                  (is (not (lv/dormant? (first (:live-views @state/app-db)))))
                  (state/dispatch [:live-view-reopen "view-1"])
                  (is (lv/dormant? (first (:live-views @state/app-db))))))))
-  (testing "a second finished run does not erase the first: each one is a row of the turn"
+  ;; Regression, Vis session a64d44c2-8228-455f-926e-b3381f19a93b: run rows
+  ;; were filed without their executing-form position and their disclosure stayed
+  ;; visually collapsed after a click reopened the record.
+  (testing "finished runs retain their execution anchors and disclosure state"
     (with-db
       (fn []
         (swap! state/app-db assoc
-          :messages
-          [{:role :user :text "watch it"} {:role :assistant :text "watching"}])
+          :messages [{:role :user :text "watch it"} {:role :assistant :text "watching"}]
+          :progress {:iterations [{:forms [{:code "first_watch()"}]}]})
         (state/dispatch [:live-view-open (assoc (ci-view :id "a") :session-id "s1")])
+        (swap! state/app-db assoc-in
+          [:progress :iterations]
+          [{:forms [{:code "first_watch()"}]} {:forms [{:code "second_watch()"}]}])
         (state/dispatch [:live-view-open (assoc (ci-view :id "b") :session-id "s1")])
         (state/dispatch [:live-view-close "a" {:reason :completed}])
         (state/dispatch [:live-view-close "b" {:reason :failed}])
         (is (= ["a" "b"] (mapv lv/view-id (:live-views @state/app-db)))
-            "nothing is retired: the run watched an hour ago still reads back")
-        (is (every? lv/dormant? (:live-views @state/app-db))
-            "and neither of them is costing the band a single row")
+            "nothing is retired: every record remains reachable")
         (let [runs (:runs (second (:messages @state/app-db)))]
-          (is (= ["a" "b"] (mapv :view-id runs))
-              "each filed its own row on the assistant turn that watched it")
-          (is (= [:completed :failed] (mapv :reason runs))
-              "carrying the verdict the row has to say")))))
+          (is (= [{:iteration-index 0 :form-index 0} {:iteration-index 1 :form-index 0}]
+                 (mapv :anchor runs))
+              "each row returns to the form active when its view opened")
+          (is (= [:completed :failed] (mapv :reason runs))))
+        (state/dispatch [:live-view-reopen "a"])
+        (is (true? (get-in @state/app-db [:messages 1 :runs 0 :is-reopened]))
+            "opening the record flips the transcript disclosure open")
+        (state/dispatch [:live-view-reopen "a"])
+        (is (false? (get-in @state/app-db [:messages 1 :runs 0 :is-reopened]))
+            "pressing it again collapses both record and disclosure"))))
   ;; The proof a person can LOOK at: one run finished and gone from the band, the
   ;; one still going painting in full.
   (testing "a real PNG of the band a finished run has already left"

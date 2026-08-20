@@ -4642,47 +4642,86 @@
                         first)]
           (expect (str/includes? (str line) (str p/INLINE_BOLD_ON "RESULT" p/INLINE_BOLD_OFF)))))))
 
-;; A run the turn watched to its END is an ARTIFACT of that turn: it leaves the
-;; band and reads back from the transcript, where the human is already looking
-;; and where a run watched an hour ago is still reachable. It used to live on
-;; the band alone, so the next finished run retired it.
+;; Regression, Vis session a64d44c2-8228-455f-926e-b3381f19a93b: finished
+;; live views moved below the final answer instead of settling beside the Python
+;; forms that ran them, and their chevrons never reflected reopening.
 (defdescribe
   answer-run-rows-test
-  (it
-    "gives every finished run a row under the answer, pressable where it is read"
-    (render/invalidate-cache!)
-    (let [payload
-          (render/format-answer-with-thinking-data
-            "Watched it."
-            []
-            80
-            nil
-            nil
-            false
-            {:session-id "s1"
-             :runs
-             [{:view-id "view-1"
-               :title "Release · gh"
-               :reason :completed
-               :lines 314
-               :elapsed-ms 461000}
-              {:view-id "view-2" :title "Nightly" :reason :interrupted :lines 1 :elapsed-ms 1000}]})
+  (it "settles each finished run at its originating form with a truthful disclosure"
+      (render/invalidate-cache!)
+      (let [payload
+            (render/format-answer-with-thinking-data
+              "Watched it."
+              [{:forms [{:code "first_watch()" :success? true :duration-ms 1000}]}
+               {:forms [{:code "second_watch()" :success? true :duration-ms 1000}]}]
+              80
+              nil
+              nil
+              false
+              {:session-id "s1"
+               :runs [{:view-id "view-1"
+                       :title "Release · gh"
+                       :reason :completed
+                       :lines 314
+                       :elapsed-ms 461000
+                       :anchor {:iteration-index 0 :form-index 0}}
+                      {:view-id "view-2"
+                       :title "Nightly"
+                       :reason :interrupted
+                       :lines 1
+                       :elapsed-ms 1000
+                       :is-reopened true
+                       :anchor {:iteration-index 1 :form-index 0}}]})
 
-          body
-          (strip-ansi (:text payload))
+            body
+            (-> (:text payload)
+                strip-ansi
+                strip-sentinels)
 
-          rows
-          (filterv #(= :live-reopen (:kind %)) (:line-meta payload))]
+            rows
+            (filterv #(= :live-reopen (:kind %)) (:line-meta payload))]
 
-      (expect (str/includes? body "RUN"))
-      (expect (str/includes? body "Release · gh · completed · 314 lines"))
-      (expect (str/includes? body "Nightly · interrupted · 1 line"))
-      (expect (= ["view-1" "view-2"] (mapv :view-id rows))
-              "one row per run, in the order they finished")
-      (expect (= ["s1" "s1"] (mapv :session-id rows))
-              "each row names the session whose band reopens the record")
-      (expect (< (.indexOf ^String body "Watched it.") (.indexOf ^String body "RUN"))
-              "what the turn SAID comes first; its runs read after it")))
+        (expect (str/includes? body "Release · gh · completed · 314 lines"))
+        (expect (str/includes? body "Nightly · interrupted · 1 line"))
+        (expect (= ["view-1" "view-2"] (mapv :view-id rows)) "one row per run, in execution order")
+        (expect (= ["s1" "s1"] (mapv :session-id rows))
+                "each row names the session whose band reopens the record")
+        (expect (< (.indexOf ^String body "first_watch()")
+                   (.indexOf ^String body "Release · gh")
+                   (.indexOf ^String body "second_watch()")
+                   (.indexOf ^String body "Nightly")
+                   (.indexOf ^String body "Watched it."))
+                "each run remains where it executed instead of collecting below the answer")
+        (expect (str/includes? body "▸ RUN Release · gh") "a dormant record offers open")
+        (expect (str/includes? body "▾ RUN Nightly") "a reopened record offers collapse")))
+  (it "invalidates the hot iteration cache when the record opens and closes"
+      (render/invalidate-cache!)
+      (let [trace
+            [{:forms [{:code "watch()" :success? true}]}]
+
+            run
+            {:view-id "view-1"
+             :title "CI"
+             :reason :completed
+             :anchor {:iteration-index 0 :form-index 0}}
+
+            render-row
+            (fn [is-reopened]
+              (-> (render/format-answer-with-thinking-data
+                    "Done."
+                    trace
+                    80
+                    nil
+                    nil
+                    false
+                    {:session-id "s1" :runs [(assoc run :is-reopened is-reopened)]})
+                  :text
+                  strip-ansi
+                  strip-sentinels))]
+
+        (expect (str/includes? (render-row false) "▸ RUN CI"))
+        (expect (str/includes? (render-row true) "▾ RUN CI"))
+        (expect (str/includes? (render-row false) "▸ RUN CI"))))
   (it "a turn that watched nothing carries no rail at all"
       (render/invalidate-cache!)
       (let [payload (render/format-answer-with-thinking-data "Nothing here."

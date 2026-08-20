@@ -500,13 +500,10 @@
          img-rows
          (image-rows-est message content-w)
 
-         ;; One row per FINISHED RUN the turn watched, plus the blank margin the
-         ;; rail opens with. The painter hangs that rail under the answer, so a
-         ;; height that ignored it under-measured every bubble that watched one.
+         ;; One row per finished run. Only a legacy row without an executing-form
+         ;; anchor opens a separate rail and therefore needs one additional margin.
          run-rows
-         (long (cond-> (count (:runs message))
-                 (seq (:runs message))
-                 inc))]
+         (long (+ (count (:runs message)) (if (some #(nil? (:anchor %)) (:runs message)) 1 0)))]
 
      (cond
        (= role :user)

@@ -2900,22 +2900,58 @@
                            (fn [panes]
                              (mapv #(if (= view-id (lv/view-id %)) (f %) %) panes)))))))
 
+(defn- current-live-trace-anchor
+  "The zero-based iteration/form position currently executing in `workspace`."
+  [workspace]
+  (let [iterations
+        (vec (get-in workspace [:progress :iterations]))
+
+        iteration-index
+        (dec (count iterations))
+
+        forms
+        (when-not (neg? iteration-index) (vec (:forms (get iterations iteration-index))))
+
+        form-index
+        (dec (count forms))]
+
+    (when (and (not (neg? iteration-index)) (not (neg? form-index)))
+      {:iteration-index iteration-index :form-index form-index})))
+
+(defn- set-run-reopened
+  [workspace view-id reopened?]
+  (update workspace
+          :messages
+          (fn [messages]
+            (mapv (fn [message]
+                    (if (some #(= view-id (:view-id %)) (:runs message))
+                      (update message
+                              :runs
+                              (fn [runs]
+                                (mapv
+                                  #(if (= view-id (:view-id %)) (assoc % :is-reopened reopened?) %)
+                                  runs)))
+                      message))
+                  (or messages [])))))
+
 (reg-event-db :live-view-open
-              ;; Mounted on the session's OWN tab, by the same rule a form obeys, and
-              ;; IDEMPOTENT BY VIEW ID: one open reaches a tab twice whenever the run
-              ;; is in this process (in-process channel bus + gateway session event),
-              ;; and re-mounting would throw away the scroll position the human is
-              ;; reading at.
+              ;; Mounted on the session's own tab and idempotent by view id. Capture the
+              ;; executing form now; by close time a later form may already be active.
               (fn [db [_ view]]
                 (let [target (session-target-tab db (:session-id view))]
                   (if (= :not-here target)
                     db
                     (update-tab db
                                 target
-                                (fn [w]
-                                  (if (some #(= (:id view) (lv/view-id %)) (:live-views w))
-                                    w
-                                    (update w :live-views (fnil conj []) (lv/opened view)))))))))
+                                (fn [workspace]
+                                  (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
+                                    workspace
+                                    (update workspace
+                                            :live-views
+                                            (fnil conj [])
+                                            (assoc (lv/opened view)
+                                              :trace-anchor (current-live-trace-anchor
+                                                              workspace))))))))))
 
 (reg-event-db :live-view-patch
               (fn [db [_ patch]]
@@ -2971,11 +3007,21 @@
                                  w)))))
 
 (reg-event-db :live-view-reopen
-              ;; The collapsed line of a settled view is a CONTROL: pressing it reads
-              ;; the record back into the band read-only, pressing it again puts it
-              ;; away. Nothing is re-run and nothing is answered — the view is over.
+              ;; The transcript disclosure and the read-only band are one control: both
+              ;; flip together so the row never claims to be collapsed while it is open.
               (fn [db [_ view-id]]
-                (update-live-pane db view-id lv/reopened)))
+                (across-tabs db
+                             (fn [workspace]
+                               (if-let [pane (first (filter #(= view-id (lv/view-id %))
+                                                            (:live-views workspace)))]
+                                 (let [next-pane (lv/reopened pane)]
+                                   (-> workspace
+                                       (update :live-views
+                                               (fn [panes]
+                                                 (mapv #(if (= view-id (lv/view-id %)) next-pane %)
+                                                       panes)))
+                                       (set-run-reopened view-id (:is-reopened next-pane))))
+                                 workspace)))))
 
 (reg-event-db :live-view-minimize
               ;; Presentation only: fold one running view to a compact status row. Its

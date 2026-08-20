@@ -337,14 +337,8 @@
                :offset 0))))
 
 (defn run-row
-  "The TRANSCRIPT's row for a FINISHED run: which view it reads back, how it
-   ended, how much record it left and how long it ran — the three things asked of
-   a finished run.
-
-   A settled view is a photograph, not a pilot, so it stops being band furniture
-   the moment it ends and becomes a row of the turn that watched it — where the
-   human is already reading, and where a run watched an hour ago is still there.
-   The row carries the view id, because pressing it is what reads the record back."
+  "The transcript row for a finished run, including the form position captured
+   when the view opened. Pressing the row reads the settled record back."
   [pane]
   (let [{:keys [reason ended-at]}
         (:settled pane)
@@ -355,11 +349,15 @@
         lines
         (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))]
 
-    {:view-id (:id view)
-     :title (flat-text (:title view))
-     :reason reason
-     :lines (long lines)
-     :elapsed-ms (max 0 (- (long (or ended-at 0)) (long (or (:created-at view) ended-at 0))))}))
+    (cond-> {:view-id (:id view)
+             :title (flat-text (:title view))
+             :reason reason
+             :lines (long lines)
+             :elapsed-ms (max 0
+                              (- (long (or ended-at 0)) (long (or (:created-at view) ended-at 0))))
+             :is-reopened false}
+      (:trace-anchor pane)
+      (assoc :anchor (:trace-anchor pane)))))
 
 (defn watching-title
   "The title of the view the band is PAINTING right now, or nil when the band is
