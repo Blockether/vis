@@ -32,8 +32,9 @@
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
    `sh.logs(-50)` reads the last 50 LINES (or a byte OFFSET, or `lines=10` for a
-   ten-line window) and returns a page NOW; `next(page)` continues that read and
-   `page.pages()` walks its ready pages lazily, bounded to ten by default, while
+   ten-line window) and returns a page NOW; `page[-4000:]` slices that page's `out`
+   text directly, `next(page)` continues the read and `page.pages()` walks its ready
+   pages lazily, bounded to ten by default, while
    `lines=-10` walks back up. `sh.wait(30)` is the bounded poll loop written once
    in the engine, `sh.type(\"y\")` types into the pty and `sh.stop()` kills the tree.
    There are no id-taking verbs to re-type an id into; re-issuing a LIVE id gives
@@ -2696,9 +2697,9 @@
 (defn shell
   "`sh = await shell(\"npm test\")` — spawn ONE bash line under a pty and return
    the HANDLE now. Every run is a background run; waiting is `sh.wait(secs)`, the
-   only wait there is. The handle reads (`page = sh.logs(0, lines=100)`), and a
-   returned page continues with `next(page)` or lazily with `page.pages()`; it
-   types (`sh.type(text)`) and kills (`sh.stop()`). Its log file outlives the call,
+   only wait there is. The handle reads (`page = sh.logs(0, lines=100)`); the page
+   slices directly as its `out` text (`page[-4000:]`), continues with `next(page)` or
+   lazily with `page.pages()`, types (`sh.type(text)`) and kills (`sh.stop()`). Its log
    so nothing is ever lost to a deadline or to a call that already returned."
   {:arglists '([command] [command opts])}
   [env & args]
@@ -2710,9 +2711,10 @@
    last n LINES with a negative one (`sh.logs(-50)`), and return NOW. `lines=10`
    is the LINE window — the last ten, or the NEXT ten from an offset, and `-10`
    the ten ABOVE it — so a long log is walked a screenful at a time, both ways.
-   Each page remembers the whole read: `next(page)` gets the next ready page and
-   `page.pages(max_pages=…)` lazily includes this page plus those after it, bounded
-   to ten pages by default. Paging stops at the current snapshot's EOF even while
+   Each page is still the shell result map, while a slice addresses its `out` text
+   directly (`page[-4000:]`). It remembers the whole read: `next(page)` gets the next
+   ready page and `page.pages(max_pages=…)` lazily includes this page plus those after
+   it, bounded to ten pages by default. Paging stops at the current snapshot's EOF
    the process is live; call `sh.logs()` later to read output written later."
   {:arglists '([id] [id opts])}
   [env & args]
@@ -3103,8 +3105,9 @@
        "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
        "status, exit, out, duration_ms, timed_out, offset, next_offset, is_eof, "
        "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
-       "methods below. A log page continues with `next(page)` or `page.pages()` while ordinary "
-       "dict iteration stays key iteration. A fresh run has no `exit`; nonzero exit is data. "
+       "methods below. A log page slices directly as its `out` text (`page[-4000:]`), continues "
+       "with `next(page)` or `page.pages()`, and keeps ordinary dict iteration as key iteration. "
+       "A fresh run has no `exit`; nonzero exit is data. "
        "`out` is the pty's ONE stream: stdout and stderr are the same channel there, so whatever "
        "the command wrote to either is IN it, in order — one name, and no `stderr` key.")
      :description
@@ -3122,7 +3125,7 @@
        "twice. NEVER trim inside the command: `| head`, "
        "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
        "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
-       "then slice on the handle or filter `log_path` in Python. "
+       "then tail-clip a log page directly (`sh.logs()[-4000:]`) or filter `log_path` in Python. "
        "`env` carries THIS run's variables over the project's — a literal for a switch, a "
        "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}, since a "
        "literal stays in the transcript for good), null to unset. "
@@ -3142,9 +3145,10 @@
      :name "_shell_logs"
      :result
      (str "The same shell result shape as every other stage (`stage` is \"logs\"): `out` is the "
-          "window this read returned. The sandbox result remembers the whole request, so "
-          "`next(page)` follows its cursor and `page.pages()` walks ready pages lazily; ordinary "
-          "dict iteration still yields keys. `is_eof` marks the end of this current snapshot.")
+          "window this read returned, and a slice addresses that text directly (`page[-4000:]`). "
+          "The sandbox result remembers the whole request, so `next(page)` follows its cursor and "
+          "`page.pages()` walks ready pages lazily; ordinary dict iteration still yields keys. "
+          "`is_eof` marks the end of this current snapshot.")
      :description
      (str "TRANSPORT for `sh.logs(offset=…, lines=…)` — call the HANDLE the shell result already "
           "is, not this. Reads a background shell's log and returns NOW. No offset reads the TAIL; "

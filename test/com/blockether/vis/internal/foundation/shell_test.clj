@@ -1764,6 +1764,24 @@
                                  " ['line-%d' % i for i in range(1, 11)],"
                                  " refusal.startswith(\"logs: no keyword 'nlines'\")]"))))
              (finally (resources/stop-all! sid)))))
+  ;; Session report 6e345db0-5e32-49f2-a63e-d871cd5227b6: tail-clipping the log page
+  ;; itself raised a map-indexing KeyError instead of clipping its `out` text.
+  (it "slices a log page directly as its `out` text"
+      (let [sid
+            (str "py-logs-slice-" (System/nanoTime))
+
+            c
+            (py-ctx {:session-id sid})]
+
+        (try (expect (= [true true]
+                        (py c
+                            (str
+                              "status_res = __vis_settle__(shell('printf abcdefghij',"
+                              " {'id':'slice'}))\n"
+                              "status_res.wait(30)\n" "page = status_res.logs()\n"
+                              "tail = page[-4000:]\n"
+                              "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij']"))))
+             (finally (resources/stop-all! sid)))))
   (it
     "walks ready log windows with `next(page)` and a bounded `page.pages()` iterator"
     (let [sid
