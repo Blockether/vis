@@ -203,3 +203,113 @@
                        output))
              (finally (doseq [file (reverse (file-seq tmp))]
                         (io/delete-file file true)))))))
+
+(defdescribe
+  wrapper-system-trust-test
+  (it
+    "passes a discovered system trust store and CA bundle to the native runtime"
+    (let [tmp
+          (.toFile (Files/createTempDirectory "vis-native-system-trust"
+                                              (make-array FileAttribute 0)))
+
+          bundle
+          (doto (io/file tmp "agent") .mkdirs)
+
+          wrapper
+          (io/file bundle "vis-agent")
+
+          native
+          (io/file bundle "vis-agent-native")
+
+          trust-store
+          (doto (io/file tmp "system-cacerts") (spit "store"))
+
+          ca-bundle
+          (doto (io/file tmp "system-ca.pem") (spit "certificate"))]
+
+      (try
+        (io/copy (io/file "bin" "vis-agent") wrapper)
+        (.setExecutable wrapper true false)
+        (spit native
+              (str "#!/bin/sh\n" "printf 'ARGS=%s\n' \"$*\"\n"
+                   "printf 'JAVA_TOOL_OPTIONS=%s\n' \"${JAVA_TOOL_OPTIONS:-}\"\n"
+                   "printf 'SSL_CERT_FILE=%s\n' \"${SSL_CERT_FILE:-}\"\n"
+                   "printf 'REQUESTS_CA_BUNDLE=%s\n' \"${REQUESTS_CA_BUNDLE:-}\"\n"
+                   "printf 'NODE_EXTRA_CA_CERTS=%s\n' \"${NODE_EXTRA_CA_CERTS:-}\"\n"))
+        (.setExecutable native true false)
+        (let [{:keys [exit output]} (run-wrapper wrapper
+                                                 {"HOME" (.getAbsolutePath tmp)
+                                                  "JAVA_TOOL_OPTIONS" ""
+                                                  "VIS_SYSTEM_TRUSTSTORE" (.getAbsolutePath
+                                                                            trust-store)
+                                                  "VIS_SYSTEM_TRUSTSTORE_TYPE" "JKS"
+                                                  "VIS_SYSTEM_CA_CERT" (.getAbsolutePath ca-bundle)}
+                                                 ["help"])]
+          (expect (zero? exit) output)
+          (expect (str/includes? output
+                                 (str "-Djavax.net.ssl.trustStore=" (.getAbsolutePath trust-store)))
+                  output)
+          (expect (str/includes? output "-Djavax.net.ssl.trustStoreType=JKS") output)
+          (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath ca-bundle))) output)
+          (expect (str/includes? output (str "REQUESTS_CA_BUNDLE=" (.getAbsolutePath ca-bundle)))
+                  output)
+          (expect (str/includes? output (str "NODE_EXTRA_CA_CERTS=" (.getAbsolutePath ca-bundle)))
+                  output))
+        (finally (doseq [file (reverse (file-seq tmp))]
+                   (io/delete-file file true))))))
+  (it
+    "exports the same trust to the JVM source runtime"
+    (let [tmp
+          (.toFile (Files/createTempDirectory "vis-jvm-system-trust" (make-array FileAttribute 0)))
+
+          checkout
+          (doto (io/file tmp "checkout") .mkdirs)
+
+          bin-dir
+          (doto (io/file checkout "bin") .mkdirs)
+
+          fake-path
+          (doto (io/file tmp "path") .mkdirs)
+
+          wrapper
+          (io/file bin-dir "vis-agent")
+
+          trust-store
+          (doto (io/file tmp "system-cacerts") (spit "store"))
+
+          ca-bundle
+          (doto (io/file tmp "system-ca.pem") (spit "certificate"))]
+
+      (try (spit (io/file checkout "deps.edn") "{}\n")
+           (io/copy (io/file "bin" "vis-agent") wrapper)
+           (.setExecutable wrapper true false)
+           (doseq [[name body] [["java" "#!/bin/sh\necho '    java.vendor.version = OpenJDK' >&2\n"]
+                                ["clojure"
+                                 (str "#!/bin/sh\n"
+                                      "printf 'JAVA_TOOL_OPTIONS=%s\n' \"${JAVA_TOOL_OPTIONS:-}\"\n"
+                                      "printf 'SSL_CERT_FILE=%s\n' \"${SSL_CERT_FILE:-}\"\n")]]]
+             (let [file (io/file fake-path name)]
+               (spit file body)
+               (.setExecutable file true false)))
+           (let [{:keys [exit output]}
+                 (run-wrapper wrapper
+                              {"HOME" (.getAbsolutePath tmp)
+                               "VIS_HOME" (.getAbsolutePath (io/file tmp "state"))
+                               "VIS_JVM" "1"
+                               "VIS_NO_AUTO_INSTALL" "1"
+                               "PATH" (str (.getAbsolutePath fake-path) ":" (System/getenv "PATH"))
+                               "JAVA_TOOL_OPTIONS" ""
+                               "VIS_SYSTEM_TRUSTSTORE" (.getAbsolutePath trust-store)
+                               "VIS_SYSTEM_TRUSTSTORE_TYPE" "JKS"
+                               "VIS_SYSTEM_CA_CERT" (.getAbsolutePath ca-bundle)}
+                              ["help"])]
+             (expect (zero? exit) output)
+             (expect (str/includes? output
+                                    (str "-Djavax.net.ssl.trustStore="
+                                         (.getAbsolutePath trust-store)))
+                     output)
+             (expect (str/includes? output "-Djavax.net.ssl.trustStoreType=JKS") output)
+             (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath ca-bundle)))
+                     output))
+           (finally (doseq [file (reverse (file-seq tmp))]
+                      (io/delete-file file true)))))))

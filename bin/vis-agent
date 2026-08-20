@@ -295,6 +295,100 @@ find_native() {
   return 1
 }
 
+# Resolve the host's maintained trust stores without modifying any JDK. Linux CA
+# packages keep a complete Java store (public roots plus administrator-installed
+# roots such as a TLS inspection CA) at one of these conventional paths. The PEM
+# bundle beside it serves curl, Git, Python, Node and other child toolchains.
+# VIS_TRUSTSTORE remains the explicit application override; VIS_SYSTEM_TRUSTSTORE
+# and VIS_SYSTEM_CA_CERT cover distributions with non-standard paths.
+find_system_java_truststore() {
+  local candidate
+  if [[ -n "${VIS_SYSTEM_TRUSTSTORE:-}" ]]; then
+    printf '%s\n' "$VIS_SYSTEM_TRUSTSTORE"
+    return 0
+  fi
+  for candidate in /etc/ssl/certs/java/cacerts \
+                   /etc/pki/java/cacerts \
+                   /etc/pki/ca-trust/extracted/java/cacerts; do
+    [[ -r "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+find_system_ca_bundle() {
+  local candidate
+  if [[ -n "${VIS_SYSTEM_CA_CERT:-}" ]]; then
+    printf '%s\n' "$VIS_SYSTEM_CA_CERT"
+    return 0
+  fi
+  for candidate in "${SSL_CERT_FILE:-}" "${CURL_CA_BUNDLE:-}" \
+                   /etc/ssl/certs/ca-certificates.crt \
+                   /etc/pki/tls/certs/ca-bundle.crt \
+                   /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+                   /etc/ssl/cert.pem; do
+    [[ -n "$candidate" && -r "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+trust_property_is_configured() {
+  [[ " ${JAVA_TOOL_OPTIONS:-} ${JDK_JAVA_OPTIONS:-} ${_JAVA_OPTIONS:-} " == *" -Djavax.net.ssl.trustStore="* ]]
+}
+
+configure_system_trust() {
+  local runtime="$1" store="" store_type="" store_password="changeit" ca_bundle="" java_opts=""
+  trust_native_args=()
+
+  if [[ -n "${VIS_SYSTEM_TRUSTSTORE:-}" && ! -r "$VIS_SYSTEM_TRUSTSTORE" ]]; then
+    die "VIS_SYSTEM_TRUSTSTORE is not readable: $VIS_SYSTEM_TRUSTSTORE"
+  fi
+  if [[ -n "${VIS_SYSTEM_CA_CERT:-}" && ! -r "$VIS_SYSTEM_CA_CERT" ]]; then
+    die "VIS_SYSTEM_CA_CERT is not readable: $VIS_SYSTEM_CA_CERT"
+  fi
+
+  if [[ -n "${VIS_TRUSTSTORE:-}" ]]; then
+    [[ -r "$VIS_TRUSTSTORE" ]] || die "VIS_TRUSTSTORE is not readable: $VIS_TRUSTSTORE"
+    store="$VIS_TRUSTSTORE"
+    store_type="${VIS_TRUSTSTORE_TYPE:-PKCS12}"
+    store_password="${VIS_TRUSTSTORE_PASSWORD:-changeit}"
+  elif [[ -n "${VIS_SYSTEM_TRUSTSTORE:-}" ]] || ! trust_property_is_configured; then
+    store="$(find_system_java_truststore 2>/dev/null || true)"
+    if [[ -n "$store" ]]; then
+      store_type="${VIS_SYSTEM_TRUSTSTORE_TYPE:-JKS}"
+      store_password="${VIS_SYSTEM_TRUSTSTORE_PASSWORD:-changeit}"
+    fi
+  fi
+
+  if [[ -n "$store" ]]; then
+    java_opts="-Djavax.net.ssl.trustStore=$store -Djavax.net.ssl.trustStoreType=$store_type -Djavax.net.ssl.trustStorePassword=$store_password"
+    export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }$java_opts"
+    if [[ "$runtime" = native ]]; then
+      trust_native_args=("-Djavax.net.ssl.trustStore=$store"
+                         "-Djavax.net.ssl.trustStoreType=$store_type"
+                         "-Djavax.net.ssl.trustStorePassword=$store_password")
+    fi
+    measure_log "system Java trust enabled from $store"
+  fi
+
+  ca_bundle="$(find_system_ca_bundle 2>/dev/null || true)"
+  if [[ -n "$ca_bundle" ]]; then
+    [[ -n "${CURL_CA_BUNDLE:-}" ]] || export CURL_CA_BUNDLE="$ca_bundle"
+    [[ -n "${SSL_CERT_FILE:-}" ]] || export SSL_CERT_FILE="$ca_bundle"
+    [[ -n "${REQUESTS_CA_BUNDLE:-}" ]] || export REQUESTS_CA_BUNDLE="$ca_bundle"
+    [[ -n "${NODE_EXTRA_CA_CERTS:-}" ]] || export NODE_EXTRA_CA_CERTS="$ca_bundle"
+    [[ -n "${GIT_SSL_CAINFO:-}" ]] || export GIT_SSL_CAINFO="$ca_bundle"
+    [[ -n "${PIP_CERT:-}" ]] || export PIP_CERT="$ca_bundle"
+    [[ -n "${AWS_CA_BUNDLE:-}" ]] || export AWS_CA_BUNDLE="$ca_bundle"
+    [[ -n "${CARGO_HTTP_CAINFO:-}" ]] || export CARGO_HTTP_CAINFO="$ca_bundle"
+    [[ -n "${DENO_CERT:-}" ]] || export DENO_CERT="$ca_bundle"
+    measure_log "system PEM trust enabled from $ca_bundle"
+  fi
+}
+
 # What runs: the native build when one is installed, otherwise the source Vis
 # owns (or, from a checkout with nothing installed, that checkout — see
 # `find_jvm_source`). Installing IS the decision; the ONE override is `--jvm` /
@@ -837,6 +931,7 @@ esac
 
 # ── Launch ───────────────────────────────────────────────────────────────────
 runtime="$(runtime_effective)"
+configure_system_trust "$runtime"
 case "$runtime" in
   native)
     native_runtime="$(find_native 2>/dev/null || true)"
@@ -863,7 +958,7 @@ case "$runtime" in
     done
     stream_trace_args=()
     if stream_trace_on; then stream_trace_args=("-Dsvar.stream.trace=true"); fi
-    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${resource_args[@]+"${resource_args[@]}"} ${stream_trace_args[@]+"${stream_trace_args[@]}"} "$@"
+    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${trust_native_args[@]+"${trust_native_args[@]}"} ${resource_args[@]+"${resource_args[@]}"} ${stream_trace_args[@]+"${stream_trace_args[@]}"} "$@"
     ;;
   jvm)
     source_root="$(find_jvm_source 2>/dev/null || true)"
