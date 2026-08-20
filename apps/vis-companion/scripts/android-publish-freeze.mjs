@@ -28,7 +28,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ANDROID_PUBLISH_FREEZE = {
-  isFrozen: true,
+  isFrozen: false,
   since: '2026-08-17',
   reason:
     'the submitted Android build is with review so that testers judge THAT artefact, and publishing ' +
