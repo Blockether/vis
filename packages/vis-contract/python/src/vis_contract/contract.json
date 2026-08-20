@@ -144,7 +144,7 @@
       "orders": ["insertion","newest-first"],
       "aligns": ["left","right"],
       "sort_dirs": ["asc","desc"],
-      "reasons": ["completed","failed","interrupted","timeout","undeliverable"],
+      "reasons": ["completed","failed","interrupted","superseded","timeout","undeliverable"],
       "log": 
       {
         "window_lines": 2000,

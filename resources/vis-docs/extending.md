@@ -1192,6 +1192,28 @@ Run them:
 vis-agent extension test     # from the shell — prints a report, exits non-zero on failure
 ```
 
+The `vis` library also carries one generic live-view test host. It keeps fixtures
+out of the active session, records only what the extension emitted, and lets a test
+simulate surface actions against the same materialized state:
+
+```python
+import vis
+
+recorder = vis.testing.LiveRecorder(vis._host)
+monkeypatch.setattr(vis, "_host", recorder)
+
+run_extension()
+recorder.focus("jobs", ["macos"])       # a human action, not extension output
+assert recorder.node("jobs")["focused_ids"] == ["macos"]
+assert recorder.patched()                # ops the extension itself emitted
+result = recorder.close(reason="interrupted")
+```
+
+Use `recorder.ops()` for stable envelope goldens and
+`vis.testing.assert_tree(actual, expected)` for an exact nested diff. Provider
+fixtures, polling and provider-specific assertions stay in that extension's test;
+open/patch/state/focus/close materialization belongs to this shared library harness.
+
 The report is **per test**: each `test_*` shows ✓/✗ with the failing
 assertion's detail, grouped by file, under a one-line summary
 (`✓ N file(s): P passed, F failed, …`). Counts are derived from the actual

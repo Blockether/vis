@@ -1400,6 +1400,284 @@ def live(title, nodes, **options):
     return LiveView(request, flush_ms=flush_ms)
 
 
+# -- Extension live-view test harness -----------------------------------------
+
+
+class _LiveRecorder:
+    """An isolated in-memory live host for testing any extension live view.
+
+    ``live`` records only envelopes emitted by the extension. ``host_live`` and
+    the ``focus``/``close`` helpers simulate surface or human actions against the
+    same materialized view without publishing fixture data into a Vis session.
+    """
+
+    _COLLECTION = {"stat": "stats", "steps": "steps", "table": "rows", "link": "links"}
+
+    def __init__(self, inner, view_id="test-live-view"):
+        self._inner = inner
+        self.said = []
+        self.view_id = str(view_id)
+        self._view = None
+        self._result = None
+        self._seq = 0
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    @staticmethod
+    def _copy(value):
+        import json
+
+        return json.loads(json.dumps(value))
+
+    @staticmethod
+    def _nodes(nodes):
+        for node in nodes or []:
+            yield node
+            yield from _LiveRecorder._nodes(node.get("fields"))
+
+    def node(self, node_id):
+        """Return one materialized node by id, at any depth."""
+        if self._view is None:
+            raise AssertionError("no test live view is open")
+        return next(
+            node
+            for node in self._nodes(self._view.get("nodes"))
+            if node["id"] == node_id
+        )
+
+    @staticmethod
+    def _upsert(old, incoming):
+        positions = {item["id"]: index for index, item in enumerate(old)}
+        result = _LiveRecorder._copy(old)
+        for item in incoming:
+            item = _LiveRecorder._copy(item)
+            if item["id"] in positions:
+                at = positions[item["id"]]
+                result[at] = {**result[at], **item}
+            else:
+                positions[item["id"]] = len(result)
+                result.append(item)
+        return result
+
+    def _materialize(self, view):
+        view = self._copy(view)
+        for node in self._nodes(view.get("nodes")):
+            kind = node.get("type")
+            if kind == "log":
+                node.setdefault("lines", [])
+                node.setdefault("window_lines", 2000)
+                node["total_lines"] = len(node["lines"])
+            elif kind == "table":
+                node.setdefault("rows", [])
+                node.setdefault("max_rows", 5000)
+                node.setdefault("order", "insertion")
+            elif kind in self._COLLECTION:
+                items = node.setdefault(self._COLLECTION[kind], [])
+                if kind == "link":
+                    for item in items:
+                        item.setdefault("target_kind", "url")
+        return view
+
+    def _parent(self, node_id):
+        def find(nodes):
+            for index, node in enumerate(nodes or []):
+                if node.get("id") == node_id:
+                    return nodes, index
+                found = find(node.get("fields"))
+                if found is not None:
+                    return found
+            return None
+
+        return find(self._view.get("nodes"))
+
+    def _apply(self, op):
+        action = op["op"]
+        if action == "add-node":
+            node = self._materialize({"nodes": [op["node_spec"]]})["nodes"][0]
+            found = (
+                self._parent(op.get("after")) if op.get("after") is not None else None
+            )
+            siblings, at = (
+                (self._view["nodes"], len(self._view["nodes"]))
+                if found is None
+                else found
+            )
+            siblings.insert(at + (1 if found is not None else 0), node)
+            return
+        if action == "remove-node":
+            found = self._parent(op["node_id"])
+            if found is None:
+                raise AssertionError(f"no test live node {op['node_id']!r}")
+            found[0].pop(found[1])
+            return
+
+        node = self.node(op["node_id"])
+        if action == "set":
+            node.update(
+                {k: self._copy(v) for k, v in op.items() if k not in ("op", "node_id")}
+            )
+        elif action == "clear":
+            key = "lines" if node["type"] == "log" else self._COLLECTION[node["type"]]
+            node[key] = []
+        elif action == "remove":
+            key = self._COLLECTION[node["type"]]
+            removed = set(op.get("item_ids") or [])
+            node[key] = [item for item in node[key] if item.get("id") not in removed]
+        elif action == "append" and node["type"] == "log":
+            lines = self._copy(op.get("lines") or [])
+            node["total_lines"] += len(lines)
+            node["lines"] = (node["lines"] + lines)[-node["window_lines"] :]
+        elif action == "append":
+            key = self._COLLECTION[node["type"]]
+            incoming = self._copy(op.get(key) or [])
+            if node["type"] == "link":
+                for item in incoming:
+                    item.setdefault("target_kind", "url")
+            node[key] = self._upsert(node[key], incoming)
+        else:
+            raise AssertionError(f"unsupported test live op: {op!r}")
+
+    def picture(self):
+        """Return the terminal, layout-free picture surfaces and the model read."""
+        picture = self._copy(self._view)
+        leaves = []
+        for node in self._nodes(picture.get("nodes")):
+            if node.get("type") == "group":
+                continue
+            node.pop("focused_ids", None)
+            node.pop("is_focusable", None)
+            leaves.append(node)
+        picture["nodes"] = leaves
+        return picture
+
+    def host_live(self, envelope_json):
+        """Apply an envelope without recording it as extension output."""
+        import json
+
+        envelope = json.loads(envelope_json)
+        action = envelope.get("op")
+        if action == "open":
+            self._view = self._materialize(envelope["view"])
+            self._result = None
+            self._seq = 0
+            answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
+        elif self._result is not None:
+            answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
+        elif action == "patch":
+            for op in (envelope.get("patch") or {}).get("ops") or []:
+                self._apply(op)
+            self._seq += 1
+            answer = {"view_id": self.view_id, "is_open": True, "seq": self._seq}
+        elif action == "state":
+            answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
+        elif action == "close":
+            ending = envelope.get("ending") or {}
+            reason = ending.get("reason") or "completed"
+            self._result = {
+                "view_id": self.view_id,
+                "reason": reason,
+                "is_completed": reason == "completed",
+                "is_from_human": False,
+                "summary": ending.get("summary"),
+                "view": self.picture(),
+                "elided": {},
+            }
+            self._result.update(
+                {k: self._copy(v) for k, v in ending.items() if k not in self._result}
+            )
+            answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
+        else:
+            raise AssertionError(f"unsupported test live envelope: {envelope!r}")
+        return json.dumps(answer)
+
+    def live(self, envelope_json):
+        """Record and apply one envelope emitted by the extension."""
+        import json
+
+        self.said.append(json.loads(envelope_json))
+        return self.host_live(envelope_json)
+
+    def focus(self, node_id, focused_ids):
+        """Simulate a surface selecting rows without recording extension output."""
+        import json
+
+        return json.loads(
+            self.host_live(
+                json.dumps(
+                    {
+                        "op": "patch",
+                        "view_id": self.view_id,
+                        "patch": {
+                            "ops": [
+                                {
+                                    "op": "set",
+                                    "node_id": str(node_id),
+                                    "focused_ids": [str(one) for one in focused_ids],
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        )
+
+    def close(self, reason="interrupted", **ending):
+        """Simulate an external close and return its terminal result."""
+        import json
+
+        answer = json.loads(
+            self.host_live(
+                json.dumps(
+                    {
+                        "op": "close",
+                        "view_id": self.view_id,
+                        "ending": {**ending, "reason": str(reason)},
+                    }
+                )
+            )
+        )
+        return answer["result"]
+
+    def ops(self):
+        """Return recorded envelopes with their run-specific view id removed."""
+        return [{k: v for k, v in one.items() if k != "view_id"} for one in self.said]
+
+    def patched(self):
+        """Return every patch op emitted by the extension, in order."""
+        return [
+            op
+            for one in self.said
+            if one.get("op") == "patch"
+            for op in (one.get("patch") or {}).get("ops") or []
+        ]
+
+
+def _assert_tree(actual, expected, path="view"):
+    """Compare a nested golden and report the exact leaf that moved."""
+    assert (path, type(expected)) == (path, type(actual))
+    if isinstance(expected, dict):
+        assert (path, sorted(expected)) == (path, sorted(actual))
+        for key, value in expected.items():
+            _assert_tree(actual[key], value, f"{path}.{key}")
+    elif isinstance(expected, list):
+        assert (path, len(expected)) == (path, len(actual))
+        for index, value in enumerate(expected):
+            _assert_tree(actual[index], value, f"{path}[{index}]")
+    else:
+        assert (path, expected) == (path, actual)
+
+
+class _Testing:
+    """Reusable helpers for extension tests; no fixture reaches the real live host."""
+
+    LiveRecorder = _LiveRecorder
+    assert_tree = staticmethod(_assert_tree)
+
+
+testing = _Testing()
+
+
 # -- Live view builders -------------------------------------------------------
 # One helper per node type, named exactly like Clojure's
 # `com.blockether.vis.human-input`, and the ID IS POSITIONAL because every op an

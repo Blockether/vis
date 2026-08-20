@@ -75,6 +75,15 @@ of blocking a build.
 Other environment knobs: `VIS_OUTSIDE_HOME` moves the state file and the shell
 logs (default `~/.vis/outside`).
 
+## Testing live extensions
+
+`vis.testing.LiveRecorder` is the shared in-memory host for extension tests. It
+records extension envelopes without publishing fixture views into a real session,
+materializes open/patch/state/close, and exposes `focus` and `close` for simulated
+surface actions. Provider-specific tests keep only their provider snapshots and
+assertions; `vis.testing.assert_tree` compares terminal view goldens at the exact
+leaf that changed.
+
 ## Where the real documentation lives
 
 `vis.ask`, the field builders, `vis.extension`, hooks, providers and network
