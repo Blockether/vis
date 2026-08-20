@@ -221,6 +221,15 @@
                       (expect
                         (= ["com.example.thing-test"]
                            (:nses (run-capturing root {"paths" ["src/com/example/thing.clj"]})))))))
+  ;; Regression, user report: selecting a nested source file with tests owned by
+  ;; its nearest parent suite was answered with no test namespaces.
+  (it "resolves a nested SOURCE file to the nearest parent *-test namespace"
+      (with-project
+        (assoc thing-test-file "src/com/example/thing/detail.clj" "(ns com.example.thing.detail)\n")
+        (fn [root]
+          (expect (= ["com.example.thing-test"]
+                     (:nses (run-capturing root
+                                           {"paths" ["src/com/example/thing/detail.clj"]})))))))
   (it "walks a directory for every test namespace under it"
       (with-project (assoc thing-test-file
                       "test/com/example/other_test.clj" "(ns com.example.other-test)\n")

@@ -503,6 +503,17 @@
   [ns-str]
   (when ns-str (if (str/ends-with? ns-str "-test") ns-str (str ns-str "-test"))))
 
+(defn- source-ns->test-nses
+  "Conventional test namespace candidates, nearest first: the source namespace's
+   own `-test`, then each parent namespace's. The first candidate present in the
+   test index owns a nested source file whose tests live in a parent suite."
+  [ns-str]
+  (when ns-str
+    (let [parts (str/split ns-str #"\.")]
+      (mapv (fn [n]
+              (source-ns->test-ns (str/join "." (take n parts))))
+            (range (count parts) 0 -1)))))
+
 (def ^:private jvm-test-exts
   "Extensions a JVM Clojure namespace lives in. `.cljc` is loaded and run by
    `clojure -M:test` exactly like `.clj`, so `foo_test.cljc` IS a test file —
@@ -559,12 +570,14 @@
 
 (defn- path->nses
   "Resolve ONE file/dir to `{:ns :file}` entries. A test file -> its own ns. A
-   plain source file -> its matching *-test ns (when that test file exists). A
-   directory -> every test file under it; a pure source dir maps each source ns
-   to its existing *-test ns. `test-index` is a DELAY over {ns-str file} —
-   naming test files never pays for the workspace walk a source file needs.
-   Every entry carries the FILE it was read from, because that file's extension
-   is what decides whether the namespace runs on the JVM or in shadow-cljs."
+   plain source file -> its nearest matching `*-test` ns: first its own, then
+   each parent namespace, so a nested implementation file can resolve to the
+   suite that owns its package. A directory -> every test file under it; a pure
+   source dir maps each source ns the same way. `test-index` is a DELAY over
+   {ns-str file} — naming test files never pays for the workspace walk a source
+   file needs. Every entry carries the FILE it was read from, because that
+   file's extension decides whether the namespace runs on the JVM or in
+   shadow-cljs."
   [^java.io.File f test-index]
   (let [entry
         (fn [^java.io.File file]
@@ -574,9 +587,10 @@
         test-entry
         (fn [^java.io.File file]
           (when-let [src-ns (ns-of-file file)]
-            (let [tn (source-ns->test-ns src-ns)]
-              (when-let [tf (get @test-index tn)]
-                {:ns tn :file tf}))))]
+            (some (fn [tn]
+                    (when-let [tf (get @test-index tn)]
+                      {:ns tn :file tf}))
+                  (source-ns->test-nses src-ns))))]
 
     (cond (test-source-file? f) (keep identity [(entry f)])
           (clj-source-file? f) (keep identity [(test-entry f)])
@@ -640,9 +654,9 @@
    and a misspelled one fails loudly at require time instead of quietly selecting
    nothing."
   [ns-str test-index]
-  (let [tn (source-ns->test-ns ns-str)]
+  (let [tn (some #(when (contains? @test-index %) %) (source-ns->test-nses ns-str))]
     (cond (contains? @test-index ns-str) [ns-str]
-          (contains? @test-index tn) [tn]
+          tn [tn]
           :else [ns-str])))
 
 (defn- resolve-ns-entry
