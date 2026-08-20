@@ -1711,6 +1711,10 @@ export function SessionScreen({
     client.cachedSetting("reasoning_level"),
   );
   const [reasoningBusy, setReasoningBusy] = useState(false);
+  const [verbosity, setVerbosity] = useState<Toggle | null>(() =>
+    client.cachedSetting("verbosity"),
+  );
+  const [verbosityBusy, setVerbosityBusy] = useState(false);
   const [codexFast, setCodexFast] = useState<Toggle | null>(() =>
     client.cachedSetting("codex_fast_mode"),
   );
@@ -1725,6 +1729,17 @@ export function SessionScreen({
       .then((toggle) => setReasoning(toggle))
       .catch(() => {
         // Optional knob: a gateway without it simply paints no chip.
+      });
+    return () => controller.abort();
+  }, [client]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void client
+      .setting("verbosity", controller.signal)
+      .then((toggle) => setVerbosity(toggle))
+      .catch(() => {
+        // Older gateways may not have the answer-length knob yet.
       });
     return () => controller.abort();
   }, [client]);
@@ -1782,12 +1797,28 @@ export function SessionScreen({
     }
   }
 
+  async function cycleVerbosity() {
+    if (!verbosity || verbosityBusy) return;
+    setVerbosityBusy(true);
+    try {
+      setVerbosity(await client.setSetting(verbosity.id, "cycle"));
+    } catch (e) {
+      setComposerNotice((e as Error).message);
+    } finally {
+      setVerbosityBusy(false);
+    }
+  }
+
   // What the chip SAYS: the optimistic pick while the write is in flight, the
   // gateway's own value the rest of the time. Never empty — that is the whole
   // point of the swap.
   const reasoningLevel = pendingLevel ?? reasoning?.value ?? "default";
   const activeProvider = modelPref?.provider ?? defaultPref?.provider;
   const codexFastAvailable = activeProvider === "openai-codex" && codexFast;
+  // Codex rides the OpenAI Responses wire, whose `text.verbosity` field is the
+  // registered knob's destination. Other providers need model-level wire
+  // capability in the session-model response before this control may appear.
+  const verbosityAvailable = activeProvider === "openai-codex" && verbosity;
   const turnExtraBody =
     codexFastAvailable && codexFast.enabled ? { service_tier: "priority" } : undefined;
 
@@ -6127,6 +6158,27 @@ export function SessionScreen({
                   >
                     {reasoningLevel}
                   </span>
+                </MetaButton>
+              </>
+            )}
+
+            {verbosityAvailable && (verbosity.choices?.length ?? 0) > 0 && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="h-2.5 w-px shrink-0 bg-dialog-edge"
+                />
+                <MetaButton
+                  className="shrink-0"
+                  onMouseDown={keepKeyboard}
+                  onClick={() => void cycleVerbosity()}
+                  disabled={verbosityBusy}
+                  aria-busy={verbosityBusy}
+                  aria-live="polite"
+                  aria-label={`${verbosity.label} — ${verbosity.value}, tap for the next level`}
+                  title={`${verbosity.label}: ${verbosity.value} — tap to cycle`}
+                >
+                  {verbosity.value}
                 </MetaButton>
               </>
             )}
