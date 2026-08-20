@@ -1764,6 +1764,43 @@
                                  " ['line-%d' % i for i in range(1, 11)],"
                                  " refusal.startswith(\"logs: no keyword 'nlines'\")]"))))
              (finally (resources/stop-all! sid)))))
+  (it
+    "walks ready log windows with `next(page)` and a bounded `page.pages()` iterator"
+    (let [sid
+          (str "py-logs-pages-" (System/nanoTime))
+
+          c
+          (py-ctx {:session-id sid})]
+
+      (try (expect
+             (= [true true true true true true true true true true true]
+                (py c
+                    (str "sh = __vis_settle__(shell('for i in $(seq 1 40); do echo line-$i;"
+                         " done', {'id':'pages'}))\n"
+                         "sh.wait(30)\n" "try:\n"
+                         "    next(sh)\n" "    refusal = 'nothing was refused'\n"
+                         "except RuntimeError as e:\n" "    refusal = str(e)\n"
+                         "first = sh.logs(0, lines=10)\n" "second = next(first)\n"
+                         "pages = list(sh.logs(0, lines=10).pages())\n"
+                         "default_bounded = list(sh.logs(0, lines=1).pages())\n"
+                         "bounded = list(sh.logs(0, lines=3).pages(max_pages=2))\n"
+                         "tail = sh.logs(lines=-10)\n"
+                         "above = next(tail)\n" "done = next(pages[-1], None)\n"
+                         "sh.stop()\n" "[first['out'].strip().splitlines() =="
+                         " ['line-%d' % i for i in range(1, 11)],"
+                         " second['out'].strip().splitlines() =="
+                         " ['line-%d' % i for i in range(11, 21)]," " len(pages) == 4,"
+                         " pages[-1]['out'].strip().splitlines() =="
+                         " ['line-%d' % i for i in range(31, 41)],"
+                         " len(default_bounded) == 10" " and not default_bounded[-1]['is_eof'],"
+                         " len(bounded) == 2 and not bounded[-1]['is_eof'],"
+                         " tail['out'].strip().splitlines() =="
+                         " ['line-%d' % i for i in range(31, 41)],"
+                         " above['out'].strip().splitlines() =="
+                         " ['line-%d' % i for i in range(21, 31)]," " done is None,"
+                         " set(iter(first)) == set(first.keys()),"
+                         " refusal.endswith('sh.logs(0, lines=100) first.')]"))))
+           (finally (resources/stop-all! sid)))))
   (it "scrolls the LINE window back UP: `lines=-10` is the ten ABOVE an offset"
       ;; The window only ever moved forward, so a reader who paged past the line they
       ;; wanted had no way back short of re-reading the log from byte 0.

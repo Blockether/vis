@@ -32,11 +32,12 @@
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
    `sh.logs(-50)` reads the last 50 LINES (or a byte OFFSET, or `lines=10` for a
-   ten-line window that `next_offset` walks forward and `lines=-10` scrolls back
-   up) and returns NOW,
-   `sh.wait(30)` is the bounded poll loop written once in the engine, `sh.type(\"y\")`
-   types into the pty and `sh.stop()` kills the tree. There are no id-taking verbs to
-   re-type an id into; re-issuing a LIVE id gives the same handle back.
+   ten-line window) and returns a page NOW; `next(page)` continues that read and
+   `page.pages()` walks its ready pages lazily, bounded to ten by default, while
+   `lines=-10` walks back up. `sh.wait(30)` is the bounded poll loop written once
+   in the engine, `sh.type(\"y\")` types into the pty and `sh.stop()` kills the tree.
+   There are no id-taking verbs to re-type an id into; re-issuing a LIVE id gives
+   the same handle back.
 
    STATUS is not a stage of its own: EVERY answer of EVERY stage already says what the
    shell is doing — `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path`,
@@ -2695,9 +2696,9 @@
 (defn shell
   "`sh = await shell(\"npm test\")` — spawn ONE bash line under a pty and return
    the HANDLE now. Every run is a background run; waiting is `sh.wait(secs)`, the
-   only wait there is. The handle reads
-   (`sh.logs(offset=0)`), types
-   (`sh.type(text)`) and kills (`sh.stop()`), and its log file outlives the call,
+   only wait there is. The handle reads (`page = sh.logs(0, lines=100)`), and a
+   returned page continues with `next(page)` or lazily with `page.pages()`; it
+   types (`sh.type(text)`) and kills (`sh.stop()`). Its log file outlives the call,
    so nothing is ever lost to a deadline or to a call that already returned."
   {:arglists '([command] [command opts])}
   [env & args]
@@ -2705,13 +2706,14 @@
 
 
 (defn shell-logs
-  "`sh.logs()` — read a background shell's log from a byte offset, or the last
-   n LINES with a negative one (`sh.logs(-50)`), and return NOW. `lines=10` is
-   the LINE window — the last ten, or the NEXT ten from an offset, and `-10` the
-   ten ABOVE it — so a long log is walked a screenful at a time, both ways.
-   Nothing blocks
-   on your behalf: a wait is a bounded loop you write in `python_execution` and
-   break on what you actually read."
+  "`page = sh.logs()` — read a background shell's log from a byte offset, or the
+   last n LINES with a negative one (`sh.logs(-50)`), and return NOW. `lines=10`
+   is the LINE window — the last ten, or the NEXT ten from an offset, and `-10`
+   the ten ABOVE it — so a long log is walked a screenful at a time, both ways.
+   Each page remembers the whole read: `next(page)` gets the next ready page and
+   `page.pages(max_pages=…)` lazily includes this page plus those after it, bounded
+   to ten pages by default. Paging stops at the current snapshot's EOF even while
+   the process is live; call `sh.logs()` later to read output written later."
   {:arglists '([id] [id opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
@@ -3097,22 +3099,25 @@
      ;; how it is found, exactly like every other sandbox capability.
      :name "shell"
      :result
-     (str "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
-          "status, exit, out, duration_ms, timed_out, offset, next_offset, is_eof, "
-          "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
-          "methods below. A fresh run has no `exit`; nonzero exit is data. `out` is the "
-          "pty's ONE stream: stdout and stderr are the same channel there, so whatever the "
-          "command wrote to either is IN it, in order — one name, and no `stderr` key.")
+     (str
+       "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
+       "status, exit, out, duration_ms, timed_out, offset, next_offset, is_eof, "
+       "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
+       "methods below. A log page continues with `next(page)` or `page.pages()` while ordinary "
+       "dict iteration stays key iteration. A fresh run has no `exit`; nonzero exit is data. "
+       "`out` is the pty's ONE stream: stdout and stderr are the same channel there, so whatever "
+       "the command wrote to either is IN it, in order — one name, and no `stderr` key.")
      :description
      (str
        "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
        "real pty and return its HANDLE NOW; every run is a background run. Chain with `&&`; "
        "run independent work as separate calls. Drive "
        "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
-       "expired, not the process), `sh.logs(-50)` (the last 50 LINES; `offset=…` bytes, "
-       "`lines=10` a ten-line window, `-10` the ten above it), "
-       "`sh.type(text)`, `sh.stop()` — never "
-       "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "
+       "expired, not the process), `sh.logs(-50)` (the last 50 LINES), or "
+       "`page = sh.logs(0, lines=10)` (a ten-line window; `next(page)` continues and "
+       "`page.pages()` walks ready pages lazily, bounded to ten by default; `lines=-10` walks "
+       "upward), `sh.type(text)`, `sh.stop()` — never a rerun; "
+       "re-issuing a live `id` returns THAT shell. Every answer already carries the "
        "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
        "twice. NEVER trim inside the command: `| head`, "
        "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
@@ -3137,15 +3142,17 @@
      :name "_shell_logs"
      :result
      (str "The same shell result shape as every other stage (`stage` is \"logs\"): `out` is the "
-          "window this read returned; feed `next_offset` back to continue, and `is_eof` false "
-          "means read again now.")
+          "window this read returned. The sandbox result remembers the whole request, so "
+          "`next(page)` follows its cursor and `page.pages()` walks ready pages lazily; ordinary "
+          "dict iteration still yields keys. `is_eof` marks the end of this current snapshot.")
      :description
      (str "TRANSPORT for `sh.logs(offset=…, lines=…)` — call the HANDLE the shell result already "
           "is, not this. Reads a background shell's log and returns NOW. No offset reads the TAIL; "
           "`offset=0` starts at the beginning; a NEGATIVE offset is the last n LINES "
           "(`sh.logs(-50)`), the same reading `cat(path, -50)` has. `lines=10` is the last ten "
-          "lines, `sh.logs(next_offset, lines=10)` walks the next ten and `lines=-10` the ten "
-          "ABOVE that offset, so the window scrolls both ways.")
+          "lines, a page from offset zero walks forward with `next(page)`, and `lines=-10` walks "
+          "ABOVE its current offset. `page.pages(max_pages=…)` includes the current page and is "
+          "bounded to ten by default; reaching the current EOF never waits for future output.")
      :params [{:name "id" :required? true :note "the shell handle's own id"}
               {:name "offset" :note "byte cursor; negative counts LINES"}
               {:name "limit" :note "byte cap for one read"}

@@ -998,6 +998,21 @@ class __VisShell__(__VisResult__):
         "start": "offset",
         "bytes": "limit",
     }
+    __vis_log_page_cap__ = 10
+
+    def __vis_log_page__(self, __vis_args__):
+        __vis_page__ = self.__vis_op__("_shell_logs", __vis_args__)
+        __vis_page__.__vis_logs_spec__ = dict(__vis_args__)
+        return __vis_page__
+
+    def __vis_log_spec__(self):
+        __vis_spec__ = getattr(self, "__vis_logs_spec__", None)
+        if __vis_spec__ is None:
+            raise RuntimeError(
+                "shell log paging starts on a log page; call "
+                "sh.logs(0, lines=100) first."
+            )
+        return __vis_spec__
 
     def logs(self, offset=None, lines=None, limit=None, **aliases):
         # Read the log and return NOW — nothing blocks on the caller's behalf.
@@ -1006,8 +1021,9 @@ class __VisShell__(__VisResult__):
         # `lines=10` is the LINE window: the last ten with no offset, the NEXT
         # ten from one (`sh.logs(next_offset, 10)`), and `lines=-10` the ten
         # ABOVE that offset — the window scrolls a long log both ways instead
-        # of only forward. A near-miss keyword folds onto the one it means
-        # rather than costing the read.
+        # of only forward. Every answer captures this whole read, so `next(page)`
+        # continues it without retyping a cursor and `page.pages()` walks lazily.
+        # A near-miss keyword folds onto the one it means rather than costing the read.
         named = {"offset": offset, "lines": lines, "limit": limit}
         for key, value in aliases.items():
             canonical = self.__vis_logs_aliases__.get(key)
@@ -1023,7 +1039,50 @@ class __VisShell__(__VisResult__):
         for key in ("offset", "lines", "limit"):
             if named[key] is not None:
                 args[key] = int(named[key])
-        return self.__vis_op__("_shell_logs", args)
+        return self.__vis_log_page__(args)
+
+    def __next__(self):
+        # Continue only what this page can read NOW. Forward paging ends at the
+        # snapshot's EOF even while the process is live; a later `logs()` starts a
+        # fresh snapshot. A negative line window walks toward byte zero instead.
+        __vis_spec__ = self.__vis_log_spec__()
+        __vis_lines__ = __vis_spec__.get("lines")
+        __vis_backward__ = __vis_lines__ is not None and int(__vis_lines__) < 0
+        if __vis_backward__:
+            __vis_cursor__ = self.get("offset")
+            if (
+                __vis_cursor__ is None
+                or int(__vis_cursor__) <= 0
+                or __vis_cursor__ == __vis_spec__.get("offset")
+            ):
+                raise StopIteration
+        else:
+            if self.get("is_eof"):
+                raise StopIteration
+            __vis_cursor__ = self.get("next_offset")
+            if (
+                __vis_cursor__ is None
+                or __vis_cursor__ == self.get("offset")
+                or __vis_cursor__ == __vis_spec__.get("offset")
+            ):
+                raise StopIteration
+        __vis_next__ = dict(__vis_spec__)
+        __vis_next__["offset"] = int(__vis_cursor__)
+        return self.__vis_log_page__(__vis_next__)
+
+    def pages(self, max_pages=None):
+        # This page, then each ready page after it, lazily and bounded to ten by
+        # default. `__iter__` remains dict iteration; page walking is explicit.
+        self.__vis_log_spec__()
+        __vis_cap__ = self.__vis_log_page_cap__ if max_pages is None else int(max_pages)
+        __vis_page__ = self
+        __vis_seen__ = 0
+        while __vis_page__ is not None:
+            yield __vis_page__
+            __vis_seen__ += 1
+            if __vis_seen__ >= __vis_cap__:
+                break
+            __vis_page__ = next(__vis_page__, None)
 
     def type(self, text, is_enter=True):
         return self.__vis_op__(
