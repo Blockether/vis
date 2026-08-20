@@ -3,13 +3,21 @@
 // case here renders the ENGINE's own fixture — the same file
 // `gateway/human_input_test.clj` asserts is the engine's projection of a view —
 // and reads the document that landed.
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LiveView as LiveViewList, LiveViewPanel } from './LiveView';
+import { LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveView';
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
-import { LIVE_NOTE_CHARS, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
+import {
+  LIVE_NOTE_CHARS,
+  LIVE_VIEW_CLOSE_EVENT,
+  liveViewFromWire,
+  type LiveNode,
+  type LiveView,
+} from '../lib/live-view';
+import type { SessionSubscriptionHub } from '../lib/subscriptions';
+import type { SseEvent } from '../lib/types';
 
 afterEach(cleanup);
 
@@ -339,6 +347,39 @@ describe('what a run says about its own layout', () => {
     // Nothing may take width from the headline any more.
     expect(headline.className).not.toContain('flex-1');
     expect(headline.parentElement?.className).not.toContain('flex');
+  });
+
+  // Regression, reported from the app: interrupt removed the live panel but never
+  // re-read the transcript, so the record filed by that stop stayed invisible.
+  it('announces a closed record so its transcript row can be re-read', async () => {
+    let receive: ((event: SseEvent) => void) | null = null;
+    const client = { liveViews: () => Promise.resolve([opened()]) } as unknown as GatewayClient;
+    const subscriptions = {
+      subscribeConnection: () => () => undefined,
+      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+        receive = listener;
+        return () => undefined;
+      },
+    } as unknown as SessionSubscriptionHub;
+    const onRecordFiled = vi.fn();
+
+    function Probe() {
+      const views = useLiveViews(client, subscriptions, 'session-1', onRecordFiled);
+      return <span>{views.length}</span>;
+    }
+
+    render(<Probe />);
+    await waitFor(() => expect(screen.getByText('1')).toBeTruthy());
+    act(() =>
+      receive?.({
+        type: LIVE_VIEW_CLOSE_EVENT,
+        view_id: opened().id,
+        result: { artifact_id: 'record-1' },
+      }),
+    );
+
+    expect(onRecordFiled).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('0')).toBeTruthy();
   });
 });
 

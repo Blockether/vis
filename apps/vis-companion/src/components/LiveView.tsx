@@ -5,6 +5,7 @@ import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   applyLiveViewEvent,
+  LIVE_VIEW_CLOSE_EVENT,
   LIVE_NOTE_CHARS,
   isLiveViewEvent,
   liveFraction,
@@ -543,6 +544,7 @@ export function useLiveViews(
   client: GatewayClient,
   subscriptions: SessionSubscriptionHub,
   sid: string,
+  onRecordFiled?: () => void,
 ): LiveViewModel[] {
   const [views, setViews] = useState<LiveViewModel[]>([]);
 
@@ -564,6 +566,10 @@ export function useLiveViews(
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
       if (!isLiveViewEvent(event)) return;
       setViews((current) => applyLiveViewEvent(current, event));
+      // The close is published only after its record has been attached to the
+      // iteration. The panel disappearing must therefore trigger the transcript
+      // read that makes that durable row visible on this already-open screen.
+      if (event.type === LIVE_VIEW_CLOSE_EVENT) onRecordFiled?.();
     });
     return () => {
       cancelled = true;
@@ -571,7 +577,7 @@ export function useLiveViews(
       stopConnection();
       stopEvents();
     };
-  }, [client, sid, subscriptions]);
+  }, [client, sid, subscriptions, onRecordFiled]);
 
   // A patch frame that skipped a seq means frames were LOST — the coalescing
   // window states the range it stands for precisely so this is knowable. The

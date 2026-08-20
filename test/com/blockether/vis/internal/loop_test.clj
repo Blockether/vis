@@ -678,6 +678,42 @@
         (expect (= "Read a" (:user-request (first out))))
         (expect (= [{:scope "t1/i1/f1" :src "cat(\"a\")"}] (:results (first out)))) ; sentinel f2 excluded
         (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
+  ;; Regression, reported from the app: interrupt filed the record after the
+  ;; iteration had settled, but the next request's resumed context omitted it.
+  (it
+    "carries a late live-view record into the next model request"
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly [{:id "t1"
+                                :status :done
+                                :position 1
+                                :user-request "watch it"
+                                :content [(content/prose "watching")]}])
+
+                  persistance/db-list-session-turn-iterations
+                  (constantly
+                    [{:id "i1"
+                      :status :done
+                      :forms [{:scope "t1/i1/f1" :svar/tool-call-id "call-1" :stdout "started"}]}])
+
+                  persistance/db-list-iterations-attachments-meta
+                  (fn [_db ids]
+                    (expect (= ["i1"] (mapv str ids)))
+                    {"i1" [{:id "record-1"
+                            :tool-call-id "call-1"
+                            :filename "native.live.json"
+                            :media-type "application/vnd.vis.live+json"}]})]
+
+      (let [results
+            (:results (first (previous-turn-context
+                               {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                               "t2")))
+
+            record
+            (:live-record (last results))]
+
+        (expect (str/includes? record "native.live.json"))
+        (expect (str/includes? record "record-1"))
+        (expect (str/includes? record "read_attachment")))))
   (it "keeps synthetic slash commands out of later provider context"
       (with-redefs [persistance/db-list-session-turns
                     (constantly [{:id "t1"
@@ -2718,6 +2754,23 @@
           (expect (= "c1" (get-in m [:content 0 :tool_use_id])))
           (expect (str/includes? (get-in m [:content 0 :content]) "# t1/i1"))
           (expect (str/includes? (get-in m [:content 0 :content]) "hello"))))
+    ;; Regression, reported from the app: a live view interrupted after its tool
+    ;; block returned filed a record, but the next model request was never told.
+    (it "puts a late live-view record back into the model's tool result"
+        (let [m
+              (irm {:forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "c1" :stdout "watching"}]
+                    :tool-calls [{:id "c1"}]
+                    :attachments [{:id "record-1"
+                                   :tool-call-id "c1"
+                                   :filename "native.live.json"
+                                   :media-type "application/vnd.vis.live+json"}]})
+
+              body
+              (get-in m [:content 0 :content])]
+
+          (expect (str/includes? body "native.live.json"))
+          (expect (str/includes? body "record-1"))
+          (expect (str/includes? body "read_attachment"))))
     (it "no summaries ⇒ trailer-iters unchanged"
         (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
           (expect (= tis (apply-summaries tis [])))))))

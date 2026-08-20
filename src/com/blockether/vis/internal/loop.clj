@@ -1903,6 +1903,8 @@
                           (if (contains? seen k)
                             [acc seen]
                             [(conj acc {:scope isc :gist gist}) (conj seen k)]))
+                        (:live-record f)
+                        [(conj acc {:scope sc :live-record (:live-record f)}) seen]
                         (and sc
                              (or (some? (:result f)) (some? (:stdout f))) ; live, worth listing
                              (not= "vis_silent" (:result f)))
@@ -1929,6 +1931,15 @@
   (contains? terminal-incomplete-turn-statuses status))
 
 (defn- interrupted-turn-status? [status] (contains? interrupted-turn-statuses status))
+
+(def ^:private live-record-media-type "application/vnd.vis.live+json")
+
+(defn- live-record-context-line
+  "Tell a later model where one settled live-view record can be reopened."
+  [att]
+  (str "Live-view record filed: " (:filename att)
+       " (attachment id " (:id att)
+       "; read_attachment(\"" (:id att) "\") opens it)."))
 
 (defn- previous-turn-context
   "Prior provider-visible turns as an append-only RESUME sequence, compacted by
@@ -1972,9 +1983,32 @@
                             (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
                                       (catch Throwable _ []))
                                  (filter #(= :done (:status %)))
-                                 vec)]
+                                 vec)
+                            atts-by-iter
+                            (if (seq iterations)
+                              (try (persistance/db-list-iterations-attachments-meta d (keep :id iterations))
+                                   (catch Throwable _ {}))
+                              {})]
                         (when-not (some user-slash-iteration? iterations)
-                          (let [forms (vec (mapcat :forms iterations))]
+                          (let [forms
+                                (vec
+                                  (mapcat
+                                    (fn [iteration]
+                                      (let [own (vec (:forms iteration))
+                                            scope (:scope (first own))
+                                            records (filter #(= live-record-media-type
+                                                                (or (:media-type %) (:media_type %)))
+                                                            (or (get atts-by-iter (:id iteration))
+                                                                (get atts-by-iter (str (:id iteration)))))]
+                                        (into own
+                                              (map (fn [att]
+                                                     {:scope scope
+                                                      :svar/tool-call-id (or (:tool-call-id att)
+                                                                             (:tool_call_id att))
+                                                      :stdout (live-record-context-line att)
+                                                      :live-record (live-record-context-line att)}))
+                                              records)))
+                                    iterations))]
                             {:turn (long (or (:position turn) 0))
                              :user-request (:user-request turn)
                              :answer (when-not (terminal-incomplete-turn-status? (:status turn))
@@ -3605,6 +3639,14 @@
                            str
                            str/trim))
 
+        ;; A live view may close on a gateway thread AFTER its block returned. Its
+        ;; record is then appended to the iteration, not to the already-frozen form
+        ;; output. Reintroduce that durable descriptor into later model context so
+        ;; the next request knows the interrupted picture exists and can open it.
+        live-records
+        (filter #(= live-record-media-type (or (:media-type %) (:media_type %)))
+                (:attachments iter-record))
+
         tool-calls
         (seq (:tool-calls iter-record))
 
@@ -3627,8 +3669,15 @@
                   (zero? (long idx))
                   (into (or orphan-forms [])))
 
+                records
+                (filter (fn [att]
+                          (let [owner (or (:tool-call-id att) (:tool_call_id att))]
+                            (if owner
+                              (= (str owner) (str (:id tc)))
+                              (zero? (long idx)))))
+                        live-records)
                 lines
-                (keep form-output own)
+                (concat (keep form-output own) (map live-record-context-line records))
 
                 iscope
                 (some #(iter-of-scope (:scope %)) own)
@@ -3647,7 +3696,7 @@
         ;; Legacy text fallback (a record with NO tool calls): all forms joined.
         fallback-content
         (let [lines
-              (keep form-output forms)
+              (concat (keep form-output forms) (map live-record-context-line live-records))
 
               iscope
               (some #(iter-of-scope (:scope %)) forms)

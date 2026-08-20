@@ -4943,7 +4943,10 @@ export function SessionScreen({
   // A view a run is SHOWING belongs inside the running assistant row: after the
   // tool trace it explains, before the phase ticker that names it. Detached views
   // still have a fallback at the transcript end when no live row exists.
-  const liveViews = useLiveViews(client, subscriptions, sid);
+  const revealFiledLiveRecord = useCallback(() => {
+    void loadTranscript();
+  }, [loadTranscript]);
+  const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
   const watching = liveViews.at(-1)?.title ?? null;
 
   const liveRow = useMemo(() => {
