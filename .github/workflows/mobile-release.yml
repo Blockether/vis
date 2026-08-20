@@ -67,10 +67,6 @@ on:
         type: choice
         options: [all, internal]
         default: all
-      runner:
-        description: "Runner label for the iOS job (empty = VIS_IOS_RUNNER, then our own vis-macos-arm64 Mac)"
-        type: string
-        default: ''
 
 concurrency:
   group: mobile-release-${{ github.ref }}
@@ -97,18 +93,11 @@ jobs:
   ios:
     # A tag ships to TestFlight; a manual run only when iOS was asked for.
     if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
-    # OUR OWN APPLE-SILICON MAC BUILDS THIS — the same `vis-macos-arm64` runner
-    # native-release.yml uses. Xcode 26 (iOS 26 SDK) is the floor, because App Store
-    # Connect rejects anything uploaded after April 2026 built against less, and that
-    # machine has it and archives in a fraction of a hosted Mac's time.
-    # Two things follow. This job holds SIGNING material on a workstation, so the
-    # keychain steps below record the machine's own keychain state and put it back.
-    # And when the Mac is off, point the job elsewhere: the `runner` dispatch input
-    # for ONE run, or the repository variable VIS_IOS_RUNNER (Settings -> Secrets and
-    # variables -> Actions -> Variables) set to `macos-26` for every run. It is a
-    # variable of its OWN, not the CI/native one, so a fire exit for the test suite
-    # can never send a store build to a Mac without the iOS 26 SDK.
-    runs-on: ${{ inputs.runner || vars.VIS_IOS_RUNNER || 'vis-macos-arm64' }}
+    # App Store Connect requires Xcode 26 (iOS 26 SDK) for uploads after April
+    # 2026. Pin the GitHub-hosted macOS 26 image: signing material stays on an
+    # ephemeral GitHub runner, and neither inputs nor repository variables can
+    # route a release onto a self-hosted machine.
+    runs-on: macos-26
     timeout-minutes: 90
     steps:
       # Version code is `git rev-list --count HEAD`, so a shallow clone would produce a
@@ -182,11 +171,9 @@ jobs:
           umask 077
           printf '%s\n' "$VIS_ASC_KEY" > "$RUNNER_TEMP/AuthKey_${{ secrets.VIS_ASC_KEY_ID }}.p8"
 
-      # App Store Connect API auth can fetch profiles, but no runner arrives with a signing
-      # identity. Import our dedicated API-created distribution certificate into a keychain of
-      # this job's own. A hosted runner takes that keychain to the grave with it; OUR Mac keeps
-      # everything, and the user-domain search list and default keychain are the human's real,
-      # shared state — so they are recorded here and restored by the step after the build.
+      # App Store Connect API auth can fetch profiles, but hosted runners do not
+      # arrive with a signing identity. Import the dedicated distribution
+      # certificate into a temporary keychain owned by this job.
       - name: Install the iOS distribution certificate
         id: keychain
         if: steps.creds.outputs.ok == 'true'
@@ -209,8 +196,7 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          # Prepend, never replace: the login keychain has to stay searchable on a machine
-          # somebody logs into.
+          # Keep the runner login keychain searchable while signing.
           security list-keychain -d user -s "$KEYCHAIN_PATH" $(cat "$RUNNER_TEMP/vis-keychains-before")
           security default-keychain -d user -s "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
@@ -225,10 +211,9 @@ jobs:
           export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
           npm run release:ios:store -- --audience ${{ inputs.audience || 'all' }}
 
-      # The signing keychain, the decrypted .p12 and the .p8 outlive a job on a machine that is
-      # not thrown away — and a default keychain left pointing at a deleted file locks the human
-      # out of their own login items. Undo all of it, whether the build passed or failed.
-      - name: Restore the machine's keychain state
+      # Delete every materialised credential and restore the temporary runner's
+      # keychain state whether the build passes or fails.
+      - name: Restore the runner keychain state
         if: always() && steps.keychain.outcome == 'success'
         run: |
           set +e

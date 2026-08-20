@@ -641,6 +641,20 @@
              "runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26' }}"]}
           directives)
         (pr-str directives))))
+  ;; Regular CI and iOS releases use GitHub-hosted macOS. The native image is
+  ;; the only macOS workload that needs Blacksmith's larger runner.
+  (it "keeps regular CI and iOS releases on GitHub-hosted macOS"
+      (let [ci
+            (slurp ".github/workflows/ci.yml")
+
+            mobile
+            (slurp ".github/workflows/mobile-release.yml")]
+
+        (expect (str/includes? ci "{ name: macos, host: macos-latest }") ci)
+        (expect (not (str/includes? ci "VIS_MACOS_ARM64_RUNNER")) ci)
+        (expect (str/includes? mobile "runs-on: macos-26") mobile)
+        (expect (not (str/includes? mobile "VIS_IOS_RUNNER")) mobile)
+        (expect (not (str/includes? (str ci mobile) "vis-macos-arm64")))))
   ;; The tuning history in native-release.yml records runs labelled "no extra
   ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
   ;; native-image's OWN sizing has never actually been measured for this image.
