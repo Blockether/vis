@@ -4265,6 +4265,9 @@
   (let [limit
         @#'lp/iteration-context-limit
 
+        fold-budget
+        @#'lp/context-fold-budget
+
         stamp!
         @#'lp/stamp-served-route!
 
@@ -4284,7 +4287,14 @@
     (it "reads :context when models.dev exposes no separate input cap"
         (expect (= 300000 (limit nil {:context 300000} {:input-limit 1000000}))))
     (it "keeps the historical 200K advisory ceiling for a model nothing is known about"
-        (expect (= 200000 (limit nil nil nil))))
+        (expect (= 200000 (limit nil nil nil)))
+        (expect (= 200000 (fold-budget (limit nil nil nil)))))
+    (it "lowers the folding budget only when the effective window is below 200K"
+        (expect (= 7372 (fold-budget 8192)))
+        (expect (= 115200 (fold-budget 128000)))
+        (expect (= 129600 (fold-budget 144000)))
+        (expect (= 200000 (fold-budget 200000)))
+        (expect (= 200000 (fold-budget 1000000))))
     ;; A window is config a human edits and a catalog a provider ships; neither is a promise,
     ;; and this number divides every saturation the session prints.
     (it "accepts a window quoted as a string, exactly as YAML hands one over"
