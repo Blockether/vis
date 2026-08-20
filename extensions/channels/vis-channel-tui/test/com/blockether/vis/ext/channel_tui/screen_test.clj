@@ -43,6 +43,10 @@
 
 (def ^:private coalesced-drag-scroll-amount (deref #'screen/coalesced-drag-scroll-amount))
 
+(def ^:private live-view-wheel-event (deref #'screen/live-view-wheel-event))
+
+(def ^:private activate-live-region! (deref #'screen/activate-live-region!))
+
 (def ^:private header-hover-only-change? (deref #'screen/header-hover-only-change?))
 
 (def ^:private handle-channel-event! (deref #'screen/handle-channel-event!))
@@ -317,6 +321,49 @@
                        (coalesce-wheel-input first-wheel poll-next)]
 
                    (expect (nil? wheel-delta)))))
+
+;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: wheel input
+;; accelerated when it crossed into the live table, and its rows had no TUI action.
+(defdescribe
+  live-view-pointer-actions-test
+  (it "keeps a coalesced live-table gesture at terminal row granularity"
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'live-band-pane)
+                       (fn [_db _my]
+                         {:view {:id "view-1"}})}
+        (fn []
+          (expect (= [:live-view-scroll "view-1" -2] (live-view-wheel-event {} 9 -2))))))
+  (it "routes a clicked row through shared local or gateway focus"
+      (let [remote-called
+            (promise)
+
+            local-called
+            (promise)
+
+            db
+            {:live-views [{:view {:id "view-1" :session-id "session-1"}}]}
+
+            hit
+            {:kind :live-focus :view-id "view-1" :node-id "jobs" :item-id "macos"}]
+
+        (with-redefs [vis/live-views
+                      (constantly [])
+
+                      vis/gateway-focus-live-view!
+                      (fn [& args]
+                        (deliver remote-called args))]
+
+          (expect (true? (activate-live-region! db hit)))
+          (expect (= ["session-1" "view-1" "jobs" ["macos"]]
+                     (deref remote-called 1000 ::timed-out))))
+        (with-redefs [vis/live-views
+                      (constantly [{:id "view-1"}])
+
+                      vis/focus-live-view!
+                      (fn [& args]
+                        (deliver local-called args))]
+
+          (expect (true? (activate-live-region! db hit)))
+          (expect (= ["view-1" "jobs" ["macos"]] (deref local-called 1000 ::timed-out)))))))
 
 (defdescribe drag-coalescing-test
              (it "coalesces drag bursts and keeps last drag event + first non-drag"

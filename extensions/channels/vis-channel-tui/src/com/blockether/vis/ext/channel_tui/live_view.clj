@@ -4,13 +4,12 @@
    `com.blockether.vis.internal.human-input.live`).
 
    A form is a QUESTION and owns the keyboard until it is answered; a view is a
-   PICTURE and owns nothing. The composer keeps focus while a view paints, the
-   wheel over the band scrolls it, a click opens a link or expands a node, and
-   the only key it takes is Escape — which ARMS a stop on the newest open view,
-   before it interrupts the turn: the band then takes one FENCED line for the
-   comment the human types, Escape or Enter interrupts with it, Backspace on an
-   empty line keeps watching. A view is ALWAYS stoppable; the note is what says
-   why.
+   PICTURE and leaves the composer focused. The wheel over the band scrolls it, and
+   clicks open links, expand nodes, or focus rows in a focusable table. The only key
+   it takes is Escape — which ARMS a stop on the newest open view before it
+   interrupts the turn: the band then takes one FENCED line for the comment the
+   human types, Escape or Enter interrupts with it, Backspace on an empty line keeps
+   watching. A view is ALWAYS stoppable; the note is what says why.
 
    Everything except [[paint!]] is PURE: [[opened]] builds the pane from the
    engine's own materialized view, [[patched]] is the reducer over one patch,
@@ -705,7 +704,8 @@
     [{:kind :empty :node-id id :text (empty-text :log)}]))
 
 (defmethod node-rows :table
-  [{:keys [id columns] :as node} {:keys [text-w widths fresh is-expanded]}]
+  [{:keys [id columns is-focusable focused-ids] :as node}
+   {:keys [text-w widths fresh is-expanded is-interactive]}]
   (let [ordered
         (live/ordered-rows node)
 
@@ -714,9 +714,15 @@
 
         ;; Measured from the painted window and never narrower than last time; the
         ;; FIT is what a cramped terminal does to the paint, and it is deliberately
-        ;; not what the pane remembers.
+        ;; not what the pane remembers. A focusable first cell also carries the same
+        ;; two-column ●/○ state mark as the Companion.
+        desired
+        (cond-> (desired-widths columns shown)
+          (and is-focusable (seq columns))
+          (update 0 + 2))
+
         measured
-        (grown-widths (get widths id) (desired-widths columns shown))
+        (grown-widths (get widths id) desired)
 
         ;; Squeezed if it must be, then GROWN into whatever the band has left: a
         ;; table is a block, and a block that ends in mid-air reads as unfinished.
@@ -725,6 +731,9 @@
 
         aligns
         (mapv #(or (:align %) :left) columns)
+
+        focused
+        (set focused-ids)
 
         line
         (fn [cells fg styles]
@@ -741,19 +750,34 @@
         body
         (if (seq shown)
           (into []
-                (comp (map-indexed (fn [idx row]
-                                     (let [is-fresh (contains? fresh (:id row))]
-                                       [(when (pos? (long idx)) (rule :mid))
-                                        (merge {:kind :trow
-                                                :node-id id
-                                                :item-id (:id row)
-                                                :tone (:tone row)
-                                                :is-fresh is-fresh}
-                                               (line (map-indexed (fn [col-idx _]
-                                                                    (md-runs (cell-of row col-idx)))
-                                                                  columns)
-                                                     (tone-fg (:tone row))
-                                                     (if is-fresh [p/BOLD] [])))])))
+                (comp (map-indexed
+                        (fn [idx row]
+                          (let [is-fresh
+                                (contains? fresh (:id row))
+
+                                is-focused
+                                (contains? focused (:id row))
+
+                                cells
+                                (cond-> (mapv (fn [col-idx]
+                                                (md-runs (cell-of row col-idx)))
+                                              (range (count columns)))
+                                  (and is-focusable (seq columns))
+                                  (update 0 #(into [{:text (if is-focused "● " "○ ")}] %)))]
+
+                            [(when (pos? (long idx)) (rule :mid))
+                             (merge {:kind :trow
+                                     :node-id id
+                                     :item-id (:id row)
+                                     :tone (:tone row)
+                                     :is-fresh is-fresh
+                                     :is-focusable (boolean (and is-focusable is-interactive))
+                                     :is-focused is-focused}
+                                    (line cells
+                                          (if is-focused
+                                            t/header-active-tab-accent
+                                            (tone-fg (:tone row)))
+                                          (if (or is-fresh is-focused) [p/BOLD] [])))])))
                       cat
                       (remove nil?))
                 shown)
@@ -880,7 +904,8 @@
           {:text-w w
            :widths widths
            :fresh (get-in fresh [:items (:id node)] #{})
-           :is-expanded (contains? (set expanded) (:id node))})
+           :is-expanded (contains? (set expanded) (:id node))
+           :is-interactive (not (settled? pane))})
 
         head
         (mapv (fn [runs]
@@ -1063,12 +1088,18 @@
   (when-let [note (stopping pane)]
     {:label (str "interrupt " (flat-text (get-in pane [:view :title])) " — why? ") :note note}))
 
+(defn- has-focusable-table?
+  "True when `pane` carries a live table whose rows change the detail below it."
+  [pane]
+  (boolean (some #(and (= :table (:type %)) (:is-focusable %)) (get-in pane [:view :nodes]))))
+
 (defn hint
   "The hint bar under the band. Escape is the ONE key a view takes, and while
    several are open it says WHICH one it will hit — the newest, the one the band
-   is painting. Once the stop is armed the bar says the two keys that end the
-   typing: Escape or Enter interrupt with whatever was written, Backspace on an
-   empty line keeps watching."
+   is painting. A focusable table advertises its click without taking the composer
+   keyboard. Once the stop is armed the bar says the two keys that end the typing:
+   Escape or Enter interrupt with whatever was written, Backspace on an empty line
+   keeps watching."
   [pane others]
   (let [open (remove settled? others)]
     (if-let [note (stopping pane)]
@@ -1076,6 +1107,9 @@
         [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
         [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
       (cond-> []
+        (and (some? pane) (not (settled? pane)) (has-focusable-table? pane))
+        (conj ["click" "focus a row"])
+
         (and (some? pane) (not (settled? pane)))
         (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
@@ -1221,7 +1255,18 @@
     (paint-plain! g left row inner-w t/dialog-hint (:text entry))
 
     :trow
-    (paint-segments! g left row inner-w (:segments entry))
+    (do (paint-segments! g left row inner-w (:segments entry))
+        ;; The full visible table row is the control, not a tiny glyph. Its item id
+        ;; is what the shared focus patch names; the next live patch repaints every
+        ;; attached TUI and Companion from that one engine state.
+        (when (:is-focusable entry)
+          (cr/register! {:bounds
+                         {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                         :kind :live-focus
+                         :view-id view-id
+                         :node-id (:node-id entry)
+                         :item-id (:item-id entry)
+                         :enabled? true})))
 
     :link
     (do (paint-segments! g
@@ -1335,11 +1380,17 @@
         rows-plan
         (if front (plan front text-w) [])
 
-        ;; Half the rows between the top of the transcript and the prompt, at the
-        ;; most: the run this view reports on is still being read above it. Four
-        ;; rows is the floor — a band shorter than that says nothing at all.
+        ;; Four fifths of the rows between the transcript top and the prompt, at
+        ;; most: a watched run is the live surface, while one fifth still keeps the
+        ;; conversation that launched it in sight. Four rows is the floor — a band
+        ;; shorter than that says nothing at all.
+        available
+        (max 0 (- (long (:hint-row region)) 1 (long (:min-row region))))
+
         room
-        (max 4 (quot (- (long (:hint-row region)) 1 (long (:min-row region))) 2))
+        ;; `band-geometry` spends one enclosing row outside this body budget. Add
+        ;; it here so the complete visible band, not merely its body, reaches 4/5.
+        (max 4 (min available (inc (quot (* 4 available) 5))))
 
         ;; An ARMED stop takes two body rows: the line the human types into and
         ;; the rule that fences it off from the view above. The band asks WHY it
@@ -1349,10 +1400,11 @@
         stop
         (stop-prompt front)
 
-        ;; What the band WANTS: every collapsed line, the plan, the row the fenced
-        ;; hint rule costs, and that note line when it is armed.
-        wanted
-        (+ (count collapsed) (count rows-plan) 1 (if stop 2 0))]
+        ;; `room` is the surface contract, not merely a content cap. A sparse live
+        ;; view still owns four fifths of the terminal so incoming rows do not make
+        ;; the whole conversation jump downward as work progresses.
+        n
+        room]
 
     {:panes panes
      :front front
@@ -1360,7 +1412,7 @@
      :collapsed collapsed
      :rows-plan rows-plan
      :stop stop
-     :n (min wanted room)}))
+     :n n}))
 
 (defn band-rows
   "The rows the band covers on a `cols`×`rows` terminal, as `[from to]`
@@ -1391,9 +1443,9 @@
 
    The SAME band the human-input form paints in (`transient/band-region`) — a
    closed box on the terminal's own paper, anchored above the prompt and growing
-   upward over the transcript, never past `content-top`. A view takes at most
-   half the rows between the transcript and the prompt, because the run it is
-   reporting on is still being read above it.
+   upward over the transcript, never past `content-top`. A busy view takes four
+   fifths of the rows between the transcript and prompt, leaving the launching
+   conversation visible without reducing the live surface to a preview.
 
    Returns nil when there is nothing to paint."
   ([g cols rows panes content-top prompt-h]

@@ -83,8 +83,10 @@
          (cap/capture! {:cols cols
                         :rows rows
                         :paint! (fn [{:keys [screen]}]
+                                  (cr/begin-frame!)
                                   (let [g (.newTextGraphics ^TerminalScreen screen)]
                                     (reset! geom (lv/paint! g cols rows panes 1 3))
+                                    (cr/commit-frame!)
                                     (.refresh ^TerminalScreen screen)))})]
 
      (assoc cap :geometry @geom))))
@@ -504,6 +506,48 @@
                (state/dispatch [:live-view-close "never-here"])
                (is (empty? (:live-views @state/app-db)))))))
 
+;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: the live
+;; surface used half the available terminal and its focusable job rows had no control.
+(deftest live-view-height-and-focus-test
+  (testing "a busy live surface takes four fifths of the room above the composer"
+    (let [[top bottom]
+          (lv/band-rows 96 26 [(pane :rows 20)] 1 3)
+
+          height
+          (inc (- (long bottom) (long top)))
+
+          available
+          (- 26 1 3)]
+
+      (is (>= (* 5 height) (* 4 available))
+          "the watched run, rather than stale transcript, owns most of the terminal")))
+  (testing "a focusable table paints shared focus and makes every visible row clickable"
+    (let [p
+          (lv/opened (mounted {} (jobs {:is-focusable true :focused-ids ["job-1"]} 8)))
+
+          plan
+          (lv/plan p 80)
+
+          table-rows
+          (filterv #(= :trow (:kind %)) plan)]
+
+      (is (= [{:item-id "job-0" :is-focusable true :is-focused false}
+              {:item-id "job-1" :is-focusable true :is-focused true}]
+             (mapv #(select-keys % [:item-id :is-focusable :is-focused]) (take 2 table-rows))))
+      (is (some #{["click" "focus a row"]} (lv/hint p []))
+          "the band advertises the mouse control without taking the composer keyboard")
+      (cr/reset!)
+      (try (let [text
+                 (cap/frame-text (last (:frames (paint-frames [p] 96 80))))
+
+                 controls
+                 (filterv #(= :live-focus (:kind %)) (cr/current))]
+
+             (is (str/includes? text "○ job-0"))
+             (is (str/includes? text "● job-1"))
+             (is (= (mapv #(str "job-" %) (range 8)) (mapv :item-id controls))))
+           (finally (cr/reset!))))))
+
 ;;; ── The screenshot gate ─────────────────────────────────────────────────────
 
 (deftest live-view-paint-test
@@ -850,7 +894,7 @@
       (is (str/includes? (nth lines to) "└") "the last is the rule that closes it")
       (is (every? str/blank? (take from lines))
           "and nothing of the band is painted above the rows the wheel owns")))
-  (testing "a view takes half the terminal at the most, and never a sliver of it"
+  (testing "a busy view takes four fifths of the available terminal without covering the composer"
     (let [p
           (patched (pane) {:op :append :node-id "tail" :lines (mapv #(str "line " %) (range 40))})
 
@@ -860,10 +904,11 @@
               (inc (- (long to) (long from)))))]
 
       (doseq [rows [20 24 40 60]]
-        (is (<= (height rows) (quot rows 2))
-            (str "on " rows " rows the band stops at half the screen"))
-        (is (>= (height rows) (quot rows 3))
-            (str "on " rows " rows a view with more to show still gets a third"))))))
+        (let [available (- rows 1 3)]
+          (is (>= (* 5 (height rows)) (* 4 available))
+              (str "on " rows " rows the watched run owns four fifths of the available surface"))
+          (is (<= (height rows) available)
+              (str "on " rows " rows the composer remains outside the band")))))))
 ;; Phase 5 of the live-view plan: a view used to vanish the moment it ended, so
 ;; the log the human had been watching became unreachable one frame after it
 ;; finished. What a finished run leaves now is a ROW OF THE TRANSCRIPT, in the

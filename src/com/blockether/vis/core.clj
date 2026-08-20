@@ -126,6 +126,7 @@
              [gateway-human-input-requests gateway-client/human-input-requests]
              [gateway-submit-human-input! gateway-client/submit-human-input!]
              [gateway-cancel-human-input! gateway-client/cancel-human-input!]
+             [gateway-focus-live-view! gateway-client/focus-live-view!]
              [gateway-interrupt-live-view! gateway-client/interrupt-live-view!]
              [gateway-live-views gateway-client/live-views]
              [gateway-get-turn gateway-client/get-turn]
@@ -802,6 +803,8 @@
 (def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/patch-live!))
 
 (def close-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/close-live!))
+
+(def focus-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/focus-live!))
 
 (def interrupt-live-view!
   (requiring-resolve 'com.blockether.vis.internal.human-input/interrupt-live!))

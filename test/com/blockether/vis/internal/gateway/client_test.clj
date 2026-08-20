@@ -50,6 +50,21 @@
             (zero? attempts) nil
             :else (do (Thread/sleep 10) (recur (dec attempts)))))))
 
+;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: the TUI had
+;; no canonical client action with which a live job row could change shared focus.
+(deftest focus-live-view-uses-the-shared-action-route
+  (let [request (atom nil)]
+    (with-redefs-fn {(rv 'send-json!)
+                     (fn [method path body]
+                       (reset! request [method path body])
+                       {"view_id" "view-1" "node_id" "jobs" "focused_ids" ["macos"]})}
+      (fn []
+        (is (= {:view-id "view-1" :node-id "jobs" :focused-ids ["macos"]}
+               (client/focus-live-view! "session-1" "view-1" "jobs" ["macos"])))
+        (is (= ["POST" "/v1/sessions/session-1/human-input/live/view-1/actions/focus"
+                {:node_id "jobs" :focused_ids ["macos"]}]
+               @request))))))
+
 (deftest ensure-project-for-root-uses-project-action-route
   (let [request (atom nil)]
     (with-redefs-fn {(rv 'send-json!) (fn [method path body]

@@ -1688,6 +1688,18 @@
                (str "/v1/sessions/" (enc sid) "/human-input/" (enc request-id) "/actions/cancel"))
              "is_cancelled")))
 
+(defn focus-live-view!
+  "Focus `item-ids` in focusable table `node-id` of the DAEMON-side live view.
+   Returns the canonical shared selection the action recorded."
+  [sid view-id node-id item-ids]
+  (let [res (send-json!
+              "POST"
+              (str "/v1/sessions/" (enc sid) "/human-input/live/" (enc view-id) "/actions/focus")
+              {:node_id node-id :focused_ids (vec item-ids)})]
+    {:view-id (get res "view_id")
+     :node-id (get res "node_id")
+     :focused-ids (vec (get res "focused_ids"))}))
+
 (defn interrupt-live-view!
   "Stop the DAEMON-side live view `view-id` of `sid`, with `note` — the comment the
    person typed with the stop, when they typed one. Returns whether a view was

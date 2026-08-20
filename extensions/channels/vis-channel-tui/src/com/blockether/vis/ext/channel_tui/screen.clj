@@ -607,6 +607,58 @@
 
         (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
+(defn- live-view-wheel-event
+  "The pane-local event for one coalesced wheel gesture over the live band.
+
+   Keep the terminal's signed row delta exactly as read. The transcript scroll path
+   applies acceleration to a document hundreds of rows long; multiplying again in
+   a compact table skipped rails and made a trackpad gesture look like a jump."
+  [db my wheel-delta]
+  (when (not (zero? (long (or wheel-delta 0))))
+    (when-let [pane (live-band-pane db my)]
+      [:live-view-scroll (lv/view-id pane) (long wheel-delta)])))
+
+(defn- local-live-view?
+  "True when `view-id` is owned by this process rather than the serve daemon."
+  [session-id view-id]
+  (boolean (or (nil? session-id) (some #(= view-id (:id %)) (vis/live-views)))))
+
+(defn- focus-live-row!
+  "Set one clicked table row as the live view's SHARED focus without blocking input.
+
+   The engine publishes the resulting ordinary patch back to every attached surface;
+   the TUI keeps no optimistic private selection that could race the extension's next
+   GitHub poll."
+  [db {:keys [view-id node-id item-id]}]
+  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
+    (let [session-id (get-in pane [:view :session-id])]
+      (future (try
+                (if (local-live-view? session-id view-id)
+                  (vis/focus-live-view! view-id node-id [item-id])
+                  (vis/gateway-focus-live-view! session-id view-id node-id [item-id]))
+                (catch Throwable t
+                  (vis/notify! (str "Could not focus that row: " (ex-message t)) :level :error)))))
+    true))
+
+(defn- activate-live-region!
+  "Activate one click region owned by the live band; true when it was consumed."
+  [db hit]
+  (case (:kind hit)
+    :live-expand
+    (do (state/dispatch [:live-view-expand (:view-id hit) (:node-id hit)])
+        (state/dispatch [:bump-render-version])
+        true)
+
+    :live-reopen
+    (do (state/dispatch [:live-view-reopen (:view-id hit)])
+        (state/dispatch [:bump-render-version])
+        true)
+
+    :live-focus
+    (do (focus-live-row! db hit) true)
+
+    false))
+
 (defn- interrupt-front-live-view!
   "Stop the newest live view this terminal paints, with `note` — the comment the
    human typed into the armed stop, when they typed one.
@@ -623,7 +675,7 @@
   (when-let [pane (lv/interruptible (:live-views db))]
     (let [view-id (lv/view-id pane)
           session-id (get-in pane [:view :session-id])
-          local? (or (nil? session-id) (some #(= view-id (:id %)) (vis/live-views)))]
+          local? (local-live-view? session-id view-id)]
 
       (try (if local?
              (vis/interrupt-live-view! view-id note)
@@ -6158,7 +6210,8 @@
                          selection-viewport {:viewport-top (+ (long messages-top)
                                                               (long render/MESSAGE_MARGIN_TOP))
                                              :eff-scroll (get-in db [:layout :eff-scroll])}
-                         slash-suggestions (slash-suggestions-for-db screen db)]
+                         slash-suggestions (slash-suggestions-for-db screen db)
+                         live-wheel-event (live-view-wheel-event db my wheel-delta)]
 
                      (cond
                        ;; F1 help / F2 task overlay is open: it LOCKS the
@@ -6300,13 +6353,14 @@
                            (recur))
                        ;; The wheel over the live-view band scrolls the PANE. The band is
                        ;; painted ON TOP of the transcript, so the rows under the pointer
-                       ;; are the pane's rows, and moving the history underneath instead
-                       ;; would be moving what the pointer is not on.
-                       (and (not (zero? (long (or wheel-delta 0)))) (live-band-pane db my))
-                       (do (state/dispatch [:live-view-scroll (lv/view-id (live-band-pane db my))
-                                            (* 3 (long wheel-delta))])
-                           (state/dispatch [:bump-render-version])
-                           (recur))
+                       ;; are the pane's rows. A pane consumes the raw coalesced row delta
+                       ;; and clears transcript momentum; carrying acceleration across the
+                       ;; boundary is what caused the visible hitch beside a live table.
+                       live-wheel-event (do (vreset! scroll-momentum 0)
+                                            (vreset! last-wheel-at-ms (System/currentTimeMillis))
+                                            (state/dispatch live-wheel-event)
+                                            (state/dispatch [:bump-render-version])
+                                            (recur))
                        ;; Smooth the raw wheel-delta through the running momentum so a
                        ;; sign-flipping inertia tail can't dispatch a reverse tick (the
                        ;; "scroll fighting me" bounce). An absorbed tick (effective nil)
@@ -6614,19 +6668,16 @@
                                  (state/dispatch [:select-preview-mode (:session-id hit)
                                                   (:node-id hit) (:mode hit)])
 
-                                 ;; `+ N more` on a live node: the pane takes no keyboard,
-                                 ;; so opening a node is a click and nothing else.
+                                 ;; Live-band controls share one activation function so
+                                 ;; CLICK_DOWN and release-only terminals cannot drift.
                                  :live-expand
-                                 (do (state/dispatch [:live-view-expand (:view-id hit)
-                                                      (:node-id hit)])
-                                     (state/dispatch [:bump-render-version]))
+                                 (activate-live-region! db hit)
 
-                                 ;; The one line a FINISHED view leaves on the band. It is
-                                 ;; the only way back to the log the human was watching, so
-                                 ;; it opens read-only and the same press puts it away.
                                  :live-reopen
-                                 (do (state/dispatch [:live-view-reopen (:view-id hit)])
-                                     (state/dispatch [:bump-render-version]))
+                                 (activate-live-region! db hit)
+
+                                 :live-focus
+                                 (activate-live-region! db hit)
 
                                  (open-click-target! screen hit))
                                (let [point (selection/point mx my)
@@ -6758,6 +6809,15 @@
                                  :preview-switcher
                                  (state/dispatch [:select-preview-mode (:session-id hit)
                                                   (:node-id hit) (:mode hit)])
+
+                                 :live-expand
+                                 (activate-live-region! db hit)
+
+                                 :live-reopen
+                                 (activate-live-region! db hit)
+
+                                 :live-focus
+                                 (activate-live-region! db hit)
 
                                  ;; Default: hand any direct-open hit to
                                  ;; the OS opener on a side thread - a
