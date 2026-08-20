@@ -28,9 +28,7 @@
 
 (defmacro ^:private with-fs-context
   [dir & body]
-  `(let [~(with-meta 'python-context {:tag `Context})
-         (:python-context (ep/create-python-context {} (constantly [~dir])))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {} (constantly [~dir])] ~@body))
 
 (def ^:private images-kind :com.blockether.vis.internal.foundation.shim-pil/images)
 

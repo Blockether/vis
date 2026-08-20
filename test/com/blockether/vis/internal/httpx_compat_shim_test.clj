@@ -2,7 +2,8 @@
   "The httpx-compat shim: a synchronous httpx module published into sys.modules,
    wrapping the requests shim. Tested offline by monkeypatching requests.request
    with a canned echo Response (no network)."
-  (:require [com.blockether.vis.internal.env-python :as ep]
+  (:require [com.blockether.vis.test-python-context :as tpc]
+            [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
@@ -19,9 +20,7 @@
 
 (defmacro with-fresh-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
-                                                                         {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {}] ~@body))
 
 ;; Deterministic offline harness: monkeypatch the requests shim (which httpx and
 ;; urllib3 delegate to) with a canned echo Response, so the wrapper logic is

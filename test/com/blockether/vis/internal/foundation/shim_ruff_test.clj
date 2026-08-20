@@ -5,7 +5,8 @@
 
    Files are written on the Clojure side into a system temp dir and the Context
    is built with a `roots-fn`, so Python `open()`/`os.walk` see them."
-  (:require [com.blockether.vis.internal.env-python :as ep]
+  (:require [com.blockether.vis.test-python-context :as tpc]
+            [com.blockether.vis.internal.env-python :as ep]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]
@@ -21,9 +22,7 @@
 (defmacro with-fs-context
   "A sandbox Context whose Python filesystem is confined to `dir`."
   [dir & body]
-  `(let [~(with-meta 'python-context {:tag `Context})
-         (:python-context (ep/create-python-context {} (constantly [~dir])))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {} (constantly [~dir])] ~@body))
 
 (defdescribe
   ruff-shim-availability-test

@@ -14,7 +14,8 @@
    be crossed — reaching it with handles genuinely held open raises a normal
    Python `OSError(EMFILE)` naming the fix, in the block that caused it, instead
    of leaving the session to die later on an unrelated toolchain error."
-  (:require [clojure.string :as str]
+  (:require [com.blockether.vis.test-python-context :as tpc]
+            [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.sun.management UnixOperatingSystemMXBean]
@@ -133,14 +134,11 @@
         (expect (nil? (:error r)))
         (expect (true? (:result r)))))
   (it "ships a default ceiling well under any process limit, sweeping at half"
-      (let [ctx
-            (:python-context (ep/create-python-context {}))
-
-            r
-            (ep/run-python-block ctx "(__vis_fd_max__, __vis_fd_sweep_at__)" "t1/i1")]
-
-        (expect (nil? (:error r)))
-        (expect (= [512 256] (:result r))))))
+      (tpc/with-own [ctx {}]
+                    (let [r
+                          (ep/run-python-block ctx "(__vis_fd_max__, __vis_fd_sweep_at__)" "t1/i1")]
+                      (expect (nil? (:error r)))
+                      (expect (= [512 256] (:result r)))))))
 
 (defdescribe
   sandbox-fd-hardening-test

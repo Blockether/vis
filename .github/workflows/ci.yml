@@ -116,10 +116,13 @@ jobs:
           # Both runners need an explicit heap: macOS starts smaller than the full
           # Truffle suite needs, and Linux's default (a quarter of RAM) ran the
           # suite out of heap. Leave headroom for native allocations and children.
-          # Each keyed sandbox (`test-python-context`) pins a whole GraalPy heap
-          # for the life of the JVM, so the suite's floor rises with the number
-          # of namespaces: 6g died at namespace 75 of 169 on a 16 GB runner.
-          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx12g' }}
+          # Every sandbox a test builds WITHOUT closing pins a whole GraalPy heap
+          # for the life of the JVM, because each Context now owns its Engine
+          # (`env-python/new-engine!`) and an Engine retains what was built on it.
+          # That, not the test count, set the floor: before the leaked sandboxes
+          # were closed (`tpc/with-own`) even 11g died here after ~19 min. With
+          # them closed the whole suite finishes in ~5.5 min and survives 9g.
+          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx10g' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale

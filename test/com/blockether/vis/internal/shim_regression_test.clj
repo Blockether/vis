@@ -18,9 +18,7 @@
 ;; A monkeypatched transport must not leak into the shared context.
 (defmacro with-fresh-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
-                                                                         {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {}] ~@body))
 
 (defdescribe
   sqlite3-bind-guards-test

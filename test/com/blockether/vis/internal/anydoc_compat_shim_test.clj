@@ -26,9 +26,7 @@
 
 (defmacro ^:private with-fresh-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
-                                                                         {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {}] ~@body))
 
 (defn- b64 [^bytes raw] (.encodeToString (Base64/getEncoder) raw))
 
@@ -62,9 +60,7 @@
 
 (defmacro ^:private with-fs-context
   [dir & body]
-  `(let [~(with-meta 'python-context {:tag `Context})
-         (:python-context (ep/create-python-context {} (constantly [~dir])))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {} (constantly [~dir])] ~@body))
 
 (defn- py-bytes
   "Python expression rebuilding `encoded` as real `bytes` inside the sandbox."

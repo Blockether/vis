@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-test
-  (:require [clojure.string :as str]
+  (:require [com.blockether.vis.test-python-context :as tpc]
+            [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.content :as content]
@@ -474,43 +475,42 @@
              ;; interrupt unwinds the guest frame, and it must leave the context REUSABLE.
              (it
                "unwinds a runaway guest loop and keeps the context usable"
-               (let [pc
-                     (:python-context (env/create-python-context {}))
+               (tpc/with-own
+                 [pc {}]
+                 (let [cpu-ns
+                       (fn []
+                         (.getProcessCpuTime
+                           ^com.sun.management.OperatingSystemMXBean
+                           (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
 
-                     cpu-ns
-                     (fn []
-                       (.getProcessCpuTime
-                         ^com.sun.management.OperatingSystemMXBean
-                         (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
+                       ;; `getProcessCpuTime` is JVM-WIDE, so it also counts the rest of the
+                       ;; suite running in parallel — on a loaded CI runner the absolute
+                       ;; number reached 2.14 cores with no guest alive at all (CI run
+                       ;; 30586924255). Only the DELTA against a baseline sampled under the
+                       ;; same load says anything about the guest, and a live spinning guest
+                       ;; is worth a whole extra core.
+                       busy-cores
+                       (fn [ms]
+                         (let [before (cpu-ns)]
+                           (Thread/sleep (long ms))
+                           (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
 
-                     ;; `getProcessCpuTime` is JVM-WIDE, so it also counts the rest of the
-                     ;; suite running in parallel — on a loaded CI runner the absolute
-                     ;; number reached 2.14 cores with no guest alive at all (CI run
-                     ;; 30586924255). Only the DELTA against a baseline sampled under the
-                     ;; same load says anything about the guest, and a live spinning guest
-                     ;; is worth a whole extra core.
-                     busy-cores
-                     (fn [ms]
-                       (let [before (cpu-ns)]
-                         (Thread/sleep (long ms))
-                         (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
+                       ;; 250ms is plenty to see a whole core: a live spinner adds
+                       ;; ~1.0 to the delta, and the threshold below is 0.75.
+                       baseline
+                       (busy-cores 250)]
 
-                     ;; 250ms is plenty to see a whole core: a live spinner adds
-                     ;; ~1.0 to the delta, and the threshold below is 0.75.
-                     baseline
-                     (busy-cores 250)]
-
-                 (try (let [result (binding [rt/*eval-timeout-ms* 400]
-                                     ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
-                        (expect (true? (:timeout? result)))
-                        ;; The guest is GONE: no EXTRA core is spinning after the timeout.
-                        ;; Take the quieter of two samples so one unlucky GC/JIT burst
-                        ;; cannot decide the verdict.
-                        (expect (< (- (min (busy-cores 250) (busy-cores 250)) baseline) 0.75))
-                        ;; ...and the interrupt did not poison the context.
-                        (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
-                      (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                    (catch Throwable _ nil)))))))
+                   (try (let [result (binding [rt/*eval-timeout-ms* 400]
+                                       ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
+                          (expect (true? (:timeout? result)))
+                          ;; The guest is GONE: no EXTRA core is spinning after the timeout.
+                          ;; Take the quieter of two samples so one unlucky GC/JIT burst
+                          ;; cannot decide the verdict.
+                          (expect (< (- (min (busy-cores 250) (busy-cores 250)) baseline) 0.75))
+                          ;; ...and the interrupt did not poison the context.
+                          (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
+                        (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                      (catch Throwable _ nil))))))))
 
 (defdescribe eval-timeout-keeps-partial-stdout-test
              ;; REGRESSION: the wall-clock BACKSTOP answered with `{:result nil :error
@@ -520,59 +520,60 @@
              ;; the frame. The model then re-ran the whole block blind, which is how a
              ;; serial `httpx` sweep burned two turns instead of one.
              (it "surfaces what the block printed before the wall fired"
-                 (let [pc (:python-context (env/create-python-context {}))]
-                   (try (let [result (binding [rt/*eval-timeout-ms* 500]
-                                       ((deref #'lp/run-python-code)
-                                         pc
-                                         "print('fetched 1')\nwhile True:\n    pass"))]
-                          (expect (true? (:timeout? result)))
-                          (expect (some? (re-find #"fetched 1" (str (:stdout result))))))
-                        (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                      (catch Throwable _ nil)))))))
+                 (tpc/with-own [pc {}]
+                               (try (let [result (binding [rt/*eval-timeout-ms* 500]
+                                                   ((deref #'lp/run-python-code)
+                                                     pc
+                                                     "print('fetched 1')\nwhile True:\n    pass"))]
+                                      (expect (true? (:timeout? result)))
+                                      (expect (some? (re-find #"fetched 1"
+                                                              (str (:stdout result))))))
+                                    (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                                  (catch Throwable _ nil)))))))
 
-(defdescribe
-  python-block-runs-in-the-session-context-test
-  ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
-  ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
-  ;; AMBIENT context (an extension SYMBOL installs its own around every call),
-  ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
-  ;; extra filesystem root — "escapes the allowed workspace roots" — while
-  ;; `cat`/`grep` on the very same path answered normally.
-  (it
-    "gives a shim bridge the filesystem roots the session actually bound"
-    (let [pc
-          (:python-context (env/create-python-context {}))
+(defdescribe python-block-runs-in-the-session-context-test
+             ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
+             ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
+             ;; AMBIENT context (an extension SYMBOL installs its own around every call),
+             ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
+             ;; extra filesystem root — "escapes the allowed workspace roots" — while
+             ;; `cat`/`grep` on the very same path answered normally.
+             (it
+               "gives a shim bridge the filesystem roots the session actually bound"
+               (tpc/with-own
+                 [pc {}]
+                 (let [;; Outside the primary cwd and outside every always-on root
+                       ;; (temp dirs, `~/.vis`) — reachable ONLY as a bound root.
+                       outside
+                       (System/getProperty "user.home")
 
-          ;; Outside the primary cwd and outside every always-on root
-          ;; (temp dirs, `~/.vis`) — reachable ONLY as a bound root.
-          outside
-          (System/getProperty "user.home")
+                       code
+                       (str "try:\n"
+                            "    rows = ls(" (pr-str outside)
+                            ")\n" "    print('listed', isinstance(rows, str) and len(rows) > 0)\n"
+                            "except Exception as e:\n" "    print('refused', e)\n")
 
-          code
-          (str "try:\n"
-               "    rows = ls(" (pr-str outside)
-                ")\n" "    print('listed', isinstance(rows, str) and len(rows) > 0)\n"
-               "except Exception as e:\n" "    print('refused', e)\n")
+                       env-with
+                       (fn [roots]
+                         {:workspace/root (System/getProperty "user.dir")
+                          :workspace {:repo-root (System/getProperty "user.dir")
+                                      :root (System/getProperty "user.dir")}
+                          :security-policy {:jail-enabled true}
+                          :security/filesystem-roots roots
+                          :security/no-search-roots []})
 
-          env-with
-          (fn [roots]
-            {:workspace/root (System/getProperty "user.dir")
-             :workspace {:repo-root (System/getProperty "user.dir")
-                         :root (System/getProperty "user.dir")}
-             :security-policy {:jail-enabled true}
-             :security/filesystem-roots roots
-             :security/no-search-roots []})
+                       listing
+                       (fn [roots]
+                         (str (:stdout
+                                ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
 
-          listing
-          (fn [roots]
-            (str (:stdout ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
-
-      (try
-        ;; The path is genuinely outside what confinement grants by itself...
-        (expect (str/starts-with? (listing []) "refused"))
-        ;; ...and the moment the session binds it, the block's own `ls` reaches it.
-        (expect (str/starts-with? (listing [outside]) "listed True"))
-        (finally (try (.close ^org.graalvm.polyglot.Context pc true) (catch Throwable _ nil)))))))
+                   (try
+                     ;; The path is genuinely outside what confinement grants by itself...
+                     (expect (str/starts-with? (listing []) "refused"))
+                     ;; ...and the moment the session binds it, the block's own `ls` reaches it.
+                     (expect (str/starts-with? (listing [outside]) "listed True"))
+                     (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                   (catch Throwable _ nil))))))))
 
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`
@@ -5742,25 +5743,23 @@
   (with-redefs-fn {live-views-dir (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
                                                              (str "vis-views-" (random-uuid))))}
     (fn []
-      (let [pc
-            (:python-context (env/create-python-context {}))
+      (tpc/with-own [pc {}]
+                    (let [;; The bridge an extension crosses for a view, on a context of its own.
+                          _
+                          (python-extensions/bind-host! pc "loop-test")
 
-            ;; The bridge an extension crosses for a view, on a context of its own.
-            _
-            (python-extensions/bind-host! pc "loop-test")
+                          before
+                          (hi/open-live-ids)
 
-            before
-            (hi/open-live-ids)
+                          left
+                          #(remove before (hi/open-live-ids))]
 
-            left
-            #(remove before (hi/open-live-ids))]
-
-        (try [(binding [rt/*eval-timeout-ms* rt/MIN_EVAL_TIMEOUT_MS]
-                ((deref #'lp/run-python-code) pc code)) (vec (left))]
-             (finally (doseq [view-id (left)]
-                        (hi/close-live! view-id))
-                      (try (.close ^org.graalvm.polyglot.Context pc true)
-                           (catch Throwable _ nil))))))))
+                      (try [(binding [rt/*eval-timeout-ms* rt/MIN_EVAL_TIMEOUT_MS]
+                              ((deref #'lp/run-python-code) pc code)) (vec (left))]
+                           (finally (doseq [view-id (left)]
+                                      (hi/close-live! view-id))
+                                    (try (.close ^org.graalvm.polyglot.Context pc true)
+                                         (catch Throwable _ nil)))))))))
 
 (defdescribe live-view-owns-the-eval-wall-test
              ;; Regression, reported from the app: watching a CI run died at `Timeout (300s)` with the
@@ -6374,7 +6373,8 @@
                       (finally (System/setProperty "user.home" old-home)
                                (config/invalidate-config-cache!))))))
 
-(defdescribe create-environment-failure-disposes-sandbox-test
+(defdescribe
+  create-environment-failure-disposes-sandbox-test
   ;; A sandbox is built ~130 lines before `create-environment` returns, and
   ;; workspace resolution, extension discovery and the defs restore all run after
   ;; it. A throw in that stretch used to abandon it — and an abandoned sandbox is
@@ -6382,25 +6382,26 @@
   ;; Context, its Engine and the whole Python heap. So the FAILURE path leaked
   ;; worse than success ever could, on exactly the runs a caller retries.
   (it "closes the sandbox it built when a later step throws"
-    (let
-      [disposed
-       (atom [])
+      (let [disposed
+            (atom [])
 
-       boom
-       (RuntimeException. "workspace exploded")]
+            boom
+            (RuntimeException. "workspace exploded")]
 
-      (with-redefs-fn
-        {#'res/dispose! (fn [sandbox] (swap! disposed conj sandbox) nil)
-         ;; A step that runs AFTER the sandbox exists, and fails.
-         #'env/restore-session-defs! (fn [& _] (throw boom))}
-        (fn []
-          (let
-            [thrown
-             (try (lp/create-environment ::router {:db :memory}) nil (catch Throwable t t))]
-
-            (expect (identical? boom thrown) "the original failure must reach the caller")
-            (expect (= 1 (count @disposed))
-                    (str "create-environment abandoned its sandbox on the failure path"
-                         " (dispose! calls: " (count @disposed) ")"))
-            (expect (some? (:python-context (first @disposed)))
-                    "the disposed value must be the sandbox it built")))))))
+        (with-redefs-fn {#'res/dispose! (fn [sandbox]
+                                          (swap! disposed conj sandbox)
+                                          nil)
+                         ;; A step that runs AFTER the sandbox exists, and fails.
+                         #'env/restore-session-defs! (fn [& _]
+                                                       (throw boom))}
+          (fn []
+            (let [thrown
+                  (try (lp/create-environment ::router {:db :memory}) nil (catch Throwable t t))]
+              (expect (identical? boom thrown) "the original failure must reach the caller")
+              (expect (= 1 (count @disposed))
+                      (str "create-environment abandoned its sandbox on the failure path"
+                           " (dispose! calls: "
+                           (count @disposed)
+                           ")"))
+              (expect (some? (:python-context (first @disposed)))
+                      "the disposed value must be the sandbox it built")))))))

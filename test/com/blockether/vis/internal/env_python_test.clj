@@ -907,31 +907,30 @@
              ;; ever reached the durable turn row, the turn stayed `:running` in every listing,
              ;; and the next cancel was refused as `:not-running`, so pressing stop did nothing.
              (it "returns within its budget when the guest snapshot never returns"
-                 (let [ctx
-                       (:python-context (ep/create-python-context {}))
+                 (tpc/with-own
+                   [ctx {}]
+                   (let [sid
+                         (str "vis-test-defs-budget-" (System/nanoTime))
 
-                       sid
-                       (str "vis-test-defs-budget-" (System/nanoTime))
+                         _
+                         (ep/run-python-block ctx
+                                              (str "import time\n" "def __vis_defs_snapshot__():\n"
+                                                   "    time.sleep(30)\n" "    return ''\n"))
 
-                       _
-                       (ep/run-python-block ctx
-                                            (str "import time\n" "def __vis_defs_snapshot__():\n"
-                                                 "    time.sleep(30)\n" "    return ''\n"))
+                         started
+                         (System/currentTimeMillis)
 
-                       started
-                       (System/currentTimeMillis)
+                         out
+                         (ep/persist-session-defs! ctx sid)
 
-                       out
-                       (ep/persist-session-defs! ctx sid)
+                         elapsed
+                         (- (System/currentTimeMillis) started)]
 
-                       elapsed
-                       (- (System/currentTimeMillis) started)]
-
-                   (try (expect (nil? out))
-                        (expect
-                          (< elapsed 15000)
-                          (str "persist-session-defs! held the turn thread for " elapsed "ms"))
-                        (finally (.delete (io/file (paths/sandbox-defs-file sid))))))))
+                     (try (expect (nil? out))
+                          (expect
+                            (< elapsed 15000)
+                            (str "persist-session-defs! held the turn thread for " elapsed "ms"))
+                          (finally (.delete (io/file (paths/sandbox-defs-file sid)))))))))
 (defdescribe
   sandbox-open-flush-test
   ;; GraalPy does NOT refcount, so the CPython idiom
@@ -1102,15 +1101,12 @@
                                         (constantly :once)
                                         (fn []
                                           [{:name "ls" :text "PAGE THAT MUST LOSE"}]))
-           (let [ctx
-                 (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings (fn []
-                                                                                            nil))))
-
-                 out
-                 (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
-
-             (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
-             (expect (str/includes? out "ls")))
+           (tpc/with-own [ctx
+                          (ext/builtin-sandbox-bindings (fn []
+                                                          nil))]
+                         (let [out (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
+                           (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
+                           (expect (str/includes? out "ls"))))
            (finally (doc-corpus/register-source! ::collision (constantly :gone) (constantly []))))))
 
 ;; Regression: a skill added to `.agents/skills` mid-session was invisible to the
@@ -1121,35 +1117,30 @@
 (defdescribe
   the-document-corpus-is-read-live-test
   (it "answers a document that appeared after the context was built, and drops it when it goes"
-      (let [ctx
-            (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings (fn []
-                                                                                       nil))))
+      (tpc/with-own
+        [ctx
+         (ext/builtin-sandbox-bindings (fn []
+                                         nil))]
+        (let [read-it (fn []
+                        (str (:stdout (ep/run-python-block ctx "print(doc('freight-planning'))"))))]
+          (expect (str/includes? (read-it) "is not a handle"))
+          (try (doc-corpus/register-source! ::late
+                                            (constantly :present)
+                                            (fn []
+                                              [{:name "freight-planning"
+                                                :kind "skill"
+                                                :text "Routes crates of tangerines by rail."}]))
+               (let [out (read-it)
+                     hits (str (:stdout (ep/run-python-block
+                                          ctx
+                                          (str "print('found='+str('freight-planning' in "
+                                               "apropos('routes crates of tangerines')))"))))]
 
-            read-it
-            (fn []
-              (str (:stdout (ep/run-python-block ctx "print(doc('freight-planning'))"))))]
-
-        (expect (str/includes? (read-it) "is not a handle"))
-        (try (doc-corpus/register-source! ::late
-                                          (constantly :present)
-                                          (fn []
-                                            [{:name "freight-planning"
-                                              :kind "skill"
-                                              :text "Routes crates of tangerines by rail."}]))
-             (let [out
-                   (read-it)
-
-                   hits
-                   (str (:stdout (ep/run-python-block
-                                   ctx
-                                   (str "print('found='+str('freight-planning' in "
-                                        "apropos('routes crates of tangerines')))"))))]
-
-               (expect (str/includes? out "# freight-planning"))
-               (expect (str/includes? out "tangerines by rail"))
-               (expect (str/includes? hits "found=True")))
-             (finally (doc-corpus/register-source! ::late (constantly :gone) (constantly []))))
-        (expect (str/includes? (read-it) "is not a handle")))))
+                 (expect (str/includes? out "# freight-planning"))
+                 (expect (str/includes? out "tangerines by rail"))
+                 (expect (str/includes? hits "found=True")))
+               (finally (doc-corpus/register-source! ::late (constantly :gone) (constantly []))))
+          (expect (str/includes? (read-it) "is not a handle"))))))
 
 (defdescribe
   block-source-introspection-test
@@ -1589,137 +1580,134 @@
   ;; Listing your own helpers meant writing a globals()/co_filename comprehension
   ;; by hand every time, and reading one back meant remembering `inspect`.
   (it "lists the session's own functions, and refuses a name it never defined"
-      (let [ctx
-            (:python-context (ep/create-python-context {}))
+      (tpc/with-own [ctx {}]
+                    (let [empty-out
+                          (:stdout (ep/run-python-block ctx "print(defs())"))
 
-            empty-out
-            (:stdout (ep/run-python-block ctx "print(defs())"))
+                          _
+                          (ep/run-python-block
+                            ctx
+                            "from json import dumps\ndef widen(a, b=2):\n    return a * b\n")
 
-            _
-            (ep/run-python-block ctx
-                                 "from json import dumps\ndef widen(a, b=2):\n    return a * b\n")
+                          listed
+                          (:stdout (ep/run-python-block ctx "print(defs())"))
 
-            listed
-            (:stdout (ep/run-python-block ctx "print(defs())"))
+                          source
+                          (:stdout (ep/run-python-block ctx "print(defs(\"widen\"))"))
 
-            source
-            (:stdout (ep/run-python-block ctx "print(defs(\"widen\"))"))
+                          missing
+                          (:stdout (ep/run-python-block ctx
+                                                        (str "try:\n" "    defs(\"nope\")\n"
+                                                             "except NameError as exc:\n"
+                                                             "    print(\"refused:\", exc)\n")))]
 
-            missing
-            (:stdout (ep/run-python-block ctx
-                                          (str "try:\n" "    defs(\"nope\")\n"
-                                               "except NameError as exc:\n"
-                                               "    print(\"refused:\", exc)\n")))]
-
-        (expect (str/includes? empty-out "no functions defined by this session yet"))
-        (expect (str/includes? listed "widen(a, b=2)"))
-        ;; An IMPORTED function is not this session's definition.
-        (expect (not (str/includes? listed "dumps")))
-        (expect (str/includes? source "def widen(a, b=2):"))
-        (expect (str/includes? missing "refused:"))))
+                      (expect (str/includes? empty-out "no functions defined by this session yet"))
+                      (expect (str/includes? listed "widen(a, b=2)"))
+                      ;; An IMPORTED function is not this session's definition.
+                      (expect (not (str/includes? listed "dumps")))
+                      (expect (str/includes? source "def widen(a, b=2):"))
+                      (expect (str/includes? missing "refused:")))))
   ;; A helper the session wrote is a DOCUMENT only when it says something: the docstring is
   ;; what the listing previews, what `doc(name)` prints and what `apropos` can find — and its
   ;; absence is what keeps a bare handle (`quiet`, `where`, `vars`) out of a described ask.
   (it
     "reads a helper's docstring as its gist, its page and what apropos finds it by"
-    (let
-      [ctx
-       (:python-context (ep/create-python-context {}))
-
-       _
-       (ep/run-python-block
-         ctx
-         "def kebab_to_snake(text):\n    \"\"\"Rewrite a kebab-case identifier as snake_case.\n\n    Splits on the hyphen the way the wire keys do, so a wire name and an\n    engine keyword round-trip.\n    \"\"\"\n    return text.replace('-', '_')\n\ndef quiet(x):\n    return x\n")
-
-       listed
-       (:stdout (ep/run-python-block ctx "print(defs())"))
-
-       page
-       (:stdout (ep/run-python-block ctx "print(doc('kebab_to_snake'))"))
-
-       bare
-       (:stdout (ep/run-python-block ctx "print(doc('quiet'))"))
-
-       found
-       (:stdout
+    (tpc/with-own
+      [ctx {}]
+      (let
+        [_
          (ep/run-python-block
            ctx
-           "hits = apropos('rewrite a kebab-case identifier')\nprint('first=' + list(hits)[0])\nprint('quiet=' + str('quiet' in hits))\nrows = apropos('')\nprint('kind=' + rows['kebab_to_snake']['kind'])\nprint('gist=' + rows['kebab_to_snake']['gist'])\nprint('listed=' + str('quiet' in rows))\nprint('empty=' + repr(rows['quiet']['gist']))"))]
+           "def kebab_to_snake(text):\n    \"\"\"Rewrite a kebab-case identifier as snake_case.\n\n    Splits on the hyphen the way the wire keys do, so a wire name and an\n    engine keyword round-trip.\n    \"\"\"\n    return text.replace('-', '_')\n\ndef quiet(x):\n    return x\n")
 
-      ;; The listing previews the first line, and counts what is still missing.
-      (expect (str/includes? listed "Rewrite a kebab-case identifier as snake_case."))
-      (expect (str/includes? listed "1 has no docstring"))
-      ;; The page is the call line and the WHOLE docstring, like any tool's.
-      (expect (str/includes? page "kebab_to_snake(text)"))
-      (expect (str/includes? page "Splits on the hyphen"))
-      ;; An undocumented helper has no page, so the page says what would make one.
-      (expect (str/includes? bare "quiet(x)"))
-      (expect (str/includes? bare "carries no docstring"))
-      ;; Documented: searchable, first for its own words, and still `local`.
-      (expect (str/includes? found "first=kebab_to_snake"))
-      (expect (str/includes? found "kind=local"))
-      (expect (str/includes? found "gist=Rewrite a kebab-case identifier as snake_case."))
-      ;; Undocumented: listed with an empty gist, never in a described ask.
-      (expect (str/includes? found "quiet=False"))
-      (expect (str/includes? found "listed=True"))
-      (expect (str/includes? found "empty=''")))))
+         listed
+         (:stdout (ep/run-python-block ctx "print(defs())"))
 
-(defdescribe tool-shadow-test
-             ;; Regression: a helper named after a bound tool was accepted in silence and then
-             ;; quietly dropped — `def patch(...)` lived only inside its own block, was never
-             ;; persisted, and the next block silently got the tool back instead.
-             (it
-               "refuses a top-level def or class named after a bound tool, and keeps the tool"
-               (let [ctx
-                     (:python-context (ep/create-python-context {}))
+         page
+         (:stdout (ep/run-python-block ctx "print(doc('kebab_to_snake'))"))
 
-                     _
-                     (ep/set-python-binding! ctx
-                                             'shadow_probe
-                                             (fn [& _]
-                                               "REAL-TOOL"))
+         bare
+         (:stdout (ep/run-python-block ctx "print(doc('quiet'))"))
 
-                     refused
-                     (ep/run-python-block ctx "def shadow_probe(a):\n    return a\n")
+         found
+         (:stdout
+           (ep/run-python-block
+             ctx
+             "hits = apropos('rewrite a kebab-case identifier')\nprint('first=' + list(hits)[0])\nprint('quiet=' + str('quiet' in hits))\nrows = apropos('')\nprint('kind=' + rows['kebab_to_snake']['kind'])\nprint('gist=' + rows['kebab_to_snake']['gist'])\nprint('listed=' + str('quiet' in rows))\nprint('empty=' + repr(rows['quiet']['gist']))"))]
 
-                     klass
-                     (ep/run-python-block ctx "class defs:\n    pass\n")
+        ;; The listing previews the first line, and counts what is still missing.
+        (expect (str/includes? listed "Rewrite a kebab-case identifier as snake_case."))
+        (expect (str/includes? listed "1 has no docstring"))
+        ;; The page is the call line and the WHOLE docstring, like any tool's.
+        (expect (str/includes? page "kebab_to_snake(text)"))
+        (expect (str/includes? page "Splits on the hyphen"))
+        ;; An undocumented helper has no page, so the page says what would make one.
+        (expect (str/includes? bare "quiet(x)"))
+        (expect (str/includes? bare "carries no docstring"))
+        ;; Documented: searchable, first for its own words, and still `local`.
+        (expect (str/includes? found "first=kebab_to_snake"))
+        (expect (str/includes? found "kind=local"))
+        (expect (str/includes? found "gist=Rewrite a kebab-case identifier as snake_case."))
+        ;; Undocumented: listed with an empty gist, never in a described ask.
+        (expect (str/includes? found "quiet=False"))
+        (expect (str/includes? found "listed=True"))
+        (expect (str/includes? found "empty=''"))))))
 
-                     nested
-                     (:stdout (ep/run-python-block ctx
-                                                   (str "def outer():\n"
-                                                        "    def defs(x):\n" "        return x\n"
-                                                        "    return defs(7)\n" "print(outer())\n")))
+(defdescribe
+  tool-shadow-test
+  ;; Regression: a helper named after a bound tool was accepted in silence and then
+  ;; quietly dropped — `def patch(...)` lived only inside its own block, was never
+  ;; persisted, and the next block silently got the tool back instead.
+  (it
+    "refuses a top-level def or class named after a bound tool, and keeps the tool"
+    (tpc/with-own
+      [ctx {}]
+      (let [_
+            (ep/set-python-binding! ctx
+                                    'shadow_probe
+                                    (fn [& _]
+                                      "REAL-TOOL"))
 
-                     var-shadow
-                     (:stdout
-                       (ep/run-python-block ctx "shadow_probe = 'a string'\nprint(shadow_probe)"))
+            refused
+            (ep/run-python-block ctx "def shadow_probe(a):\n    return a\n")
 
-                     after
-                     (:stdout (ep/run-python-block ctx "print(shadow_probe('x'))"))]
+            klass
+            (ep/run-python-block ctx "class defs:\n    pass\n")
 
-                 (expect (str/includes? (str (:error refused)) "`shadow_probe` is a bound tool"))
-                 (expect (str/includes? (str (:error refused)) "shadow_probe_mine"))
-                 (expect (str/includes? (str (:error klass)) "`defs` is a bound tool"))
-                 ;; A def nested in another function is an ordinary local, and a plain
-                 ;; assignment is still a block-local shadow: neither is refused.
-                 (expect (str/includes? nested "7"))
-                 (expect (str/includes? var-shadow "a string"))
-                 (expect (str/includes? after "REAL-TOOL"))))
-             ;; Regression, the same trap across processes: a snapshot written before a tool
-             ;; existed re-created `def patch(...)` straight over the real one, and the tool
-             ;; was gone for the whole process — while the restored count never noticed.
-             (it "never restores a definition whose name is a bound tool now"
-                 (let [{:keys [restored stdout]}
-                       (restore-into-fresh-sandbox
-                         [:file
-                          (str "def defs(*a, **k):\n    return \"HIJACKED\"\n\n"
-                               "doc = \"clobbered\"\n"
-                               "def kept(n):\n    return n * 3\n")]
-                         (str "print(kept(2))\n" "print(\"HIJACKED\" in str(defs()))\n"
-                              "print(callable(doc))\n" "print(__vis_restore_dropped__)\n"))]
-                   (expect (= 1 restored))
-                   (expect (str/includes? stdout "6"))
-                   (expect (str/includes? stdout "False"))
-                   (expect (str/includes? stdout "True"))
-                   (expect (str/includes? stdout "['defs', 'doc']")))))
+            nested
+            (:stdout (ep/run-python-block ctx
+                                          (str "def outer():\n"
+                                               "    def defs(x):\n" "        return x\n"
+                                               "    return defs(7)\n" "print(outer())\n")))
+
+            var-shadow
+            (:stdout (ep/run-python-block ctx "shadow_probe = 'a string'\nprint(shadow_probe)"))
+
+            after
+            (:stdout (ep/run-python-block ctx "print(shadow_probe('x'))"))]
+
+        (expect (str/includes? (str (:error refused)) "`shadow_probe` is a bound tool"))
+        (expect (str/includes? (str (:error refused)) "shadow_probe_mine"))
+        (expect (str/includes? (str (:error klass)) "`defs` is a bound tool"))
+        ;; A def nested in another function is an ordinary local, and a plain
+        ;; assignment is still a block-local shadow: neither is refused.
+        (expect (str/includes? nested "7"))
+        (expect (str/includes? var-shadow "a string"))
+        (expect (str/includes? after "REAL-TOOL")))))
+  ;; Regression, the same trap across processes: a snapshot written before a tool
+  ;; existed re-created `def patch(...)` straight over the real one, and the tool
+  ;; was gone for the whole process — while the restored count never noticed.
+  (it "never restores a definition whose name is a bound tool now"
+      (let [{:keys [restored stdout]}
+            (restore-into-fresh-sandbox
+              [:file
+               (str "def defs(*a, **k):\n    return \"HIJACKED\"\n\n"
+                    "doc = \"clobbered\"\n"
+                    "def kept(n):\n    return n * 3\n")]
+              (str "print(kept(2))\n" "print(\"HIJACKED\" in str(defs()))\n"
+                   "print(callable(doc))\n" "print(__vis_restore_dropped__)\n"))]
+        (expect (= 1 restored))
+        (expect (str/includes? stdout "6"))
+        (expect (str/includes? stdout "False"))
+        (expect (str/includes? stdout "True"))
+        (expect (str/includes? stdout "['defs', 'doc']")))))

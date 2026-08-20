@@ -20,9 +20,7 @@
 
 (defmacro with-fresh-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
-                                                                         {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {}] ~@body))
 
 (defn- encoded-fixture [value] (.encodeToString (Base64/getEncoder) (nippy/freeze value)))
 

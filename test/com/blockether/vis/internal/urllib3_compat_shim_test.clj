@@ -2,7 +2,8 @@
   "The urllib3-compat shim: a urllib3 module (PoolManager/HTTPResponse) published
    into sys.modules, wrapping the requests shim. Tested offline by monkeypatching
    requests.request with a canned echo Response (no network)."
-  (:require [com.blockether.vis.internal.env-python :as ep]
+  (:require [com.blockether.vis.test-python-context :as tpc]
+            [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
@@ -405,7 +406,8 @@ _rq.request = _echo
 ;; the shim's own exception and let the import machinery blame a missing module.
 (defdescribe urllib3-load-independence-test
              (it "loads and encodes multipart with the stdlib uuid module unavailable"
-                 (let [c (:python-context (ep/create-python-context {}))]
+                 (tpc/with-own
+                   [c {}]
                    (expect (true? (ev c
                                       (str "import sys\n"
                                            "sys.modules['uuid'] = None\n" "import urllib3\n"
@@ -414,13 +416,14 @@ _rq.request = _echo
                                            "and b.startswith(('--' + ct.split('=')[1]).encode()) "
                                            "and b.endswith(b'--\\r\\n')"))))))
              (it "names the shim and the real cause when a shim cannot load"
-                 (let [c (:python-context (ep/create-python-context {}))]
-                   (expect (true? (ev c
-                                      (str "import sys\n" "sys.modules['json'] = None\n"
-                                           "out = 'imported'\n" "try:\n"
-                                           "    import urllib3\n" "except ImportError as e:\n"
-                                           "    out = str(e)\n"
-                                           "'json' in out and 'urllib3' in out")))))))
+                 (tpc/with-own [c {}]
+                               (expect (true? (ev c
+                                                  (str "import sys\n" "sys.modules['json'] = None\n"
+                                                       "out = 'imported'\n" "try:\n"
+                                                       "    import urllib3\n"
+                                                       "except ImportError as e:\n"
+                                                       "    out = str(e)\n"
+                                                       "'json' in out and 'urllib3' in out")))))))
 
 ;; Regression, issue #141: PoolManager swallowed every TLS option in `**_ignored`,
 ;; so `cert_reqs='CERT_NONE'` (and ca_certs / cert_file) never reached the socket

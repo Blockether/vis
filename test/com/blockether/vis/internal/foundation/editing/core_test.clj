@@ -10,7 +10,8 @@
    bringing up a full SCI sandbox. Temp files land under
    `target/editing-test/` (always inside the repo cwd, so
    `safe-path` accepts them)."
-  (:require [babashka.fs :as fs]
+  (:require [com.blockether.vis.test-python-context :as tpc]
+            [babashka.fs :as fs]
             [clojure.set]
             [clojure.string :as string]
             ;; Loads/registers the built-in foundation extension so direct private
@@ -4328,19 +4329,16 @@
         (expect (nil? (get docs 'ls)))
         (expect (= ["ls"] (:shim/globals ls-shim)))))
   (it "lists a real directory from real Python"
-      (let [ctx
-            (:python-context (ep/create-python-context (extension/builtin-sandbox-bindings
-                                                         (constantly nil))))
-
-            result
-            (ep/run-python-block ctx
-                                 (str "tree = "
-                                      "ls(\"src/com/blockether/vis/internal/foundation/editing\")\n"
-                                      "print(isinstance(tree, str) and \"core.clj\" in tree)")
-                                 "t1/i1")]
-
-        (expect (nil? (:error result)))
-        (expect (= "True\n" (:stdout result)))))
+      (tpc/with-own [ctx (extension/builtin-sandbox-bindings (constantly nil))]
+                    (let [result (ep/run-python-block
+                                   ctx
+                                   (str
+                                     "tree = "
+                                     "ls(\"src/com/blockether/vis/internal/foundation/editing\")\n"
+                                     "print(isinstance(tree, str) and \"core.clj\" in tree)")
+                                   "t1/i1")]
+                      (expect (nil? (:error result)))
+                      (expect (= "True\n" (:stdout result))))))
   ;; Regression: `cat` answered its anchored text as a BARE STRING, so the FIRST
   ;; real call from the sandbox died at the extension boundary with "Symbol 'cat'
   ;; must return a canonical :envelope map"; and because its declared parameter
