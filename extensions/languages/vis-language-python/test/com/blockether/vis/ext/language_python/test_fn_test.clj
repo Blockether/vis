@@ -136,6 +136,20 @@
                (expect (= 0 (get res "files")))
                (expect (= 0 (get res "pass"))))
              (finally (cleanup root)))))
+  ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: an extension test
+  ;; reached the active session host and filed its live view as user work.
+  (it "refuses a live session view from code running under run_tests"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (spit (io/file root "tests" "test_live.py")
+                   (str "import vis\n\n" "def test_live_is_not_session_work():\n"
+                        "    with vis.live('Test view', [vis.status('state', 'Running')]):\n"
+                        "        pass\n"))
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)} {}))]
+               (expect (= 1 (get res "fail")))
+               (expect (str/includes? (get-in res ["failures" 0 "message"])
+                                      "vis.live is not available while running tests")))
+             (finally (cleanup root)))))
   ;; The `environment` option is documented in the tool's description, not in a
   ;; JSON Schema enum: the model reaches `run_tests` from Python, where the option
   ;; is a plain string key.

@@ -10,6 +10,7 @@ replays that same `ops.json` through the engine's own live dispatch, so an op th
 that the engine would refuse turns a Clojure test red rather than failing in front of a human.
 """
 
+import copy
 import json
 import pathlib
 
@@ -35,26 +36,167 @@ def fixture(name):
 
 
 class Recorder:
-    """The host with every live envelope kept — what the extension SAID, verbatim.
+    """An in-memory live host plus every envelope the extension said, verbatim.
 
-    It delegates to the real host, so the view is opened, patched and closed by the same code
-    that runs in a session; the recording is only a carbon copy of the wire.
+    Tests must never delegate `vis.live` to the session host: that would publish
+    their fixture as user work and file its NDJSON record as a conversation
+    artifact. The Clojure boundary test replays these recorded envelopes through
+    the real engine separately.
     """
+
+    _COLLECTION = {"stat": "stats", "steps": "steps", "table": "rows", "link": "links"}
 
     def __init__(self, inner):
         self._inner = inner
         self.said = []
-
-    def live(self, envelope_json):
-        envelope = json.loads(envelope_json)
-        self.said.append(envelope)
-        answer_json = self._inner.live(envelope_json)
-        if envelope.get("op") == "open":
-            self.view_id = str(json.loads(answer_json).get("view_id") or "")
-        return answer_json
+        self.view_id = "test-live-view"
+        self._view = None
+        self._result = None
+        self._seq = 0
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
+
+    @staticmethod
+    def _nodes(nodes):
+        for node in nodes or []:
+            yield node
+            yield from Recorder._nodes(node.get("fields"))
+
+    def _node(self, node_id):
+        return next(
+            node
+            for node in self._nodes(self._view.get("nodes"))
+            if node["id"] == node_id
+        )
+
+    @staticmethod
+    def _upsert(old, incoming):
+        positions = {item["id"]: index for index, item in enumerate(old)}
+        result = copy.deepcopy(old)
+        for item in incoming:
+            item = copy.deepcopy(item)
+            if item["id"] in positions:
+                result[positions[item["id"]]] = item
+            else:
+                positions[item["id"]] = len(result)
+                result.append(item)
+        return result
+
+    def _materialize(self, view):
+        view = copy.deepcopy(view)
+        for node in self._nodes(view.get("nodes")):
+            kind = node.get("type")
+            if kind == "log":
+                node.setdefault("lines", [])
+                node.setdefault("window_lines", 2000)
+                node["total_lines"] = len(node["lines"])
+            elif kind == "table":
+                node.setdefault("rows", [])
+                node.setdefault("max_rows", 5000)
+                node.setdefault("order", "insertion")
+            elif kind in self._COLLECTION:
+                items = node.setdefault(self._COLLECTION[kind], [])
+                if kind == "link":
+                    for item in items:
+                        item.setdefault("target_kind", "url")
+        return view
+
+    def _apply(self, op):
+        action = op["op"]
+        if action == "add-node":
+            nodes = self._view["nodes"]
+            node = self._materialize({"nodes": [op["node_spec"]]})["nodes"][0]
+            if op.get("after") is None:
+                nodes.append(node)
+            else:
+                at = next(i for i, old in enumerate(nodes) if old["id"] == op["after"])
+                nodes.insert(at + 1, node)
+            return
+        if action == "remove-node":
+            self._view["nodes"] = [
+                n for n in self._view["nodes"] if n["id"] != op["node_id"]
+            ]
+            return
+
+        node = self._node(op["node_id"])
+        if action == "set":
+            node.update(
+                {
+                    k: copy.deepcopy(v)
+                    for k, v in op.items()
+                    if k not in ("op", "node_id")
+                }
+            )
+        elif action == "clear":
+            key = "lines" if node["type"] == "log" else self._COLLECTION[node["type"]]
+            node[key] = []
+        elif action == "append" and node["type"] == "log":
+            lines = copy.deepcopy(op.get("lines") or [])
+            node["total_lines"] += len(lines)
+            node["lines"] = (node["lines"] + lines)[-node["window_lines"] :]
+        elif action == "append":
+            key = self._COLLECTION[node["type"]]
+            incoming = copy.deepcopy(op.get(key) or [])
+            if node["type"] == "link":
+                for item in incoming:
+                    item.setdefault("target_kind", "url")
+            node[key] = self._upsert(node[key], incoming)
+        else:
+            raise AssertionError(f"unsupported test live op: {op!r}")
+
+    def _picture(self):
+        picture = copy.deepcopy(self._view)
+        for node in self._nodes(picture.get("nodes")):
+            node.pop("focused_ids", None)
+            node.pop("is_focusable", None)
+        return picture
+
+    def host_live(self, envelope_json):
+        """Apply one envelope without recording it as something the extension said."""
+        envelope = json.loads(envelope_json)
+        action = envelope.get("op")
+        if action == "open":
+            self._view = self._materialize(envelope["view"])
+            self._result = None
+            self._seq = 0
+            answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
+        elif self._result is not None:
+            answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
+        elif action == "patch":
+            for op in (envelope.get("patch") or {}).get("ops") or []:
+                self._apply(op)
+            self._seq += 1
+            answer = {"view_id": self.view_id, "is_open": True, "seq": self._seq}
+        elif action == "state":
+            answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
+        elif action == "close":
+            ending = envelope.get("ending") or {}
+            reason = ending.get("reason") or "completed"
+            self._result = {
+                "view_id": self.view_id,
+                "reason": reason,
+                "is_completed": reason == "completed",
+                "is_from_human": False,
+                "summary": ending.get("summary"),
+                "view": self._picture(),
+                "elided": {},
+            }
+            self._result.update(
+                {
+                    k: copy.deepcopy(v)
+                    for k, v in ending.items()
+                    if k not in self._result
+                }
+            )
+            answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
+        else:
+            raise AssertionError(f"unsupported test live envelope: {envelope!r}")
+        return json.dumps(answer)
+
+    def live(self, envelope_json):
+        self.said.append(json.loads(envelope_json))
+        return self.host_live(envelope_json)
 
     def ops(self):
         """The envelopes with the run-specific view id dropped: what a golden can hold."""
@@ -416,7 +558,7 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
         view_id = recorder.view_id
         # The surface action reaches the host directly; Recorder only captures what
         # the extension says, so this remains a real external focus change.
-        recorder._inner.live(
+        recorder.host_live(
             json.dumps(
                 {
                     "op": "patch",
@@ -486,7 +628,7 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
             envelope = json.loads(envelope_json)
             if envelope.get("op") == "patch" and not getattr(self, "stopped", False):
                 self.stopped = True
-                self._inner.live(
+                self.host_live(
                     json.dumps(
                         {
                             "op": "close",
@@ -598,7 +740,7 @@ def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):
         polls.append(True)
         if len(polls) == 6:
             # The only thing that may end this: the person watching.
-            vis._host.live(
+            recorder.host_live(
                 json.dumps(
                     {
                         "op": "close",

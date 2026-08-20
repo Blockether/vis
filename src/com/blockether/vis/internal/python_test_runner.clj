@@ -4,8 +4,8 @@
    (same trust level as the extension it covers). Tests import the extension's
    own package through the SAME `sys.path` sugar the loader gives `extension.py`,
    so an author ships real Python tests next to the code and runs them with the
-   project's own tooling. Pure Python end to end — the shim is stdlib-only, no
-   host bridge, no pip.
+   project's own tooling. Pure Python end to end — the shim is stdlib-only, and
+   the test host refuses session live views so a test cannot publish artifacts.
 
    Split out of `python-extensions` (which owns loading/registration) so the
    runner is a single, testable responsibility. It depends on that namespace's
@@ -177,7 +177,7 @@
         ^Context ctx
         (pyx/build-context (.getName test-file))]
 
-    (try (pyx/bind-host! ctx (.getName test-file))
+    (try (pyx/bind-test-host! ctx (.getName test-file))
          (locking ctx
            (.eval ctx "python" ^String pyx/bootstrap-python)
            (.eval ctx "python" shim-src)

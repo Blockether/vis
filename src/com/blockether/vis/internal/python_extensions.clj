@@ -502,6 +502,23 @@
                                            " resolved")})
                       (json/write-json-str resolved)))))))
 
+(defn ^:no-doc bind-test-host!
+  "Bind the ordinary trusted-extension host, except that a test may not mount a
+   live view into the session running `run_tests`. Unit tests supply an in-memory
+   host when they need to exercise live envelopes; accidentally reaching this
+   callback fails the test at the boundary instead of publishing test work to a
+   human channel and filing its record as a conversation artifact."
+  [^Context ctx label]
+  (bind-host! ctx label)
+  (.putMember
+    (.getBindings ctx "python")
+    "__vis_host_live__"
+    (->executable
+      (fn [& _]
+        (throw (ex-info "vis.live is not available while running tests; use an in-memory test host"
+                        {:type :vis/test-live-refused})))))
+  ctx)
+
 (def ^:no-doc host-member-names
   "Every `__vis_host_*` global the bootstrap reads out of a context's bindings, in
    the order `packages/vis-contract/resources/vis-contract/python-host.edn` declares them.
