@@ -9,20 +9,22 @@ read, copied or printed: authentication is the operator's own `gh` session, and 
 unauthenticated `gh` refuses in ONE line before any view opens — nothing to watch beats an empty
 pane.
 
-Seven nodes, one per question a person asks about a run: what is happening (`run`), how far
-(`progress`), how many of each (`score`), which jobs (`jobs`), which steps of the job in focus
-(`failing`), what it printed (`output`), where to open it (`links`). One mapping serves all of them:
-`queued`/`in_progress` is `running`, `success` is `ok`, `skipped` and `neutral` are `idle`, anything
-else is `error`. Rows are upserted by the job's `databaseId`, so a job that changes state keeps its
-slot and the eye keeps its place, and only what CHANGED since the last poll crosses the wire.
+Eight nodes, one per question a person asks about a run: what is happening (`run`), how far
+(`progress`), how many of each (`score`), which jobs (`jobs`), which steps belong to the focused
+jobs (`steps`), what moved (`activity`), what the focused jobs printed (`output`), and where to
+open it (`links`). Job rows are controls: all concurrently running jobs are focused by default;
+with none running, the last failed job (or simply the last job) is focused. A tap replaces that
+focus in shared live state, so the extension, terminal, and every Companion agree on the steps and
+logs below it. One mapping serves all nodes: `queued`/`in_progress` is `running`, `success` is `ok`,
+`skipped` and `neutral` are `idle`, anything else is `error`. Rows are upserted by the job's
+`databaseId`, so a job that changes state keeps its slot and the eye keeps its place, and only what
+CHANGED since the last poll crosses the wire.
 
-GitHub serves a log per JOB, not per run: `gh run view --job N --log` refuses with "run … is
-still in progress" until the whole run is over, while the REST endpoint `actions/jobs/N/logs`
-answers the moment THAT job ends. So a job that fails eight minutes into a twenty-minute matrix
-shows its log eight minutes in, and until then the pane is a feed of what MOVED — every job that
-changed state, every step of the job in focus. The tail is what the model reads; the view's
-record keeps every line that was written, and the settled pane is one photograph of the log that
-matters rather than the hour of feed that led to it.
+GitHub serves a log per JOB, not per run: `gh run view --job N --log` refuses while the run is
+still in progress, while the REST endpoint `actions/jobs/N/logs` answers the moment THAT job ends.
+The selected log therefore appears as soon as its job completes; a running selection says plainly
+that GitHub has not served it yet. The activity feed stays separate, and the settled pane is one
+photograph of the selected logs rather than the hour of movement that led to them.
 """
 
 import json
@@ -55,7 +57,7 @@ class GhMissing(RuntimeError):
     """`gh` is absent or signed out — the one refusal that happens before a view opens."""
 
 
-# -- the mapping: a `gh run view` payload, read as the seven answers --------------------
+# -- the mapping: a `gh run view` payload, read as the eight answers --------------------
 
 
 def tone_of(status, conclusion):
@@ -91,39 +93,93 @@ def _state_text(job):
     )
 
 
-def run_shape(payload):
-    """Everything the seven nodes show, derived from one `gh run view --json` payload.
+def _job_id(job, index=0):
+    """The stable table address of one job, with the same fallback its row uses."""
+    return str(job.get("databaseId") or job.get("name") or index)
 
-    Pure: the same payload always answers the same shape, which is what makes the mapping
-    testable without a network and the patches computable by comparing two of them.
+
+def default_focus_ids(jobs):
+    """All running jobs, else the last failed job, else the last job."""
+    running = [
+        _job_id(job, index)
+        for index, job in enumerate(jobs)
+        if str(job.get("status") or "") in _RUNNING_STATES
+    ]
+    if running:
+        return running
+    failed = [
+        _job_id(job, index)
+        for index, job in enumerate(jobs)
+        if tone_of(job.get("status"), job.get("conclusion")) == "error"
+    ]
+    if failed:
+        return [failed[-1]]
+    return [_job_id(jobs[-1], len(jobs) - 1)] if jobs else []
+
+
+def run_shape(payload, focus_ids=None):
+    """Everything the eight nodes show, derived from one `gh run view --json` payload.
+
+    Pure: `focus_ids=None` applies the live default; explicit ids are the human's shared
+    selection, pruned to jobs that still exist. The same payload and focus always answer the
+    same shape, which makes both the mapping and click behavior testable without a network.
     """
-    jobs = [j for j in (payload.get("jobs") or []) if isinstance(j, dict)]
-    tones = [tone_of(j.get("status"), j.get("conclusion")) for j in jobs]
-    finished = [j for j in jobs if str(j.get("status") or "") == "completed"]
-    failed = [j for j, tone in zip(jobs, tones, strict=True) if tone == "error"]
-    running = [j for j in jobs if str(j.get("status") or "") in _RUNNING_STATES]
+    jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
+    tones = [tone_of(job.get("status"), job.get("conclusion")) for job in jobs]
+    indexed = [(_job_id(job, index), job) for index, job in enumerate(jobs)]
+    by_id = dict(indexed)
+    requested = (
+        default_focus_ids(jobs)
+        if focus_ids is None
+        else [str(one) for one in focus_ids]
+    )
+    selected_ids = []
+    for job_id in requested:
+        if job_id in by_id and job_id not in selected_ids:
+            selected_ids.append(job_id)
+    if not selected_ids and jobs:
+        selected_ids = default_focus_ids(jobs)
+    selected = [(job_id, by_id[job_id]) for job_id in selected_ids]
+    finished = [job for job in jobs if str(job.get("status") or "") == "completed"]
+    failed = [
+        job for job, job_tone in zip(jobs, tones, strict=True) if job_tone == "error"
+    ]
     counted = {
-        "passed": sum(1 for t in tones if t == "ok"),
+        "passed": sum(1 for job_tone in tones if job_tone == "ok"),
         "failed": len(failed),
-        "skipped": sum(1 for t in tones if t == "idle"),
-        "queued": sum(1 for t in tones if t == "running"),
+        "skipped": sum(1 for job_tone in tones if job_tone == "idle"),
+        "queued": sum(1 for job_tone in tones if job_tone == "running"),
     }
     headline = f"{len(finished)} of {len(jobs)} jobs finished"
     if failed:
         headline += f", {len(failed)} failed"
     is_over = str(payload.get("status") or "") == "completed"
-    focus = (running or failed or jobs or [None])[0]
-    in_focus = str(focus.get("name") or "?") if focus else ""
+    focus_names = [str(job.get("name") or "?") for _, job in selected]
+    focus = focus_names[0] if len(focus_names) == 1 else " + ".join(focus_names)
+    focus_detail = focus if len(focus_names) == 1 else f"{len(focus_names)} jobs"
+    steps = []
+    for job_id, job in selected:
+        for index, step in enumerate(job.get("steps") or []):
+            step_name = str(step.get("name") or "?")
+            steps.append(
+                {
+                    "id": f"{job_id}:{step.get('number') or step_name or index}",
+                    "label": (
+                        f"{job.get('name') or '?'} · {step_name}"
+                        if len(selected) > 1
+                        else step_name
+                    ),
+                    "tone": tone_of(step.get("status"), step.get("conclusion")),
+                }
+            )
     return {
         "is_over": is_over,
         "run_url": str(payload.get("url") or ""),
         "headline": headline,
-        # A node's LABEL is declared once and never patched, so the job whose steps and log are
-        # shown is named here, where it can change with the focus.
         "detail": "workflow **{}** on `{}` · in focus **{}**".format(
             payload.get("workflowName") or "?",
             payload.get("headBranch") or "?",
-            in_focus,
+            focus_detail,
         ),
         "tone": tone_of(payload.get("status"), payload.get("conclusion")),
         "done": len(finished),
@@ -139,28 +195,21 @@ def run_shape(payload):
         ],
         "rows": [
             {
-                "id": str(job.get("databaseId") or job.get("name") or index),
+                "id": _job_id(job, index),
                 "cells": [str(job.get("name") or "?"), _state_text(job), _elapsed(job)],
-                "tone": tone,
+                "tone": job_tone,
             }
-            for index, (job, tone) in enumerate(zip(jobs, tones, strict=True))
+            for index, (job, job_tone) in enumerate(zip(jobs, tones, strict=True))
         ],
-        "focus": in_focus,
-        "focus_id": str(focus.get("databaseId") or "") if focus else "",
-        "steps": [
-            {
-                "id": str(step.get("number") or step.get("name") or index),
-                "label": str(step.get("name") or "?"),
-                "tone": tone_of(step.get("status"), step.get("conclusion")),
-            }
-            for index, step in enumerate(focus.get("steps") or [] if focus else [])
-        ],
+        "focus": focus,
+        "focus_ids": selected_ids,
+        "steps": steps,
         "links": [
             {"id": "run", "label": "This run", "target": str(payload.get("url") or "")},
         ]
         + [
             {
-                "id": str(job.get("databaseId") or job.get("name")),
+                "id": _job_id(job),
                 "label": f"Failed · {job.get('name')}",
                 "target": str(job.get("url") or payload.get("url") or ""),
             }
@@ -170,7 +219,7 @@ def run_shape(payload):
 
 
 def declared_nodes(shape):
-    """The seven nodes, declared once from the first poll and addressed by id ever after."""
+    """The eight nodes, declared once from the first poll and addressed by id ever after."""
     return [
         vis.status(
             "run", shape["headline"], tone=shape["tone"], detail=shape["detail"]
@@ -188,23 +237,22 @@ def declared_nodes(shape):
                 vis.table_row(row["id"], row["cells"], tone=row["tone"])
                 for row in shape["rows"]
             ],
+            is_focusable=True,
+            focused_ids=shape["focus_ids"],
         ),
         vis.steps(
-            "failing",
+            "steps",
             steps=[dict(one) for one in shape["steps"]],
-            label="Steps of the job in focus",
+            label="Steps of focused jobs",
         ),
-        vis.output("output", label="Log of the job in focus"),
+        vis.output("activity", label="Activity"),
+        vis.output("output", label="Logs of focused jobs"),
         vis.link("links", links=[dict(one) for one in shape["links"]]),
     ]
 
 
 def push_changes(view, before, after):
-    """Patch ONLY what moved between two polls — the whole point of upserting by id.
-
-    A run of eighteen jobs settles one row at a time; re-pushing the table every five seconds
-    would reshuffle nothing but would cost the wire (and the reader's place) every tick.
-    """
+    """Patch ONLY what moved between two polls — including shared table focus."""
     if (
         before.get("headline") != after["headline"]
         or before.get("tone") != after["tone"]
@@ -224,12 +272,13 @@ def push_changes(view, before, after):
         if rows.get(row["id"]) != row:
             view["jobs"].upsert(row["id"], row["cells"], tone=row["tone"])
     steps = {one["id"]: one for one in before.get("steps") or []}
-    if before.get("focus_id") != after["focus_id"]:
+    if before.get("focus_ids") != after["focus_ids"]:
+        view["jobs"].focus(*after["focus_ids"])
         steps = {}
-        view["failing"].clear()
+        view["steps"].clear()
     for step in after["steps"]:
         if steps.get(step["id"]) != step:
-            view["failing"].set(step["id"], tone=step["tone"], label=step["label"])
+            view["steps"].set(step["id"], tone=step["tone"], label=step["label"])
     known = {one["id"] for one in before.get("links") or []}
     for one in after["links"]:
         if one["id"] not in known:
@@ -378,7 +427,7 @@ def feed_lines(before, after):
     as it happens, and they cost nothing: they are read out of the poll the view is patched from.
 
     A job seen for the first time is news; a STEP is not, or every focus change would dump the
-    whole checklist the `failing` node already paints.
+    whole checklist the `steps` node already paints.
     """
     was = {row["id"]: row for row in before.get("rows") or []}
     lines = []
@@ -397,7 +446,7 @@ def feed_lines(before, after):
         )
     steps = (
         {one["id"]: one for one in before.get("steps") or []}
-        if before.get("focus_id") == after.get("focus_id")
+        if before.get("focus_ids") == after.get("focus_ids")
         else {}
     )
     for step in after.get("steps") or []:
@@ -408,68 +457,134 @@ def feed_lines(before, after):
     return lines
 
 
-def _file_logs(view, shape, logged, log_of):
-    """Write the log of every job that has FAILED and has not been shown yet.
+def _focus_signature(shape):
+    """The focused rows and the state that decides whether their logs are ready."""
+    rows = {row["id"]: row for row in shape.get("rows") or []}
+    return tuple(
+        (
+            job_id,
+            rows.get(job_id, {}).get("tone"),
+            tuple(rows.get(job_id, {}).get("cells") or []),
+        )
+        for job_id in shape.get("focus_ids") or []
+    )
 
-    Attempted once per job: a log GitHub would not serve is not re-asked every three seconds, and
-    the job in focus is fetched again when the run ends anyway.
-    """
-    for row in shape.get("rows") or []:
-        if row["tone"] != "error" or row["id"] in logged:
+
+def _focused_ids_from_state(state):
+    """The jobs table selection a surface last wrote into shared live state."""
+    pending = list((state or {}).get("nodes") or [])
+    while pending:
+        node = pending.pop(0)
+        if node.get("id") == "jobs" and node.get("type") == "table":
+            return [str(one) for one in node.get("focused_ids") or []]
+        pending[0:0] = list(node.get("fields") or [])
+    return []
+
+
+def _job_log_tail(job_id, lines, log_of, cache):
+    """One job tail, fetched once for this exact window size."""
+    if not log_of:
+        return None
+    key = (job_id, lines)
+    if key not in cache:
+        cache[key] = log_of(job_id, lines)
+    return cache[key]
+
+
+def _focus_log_lines(shape, log_of, cache, lines):
+    """Headers and log tails for exactly the jobs currently in focus."""
+    rows = {row["id"]: row for row in shape.get("rows") or []}
+    shown = []
+    for job_id in shape.get("focus_ids") or []:
+        row = rows.get(job_id)
+        if not row:
             continue
-        logged.add(row["id"])
-        tail = log_of(row["id"], FAILED_TAIL_LINES)
+        shown.append(f"── {row['cells'][0]} · log")
+        if row["tone"] == "running":
+            shown.append("· GitHub has not served this running job's log yet")
+            continue
+        tail = _job_log_tail(job_id, lines, log_of, cache)
         if tail:
-            view["output"].write(f"── {row['cells'][0]} · log", *tail)
+            shown.extend(tail)
+        else:
+            shown.append("· No job log is available")
+    return shown or ["· No job is focused"]
+
+
+def _file_failure_logs(view, shape, filed, log_of, cache):
+    """Keep every newly failed job's log visible immediately in Activity."""
+    for row in shape.get("rows") or []:
+        if row["tone"] != "error" or row["id"] in filed:
+            continue
+        filed.add(row["id"])
+        tail = _job_log_tail(row["id"], FAILED_TAIL_LINES, log_of, cache)
+        if tail:
+            view["activity"].write(f"── {row['cells'][0]} · failed log", *tail)
+
+
+def _show_focus_logs(view, shape, log_of, cache, lines, clear=True):
+    """Replace the output pane with one combined photograph of focused job logs."""
+    if clear:
+        view["output"].clear()
+    view["output"].write(*_focus_log_lines(shape, log_of, cache, lines))
 
 
 def watch(title, description, poll, log_of=None):
-    """Open the view on the first poll, patch it until the run ends, answer the picture.
+    """Open a selectable CI view, patch it until the run ends, answer its picture.
 
-    Whatever ends it, the model gets the same shape: a human's stop answers the state they were
-    looking at plus their note, a finished run answers the finished run.
+    Job focus is shared live state. Each tick reads it before deriving the next shape, so a
+    Companion tap changes the steps and logs the extension writes; absent a tap, all parallel
+    running jobs follow together, then the last failed (or last) job becomes the default.
 
     There is no clock here. The loop ends when GitHub says the run is over, when `gh` stops
-    answering, or when the human presses Interrupt — never on a duration this extension
-    invented. A watch whose end the extension cannot SEE is meant to hang: the view is on
-    screen and the stop is one keystroke away, so the person watching decides, and the engine's
-    eval wall (lifted for as long as a view is open) is nobody's deadline.
+    answering, or when the human presses Interrupt — never on a duration this extension invented.
     """
     shape = run_shape(poll())
     began = time.monotonic()
-    logged = set()
+    manual_focus = None
+    log_cache = {}
+    filed_failures = set()
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
-            view["output"].write("· what moves is written here as it happens")
-            if log_of:
-                _file_logs(view, shape, logged, log_of)
+            view["activity"].write("· job and step changes appear here as they happen")
+            _file_failure_logs(view, shape, filed_failures, log_of, log_cache)
+            _show_focus_logs(
+                view, shape, log_of, log_cache, FAILED_TAIL_LINES, clear=False
+            )
+            shown_focus = _focus_signature(shape)
             while not shape["is_over"]:
                 if view.is_interrupted:
                     break
                 time.sleep(_tick(time.monotonic() - began))
                 try:
-                    fresh = run_shape(poll())
+                    payload = poll()
                 except RuntimeError as failure:
                     view["run"].set(str(failure)[:200], tone="error")
                     break
+                try:
+                    # Read AFTER the network poll: a tap made while `gh` was answering
+                    # must win over the extension's next default-focus patch.
+                    selected = _focused_ids_from_state(view.state())
+                except vis.Interrupted:
+                    break
+                if selected != shape["focus_ids"]:
+                    manual_focus = selected
+                fresh = run_shape(payload, focus_ids=manual_focus)
                 push_changes(view, shape, fresh)
                 moved = feed_lines(shape, fresh)
                 if moved:
-                    view["output"].write(*moved)
-                if log_of:
-                    _file_logs(view, fresh, logged, log_of)
+                    view["activity"].write(*moved)
+                _file_failure_logs(view, fresh, filed_failures, log_of, log_cache)
+                fresh_focus = _focus_signature(fresh)
+                if fresh_focus != shown_focus and not fresh["is_over"]:
+                    _show_focus_logs(view, fresh, log_of, log_cache, FAILED_TAIL_LINES)
+                    shown_focus = fresh_focus
                 shape = fresh
-            if shape["is_over"] and log_of:
-                # The settled pane is ONE photograph: the log of the job that must be acted on,
-                # not the feed that led there. The record still holds every line of it.
-                tail = log_of(shape["focus_id"], LOG_TAIL_LINES)
-                if tail:
-                    view["output"].clear()
-                    view["output"].write(f"── {shape['focus']} · log", *tail)
+            if shape["is_over"]:
+                _show_focus_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
         except vis.Interrupted:
             # The human stopped watching. The view already holds its verdict, `close` answers
-            # it, and `shape` is the last poll that reached them — which is the picture they
-            # were looking at when they stopped.
+            # it, and `shape` is the last poll that reached them.
             pass
         return view.close(summary=_summary(shape))
 
@@ -478,12 +593,12 @@ def gh_watch_run(run=None, repo=None):
     """What is this CI run doing, and how did it end? Watch a GitHub Actions run to its verdict.
 
     Opens a live view a person can watch (and stop) while it polls `gh run view` every three
-    seconds, easing to eight past the first five minutes, and answers the picture at the end: the
-    jobs, the score, the failing job's steps and the tail of its log. Every job that moves is
-    written into the log pane as it moves, and a job that FAILS shows its log the moment it
-    fails — the rest of the matrix is not waited for. `run` is a run id or URL; without one, the
-    newest run on the current branch. `repo` is `owner/name` for a repo other than the working
-    directory's.
+    seconds, easing to eight past five minutes. Job rows are controls: all jobs running in
+    parallel are focused initially; tap one to replace the steps and log below with that job.
+    With none running, the last failed job (or the last job) is focused. A completed selected
+    job's log appears immediately; a running one says GitHub has not served it yet. `run` is a
+    run id or URL; without one, the newest run on the current branch. `repo` is `owner/name` for
+    a repository other than the working directory's.
     """
     require_gh()
     run_id = run or newest_run(repo)
@@ -574,7 +689,7 @@ def gh_watch_checks(pr=None, repo=None):
 
 PROMPT = """gh_ surface active — watch a GitHub Actions run on a live view the human can see.
   gh_watch_run(run=None, repo=None)     gh_watch_checks(pr=None, repo=None)
-Both open a view, poll `gh` until the run ends, and answer the picture (jobs, score, failing
+Both open a view, poll `gh` until the run ends, and answer the picture (jobs, score, focused
 steps, log tail) — use them instead of a shell loop over `gh run view`."""
 
 

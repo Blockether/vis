@@ -1076,13 +1076,19 @@
                               (long (:window-lines hi-spec/log-defaults))))
 
             :table
-            (assoc base
-              :columns (items :columns)
-              :rows (items :rows)
-              :max-rows (if-some [bound (pick* node :max-rows)]
-                          (live-long node-fail! ":max-rows" bound)
-                          (long (:max-rows hi-spec/table-defaults)))
-              :order (normalize-live-order node-fail! (pick* node :order)))
+            (cond-> (assoc base
+                      :columns (items :columns)
+                      :rows (items :rows)
+                      :max-rows (if-some [bound (pick* node :max-rows)]
+                                  (live-long node-fail! ":max-rows" bound)
+                                  (long (:max-rows hi-spec/table-defaults)))
+                      :order (normalize-live-order node-fail! (pick* node :order)))
+              (some? (pick* node :is-focusable))
+              (assoc :is-focusable
+                (bool-value node-fail! ":is-focusable" (pick* node :is-focusable) false))
+
+              (some? (pick* node :focused-ids))
+              (assoc :focused-ids (text-items node-fail! ":focused-ids" (pick* node :focused-ids))))
 
             :link
             (assoc base :links (items :links))))))))
@@ -1197,6 +1203,8 @@
             (text-items fail! ":lines" value))
    :item-ids (fn [fail! value]
                (text-items fail! ":item-ids" value))
+   :focused-ids (fn [fail! value]
+                  (text-items fail! ":focused-ids" value))
    :rows (fn [fail! value]
            (normalize-live-items fail! :rows value))
    :stats (fn [fail! value]
@@ -1780,6 +1788,16 @@
                    :session-id (:session-id entry)
                    :patch applied})
         patched))))
+
+(defn focus-live!
+  "Focus `item-ids` in focusable table `node-id` of open view `view-id`.
+
+   This is an ordinary durable `set` patch, not app-local selection: the writer
+   sees the change through `state`, and every TUI or Companion painting the view
+   receives the same new focus. Stale row ids and non-focusable tables are
+   refused by the materializer without changing the view."
+  [view-id node-id item-ids]
+  (patch-live! view-id [{:op :set :node-id node-id :focused-ids item-ids}]))
 
 (defn- human-note
   "The comment a human left with their stop: trimmed, and cut to

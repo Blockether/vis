@@ -255,7 +255,7 @@
    set for the same reason [[field-keys]] is: the parser derives the snake_case
    spellings from it, so no key is written down twice."
   #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
-    :columns :rows :max-rows :order :links
+    :columns :rows :max-rows :order :is-focusable :focused-ids :links
     ;; A layout GROUP's own two keys: which way its children run, and the
     ;; children themselves. DECLARED once and never `set` — both are absent from
     ;; every op in [[live-op-key-sets]], so the arrangement a reader learned
@@ -293,7 +293,8 @@
    `:node-id` is the ADDRESS of the node an op speaks to — spelled apart from the
    form tree's `:node`, which is a whole field; `:node-spec` is the whole node
    `add-node` introduces."
-  {:set #{:op :node-id :text :detail :tone :label :value :done :total :stats :steps :links}
+  {:set #{:op :node-id :text :detail :tone :label :value :done :total :stats :steps :focused-ids
+          :links}
    :append #{:op :node-id :lines :rows :stats :steps :links}
    :remove #{:op :node-id :item-ids}
    :clear #{:op :node-id}
@@ -835,6 +836,8 @@
 (s/def ::view-id non-blank-string?)
 (s/def ::is-completed boolean?)
 (s/def ::is-from-human boolean?)                            ; a PERSON stopped it, not the run
+(s/def ::is-focusable boolean?)
+(s/def ::focused-ids (s/and (s/coll-of ::id :kind vector?) #(= (count %) (count (distinct %)))))
 (s/def ::note (s/and non-blank-string? #(<= (count %) (long note-chars))))
 (s/def ::summary non-blank-string?)
 (s/def ::total-lines nat-int?)                              ; the size of a log's record, engine-stamped
@@ -936,7 +939,8 @@
   (s/keys :req-un [::id ::type ::lines ::window-lines] :opt-un [::label ::total-lines]))
 (defmethod live-node-form :table
   [_]
-  (s/keys :req-un [::id ::type ::columns ::rows ::max-rows ::order] :opt-un [::label]))
+  (s/keys :req-un [::id ::type ::columns ::rows ::max-rows ::order]
+          :opt-un [::label ::is-focusable ::focused-ids]))
 (defmethod live-node-form :link [_] (s/keys :req-un [::id ::type ::links] :opt-un [::label]))
 ;; Layout is the request's own group, so a view arranges its work with the
 ;; vocabulary the form already speaks. `::type` is deliberately absent from the
@@ -962,6 +966,15 @@
   [{:keys [type columns order]}]
   (or (not= :table type) (not (map? order)) (contains? (set (map :id columns)) (:by order))))
 
+(defn- focus-belongs-to-table?
+  "Focus is control state of a focusable TABLE, and can only name rows the table
+   still holds. Other node types cannot carry either table-only key."
+  [{:keys [type rows is-focusable focused-ids] :as node}]
+  (if (= :table type)
+    (and (or (not (contains? node :focused-ids)) (true? is-focusable))
+         (every? (set (map :id rows)) focused-ids))
+    (and (not (contains? node :is-focusable)) (not (contains? node :focused-ids)))))
+
 ;; The children of a live group are live NODES, while [[::fields]] is the FORM
 ;; tree's children — so a group's `:fields` is spelled under its own spec name
 ;; and `s/keys` checks it against the right vocabulary.
@@ -978,7 +991,8 @@
          live-node-typed?
          layout-only-when-grouped?
          (s/multi-spec live-node-form :type)
-         ordered-by-declared-column?))
+         ordered-by-declared-column?
+         focus-belongs-to-table?))
 
 (defn- live-tree
   "Every node of a view depth first, the children of a layout group included. The
@@ -1017,7 +1031,8 @@
 (defmethod live-op-form :set
   [_]
   (s/keys :req-un [::op ::node-id]
-          :opt-un [::text ::detail ::tone ::label ::value ::done ::total ::stats ::steps ::links]))
+          :opt-un [::text ::detail ::tone ::label ::value ::done ::total ::stats ::steps
+                   ::focused-ids ::links]))
 (defmethod live-op-form :append
   [_]
   (s/keys :req-un [::op ::node-id] :opt-un [::lines ::rows ::stats ::steps ::links]))

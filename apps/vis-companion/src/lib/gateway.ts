@@ -3405,6 +3405,20 @@ export class GatewayClient {
     );
   }
 
+  /** Replace one focusable live table's selected row ids in shared engine state. */
+  focusLiveView(
+    sid: string,
+    viewId: string,
+    nodeId: string,
+    itemIds: string[],
+  ): Promise<{ focused_ids: string[]; node_id: string; view_id: string }> {
+    return this.request<{ focused_ids: string[]; node_id: string; view_id: string }>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live/${encodeURIComponent(viewId)}/actions/focus`,
+      { node_id: nodeId, item_ids: itemIds },
+    );
+  }
+
   /**
    * Ask one view to stop, with `note` — the comment the person leaves with the
    * stop, when they leave one. The extension SEES the interruption and ends the

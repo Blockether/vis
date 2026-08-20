@@ -372,6 +372,8 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
                         vis.table_column("job", "Job"),
                         vis.table_column("state", "State"),
                     ],
+                    is_focusable=True,
+                    focused_ids=[],
                 ),
                 vis.stat(
                     "why",
@@ -385,12 +387,14 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         view.status("Building", tone="running")
         view.row("api", ["api", "queued"])
         view.row("api", ["api", "done"], tone="ok")
+        view["jobs"].focus("api")
         view.write("cloning", "compiling")
         state = view.state()
         nodes = _painted(state["nodes"])
         # The row was upserted by its id, not appended twice.
         assert [row["cells"] for row in nodes["jobs"]["rows"]] == [["api", "done"]]
         assert nodes["jobs"]["rows"][0]["tone"] == "ok"
+        assert nodes["jobs"]["focused_ids"] == ["api"]
         assert nodes["tail"]["lines"] == ["cloning", "compiling"]
         assert nodes["now"]["text"] == "Building"
         # A row is a node of its own in the state the host holds, and the ops

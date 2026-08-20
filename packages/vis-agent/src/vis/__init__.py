@@ -975,6 +975,11 @@ class Table(_KeyedNode):
             ],
         )
 
+    def focus(self, *item_ids):
+        # Focus is shared engine state. A surface writes it and the extension can
+        # observe it through `LiveView.state()` on its next update.
+        return self._op("set", focused_ids=[str(item_id) for item_id in item_ids])
+
 
 class Link(_KeyedNode):
     def add(self, link_id, label, target, target_kind=None, tone=None):
@@ -1446,6 +1451,7 @@ def output(node_id, **spec):
 def table(node_id, columns=None, **spec):
     # Rows keyed by id. `order` declares how they paint — 'insertion' (the
     # default), 'newest-first', or {'by': 'duration', 'dir': 'desc'}.
+    # `is_focusable=True` makes rows controls; `focused_ids` is shared state.
     return _live_node("table", node_id, dict(spec, columns=columns))
 
 

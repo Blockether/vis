@@ -174,6 +174,8 @@ export interface LiveTableNode extends LiveNodeBase {
   rows: LiveRow[];
   max_rows: number;
   order: LiveOrder;
+  is_focusable: boolean;
+  focused_ids: string[];
 }
 
 export interface LiveLink {
@@ -274,6 +276,15 @@ function rows(value: unknown): Record<string, unknown>[] {
 
 function lines(value: unknown): string[] {
   return Array.isArray(value) ? value.map((line) => text(line)) : [];
+}
+
+/** Distinct selected ids which still name a row, in the engine's order. */
+function focusedIds(value: unknown, tableRows: LiveRow[]): string[] {
+  const existing = new Set(tableRows.map((row) => row.id));
+  const seen = new Set<string>();
+  return (Array.isArray(value) ? value : [])
+    .map(text)
+    .filter((id) => id !== '' && existing.has(id) && !seen.has(id) && Boolean(seen.add(id)));
 }
 
 /** An unknown tone paints as `idle` rather than as nothing: the LINE still matters. */
@@ -415,15 +426,20 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         window_lines: count(node.window_lines, LIVE_LOG_WINDOW),
         total_lines: count(node.total_lines, lines(node.lines).length),
       };
-    case 'table':
+    case 'table': {
+      const tableRows = keyed(node.rows, rowFromWire);
+      const isFocusable = node.is_focusable === true;
       return {
         ...base,
         type: 'table',
         columns: keyed(node.columns, columnFromWire),
-        rows: keyed(node.rows, rowFromWire),
+        rows: tableRows,
         max_rows: count(node.max_rows, LIVE_TABLE_MAX_ROWS),
         order: order(node.order),
+        is_focusable: isFocusable,
+        focused_ids: isFocusable ? focusedIds(node.focused_ids, tableRows) : [],
       };
+    }
     case 'link':
       return { ...base, type: 'link', links: keyed(node.links, linkFromWire) };
   }
@@ -540,6 +556,15 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         label: 'label' in op ? optionalText(op.label) : node.label,
         steps: 'steps' in op ? keyed(op.steps, stepFromWire) : node.steps,
       };
+    case 'table':
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        focused_ids:
+          'focused_ids' in op && node.is_focusable
+            ? focusedIds(op.focused_ids, node.rows)
+            : node.focused_ids,
+      };
     case 'link':
       return {
         ...node,
@@ -587,8 +612,14 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
 
 function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   switch (node.type) {
-    case 'table':
-      return { ...node, rows: withoutIds(node.rows, op.item_ids) };
+    case 'table': {
+      const tableRows = withoutIds(node.rows, op.item_ids);
+      return {
+        ...node,
+        rows: tableRows,
+        focused_ids: focusedIds(node.focused_ids, tableRows),
+      };
+    }
     case 'stat':
       return { ...node, stats: withoutIds(node.stats, op.item_ids) };
     case 'steps':
@@ -606,7 +637,7 @@ function applyClear(node: LiveLeafNode): LiveNode {
     case 'log':
       return { ...node, lines: [] };
     case 'table':
-      return { ...node, rows: [] };
+      return { ...node, rows: [], focused_ids: [] };
     case 'stat':
       return { ...node, stats: [] };
     case 'steps':

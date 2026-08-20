@@ -65,22 +65,38 @@
           (:result (last answers))
 
           view
-          (:view verdict)]
+          (:view verdict)
+
+          opened-view
+          (:view (first answers))]
 
       ;; Every push before the close was accepted: the wire the extension speaks IS this one.
       (expect (every? :is-open (butlast answers)))
       (expect (= :completed (:reason verdict)))
       (expect (str/starts-with? (:summary verdict) "6 of 6 jobs finished, 1 failed"))
-      ;; Seven nodes, one per question a person asks about a run.
-      (expect (= ["run" "progress" "score" "jobs" "failing" "output" "links"]
+      ;; Eight nodes: seven current answers plus the in-view activity history.
+      (expect (= ["run" "progress" "score" "jobs" "steps" "activity" "output" "links"]
                  (mapv :id (:nodes view))))
-      (expect (= [:status :progress :stat :table :steps :log :link] (mapv :type (:nodes view))))
+      (expect (= [:status :progress :stat :table :steps :log :log :link]
+                 (mapv :type (:nodes view))))
       (expect (= "6 of 6 jobs finished, 1 failed" (:text (node view "run"))))
       (expect (= :error (:tone (node view "run"))))
       (expect (= [6 6] ((juxt :done :total) (node view "progress"))))
       (expect (= ["5" "1" "0" "0"] (mapv :value-text (:stats (node view "score")))))
       ;; A row is addressed by the job's databaseId, so a job that changes state keeps its slot.
-      (let [jobs (:rows (node view "jobs"))]
+      (let [jobs-node
+            (node view "jobs")
+
+            opened-jobs-node
+            (node opened-view "jobs")
+
+            jobs
+            (:rows jobs-node)]
+
+        ;; The live view starts with every concurrently running job in focus. Interactive-only
+        ;; state is intentionally absent from the budgeted verdict the model reads.
+        (expect (true? (:is-focusable opened-jobs-node)))
+        (expect (= ["95742028721" "95742028781"] (:focused-ids opened-jobs-node)))
         (expect (= 6 (count jobs)))
         (expect (= ["95742028721" "95742028770" "95742028781" "95742028809" "95742028943"
                     "95742029230"]
@@ -88,10 +104,12 @@
         (expect (= :error (:tone (first (filter #(= "95742028770" (:id %)) jobs)))))
         (expect (= [:ok :error :ok :ok :ok :ok] (mapv :tone jobs))))
       ;; The checklist follows the job in focus: the failing job's steps, not the running one's.
-      (expect (= 10 (count (:steps (node view "failing")))))
-      (expect (some #(= :error (:tone %)) (:steps (node view "failing"))))
-      ;; The settled pane is ONE photograph — the job named, then the tail of its log. The feed
-      ;; that ran while the jobs moved stays in the record, not in what the model reads.
+      (expect (= 10 (count (:steps (node view "steps")))))
+      (expect (some #(= :error (:tone %)) (:steps (node view "steps"))))
+      ;; Activity stays INSIDE the view and files a failure tail as soon as that job fails; the
+      ;; settled focused pane remains one photograph of the selected job's log.
+      (expect (= 10 (count (:lines (node view "activity")))))
+      (expect (str/includes? (str/join "\n" (:lines (node view "activity"))) "· failed log"))
       (expect (= 7 (count (:lines (node view "output")))))
       (expect (str/starts-with? (first (:lines (node view "output")))
                                 "── tests / vis-agent + vis-contract (PyPI packages) · log"))
@@ -140,5 +158,5 @@
                   (json/read-json (hi/live-json! (json/write-json-str envelope)) :key-fn identity)]
 
               (expect (true? (get answer "is_open")))
-              (expect (= ["run" "progress" "score" "jobs" "failing" "output" "links"]
+              (expect (= ["run" "progress" "score" "jobs" "steps" "activity" "output" "links"]
                          (mapv #(get % "id") (get-in answer ["view" "nodes"]))))))))))

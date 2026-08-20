@@ -51,7 +51,7 @@
    :stat #{:stats}
    :steps #{:steps}
    :log #{:window-lines}
-   :table #{:order :max-rows}
+   :table #{:order :max-rows :focused-ids}
    :link #{:links}})
 
 (def ^:private appendable-key
@@ -208,6 +208,12 @@
                       (str "a " (name (:type node))
                            " node has no " (str/join ", " foreign)
                            " to set; it sets " (str/join ", " (sort (map name allowed))))))
+    (when (contains? given :focused-ids)
+      (when-not (true? (:is-focusable node))
+        (invalid-patch! (:id node) "this table is not focusable"))
+      (let [row-ids (set (map :id (:rows node)))]
+        (when-let [missing (first (remove row-ids (:focused-ids op)))]
+          (invalid-patch! (:id node) (str "there is no row " missing " to focus")))))
     (let [merged (merge node (select-keys op (vec given)))]
       (checked-node (if (contains? given :stats)
                       (assoc merged :stats (checked-count! merged (:stats op)))
@@ -253,14 +259,25 @@
             :total-lines (+ (long (:total-lines node)) (count items))))
         (update node k #(checked-count! node (upsert % items)))))))
 
+(defn- prune-focused
+  "Drop focus ids whose rows no longer exist, without adding focus metadata to a
+   table that never declared the control."
+  [node]
+  (if (contains? node :focused-ids)
+    (let [row-ids (set (map :id (:rows node)))]
+      (update node :focused-ids #(filterv row-ids %)))
+    node))
+
 (defn- apply-remove
   "A node without the named items. A node with no keyed collection has nothing
-   to remove and says so."
+   to remove and says so. Removing table rows also prunes transient focus."
   [node op]
   (let [{:keys [key]} (spec/item-bounds (:type node))]
     (when (nil? key)
       (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds no removable items")))
-    (update node key without-ids (:item-ids op))))
+    (cond-> (update node key without-ids (:item-ids op))
+      (= :table (:type node))
+      prune-focused)))
 
 (defn- apply-clear
   "A node emptied. Clearing a log empties the WINDOW, never the record: the
@@ -273,7 +290,9 @@
     (let [{:keys [key]} (spec/item-bounds (:type node))]
       (when (nil? key)
         (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds nothing to clear")))
-      (assoc node key []))))
+      (cond-> (assoc node key [])
+        (= :table (:type node))
+        prune-focused))))
 
 (defn- insert-after
   "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
@@ -705,9 +724,10 @@
                          shown
                          (if (> (count rows) limit) (subvec rows 0 limit) rows)]
 
-                     (with-meta (assoc node
-                                  :rows shown
-                                  :order :insertion)
+                     (with-meta (-> node
+                                    (assoc :rows shown
+                                           :order :insertion)
+                                    (dissoc :is-focusable :focused-ids))
                        {:elided (- (count rows) (count shown))}))
 
                    node))

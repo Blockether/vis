@@ -7,7 +7,7 @@
       "nodes": [
         {
           "tone": "running",
-          "detail": "workflow **CI** on `main` · in focus **tests / macos-latest**",
+          "detail": "workflow **CI** on `main` · in focus **2 jobs**",
           "text": "4 of 6 jobs finished, 1 failed",
           "type": "status",
           "id": "run"
@@ -105,6 +105,11 @@
               ]
             }
           ],
+          "is_focusable": true,
+          "focused_ids": [
+            "95742028721",
+            "95742028781"
+          ],
           "columns": [
             {
               "id": "job",
@@ -123,79 +128,99 @@
           "id": "jobs"
         },
         {
-          "label": "Steps of the job in focus",
+          "label": "Steps of focused jobs",
           "steps": [
             {
-              "id": "1",
-              "label": "Set up job",
+              "id": "95742028721:1",
+              "label": "tests / macos-latest · Set up job",
               "tone": "ok"
             },
             {
-              "id": "2",
-              "label": "Run actions/checkout@v7",
+              "id": "95742028721:2",
+              "label": "tests / macos-latest · Run actions/checkout@v7",
               "tone": "ok"
             },
             {
-              "id": "3",
-              "label": "Run ./.github/actions/setup-graalvm-25",
+              "id": "95742028721:3",
+              "label": "tests / macos-latest · Run ./.github/actions/setup-graalvm-25",
               "tone": "ok"
             },
             {
-              "id": "4",
-              "label": "Run DeLaGuardo/setup-clojure@13.6.1",
+              "id": "95742028721:4",
+              "label": "tests / macos-latest · Run DeLaGuardo/setup-clojure@13.6.1",
               "tone": "ok"
             },
             {
-              "id": "5",
-              "label": "Run actions/cache@v6",
+              "id": "95742028721:5",
+              "label": "tests / macos-latest · Run actions/cache@v6",
               "tone": "ok"
             },
             {
-              "id": "6",
-              "label": "Seed a minimal AI provider config + harness fixtures",
+              "id": "95742028721:6",
+              "label": "tests / macos-latest · Seed a minimal AI provider config + harness fixtures",
               "tone": "ok"
             },
             {
-              "id": "7",
-              "label": "Install bubblewrap + passt (Linux jail enforcer + filtered egress)",
+              "id": "95742028721:7",
+              "label": "tests / macos-latest · Install bubblewrap + passt (Linux jail enforcer + filtered egress)",
               "tone": "idle"
             },
             {
-              "id": "8",
-              "label": "Run actions/cache@v6",
+              "id": "95742028721:8",
+              "label": "tests / macos-latest · Run actions/cache@v6",
               "tone": "ok"
             },
             {
-              "id": "9",
-              "label": "Provision the sherpa-onnx native runtime",
+              "id": "95742028721:9",
+              "label": "tests / macos-latest · Provision the sherpa-onnx native runtime",
               "tone": "ok"
             },
             {
-              "id": "10",
-              "label": "Run test suite",
+              "id": "95742028721:10",
+              "label": "tests / macos-latest · Run test suite",
               "tone": "running"
             },
             {
-              "id": "18",
-              "label": "Post Run actions/cache@v6",
+              "id": "95742028721:18",
+              "label": "tests / macos-latest · Post Run actions/cache@v6",
               "tone": "running"
             },
             {
-              "id": "19",
-              "label": "Post Run actions/cache@v6",
+              "id": "95742028721:19",
+              "label": "tests / macos-latest · Post Run actions/cache@v6",
               "tone": "running"
             },
             {
-              "id": "20",
-              "label": "Post Run actions/checkout@v7",
+              "id": "95742028721:20",
+              "label": "tests / macos-latest · Post Run actions/checkout@v7",
               "tone": "running"
+            },
+            {
+              "id": "95742028781:1",
+              "label": "tests / ubuntu-latest · Set up job",
+              "tone": "ok"
+            },
+            {
+              "id": "95742028781:2",
+              "label": "tests / ubuntu-latest · Run actions/checkout@v7",
+              "tone": "ok"
+            },
+            {
+              "id": "95742028781:3",
+              "label": "tests / ubuntu-latest · Run ./.github/actions/setup-graalvm-25",
+              "tone": "ok"
             }
           ],
           "type": "steps",
-          "id": "failing"
+          "id": "steps"
         },
         {
-          "label": "Log of the job in focus",
+          "label": "Activity",
+          "type": "log",
+          "id": "activity"
+        },
+        {
+          "label": "Logs of focused jobs",
           "type": "log",
           "id": "output"
         },
@@ -224,10 +249,10 @@
       "ops": [
         {
           "lines": [
-            "· what moves is written here as it happens"
+            "· job and step changes appear here as they happen"
           ],
           "op": "append",
-          "node_id": "output"
+          "node_id": "activity"
         }
       ]
     }
@@ -238,7 +263,7 @@
       "ops": [
         {
           "lines": [
-            "── tests / vis-agent + vis-contract (PyPI packages) · log",
+            "── tests / vis-agent + vis-contract (PyPI packages) · failed log",
             "2026-08-18T14:10:24.6255054Z     [",
             "2026-08-18T14:10:24.6255326Z         'open',",
             "2026-08-18T14:10:24.6255617Z   -     'patch',",
@@ -247,10 +272,23 @@
             "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
           ],
           "op": "append",
+          "node_id": "activity"
+        },
+        {
+          "lines": [
+            "── tests / macos-latest · log",
+            "· GitHub has not served this running job's log yet",
+            "── tests / ubuntu-latest · log",
+            "· GitHub has not served this running job's log yet"
+          ],
+          "op": "append",
           "node_id": "output"
         }
       ]
     }
+  },
+  {
+    "op": "state"
   },
   {
     "op": "state"
@@ -315,64 +353,71 @@
           "node_id": "jobs"
         },
         {
+          "focused_ids": [
+            "95742028770"
+          ],
+          "op": "set",
+          "node_id": "jobs"
+        },
+        {
           "op": "clear",
-          "node_id": "failing"
+          "node_id": "steps"
         },
         {
           "steps": [
             {
-              "id": "1",
+              "id": "95742028770:1",
               "tone": "ok",
               "label": "Set up job"
             },
             {
-              "id": "2",
+              "id": "95742028770:2",
               "tone": "ok",
               "label": "Run actions/checkout@v7"
             },
             {
-              "id": "3",
+              "id": "95742028770:3",
               "tone": "ok",
               "label": "Run actions/setup-python@v6"
             },
             {
-              "id": "4",
+              "id": "95742028770:4",
               "tone": "ok",
               "label": "Install the test tools"
             },
             {
-              "id": "5",
+              "id": "95742028770:5",
               "tone": "error",
               "label": "Run both package suites"
             },
             {
-              "id": "6",
+              "id": "95742028770:6",
               "tone": "idle",
               "label": "Lint and format-check both packages"
             },
             {
-              "id": "7",
+              "id": "95742028770:7",
               "tone": "idle",
               "label": "Build both wheels and import the installed pair"
             },
             {
-              "id": "13",
+              "id": "95742028770:13",
               "tone": "idle",
               "label": "Post Run actions/setup-python@v6"
             },
             {
-              "id": "14",
+              "id": "95742028770:14",
               "tone": "ok",
               "label": "Post Run actions/checkout@v7"
             },
             {
-              "id": "15",
+              "id": "95742028770:15",
               "tone": "ok",
               "label": "Complete job"
             }
           ],
           "op": "append",
-          "node_id": "failing"
+          "node_id": "steps"
         },
         {
           "lines": [
@@ -380,7 +425,7 @@
             "✓ tests / ubuntu-latest · success · 12m 54s"
           ],
           "op": "append",
-          "node_id": "output"
+          "node_id": "activity"
         },
         {
           "op": "clear",

@@ -4940,9 +4940,9 @@ export function SessionScreen({
     };
   }, [client, sid, liveTurnId, liveTurnAttachments]);
 
-  // A view a run is SHOWING is not only a panel: while one is open the running
-  // row names what is on screen instead of saying Vis is thinking, so the phase
-  // line and the panel below it read ONE list.
+  // A view a run is SHOWING belongs inside the running assistant row: after the
+  // tool trace it explains, before the phase ticker that names it. Detached views
+  // still have a fallback at the transcript end when no live row exists.
   const liveViews = useLiveViews(client, subscriptions, sid);
   const watching = liveViews.at(-1)?.title ?? null;
 
@@ -4994,6 +4994,11 @@ export function SessionScreen({
           startedAt={liveTurn.startedAt}
           client={client}
           sid={sid}
+          livePanel={
+            <div className="mt-5">
+              <LiveView views={liveViews} client={client} sid={sid} />
+            </div>
+          }
         />
       </div>
     );
@@ -5007,6 +5012,7 @@ export function SessionScreen({
     session?.workspace?.root,
     session?.workspace?.repo_root,
     watching,
+    liveViews,
   ]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
   // has to do: the anchor observer holds the reader's line for every mutation.
@@ -5317,14 +5323,14 @@ export function SessionScreen({
 
                 {liveRow}
 
-                {/* A run SHOWING its work (`vis.live`) stands at the END of the
-                  transcript, where whatever is happening now already lands. It
-                  is not a dialog: nobody has to answer it, so it takes no scrim
-                  and no scroll lock — it fills in while the operator reads, and
-                  it leaves when the run ends, exactly as the terminal band does. */}
-                <div className="mt-5">
-                  <LiveView views={liveViews} client={client} sid={sid} />
-                </div>
+                {/* A view can outlive the optimistic running row during resync. In that
+                  narrow gap it still paints at the transcript end; otherwise the row owns
+                  it so the phase line follows, rather than precedes, the live panel. */}
+                {!liveRow && (
+                  <div className="mt-5">
+                    <LiveView views={liveViews} client={client} sid={sid} />
+                  </div>
+                )}
               </>
             </div>
           </div>

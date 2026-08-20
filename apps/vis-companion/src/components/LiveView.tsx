@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, LoadMore, Meter, PROSE, Spinner } from './ui';
+import { Button, Input, LoadMore, Meter, PROSE, Spinner, TableFocusButton } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -251,8 +251,15 @@ function LogRows({
  * under the thumb on every patch. The order is the extension's statement, and
  * it is the same one the terminal paints.
  */
-function TableRows({ node }: { node: LiveTableNode }) {
+function TableRows({
+  node,
+  onFocus,
+}: {
+  node: LiveTableNode;
+  onFocus?: (nodeId: string, itemIds: string[]) => void;
+}) {
   const rows = orderedRows(node);
+  const focused = new Set(node.focused_ids);
   return (
     <div className="-mx-1 overflow-x-auto">
       <table className="w-full min-w-0 border-collapse border border-dialog-edge font-mono text-chip">
@@ -283,15 +290,28 @@ function TableRows({ node }: { node: LiveTableNode }) {
             </tr>
           )}
           {rows.map((row) => (
-            <tr key={row.id} className={TONE_INK[row.tone]}>
+            <tr
+              key={row.id}
+              className={`${TONE_INK[row.tone]} ${node.is_focusable ? 'cursor-pointer' : ''}`}
+              onClick={node.is_focusable ? () => onFocus?.(node.id, [row.id]) : undefined}
+            >
               {node.columns.map((column, cell) => (
                 <td
                   key={column.id}
-                  className={`border border-dialog-edge px-1.5 py-1 align-top ${
-                    column.align === 'right' ? 'text-right tabular-nums' : 'text-left'
-                  }`}
+                  className={`border border-dialog-edge align-top ${
+                    node.is_focusable && cell === 0 ? 'p-0' : 'px-1.5 py-1'
+                  } ${column.align === 'right' ? 'text-right tabular-nums' : 'text-left'}`}
                 >
-                  <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
+                  {node.is_focusable && cell === 0 ? (
+                    <TableFocusButton
+                      isFocused={focused.has(row.id)}
+                      aria-label={`Focus ${row.cells[cell] || row.id}`}
+                    >
+                      <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
+                    </TableFocusButton>
+                  ) : (
+                    <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
+                  )}
                 </td>
               ))}
             </tr>
@@ -352,9 +372,11 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
 function NodeCell({
   node,
   load,
+  onFocus,
 }: {
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
+  onFocus?: (nodeId: string, itemIds: string[]) => void;
 }) {
   if (node.type === 'group') {
     return (
@@ -368,7 +390,7 @@ function NodeCell({
           }
         >
           {node.fields.map((child) => (
-            <NodeCell key={child.id} node={child} load={load} />
+            <NodeCell key={child.id} node={child} load={load} onFocus={onFocus} />
           ))}
         </div>
       </div>
@@ -387,7 +409,7 @@ function NodeCell({
           load={load && ((from, limit) => load(node.id, from, limit))}
         />
       )}
-      {node.type === 'table' && <TableRows node={node} />}
+      {node.type === 'table' && <TableRows node={node} onFocus={onFocus} />}
       {node.type === 'link' && <LinkRows node={node} />}
     </div>
   );
@@ -400,6 +422,7 @@ function NodeCell({
 export function LiveViewPanel({
   view,
   onInterrupt,
+  onFocus,
   isInterrupting = false,
   error,
   load,
@@ -408,6 +431,8 @@ export function LiveViewPanel({
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
   onInterrupt?: (note: string | null) => void;
+  /** Replace the focused ids of one focusable table in shared engine state. */
+  onFocus?: (nodeId: string, itemIds: string[]) => void;
   isInterrupting?: boolean;
   error?: string | null;
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
@@ -494,7 +519,7 @@ export function LiveViewPanel({
       <ul className="divide-y divide-dialog-edge">
         {view.nodes.map((node) => (
           <li key={node.id} className="min-w-0 px-3 py-2.5">
-            <NodeCell node={node} load={load} />
+            <NodeCell node={node} load={load} onFocus={onFocus} />
           </li>
         ))}
       </ul>
@@ -598,6 +623,13 @@ export function LiveView({
       .finally(() => setStopping(null));
   };
 
+  const focus = (viewId: string, nodeId: string, itemIds: string[]) => {
+    setError(null);
+    client
+      .focusLiveView(sid, viewId, nodeId, itemIds)
+      .catch(() => setError('That job could not be focused. It may have just finished.'));
+  };
+
   const readLog = (viewId: string) => (nodeId: string, from: number, limit: number) =>
     client.liveViewLog(sid, viewId, nodeId, from, limit);
 
@@ -610,6 +642,7 @@ export function LiveView({
           error={stopping === null ? error : null}
           isInterrupting={stopping === view.id}
           onInterrupt={(note) => interrupt(view.id, note)}
+          onFocus={(nodeId, itemIds) => focus(view.id, nodeId, itemIds)}
           load={readLog(view.id)}
         />
       ))}

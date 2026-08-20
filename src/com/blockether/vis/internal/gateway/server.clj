@@ -3114,6 +3114,37 @@
                                                               (query-long request "from")
                                                               (query-long request "limit"))))))
 
+(defn- focus-live-view-handler
+  "POST /v1/sessions/:sid/human-input/live/:view-id/actions/focus — focus table
+   rows in the engine's live state, so every surface and the extension itself see
+   the same selection. The body carries node_id and the selected item_ids."
+  [request]
+  (let [sid
+        (path-sid request)
+
+        view-id
+        (path-view-id request)
+
+        view
+        (when (and sid view-id) (gw-human-input/live-view-of sid view-id))
+
+        body
+        (optional-body-json request)
+
+        node-id
+        (get body "node_id")
+
+        item-ids
+        (get body "item_ids")]
+
+    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
+          (nil? view) (live-view-404 (get-in request [:path-params :view-id]))
+          :else (try
+                  (gw-human-input/focus-live! view-id node-id item-ids)
+                  (json-response {:focused_ids (vec item-ids) :node_id node-id :view_id view-id})
+                  (catch clojure.lang.ExceptionInfo e
+                    (error-response 400 (:type (ex-data e) :invalid-live-focus) (ex-message e)))))))
+
 (defn- interrupt-live-view-handler
   "POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt — stop one
    live view from the app, with an optional `{note: \"…\"}`: the comment the person
@@ -3979,6 +4010,7 @@
         [(sid-route "/human-input/:request-id/actions/cancel") {:post cancel-human-input-handler}]
         [(sid-route "/human-input/live") {:get list-live-views-handler}]
         [(sid-route "/human-input/live/:view-id/log/:node-id") {:get live-view-log-handler}]
+        [(sid-route "/human-input/live/:view-id/actions/focus") {:post focus-live-view-handler}]
         [(sid-route "/human-input/live/:view-id/actions/interrupt")
          {:post interrupt-live-view-handler}] [(sid-route "/events") {:get events-handler}]
         [(sid-route "/voice") {:post voice-handler}]

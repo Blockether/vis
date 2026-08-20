@@ -21,9 +21,9 @@
    about the phone and not about the engine: patches are COALESCED on a tick
    ([[live-flush-ms]]) before they are published, because a run that streams a
    build log would otherwise pay a durable journal write per line.
-   [[live-views]] / [[live-view-of]] / [[live-log-range]] / [[interrupt-live!]]
-   back the REST routes, so a client that joined mid-flight reads the picture
-   back instead of replaying a stream it never saw.
+   [[live-views]] / [[live-view-of]] / [[live-log-range]] / [[focus-live!]] /
+   [[interrupt-live!]] back the REST routes, so a client that joined mid-flight
+   reads the picture back instead of replaying a stream it never saw.
 
    Every request names the session it parks — `human-input/request!` refuses one
    that does not — so a run waiting on a human is always a run the app can see.
@@ -258,6 +258,12 @@
                        node-id
                        (max 0 (long (or from 0)))
                        (min (long live-log-page) (max 1 (long (or limit live-log-page))))))
+
+(defn focus-live!
+  "Focus `item-ids` in table `node-id` of open live view `view-id`. The engine
+   records and publishes the same patch an extension would write."
+  [view-id node-id item-ids]
+  (human-input/focus-live! (str view-id) node-id item-ids))
 
 (defn interrupt-live!
   "Stop live view `view-id` from the app, with `note` — the comment the person

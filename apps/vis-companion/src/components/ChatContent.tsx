@@ -2986,6 +2986,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   whole = false,
   client,
   sid,
+  livePanel,
 }: {
   turn: TranscriptTurn;
   streaming?: boolean;
@@ -3004,6 +3005,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   settled?: boolean;
   client?: GatewayClient;
   sid?: string;
+  /** Live work belongs after its tool/prose trace and before the phase ticker. */
+  livePanel?: ReactNode;
 }) {
   const blocks = turn.content ?? [];
   const fallback = blocks.length ? "" : fallbackAnswer(turn);
@@ -3073,6 +3076,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               </span>
             )}
         </div>
+        {livePanel}
         {streaming ? (
           <LiveProgress
             phase={activity ?? "Vis is working"}

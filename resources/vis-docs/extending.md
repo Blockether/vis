@@ -743,9 +743,9 @@ def watch_run(run_id):
         return view.close(summary=f"the run {run['conclusion']}")
 ```
 
-The Vis repository ships the whole version of this as `.vis/extensions/gh.py` — seven nodes, a
-failing job's log tail, and `gh pr checks` read through the same mapping — with its tests beside
-it and a Clojure test replaying its captured ops through the engine.
+The Vis repository ships the whole version of this as `.vis/extensions/gh.py` — eight nodes,
+selectable job rows, focused steps and logs, and `gh pr checks` read through the same mapping —
+with its tests beside it and a Clojure test replaying its captured ops through the engine.
 
 **A view declares its nodes once and addresses them by id ever after** — which
 is why the id is the first argument of every builder, exactly as a field name is
@@ -759,14 +759,17 @@ handle only has the verbs its type can honour:
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
 | `vis.output(id, label=…)` | streamed lines | `.write(*lines)`, `.clear()` |
-| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=)`, `.remove(*ids)`, `.clear()` |
+| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=)`, `.focus(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.link(id, links=[…])` | pointers a human can open | `.add(link_id, label, target, target_kind=, tone=)` |
 
 `vis.output` builds a `log` node; the builder is named `output` so it never
 shadows `vis.log`, the engine log line — the same reason `vis.slider` builds a
 `range` field. Rows and columns of a declared table are `vis.table_row(...)` and
 `vis.table_column(...)`, and a table's `order` says how it paints — `insertion`
-(the default), `newest-first`, or `{'by': 'duration', 'dir': 'desc'}`.
+(the default), `newest-first`, or `{'by': 'duration', 'dir': 'desc'}`. A table declared with
+`is_focusable=True` paints every row as a control; `focused_ids=[…]` is its initial selection.
+A surface click and `view["jobs"].focus(*row_ids)` write the same shared patch, so the
+extension reads the current selection from `view.state()` before it replaces the focused detail.
 
 **Writing an item twice updates it in place.** Every keyed verb is an upsert:
 `.upsert("web-1", …)` is both "new row" and "that row changed", because a scan

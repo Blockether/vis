@@ -749,6 +749,51 @@
                  (is (= 20 (count (get body "lines"))))))
              (finally (hi/close-live! view-id)))))))
 
+;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: tapping a CI job
+;; had no engine action, so the visible focus and the log could never follow the tap.
+(deftest the-app-focuses-a-live-table-row-over-http-test
+  (gw-hi/install!)
+  (let [sid
+        (str (random-uuid))
+
+        view
+        (hi/open-live! {:title "CI"
+                        :session-id sid
+                        :nodes [{:id "jobs"
+                                 :type "table"
+                                 :is-focusable true
+                                 :focused-ids ["a"]
+                                 :columns [{:id "job" :label "Job"}]
+                                 :rows [{:id "a" :cells ["A"]} {:id "b" :cells ["B"]}]}]})
+
+        view-id
+        (:id view)]
+
+    (try (testing "the focused ids become ordinary durable live state"
+           (let [response
+                 ((rv 'focus-live-view-handler)
+                   {:path-params {:sid sid :view-id view-id}
+                    :body (body-stream {:node_id "jobs" :item_ids ["b"]})})
+
+                 body
+                 (json-body response)]
+
+             (is (= 200 (:status response)))
+             (is (= ["b"] (get body "focused_ids")))
+             (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
+         (testing "a stale row id is refused without moving the focus"
+           (let [response ((rv 'focus-live-view-handler)
+                            {:path-params {:sid sid :view-id view-id}
+                             :body (body-stream {:node_id "jobs" :item_ids ["missing"]})})]
+             (is (= 400 (:status response)))
+             (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
+         (testing "another session cannot focus this view"
+           (is (= 404
+                  (:status ((rv 'focus-live-view-handler)
+                             {:path-params {:sid (str (random-uuid)) :view-id view-id}
+                              :body (body-stream {:node_id "jobs" :item_ids ["a"]})})))))
+         (finally (hi/close-live! view-id)))))
+
 (deftest a-live-view-is-always-stoppable-and-the-stop-carries-its-words-test
   (gw-hi/install!)
   (recorded
@@ -828,6 +873,9 @@
       (is (= @(rv 'interrupt-live-view-handler)
              (get-in (match
                        (str "/v1/sessions/" sid "/human-input/live/" view-id "/actions/interrupt"))
+                     [:data :post :handler])))
+      (is (= @(rv 'focus-live-view-handler)
+             (get-in (match (str "/v1/sessions/" sid "/human-input/live/" view-id "/actions/focus"))
                      [:data :post :handler])))
       ;; `live` is a STATIC segment where a request id also fits: a form route that
       ;; started resolving to a live handler would answer the wrong run entirely.

@@ -53,6 +53,7 @@ import {
   ListRow,
   LiveCount,
   LoadMore,
+  TableFocusButton,
   Meter,
   LiveTally,
   LIST_EDGE,
@@ -2395,6 +2396,22 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html(false))).toContain("border-edge-strong");
       expect(first(html(false))).not.toContain("border-edge");
       expect(first(html(true))).toContain("border-accent");
+    });
+  });
+
+  describe("TableFocusButton", () => {
+    const html = (isFocused: boolean) =>
+      renderToStaticMarkup(
+        <TableFocusButton isFocused={isFocused} aria-label="Focus tests / macos">
+          tests / macos
+        </TableFocusButton>,
+      );
+
+    it("states focus and keeps a finger-sized row target", () => {
+      expect(html(true)).toContain('aria-pressed="true"');
+      expect(html(false)).toContain('aria-pressed="false"');
+      expect(first(html(true))).toContain("min-h-11");
+      expect(first(html(true))).toContain("mouse:min-h-8");
     });
   });
 

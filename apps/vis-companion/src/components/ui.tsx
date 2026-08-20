@@ -346,6 +346,35 @@ export const Chip = forwardRef<
 });
 
 /**
+ * A live table row which CHANGES the detail below it. Selection is shared engine
+ * state, not navigation: `aria-pressed` admits several concurrently running rows,
+ * while the full-width 44px face gives a phone thumb the whole first cell.
+ */
+export const TableFocusButton = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { isFocused?: boolean }
+>(function TableFocusButton({ isFocused = false, className = '', children, ...props }, ref) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-pressed={isFocused}
+      className={`flex min-h-11 w-full min-w-0 items-center gap-1.5 border-l-2 px-1.5 py-1 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-8 ${
+        isFocused
+          ? 'border-accent bg-accent/10 text-accent-ink'
+          : 'border-transparent text-inherit hover:bg-hover'
+      } ${className}`}
+      {...props}
+    >
+      <span aria-hidden="true" className="shrink-0">
+        {isFocused ? '●' : '○'}
+      </span>
+      <span className="min-w-0 flex-1">{children}</span>
+    </button>
+  );
+});
+
+/**
  * "THERE IS MORE OF THIS BELOW", and there is only one of it.
  *
  * The transcript's attachments and the artifacts sheet page the same way, so

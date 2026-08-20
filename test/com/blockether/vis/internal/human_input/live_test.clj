@@ -219,6 +219,39 @@
                               :target "https://example.com/run"}]}))]
         (expect (nil? (hs/live-view-error v))))))
 
+;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: CI job rows painted
+;; selection as inert text, so choosing a job could not change the steps or log below it.
+(defdescribe
+  focused-table-test
+  (it "accepts focused rows only on a focusable table, and keeps focus inside the rows that remain"
+      (let [focusable
+            (assoc (table-node :insertion)
+              :rows [(row "a" "A" "1") (row "b" "B" "2")]
+              :is-focusable true
+              :focused-ids ["a"])
+
+            selected
+            (patched (view focusable) {:op :set :node-id "t" :focused-ids ["a" "b"]})
+
+            removed
+            (patched selected {:op :remove :node-id "t" :item-ids ["a"]})
+
+            cleared
+            (patched removed {:op :clear :node-id "t"})]
+
+        (expect (nil? (hs/live-node-error focusable)))
+        (expect (some? (hs/live-node-error (assoc (table-node :insertion) :focused-ids []))))
+        (expect (= ["a" "b"] (:focused-ids (node selected "t"))))
+        (expect (= ["b"] (:focused-ids (node removed "t"))))
+        (expect (= [] (:focused-ids (node cleared "t"))))
+        (expect (str/includes? (refusal #(patched (view focusable)
+                                                  {:op :set :node-id "t" :focused-ids ["missing"]}))
+                               "no row missing"))
+        (expect (str/includes? (refusal #(patched (view (assoc (table-node :insertion)
+                                                          :rows [(row "a" "A" "1")]))
+                                                  {:op :set :node-id "t" :focused-ids ["a"]}))
+                               "not focusable")))))
+
 ;; A table is the one node whose shape the human keeps reading while it moves,
 ;; so the same script is asserted row by row under each declared order.
 (def ^:private script
@@ -389,6 +422,21 @@
       (expect (= :insertion (:order t)))))
   (it "says nothing about elisions when the budget cut nothing"
       (expect (empty? (:elided (live/picture ci-view))))))
+
+(defdescribe picture-control-state-test
+             (it "leaves table focus controls out of the model picture and its markdown inverse"
+                 (let [focusable
+                       (assoc (table-node :insertion)
+                         :rows [(row "a" "A" "1")]
+                         :is-focusable true
+                         :focused-ids ["a"])
+
+                       table
+                       (node (:view (live/picture (view focusable))) "t")]
+
+                   (expect (not (contains? table :is-focusable)))
+                   (expect (not (contains? table :focused-ids))))))
+
 (defdescribe
   markdown-test
   (it "renders the whole view, verdict first, in one markdown document"

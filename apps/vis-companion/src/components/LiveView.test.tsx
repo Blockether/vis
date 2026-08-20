@@ -5,9 +5,10 @@
 // and reads the document that landed.
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LiveViewPanel } from './LiveView';
+import { LiveView as LiveViewList, LiveViewPanel } from './LiveView';
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
+import type { GatewayClient } from '../lib/gateway';
 import { LIVE_NOTE_CHARS, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
 
 afterEach(cleanup);
@@ -94,6 +95,8 @@ describe('a live view on the phone', () => {
         rows: [],
         max_rows: 5000,
         order: 'insertion',
+        is_focusable: false,
+        focused_ids: [],
       }),
     });
     expect(html).toContain('no rows yet');
@@ -106,6 +109,52 @@ describe('a live view on the phone', () => {
     paint();
     expect(screen.queryByRole('link', { name: 'report.md' })).toBeNull();
     expect(document.body.innerHTML).toContain('/tmp/report.md');
+  });
+});
+
+describe('focusing a table row', () => {
+  const focusableView = (): LiveView => {
+    const view = opened();
+    const hosts = view.nodes
+      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .find((node) => node.id === 'hosts');
+    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
+    return withNode(view, {
+      ...hosts,
+      is_focusable: true,
+      focused_ids: ['db-1', 'db-2'],
+    });
+  };
+
+  it('shows every default focus and sends a press anywhere in the job row', () => {
+    const onFocus = vi.fn();
+    paint({ view: focusableView(), onFocus });
+
+    const first = screen.getByRole('button', { name: 'Focus db-1' });
+    const second = screen.getByRole('button', { name: 'Focus db-2' });
+    expect(first.getAttribute('aria-pressed')).toBe('true');
+    expect(second.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(second);
+    expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
+
+    onFocus.mockClear();
+    fireEvent.click(screen.getByText('critical'));
+    expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
+  });
+
+  it('sends the row through the gateway rather than keeping selection in the component', () => {
+    const view = focusableView();
+    const focusLiveView = vi.fn(async () => ({
+      focused_ids: ['db-2'],
+      node_id: 'hosts',
+      view_id: view.id,
+    }));
+    const client = { focusLiveView } as unknown as GatewayClient;
+
+    render(<LiveViewList views={[view]} client={client} sid="session-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Focus db-2' }));
+
+    expect(focusLiveView).toHaveBeenCalledWith('session-1', view.id, 'hosts', ['db-2']);
   });
 });
 
