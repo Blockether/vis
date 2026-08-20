@@ -746,6 +746,31 @@
         (expect (= "(ns ok)\n\n(defn ok [] inc 1)\n" ((clj-balancer) broken)))
         (expect (false? (:ok? verdict)))
         (expect (str/includes? (:why verdict) "would delete `)` this edit wrote"))))
+  ;; Regression, issue #158: adding a closer to separate two forms was refused because the
+  ;; pack removed the new closer instead of relocating the now-surplus old one.
+  (it "relocates one proven surplus closer outside the edited line"
+      (let [original
+            (str "(deftest first-test\n"
+                 "  (testing \"first\"\n" "    (is true))\n"
+                 "\n" "  (deftest second-test\n"
+                 "    (testing \"second\"\n" "      (is true))))\n")
+
+            source
+            (str/replace original "    (is true))\n" "    (is true)))\n")
+
+            expected
+            (str/replace source "      (is true))))\n" "      (is true)))\n")
+
+            verdict
+            (balance/rebalance {:balancer (clj-balancer)
+                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
+                                :source source
+                                :original original
+                                :spans [[3 3]]})]
+
+        (expect (true? (:ok? verdict)))
+        (expect (= expected (:content verdict)))
+        (expect (= ["line 7 removed `)` → `(is true)))`"] (:notes verdict)))))
   ;; One, two and three closers off the END of every line that has them, over every shape
   ;; above: this is the mistake the repair exists for, and each one has to come back
   ;; byte-identical — a repair that lands anywhere else would be a silent rewrite.
