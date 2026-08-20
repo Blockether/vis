@@ -353,7 +353,7 @@ jobs:
             if [ '${{ steps.target.outputs.publish }}' != 'true' ]; then
               args="$args -Ob"
             fi
-            echo "hosted builder under the ~13.7 GiB live set: $args"
+            echo "low-memory builder under the ~13.7 GiB live set: $args"
           fi
           if [ -n "$args" ]; then echo "VIS_NATIVE_EXTRA_ARGS=$args" >> "$GITHUB_ENV"; fi
       - uses: actions/checkout@v7
@@ -363,6 +363,10 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+      # Piper uses espeak-ng's phoneme tables. The clean Blacksmith macOS image
+      # does not preinstall them, so make the native suite dependency explicit.
+      - name: Install native test dependencies
+        run: brew install espeak-ng
       # Blacksmith runners are ephemeral. Persist the dependency and build
       # caches so each release does not download and reconstruct the whole tree.
       - uses: actions/cache@v6

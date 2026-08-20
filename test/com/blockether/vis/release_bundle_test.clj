@@ -586,37 +586,40 @@
   ;; native-image before the timeout killed it, so the tag had no macOS asset.
   ;; Blacksmith's smallest Apple-silicon runner has the 24 GiB needed by the
   ;; measured ~13.7 GiB analysis live set.
-  (it "builds the macOS asset on Blacksmith, and fails fast if it does not start"
-      (let [stable
-            (slurp ".github/workflows/native-release.yml")
+  (it
+    "builds the macOS asset on Blacksmith, and fails fast if it does not start"
+    (let [stable
+          (slurp ".github/workflows/native-release.yml")
 
-            macos-job
-            (->> (str/split-lines stable)
-                 (drop-while #(not (str/starts-with? % "  macos:")))
-                 (take 12)
-                 (str/join "\n"))
+          macos-job
+          (->> (str/split-lines stable)
+               (drop-while #(not (str/starts-with? % "  macos:")))
+               (take-while #(not (str/starts-with? % "  macos-pickup:")))
+               (str/join "\n"))
 
-            pickup
-            (->> (str/split-lines stable)
-                 (drop-while #(not (str/includes? % "macos-pickup:")))
-                 (take 25)
-                 (str/join "\n"))]
+          pickup
+          (->> (str/split-lines stable)
+               (drop-while #(not (str/includes? % "macos-pickup:")))
+               (take 25)
+               (str/join "\n"))]
 
-        (expect (str/includes? macos-job
-                               "vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26'")
-                macos-job)
-        ;; Six hours was the undersized hosted Mac's price for not finishing;
-        ;; a stalled cloud build should still return capacity the same morning.
-        ;; (The Linux matrix keeps its 6 h cap: a swapping analysis there is slow.)
-        (expect (not (str/includes? macos-job "timeout-minutes: 350")) macos-job)
-        (expect (seq pickup) "no job watches the macOS queue")
-        ;; The watchdog must never wait on the runner class it is watching.
-        (expect (str/includes? pickup "runs-on: ubuntu-latest") pickup)
-        ;; `contents: write` at the top of that file REPLACES the default token
-        ;; scopes, so reading this run's job list has to be granted explicitly.
-        (expect (str/includes? pickup "actions: read") pickup)
-        (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
-        (expect (str/includes? stable "::error::No runner labelled") stable)))
+      (expect (str/includes? macos-job "vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26'")
+              macos-job)
+      ;; A clean Blacksmith image does not include espeak-ng's phoneme tables;
+      ;; without this dependency the built binary reaches test-native and fails.
+      (expect (str/includes? macos-job "brew install espeak-ng") macos-job)
+      ;; Six hours was the undersized hosted Mac's price for not finishing;
+      ;; a stalled cloud build should still return capacity the same morning.
+      ;; (The Linux matrix keeps its 6 h cap: a swapping analysis there is slow.)
+      (expect (not (str/includes? macos-job "timeout-minutes: 350")) macos-job)
+      (expect (seq pickup) "no job watches the macOS queue")
+      ;; The watchdog must never wait on the runner class it is watching.
+      (expect (str/includes? pickup "runs-on: ubuntu-latest") pickup)
+      ;; `contents: write` at the top of that file REPLACES the default token
+      ;; scopes, so reading this run's job list has to be granted explicitly.
+      (expect (str/includes? pickup "actions: read") pickup)
+      (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
+      (expect (str/includes? stable "::error::No runner labelled") stable)))
   ;; Scope guard: no test, iOS or Linux job should move when the native macOS
   ;; image moves. Exactly one runs-on directive names a Blacksmith macOS runner.
   (it
