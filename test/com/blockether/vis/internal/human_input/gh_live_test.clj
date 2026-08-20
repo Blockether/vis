@@ -58,8 +58,11 @@
   gh-extension-live-test
   (it
     "accepts every op the gh extension says, and ends in the picture the model reads"
-    (let [answers
-          (replay (fixture ops-file))
+    (let [ops
+          (fixture ops-file)
+
+          answers
+          (replay ops)
 
           verdict
           (:result (last answers))
@@ -68,7 +71,10 @@
           (:view verdict)
 
           opened-view
-          (:view (first answers))]
+          (:view (first answers))
+
+          patch-ops
+          (mapcat #(get-in % ["patch" "ops"] []) ops)]
 
       ;; Every push before the close was accepted: the wire the extension speaks IS this one.
       (expect (every? :is-open (butlast answers)))
@@ -106,9 +112,17 @@
       ;; The checklist follows the job in focus: the failing job's steps, not the running one's.
       (expect (= 10 (count (:steps (node view "steps")))))
       (expect (some #(= :error (:tone %)) (:steps (node view "steps"))))
-      ;; Activity stays INSIDE the view and files a failure tail as soon as that job fails; the
-      ;; settled focused pane remains one photograph of the selected job's log.
+      ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: Activity used to stay
+      ;; blank until a state transition, so a long-running step looked stalled before raw logs existed.
+      (expect (some (fn [op]
+                      (and (= "activity" (get op "node_id"))
+                           (some #(= "▶ tests / macos-latest · Run test suite · 10m 00s" %)
+                                 (get op "lines"))))
+                    patch-ops))
+      ;; The pulse is replaced rather than appended forever; the settled feed keeps a finite ending,
+      ;; every immediate failure tail and the transitions that followed it.
       (expect (= 10 (count (:lines (node view "activity")))))
+      (expect (= "✓ Run finished" (first (:lines (node view "activity")))))
       (expect (str/includes? (str/join "\n" (:lines (node view "activity"))) "· failed log"))
       (expect (= 7 (count (:lines (node view "output")))))
       (expect (str/starts-with? (first (:lines (node view "output")))

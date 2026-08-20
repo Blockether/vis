@@ -102,10 +102,8 @@
           ]
         }
       ],
-      "is_focusable": true,
-      "focused_ids": [
-        "95742028770"
-      ],
+      "max_rows": 5000,
+      "order": "insertion",
       "columns": [
         {
           "id": "job",
@@ -185,7 +183,7 @@
       "type": "log",
       "id": "activity",
       "lines": [
-        "· job and step changes appear here as they happen",
+        "✓ Run finished",
         "── tests / vis-agent + vis-contract (PyPI packages) · failed log",
         "2026-08-18T14:10:24.6255054Z     [",
         "2026-08-18T14:10:24.6255326Z         'open',",
@@ -195,7 +193,9 @@
         "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1.",
         "✓ tests / macos-latest · success · 28m 33s",
         "✓ tests / ubuntu-latest · success · 12m 54s"
-      ]
+      ],
+      "total_lines": 19,
+      "window_lines": 2000
     },
     {
       "label": "Logs of focused jobs",
@@ -209,19 +209,23 @@
         "2026-08-18T14:10:24.6255911Z     ]",
         "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
         "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
-      ]
+      ],
+      "total_lines": 13,
+      "window_lines": 2000
     },
     {
       "links": [
         {
           "id": "run",
           "label": "This run",
-          "target": "https://github.com/Blockether/vis/actions/runs/32146686161"
+          "target": "https://github.com/Blockether/vis/actions/runs/32146686161",
+          "target_kind": "url"
         },
         {
           "id": "95742028770",
           "label": "Failed · tests / vis-agent + vis-contract (PyPI packages)",
-          "target": "https://github.com/Blockether/vis/actions/runs/32146686161/job/95742028770"
+          "target": "https://github.com/Blockether/vis/actions/runs/32146686161/job/95742028770",
+          "target_kind": "url"
         }
       ],
       "type": "link",

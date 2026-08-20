@@ -56,7 +56,7 @@
               "cells": [
                 "tests / macos-latest",
                 "in progress",
-                "·"
+                "10m 34s"
               ]
             },
             {
@@ -74,7 +74,7 @@
               "cells": [
                 "tests / ubuntu-latest",
                 "in progress",
-                "·"
+                "10m 34s"
               ]
             },
             {
@@ -177,7 +177,7 @@
             },
             {
               "id": "95742028721:10",
-              "label": "tests / macos-latest · Run test suite",
+              "label": "tests / macos-latest · Run test suite · 10m 00s",
               "tone": "running"
             },
             {
@@ -249,7 +249,15 @@
       "ops": [
         {
           "lines": [
-            "· job and step changes appear here as they happen"
+            "▶ tests / macos-latest · Run test suite · 10m 00s",
+            "▶ tests / ubuntu-latest · waiting to start",
+            "── tests / vis-agent + vis-contract (PyPI packages) · failed log",
+            "2026-08-18T14:10:24.6255054Z     [",
+            "2026-08-18T14:10:24.6255326Z         'open',",
+            "2026-08-18T14:10:24.6255617Z   -     'patch',",
+            "2026-08-18T14:10:24.6255911Z     ]",
+            "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
+            "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
           ],
           "op": "append",
           "node_id": "activity"
@@ -263,23 +271,12 @@
       "ops": [
         {
           "lines": [
-            "── tests / vis-agent + vis-contract (PyPI packages) · failed log",
-            "2026-08-18T14:10:24.6255054Z     [",
-            "2026-08-18T14:10:24.6255326Z         'open',",
-            "2026-08-18T14:10:24.6255617Z   -     'patch',",
-            "2026-08-18T14:10:24.6255911Z     ]",
-            "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
-            "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
-          ],
-          "op": "append",
-          "node_id": "activity"
-        },
-        {
-          "lines": [
-            "── tests / macos-latest · log",
-            "· GitHub has not served this running job's log yet",
-            "── tests / ubuntu-latest · log",
-            "· GitHub has not served this running job's log yet"
+            "── tests / macos-latest · live progress",
+            "▶ Run test suite · 10m 00s",
+            "· GitHub publishes the raw job log when this job ends",
+            "── tests / ubuntu-latest · live progress",
+            "▶ Waiting for this job to start",
+            "· GitHub publishes the raw job log when this job ends"
           ],
           "op": "append",
           "node_id": "output"
@@ -420,7 +417,19 @@
           "node_id": "steps"
         },
         {
+          "op": "clear",
+          "node_id": "activity"
+        },
+        {
           "lines": [
+            "✓ Run finished",
+            "── tests / vis-agent + vis-contract (PyPI packages) · failed log",
+            "2026-08-18T14:10:24.6255054Z     [",
+            "2026-08-18T14:10:24.6255326Z         'open',",
+            "2026-08-18T14:10:24.6255617Z   -     'patch',",
+            "2026-08-18T14:10:24.6255911Z     ]",
+            "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
+            "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1.",
             "✓ tests / macos-latest · success · 28m 33s",
             "✓ tests / ubuntu-latest · success · 12m 54s"
           ],

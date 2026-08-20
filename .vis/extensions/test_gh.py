@@ -76,6 +76,7 @@ def recorder(monkeypatch):
     monkeypatch.setattr(vis, "_host", kept)
     monkeypatch.setattr(gh, "FAST_TICK_S", 0.0)
     monkeypatch.setattr(gh, "SLOW_TICK_S", 0.0)
+    monkeypatch.setattr(gh, "_wall_time", lambda: gh._timestamp("2026-08-18T14:20:47Z"))
     return kept
 
 
@@ -101,6 +102,21 @@ def watched(recorder):
 
 def node(view, node_id):
     return next(one for one in view["nodes"] if one["id"] == node_id)
+
+
+def assert_tree(actual, expected, path="view"):
+    """Compare a golden tree at the exact leaf that moved."""
+    assert (path, type(expected)) == (path, type(actual))
+    if isinstance(expected, dict):
+        assert (path, sorted(expected)) == (path, sorted(actual))
+        for key, value in expected.items():
+            assert_tree(actual[key], value, f"{path}.{key}")
+    elif isinstance(expected, list):
+        assert (path, len(expected)) == (path, len(actual))
+        for index, value in enumerate(expected):
+            assert_tree(actual[index], value, f"{path}[{index}]")
+    else:
+        assert (path, expected) == (path, actual)
 
 
 def test_a_job_state_is_one_tone_everywhere():
@@ -252,20 +268,57 @@ def test_the_log_window_ends_where_the_job_failed():
     assert all(line.startswith("2026-08-18T") for line in window)
 
 
+def test_running_focus_shows_current_step_before_raw_logs_exist():
+    payload = fixture("run-mid.json")
+    shape = gh.run_shape(
+        payload,
+        focus_ids=["95742028721"],
+        now=gh._timestamp("2026-08-18T14:20:47Z"),
+    )
+    later = gh.run_shape(
+        payload,
+        focus_ids=["95742028721"],
+        now=gh._timestamp("2026-08-18T14:20:50Z"),
+    )
+    lines = gh._focus_log_lines(shape, None, {}, gh.FAILED_TAIL_LINES)
+
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a running job left both
+    # activity panes static while GitHub withheld its raw log until the job completed.
+    assert shape["rows"][0]["cells"][2] == "10m 34s"
+    assert gh.active_lines(shape) == [
+        "▶ tests / macos-latest · Run test suite · 10m 00s"
+    ]
+    assert lines == [
+        "── tests / macos-latest · live progress",
+        "▶ Run test suite · 10m 00s",
+        "· GitHub publishes the raw job log when this job ends",
+    ]
+    assert later["rows"][0]["cells"][2] == "10m 37s"
+    assert gh.active_lines(later) == [
+        "▶ tests / macos-latest · Run test suite · 10m 03s"
+    ]
+    assert gh._focus_signature(shape) != gh._focus_signature(later)
+
+
 def test_running_focus_waits_while_a_failed_log_stays_visible_in_activity(watched):
     recorder, _ = watched
     output = [op for op in recorder.patched() if op.get("node_id") == "output"]
     activity = [op for op in recorder.patched() if op.get("node_id") == "activity"]
 
-    # A running matrix starts with every running job selected. GitHub has no job
-    # logs to serve yet, so the pane says so instead of showing another job's log.
+    # A running matrix starts with every running job selected. Before GitHub publishes raw logs,
+    # both panes identify the exact work underway and the current step keeps a live timer.
     assert output[0]["lines"] == [
-        "── tests / macos-latest · log",
-        "· GitHub has not served this running job's log yet",
-        "── tests / ubuntu-latest · log",
-        "· GitHub has not served this running job's log yet",
+        "── tests / macos-latest · live progress",
+        "▶ Run test suite · 10m 00s",
+        "· GitHub publishes the raw job log when this job ends",
+        "── tests / ubuntu-latest · live progress",
+        "▶ Waiting for this job to start",
+        "· GitHub publishes the raw job log when this job ends",
     ]
-    assert activity[0]["lines"] == ["· job and step changes appear here as they happen"]
+    assert activity[0]["lines"][:2] == [
+        "▶ tests / macos-latest · Run test suite · 10m 00s",
+        "▶ tests / ubuntu-latest · waiting to start",
+    ]
     activity_lines = [line for op in activity for line in op.get("lines", [])]
     # Preserve the original live-watch promise: a job that fails is filed immediately,
     # even while the focused running jobs have no logs of their own yet.
@@ -396,7 +449,7 @@ def test_the_picture_is_the_one_the_human_watched(watched):
 
     assert verdict["is_completed"] is True
     assert verdict["summary"].startswith("6 of 6 jobs finished, 1 failed")
-    assert verdict["view"] == fixture("view.json")
+    assert_tree(verdict["view"], fixture("view.json"))
 
 
 def test_the_ops_are_the_ones_the_engine_replays(watched):

@@ -20,13 +20,14 @@ logs below it. One mapping serves all nodes: `queued`/`in_progress` is `running`
 `databaseId`, so a job that changes state keeps its slot and the eye keeps its place, and only what
 CHANGED since the last poll crosses the wire.
 
-GitHub serves a log per JOB, not per run: `gh run view --job N --log` refuses while the run is
-still in progress, while the REST endpoint `actions/jobs/N/logs` answers the moment THAT job ends.
-The selected log therefore appears as soon as its job completes; a running selection says plainly
-that GitHub has not served it yet. The activity feed stays separate, and the settled pane is one
-photograph of the selected logs rather than the hour of movement that led to them.
+GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs` returns 404
+while that job is writing, then answers with the whole log the moment the job ends. A running
+selection therefore shows its current step and live elapsed time; that pulse is replaced by the raw
+log as soon as GitHub publishes it. Activity starts with the work already underway instead of an
+empty promise, then records every later job and step transition.
 """
 
+import calendar
 import json
 import os
 import tempfile
@@ -72,17 +73,29 @@ def tone_of(status, conclusion):
     return "error"
 
 
-def _elapsed(job):
-    """`1m 12s` between a job's start and its end — `·` while it is still running."""
-    started, ended = str(job.get("startedAt") or ""), str(job.get("completedAt") or "")
-    if not started or not ended or ended.startswith("0001-01-01"):
-        return "·"
+def _timestamp(value):
+    """A GitHub UTC timestamp as epoch seconds, or None for its zero/invalid sentinel."""
+    text = str(value or "")
+    if not text or text.startswith("0001-01-01"):
+        return None
     try:
-        began = time.strptime(started[:19], "%Y-%m-%dT%H:%M:%S")
-        over = time.strptime(ended[:19], "%Y-%m-%dT%H:%M:%S")
+        return calendar.timegm(time.strptime(text[:19], "%Y-%m-%dT%H:%M:%S"))
     except ValueError:
+        return None
+
+
+def _wall_time():
+    """Current epoch seconds behind a deterministic test seam."""
+    return time.time()
+
+
+def _elapsed(item, now=None):
+    """Elapsed wall time, live when `now` is supplied and the item has not ended yet."""
+    began = _timestamp(item.get("startedAt"))
+    ended = _timestamp(item.get("completedAt"))
+    if began is None or (ended is None and now is None):
         return "·"
-    seconds = max(0, int(time.mktime(over) - time.mktime(began)))
+    seconds = max(0, int((ended if ended is not None else now) - began))
     minutes, seconds = divmod(seconds, 60)
     return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
 
@@ -117,7 +130,7 @@ def default_focus_ids(jobs):
     return [_job_id(jobs[-1], len(jobs) - 1)] if jobs else []
 
 
-def run_shape(payload, focus_ids=None):
+def run_shape(payload, focus_ids=None, now=None):
     """Everything the eight nodes show, derived from one `gh run view --json` payload.
 
     Pure: `focus_ids=None` applies the live default; explicit ids are the human's shared
@@ -158,18 +171,27 @@ def run_shape(payload, focus_ids=None):
     focus = focus_names[0] if len(focus_names) == 1 else " + ".join(focus_names)
     focus_detail = focus if len(focus_names) == 1 else f"{len(focus_names)} jobs"
     steps = []
+    active_step_ids = []
     for job_id, job in selected:
         for index, step in enumerate(job.get("steps") or []):
+            step_status = str(step.get("status") or "")
             step_name = str(step.get("name") or "?")
+            step_id = f"{job_id}:{step.get('number') or step_name or index}"
+            if step_status == "in_progress":
+                active_step_ids.append(step_id)
+            step_tone = tone_of(step.get("status"), step.get("conclusion"))
+            step_elapsed = _elapsed(step, now)
+            if step_tone == "running" and step_elapsed != "·":
+                step_name = f"{step_name} · {step_elapsed}"
             steps.append(
                 {
-                    "id": f"{job_id}:{step.get('number') or step_name or index}",
+                    "id": step_id,
                     "label": (
                         f"{job.get('name') or '?'} · {step_name}"
                         if len(selected) > 1
                         else step_name
                     ),
-                    "tone": tone_of(step.get("status"), step.get("conclusion")),
+                    "tone": step_tone,
                 }
             )
     return {
@@ -196,7 +218,11 @@ def run_shape(payload, focus_ids=None):
         "rows": [
             {
                 "id": _job_id(job, index),
-                "cells": [str(job.get("name") or "?"), _state_text(job), _elapsed(job)],
+                "cells": [
+                    str(job.get("name") or "?"),
+                    _state_text(job),
+                    _elapsed(job, now),
+                ],
                 "tone": job_tone,
             }
             for index, (job, job_tone) in enumerate(zip(jobs, tones, strict=True))
@@ -204,6 +230,7 @@ def run_shape(payload, focus_ids=None):
         "focus": focus,
         "focus_ids": selected_ids,
         "steps": steps,
+        "active_step_ids": active_step_ids,
         "links": [
             {"id": "run", "label": "This run", "target": str(payload.get("url") or "")},
         ]
@@ -457,6 +484,36 @@ def feed_lines(before, after):
     return lines
 
 
+def active_lines(shape):
+    """The focused work already underway when this poll landed."""
+    rows = {row["id"]: row for row in shape.get("rows") or []}
+    active_ids = set(shape.get("active_step_ids") or [])
+    active_by_job = {}
+    for step in shape.get("steps") or []:
+        if step["id"] in active_ids:
+            active_by_job.setdefault(step["id"].split(":", 1)[0], []).append(step)
+    lines = []
+    for job_id in shape.get("focus_ids") or []:
+        row = rows.get(job_id)
+        if not row or row["tone"] != "running":
+            continue
+        job_name = str(row["cells"][0])
+        active = active_by_job.get(job_id) or []
+        if not active:
+            lines.append(f"▶ {job_name} · waiting to start")
+            continue
+        for step in active:
+            label = step["label"].removeprefix(f"{job_name} · ")
+            lines.append(f"▶ {job_name} · {label}")
+    if lines:
+        return lines
+    return (
+        ["✓ Run finished"]
+        if shape.get("is_over")
+        else ["· job and step changes appear here as they happen"]
+    )
+
+
 def _focus_signature(shape):
     """The focused rows and the state that decides whether their logs are ready."""
     rows = {row["id"]: row for row in shape.get("rows") or []}
@@ -492,17 +549,31 @@ def _job_log_tail(job_id, lines, log_of, cache):
 
 
 def _focus_log_lines(shape, log_of, cache, lines):
-    """Headers and log tails for exactly the jobs currently in focus."""
+    """Raw tails for finished focus, or a live step pulse while GitHub still withholds them."""
     rows = {row["id"]: row for row in shape.get("rows") or []}
     shown = []
     for job_id in shape.get("focus_ids") or []:
         row = rows.get(job_id)
         if not row:
             continue
-        shown.append(f"── {row['cells'][0]} · log")
         if row["tone"] == "running":
-            shown.append("· GitHub has not served this running job's log yet")
+            shown.append(f"── {row['cells'][0]} · live progress")
+            prefix = f"{job_id}:"
+            active_ids = set(shape.get("active_step_ids") or [])
+            active = [
+                step
+                for step in shape.get("steps") or []
+                if step["id"].startswith(prefix) and step["id"] in active_ids
+            ]
+            for step in active:
+                label = step["label"]
+                job_prefix = f"{row['cells'][0]} · "
+                shown.append(f"▶ {label.removeprefix(job_prefix)}")
+            if not active:
+                shown.append("▶ Waiting for this job to start")
+            shown.append("· GitHub publishes the raw job log when this job ends")
             continue
+        shown.append(f"── {row['cells'][0]} · log")
         tail = _job_log_tail(job_id, lines, log_of, cache)
         if tail:
             shown.extend(tail)
@@ -511,15 +582,24 @@ def _focus_log_lines(shape, log_of, cache, lines):
     return shown or ["· No job is focused"]
 
 
-def _file_failure_logs(view, shape, filed, log_of, cache):
-    """Keep every newly failed job's log visible immediately in Activity."""
+def _new_failure_log_lines(shape, filed, log_of, cache):
+    """Newly failed jobs and their immediate tails, ready for the Activity history."""
+    added = []
     for row in shape.get("rows") or []:
         if row["tone"] != "error" or row["id"] in filed:
             continue
         filed.add(row["id"])
         tail = _job_log_tail(row["id"], FAILED_TAIL_LINES, log_of, cache)
         if tail:
-            view["activity"].write(f"── {row['cells'][0]} · failed log", *tail)
+            added.extend([f"── {row['cells'][0]} · failed log", *tail])
+    return added
+
+
+def _show_activity(view, current, history, clear=True):
+    """Replace Activity's live pulse while preserving its finite transition history."""
+    if clear:
+        view["activity"].clear()
+    view["activity"].write(*current, *history)
 
 
 def _show_focus_logs(view, shape, log_of, cache, lines, clear=True):
@@ -539,15 +619,19 @@ def watch(title, description, poll, log_of=None):
     There is no clock here. The loop ends when GitHub says the run is over, when `gh` stops
     answering, or when the human presses Interrupt — never on a duration this extension invented.
     """
-    shape = run_shape(poll())
+    shape = run_shape(poll(), now=_wall_time())
     began = time.monotonic()
     manual_focus = None
     log_cache = {}
     filed_failures = set()
+    activity_history = []
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
-            view["activity"].write("· job and step changes appear here as they happen")
-            _file_failure_logs(view, shape, filed_failures, log_of, log_cache)
+            current_activity = active_lines(shape)
+            activity_history.extend(
+                _new_failure_log_lines(shape, filed_failures, log_of, log_cache)
+            )
+            _show_activity(view, current_activity, activity_history, clear=False)
             _show_focus_logs(
                 view, shape, log_of, log_cache, FAILED_TAIL_LINES, clear=False
             )
@@ -569,12 +653,18 @@ def watch(title, description, poll, log_of=None):
                     break
                 if selected != shape["focus_ids"]:
                     manual_focus = selected
-                fresh = run_shape(payload, focus_ids=manual_focus)
+                fresh = run_shape(payload, focus_ids=manual_focus, now=_wall_time())
                 push_changes(view, shape, fresh)
                 moved = feed_lines(shape, fresh)
-                if moved:
-                    view["activity"].write(*moved)
-                _file_failure_logs(view, fresh, filed_failures, log_of, log_cache)
+                failures = _new_failure_log_lines(
+                    fresh, filed_failures, log_of, log_cache
+                )
+                activity_history.extend(moved)
+                activity_history.extend(failures)
+                fresh_activity = active_lines(fresh)
+                if fresh_activity != current_activity or moved or failures:
+                    _show_activity(view, fresh_activity, activity_history)
+                    current_activity = fresh_activity
                 fresh_focus = _focus_signature(fresh)
                 if fresh_focus != shown_focus and not fresh["is_over"]:
                     _show_focus_logs(view, fresh, log_of, log_cache, FAILED_TAIL_LINES)
@@ -594,11 +684,11 @@ def gh_watch_run(run=None, repo=None):
 
     Opens a live view a person can watch (and stop) while it polls `gh run view` every three
     seconds, easing to eight past five minutes. Job rows are controls: all jobs running in
-    parallel are focused initially; tap one to replace the steps and log below with that job.
-    With none running, the last failed job (or the last job) is focused. A completed selected
-    job's log appears immediately; a running one says GitHub has not served it yet. `run` is a
-    run id or URL; without one, the newest run on the current branch. `repo` is `owner/name` for
-    a repository other than the working directory's.
+    parallel are focused initially; tap one to replace the steps and output below with that job.
+    With none running, the last failed job (or the last job) is focused. While a selected job runs,
+    its current step and elapsed time keep moving; GitHub's raw log replaces that pulse the moment
+    the job ends. `run` is a run id or URL; without one, the newest run on the current branch.
+    `repo` is `owner/name` for a repository other than the working directory's.
     """
     require_gh()
     run_id = run or newest_run(repo)
