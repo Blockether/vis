@@ -616,7 +616,9 @@
   [db my wheel-delta]
   (when (not (zero? (long (or wheel-delta 0))))
     (when-let [pane (live-band-pane db my)]
-      [:live-view-scroll (lv/view-id pane) (long wheel-delta)])))
+      ;; A compact status line returns its surface to the transcript; wheel input
+      ;; crossing that line must therefore keep scrolling the transcript beneath it.
+      (when-not (lv/minimized? pane) [:live-view-scroll (lv/view-id pane) (long wheel-delta)]))))
 
 (defn- local-live-view?
   "True when `view-id` is owned by this process rather than the serve daemon."
@@ -651,6 +653,16 @@
 
     :live-reopen
     (do (state/dispatch [:live-view-reopen (:view-id hit)])
+        (state/dispatch [:bump-render-version])
+        true)
+
+    :live-minimize
+    (do (state/dispatch [:live-view-minimize (:view-id hit)])
+        (state/dispatch [:bump-render-version])
+        true)
+
+    :live-restore
+    (do (state/dispatch [:live-view-restore (:view-id hit)])
         (state/dispatch [:bump-render-version])
         true)
 
@@ -6676,6 +6688,12 @@
                                  :live-reopen
                                  (activate-live-region! db hit)
 
+                                 :live-minimize
+                                 (activate-live-region! db hit)
+
+                                 :live-restore
+                                 (activate-live-region! db hit)
+
                                  :live-focus
                                  (activate-live-region! db hit)
 
@@ -6814,6 +6832,12 @@
                                  (activate-live-region! db hit)
 
                                  :live-reopen
+                                 (activate-live-region! db hit)
+
+                                 :live-minimize
+                                 (activate-live-region! db hit)
+
+                                 :live-restore
                                  (activate-live-region! db hit)
 
                                  :live-focus

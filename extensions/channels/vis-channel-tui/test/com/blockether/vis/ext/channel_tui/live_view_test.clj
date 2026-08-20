@@ -481,6 +481,11 @@
                            (engine/normalize-patch view [{:op :set :node-id "now" :text "Done"}])])
           (is (= "Done" (:text (first (:nodes (:view (first (:live-views @state/app-db)))))))
               "the ENGINE advanced the view; the terminal never interprets a patch itself")
+          (state/dispatch [:live-view-minimize "view-1"])
+          (is (lv/minimized? (first (:live-views @state/app-db)))
+              "minimizing is terminal-local pane state, not a close")
+          (state/dispatch [:live-view-restore "view-1"])
+          (is (not (lv/minimized? (first (:live-views @state/app-db)))))
           (state/dispatch [:live-view-close "view-1" {:reason :completed}])
           (is (lv/settled? (first (:live-views @state/app-db)))
               "the close ends the view and leaves the line that reopens it")
@@ -546,6 +551,57 @@
              (is (str/includes? text "○ job-0"))
              (is (str/includes? text "● job-1"))
              (is (= (mapv #(str "job-" %) (range 8)) (mapv :item-id controls))))
+           (finally (cr/reset!))))))
+
+;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: an active
+;; live surface could consume most of the terminal but had no way to minimize it.
+(deftest live-view-minimize-test
+  (testing "an active live surface exposes a minimize control"
+    (cr/reset!)
+    (try (paint-frames [(pane)] 96 26)
+         (let [controls (filterv #(= :live-minimize (:kind %)) (cr/current))]
+           (is (= 1 (count controls)) "the opening rule has one explicit minimize control")
+           (is (= "view-1" (:view-id (first controls))))
+           (is (some #{["click ▾" "minimize"]} (lv/hint (pane) []))))
+         (finally (cr/reset!))))
+  (testing "minimizing keeps the run alive behind one restorable status row"
+    (let [full
+          (pane :rows 20)
+
+          compact
+          (lv/minimized full)
+
+          advanced
+          (patched compact {:op :set :node-id "now" :text "Still polling"})
+
+          [full-top full-bottom]
+          (lv/band-rows 96 26 [full] 1 3)
+
+          [compact-top compact-bottom]
+          (lv/band-rows 96 26 [compact] 1 3)]
+
+      (is (lv/minimized? advanced) "ordinary patches do not reopen the local surface")
+      (is (< (- (long compact-bottom) (long compact-top)) (- (long full-bottom) (long full-top)))
+          "the transcript gets the live surface's body rows back")
+      (is (= full (lv/restored compact)) "restoring preserves the exact viewport")
+      (is (not (lv/minimized? (lv/armed compact)))
+          "arming an interrupt restores the note field before it takes the keyboard")
+      (is (some #{["click ▴" "restore live view"]} (lv/hint compact [])))
+      (cr/reset!)
+      (try (let [{:keys [frames]}
+                 (paint-frames [advanced] 96 26)
+
+                 text
+                 (cap/frame-text (last frames))
+
+                 controls
+                 (filterv #(= :live-restore (:kind %)) (cr/current))]
+
+             (is (str/includes? text "Still polling · minimized")
+                 "patches keep updating the compact status while its body is folded")
+             (is (not (str/includes? text "job-0")) "the table body is no longer painted")
+             (is (= 2 (count controls)) "both the title chevron and status row restore")
+             (is (every? #(= "view-1" (:view-id %)) controls)))
            (finally (cr/reset!))))))
 
 ;;; ── The screenshot gate ─────────────────────────────────────────────────────

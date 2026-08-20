@@ -2977,6 +2977,16 @@
               (fn [db [_ view-id]]
                 (update-live-pane db view-id lv/reopened)))
 
+(reg-event-db :live-view-minimize
+              ;; Presentation only: fold one running view to a compact status row. Its
+              ;; patches keep landing and the engine is not told.
+              (fn [db [_ view-id]]
+                (update-live-pane db view-id lv/minimized)))
+
+(reg-event-db :live-view-restore
+              (fn [db [_ view-id]]
+                (update-live-pane db view-id lv/restored)))
+
 (reg-event-db :live-view-scroll
               (fn [db [_ view-id delta]]
                 (update-live-pane db view-id #(lv/scrolled % (long delta)))))

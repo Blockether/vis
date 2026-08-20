@@ -323,7 +323,8 @@
                    (expect (nil? wheel-delta)))))
 
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: wheel input
-;; accelerated when it crossed into the live table, and its rows had no TUI action.
+;; accelerated when it crossed into the live table, its rows had no TUI action, and
+;; the live transient had no minimize/restore action.
 (defdescribe
   live-view-pointer-actions-test
   (it "keeps a coalesced live-table gesture at terminal row granularity"
@@ -332,6 +333,20 @@
                          {:view {:id "view-1"}})}
         (fn []
           (expect (= [:live-view-scroll "view-1" -2] (live-view-wheel-event {} 9 -2))))))
+  (it "returns wheel input over a compact status line to the transcript"
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'live-band-pane)
+                       (fn [_db _my]
+                         {:view {:id "view-1"} :is-minimized true})}
+        (fn []
+          (expect (nil? (live-view-wheel-event {} 9 -2))))))
+  (it "routes minimize and restore clicks through pane state only"
+      (let [events (atom [])]
+        (with-redefs [state/dispatch #(swap! events conj %)]
+          (expect (true? (activate-live-region! {} {:kind :live-minimize :view-id "view-1"})))
+          (expect (true? (activate-live-region! {} {:kind :live-restore :view-id "view-1"}))))
+        (expect (= [[:live-view-minimize "view-1"] [:bump-render-version]
+                    [:live-view-restore "view-1"] [:bump-render-version]]
+                   @events))))
   (it "routes a clicked row through shared local or gateway focus"
       (let [remote-called
             (promise)

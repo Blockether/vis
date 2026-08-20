@@ -5,11 +5,12 @@
 
    A form is a QUESTION and owns the keyboard until it is answered; a view is a
    PICTURE and leaves the composer focused. The wheel over the band scrolls it, and
-   clicks open links, expand nodes, or focus rows in a focusable table. The only key
-   it takes is Escape — which ARMS a stop on the newest open view before it
-   interrupts the turn: the band then takes one FENCED line for the comment the
-   human types, Escape or Enter interrupts with it, Backspace on an empty line keeps
-   watching. A view is ALWAYS stoppable; the note is what says why.
+   clicks open links, expand nodes, focus rows in a focusable table, or fold the
+   live surface down to a compact status line without stopping it. The only key it
+   takes is Escape — which ARMS a stop on the newest open view before it interrupts
+   the turn: the band then takes one FENCED line for the comment the human types,
+   Escape or Enter interrupts with it, Backspace on an empty line keeps watching.
+   A view is ALWAYS stoppable; the note is what says why.
 
    Everything except [[paint!]] is PURE: [[opened]] builds the pane from the
    engine's own materialized view, [[patched]] is the reducer over one patch,
@@ -284,7 +285,7 @@
   ([pane result] (settled pane result (System/currentTimeMillis)))
   ([pane result ended-at]
    (-> pane
-       (dissoc :stop)
+       (dissoc :stop :is-minimized)
        (update :view merge (:view result))
        (assoc :settled (-> (select-keys result [:reason :artifact-id :is-from-human])
                            (assoc :ended-at ended-at))
@@ -301,13 +302,35 @@
   [pane]
   (and (settled? pane) (not (:is-reopened pane))))
 
+(defn minimized?
+  "True when a still-running pane was folded to its compact status line. This is
+   terminal-local presentation state: patches keep landing and the run keeps going."
+  [pane]
+  (and (not (settled? pane)) (true? (:is-minimized pane))))
+
+(defn minimized
+  "Fold a running pane without stopping it. An armed stop is abandoned because its
+   note field cannot remain hidden behind the compact line. Settled records use their
+   transcript row instead and are left alone."
+  [pane]
+  (if (settled? pane)
+    pane
+    (-> pane
+        (dissoc :stop)
+        (assoc :is-minimized true))))
+
+(defn restored
+  "Return a minimized pane to the full live surface, preserving its viewport."
+  [pane]
+  (dissoc pane :is-minimized))
+
 (defn reopened
   "The pane after the human pressed its collapsed line: a settled view reads
    again, READ-ONLY — every node it ended with, the wheel over the band, and the
    same press to put it away. Nothing about it can be stopped or answered; the
    run it reports on is over."
   [pane]
-  (cond-> pane
+  (cond-> (restored pane)
     (settled? pane)
     (-> (update :is-reopened not)
         (assoc :is-following true
@@ -1033,11 +1056,13 @@
   "The pane with its stop ARMED: Escape asked to interrupt and the band takes the
    keyboard for one line. NOTHING is stopped yet — Escape again (or Enter) sends it,
    so the comment travels WITH the stop instead of arriving after it, and one
-   mistaken Escape never kills work the human still wanted."
+   mistaken Escape never kills work the human still wanted. A compact pane restores
+   first, because the note field must never be hidden."
   [pane]
-  (cond-> pane
-    (nil? (stopping pane))
-    (assoc :stop "")))
+  (let [pane (restored pane)]
+    (cond-> pane
+      (nil? (stopping pane))
+      (assoc :stop ""))))
 
 (defn disarmed
   "The pane back to being watched: whatever was typed is dropped with the stop."
@@ -1096,31 +1121,37 @@
 (defn hint
   "The hint bar under the band. Escape is the ONE key a view takes, and while
    several are open it says WHICH one it will hit — the newest, the one the band
-   is painting. A focusable table advertises its click without taking the composer
-   keyboard. Once the stop is armed the bar says the two keys that end the typing:
-   Escape or Enter interrupt with whatever was written, Backspace on an empty line
-   keeps watching."
+   is painting. A running view exposes its fold control without taking a composer
+   key; a focusable table advertises its click for the same reason. Once the stop is
+   armed the bar says the two keys that end the typing: Escape or Enter interrupt
+   with whatever was written, Backspace on an empty line keeps watching."
   [pane others]
   (let [open (remove settled? others)]
     (if-let [note (stopping pane)]
       (if (str/blank? note)
         [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
         [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
-      (cond-> []
-        (and (some? pane) (not (settled? pane)) (has-focusable-table? pane))
-        (conj ["click" "focus a row"])
+      (if (minimized? pane)
+        [["click ▴" "restore live view"]
+         ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
+        (cond-> []
+          (and (some? pane) (not (settled? pane)))
+          (conj ["click ▾" "minimize"])
 
-        (and (some? pane) (not (settled? pane)))
-        (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
+          (and (some? pane) (not (settled? pane)) (has-focusable-table? pane))
+          (conj ["click" "focus a row"])
 
-        ;; A record read back is a photograph: the only gesture it answers is the
-        ;; one that puts it away. Nothing about it can be stopped — the run it
-        ;; reports on is over, and its row is waiting in the transcript.
-        (and (some? pane) (settled? pane))
-        (conj ["click" "close the record"])
+          (and (some? pane) (not (settled? pane)))
+          (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-        (seq open)
-        (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))
+          ;; A record read back is a photograph: the only gesture it answers is the
+          ;; one that puts it away. Nothing about it can be stopped — the run it
+          ;; reports on is over, and its row is waiting in the transcript.
+          (and (some? pane) (settled? pane))
+          (conj ["click" "close the record"])
+
+          (seq open)
+          (conj [(str (+ (if pane 1 0) (count open))) "views open"]))))))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
 
@@ -1314,6 +1345,15 @@
                 nil
                 (map vector (columns/slots inner-w (count (:cells entry))) (:cells entry))))
 
+    ;; A minimized LIVE pane is still a control: the whole status row restores its
+    ;; full surface while patches continue to land behind it.
+    :minimized
+    (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
+        (cr/register! {:bounds {:row row :col (inc (long left)) :width (long inner-w)}
+                       :kind :live-restore
+                       :view-id view-id
+                       :enabled? true}))
+
     ;; A view standing BEHIND the one in front: one line saying where it got to.
     ;; Nothing here is pressable, because a run that has ENDED is not on the band
     ;; at all — its row is in the transcript, and that row is the door to the
@@ -1345,6 +1385,42 @@
                 (str/join " · "
                           (remove str/blank? [(flat-text (get-in pane [:view :title])) text])))}))
 
+(defn- minimized-row
+  "The compact row a folded active view leaves: current status plus an explicit
+   minimized label, so it cannot be mistaken for a finished transcript record."
+  [pane pane-count]
+  (let [{:keys [tone text]} (status-summary pane)]
+    {:kind :minimized
+     :node-id nil
+     :view-id (view-id pane)
+     :tone tone
+     :text (str (or (tone-glyph tone) "▸")
+                " "
+                (str/join " · "
+                          (remove str/blank?
+                            [text "minimized"
+                             (when (> (long pane-count) 1) (str pane-count " views open"))])))}))
+
+(defn- paint-fold-control!
+  "Paint and register the right-edge ▾/▴ control on a running view's title rule."
+  [g {:keys [left inner-w]} row pane]
+  (when (and pane (not (settled? pane)))
+    (let [label
+          (if (minimized? pane) " ▴ " " ▾ ")
+
+          width
+          (long (p/display-width label))
+
+          col
+          (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))]
+
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g col row label))
+      (cr/register! {:bounds {:row row :col col :width width}
+                     :kind (if (minimized? pane) :live-restore :live-minimize)
+                     :view-id (view-id pane)
+                     :enabled? true}))))
+
 (defn- band-shape
   "PURE: what the band is made of on `region` — the live panes oldest first, the
    collapsed lines behind the pane in FRONT, that pane's plan rows, its armed
@@ -1371,26 +1447,34 @@
         front
         (last panes)
 
+        minimized-front?
+        (minimized? front)
+
         others
         (if front (vec (butlast panes)) (vec panes))
 
+        ;; Folding the transient returns ALL of its body rows to the transcript;
+        ;; older open views remain represented by the compact row's count.
         collapsed
-        (mapv collapsed-row others)
+        (if minimized-front? [] (mapv collapsed-row others))
 
         rows-plan
-        (if front (plan front text-w) [])
+        (cond minimized-front? [(minimized-row front (count panes))]
+              front (plan front text-w)
+              :else [])
 
         ;; Four fifths of the rows between the transcript top and the prompt, at
         ;; most: a watched run is the live surface, while one fifth still keeps the
         ;; conversation that launched it in sight. Four rows is the floor — a band
-        ;; shorter than that says nothing at all.
+        ;; shorter than that says nothing at all. A minimized surface keeps only one
+        ;; status row plus the chrome needed to make its restore action explicit.
         available
         (max 0 (- (long (:hint-row region)) 1 (long (:min-row region))))
 
         room
         ;; `band-geometry` spends one enclosing row outside this body budget. Add
         ;; it here so the complete visible band, not merely its body, reaches 4/5.
-        (max 4 (min available (inc (quot (* 4 available) 5))))
+        (if minimized-front? 2 (max 4 (min available (inc (quot (* 4 available) 5)))))
 
         ;; An ARMED stop takes two body rows: the line the human types into and
         ;; the rule that fences it off from the view above. The band asks WHY it
@@ -1412,6 +1496,7 @@
      :collapsed collapsed
      :rows-plan rows-plan
      :stop stop
+     :is-minimized minimized-front?
      :n n}))
 
 (defn band-rows
@@ -1466,7 +1551,8 @@
          (let [left (long left)
                inner-w (long inner-w)
                body-w (dec inner-w)
-               {:keys [front others collapsed rows-plan stop n]} (band-shape panes region)
+               {:keys [front others collapsed rows-plan stop is-minimized n]} (band-shape panes
+                                                                                          region)
                {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
                (tr/band-geometry region n false)
                ;; The band CLOSES below its hint bar, exactly like the form's: the
@@ -1479,7 +1565,7 @@
                visible (max 1 (dec (long visible)))
                body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
                total (count rows-plan)
-               start (if front (offset front rows-plan body-visible) 0)
+               start (if (and front (not is-minimized)) (offset front rows-plan body-visible) 0)
                shown (subvec (vec rows-plan) (min start total) (min total (+ start body-visible)))
                view-id (view-id front)]
 
@@ -1487,7 +1573,12 @@
            ;; The title is the rule's own label — `── CI · 1m 12s ──` — so the
            ;; first row is chrome and every row under it is the view.
            (when (>= (long sep-row) (long top-limit))
-             (tr/draw-rule! g region sep-row (title-line (or front (last panes)) now-ms)))
+             (tr/draw-rule! g
+                            region
+                            sep-row
+                            (p/ellipsize (title-line (or front (last panes)) now-ms)
+                                         (max 1 (- inner-w 10))))
+             (paint-fold-control! g region sep-row front))
            (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
            (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
              (tr/draw-rule! g region hint-rule-at))
@@ -1534,9 +1625,16 @@
                                :track-fg t/border-fg}))
            (tr/draw-band-border! g region sep-row rule-at top-limit)
            (p/clear-styles! g)
-           {:view-id view-id
-            :offset start
-            :anchor (anchor-at rows-plan start)
-            :total total
-            :visible body-visible
-            :widths (:widths (meta rows-plan))}))))))
+           (if is-minimized
+             {:view-id view-id
+              :offset (:offset front)
+              :anchor (:anchor front)
+              :total (:total front)
+              :visible (:visible front)
+              :widths (:widths front)}
+             {:view-id view-id
+              :offset start
+              :anchor (anchor-at rows-plan start)
+              :total total
+              :visible body-visible
+              :widths (:widths (meta rows-plan))})))))))
