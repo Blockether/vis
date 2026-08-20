@@ -57,6 +57,7 @@
             [com.blockether.vis.internal.progress :as progress]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.system-trust :as system-trust]
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel]))
 
@@ -4863,6 +4864,7 @@
    the generic dispatcher stays a pure command tree while the binary owns
    CLI ergonomics (`vis-agent fix this`, `vis-agent --json summarize`)."
   [& raw-args]
+  (system-trust/install!)
   (let [main-started
         (System/nanoTime)
 

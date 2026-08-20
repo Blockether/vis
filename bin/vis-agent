@@ -317,6 +317,72 @@ find_system_java_truststore() {
   return 1
 }
 
+is_wsl() {
+  [[ -n "${WSL_DISTRO_NAME:-}" || "$(uname -r 2>/dev/null || true)" == *[Mm]icrosoft* ]]
+}
+
+# WSL has its own Linux trust database; installing a root in the Windows host
+# does not copy it into the distribution. Export the host's CurrentUser and
+# LocalMachine root stores through WSL interop on every launch, so certificate
+# policy changes are visible without modifying the distribution or a JDK.
+refresh_wsl_windows_ca_bundle() {
+  local powershell="" trust_dir="$vis_home/trust" output="" tmp=""
+  output="$trust_dir/wsl-windows-ca.pem"
+  [[ -z "${VIS_SYSTEM_CA_CERT:-}" ]] || return 0
+  is_wsl || return 0
+
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell="$(command -v powershell.exe)"
+  elif command -v pwsh.exe >/dev/null 2>&1; then
+    powershell="$(command -v pwsh.exe)"
+  else
+    warn "WSL detected, but Windows PowerShell interop is unavailable; using the WSL trust store"
+    return 0
+  fi
+
+  mkdir -p "$trust_dir" || {
+    warn "cannot create $trust_dir; using the WSL trust store"
+    return 0
+  }
+  tmp="$(mktemp "$trust_dir/.wsl-windows-ca.XXXXXX")" || return 0
+  chmod 600 "$tmp"
+  # The dollar expressions belong to PowerShell, not Bash.
+  # shellcheck disable=SC2016
+  if "$powershell" -NoLogo -NoProfile -NonInteractive -Command '
+      $ErrorActionPreference = "Stop"
+      [System.Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+      $seen = @{}
+      $pem = [System.Text.StringBuilder]::new()
+      foreach ($location in @(
+          [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser,
+          [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)) {
+        $store = [System.Security.Cryptography.X509Certificates.X509Store]::new("Root", $location)
+        try {
+          $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+          foreach ($cert in $store.Certificates) {
+            if (-not $seen.ContainsKey($cert.Thumbprint)) {
+              $seen[$cert.Thumbprint] = $true
+              [void]$pem.AppendLine("-----BEGIN CERTIFICATE-----")
+              [void]$pem.AppendLine([System.Convert]::ToBase64String(
+                $cert.RawData,
+                [System.Base64FormattingOptions]::InsertLineBreaks))
+              [void]$pem.AppendLine("-----END CERTIFICATE-----")
+            }
+          }
+        } finally {
+          $store.Close()
+        }
+      }
+      [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($pem.ToString()))
+    ' | tr -d '\r\n' | base64 --decode >"$tmp" && [[ -s "$tmp" ]]; then
+    mv -f "$tmp" "$output"
+    export VIS_SYSTEM_CA_CERT="$output"
+  else
+    rm -f "$tmp"
+    warn "could not export Windows root certificates; using the WSL trust store"
+  fi
+}
+
 find_system_ca_bundle() {
   local candidate
   if [[ -n "${VIS_SYSTEM_CA_CERT:-}" ]]; then
@@ -342,6 +408,7 @@ trust_property_is_configured() {
 configure_system_trust() {
   local runtime="$1" store="" store_type="" store_password="changeit" ca_bundle="" java_opts=""
   trust_native_args=()
+  refresh_wsl_windows_ca_bundle
 
   if [[ -n "${VIS_SYSTEM_TRUSTSTORE:-}" && ! -r "$VIS_SYSTEM_TRUSTSTORE" ]]; then
     die "VIS_SYSTEM_TRUSTSTORE is not readable: $VIS_SYSTEM_TRUSTSTORE"
@@ -385,6 +452,7 @@ configure_system_trust() {
     [[ -n "${AWS_CA_BUNDLE:-}" ]] || export AWS_CA_BUNDLE="$ca_bundle"
     [[ -n "${CARGO_HTTP_CAINFO:-}" ]] || export CARGO_HTTP_CAINFO="$ca_bundle"
     [[ -n "${DENO_CERT:-}" ]] || export DENO_CERT="$ca_bundle"
+    [[ -n "${VIS_SYSTEM_CA_CERT:-}" ]] || export VIS_SYSTEM_CA_CERT="$ca_bundle"
     measure_log "system PEM trust enabled from $ca_bundle"
   fi
 }
@@ -698,9 +766,8 @@ sync_wrapper_from_source() {
   [[ -f "$incoming" ]] || return 0
   if cmp -s "$incoming" "$launcher_path"; then return 0; fi
   if [[ ! -w "$launcher_path" || ! -w "$bin_dir" ]]; then
-    warn "the vis-agent command at $launcher_path is not writable — it stays at its old version"
-    warn "  re-run this update with the permissions that directory needs"
-    return 0
+    die "update: cannot replace the vis-agent command at $launcher_path (permission denied)" \
+        "Re-run with the permissions used to install that command."
   fi
   # Replacing the file in place is safe: Bash has already read this script.
   if install -m 0755 "$incoming" "$launcher_path.tmp" 2>/dev/null \
@@ -708,7 +775,8 @@ sync_wrapper_from_source() {
     say "vis-agent command updated from $source_root"
   else
     rm -f "$launcher_path.tmp" 2>/dev/null || true
-    warn "could not replace the vis-agent command at $launcher_path — it stays at its old version"
+    die "update: could not replace the vis-agent command at $launcher_path" \
+        "The source runtime was updated, but this command must be updated with it."
   fi
 }
 
@@ -925,6 +993,8 @@ case "${1:-}" in
     ;;
   update)
     shift
+    # Git and curl need the same corporate roots as the runtime they update.
+    configure_system_trust "$(runtime_effective)"
     vis_do_update "$@"
     ;;
 esac

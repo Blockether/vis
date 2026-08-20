@@ -43,6 +43,27 @@
 
       {:exit (.waitFor process) :output output})))
 
+(defn- run-command!
+  "Run a setup command in `dir`, throwing with merged output when it fails."
+  [^java.io.File dir args]
+  (let [pb
+        (doto (ProcessBuilder. ^java.util.List (mapv str args))
+          (.directory dir)
+          (.redirectErrorStream true))
+
+        process
+        (.start pb)
+
+        output
+        (slurp (.getInputStream process))
+
+        exit
+        (.waitFor process)]
+
+    (when-not (zero? exit)
+      (throw (ex-info "Test setup command failed" {:args args :exit exit :output output})))
+    output))
+
 (defdescribe
   container-runs-the-native-runtime-test
   (it "installs the release bundle and links the wrapper at it"
@@ -311,5 +332,117 @@
              (expect (str/includes? output "-Djavax.net.ssl.trustStoreType=JKS") output)
              (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath ca-bundle)))
                      output))
+           (finally (doseq [file (reverse (file-seq tmp))]
+                      (io/delete-file file true)))))))
+
+
+(defdescribe
+  wrapper-wsl-system-trust-test
+  (it
+    "exports Windows roots into WSL for both Vis and child tools"
+    (let [tmp
+          (.toFile (Files/createTempDirectory "vis-wsl-system-trust" (make-array FileAttribute 0)))
+
+          bundle
+          (doto (io/file tmp "agent") .mkdirs)
+
+          fake-path
+          (doto (io/file tmp "path") .mkdirs)
+
+          state
+          (io/file tmp "state")
+
+          wrapper
+          (io/file bundle "vis-agent")
+
+          native
+          (io/file bundle "vis-agent-native")
+
+          powershell
+          (io/file fake-path "powershell.exe")
+
+          windows-pem
+          "-----BEGIN CERTIFICATE-----\nV0lORE9XUy1ST09U\n-----END CERTIFICATE-----\n"
+
+          encoded
+          (.encodeToString (java.util.Base64/getEncoder) (.getBytes windows-pem "UTF-8"))]
+
+      (try (io/copy (io/file "bin" "vis-agent") wrapper)
+           (.setExecutable wrapper true false)
+           (spit native
+                 (str "#!/bin/sh\n"
+                      "printf 'SSL_CERT_FILE=%s\\n' \"${SSL_CERT_FILE:-}\"\n"
+                      "printf 'VIS_SYSTEM_CA_CERT=%s\\n' \"${VIS_SYSTEM_CA_CERT:-}\"\n"))
+           (.setExecutable native true false)
+           (spit powershell (str "#!/bin/sh\nprintf '%s\\n' '" encoded "'\n"))
+           (.setExecutable powershell true false)
+           (let [{:keys [exit output]}
+                 (run-wrapper wrapper
+                              {"HOME" (.getAbsolutePath tmp)
+                               "VIS_HOME" (.getAbsolutePath state)
+                               "WSL_DISTRO_NAME" "Ubuntu"
+                               "PATH" (str (.getAbsolutePath fake-path) ":" (System/getenv "PATH"))}
+                              ["help"])
+
+                 exported
+                 (io/file state "trust" "wsl-windows-ca.pem")]
+
+             (expect (zero? exit) output)
+             (expect (= windows-pem (slurp exported)))
+             (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath exported)))
+                     output)
+             (expect (str/includes? output (str "VIS_SYSTEM_CA_CERT=" (.getAbsolutePath exported)))
+                     output))
+           (finally (doseq [file (reverse (file-seq tmp))]
+                      (io/delete-file file true)))))))
+
+(defdescribe
+  wrapper-self-update-test
+  (it
+    "replaces an installed Bash wrapper from the source commit it pins"
+    (let [tmp
+          (.toFile (Files/createTempDirectory "vis-wrapper-self-update"
+                                              (make-array FileAttribute 0)))
+
+          remote
+          (doto (io/file tmp "remote") .mkdirs)
+
+          remote-bin
+          (doto (io/file remote "bin") .mkdirs)
+
+          installed-bin
+          (doto (io/file tmp "installed-bin") .mkdirs)
+
+          installed
+          (io/file installed-bin "vis-agent")
+
+          replacement
+          "#!/usr/bin/env bash
+printf 'updated wrapper\n'
+"
+
+          state
+          (io/file tmp "state")]
+
+      (try (spit (io/file remote "deps.edn") "{}
+")
+           (spit (io/file remote-bin "vis-agent") replacement)
+           (.setExecutable (io/file remote-bin "vis-agent") true false)
+           (run-command! remote ["git" "init" "--quiet" "--initial-branch=main"])
+           (run-command! remote ["git" "add" "deps.edn" "bin/vis-agent"])
+           (run-command! remote
+                         ["git" "-c" "user.name=Vis Test" "-c" "user.email=vis@example.com" "commit"
+                          "--quiet" "-m" "test source"])
+           (io/copy (io/file "bin" "vis-agent") installed)
+           (.setExecutable installed true false)
+           (let [{:keys [exit output]} (run-wrapper installed
+                                                    {"HOME" (.getAbsolutePath tmp)
+                                                     "VIS_HOME" (.getAbsolutePath state)
+                                                     "VIS_REPO_SLUG" "local/vis"
+                                                     "VIS_REPO_URL" (.getAbsolutePath remote)}
+                                                    ["update" "--keep-gateway"])]
+             (expect (zero? exit) output)
+             (expect (= replacement (slurp installed)))
+             (expect (str/includes? output "vis-agent command updated from") output))
            (finally (doseq [file (reverse (file-seq tmp))]
                       (io/delete-file file true)))))))
