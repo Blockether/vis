@@ -1940,9 +1940,11 @@ export const AttachmentRail = memo(function AttachmentRail({
   // release.live.json" under the recorded-files disclosure — an unnamed line,
   // while the record behind it holds the picture the run ended on and its whole
   // log. It is an artifact this app can open, so it gets an artifact's row.
-  const runs = attachments.filter(
-    (entry) => attachmentIsLive(entry) && entry.iteration_id,
-  );
+  const runs = collapseAttachmentVersions(
+    attachments.filter(
+      (entry) => attachmentIsLive(entry) && entry.iteration_id,
+    ),
+  ).map((thread) => thread[0]);
   const files = recordedFiles(
     attachments.filter(
       (entry) =>

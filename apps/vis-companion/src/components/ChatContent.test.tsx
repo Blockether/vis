@@ -509,28 +509,29 @@ describe("the attachment rail", () => {
   // files disclosure, while the record behind it holds the picture the run
   // ended on and its whole log. A settled run is an artifact this app opens,
   // so it stands in the step as one.
-  const withRun = () =>
-    renderToStaticMarkup(
+  it("collapses repeated cuts of one settled run into one row", () => {
+    const run = {
+      filename: "release.live.json",
+      media_type: "application/vnd.vis.live+json",
+      iteration_id: "i1",
+    };
+    const html = renderToStaticMarkup(
       <AttachmentRail
         client={client}
         sid="s1"
-        attachments={[
-          {
-            filename: "release.live.json",
-            media_type: "application/vnd.vis.live+json",
-            size: 48_000,
-            iteration_id: "i1",
-            index: 0,
-          },
-        ]}
+        attachments={Array.from({ length: 11 }, (_, index) => ({
+          ...run,
+          index,
+          version: index + 1,
+          size: 40_000 + index,
+        }))}
       />,
     );
 
-  it("gives a settled run its own row instead of a recorded file", () => {
-    const html = withRun();
-    expect(html).toContain('aria-label="Open run release"');
-    expect(text(html)).toContain("RUN");
-    // The disclosure that lists what a step merely WROTE must not claim it.
+    // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: every saved cut of
+    // one CI run rendered as another identical RUN row in the same tool result.
+    expect(html.match(/aria-label="Open run release"/g)).toHaveLength(1);
+    expect(text(html).match(/RUN/g)).toHaveLength(1);
     expect(text(html)).not.toContain("release.live.json");
   });
 });
