@@ -3242,16 +3242,15 @@
         (expect (= 5 (:tool-call-count u)))
         (expect (= 3 @decodes))))))
 
-;; Regression, user report: a session that had folded many times showed FOLDS 0 on the
-;; companion's usage card. The rollup counted a tool form named `fold_session`, and no
-;; such form is ever written: a fold is a call INSIDE a `python_execution` block, so the
-;; tally was 0 for every session that ever folded.
+;; Regression, issue #38: the usage card reported only the surviving summary
+;; after a broader fold superseded earlier breadcrumbs, not every successful
+;; fold in the transcript.
 (defdescribe
-  usage-fold-count-reads-the-ledger-test
-  "Folds are counted from the turn ctx's `session_summaries` ledger — the folds that
-   still shape the wire — never from the tool tally, which cannot see them."
+  usage-fold-count-reads-transcript-test
+  "Folds are a whole-session usage fact, so the count comes from successful
+   `fold_session` receipts in immutable iteration forms, never the mutable summary ledger."
   (it
-    "counts the newest turn's fold ledger, not tool forms"
+    "counts superseded fold receipts without counting Python forms as extra tools"
     (let [s
           (h/store)
 
@@ -3265,18 +3264,32 @@
                           {:session-turn-id tid
                            :status :done
                            :idx 0
-                           :code "fold"
-                           :forms [{:vis/tool-name "python_execution" :result "folded t1"}]})
-      ;; The tool pass alone sees nothing foldlike.
-      (expect (= 0 (:fold-count (persistance/db-session-usage-stats s (str sid)))))
+                           :code "fold twice"
+                           :forms [{:vis/tool-name "python_execution"
+                                    :src (str "print(fold_session('t1/i1', 'first'))\n"
+                                              "print(fold_session('t1/i2', 'second'))")
+                                    :stdout "folded t1/i1 → first\nfolded t1/i2 → second"}
+                                   {:vis/tool-name "cat" :result "read"}]})
+      ;; Source text alone is not proof that a fold ran: no receipt, no fold.
+      (h/store-iteration! s
+                          {:session-turn-id tid
+                           :status :done
+                           :idx 1
+                           :code "mention only"
+                           :forms [{:vis/tool-name "python_execution"
+                                    :src "example = \"fold_session('t1/i3', 'not run')\""
+                                    :stdout ""}]})
       (persistance/db-update-session-turn! s
                                            tid
                                            {:status :done
-                                            :iteration-count 1
-                                            :ctx {"session_summaries"
-                                                  [{"scopes" ["t1"] "gist" "first"}
-                                                   {"scopes" ["t2/i3"] "gist" "second"}]}})
-      (expect (= 2 (:fold-count (persistance/db-session-usage-stats s (str sid))))))))
+                                            :iteration-count 2
+                                            ;; The broader surviving breadcrumb deliberately says ONE.
+                                            ;; Historical usage says TWO.
+                                            :ctx {"session_summaries" [{"scopes" ["t1/i1" "t1/i2"]
+                                                                        "gist" "both"}]}})
+      (let [usage (persistance/db-session-usage-stats s (str sid))]
+        (expect (= 3 (:tool-call-count usage)))
+        (expect (= 2 (:fold-count usage)))))))
 
 (defdescribe
   attachment-version-chain-test

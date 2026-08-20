@@ -1782,8 +1782,8 @@
 ;; the merged memo without touching a blob at all.
 
 (def ^:private ^java.util.concurrent.ConcurrentHashMap usage-tally-cache
-  "Iteration row id → that row's `{tool n}` call tally. Counts only — no
-   forms, no results — so a row costs a few tens of bytes."
+  "Iteration row id → that row's `{:tools {tool n} :folds n}` tally. Counts only —
+   no forms, no results — so a row costs a few tens of bytes."
   (java.util.concurrent.ConcurrentHashMap.))
 
 (def ^:private usage-tally-cache-max
@@ -1802,23 +1802,59 @@
   "Session ceiling; dropped wholesale on overflow like the row cache."
   512)
 
-(def ^:private empty-tally {})
+(def ^:private empty-tally {:tools {} :folds 0})
+
+(def ^:private fold-call-re
+  "A direct fold invocation in a Python form. The non-name boundary refuses
+   lookalikes such as `my_fold_session`; a receipt below proves it actually ran."
+  #"(?m)(?:^|[^A-Za-z0-9_])(?:await[ \t]+)?fold_session[ \t]*\(")
+
+(def ^:private fold-receipt-re
+  "The stable prefix emitted only after `fold_session` records its intent."
+  #"(?m)^folded (?:through |since )?t[1-9][0-9]*(?:/i[1-9][0-9]*)?")
+
+(defn- fold-receipt-count
+  "Successful direct folds evidenced by BOTH the Python source and its stdout.
+
+   Source alone can be a comment/string or an unexecuted branch; stdout alone can
+   be arbitrary user output. Pairing and capping both counts identifies the
+   generated receipts while supporting several folds in one Python block."
+  [form]
+  (if (= "python_execution" (str (:vis/tool-name form)))
+    (min (count (re-seq fold-call-re (str (:src form))))
+         (count (re-seq fold-receipt-re (str (:stdout form)))))
+    0))
 
 (defn- forms-tally
-  "ONE iteration's `{tool n}` call tally over its decoded tool-call `forms`,
-   keyed by `:vis/tool-name`."
+  "ONE iteration's `{:tools {tool n} :folds n}` tally over decoded tool-call
+   `forms`. Tools are keyed by `:vis/tool-name`; folds are successful nested
+   `fold_session` receipts inside a `python_execution` form."
   [forms]
-  (reduce (fn [acc form]
-            (let [n (str (:vis/tool-name form))]
-              (if (str/blank? n) acc (update acc n (fnil inc 0)))))
+  (reduce (fn [tally form]
+            (let [tool
+                  (str (:vis/tool-name form))
+
+                  folds
+                  (fold-receipt-count form)]
+
+              (cond-> tally
+                (not (str/blank? tool))
+                (update-in [:tools tool] (fnil inc 0))
+
+                (pos? (long folds))
+                (update :folds + folds))))
           empty-tally
           forms))
 
-(defn- merge-tally "Sum two `{tool n}` tallies tool by tool." [a b] (merge-with + a b))
+(defn- merge-tally
+  "Sum two usage tallies."
+  [a b]
+  {:tools (merge-with + (:tools a) (:tools b))
+   :folds (+ (long (or (:folds a) 0)) (long (or (:folds b) 0)))})
 
 (defn- usage-tally
-  "Merged `{tool n}` call tally over the iteration rows `row-ids` of session
-   `sref`, computed at most ONCE per row per process.
+  "Merged `{:tools {tool n} :folds n}` tally over the iteration rows `row-ids`
+   of session `sref`, computed at most ONCE per row per process.
 
    Three tiers, cheapest first: an unchanged session returns its memoised merge;
    a session whose rows are all tallied re-merges cached per-row counts without
@@ -1865,27 +1901,6 @@
           (.put usage-rollup-cache sref {:fingerprint fingerprint :tally tally})
           tally)))))
 
-(defn- session-fold-count
-  "How many folds a session CARRIES: the length of the fold ledger
-   (`ctx` -> `\"session_summaries\"`) on its newest turn state that has a ctx.
-
-   Never the tool tally. A fold is `fold_session(...)` called INSIDE a
-   `python_execution` block, so no tool form is ever named `fold_session` and a
-   tally over `:vis/tool-name` reports 0 for every session that ever folded. The
-   ledger is also the number a reader means: superseded breadcrumbs are dropped
-   when a broader fold covers them, so it counts folds that still SHAPE the wire
-   rather than fold calls ever issued."
-  [db-info from join where]
-  (let [row (query-one! db-info
-                        {:select [:sts.ctx]
-                         :from from
-                         :join join
-                         :where (conj where [:<> :sts.ctx nil])
-                         :order-by [[:ts.created_at :desc] [:sts.version :desc]]
-                         :limit 1})]
-    (long (count (get (some-> (:ctx row)
-                              <-blob)
-                      "session_summaries")))))
 
 (defn db-session-usage-stats
   "ONE session's whole-life USAGE rollup, or nil when the session has no turns:
@@ -1897,18 +1912,14 @@
 
    Token/cost/iteration facts are SQL aggregates over the turn-state rollups
    (`session_turn_state`), which the turn writer already maintains — no
-   iteration scan. The TOOL count has no column: it lives inside each
-   iteration's nippy `tool_calls` BLOB, so it is counted by `:vis/tool-name`
-   through `usage-tally`, which thaws any one row's blob at most ONCE per
-   process and memoises the merged result per session — a re-read costs two
-   skinny id-only queries, a repeat read of an unchanged session costs nothing
-   beyond them, and a live session pays only for the iterations added since the
-   last read. It is still an ON-DEMAND single-session read and never part of
-   `list-sessions`.
-
-   The FOLD count is not in that blob at all — a fold is called INSIDE a
-   `python_execution` block, never as a tool of its own — so it is read from the
-   newest turn's fold ledger by `session-fold-count`.
+   iteration scan. TOOL and FOLD counts live inside each iteration's Nippy
+   `tool_calls` BLOB: tools are keyed by `:vis/tool-name`; a fold is a successful
+   `fold_session` receipt nested inside a `python_execution` form. `usage-tally`
+   thaws any one row's blob at most ONCE per process and memoises the merged
+   result per session — a re-read costs two skinny id-only queries, a repeat
+   read of an unchanged session costs nothing beyond them, and a live session
+   pays only for iterations added since the last read. It is still an ON-DEMAND
+   single-session read and never part of `list-sessions`.
 
    Only the TOTALS survive the blob pass: per-tool and per-error rankings had no
    reader left on any channel, so they are not computed."
@@ -1969,7 +1980,7 @@
               (usage-tally db-info soul-id-s iter-ids)
 
               folds
-              (session-fold-count db-info from join where)]
+              (long (or (:folds counts) 0))]
 
           (cond-> {:turn-count (long (or (:turns agg) 0))
                    :iteration-count (long (or (:iterations agg) 0))
@@ -1981,7 +1992,7 @@
                    :output-tokens (long (or (:output_tokens agg) 0))
                    :output-reasoning-tokens (long (or (:output_reasoning_tokens agg) 0))
                    :cost-usd (double (or (:cost_usd agg) 0))
-                   :tool-call-count (long (reduce + 0 (vals counts)))
+                   :tool-call-count (long (reduce + 0 (vals (:tools counts))))
                    :fold-count folds}
             (:first_at agg)
             (assoc :first-turn-at (long (:first_at agg)))
