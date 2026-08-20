@@ -30,6 +30,9 @@ workspace:
     - id: clj-fff
       path: ~/clj-fff
       description: Blockether Clojure bindings for FFF.
+    - id: clj-parinferish
+      path: ~/clj-parinferish
+      description: Sibling repo — conservative structural balancing for Clojure edits.
     - id: clj-ruff
       path: ~/clj-ruff
       description: Blockether Clojure bindings for ruff — bump ruff + release there, then move the com.blockether/ruff pin in deps.edn.
@@ -95,7 +98,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [spel, fff, clj-fff, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, m2, clojure, clj-tslp, graal, npm]
+#     allow: [spel, fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, m2, clojure, clj-tslp, graal, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers
