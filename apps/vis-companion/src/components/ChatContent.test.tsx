@@ -505,14 +505,14 @@ describe("the attachment rail", () => {
   });
 
   // Regression, user report with a screenshot: a `gh` watch that had FINISHED
-  // read as "1 file · release.live.json" — a nameless line under the recorded
+  // read as "1 file · release.live.ndjson" — a nameless line under the recorded
   // files disclosure, while the record behind it holds the picture the run
   // ended on and its whole log. A settled run is an artifact this app opens,
   // so it stands in the step as one.
   it("collapses repeated cuts of one settled run into one row", () => {
     const run = {
-      filename: "release.live.json",
-      media_type: "application/vnd.vis.live+json",
+      filename: "release.live.ndjson",
+      media_type: "application/vnd.vis.live+ndjson",
       iteration_id: "i1",
     };
     const html = renderToStaticMarkup(
@@ -532,7 +532,7 @@ describe("the attachment rail", () => {
     // one CI run rendered as another identical RUN row in the same tool result.
     expect(html.match(/aria-label="Open run release"/g)).toHaveLength(1);
     expect(text(html).match(/RUN/g)).toHaveLength(1);
-    expect(text(html)).not.toContain("release.live.json");
+    expect(text(html)).not.toContain("release.live.ndjson");
   });
 });
 

@@ -3453,10 +3453,10 @@
             (persistance/db-append-iteration-attachment! s
                                                          iid
                                                          {:media-type
-                                                          "application/vnd.vis.live+json"
+                                                          "application/vnd.vis.live+ndjson"
                                                           :storage-uri "vis-live://s1/view-1"
                                                           :size 4096
-                                                          :filename "release.live.json"
+                                                          :filename "release.live.ndjson"
                                                           :kind "file"
                                                           :audience "user"})
 
@@ -3465,7 +3465,7 @@
 
         (expect (some? stored))
         (expect (= 1 (:version stored)))
-        (expect (= ["release.live.json"] (mapv :filename rows)))
+        (expect (= ["release.live.ndjson"] (mapv :filename rows)))
         (expect (= "vis-live://s1/view-1" (:storage-uri (first rows)))))))
 
 ;; Regression (session 4b6897d4): nothing bounded a STORED artifact -- neither a

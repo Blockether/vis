@@ -100,9 +100,9 @@ const note = artifact({
 const run = artifact({
   key: "i5:0",
   kind: "live",
-  name: "fleet-scan.live.json",
+  name: "fleet-scan.live.ndjson",
   media: "RUN",
-  mediaType: "application/vnd.vis.live+json",
+  mediaType: "application/vnd.vis.live+ndjson",
   size: 12800,
   sizeLabel: "12.5KB",
   turn: 3,
@@ -434,7 +434,7 @@ describe("the artifacts sheet", () => {
   it("opens a settled run instead of calling a finished one live", () => {
     const html = sheet([run]);
     expect(html).toContain(
-      'aria-label="Open fleet-scan.live.json, RUN, 12.5KB, produced in turn 3"',
+      'aria-label="Open fleet-scan.live.ndjson, RUN, 12.5KB, produced in turn 3"',
     );
     expect(text(html)).toContain("RUN");
     expect(text(html)).not.toContain("LIVE");

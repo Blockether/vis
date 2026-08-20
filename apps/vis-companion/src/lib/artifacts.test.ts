@@ -128,7 +128,7 @@ describe("attachment classification", () => {
     index: 0,
     kind: "file",
     media_type: LIVE_ARTIFACT_MEDIA,
-    filename: "fleet-scan.live.json",
+    filename: "fleet-scan.live.ndjson",
   };
 
   // A settled live view is filed as a FILE carrying the engine's own media type
@@ -137,7 +137,7 @@ describe("attachment classification", () => {
   it("sorts a settled run by the media type the engine sealed it with", () => {
     expect(attachmentIsLive(run)).toBe(true);
     expect(attachmentIsLive({ ...run, media_type: `${LIVE_ARTIFACT_MEDIA}; charset=utf-8` })).toBe(true);
-    expect(attachmentIsLive({ index: 0, filename: "notes.live.json" })).toBe(false);
+    expect(attachmentIsLive({ index: 0, filename: "notes.live.ndjson" })).toBe(false);
     expect(artifactKind(run)).toBe("live");
     expect(artifactMedia(run)).toBe("RUN");
     expect(attachmentIsDoc(run)).toBe(false);

@@ -700,8 +700,8 @@
                     (expect (= ["i1"] (mapv str ids)))
                     {"i1" [{:id "record-1"
                             :tool-call-id "call-1"
-                            :filename "native.live.json"
-                            :media-type "application/vnd.vis.live+json"}]})]
+                            :filename "native.live.ndjson"
+                            :media-type "application/vnd.vis.live+ndjson"}]})]
 
       (let [results
             (:results (first (previous-turn-context
@@ -711,7 +711,7 @@
             record
             (:live-record (last results))]
 
-        (expect (str/includes? record "native.live.json"))
+        (expect (str/includes? record "native.live.ndjson"))
         (expect (str/includes? record "record-1"))
         (expect (str/includes? record "read_attachment")))))
   (it "keeps synthetic slash commands out of later provider context"
@@ -2762,13 +2762,13 @@
                     :tool-calls [{:id "c1"}]
                     :attachments [{:id "record-1"
                                    :tool-call-id "c1"
-                                   :filename "native.live.json"
-                                   :media-type "application/vnd.vis.live+json"}]})
+                                   :filename "native.live.ndjson"
+                                   :media-type "application/vnd.vis.live+ndjson"}]})
 
               body
               (get-in m [:content 0 :content])]
 
-          (expect (str/includes? body "native.live.json"))
+          (expect (str/includes? body "native.live.ndjson"))
           (expect (str/includes? body "record-1"))
           (expect (str/includes? body "read_attachment"))))
     (it "no summaries ⇒ trailer-iters unchanged"
@@ -6005,7 +6005,7 @@
                              ;; database hold what they watched.
                              (expect (= 1 (count (:attachments result))))
                              (expect (= "file" (:kind row)))
-                             (expect (str/ends-with? (str (:filename row)) ".live.json"))
+                             (expect (str/ends-with? (str (:filename row)) ".live.ndjson"))
                              ;; The model's half: the picture the view ended on, and the lines
                              ;; the block printed before the stop.
                              (expect (str/includes? (str (:stdout result)) "# Watching"))

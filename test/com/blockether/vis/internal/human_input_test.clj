@@ -1886,7 +1886,7 @@
           ;; Human-only: the model is TOLD the artifact exists and reads the picture
           ;; the verdict already carries, never the log.
           (expect (= "user" (:audience row)))
-          (expect (= "ci.live.json" (:filename row)))
+          (expect (= "ci.live.ndjson" (:filename row)))
           ;; ADDRESSED, never re-encoded: the row points at the very file the run has
           ;; been writing since `open`, by IDENTITY — a path only the machine that
           ;; wrote it could resolve is not an address a row gets to outlive.
@@ -2047,7 +2047,7 @@
             (expect (= :interrupted (:reason result)))
             (expect (empty? @sink) "the collector the block already drained is never written again")
             (expect (= ["iteration-7"] (mapv first @filed)))
-            (expect (str/ends-with? (:filename (second (first @filed))) ".live.json"))
+            (expect (str/ends-with? (:filename (second (first @filed))) ".live.ndjson"))
             (expect (string? (:artifact-id result))))))))
 
 (defdescribe

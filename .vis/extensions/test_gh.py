@@ -128,6 +128,10 @@ def test_a_job_state_is_one_tone_everywhere():
     assert gh.tone_of("completed", "failure") == "error"
     assert gh.tone_of("completed", "cancelled") == "error"
     assert gh.tone_of("completed", "timed_out") == "error"
+    assert gh.tone_of("completed", "action_required") == "error"
+    assert gh.tone_of("completed", "startup_failure") == "error"
+    assert gh.tone_of("completed", "stale") == "error"
+    assert gh.tone_of("mystery_pending_state", "") == "running"
 
 
 def test_a_poll_reads_as_the_eight_answers():
@@ -382,6 +386,16 @@ def test_a_log_is_asked_of_the_job_not_of_the_run(monkeypatch):
     assert gh.job_log("Blockether/vis", "") is None
 
 
+def test_an_unpublished_log_is_not_cached_as_if_it_were_final():
+    answers = iter([None, ["the log arrived"]])
+    cache = {}
+
+    assert gh._job_log_tail("42", 10, lambda _job, _lines: next(answers), cache) is None
+    assert gh._job_log_tail("42", 10, lambda _job, _lines: next(answers), cache) == [
+        "the log arrived"
+    ]
+
+
 def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
     polls = [fixture("run-mid.json"), fixture("run-final.json")]
     selected = "95742028809"
@@ -518,6 +532,49 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
     assert node(verdict["view"], "links")["links"][-1]["id"] == "newer-run"
 
 
+def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
+    polls = [
+        fixture("run-mid.json"),
+        RuntimeError("gh run view failed: HTTP 502"),
+        RuntimeError("gh run view failed: rate limit temporarily exceeded"),
+        fixture("run-final.json"),
+    ]
+
+    def poll():
+        answer = polls.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    # Regression: one temporary CLI, network, or API failure ended the view while the run
+    # was still alive. GitHub outages are state too: retain the last picture and retry.
+    verdict = gh.watch(TITLE, DESCRIPTION, poll)
+
+    assert verdict["is_completed"] is True
+    assert not polls
+    activity = node(verdict["view"], "activity")["lines"]
+    assert any("GitHub unavailable; retrying" in line for line in activity)
+    assert any("GitHub recovered after 2 attempts" in line for line in activity)
+    assert node(verdict["view"], "run")["text"].startswith("6 of 6 jobs finished")
+
+
+def test_a_permanently_unavailable_run_stops_after_bounded_retries(recorder):
+    attempts = []
+
+    def poll():
+        attempts.append(True)
+        if len(attempts) == 1:
+            return fixture("run-mid.json")
+        raise RuntimeError("gh run view failed: run was deleted")
+
+    verdict = gh.watch(TITLE, DESCRIPTION, poll)
+
+    assert len(attempts) == gh.MAX_CONSECUTIVE_POLL_FAILURES + 1
+    assert verdict["is_completed"] is False
+    assert verdict["summary"].startswith("Stopped watching after GitHub failed")
+    assert node(verdict["view"], "run")["tone"] == "error"
+
+
 def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):
     # Regression: a watch stopped itself after 90 minutes it invented, so a longer CI run was
     # abandoned mid-flight and the model was told "still running" about a run it never saw end.
@@ -618,3 +675,16 @@ def test_a_pull_requests_checks_read_as_the_same_run():
     settled = gh.checks_payload([dict(one, bucket="pass") for one in rows], "1421")
     assert gh.run_shape(settled)["is_over"] is True
     assert gh.run_shape(settled)["tone"] == "ok"
+
+    empty = gh.checks_payload([], "1421")
+    assert gh.run_shape(empty)["is_over"] is True
+    assert gh.run_shape(empty)["tone"] == "idle"
+
+
+def test_malformed_github_json_is_a_retryable_poll_failure(monkeypatch):
+    monkeypatch.setattr(gh, "_capture", lambda command, seconds=120: (0, "[not-json"))
+
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        gh.fetch_run(42)
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        gh.fetch_checks(42)

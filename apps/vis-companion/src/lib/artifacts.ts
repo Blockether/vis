@@ -132,7 +132,7 @@ export function attachmentIsDoc(attachment: IterationAttachment): boolean {
  * name: the picture the run ended on is in it, and its log is still readable a
  * page at a time from the gateway.
  */
-export const LIVE_ARTIFACT_MEDIA = "application/vnd.vis.live+json";
+export const LIVE_ARTIFACT_MEDIA = "application/vnd.vis.live+ndjson";
 
 export function attachmentIsLive(
   attachment: Partial<IterationAttachment>,

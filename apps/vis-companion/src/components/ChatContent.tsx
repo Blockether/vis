@@ -1937,7 +1937,7 @@ export const AttachmentRail = memo(function AttachmentRail({
   // A SETTLED RUN IS A ROW OF THE TRACE, NOT A RECORDED FILE.
   //
   // Reported from the app: a finished `gh` watch read as "1 file ·
-  // release.live.json" under the recorded-files disclosure — an unnamed line,
+  // release.live.ndjson" under the recorded-files disclosure — an unnamed line,
   // while the record behind it holds the picture the run ended on and its whole
   // log. It is an artifact this app can open, so it gets an artifact's row.
   const runs = collapseAttachmentVersions(

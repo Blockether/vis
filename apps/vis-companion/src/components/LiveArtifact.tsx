@@ -163,12 +163,12 @@ export function LiveArtifact({
 
 /**
  * The run's own NAME, out of the file the close filed it under. The engine
- * names the record after the view's title (`release.live.json`), so the row
+ * names the record after the view's title (`release.live.ndjson`), so the row
  * says what ran rather than what the file is called.
  */
 export function liveRunName(filename?: string): string {
   const name = filename ?? "";
-  return name.replace(/\.live\.json$/i, "") || "run";
+  return name.replace(/\.live\.ndjson$/i, "") || "run";
 }
 
 /**
@@ -178,7 +178,7 @@ export function liveRunName(filename?: string): string {
  * it is gone the moment the run ends. What is left is the RECORD, and it
  * belongs in the trace beside the block that produced it — not only in the
  * gallery, and not as an unnamed line in the recorded files ("1 file ·
- * release.live.json") which is what a settled run used to read as here.
+ * release.live.ndjson") which is what a settled run used to read as here.
  *
  * IT IS A ROW, NOT A PANEL IN PLACE. A run that logged thousands of lines
  * embedded in the transcript would stand taller than the whole turn that made

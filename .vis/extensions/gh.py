@@ -15,18 +15,23 @@ jobs (`steps`), what moved (`activity`), what the focused jobs printed (`output`
 open it (`links`). Job rows are controls: all concurrently running jobs are focused by default;
 with none running, the last failed job (or simply the last job) is focused. A tap replaces that
 focus in shared live state, so the extension, terminal, and every Companion agree on the steps and
-logs below it. One mapping serves all nodes: `queued`/`in_progress` is `running`, `success` is `ok`,
-`skipped` and `neutral` are `idle`, anything else is `error`. Rows are upserted by the job's
-`databaseId`, so a job that changes state keeps its slot and the eye keeps its place, and only what
-CHANGED since the last poll crosses the wire.
+logs below it. One mapping serves all nodes: every unfinished status is `running`, `success` is `ok`,
+`skipped` and `neutral` are `idle`, and every unsuccessful conclusion is `error`. Rows are
+upserted by the job's `databaseId`, so a job that changes state keeps its slot and the eye keeps its
+place, and only what CHANGED since the last poll crosses the wire.
 
 GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs` returns 404
 while that job is writing, then answers with the whole log the moment the job ends. A running
 selection therefore shows its current step and live elapsed time; that pulse is replaced by the raw
 log as soon as GitHub publishes it. Activity starts with the work already underway instead of an
-empty promise, then records every later job and step transition. When an implicitly selected run is
-overtaken by a newer commit for the same workflow, branch and event, the obsolete watch closes and
-links to its replacement instead of polling work that no longer matters.
+empty promise, then records every later job and step transition. Temporary CLI, network, malformed
+JSON, rate-limit, and provider failures retain that last good picture and retry visibly; three
+consecutive failures settle the view as failed instead of turning an outage or deleted run into an
+infinite watch. A missing job log is never cached as final. When an implicitly selected run is
+overtaken by a newer commit for
+the same workflow, branch and event, the obsolete watch closes and links to its replacement instead
+of polling work that no longer matters. A check set with no checks settles neutral rather than
+waiting forever.
 """
 
 import calendar
@@ -47,6 +52,7 @@ RUN_FIELDS = "jobs,status,conclusion,workflowName,headBranch,url,displayTitle,nu
 FAST_TICK_S = 3.0
 SLOW_TICK_S = 8.0
 BACKOFF_AFTER_S = 300.0
+MAX_CONSECUTIVE_POLL_FAILURES = 3
 
 # The model's copy of a log is a TAIL: the whole log stays in the view's record. The settled tail
 # is the engine's own model budget for a log node, so the picture elides nothing; a job that fails
@@ -66,9 +72,10 @@ class GhMissing(RuntimeError):
 
 def tone_of(status, conclusion):
     """The one tone mapping every node uses: a job's state read as `running`/`ok`/`idle`/`error`."""
-    if str(status or "") in _RUNNING_STATES:
-        return "running"
+    state = str(status or "")
     finished = str(conclusion or "")
+    if state in _RUNNING_STATES or (state != "completed" and not finished):
+        return "running"
     if finished == "success":
         return "ok"
     if finished in ("skipped", "neutral"):
@@ -369,7 +376,10 @@ def fetch_run(run_id, repo=None):
     )
     if exit_code != 0:
         raise RuntimeError(f"gh run view {run_id} failed: {text.strip()[:400]}")
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as failure:
+        raise RuntimeError(f"gh run view {run_id} returned invalid JSON") from failure
 
 
 def newest_run(repo=None):
@@ -470,13 +480,15 @@ def _tick(since):
     return FAST_TICK_S if since < BACKOFF_AFTER_S else SLOW_TICK_S
 
 
-def _summary(shape, superseded=None):
+def _summary(shape, superseded=None, failure=None):
     if superseded:
         return "Superseded by run {} — {} · {}".format(
             superseded.get("databaseId") or "?",
             superseded.get("displayTitle") or "newer workflow run",
             superseded.get("url") or shape["run_url"],
         )
+    if failure:
+        return f"Stopped watching after GitHub failed {MAX_CONSECUTIVE_POLL_FAILURES} consecutive polls — {shape['run_url']}"
     ending = "finished" if shape["is_over"] else "still running"
     return "{} — {}, {} · {}".format(
         shape["headline"], shape["detail"], ending, shape["run_url"]
@@ -584,7 +596,10 @@ def _job_log_tail(job_id, lines, log_of, cache):
         return None
     key = (job_id, lines)
     if key not in cache:
-        cache[key] = log_of(job_id, lines)
+        tail = log_of(job_id, lines)
+        if tail is not None:
+            cache[key] = tail
+        return tail
     return cache[key]
 
 
@@ -666,6 +681,8 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     filed_failures = set()
     activity_history = []
     superseded = None
+    unavailable_attempts = 0
+    terminal_failure = None
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
             current_activity = active_lines(shape)
@@ -704,8 +721,49 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 try:
                     payload = poll()
                 except RuntimeError as failure:
-                    view["run"].set(str(failure)[:200], tone="error")
-                    break
+                    unavailable_attempts += 1
+                    if unavailable_attempts == 1:
+                        activity_history.append("▶ GitHub unavailable; retrying")
+                    message = str(failure).splitlines()[0][:160]
+                    if unavailable_attempts >= MAX_CONSECUTIVE_POLL_FAILURES:
+                        terminal_failure = message
+                        view["run"].set(
+                            "Stopped: GitHub remained unavailable",
+                            tone="error",
+                            detail=message,
+                        )
+                        _show_activity(
+                            view,
+                            [
+                                f"✗ Stopped after {unavailable_attempts} failed GitHub polls"
+                            ],
+                            activity_history,
+                        )
+                        break
+                    view["run"].set(
+                        "GitHub temporarily unavailable; retrying",
+                        tone="running",
+                        detail=message,
+                    )
+                    _show_activity(
+                        view,
+                        [
+                            f"▶ GitHub unavailable (attempt {unavailable_attempts}); retrying"
+                        ],
+                        activity_history,
+                    )
+                    current_activity = [
+                        f"▶ GitHub unavailable (attempt {unavailable_attempts}); retrying"
+                    ]
+                    continue
+                if unavailable_attempts:
+                    activity_history.append(
+                        f"✓ GitHub recovered after {unavailable_attempts} attempts"
+                    )
+                    unavailable_attempts = 0
+                    view["run"].set(
+                        shape["headline"], tone=shape["tone"], detail=shape["detail"]
+                    )
                 try:
                     # Read AFTER the network poll: a tap made while `gh` was answering
                     # must win over the extension's next default-focus patch.
@@ -737,6 +795,12 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
             # The human stopped watching. The view already holds its verdict, `close` answers
             # it, and `shape` is the last poll that reached them.
             pass
+        if terminal_failure:
+            return view.close(
+                reason="failed",
+                summary=_summary(shape, superseded, terminal_failure),
+                error=terminal_failure,
+            )
         return view.close(summary=_summary(shape, superseded))
 
 
@@ -796,12 +860,14 @@ def checks_payload(rows, pull):
                 "steps": [],
             }
         )
-    is_over = all(str(job["status"]) == "completed" for job in jobs) if jobs else False
+    is_over = all(str(job["status"]) == "completed" for job in jobs)
     failed = [job for job in jobs if job["conclusion"] == "failure"]
     return {
         "jobs": jobs,
         "status": "completed" if is_over else "in_progress",
-        "conclusion": ("failure" if failed else "success") if is_over else "",
+        "conclusion": ("failure" if failed else "success" if jobs else "neutral")
+        if is_over
+        else "",
         "workflowName": "checks",
         "headBranch": str(pull or "pull request"),
         "displayTitle": f"Checks on {pull}" if pull else "Checks",
@@ -822,7 +888,11 @@ def fetch_checks(pull, repo=None):
     # and only a payload that is not JSON is a failure worth stopping for.
     if not text.strip().startswith("["):
         raise RuntimeError(f"gh pr checks failed: {text.strip()[:400]}")
-    return checks_payload(json.loads(text), pull)
+    try:
+        rows = json.loads(text)
+    except json.JSONDecodeError as failure:
+        raise RuntimeError("gh pr checks returned invalid JSON") from failure
+    return checks_payload(rows, pull)
 
 
 def gh_watch_checks(pr=None, repo=None):

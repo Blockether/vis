@@ -323,7 +323,7 @@
   "The media type a settled live view carries. Its bytes are the view's RECORD —
    the append-only NDJSON `human-input.live-sink` has been writing since `open` —
    so the artifact IS that file rather than a re-encoded copy of it."
-  "application/vnd.vis.live+json")
+  "application/vnd.vis.live+ndjson")
 
 (def live-artifact-inline-bytes
   "Byte size under which a settled view ALSO travels inline, on top of the file it

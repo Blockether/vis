@@ -667,7 +667,7 @@ dumping it into the transcript, which is the cost this plan exists to remove.
 **Data.** The stored artifact, declared in `internal/human_input/spec.clj` beside the rest:
 
 ```clojure
-(def live-artifact-media-type "application/vnd.vis.live+json")
+ (def live-artifact-media-type "application/vnd.vis.live+ndjson")
 (s/def ::live-artifact
   (s/and #(closed? live-artifact-keys %)
          (s/keys :req-un [::id ::view-id ::session-id ::title ::media-type ::audience
@@ -843,7 +843,7 @@ Done:
   across the engine, gateway and TUI suites.
 - Phase 5 COMPLETE — a finished view SETTLES into an artifact instead of vanishing. `close-live!`
   builds the artifact BEFORE it retires the view, so what it addresses is the record the run itself
-  wrote: `hi-spec/live-artifact-media-type` (`application/vnd.vis.live+json`), `:storage-uri`
+   wrote: `hi-spec/live-artifact-media-type` (`application/vnd.vis.live+ndjson`), `:storage-uri`
   pointing at the sink's NDJSON, `:size` / `:line-count` from one streamed pass
   (`live-sink/stats`), the materialized `:view` as the summary a surface opens instantly, and bytes
   ONLY under `hi-spec/live-artifact-inline-bytes` (256 KiB) — holding a build log in memory as

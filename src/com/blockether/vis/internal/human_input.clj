@@ -1864,7 +1864,7 @@
   (-> artifact
       (dissoc :view)
       (assoc :kind "file"
-             :filename (str (or (live/slug (:title artifact)) "live-view") ".live.json"))))
+             :filename (str (or (live/slug (:title artifact)) "live-view") ".live.ndjson"))))
 
 (defn- live-artifact
   "The closed view as an ARTIFACT the human can reopen: what they watched,

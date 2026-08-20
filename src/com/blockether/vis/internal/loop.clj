@@ -1932,7 +1932,7 @@
 
 (defn- interrupted-turn-status? [status] (contains? interrupted-turn-statuses status))
 
-(def ^:private live-record-media-type "application/vnd.vis.live+json")
+(def ^:private live-record-media-type "application/vnd.vis.live+ndjson")
 
 (defn- live-record-context-line
   "Tell a later model where one settled live-view record can be reopened."

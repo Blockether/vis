@@ -157,7 +157,7 @@ describe('the artifact on screen', () => {
 });
 
 // Reported from the app, with a screenshot: a `gh` watch that had finished left
-// "1 file · release.live.json" in the step — the record was in the session and
+// "1 file · release.live.ndjson" in the step — the record was in the session and
 // the transcript said nothing about the run. A settled run is an ARTIFACT, so
 // it reads like one: a row where it happened, and it opens.
 describe('the settled run in the transcript', () => {
@@ -165,8 +165,8 @@ describe('the settled run in the transcript', () => {
     return {
       index: 2,
       iteration_id: 'it-1',
-      filename: 'release.live.json',
-      media_type: 'application/vnd.vis.live+json',
+      filename: 'release.live.ndjson',
+      media_type: 'application/vnd.vis.live+ndjson',
       size: 4096,
     } as IterationAttachment;
   }
@@ -241,8 +241,8 @@ describe('the settled run in the transcript', () => {
   });
 
   it('names the run out of the file the close filed it under', () => {
-    expect(liveRunName('release.live.json')).toBe('release');
-    expect(liveRunName('scan.LIVE.JSON')).toBe('scan');
+    expect(liveRunName('release.live.ndjson')).toBe('release');
+    expect(liveRunName('scan.LIVE.NDJSON')).toBe('scan');
     expect(liveRunName(undefined)).toBe('run');
   });
 });
