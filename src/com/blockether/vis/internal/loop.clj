@@ -1903,8 +1903,7 @@
                           (if (contains? seen k)
                             [acc seen]
                             [(conj acc {:scope isc :gist gist}) (conj seen k)]))
-                        (:live-record f)
-                        [(conj acc {:scope sc :live-record (:live-record f)}) seen]
+                        (:live-record f) [(conj acc {:scope sc :live-record (:live-record f)}) seen]
                         (and sc
                              (or (some? (:result f)) (some? (:stdout f))) ; live, worth listing
                              (not= "vis_silent" (:result f)))
@@ -1937,9 +1936,13 @@
 (defn- live-record-context-line
   "Tell a later model where one settled live-view record can be reopened."
   [att]
-  (str "Live-view record filed: " (:filename att)
-       " (attachment id " (:id att)
-       "; read_attachment(\"" (:id att) "\") opens it)."))
+  (str "Live-view record filed: "
+       (:filename att)
+       " (attachment id "
+       (:id att)
+       "; read_attachment(\""
+       (:id att)
+       "\") opens it)."))
 
 (defn- previous-turn-context
   "Prior provider-visible turns as an append-only RESUME sequence, compacted by
@@ -1984,11 +1987,13 @@
                                       (catch Throwable _ []))
                                  (filter #(= :done (:status %)))
                                  vec)
-                            atts-by-iter
-                            (if (seq iterations)
-                              (try (persistance/db-list-iterations-attachments-meta d (keep :id iterations))
-                                   (catch Throwable _ {}))
-                              {})]
+                            atts-by-iter (if (seq iterations)
+                                           (try (persistance/db-list-iterations-attachments-meta
+                                                  d
+                                                  (keep :id iterations))
+                                                (catch Throwable _ {}))
+                                           {})]
+
                         (when-not (some user-slash-iteration? iterations)
                           (let [forms
                                 (vec
@@ -1996,10 +2001,12 @@
                                     (fn [iteration]
                                       (let [own (vec (:forms iteration))
                                             scope (:scope (first own))
-                                            records (filter #(= live-record-media-type
-                                                                (or (:media-type %) (:media_type %)))
-                                                            (or (get atts-by-iter (:id iteration))
-                                                                (get atts-by-iter (str (:id iteration)))))]
+                                            records
+                                            (filter #(= live-record-media-type
+                                                        (or (:media-type %) (:media_type %)))
+                                                    (or (get atts-by-iter (:id iteration))
+                                                        (get atts-by-iter (str (:id iteration)))))]
+
                                         (into own
                                               (map (fn [att]
                                                      {:scope scope
@@ -3672,10 +3679,9 @@
                 records
                 (filter (fn [att]
                           (let [owner (or (:tool-call-id att) (:tool_call_id att))]
-                            (if owner
-                              (= (str owner) (str (:id tc)))
-                              (zero? (long idx)))))
+                            (if owner (= (str owner) (str (:id tc))) (zero? (long idx)))))
                         live-records)
+
                 lines
                 (concat (keep form-output own) (map live-record-context-line records))
 
@@ -6867,8 +6873,8 @@
                               (ctx-engine/utilization (:input-tokens overflow)
                                                       (:max-input-tokens overflow)
                                                       turn-input-tokens
-                                                      (context-fold-budget
-                                                        (:max-input-tokens overflow))))
+                                                      (context-fold-budget (:max-input-tokens
+                                                                             overflow))))
           (when-let [projection (emergency-fold-projection
                                   base-messages
                                   trailer-iters
@@ -7513,8 +7519,7 @@
                  served-model (turn-served-model environment)
                  effective-context-limit
                  (iteration-context-limit max-context-tokens served-model pre-resolved-model)
-                 effective-fold-budget
-                 (context-fold-budget effective-context-limit)
+                 effective-fold-budget (context-fold-budget effective-context-limit)
                  _llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
                                                                   (some-> (:name pre-resolved-model)
                                                                           str))
@@ -8199,26 +8204,25 @@
                                        ;; context dialog updates DURING the turn,
                                        ;; not only after it ends.
                                        :done? true}))
-                          (let [result (-> (merge {:answer (:answer final-result)
-                                                   :trace (conj trace trace-entry)
-                                                   :iteration-count (inc (long iteration))
-                                                   :utilization
-                                                   (let [u @usage-atom
-                                                         req (if (pos? (long (:iter-count u)))
-                                                               (long (:last-iter-input u))
-                                                               (long (:previous-request-input u)))]
+                          (let [result (-> (merge
+                                             {:answer (:answer final-result)
+                                              :trace (conj trace trace-entry)
+                                              :iteration-count (inc (long iteration))
+                                              :utilization
+                                              (let [u @usage-atom
+                                                    req (if (pos? (long (:iter-count u)))
+                                                          (long (:last-iter-input u))
+                                                          (long (:previous-request-input u)))]
 
-                                                     (ctx-engine/with-cache-hit-rate
-                                                       (ctx-engine/utilization
-                                                         req
-                                                         effective-context-limit
-                                                         (:input-tokens u)
-                                                         effective-fold-budget)
-                                                       (some-> (:ctx-atom environment)
-                                                               deref
-                                                               (get
-                                                                 ctx-engine/cache-samples-key))))}
-                                                  (finalize-cost))
+                                                (ctx-engine/with-cache-hit-rate
+                                                  (ctx-engine/utilization req
+                                                                          effective-context-limit
+                                                                          (:input-tokens u)
+                                                                          effective-fold-budget)
+                                                  (some-> (:ctx-atom environment)
+                                                          deref
+                                                          (get ctx-engine/cache-samples-key))))}
+                                             (finalize-cost))
                                            (attach-llm-routing-summary pre-resolved-model
                                                                        iteration-result))]
                             (auto-archive-hot-symbols! environment)
@@ -8262,11 +8266,10 @@
                                                       (long (:previous-request-input u)))]
 
                                             (ctx-engine/with-cache-hit-rate
-                                              (ctx-engine/utilization
-                                                req
-                                                effective-context-limit
-                                                (:input-tokens u)
-                                                effective-fold-budget)
+                                              (ctx-engine/utilization req
+                                                                      effective-context-limit
+                                                                      (:input-tokens u)
+                                                                      effective-fold-budget)
                                               (some-> (:ctx-atom environment)
                                                       deref
                                                       (get ctx-engine/cache-samples-key))))}
@@ -9920,608 +9923,501 @@
   ;; Context, its Engine and the whole Python heap. So the failure path leaked
   ;; worse than success ever could, on exactly the runs a caller would retry.
   (let [pending (volatile! nil)]
-   (try
-  (let [db-info
-        (persistance/db-create-connection! db)
-
-        state-atom
-        (atom {:custom-bindings {} :environment nil :session-id nil})
-
-        environment-atom
-        (atom nil)
-
-        environment-id
-        (str (util/uuid))
-
-        ;; SINGLE turn-state atom holds all per-turn cursor fields
-        ;; (current-{turn-position,iteration,form-idx,iteration-id,
-        ;;  session-turn-id,user-request}-atom). All six fields live
-        ;; under map keys with the same names minus `current-` /
-        ;; `-atom`. Reads via `ctx-loop/read-turn-state`; writes via
-        ;; `ctx-loop/set-turn-state!` / `swap-turn-state!`. Extension
-        ;; symbol wrappers close over THIS atom; the loop swap!s it
-        ;; between turns and forms.
-        turn-state-atom
-        (ctx-loop/make-turn-state-atom)
-
-        ;; Seed iteration to 1 so early hooks reading the atom before
-        ;; the loop's per-turn reset see a sensible value.
-        _
-        (swap! turn-state-atom assoc :iteration 1)
-
-        ;; Title atom: in-memory cache for the session title.
-        ;; The DB column on `session_state` is the persisted
-        ;; truth; this atom is the fast read path for  and
-        ;; the source for the title hint / channel chrome at iteration
-        ;; boundaries. `set-title!` writes both, in that order, then
-        ;; broadcasts to every registered listener.
-        ;; On RESUME (no caller-supplied title) seed the atom from the PERSISTED
-        ;; session title. Without this a fresh process starts the atom empty, so
-        ;; `maybe-auto-title!`'s guard sees "untitled" and RE-titles the session
-        ;; from the next message (e.g. a "continue") — overwriting a good title
-        ;; cross-process. Placeholder titles ("Untitled") still fall through to
-        ;; auto-title via `usable-existing-title`.
-        resolved-title
-        (or (not-empty (str title))
-            (when (and db-info session)
-              (when-let [rid (persistance/db-resolve-session-id db-info session)]
-                (not-empty (str (:title (persistance/db-get-session db-info rid)))))))
-
-        session-title-atom
-        (atom (or resolved-title ""))
-
-        root-resolved-model
-        (resolve-effective-model router)
-
-        root-model
-        (or (:name root-resolved-model) "unknown")
-
-        root-provider
-        (:provider root-resolved-model)
-
-        ;; Routing digest surfaced in the model-facing ctx (`routing`): the CURRENT
-        ;; model + provider, nothing more. The provider/model CATALOG is deliberately
-        ;; NOT shipped — there is no child dispatch to act on it, and it cost ~445
-        ;; tokens on EVERY request. STRING-KEYED: this
-        ;; digest lands in ctx as `session_routing` and crosses the Python boundary.
-        routing-digest
-        (cond-> {"model" root-model}
-          root-provider
-          (assoc "provider" (name root-provider)))
-
-        ;; Snapshot a base system prompt for the session row so the
-        ;; sidebar / DB inspectors have something stable to display.
-        ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
-        ;; with `:active-extensions`, so this snapshot is just metadata.
-        system-prompt
-        (prompt/build-system-prompt {})
-
-        resolved-session-id
-        (persistance/db-resolve-session-id db-info session)
-
-        ;; Workspace pin (1:1 with session_state):
-        ;;   - resuming a session       → derive workspace from its latest state
-        ;;   - brand-new session        → mint a trunk workspace, pass its id
-        ;;                                into db-store-session! below
-        ;; db-info nil (sandbox-only mode) → skip; iteration loop never asserts
-        ;;                                workspace pin when there's no DB
-        active-workspace
-        (when db-info
-          (cond
-            ;; Resume path: the existing session already pins a
-            ;; workspace; honour it.
-            resolved-session-id
-            (some->> (persistance/db-latest-session-state-id db-info resolved-session-id)
-                     (persistance/db-workspace-for-session db-info))
-            ;; New session, caller pre-spawned a workspace
-            ;; (e.g. /workspace slash spawn-branch path).
-            workspace-id (persistance/db-workspace-get db-info workspace-id)
-            ;; New session, no pre-spawn: clone cwd.
-            :else (workspace/ensure-workspace! db-info {})))
-
-        session-id
-        (or resolved-session-id
-            (persistance/db-store-session! db-info
-                                           (cond-> {:channel (or channel :tui)
-                                                    :external-id external-id
-                                                    :model root-model
-                                                    :title title
-                                                    :system-prompt system-prompt
-                                                    :workspace-id (:id active-workspace)
-                                                    ;; Unadopted TUI warm-pool sessions are
-                                                    ;; created UNCLAIMED (:claimed? false) so
-                                                    ;; they stay out of the cross-channel list
-                                                    ;; until a tab uses them (first turn claims).
-                                                    :claimed? (not prewarm?)}
-                                             root-provider
-                                             (assoc :provider root-provider))))
-
-        ;; Resolve the session_state row id ONCE here (reliable at env build)
-        ;; and stamp it on the env, so slashes/turns don't re-query it — the
-        ;; per-call re-query intermittently returns nil for fresh sessions,
-        ;; which broke `/draft new`'s pin ("session not ready").
-        session-state-id
-        (when (and db-info session-id) (persistance/db-latest-session-state-id db-info session-id))
-
-        ;; Context wiring (see ctx-loop). `ctx-atom` carries stable session
-        ;; context, while `turn-state-atom` tracks live counters. Seeded fresh;
-        ;; reloaded from session_turn_state.ctx (Nippy BLOB) on session resume.
-        ctx-atom
-        (ctx-loop/make-ctx-atom session-id)
-
-        ;; Large folds already invalidate the provider cache. Once their cumulative
-        ;; newly reclaimed wire crosses the threshold, rebase the standing session
-        ;; snapshot too instead of retaining an unbounded chain of historical deltas.
-        session-rebase-atom
-        (atom {:reclaimed-tokens 0 :pending? false})
-
-        ;; ONE model-driven context-compaction verb, recording a
-        ;; `:session/summaries` intent the wire applies via `apply-summaries`:
-        ;;
-        ;;   fold_session("tN/iM", "what this step established")  — the KEY names
-        ;;     the step, the GIST keeps its conclusion: the step collapses into
-        ;;     that one distilled line.
-        ;;   fold_session("tN/i1-i56", "…")  — ONE key string folds a whole window
-        ;;     (`-tN/iM` everything through it, `tN/iM-` everything since it, `tN`
-        ;;     a whole turn, commas union several). See `ctx-engine/fold-key` for
-        ;;     the grammar.
-        ;;   fold_session("tN/iM")  — the gist is OPTIONAL: OMIT it to just
-        ;;     DISCARD the step outright (an approach you abandoned, a read you
-        ;;     misread) where keeping even a summary would mislead. Replaces the
-        ;;     old `session_drop`.
-        ;;
-        ;; It records a `:session/summaries` intent the wire applies via
-        ;; apply-summaries, and RETURNS a visible confirmation (not the silent
-        ;; sentinel) so the fold shows in the Python result. See
-        ;; `compaction-verbs` for the intent shape + range handling.
-        compaction
-        (compaction-verbs ctx-atom session-rebase-atom)
-
-        ;; maki-style in-program concurrency: run each thunk (a Python callable,
-        ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
-        ;; order. GraalPy releases its lock on blocking I/O, so I/O-bound tool
-        ;; calls genuinely overlap inside ONE python_execution call. Dynamic sink
-        ;; bindings (tool-event/render) are conveyed via `bound-fn*` so tools
-        ;; called concurrently still render. ALL thunks run; if several FAIL,
-        ;; every future is still settled (we don't abort at the first throw) and
-        ;; ONE aggregated error names EVERY failure by slot index — so the model
-        ;; fixes them all in one pass instead of one-per-iteration. No failures →
-        ;; results in order, exactly as before.
-        gather-fn
-        (fn gather [& thunks]
-          (let [thunks
-                (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-                  (vec (first thunks)) ; gather([f1 f2]) too
-                  (vec thunks))
-
-                call
-                (fn [t]
-                  (cond (instance? Value t) (.execute ^Value t (object-array 0))
-                        (ifn? t) (t)
-                        :else t))
-
-                futs
-                (mapv (fn [t]
-                        (.submit ^ExecutorService @gather-executor
-                                 ^Callable
-                                 (bound-fn* (fn []
-                                              (call t)))))
-                      thunks)
-
-                ;; settle EVERY future — value OR error per slot; child
-                ;; futures are hard-cancelled when WE get interrupted
-                outcomes
-                (settle-gather-futures! futs)
-
-                failures
-                (keep-indexed (fn [i o]
-                                (when (contains? o :err) [i (:err o)]))
-                              outcomes)]
-
-            (if (empty? failures)
-              (mapv :ok outcomes)
-              ;; aggregate ALL failures into ONE error (slot index +
-              ;; message); chain the first as cause for the traceback.
-              (throw (ex-info (str "gather: " (count failures)
-                                   "/" (count outcomes)
-                                   " awaitables failed — "
-                                   (str/join "; "
-                                             (map (fn [[i e]]
-                                                    (str "[" i "] " (or (ex-message e) (str e))))
-                                                  failures)))
-                              {:vis/gather-failures (mapv (fn [[i e]]
-                                                            {:index i
-                                                             :message (or (ex-message e) (str e))})
-                                                          failures)
-                               :vis/gather-total (count outcomes)}
-                              (second (first failures)))))))
-
-        ;; ISOLATED sibling of `gather-fn`, backing `__vis_par_isolated__`. Runs
-        ;; every thunk on the SAME bounded platform pool with the SAME real overlap,
-        ;; but NEVER throws an aggregate on failure: each slot returns a per-call
-        ;; SENTINEL — `{"__vis_ok__" true "__vis_val__" v}` on success, or
-        ;; `{"__vis_ok__" false "__vis_exc__" <Throwable>}` on failure. The raw
-        ;; Throwable crosses back as a host object (env/->clj `asHostObject`), so
-        ;; the loop maps it through the SAME `python-op-error` path a serial call
-        ;; uses — byte-identical error fidelity, but ISOLATED (one failing
-        ;; observation never poisons its siblings). Exposed to the sandbox as
-        ;; `__vis_par_isolated__` so python code can fan out inside ONE block.
-        par-isolated-fn
-        (fn par-isolated [& thunks]
-          (let [thunks
-                (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-                  (vec (first thunks))
-                  (vec thunks))
-
-                call
-                (fn [t]
-                  (cond (instance? Value t) (.execute ^Value t (object-array 0))
-                        (ifn? t) (t)
-                        :else t))
-
-                futs
-                (mapv (fn [t]
-                        (.submit ^ExecutorService @gather-executor
-                                 ^Callable
-                                 (bound-fn* (fn []
-                                              (call t)))))
-                      thunks)]
-
-            (mapv (fn [o]
-                    (if (contains? o :err)
-                      {"__vis_ok__" false "__vis_exc__" (:err o)}
-                      {"__vis_ok__" true "__vis_val__" (:ok o)}))
-                  (settle-gather-futures! futs))))
-
-        ;; Build the ctx-loop env subset used by the engine bindings + helpers.
-        ;; Just the cursor counters + the single ctx-atom. Warnings
-        ;; live as `:engine/warnings` on the ctx itself, no side atoms.
-        ;; (D12 retired `:engine/pending-satisfies` along with
-        ;; satisfy-hint!; hook-task satisfaction is plain `plan_step`.)
-        _ctx-loop-env
-        {:ctx-atom ctx-atom
-         :turn-state-atom turn-state-atom
-         ;; DB + session id ride on the same env
-         ;; map so `build-introspect-bindings`
-         ;; can hit `session_turn_iteration.forms`
-         ;; for the per-form / per-iter / per-turn
-         ;; introspection verbs without an extra
-         ;; closure capture.
-         :db-info db-info
-         :session-id session-id}
-
-        ;; The current human turn text and engine context flow through ctx.
-        ;; Introspect verbs reach archived entries + any past turn snapshot
-        ;; via the soul/state chain. History loader is a thunk so the
-        ;; per-call DB read only happens when the model actually invokes
-        ;; one of the verbs.
-        ;;
-        ;; The cross-turn snapshot history loader is gone — rewind/lens/
-        ;; grep read the LIVE ctx-atom + per-form DB rows directly, not a
-        ;; {turn → ctx} history map. The loader arg is kept nil for
-        ;; call-site compatibility.
-        env-bindings
-        (merge
-          ;; BUILT-IN extension kernel (`foundation`):
-          ;; cat/ls/rg/patch/… interned BARE into the
-          ;; sandbox ns next to the engine verbs — no
-          ;; `v/` alias. env resolved lazily (atom not
-          ;; built yet). Listed FIRST so engine verbs
-          ;; below win any accidental name collision.
-          (extension/builtin-sandbox-bindings (fn []
-                                                @environment-atom))
-          ;; Engine verbs (no `done` — a plain-text reply
-          ;; finalizes the turn): the compaction verbs +
-          ;; `__vis_par__`, the bounded host platform pool
-          ;; that backs the async runtime's `gather`
-          ;; (Python-side `gather`/`await` live in the
-          ;; env_python async-runtime preamble; this is
-          ;; the dispatcher they call to overlap awaitables
-          ;; on bounded platform workers).
-          compaction
-          {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
-          ;; Canonical stateful-resource lifecycle:
-          ;; `resource_stop(id)` (B-dispatch — act by id;
-          ;; ctx advertises can_stop). Session-scoped so the
-          ;; agent only touches THIS session's resources.
-          ;; No context mutator or introspect
-          ;; bindings are installed here.
-          (resources/sandbox-bindings session-id))
-
-        ;; Security configuration is resolved exactly once per environment; it never
-        ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
-        ;; `policy-reload-epoch`, so each live env recycles at its next turn and
-        ;; rebuilds this snapshot.
-        security-config
-        (security-config-snapshot)
-
-        configured-rw-roots
-        (security-policy/read-write-roots security-config)
-
-        ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
-        ;; deny-by-default polyglot Context, wires the Clojure tools as Python
-        ;; callables, and installs doc/apropos introspection). Its live roots are the
-        ;; workspace overlay plus immutable configured read/write roots. Native file
-        ;; tools consume the same configured roots through the environment below.
-        workspace-atom
-        (atom active-workspace)
-
-        sandbox-roots-fn
-        (when (or active-workspace (seq configured-rw-roots))
-          (fn []
-            (let [ws
-                  @workspace-atom
-
-                  ;; The SAME per-root draft resolution the native tools use, so the
-                  ;; Python sandbox cannot reach a root the draft policy withholds
-                  ;; (`:denied?`) or write straight into a root this draft only owns
-                  ;; a private copy of — the clone is granted in its place.
-                  entries
-                  (workspace/env-filesystem-roots {:security-policy security-config
-                                                   :workspace ws
-                                                   :security/filesystem-roots configured-rw-roots})
-
-                  clones
-                  (into []
-                        (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %)))) (map :clone))
-                        entries)
-
-                  withheld
-                  (into #{}
-                        (comp (filter #(or (:denied? %)
-                                           (and (:clone %) (not= (:clone %) (:trunk %)))))
-                              (map :trunk))
-                        entries)]
-
-              (vec (distinct (concat (when ws [(str (:root ws))])
-                                     clones
-                                     (remove #(contains? withheld (workspace/normalize-root %))
-                                       configured-rw-roots)))))))
-
-        access-view-fn
-        (fn []
-          (let [ws
-                @workspace-atom
-
-                live-roots
-                (when ws [(:root ws)])]
-
-            (security-policy/access-view security-config live-roots)))
-
-        jail-config
-        (:process-jail security-config)
-
-        jail-enabled?
-        (not (:disabled? jail-config))
-
-        net-cfg
-        (:network security-config)
-
-        ;; Host sockets stay available to the interpreter; the jail is the ONE
-        ;; network switch. With the jail OFF there is no egress proxy AND no
-        ;; in-interpreter domain guard — the sandbox network is unconfined, the
-        ;; same all-or-nothing containment the OS process jail gives subprocesses.
-        net-on?
-        true
-
-        network-opts
-        {:enabled? net-on?
-         :jail-enabled? jail-enabled?
-         :allowed-domains (:allowed-domains net-cfg)
-         :denied-domains (:denied-domains net-cfg)
-         :exclude-domains (:exclude-domains net-cfg)
-         :allow-private (:allow-private net-cfg)
-         :rules (:rules net-cfg)}
-
-        ;; One shared gateway proxy serves every environment. Unguessable tokens
-        ;; attribute requests to this environment's immutable policy snapshot.
-        sandbox-token
-        (str (java.util.UUID/randomUUID))
-
-        repl-sandbox-token
-        (str (java.util.UUID/randomUUID))
-
-        compiled-network-policy
-        (some-> (egress/compile-policy net-cfg)
-                (assoc :mitm? (boolean (seq (:rules net-cfg)))))
-
-        _register-sandbox
-        (when (and sandbox-roots-fn jail-enabled?)
-          (gateway-sandbox/register-session! sandbox-token (constantly compiled-network-policy)))
-
-        _register-repl-sandbox
-        (when (and sandbox-roots-fn jail-enabled?)
-          (gateway-sandbox/register-session! repl-sandbox-token
-                                             (constantly compiled-network-policy)))
-
-        ;; The user-controlled keys come only from config-spec/process-jail-config.
-        ;; Per-spawn evaluation retains live workspace roots, lazy proxy startup and
-        ;; the resolved `environment:` declarations; nothing else re-reads config.
-        jail-policy-fn
-        (when sandbox-roots-fn
-          (fn []
-            (let [proxy?
-                  (and jail-enabled? net-on?)
-
-                  proxy-port
-                  (when proxy? (gateway-sandbox/ensure-proxy!))
-
-                  ca-file
-                  (when proxy? (gateway-sandbox/ensure-ca!))
-
-                  java-trust
-                  (when proxy? (gateway-sandbox/ensure-java-trust!))
-
-                  repl-proxy-port
-                  (when proxy? (gateway-sandbox/ensure-session-proxy! repl-sandbox-token))]
-
-              (merge jail-config
-                     {:roots-fn sandbox-roots-fn
-                      :net-enabled? net-on?
-                      ;; Resolved per spawn (never baked into the session snapshot), so a
-                      ;; `.env` edit or a refreshed keychain item reaches the next child.
-                      :env-values (config/child-environment-values)
-                      :proxy-port proxy-port
-                      :proxy-token (when proxy? sandbox-token)
-                      :repl-proxy-port repl-proxy-port
-                      :repl-ca-file ca-file
-                      :java-trust-store (:java-trust-store java-trust)
-                      :java-trust-store-password (:java-trust-store-password java-trust)
-                      :ca-file ca-file}))))
-
-        ;; Register one live policy function for the standard language-process launch
-        ;; contract. Managed REPLs and project test runners share the same Seatbelt +
-        ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.
-        _register-repl-jail
-        (when session-id (process-jail/register-session-jail! session-id jail-policy-fn))
-
-        ;; The `:fs/access` gate, pushed down into the sandbox filesystem: a path an
-        ;; extension's gate hook refuses is refused for `open(..., "w")`,
-        ;; `shutil.move` and `Path.unlink` exactly as it is for `patch`.
-        sandbox-gate-fn
-        (when sandbox-roots-fn
-          (extension/fs-access-gate (fn []
-                                      @environment-atom)))
-
-        {:keys [python-context python-engine sandbox-ns initial-ns-keys] :as sandbox}
-        (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
-                                   sandbox-roots-fn
-                                   network-opts
-                                   nil
-                                   nil
-                                   sandbox-gate-fn)
-
-        _
-        (vreset! pending sandbox)
-
-        ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
-        ;; while the transcript still shows the helpers this session refined, so the
-        ;; next call would be a NameError against code the model can read. Re-create
-        ;; them from the snapshot `execute-code` wrote after every block.
-        _restored-defs
-        (env/restore-session-defs! python-context session-id)
-
-        env
-        (cond-> {:environment-id environment-id
-                 :session-id session-id
-                 :session/state-id session-state-id
-                 :channel (or channel :tui)
-                 ;; Immutable canonical security policy plus its live workspace overlay.
-                 ;; Context, GraalPy, native file tools, shell, managed language processes,
-                 ;; and egress all derive from this same environment-owned value.
-                 :security-policy security-config
-                 :security/filesystem-roots configured-rw-roots
-                 :security/no-search-roots (security-policy/no-search-roots security-config)
-                 :access-view-fn access-view-fn
-                 ;; What the Python sandbox can ACTUALLY reach this session —
-                 ;; `python-execution-tool` builds its fs/network description
-                 ;; from this so the prompt never claims a capability the
-                 ;; sandbox lacks (no workspace ⇒ no fs; toggle off ⇒ no net).
-                 :sandbox-caps {:fs? (boolean sandbox-roots-fn) :network network-opts}
-                 ;; Live workspace pointer for the sandbox confinement —
-                 ;; run-turn! resets it after its per-turn workspace
-                 ;; re-resolve so `sandbox-roots-fn` tracks /draft + /root.
-                 :workspace-atom workspace-atom
-                 ;; routing digest → rendered into ctx as `routing`
-                 ;; (current model + provider only).
-                 :routing routing-digest
-                 :db-info db-info
-                 ;; Per-session OS-jail policy fn — the shell jail is ALWAYS ON; nil only when
-                 ;; no sandbox roots exist. Shell/subprocess executors consult it per spawn; see process-jail.
-                 :jail-policy-fn jail-policy-fn
-                 ;; This session's unguessable token for the SHARED gateway egress proxy /
-                 ;; MITM CA (internal.gateway-sandbox). Registered at env build; dropped from
-                 ;; the proxy's session registry in dispose-environment!.
-                 :sandbox-token sandbox-token
-                 :repl-sandbox-token repl-sandbox-token}
-          ;; Workspace info attached at env-build time so the extension
-          ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
-          ;; root the very first time it fires.
-          active-workspace
-          (assoc :workspace
-            active-workspace :workspace/id
-            (:id active-workspace) :workspace/root
-            (:root active-workspace)
-            ;; Every workspace is a rift CoW clone — always a sandbox.
-            ;; Reported on :workspace/sandbox?, NOT as a VCS. The
-            ;; model-facing :vcs/kind is the real repo VCS, computed in
-            ;; foundation.workspace-ctx/render-block.
-            :workspace/sandbox?
-            true))
-
-        env
-        (assoc env
-          ;; Context atoms — visible to the rest of the loop so renderer /
-          ;; per-iter capture / done snapshot can read or stamp them.
-          :ctx-atom ctx-atom
-          :turn-state-atom turn-state-atom
-          :session-rebase-atom session-rebase-atom
-          ;; PROMPT-CACHE STABILITY: the standing `session = {…}` block rides
-          ;; in the cached system prefix and is normally frozen across turns.
-          ;; State changes ride as appended `session[...] = …` deltas. A large
-          ;; fold deliberately rebases this block to the current materialized
-          ;; session, bounding the delta chain while spending a cache miss that
-          ;; compaction already made useful. Holds
-          ;; `{:block <frozen text> :baseline <last-emitted static map>}`;
-          ;; nil until the first turn seeds it. A fresh process (resume/restart)
-          ;; starts nil → renders fresh from current state (cold cache anyway).
-          :standing-ctx-atom (atom nil)
-          :state-atom state-atom
-          :python-context python-context
-          ;; Owned by THIS env: `dispose-environment!` closes it right after the
-          ;; context, which is what frees the session's Python heap.
-          :python-engine python-engine
-          :sandbox-ns sandbox-ns
-          :initial-ns-keys initial-ns-keys
-          ;; Long-lived per-env LRU map: `{var-name-string →
-          ;; last-used-turn-pos}`. Merged from each iteration's
-          ;; `:lru` after eval.
-          :def-resolve-lru-atom (atom {})
-          :router router
-          :session-title-atom session-title-atom
-          :extensions (atom [])
-          :active-extensions (atom []))]
-
-    (reset! environment-atom env)
-    (swap! state-atom assoc :environment env :session-id session-id)
-    ;; Restore the context state when resuming. Sandbox defs do NOT persist
-    ;; across turns (the `definition_*` sidecar tables were dropped).
-    (when resolved-session-id
-      ;; The latest session_turn_state.ctx (Nippy BLOB) carries the persisted
-      ;; context snapshot. Cursor is iter-local so we don't restore it; the
-      ;; renderer stamps a fresh one from the loop counters.
-      (try (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
-             ;; The Nippy blob IS the whole ctx now (no separate task/fact/archive
-             ;; tables). It has no `"engine_*"` ephemeral keys (stripped before
-             ;; Nippy), so re-seed those empty here so swap! callers don't need
-             ;; nil-guards. Read once, on resume; the live render stays in-memory.
-             (reset! ctx-atom (assoc persisted-ctx
-                                "session_id" session-id
-                                "engine_warnings" []
-                                "engine_pending_satisfies" [])))
-           (catch Throwable t
-             (tel/log! {:level :warn
-                        :id ::restore-ctx-failed
-                        :data {:error (ex-message t) :session-id session-id}
-                        :msg "Failed to restore context state from DB - starting empty"}))))
-    ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
-    ;; classpath, then install extensions in dependency order. The
-    ;; same loader populates channel/command/provider/persistance
-    ;; registries as a side effect; we just care about the extension
-    ;; rows here.
-    (extension/discover-extensions!)
-    ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
-    ;; classpath discovery so they land in the same registry walk below.
-    ;; Load-once, never adopt: this runs on every env cache miss, every recycle
-    ;; and every child env, and none of those is a human act. Only
-    ;; this process's own start and `/reload` may pick an edit up.
-    (python-extensions/ensure-python-extensions-loaded!)
-    (extension/register-extensions! env install-extension!)
-    env)
-   (catch Throwable t
-     ;; Best-effort: a teardown must never replace the real failure with its own.
-     (try (res/dispose! @pending) (catch Throwable _ nil))
-     (throw t)))))
+    (try
+      (let [db-info (persistance/db-create-connection! db)
+            state-atom (atom {:custom-bindings {} :environment nil :session-id nil})
+            environment-atom (atom nil)
+            environment-id (str (util/uuid))
+            ;; SINGLE turn-state atom holds all per-turn cursor fields
+            ;; (current-{turn-position,iteration,form-idx,iteration-id,
+            ;;  session-turn-id,user-request}-atom). All six fields live
+            ;; under map keys with the same names minus `current-` /
+            ;; `-atom`. Reads via `ctx-loop/read-turn-state`; writes via
+            ;; `ctx-loop/set-turn-state!` / `swap-turn-state!`. Extension
+            ;; symbol wrappers close over THIS atom; the loop swap!s it
+            ;; between turns and forms.
+            turn-state-atom (ctx-loop/make-turn-state-atom)
+            ;; Seed iteration to 1 so early hooks reading the atom before
+            ;; the loop's per-turn reset see a sensible value.
+            _ (swap! turn-state-atom assoc :iteration 1)
+            ;; Title atom: in-memory cache for the session title.
+            ;; The DB column on `session_state` is the persisted
+            ;; truth; this atom is the fast read path for  and
+            ;; the source for the title hint / channel chrome at iteration
+            ;; boundaries. `set-title!` writes both, in that order, then
+            ;; broadcasts to every registered listener.
+            ;; On RESUME (no caller-supplied title) seed the atom from the PERSISTED
+            ;; session title. Without this a fresh process starts the atom empty, so
+            ;; `maybe-auto-title!`'s guard sees "untitled" and RE-titles the session
+            ;; from the next message (e.g. a "continue") — overwriting a good title
+            ;; cross-process. Placeholder titles ("Untitled") still fall through to
+            ;; auto-title via `usable-existing-title`.
+            resolved-title (or (not-empty (str title))
+                               (when (and db-info session)
+                                 (when-let [rid (persistance/db-resolve-session-id db-info session)]
+                                   (not-empty (str (:title (persistance/db-get-session db-info
+                                                                                       rid)))))))
+            session-title-atom (atom (or resolved-title ""))
+            root-resolved-model (resolve-effective-model router)
+            root-model (or (:name root-resolved-model) "unknown")
+            root-provider (:provider root-resolved-model)
+            ;; Routing digest surfaced in the model-facing ctx (`routing`): the CURRENT
+            ;; model + provider, nothing more. The provider/model CATALOG is deliberately
+            ;; NOT shipped — there is no child dispatch to act on it, and it cost ~445
+            ;; tokens on EVERY request. STRING-KEYED: this
+            ;; digest lands in ctx as `session_routing` and crosses the Python boundary.
+            routing-digest (cond-> {"model" root-model}
+                             root-provider
+                             (assoc "provider" (name root-provider)))
+            ;; Snapshot a base system prompt for the session row so the
+            ;; sidebar / DB inspectors have something stable to display.
+            ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
+            ;; with `:active-extensions`, so this snapshot is just metadata.
+            system-prompt (prompt/build-system-prompt {})
+            resolved-session-id (persistance/db-resolve-session-id db-info session)
+            ;; Workspace pin (1:1 with session_state):
+            ;;   - resuming a session       → derive workspace from its latest state
+            ;;   - brand-new session        → mint a trunk workspace, pass its id
+            ;;                                into db-store-session! below
+            ;; db-info nil (sandbox-only mode) → skip; iteration loop never asserts
+            ;;                                workspace pin when there's no DB
+            active-workspace
+            (when db-info
+              (cond
+                ;; Resume path: the existing session already pins a
+                ;; workspace; honour it.
+                resolved-session-id
+                (some->> (persistance/db-latest-session-state-id db-info resolved-session-id)
+                         (persistance/db-workspace-for-session db-info))
+                ;; New session, caller pre-spawned a workspace
+                ;; (e.g. /workspace slash spawn-branch path).
+                workspace-id (persistance/db-workspace-get db-info workspace-id)
+                ;; New session, no pre-spawn: clone cwd.
+                :else (workspace/ensure-workspace! db-info {})))
+            session-id (or resolved-session-id
+                           (persistance/db-store-session! db-info
+                                                          (cond-> {:channel (or channel :tui)
+                                                                   :external-id external-id
+                                                                   :model root-model
+                                                                   :title title
+                                                                   :system-prompt system-prompt
+                                                                   :workspace-id (:id
+                                                                                   active-workspace)
+                                                                   ;; Unadopted TUI warm-pool sessions are
+                                                                   ;; created UNCLAIMED (:claimed? false) so
+                                                                   ;; they stay out of the cross-channel list
+                                                                   ;; until a tab uses them (first turn claims).
+                                                                   :claimed? (not prewarm?)}
+                                                            root-provider
+                                                            (assoc :provider root-provider))))
+            ;; Resolve the session_state row id ONCE here (reliable at env build)
+            ;; and stamp it on the env, so slashes/turns don't re-query it — the
+            ;; per-call re-query intermittently returns nil for fresh sessions,
+            ;; which broke `/draft new`'s pin ("session not ready").
+            session-state-id (when (and db-info session-id)
+                               (persistance/db-latest-session-state-id db-info session-id))
+            ;; Context wiring (see ctx-loop). `ctx-atom` carries stable session
+            ;; context, while `turn-state-atom` tracks live counters. Seeded fresh;
+            ;; reloaded from session_turn_state.ctx (Nippy BLOB) on session resume.
+            ctx-atom (ctx-loop/make-ctx-atom session-id)
+            ;; Large folds already invalidate the provider cache. Once their cumulative
+            ;; newly reclaimed wire crosses the threshold, rebase the standing session
+            ;; snapshot too instead of retaining an unbounded chain of historical deltas.
+            session-rebase-atom (atom {:reclaimed-tokens 0 :pending? false})
+            ;; ONE model-driven context-compaction verb, recording a
+            ;; `:session/summaries` intent the wire applies via `apply-summaries`:
+            ;;
+            ;;   fold_session("tN/iM", "what this step established")  — the KEY names
+            ;;     the step, the GIST keeps its conclusion: the step collapses into
+            ;;     that one distilled line.
+            ;;   fold_session("tN/i1-i56", "…")  — ONE key string folds a whole window
+            ;;     (`-tN/iM` everything through it, `tN/iM-` everything since it, `tN`
+            ;;     a whole turn, commas union several). See `ctx-engine/fold-key` for
+            ;;     the grammar.
+            ;;   fold_session("tN/iM")  — the gist is OPTIONAL: OMIT it to just
+            ;;     DISCARD the step outright (an approach you abandoned, a read you
+            ;;     misread) where keeping even a summary would mislead. Replaces the
+            ;;     old `session_drop`.
+            ;;
+            ;; It records a `:session/summaries` intent the wire applies via
+            ;; apply-summaries, and RETURNS a visible confirmation (not the silent
+            ;; sentinel) so the fold shows in the Python result. See
+            ;; `compaction-verbs` for the intent shape + range handling.
+            compaction (compaction-verbs ctx-atom session-rebase-atom)
+            ;; maki-style in-program concurrency: run each thunk (a Python callable,
+            ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
+            ;; order. GraalPy releases its lock on blocking I/O, so I/O-bound tool
+            ;; calls genuinely overlap inside ONE python_execution call. Dynamic sink
+            ;; bindings (tool-event/render) are conveyed via `bound-fn*` so tools
+            ;; called concurrently still render. ALL thunks run; if several FAIL,
+            ;; every future is still settled (we don't abort at the first throw) and
+            ;; ONE aggregated error names EVERY failure by slot index — so the model
+            ;; fixes them all in one pass instead of one-per-iteration. No failures →
+            ;; results in order, exactly as before.
+            gather-fn (fn gather [& thunks]
+                        (let [thunks (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+                                       (vec (first thunks)) ; gather([f1 f2]) too
+                                       (vec thunks))
+                              call (fn [t]
+                                     (cond (instance? Value t) (.execute ^Value t (object-array 0))
+                                           (ifn? t) (t)
+                                           :else t))
+                              futs (mapv (fn [t]
+                                           (.submit ^ExecutorService @gather-executor
+                                                    ^Callable
+                                                    (bound-fn* (fn []
+                                                                 (call t)))))
+                                         thunks)
+                              ;; settle EVERY future — value OR error per slot; child
+                              ;; futures are hard-cancelled when WE get interrupted
+                              outcomes (settle-gather-futures! futs)
+                              failures (keep-indexed (fn [i o]
+                                                       (when (contains? o :err) [i (:err o)]))
+                                                     outcomes)]
+
+                          (if (empty? failures)
+                            (mapv :ok outcomes)
+                            ;; aggregate ALL failures into ONE error (slot index +
+                            ;; message); chain the first as cause for the traceback.
+                            (throw (ex-info
+                                     (str "gather: " (count failures)
+                                          "/" (count outcomes)
+                                          " awaitables failed — "
+                                          (str/join "; "
+                                                    (map (fn [[i e]]
+                                                           (str "[" i
+                                                                "] " (or (ex-message e) (str e))))
+                                                         failures)))
+                                     {:vis/gather-failures
+                                      (mapv (fn [[i e]]
+                                              {:index i :message (or (ex-message e) (str e))})
+                                            failures)
+                                      :vis/gather-total (count outcomes)}
+                                     (second (first failures)))))))
+            ;; ISOLATED sibling of `gather-fn`, backing `__vis_par_isolated__`. Runs
+            ;; every thunk on the SAME bounded platform pool with the SAME real overlap,
+            ;; but NEVER throws an aggregate on failure: each slot returns a per-call
+            ;; SENTINEL — `{"__vis_ok__" true "__vis_val__" v}` on success, or
+            ;; `{"__vis_ok__" false "__vis_exc__" <Throwable>}` on failure. The raw
+            ;; Throwable crosses back as a host object (env/->clj `asHostObject`), so
+            ;; the loop maps it through the SAME `python-op-error` path a serial call
+            ;; uses — byte-identical error fidelity, but ISOLATED (one failing
+            ;; observation never poisons its siblings). Exposed to the sandbox as
+            ;; `__vis_par_isolated__` so python code can fan out inside ONE block.
+            par-isolated-fn
+            (fn par-isolated [& thunks]
+              (let [thunks (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+                             (vec (first thunks))
+                             (vec thunks))
+                    call (fn [t]
+                           (cond (instance? Value t) (.execute ^Value t (object-array 0))
+                                 (ifn? t) (t)
+                                 :else t))
+                    futs (mapv (fn [t]
+                                 (.submit ^ExecutorService @gather-executor
+                                          ^Callable
+                                          (bound-fn* (fn []
+                                                       (call t)))))
+                               thunks)]
+
+                (mapv (fn [o]
+                        (if (contains? o :err)
+                          {"__vis_ok__" false "__vis_exc__" (:err o)}
+                          {"__vis_ok__" true "__vis_val__" (:ok o)}))
+                      (settle-gather-futures! futs))))
+            ;; Build the ctx-loop env subset used by the engine bindings + helpers.
+            ;; Just the cursor counters + the single ctx-atom. Warnings
+            ;; live as `:engine/warnings` on the ctx itself, no side atoms.
+            ;; (D12 retired `:engine/pending-satisfies` along with
+            ;; satisfy-hint!; hook-task satisfaction is plain `plan_step`.)
+            _ctx-loop-env {:ctx-atom ctx-atom
+                           :turn-state-atom turn-state-atom
+                           ;; DB + session id ride on the same env
+                           ;; map so `build-introspect-bindings`
+                           ;; can hit `session_turn_iteration.forms`
+                           ;; for the per-form / per-iter / per-turn
+                           ;; introspection verbs without an extra
+                           ;; closure capture.
+                           :db-info db-info
+                           :session-id session-id}
+            ;; The current human turn text and engine context flow through ctx.
+            ;; Introspect verbs reach archived entries + any past turn snapshot
+            ;; via the soul/state chain. History loader is a thunk so the
+            ;; per-call DB read only happens when the model actually invokes
+            ;; one of the verbs.
+            ;;
+            ;; The cross-turn snapshot history loader is gone — rewind/lens/
+            ;; grep read the LIVE ctx-atom + per-form DB rows directly, not a
+            ;; {turn → ctx} history map. The loader arg is kept nil for
+            ;; call-site compatibility.
+            env-bindings (merge
+                           ;; BUILT-IN extension kernel (`foundation`):
+                           ;; cat/ls/rg/patch/… interned BARE into the
+                           ;; sandbox ns next to the engine verbs — no
+                           ;; `v/` alias. env resolved lazily (atom not
+                           ;; built yet). Listed FIRST so engine verbs
+                           ;; below win any accidental name collision.
+                           (extension/builtin-sandbox-bindings (fn []
+                                                                 @environment-atom))
+                           ;; Engine verbs (no `done` — a plain-text reply
+                           ;; finalizes the turn): the compaction verbs +
+                           ;; `__vis_par__`, the bounded host platform pool
+                           ;; that backs the async runtime's `gather`
+                           ;; (Python-side `gather`/`await` live in the
+                           ;; env_python async-runtime preamble; this is
+                           ;; the dispatcher they call to overlap awaitables
+                           ;; on bounded platform workers).
+                           compaction
+                           {(symbol "__vis_par__") gather-fn
+                            (symbol "__vis_par_isolated__") par-isolated-fn}
+                           ;; Canonical stateful-resource lifecycle:
+                           ;; `resource_stop(id)` (B-dispatch — act by id;
+                           ;; ctx advertises can_stop). Session-scoped so the
+                           ;; agent only touches THIS session's resources.
+                           ;; No context mutator or introspect
+                           ;; bindings are installed here.
+                           (resources/sandbox-bindings session-id))
+            ;; Security configuration is resolved exactly once per environment; it never
+            ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
+            ;; `policy-reload-epoch`, so each live env recycles at its next turn and
+            ;; rebuilds this snapshot.
+            security-config (security-config-snapshot)
+            configured-rw-roots (security-policy/read-write-roots security-config)
+            ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
+            ;; deny-by-default polyglot Context, wires the Clojure tools as Python
+            ;; callables, and installs doc/apropos introspection). Its live roots are the
+            ;; workspace overlay plus immutable configured read/write roots. Native file
+            ;; tools consume the same configured roots through the environment below.
+            workspace-atom (atom active-workspace)
+            sandbox-roots-fn
+            (when (or active-workspace (seq configured-rw-roots))
+              (fn []
+                (let [ws @workspace-atom
+                      ;; The SAME per-root draft resolution the native tools use, so the
+                      ;; Python sandbox cannot reach a root the draft policy withholds
+                      ;; (`:denied?`) or write straight into a root this draft only owns
+                      ;; a private copy of — the clone is granted in its place.
+                      entries (workspace/env-filesystem-roots {:security-policy security-config
+                                                               :workspace ws
+                                                               :security/filesystem-roots
+                                                               configured-rw-roots})
+                      clones (into []
+                                   (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %))))
+                                         (map :clone))
+                                   entries)
+                      withheld (into #{}
+                                     (comp (filter #(or (:denied? %)
+                                                        (and (:clone %)
+                                                             (not= (:clone %) (:trunk %)))))
+                                           (map :trunk))
+                                     entries)]
+
+                  (vec (distinct (concat (when ws [(str (:root ws))])
+                                         clones
+                                         (remove #(contains? withheld (workspace/normalize-root %))
+                                           configured-rw-roots)))))))
+            access-view-fn (fn []
+                             (let [ws @workspace-atom
+                                   live-roots (when ws [(:root ws)])]
+
+                               (security-policy/access-view security-config live-roots)))
+            jail-config (:process-jail security-config)
+            jail-enabled? (not (:disabled? jail-config))
+            net-cfg (:network security-config)
+            ;; Host sockets stay available to the interpreter; the jail is the ONE
+            ;; network switch. With the jail OFF there is no egress proxy AND no
+            ;; in-interpreter domain guard — the sandbox network is unconfined, the
+            ;; same all-or-nothing containment the OS process jail gives subprocesses.
+            net-on? true
+            network-opts {:enabled? net-on?
+                          :jail-enabled? jail-enabled?
+                          :allowed-domains (:allowed-domains net-cfg)
+                          :denied-domains (:denied-domains net-cfg)
+                          :exclude-domains (:exclude-domains net-cfg)
+                          :allow-private (:allow-private net-cfg)
+                          :rules (:rules net-cfg)}
+            ;; One shared gateway proxy serves every environment. Unguessable tokens
+            ;; attribute requests to this environment's immutable policy snapshot.
+            sandbox-token (str (java.util.UUID/randomUUID))
+            repl-sandbox-token (str (java.util.UUID/randomUUID))
+            compiled-network-policy (some-> (egress/compile-policy net-cfg)
+                                            (assoc :mitm? (boolean (seq (:rules net-cfg)))))
+            _register-sandbox (when (and sandbox-roots-fn jail-enabled?)
+                                (gateway-sandbox/register-session! sandbox-token
+                                                                   (constantly
+                                                                     compiled-network-policy)))
+            _register-repl-sandbox (when (and sandbox-roots-fn jail-enabled?)
+                                     (gateway-sandbox/register-session! repl-sandbox-token
+                                                                        (constantly
+                                                                          compiled-network-policy)))
+            ;; The user-controlled keys come only from config-spec/process-jail-config.
+            ;; Per-spawn evaluation retains live workspace roots, lazy proxy startup and
+            ;; the resolved `environment:` declarations; nothing else re-reads config.
+            jail-policy-fn
+            (when sandbox-roots-fn
+              (fn []
+                (let [proxy? (and jail-enabled? net-on?)
+                      proxy-port (when proxy? (gateway-sandbox/ensure-proxy!))
+                      ca-file (when proxy? (gateway-sandbox/ensure-ca!))
+                      java-trust (when proxy? (gateway-sandbox/ensure-java-trust!))
+                      repl-proxy-port (when proxy?
+                                        (gateway-sandbox/ensure-session-proxy! repl-sandbox-token))]
+
+                  (merge jail-config
+                         {:roots-fn sandbox-roots-fn
+                          :net-enabled? net-on?
+                          ;; Resolved per spawn (never baked into the session snapshot), so a
+                          ;; `.env` edit or a refreshed keychain item reaches the next child.
+                          :env-values (config/child-environment-values)
+                          :proxy-port proxy-port
+                          :proxy-token (when proxy? sandbox-token)
+                          :repl-proxy-port repl-proxy-port
+                          :repl-ca-file ca-file
+                          :java-trust-store (:java-trust-store java-trust)
+                          :java-trust-store-password (:java-trust-store-password java-trust)
+                          :ca-file ca-file}))))
+            ;; Register one live policy function for the standard language-process launch
+            ;; contract. Managed REPLs and project test runners share the same Seatbelt +
+            ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.
+            _register-repl-jail (when session-id
+                                  (process-jail/register-session-jail! session-id jail-policy-fn))
+            ;; The `:fs/access` gate, pushed down into the sandbox filesystem: a path an
+            ;; extension's gate hook refuses is refused for `open(..., "w")`,
+            ;; `shutil.move` and `Path.unlink` exactly as it is for `patch`.
+            sandbox-gate-fn (when sandbox-roots-fn
+                              (extension/fs-access-gate (fn []
+                                                          @environment-atom)))
+            {:keys [python-context python-engine sandbox-ns initial-ns-keys] :as sandbox}
+            (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
+                                       sandbox-roots-fn
+                                       network-opts
+                                       nil
+                                       nil
+                                       sandbox-gate-fn)
+            _ (vreset! pending sandbox)
+            ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
+            ;; while the transcript still shows the helpers this session refined, so the
+            ;; next call would be a NameError against code the model can read. Re-create
+            ;; them from the snapshot `execute-code` wrote after every block.
+            _restored-defs (env/restore-session-defs! python-context session-id)
+            env (cond-> {:environment-id environment-id
+                         :session-id session-id
+                         :session/state-id session-state-id
+                         :channel (or channel :tui)
+                         ;; Immutable canonical security policy plus its live workspace overlay.
+                         ;; Context, GraalPy, native file tools, shell, managed language processes,
+                         ;; and egress all derive from this same environment-owned value.
+                         :security-policy security-config
+                         :security/filesystem-roots configured-rw-roots
+                         :security/no-search-roots (security-policy/no-search-roots security-config)
+                         :access-view-fn access-view-fn
+                         ;; What the Python sandbox can ACTUALLY reach this session —
+                         ;; `python-execution-tool` builds its fs/network description
+                         ;; from this so the prompt never claims a capability the
+                         ;; sandbox lacks (no workspace ⇒ no fs; toggle off ⇒ no net).
+                         :sandbox-caps {:fs? (boolean sandbox-roots-fn) :network network-opts}
+                         ;; Live workspace pointer for the sandbox confinement —
+                         ;; run-turn! resets it after its per-turn workspace
+                         ;; re-resolve so `sandbox-roots-fn` tracks /draft + /root.
+                         :workspace-atom workspace-atom
+                         ;; routing digest → rendered into ctx as `routing`
+                         ;; (current model + provider only).
+                         :routing routing-digest
+                         :db-info db-info
+                         ;; Per-session OS-jail policy fn — the shell jail is ALWAYS ON; nil only when
+                         ;; no sandbox roots exist. Shell/subprocess executors consult it per spawn; see process-jail.
+                         :jail-policy-fn jail-policy-fn
+                         ;; This session's unguessable token for the SHARED gateway egress proxy /
+                         ;; MITM CA (internal.gateway-sandbox). Registered at env build; dropped from
+                         ;; the proxy's session registry in dispose-environment!.
+                         :sandbox-token sandbox-token
+                         :repl-sandbox-token repl-sandbox-token}
+                  ;; Workspace info attached at env-build time so the extension
+                  ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
+                  ;; root the very first time it fires.
+                  active-workspace
+                  (assoc :workspace
+                    active-workspace :workspace/id
+                    (:id active-workspace) :workspace/root
+                    (:root active-workspace)
+                    ;; Every workspace is a rift CoW clone — always a sandbox.
+                    ;; Reported on :workspace/sandbox?, NOT as a VCS. The
+                    ;; model-facing :vcs/kind is the real repo VCS, computed in
+                    ;; foundation.workspace-ctx/render-block.
+                    :workspace/sandbox?
+                    true))
+            env (assoc env
+                  ;; Context atoms — visible to the rest of the loop so renderer /
+                  ;; per-iter capture / done snapshot can read or stamp them.
+                  :ctx-atom ctx-atom
+                  :turn-state-atom turn-state-atom
+                  :session-rebase-atom session-rebase-atom
+                  ;; PROMPT-CACHE STABILITY: the standing `session = {…}` block rides
+                  ;; in the cached system prefix and is normally frozen across turns.
+                  ;; State changes ride as appended `session[...] = …` deltas. A large
+                  ;; fold deliberately rebases this block to the current materialized
+                  ;; session, bounding the delta chain while spending a cache miss that
+                  ;; compaction already made useful. Holds
+                  ;; `{:block <frozen text> :baseline <last-emitted static map>}`;
+                  ;; nil until the first turn seeds it. A fresh process (resume/restart)
+                  ;; starts nil → renders fresh from current state (cold cache anyway).
+                  :standing-ctx-atom (atom nil)
+                  :state-atom state-atom
+                  :python-context python-context
+                  ;; Owned by THIS env: `dispose-environment!` closes it right after the
+                  ;; context, which is what frees the session's Python heap.
+                  :python-engine python-engine
+                  :sandbox-ns sandbox-ns
+                  :initial-ns-keys initial-ns-keys
+                  ;; Long-lived per-env LRU map: `{var-name-string →
+                  ;; last-used-turn-pos}`. Merged from each iteration's
+                  ;; `:lru` after eval.
+                  :def-resolve-lru-atom (atom {})
+                  :router router
+                  :session-title-atom session-title-atom
+                  :extensions (atom [])
+                  :active-extensions (atom []))]
+
+        (reset! environment-atom env)
+        (swap! state-atom assoc :environment env :session-id session-id)
+        ;; Restore the context state when resuming. Sandbox defs do NOT persist
+        ;; across turns (the `definition_*` sidecar tables were dropped).
+        (when resolved-session-id
+          ;; The latest session_turn_state.ctx (Nippy BLOB) carries the persisted
+          ;; context snapshot. Cursor is iter-local so we don't restore it; the
+          ;; renderer stamps a fresh one from the loop counters.
+          (try (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
+                 ;; The Nippy blob IS the whole ctx now (no separate task/fact/archive
+                 ;; tables). It has no `"engine_*"` ephemeral keys (stripped before
+                 ;; Nippy), so re-seed those empty here so swap! callers don't need
+                 ;; nil-guards. Read once, on resume; the live render stays in-memory.
+                 (reset! ctx-atom (assoc persisted-ctx
+                                    "session_id" session-id
+                                    "engine_warnings" []
+                                    "engine_pending_satisfies" [])))
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::restore-ctx-failed
+                            :data {:error (ex-message t) :session-id session-id}
+                            :msg "Failed to restore context state from DB - starting empty"}))))
+        ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
+        ;; classpath, then install extensions in dependency order. The
+        ;; same loader populates channel/command/provider/persistance
+        ;; registries as a side effect; we just care about the extension
+        ;; rows here.
+        (extension/discover-extensions!)
+        ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
+        ;; classpath discovery so they land in the same registry walk below.
+        ;; Load-once, never adopt: this runs on every env cache miss, every recycle
+        ;; and every child env, and none of those is a human act. Only
+        ;; this process's own start and `/reload` may pick an edit up.
+        (python-extensions/ensure-python-extensions-loaded!)
+        (extension/register-extensions! env install-extension!)
+        env)
+      (catch Throwable t
+        ;; Best-effort: a teardown must never replace the real failure with its own.
+        (try (res/dispose! @pending) (catch Throwable _ nil))
+        (throw t)))))
 
 ;; Session env cache
 
@@ -10983,7 +10879,8 @@
   "Insert `env` into the cache under `session-id` (UUID, or string
    normalized via `cache-key`). Returns `{:id <UUID> :environment env}`."
   [session-id env]
-  (let [k (cache-key session-id)
+  (let [k
+        (cache-key session-id)
 
         ;; Whatever this insert is about to displace. Overwriting the entry used
         ;; to drop it on the floor: its GraalPy Context — and, since every

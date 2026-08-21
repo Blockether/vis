@@ -207,14 +207,13 @@
   Best-effort throughout: teardown must never throw."
   [sandbox]
   (when sandbox
-    (let
-      [ctx
-       (if (map? sandbox) (:python-context sandbox) sandbox)
+    (let [ctx
+          (if (map? sandbox) (:python-context sandbox) sandbox)
 
-       engine
-       (if (map? sandbox)
-         (:python-engine sandbox)
-         (try (.getEngine ^Context sandbox) (catch Throwable _ nil)))]
+          engine
+          (if (map? sandbox)
+            (:python-engine sandbox)
+            (try (.getEngine ^Context sandbox) (catch Throwable _ nil)))]
 
       (when ctx
         (try (release-scope! ctx) (catch Throwable _ nil))
@@ -228,8 +227,7 @@
    runner, a one-shot probe, a project-metadata read."
   [[sym create-expr] & body]
   `(let [~sym ~create-expr]
-     (try ~@body
-          (finally (dispose! ~sym)))))
+     (try ~@body (finally (dispose! ~sym)))))
 
 (defmacro keeping-sandbox
   "Bind `sym` to what `create-expr` returns, and [[dispose!]] it ONLY if the body
@@ -242,8 +240,7 @@
    the failure path leaks worse than the success path ever could."
   [[sym create-expr] & body]
   `(let [~sym ~create-expr]
-     (try ~@body
-          (catch Throwable t# (dispose! ~sym) (throw t#)))))
+     (try ~@body (catch Throwable t# (dispose! ~sym) (throw t#)))))
 
 (defn live-count
   "How many handles of `kind` are live. For tests and diagnostics."

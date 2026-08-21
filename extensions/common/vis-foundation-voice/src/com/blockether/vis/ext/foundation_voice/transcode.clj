@@ -37,8 +37,7 @@
   "The `ffmpeg` this process can execute, or nil. Resolved per call: a machine that
    installs it while Vis runs converts the next recording without a restart."
   []
-  (some #(let [f (io/file % "ffmpeg")]
-           (when (.canExecute f) (str f)))
+  (some #(let [f (io/file % "ffmpeg")] (when (.canExecute f) (str f)))
         (str/split (str (System/getenv "PATH")) (re-pattern File/pathSeparator))))
 
 (defn missing-ffmpeg-message
@@ -67,29 +66,25 @@
 
       (when-not ffmpeg
         (.delete converted)
-        (throw (ex-info (missing-ffmpeg-message file)
-                        {:type :voice/no-ffmpeg :path (str file)})))
-      (try
-        (let [^java.util.List command
-              [ffmpeg "-v" "error" "-y" "-i" (str file) "-ac" "1" "-c:a" "pcm_s16le"
-               (str converted)]
+        (throw (ex-info (missing-ffmpeg-message file) {:type :voice/no-ffmpeg :path (str file)})))
+      (try (let [^java.util.List command
+                 [ffmpeg "-v" "error" "-y" "-i" (str file) "-ac" "1" "-c:a" "pcm_s16le"
+                  (str converted)]
 
-              ^Process process
-              (.start (doto (ProcessBuilder. command) (.redirectErrorStream true)))
+                 ^Process process
+                 (.start (doto (ProcessBuilder. command) (.redirectErrorStream true)))
 
-              output
-              (slurp (.getInputStream process))
+                 output
+                 (slurp (.getInputStream process))
 
-              code
-              (.waitFor process)]
+                 code
+                 (.waitFor process)]
 
-          (when-not (zero? code)
-            (throw (ex-info (str "ffmpeg could not read that recording: " (str/trim output))
-                            {:type :voice/unreadable :exit code :path (str file)})))
-          {:file converted :is-temp true})
-        (catch Throwable t
-          (.delete converted)
-          (throw t))))))
+             (when-not (zero? code)
+               (throw (ex-info (str "ffmpeg could not read that recording: " (str/trim output))
+                               {:type :voice/unreadable :exit code :path (str file)})))
+             {:file converted :is-temp true})
+           (catch Throwable t (.delete converted) (throw t))))))
 
 (defn with-wav
   "Call `f` with `file` as a 16-bit PCM WAV and delete the conversion afterwards.

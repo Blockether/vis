@@ -74,11 +74,12 @@
   (let [report (fn [m]
                  (when on-progress (try (on-progress m) (catch Throwable _ nil))))]
     (await-model! report)
-    (transcode/with-wav
-      (io/file (str audio-path))
-      (fn [^File wav]
-        (sherpa/call-native
-          #(clean-text (asr/transcribe-file! (asr/model-dir) (str wav) {:on-progress on-progress})))))))
+    (transcode/with-wav (io/file (str audio-path))
+                        (fn [^File wav]
+                          (sherpa/call-native #(clean-text (asr/transcribe-file!
+                                                             (asr/model-dir)
+                                                             (str wav)
+                                                             {:on-progress on-progress})))))))
 
 (defn register!
   "Idempotent — [[voice/register-engine!]] replaces by id. `:model-state` and

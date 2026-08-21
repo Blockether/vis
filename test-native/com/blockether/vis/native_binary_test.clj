@@ -81,11 +81,10 @@
   "Kills the process AND what it spawned. `script` lends the TUI a pty by forking
    it, so destroying only the parent would leave a live native runtime behind."
   [^Process process]
-  (doseq
-    [^java.lang.ProcessHandle child (-> process
-                                        .toHandle
-                                        .descendants
-                                        .toList)]
+  (doseq [^java.lang.ProcessHandle child (-> process
+                                             .toHandle
+                                             .descendants
+                                             .toList)]
     (.destroyForcibly child))
   (.destroyForcibly process)
   (.waitFor process 10 TimeUnit/SECONDS))
@@ -98,19 +97,18 @@
    Returns `{:finished? :exit :output}`; `:finished?` false means the deadline
    killed a process that was still running, which for the TUI is the assertion."
   [^File dir argv timeout-secs]
-  (let
-    [log
-     (io/file dir "run.log")
+  (let [log
+        (io/file dir "run.log")
 
-     process
-     (-> (ProcessBuilder. ^java.util.List (vec argv))
-         (.directory dir)
-         (.redirectErrorStream true)
-         (.redirectOutput (ProcessBuilder$Redirect/to log))
-         (.start))
+        process
+        (-> (ProcessBuilder. ^java.util.List (vec argv))
+            (.directory dir)
+            (.redirectErrorStream true)
+            (.redirectOutput (ProcessBuilder$Redirect/to log))
+            (.start))
 
-     finished?
-     (.waitFor process timeout-secs TimeUnit/SECONDS)]
+        finished?
+        (.waitFor process timeout-secs TimeUnit/SECONDS)]
 
     (when-not finished? (kill-tree! process))
     {:finished? finished?
@@ -124,12 +122,11 @@
    `.available` rather than a blocking read: a TUI that never writes another byte
    must not hold the suite until the pipe closes."
   [^InputStream in deadline-ms enough?]
-  (let
-    [buffer
-     (byte-array 8192)
+  (let [buffer
+        (byte-array 8192)
 
-     stop-at
-     (+ (System/currentTimeMillis) deadline-ms)]
+        stop-at
+        (+ (System/currentTimeMillis) deadline-ms)]
 
     (loop [seen ""]
       (cond (enough? seen) seen
@@ -162,19 +159,18 @@
    The pty is Vis' own `internal.foundation.pty`, parent-side JVM code: nothing
    about the binary under test is mocked by using it."
   [^File dir argv deadline-ms enough?]
-  (let
-    [handle
-     (pty/spawn! {:command (with-a-controlling-terminal argv)
-                  :dir (.getAbsolutePath dir)
-                  :env (assoc (into {} (System/getenv)) "TERM" "xterm-256color")
-                  :cols 120
-                  :rows 40})
+  (let [handle
+        (pty/spawn! {:command (with-a-controlling-terminal argv)
+                     :dir (.getAbsolutePath dir)
+                     :env (assoc (into {} (System/getenv)) "TERM" "xterm-256color")
+                     :cols 120
+                     :rows 40})
 
-     painted
-     (pty-text (:in handle) deadline-ms enough?)
+        painted
+        (pty-text (:in handle) deadline-ms enough?)
 
-     alive?
-     ((:alive? handle))]
+        alive?
+        ((:alive? handle))]
 
     ((:destroy handle) true)
     {:painted painted :alive? alive?}))
@@ -214,12 +210,11 @@
    to a credential this machine happens to hold, and the headers are how the
    suite proves the keyless provider stayed keyless on the wire."
   [reply]
-  (let
-    [asked
-     (atom [])
+  (let [asked
+        (atom [])
 
-     server
-     (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+        server
+        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
 
     (.createContext
       server
@@ -227,25 +222,24 @@
       (reify
         HttpHandler
           (handle [_ exchange]
-            (let
-              [^HttpExchange exchange
-               exchange
+            (let [^HttpExchange exchange
+                  exchange
 
-               request
-               (slurp (.getRequestBody exchange))
+                  request
+                  (slurp (.getRequestBody exchange))
 
-               headers
-               (into {}
-                     (map (fn [[k v]]
-                            [(str/lower-case (str k)) (vec v)]))
-                     (.getRequestHeaders exchange))
+                  headers
+                  (into {}
+                        (map (fn [[k v]]
+                               [(str/lower-case (str k)) (vec v)]))
+                        (.getRequestHeaders exchange))
 
-               stream?
-               (str/includes? (str/replace request " " "") "\"stream\":true")
+                  stream?
+                  (str/includes? (str/replace request " " "") "\"stream\":true")
 
-               payload
-               (.getBytes ^String (if stream? (stream-body reply) (whole-body reply))
-                          StandardCharsets/UTF_8)]
+                  payload
+                  (.getBytes ^String (if stream? (stream-body reply) (whole-body reply))
+                             StandardCharsets/UTF_8)]
 
               (swap! asked conj
                 {:path (.getPath (.getRequestURI exchange)) :body request :headers headers})
@@ -292,12 +286,11 @@
              (it "reports the version stamped into it"
                  ;; The cheapest possible run of the linked image: it initializes every
                  ;; build-time-initialized namespace on the way to printing one line.
-                 (let
-                   [dir
-                    (temp-dir "vis-native-version")
+                 (let [dir
+                       (temp-dir "vis-native-version")
 
-                    {:keys [exit output]}
-                    (run-binary dir [(.getAbsolutePath (require-binary)) "--version"] 60)]
+                       {:keys [exit output]}
+                       (run-binary dir [(.getAbsolutePath (require-binary)) "--version"] 60)]
 
                    (try (expect (= 0 exit) output)
                         (expect (re-find #"(?m)^vis-agent\s+\S+" output) output)
@@ -311,19 +304,18 @@
   ;; still alive behind it is that proof — anything else is a TUI that left.
   (it
     "paints a first frame and is still running behind it"
-    (let
-      [dir
-       (temp-dir "vis-native-tui")
+    (let [dir
+          (temp-dir "vis-native-tui")
 
-       ;; Entering the alternate screen is the first thing a live frame does.
-       alt-screen
-       "\u001b[?1049h"
+          ;; Entering the alternate screen is the first thing a live frame does.
+          alt-screen
+          "\u001b[?1049h"
 
-       {:keys [painted alive?]}
-       (run-on-a-pty dir
-                     [(.getAbsolutePath (require-binary)) "channels" "tui"]
-                     20000
-                     #(str/includes? % alt-screen))]
+          {:keys [painted alive?]}
+          (run-on-a-pty dir
+                        [(.getAbsolutePath (require-binary)) "channels" "tui"]
+                        20000
+                        #(str/includes? % alt-screen))]
 
       (try
         (expect (str/includes? painted alt-screen)
@@ -349,34 +341,32 @@
              ;; config reaches a real model call out of the native image.
              (it
                "answers the prompt from the keyless custom provider its config names"
-               (let
-                 [dir
-                  (temp-dir "vis-native-agent")
+               (let [dir
+                     (temp-dir "vis-native-agent")
 
-                  {:keys [server asked port]}
-                  (start-stub-provider! "hello world")]
+                     {:keys [server asked port]}
+                     (start-stub-provider! "hello world")]
 
                  (try (overlay! dir port)
-                      (let
-                        [{:keys [exit output]}
-                         (run-binary dir
-                                     [(.getAbsolutePath (require-binary)) "--db" ":memory" "--raw"
-                                      "Reply with exactly: hello world"]
-                                     180)
+                      (let [{:keys [exit output]}
+                            (run-binary dir
+                                        [(.getAbsolutePath (require-binary)) "--db" ":memory"
+                                         "--raw" "Reply with exactly: hello world"]
+                                        180)
 
-                         requests
-                         @asked
+                            requests
+                            @asked
 
-                         {:keys [path body headers]}
-                         (first requests)
+                            {:keys [path body headers]}
+                            (first requests)
 
-                         ;; Whatever the transport spells the auth header as, what matters is
-                         ;; whether anything SECRET rode in it.
-                         credentials
-                         (->> ["authorization" "x-api-key"]
-                              (mapcat #(get headers %))
-                              (map #(str/trim (str/replace (str %) #"(?i)^bearer" "")))
-                              (remove str/blank?))]
+                            ;; Whatever the transport spells the auth header as, what matters is
+                            ;; whether anything SECRET rode in it.
+                            credentials
+                            (->> ["authorization" "x-api-key"]
+                                 (mapcat #(get headers %))
+                                 (map #(str/trim (str/replace (str %) #"(?i)^bearer" "")))
+                                 (remove str/blank?))]
 
                         (expect (= 0 exit) output)
                         (expect (str/includes? output "hello world") output)
@@ -417,16 +407,15 @@
     (let [header (byte-array 44)]
       (with-open [in (io/input-stream f)]
         (.read in header))
-      (let
-        [tag (fn [from]
-               (String. header from 4 StandardCharsets/US_ASCII))
-         u32 (fn [from]
-               (reduce (fn [acc i]
-                         (+ acc
-                            (bit-shift-left (bit-and (long (aget header (+ from i))) 0xff)
-                                            (* 8 i))))
-                       0
-                       (range 4)))]
+      (let [tag (fn [from]
+                  (String. header from 4 StandardCharsets/US_ASCII))
+            u32 (fn [from]
+                  (reduce (fn [acc i]
+                            (+ acc
+                               (bit-shift-left (bit-and (long (aget header (+ from i))) 0xff)
+                                               (* 8 i))))
+                          0
+                          (range 4)))]
 
         (when (and (= "RIFF" (tag 0)) (= "WAVE" (tag 8)))
           {:sample-rate (u32 24) :bytes (.length f)})))))
@@ -452,20 +441,19 @@
   ;; an archive is native code too, and no other test runs it inside the image.
   (it
     "speaks a sentence and reads its own recording back"
-    (let
-      [dir
-       (temp-dir "vis-native-voice")
+    (let [dir
+          (temp-dir "vis-native-voice")
 
-       wav
-       (io/file dir "spoken.wav")
+          wav
+          (io/file dir "spoken.wav")
 
-       bin
-       (.getAbsolutePath (require-binary))
+          bin
+          (.getAbsolutePath (require-binary))
 
-       said
-       (run-binary dir
-                   [bin "extension" "voice" "say" spoken-sentence "--out" (.getAbsolutePath wav)]
-                   900)]
+          said
+          (run-binary dir
+                      [bin "extension" "voice" "say" spoken-sentence "--out" (.getAbsolutePath wav)]
+                      900)]
 
       (try
         (expect (= 0 (:exit said)) (:output said))
@@ -481,8 +469,8 @@
                   (str "implausible sample rate: " facts))
           (expect (> (long (:bytes facts)) 20000)
                   (str "the binary wrote a WAV with nothing in it: " facts)))
-        (let
-          [heard (run-binary dir [bin "extension" "voice" "transcribe" (.getAbsolutePath wav)] 900)]
+        (let [heard
+              (run-binary dir [bin "extension" "voice" "transcribe" (.getAbsolutePath wav)] 900)]
           (expect (= 0 (:exit heard)) (:output heard))
           (expect (str/includes? (plain-words (:output heard)) (plain-words spoken-sentence))
                   (str "the binary did not hear what it had just said:\n" (:output heard))))
@@ -491,19 +479,18 @@
       ;; The Piper path above is sherpa's VITS engine; pocket-tts is OUR ONNX
       ;; export driven through a different config class, with a reference clip
       ;; read from the installed bundle. Only one of the two proves the other.
-      (let
-        [dir
-         (temp-dir "vis-native-pocket")
+      (let [dir
+            (temp-dir "vis-native-pocket")
 
-         wav
-         (io/file dir "pocket.wav")
+            wav
+            (io/file dir "pocket.wav")
 
-         said
-         (run-binary dir
-                     [(.getAbsolutePath (require-binary)) "extension" "voice" "say"
-                      "The bundle we ship is the ONNX export itself." "--pocket-tts" "--out"
-                      (.getAbsolutePath wav)]
-                     900)]
+            said
+            (run-binary dir
+                        [(.getAbsolutePath (require-binary)) "extension" "voice" "say"
+                         "The bundle we ship is the ONNX export itself." "--pocket-tts" "--out"
+                         (.getAbsolutePath wav)]
+                        900)]
 
         (try (expect (= 0 (:exit said)) (:output said))
              (let [facts (wav-facts wav)]
@@ -511,15 +498,15 @@
                (expect (= 24000 (long (:sample-rate facts)))
                        (str "pocket-tts speaks at 24 kHz; got " facts)))
              (finally (delete-tree! dir)))))
-  (it "lists the voices this machine can speak in without loading a model"
-      (let
-        [dir
-         (temp-dir "vis-native-voices")
+  (it
+    "lists the voices this machine can speak in without loading a model"
+    (let [dir
+          (temp-dir "vis-native-voices")
 
-         {:keys [exit output]}
-         (run-binary dir [(.getAbsolutePath (require-binary)) "extension" "voice" "voices"] 120)]
+          {:keys [exit output]}
+          (run-binary dir [(.getAbsolutePath (require-binary)) "extension" "voice" "voices"] 120)]
 
-        (try (expect (= 0 exit) output)
-             (expect (str/includes? output "piper") output)
-             (expect (str/includes? output "pocket-tts") output)
-             (finally (delete-tree! dir))))))
+      (try (expect (= 0 exit) output)
+           (expect (str/includes? output "piper") output)
+           (expect (str/includes? output "pocket-tts") output)
+           (finally (delete-tree! dir))))))

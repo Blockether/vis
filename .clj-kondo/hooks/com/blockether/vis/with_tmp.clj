@@ -23,9 +23,6 @@
   [{:keys [node]}]
   (let [[_op sym-node & body] (:children node)]
     (when (api/token-node? sym-node)
-      {:node
-       (api/list-node
-         (concat
-           [(api/token-node 'clojure.core/let)
-            (api/vector-node [sym-node (api/token-node 'nil)])]
-           body))})))
+      {:node (api/list-node (concat [(api/token-node 'clojure.core/let)
+                                     (api/vector-node [sym-node (api/token-node 'nil)])]
+                                    body))})))

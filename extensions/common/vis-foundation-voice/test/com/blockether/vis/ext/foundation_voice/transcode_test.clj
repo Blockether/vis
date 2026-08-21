@@ -40,7 +40,8 @@
     (.putInt buffer data-bytes)
     (dotimes [i frames]
       (.putShort buffer (short (* 8000 (Math/sin (* 2 Math/PI 440 (/ (double i) rate)))))))
-    (with-open [out (java.io.FileOutputStream. file)] (.write out (.array buffer)))
+    (with-open [out (java.io.FileOutputStream. file)]
+      (.write out (.array buffer)))
     file))
 
 (defn- m4a!
@@ -52,13 +53,19 @@
           p (.start (doto (ProcessBuilder. ^java.util.List
                                            [ffmpeg "-v" "error" "-y" "-i" (str wav) (str out)])
                       (.redirectErrorStream true)))]
+
       (slurp (.getInputStream p))
       (when (zero? (.waitFor p)) out))))
 
-(defdescribe transcode-test
+(defdescribe
+  transcode-test
   (it "reads the container from the head, never the extension"
-      (let [wav (wav! 0.25)
-            renamed (doto (File/createTempFile "vis-transcode-test" ".m4a") (.deleteOnExit))]
+      (let [wav
+            (wav! 0.25)
+
+            renamed
+            (doto (File/createTempFile "vis-transcode-test" ".m4a") (.deleteOnExit))]
+
         (expect (true? (transcode/wav? wav)))
         (java.nio.file.Files/copy (.toPath wav)
                                   (.toPath renamed)
@@ -70,13 +77,15 @@
         (expect (false? (transcode/wav? (doto (File/createTempFile "vis-transcode-test" ".wav")
                                           (.deleteOnExit)
                                           (spit "this is not a recording")))))))
-
   (it "hands a WAV straight through and never leaves a temp file behind"
-      (let [wav (wav! 0.25)
-            {:keys [file is-temp]} (transcode/->wav! wav)]
+      (let [wav
+            (wav! 0.25)
+
+            {:keys [file is-temp]}
+            (transcode/->wav! wav)]
+
         (expect (false? is-temp))
         (expect (= (str wav) (str file)))))
-
   (it "converts an .m4a memo to a readable WAV and deletes the conversion"
       (let [source (m4a! (wav! 0.5))]
         ;; No ffmpeg on this machine is not a failing test - it is the one case
@@ -88,10 +97,10 @@
                                              (reset! seen wav)
                                              (expect (true? (transcode/wav? wav)))
                                              :transcribed))]
+
             (expect (= :transcribed answer))
             (expect (false? (.exists ^File @seen))))
           (expect (re-find #"ffmpeg" (transcode/missing-ffmpeg-message (wav! 0.1)))))))
-
   (it "names the fix when a container needs converting and nothing can"
       (let [message (transcode/missing-ffmpeg-message (File. "/tmp/memo.m4a"))]
         (expect (re-find #"memo\.m4a" message))

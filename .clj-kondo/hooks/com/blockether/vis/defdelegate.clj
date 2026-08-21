@@ -26,24 +26,16 @@
 ;; turned on never flags a delegated fn as unused. `:export true` is
 ;; the historical equivalent and is also respected.
 (def ^:private attr-map-node
-  (api/map-node
-    [(api/keyword-node :clj-kondo/ignore)
-     (api/vector-node [(api/keyword-node :unused-public-var)])
-     (api/keyword-node :export)
-     (api/token-node true)]))
+  (api/map-node [(api/keyword-node :clj-kondo/ignore)
+                 (api/vector-node [(api/keyword-node :unused-public-var)])
+                 (api/keyword-node :export) (api/token-node true)]))
 
 (defn defdelegate
   [{:keys [node]}]
   (let [[_op sym-node arglist-node] (:children node)]
-    (when (and (api/token-node? sym-node)
-            (api/vector-node? arglist-node))
+    (when (and (api/token-node? sym-node) (api/vector-node? arglist-node))
       (let [arg-tokens (filter api/token-node? (:children arglist-node))
-            body       (api/list-node
-                         (cons (api/token-node 'do) arg-tokens))]
-        {:node
-         (api/list-node
-           [(api/token-node 'clojure.core/defn)
-            sym-node
-            attr-map-node
-            arglist-node
-            body])}))))
+            body (api/list-node (cons (api/token-node 'do) arg-tokens))]
+
+        {:node (api/list-node [(api/token-node 'clojure.core/defn) sym-node attr-map-node
+                               arglist-node body])}))))
