@@ -1893,6 +1893,14 @@
   ;; Context's buffer is GC'd with it.
   (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
 
+(defonce ^:private ^java.util.Map ctx->syntax-guard-events
+  ;; Context -> atom of rejected transactional writes. GraalPy currently suppresses an
+  ;; IOException raised by SeekableByteChannel.close, so run-python-block drains this
+  ;; host-side channel and still reports the failed write to the model.
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(defn- ctx-syntax-guard-events [^Context ctx] (.get ctx->syntax-guard-events ctx))
+
 (defn- ctx-stdout-baos ^java.io.ByteArrayOutputStream [^Context ctx] (.get ctx->stdout ctx))
 
 (defn- baos->str
@@ -2078,6 +2086,9 @@
   (let [stdout-baos
         (java.io.ByteArrayOutputStream.)
 
+        syntax-guard-events
+        (atom [])
+
         net?
         (boolean (:enabled? network-opts))
 
@@ -2136,7 +2147,10 @@
           (-> (IOAccess/newBuilder)
               (cond->
                 roots-fn
-                (.fileSystem (sandbox-fs/confined-filesystem roots-fn outbox gate-fn)))
+                (.fileSystem (sandbox-fs/confined-filesystem roots-fn
+                                                             outbox
+                                                             gate-fn
+                                                             #(swap! syntax-guard-events conj %))))
               (.allowHostSocketAccess net?)
               (.build))
           IOAccess/NONE)
@@ -2188,6 +2202,9 @@
 
         _
         (.put ctx->stdout ctx stdout-baos)
+
+        _
+        (.put ctx->syntax-guard-events ctx syntax-guard-events)
 
         g
         (.getBindings ctx "python")]
@@ -3351,6 +3368,34 @@
           (live)))))
 
 
+(defn- syntax-guard-op-error
+  "Build the model-facing exception for a filesystem write tree-sitter rejected."
+  [^Context ctx code {:keys [path language reason line column node-type]}]
+  (let [message (str "Python write failed: tree-sitter rejected "
+                     (pr-str path)
+                     " (language="
+                     language
+                     ", reason="
+                     reason
+                     ", line="
+                     line
+                     ", column="
+                     column
+                     (when node-type (str ", node=" node-type))
+                     "). The original file was left unchanged. "
+                     "Use patch(...) for guarded code edits.")]
+    (note-block-failure! ctx code message)
+    {:message message
+     :data (cond-> {:phase :python/syntax-guard :path path :language language :reason reason}
+             (some? line)
+             (assoc :line line)
+
+             (some? column)
+             (assoc :column column)
+
+             (some? node-type)
+             (assoc :node-type node-type))}))
+
 (defn- run-async-program
   "Run the program as ONE driven coroutine. `__vis_run_async__` AST-wraps it in
    an `async def` (with `global` decls for its assigned names so they persist in
@@ -3361,8 +3406,11 @@
   (let [baos
         (ctx-stdout-baos ctx)
 
+        guard-events
+        (ctx-syntax-guard-events ctx)
+
         _
-        (when baos (.reset baos))
+        (do (when baos (.reset baos)) (when guard-events (reset! guard-events [])))
 
         ;; (The per-block print-capture list is reset INSIDE `__vis_run_async__` as
         ;; a real python list — resetting it from here with `->py []` would make it
@@ -3404,27 +3452,38 @@
               ;; sink — folded in as `:attachments` so the loop OWNS the bytes with
               ;; NO stdout-fence parsing.
               attachments
-              (mpl-capture/drain sink)]
+              (mpl-capture/drain sink)
+
+              guard-event
+              (first (when guard-events @guard-events))]
 
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
-          ;; A clean block ENDS any failure streak, so the loop breaker only ever
-          ;; counts CONSECUTIVE identical failures.
-          (clear-block-failures! ctx)
-          ;; FLAT sum type — success is ONE CONTEXT channel, never both:
-          ;;   - printed output (`:stdout`) → the python_execution result; OR
-          ;;   - the returned value (`:result`) → a block that returned without printing.
-          ;; Printed output WINS. `:attachments` ride alongside EITHER — a
-          ;; produced-artifact channel, not context.
-          (if out
-            (cond-> {:stdout out}
+          (if guard-event
+            (cond-> {:error (syntax-guard-op-error ctx code guard-event)}
+              out
+              (assoc :stdout out)
+
               attachments
               (assoc :attachments attachments))
-            (cond-> {}
-              attachments
-              (assoc :attachments attachments)
+            (do
+              ;; A clean block ENDS any failure streak, so the loop breaker only ever
+              ;; counts CONSECUTIVE identical failures.
+              (clear-block-failures! ctx)
+              ;; FLAT sum type — success is ONE CONTEXT channel, never both:
+              ;;   - printed output (`:stdout`) → the python_execution result; OR
+              ;;   - the returned value (`:result`) → a block that returned without printing.
+              ;; Printed output WINS. `:attachments` ride alongside EITHER — a
+              ;; produced-artifact channel, not context.
+              (if out
+                (cond-> {:stdout out}
+                  attachments
+                  (assoc :attachments attachments))
+                (cond-> {}
+                  attachments
+                  (assoc :attachments attachments)
 
-              (some? res)
-              (assoc :result res))))
+                  (some? res)
+                  (assoc :result res))))))
         (catch PolyglotException e
           ;; FLAT sum type — failure branch. The raised error IS the result, in
           ;; ONE place; any partial stdout (and any artifact produced before it)
@@ -3435,7 +3494,9 @@
                 attachments
                 (mpl-capture/drain sink)]
 
-            (cond-> {:error (map-polyglot-error ctx e code)}
+            (cond-> {:error (if-let [guard-event (first (when guard-events @guard-events))]
+                              (syntax-guard-op-error ctx code guard-event)
+                              (map-polyglot-error ctx e code))}
               out
               (assoc :stdout out)
 

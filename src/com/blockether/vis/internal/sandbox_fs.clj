@@ -209,7 +209,7 @@
   "Stage a write-capable channel for a guarded code file. The original target remains
    untouched until close, when the shared tree-sitter transition verdict either permits
    one atomic replacement or raises IOException. Raw writes are never repaired."
-  ^SeekableByteChannel [^FileSystem delegate ^Path requested opts lang on-close]
+  ^SeekableByteChannel [^FileSystem delegate ^Path requested opts lang on-close on-rejection]
   (let [exists?
         (Files/exists requested no-link-opts)
 
@@ -282,7 +282,19 @@
                              (parse/transition-verdict lang original candidate)]
 
                          (when (= :introduced-error status)
-                           (let [e (first after)]
+                           (let [e
+                                 (first after)
+
+                                 rejection
+                                 {:path (str requested)
+                                  :language lang
+                                  :reason "introduced_parse_error"
+                                  :line (:line e)
+                                  :column (:col e)
+                                  :node-type (:type e)}]
+
+                             (try (when on-rejection (on-rejection rejection))
+                                  (catch Throwable _ nil))
                              (throw (IOException. (str "[vis:syntax_guard] language="
                                                        lang
                                                        " reason=introduced_parse_error line="
@@ -312,10 +324,15 @@
    there even though it is outside configured filesystem roots); a WRITE channel closed under it
    fires `on-close` with the file path. The SAME `on-close` also fires for a
    write closed under any system temp root (`/tmp`, `$TMPDIR`), so plain /tmp
-   scratch streams to the DB too, not just `$VIS_OUTBOX`. Nil ⇒ no tap."
-  (^FileSystem [roots-fn] (confined-filesystem roots-fn nil nil))
-  (^FileSystem [roots-fn outbox] (confined-filesystem roots-fn outbox nil))
-  (^FileSystem [roots-fn outbox gate-fn]
+   scratch streams to the DB too, not just `$VIS_OUTBOX`. Nil ⇒ no tap.
+
+   `on-rejection` (optional) receives a structured map whenever a guarded write is
+   rejected. The agent context uses it to surface close-time failures that GraalPy
+   suppresses as a model-facing python_execution error."
+  (^FileSystem [roots-fn] (confined-filesystem roots-fn nil nil nil))
+  (^FileSystem [roots-fn outbox] (confined-filesystem roots-fn outbox nil nil))
+  (^FileSystem [roots-fn outbox gate-fn] (confined-filesystem roots-fn outbox gate-fn nil))
+  (^FileSystem [roots-fn outbox gate-fn on-rejection]
    (let [^FileSystem d
          (FileSystem/newDefaultFileSystem)
 
@@ -371,7 +388,7 @@
                    (when (write-opts? opts) (parse/guarded-language (str cp)))]
 
                (if lang
-                 (guarded-write-channel d cp opts lang close-fn)
+                 (guarded-write-channel d cp opts lang close-fn on-rejection)
                  (let [ch (.newByteChannel d cp opts attrs)]
                    (if tap? (tap-write-channel ch cp on-close) ch)))))
            (newDirectoryStream [dir filt] (.newDirectoryStream d (c "file-read" dir) filt))

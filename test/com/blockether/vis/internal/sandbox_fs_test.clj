@@ -7,6 +7,7 @@
    — so these drive `confined-filesystem` directly to keep the kept-but-unwired
    machinery honest."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.foundation.mpl-capture :as mc]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.sandbox-fs :as sfs]
@@ -210,6 +211,38 @@
                   (str "from pathlib import Path; Path(" (pr-str target) ").write_text(chr(41))"))
            (expect (= changed (slurp target)))
            (finally (.close ctx true))))))
+(defdescribe
+  syntax-guard-reported-effect-test
+  (it "reports a swallowed close failure as the python_execution exception"
+      (let [root
+            (tmp-root)
+
+            target
+            (str root "/reported.clj")
+
+            original
+            "(defn reported [] :ok)\n"
+
+            {:keys [python-context python-engine]}
+            (env-python/create-python-context {} (constantly [root]))]
+
+        (spit target original)
+        (try (let [result (env-python/run-python-block python-context
+                                                       (str "from pathlib import Path; Path("
+                                                            (pr-str target)
+                                                            ").write_text(chr(41))"))]
+               (expect (= :python/syntax-guard (get-in result [:error :data :phase])))
+               (expect (str/includes? (get-in result [:error :message]) "write failed"))
+               (expect (str/includes? (get-in result [:error :message]) "introduced_parse_error"))
+               (expect (= "clojure" (get-in result [:error :data :language])))
+               (expect (= target (get-in result [:error :data :path])))
+               (expect (= original (slurp target)))
+               ;; The rejection belongs to this block only; a later block is clean.
+               (let [next-result (env-python/run-python-block python-context "40 + 2")]
+                 (expect (= 42 (:result next-result)))
+                 (expect (nil? (:error next-result)))))
+             (finally (.close ^Context python-context true)
+                      (.close ^org.graalvm.polyglot.Engine python-engine))))))
 
 (defn- write-channel!
   "Open `path` for write through `fs`, write `s`, close — driving the outbox tap."
