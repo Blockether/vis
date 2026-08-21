@@ -7,6 +7,537 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.41] - 2026-08-21
+
+### Changed
+- chore(release): v0.1.41
+- feat(companion): tighten composer footer spacing
+- feat(tui): clarify response footer controls
+- feat(live): return optimized model results
+- fix(cli): merge Ubuntu and Windows trust in WSL
+- fix(companion): keep keyboard open after send
+- chore(docs): regenerate spel agents for 0.9.31
+- fix(companion): retain finished job details
+- fix(companion): keep fenced code ragged
+- fix(companion): keep markdown code spans ragged
+- refactor(extensions): remove duplicate CI activity
+- fix(companion): resume Android beta publishing
+- chore(cli): bump svar to 0.7.126
+- refactor(extensions): share live view test harness
+- fix(companion): rename quick reasoning effort to low
+- fix(companion): restore the verbosity composer control
+- style(companion): preserve live artifact formatting
+- fix(companion): settle superseded CI states
+- fix(cli): find parent tests for nested sources
+- fix(companion): scope tester notes to app changes
+- docs(companion): record TestFlight build 4618
+- docs(cli): record parinferish 0.1.1 in audit
+- fix(companion): sync selected GitHub job
+- docs(companion): record TestFlight build 4615
+- fix(cli): consume parinferish closer relocation
+- feat(cli): carry Windows trust through WSL
+- feat(cli): discover system certificate stores
+- fix(tui): anchor finished live runs
+- chore(cli): add clj-parinferish workspace root
+- fix(extensions): isolate live views from test runs
+- fix(companion): keep short responses beside composer
+- fix(extensions): show GitHub run start time
+- fix(companion): load session totals with list
+- fix(live): harden GitHub watches and name NDJSON
+- fix(companion): keep composer pinned during keyboard dismissal
+- fix(companion): collapse repeated live run cuts
+- fix(tui): stop watching superseded CI runs
+- fix(companion): preserve interrupted live records
+- fix(tui): show live CI job activity
+- ci(release): use GitHub-hosted macOS runners
+- docs(gateway): refresh dependency audit
+- build(gateway): bump svar to 0.7.125
+- feat(tui): minimize active live views
+- fix(tui): expand and focus live CI jobs
+- chore(release): merge concurrent main update
+- fix(release): install macOS native test dependency
+- fix(shell): slice log pages as output text
+- fix(release): install macOS native test dependency
+- fix(shell): slice log pages as output text
+- fix(gateway): scale folding budget for small contexts
+- feat(shell): page log windows on the handle
+- ci(release): run macOS native image on Blacksmith
+- feat(companion): focus live CI jobs
+- chore(gateway): merge concurrent main update
+- fix(gateway): count every successful session fold
+- fix(gateway): skip auto-title after cancelled turns
+- fix(gateway): keep a session pinned to the provider it named
+- fix(engine): unwedge a turn queued behind a leaked Python GIL
+- fix(editing): gate-check grep paths as given, not their parent dir
+- fix(loop): keep the record of a view a stopped block abandoned
+- build(ci): run every macOS job on our own Apple-silicon runner
+- fix(ci): close the test sandboxes that were exhausting the heap
+- ci(gateway): give the Linux test suite the heap it needs
+- fix(ci): resolve the lint and test failures blocking the pipeline
+- fix(companion): settle Settings on the machine a session came from
+- docs(docs): state the boundary, do not prescribe the call site
+- docs(docs): a Path crosses a tool boundary as itself
+- fix(docs): let a lower-case ask reach a camelCase name
+- fix(companion): save the machine this device found dark
+- refactor(cli): drop the duplicate by-cwd view from tool results
+- docs(python): a capped grep names next(r), not a retyped call
+- refactor(python): walk grep pages with next(), not more()
+- fix(tui): copy short thinking blocks independently
+- fix(tui): apply settings through gateway
+- feat(python): page a capped grep from the result itself
+- docs(changelog): record the shell out rename and the daemon live view
+- refactor(shell): name the merged pty stream out
+- fix(tui): paint live views raised in the serve daemon
+- fix(python): give the PIL shim Pillow's whole helper-module surface
+- fix(loop): stop create-environment abandoning its sandbox when a later step fails
+- feat(sandbox): one canonical teardown, so no site has to remember the order
+- fix(python): close the Engine with contexts built outside python-extensions
+- docs(cli): say the pty merges stderr into stdout
+- fix(companion): shorten the composer's queued placeholder
+- fix(cli): close the PIL shim's remaining Pillow gaps
+- fix(companion): let the human, not the mounted screen, take a share
+- fix(sandbox): give PIL the CSS colours, hsl wheels and a real mode filter
+- feat(companion): accept shared files and let the share pick its session
+- fix(companion): hold the fleet scope through one dropped read
+- fix(python): own the condition lock across gather children
+- feat(config): declare a non-secret literal in environment:
+- docs(release): record companion TestFlight build 4546
+- feat(shell): scroll the log line window back up with a negative count
+- fix(tui): paint a recording's transcript as a quotation, not code
+- fix(companion): quote a memo's transcript instead of icing it
+- fix(loop): dispose the env a cache insert displaces
+- fix(cli): fold near-miss tool keywords instead of refusing the call
+- fix(tui): wrap a recording's transcript on words, not columns
+- feat(companion): open a recording's transcription under its player
+- feat(tui): fold a recording's transcript under the turn that carried it
+- feat(gateway): transcribe an attached recording into the model's manifest
+- feat(config): let an issued credential name its wire dialect
+- docs(docs): break the walls of text into lists, tables and steps
+- fix(tui): let the wheel own every row the live band paints
+- feat(config): one forgiving, validated wire-dialect vocabulary
+- fix(companion): say which live view the running row is showing
+- fix(tui): say which live view the running row is showing
+- docs(cli): one shape for a tool's doc page, cross-validated against the handlers
+- feat(extensions): keep a gh watch moving and settle it into one picture
+- fix(cli): keep project-scoped blocks out of the machine store
+- fix(companion): name an Android octet-stream pick by its extension
+- fix(tui): isolate a dropped recording path like a dropped picture
+- feat(gateway): sniff every recorder format, not only the m4a
+- docs(docs): one canonical page shape, and a gate that keeps it
+- feat(cli): run_tests takes deps.edn aliases for the clean-JVM run
+- feat(companion): reach any file from + and play what it cannot show
+- feat(gateway): accept voice recordings as attachments
+- docs(cli): the language verbs state the requiredness they enforce
+- chore(deps): bump imaging to 0.1.10 so an empty deck opens
+- chore(deps): bump svar to 0.7.124
+- test(providers): prove MANAGED crosses the Python extension boundary
+- docs(cli): run_tests and repl_eval state requiredness and the `project` spelling
+- feat(providers): let an extension declare a MANAGED provider
+- fix(language-surface): read `project` as `cwd` on every language verb
+- fix(tui): read an OPTION in the band, and wrap over-wide headings
+- docs(release): record the TestFlight builds 4488 and 4508
+- fix(tui): measure dialog widths in lanterna columns, not chars
+- fix(human-input): file a late close onto its iteration, not a dead block
+- docs(docs): drop sub-agent vocabulary and the drifting host-op count
+- fix(tui): file a finished run as a transcript row, not band furniture
+- fix(python): one spelling, runner, for the test backend on every surface
+- perf(companion): ask each machine once for its notifications state
+- fix(python): take a pathlib.Path wherever a shim takes a path
+- fix(companion): answer every machine's notifications row before it is opened
+- test(python): dispose three more single-test sandboxes
+- fix(extensions): let a gh watch run as long as the run does
+- style(repo): format every namespace with the canonical formatter
+- fix(build): keep the formatter alive on a binding form inside #()
+- fix(gateway): retire a client lease that stopped talking
+- refactor(gateway): identify a source build by its commit alone
+- fix(human-input): stop billing a watched run any deadline at all
+- feat(cli): say which build the gateway is running, and what replaces it
+- fix(human-input): let a live view own the wall of the block watching it
+- fix(languages): read a failed REPL start the same way in every language
+- fix(gateway): refuse a status this build cannot read
+- feat(gateway): identify a dev build by its commit, not by "dev"
+- feat(gateway): pick up a new build when nobody is using the old daemon
+- fix(languages): one REPL lifecycle contract for every language
+- fix(gateway): let a managed daemon die when nothing is watching it
+- test(languages): read pack test counts by their contract names
+- fix(language-surface): refuse a bare string where repl options belong
+- fix(language-surface): keep repl_stop(id) an id, whatever trails it
+- docs(config): point whole-store writers at update-machine-config!
+- test(posix-shim): dispose the sandboxes this suite builds for itself
+- fix(companion): paint the stored palette on the first frame
+- test(network-guard): close the Engine with the sandbox it belongs to
+- test(config): cover removed_providers in the exhaustive config fixture
+- feat(providers): make deleting a provider actually delete it
+- test(python): give a sandbox the lifetime of the test that needs it
+- fix(gateway): say why a provider cannot be deleted instead of silently refusing
+- docs(language-surface): name the four repl lifecycle verbs
+- docs(cli): describe ls's tree string where the sandbox reads it
+- fix(gateway): count folds from the turn ctx ledger
+- fix(gateway): let /projects/overview and /projects/:pid coexist
+- feat(companion): paint project counts from the gateway's own overview
+- feat(cli): render ls as one compact tree string
+- fix(companion): inset every panel verb instead of running it full bleed
+- chore(python): format _outside.py the way ruff 0.16.3 does
+- fix(companion): match the notification verb to the panel action box
+- fix(companion): show a just-created session without tapping the pill
+- docs(gateway): correct the remote-target claims to what the code does
+- feat(companion): fork a session from its own slide, whole or at a turn
+- fix(gateway): store settings without folding the config tiers
+- fix(python): cross a live view's first op on a freshly booted machine
+- feat(extensions): watch a GitHub Actions run in one live view
+- fix(companion): open the projects mark on the inventory, not the browser
+- fix(loop): keep a failed block's printed output on the wire
+- docs(cli): name the remote gateway flags in help, not only in the docs
+- fix(gateway): unbox the log page window and drop two dead test bindings
+- fix(sandbox): repair the PIL envelope arity, and stop repeating the scope
+- feat(sandbox): a shim declares what it lends the guest, and gets the lifetime free
+- fix(sandbox): tie a guest's host objects to the session that opened them
+- docs(test): name the double-registration trap in the shared sandbox
+- refactor(loop): delete the child-env plumbing sub_loop was the only user of
+- fix(python): one GraalPy Engine per session, not one per process
+- refactor(harness): drop the agent() verb and every sub_loop caller
+- docs(release): record the TestFlight build testers now have
+- refactor(human-input): stop publishing what only the sink itself calls
+- fix(human-input): serve a settled view's record, and file it on a stop
+- feat(human-input): settle a finished live view into an artifact
+- fix(contract): freeze the live materializer the TUI channel reads
+- refactor(gateway): serve on Jetty 12 core, drop the ee9 servlet layer
+- docs(gateway): name the commands a remote target does not redirect
+- feat(gateway): drive a remote gateway from the command line
+- test(gateway): pin that a leaving gateway publishes held patches
+- refactor(gateway): delete unread live surface, flush patches on stop
+- feat(human-input): arrange a live view with the form's own groups
+- fix(companion): read the armed pull-to-search band
+- fix(companion): load the session list behind an open transcript
+- fix(companion): keep the turn either side of the reader laid out
+- test(tui): show the aside band whole and pin is_aside outside Vis
+- feat(tui): fill the band, paint inline markdown, and stand a node aside
+- feat(human-input): let a human stop any live view, with a note
+- feat(companion): watch and stop a live view from the phone
+- feat(cli): open live views from a Python extension
+
+### Package changes
+
+#### com.blockether/vis
+- chore(release): v0.1.41 (845c396e5)
+- feat(companion): tighten composer footer spacing (8e6180024)
+- feat(tui): clarify response footer controls (e9a90f4cb)
+- feat(live): return optimized model results (ec9864ec8)
+- fix(cli): merge Ubuntu and Windows trust in WSL (aeceaa0ce)
+- fix(companion): keep keyboard open after send (cc88261f5)
+- chore(docs): regenerate spel agents for 0.9.31 (b500dcb8c)
+- fix(companion): retain finished job details (4bed954db)
+- fix(companion): keep fenced code ragged (4a67ac707)
+- fix(companion): keep markdown code spans ragged (eaee188a7)
+- refactor(extensions): remove duplicate CI activity (28e9aaa51)
+- fix(companion): resume Android beta publishing (c724b13ce)
+- chore(cli): bump svar to 0.7.126 (994c7ff07)
+- refactor(extensions): share live view test harness (b16203edf)
+- fix(companion): rename quick reasoning effort to low (19cc394e2)
+- fix(companion): restore the verbosity composer control (6787fe808)
+- style(companion): preserve live artifact formatting (0e34d4c7a)
+- fix(companion): settle superseded CI states (57d22fccb)
+- fix(companion): scope tester notes to app changes (4485e3c8b)
+- docs(companion): record TestFlight build 4618 (27a5ffbea)
+- docs(cli): record parinferish 0.1.1 in audit (02602989f)
+- fix(companion): sync selected GitHub job (73bce25d5)
+- docs(companion): record TestFlight build 4615 (7b847c0a4)
+- fix(cli): consume parinferish closer relocation (e2cd4f701)
+- feat(cli): carry Windows trust through WSL (485363ecf)
+- feat(cli): discover system certificate stores (52677f502)
+- fix(tui): anchor finished live runs (a614c9029)
+- chore(cli): add clj-parinferish workspace root (93d5fdc1d)
+- fix(extensions): isolate live views from test runs (3c64395a9)
+- fix(companion): keep short responses beside composer (992185d5b)
+- fix(extensions): show GitHub run start time (fd24cd394)
+- fix(companion): load session totals with list (58c8a3815)
+- fix(live): harden GitHub watches and name NDJSON (089547073)
+- fix(companion): keep composer pinned during keyboard dismissal (8b07ee528)
+- fix(companion): collapse repeated live run cuts (f0500d788)
+- fix(tui): stop watching superseded CI runs (8094319b3)
+- fix(companion): preserve interrupted live records (ef73c0271)
+- fix(tui): show live CI job activity (c15bcc121)
+- ci(release): use GitHub-hosted macOS runners (4ad2f023c)
+- docs(gateway): refresh dependency audit (183f72652)
+- build(gateway): bump svar to 0.7.125 (18173bba8)
+- feat(tui): minimize active live views (a94cc8278)
+- fix(tui): expand and focus live CI jobs (6f5d67865)
+- fix(release): install macOS native test dependency (9e0c63d91)
+- fix(shell): slice log pages as output text (5ff3caaf6)
+- fix(gateway): scale folding budget for small contexts (e33c08ab8)
+- feat(shell): page log windows on the handle (448463804)
+- ci(release): run macOS native image on Blacksmith (fb934f4f4)
+- feat(companion): focus live CI jobs (47cc50ac3)
+- fix(gateway): skip auto-title after cancelled turns (851f41948)
+- fix(gateway): keep a session pinned to the provider it named (0e5fdf521)
+- fix(engine): unwedge a turn queued behind a leaked Python GIL (b3c78e43f)
+- fix(editing): gate-check grep paths as given, not their parent dir (b9af259d4)
+- fix(loop): keep the record of a view a stopped block abandoned (df1280ba5)
+- build(ci): run every macOS job on our own Apple-silicon runner (d19f66361)
+- fix(ci): close the test sandboxes that were exhausting the heap (a91da2786)
+- ci(gateway): give the Linux test suite the heap it needs (dab6dfb18)
+- fix(ci): resolve the lint and test failures blocking the pipeline (a6b091834)
+- fix(companion): settle Settings on the machine a session came from (ef54e2323)
+- docs(docs): state the boundary, do not prescribe the call site (4e77cf513)
+- docs(docs): a Path crosses a tool boundary as itself (73f906ed2)
+- fix(docs): let a lower-case ask reach a camelCase name (3ea6c2711)
+- fix(companion): save the machine this device found dark (010d8cde3)
+- refactor(cli): drop the duplicate by-cwd view from tool results (86a35379d)
+- docs(python): a capped grep names next(r), not a retyped call (28cfaeb62)
+- refactor(python): walk grep pages with next(), not more() (aadf51db3)
+- fix(tui): apply settings through gateway (0d4114f6e)
+- feat(python): page a capped grep from the result itself (133fd9c0f)
+- docs(changelog): record the shell out rename and the daemon live view (5c352fefc)
+- refactor(shell): name the merged pty stream out (879c79cb9)
+- fix(tui): paint live views raised in the serve daemon (c0ceb78bb)
+- fix(python): give the PIL shim Pillow's whole helper-module surface (e87af58fd)
+- fix(loop): stop create-environment abandoning its sandbox when a later step fails (0a80cc775)
+- feat(sandbox): one canonical teardown, so no site has to remember the order (ef71d025e)
+- fix(python): close the Engine with contexts built outside python-extensions (251f5d710)
+- docs(cli): say the pty merges stderr into stdout (094256421)
+- fix(companion): shorten the composer's queued placeholder (ab87a9ea3)
+- fix(cli): close the PIL shim's remaining Pillow gaps (4dd507f6e)
+- fix(companion): let the human, not the mounted screen, take a share (3f97a49f3)
+- fix(sandbox): give PIL the CSS colours, hsl wheels and a real mode filter (76fbe2316)
+- feat(companion): accept shared files and let the share pick its session (86d3fac0f)
+- fix(companion): hold the fleet scope through one dropped read (e7d184d0c)
+- fix(python): own the condition lock across gather children (e68c119c6)
+- feat(config): declare a non-secret literal in environment: (a50b09c86)
+- docs(release): record companion TestFlight build 4546 (bd908456b)
+- feat(shell): scroll the log line window back up with a negative count (a46b91043)
+- fix(companion): quote a memo's transcript instead of icing it (1c2dc41e4)
+- fix(loop): dispose the env a cache insert displaces (22210bd3c)
+- fix(cli): fold near-miss tool keywords instead of refusing the call (2351576e5)
+- feat(companion): open a recording's transcription under its player (1fc0f9fd0)
+- feat(gateway): transcribe an attached recording into the model's manifest (898ca2ebd)
+- feat(config): let an issued credential name its wire dialect (fcf08a7d9)
+- docs(docs): break the walls of text into lists, tables and steps (09fe3914f)
+- fix(tui): let the wheel own every row the live band paints (8ae7c4067)
+- feat(config): one forgiving, validated wire-dialect vocabulary (845d807d8)
+- fix(companion): say which live view the running row is showing (3830f09a8)
+- docs(cli): one shape for a tool's doc page, cross-validated against the handlers (9ebe5f56f)
+- feat(extensions): keep a gh watch moving and settle it into one picture (ede8099e3)
+- fix(cli): keep project-scoped blocks out of the machine store (4fa5eccef)
+- fix(companion): name an Android octet-stream pick by its extension (8a972d1b4)
+- feat(gateway): sniff every recorder format, not only the m4a (f59a1176f)
+- docs(docs): one canonical page shape, and a gate that keeps it (fca795da9)
+- feat(cli): run_tests takes deps.edn aliases for the clean-JVM run (a92be52fd)
+- feat(companion): reach any file from + and play what it cannot show (c4c0914ec)
+- feat(gateway): accept voice recordings as attachments (1fc0d2852)
+- docs(cli): the language verbs state the requiredness they enforce (1534fd728)
+- chore(deps): bump imaging to 0.1.10 so an empty deck opens (2e9aa9c10)
+- chore(deps): bump svar to 0.7.124 (6ed5893c5)
+- test(providers): prove MANAGED crosses the Python extension boundary (c79a5679e)
+- docs(cli): run_tests and repl_eval state requiredness and the `project` spelling (a91d72e90)
+- feat(providers): let an extension declare a MANAGED provider (95a29c152)
+- fix(language-surface): read `project` as `cwd` on every language verb (8f35760e0)
+- docs(release): record the TestFlight builds 4488 and 4508 (20065edda)
+- fix(human-input): file a late close onto its iteration, not a dead block (682665bff)
+- docs(docs): drop sub-agent vocabulary and the drifting host-op count (2d71f8304)
+- fix(tui): file a finished run as a transcript row, not band furniture (e379b3b6a)
+- fix(python): one spelling, runner, for the test backend on every surface (4719ef96d)
+- perf(companion): ask each machine once for its notifications state (057697b52)
+- fix(python): take a pathlib.Path wherever a shim takes a path (020727bff)
+- fix(companion): answer every machine's notifications row before it is opened (281c28d6a)
+- test(python): dispose three more single-test sandboxes (95037c627)
+- fix(extensions): let a gh watch run as long as the run does (192162006)
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- fix(build): keep the formatter alive on a binding form inside #() (2575e9a6a)
+- fix(gateway): retire a client lease that stopped talking (8670f3a3a)
+- refactor(gateway): identify a source build by its commit alone (62ff92d46)
+- fix(human-input): stop billing a watched run any deadline at all (2a24b9ee9)
+- feat(cli): say which build the gateway is running, and what replaces it (659a7e464)
+- fix(human-input): let a live view own the wall of the block watching it (131618013)
+- fix(languages): read a failed REPL start the same way in every language (2b2ed346c)
+- fix(gateway): refuse a status this build cannot read (9687d8ff3)
+- feat(gateway): identify a dev build by its commit, not by "dev" (c93567d31)
+- feat(gateway): pick up a new build when nobody is using the old daemon (bcc0c8208)
+- fix(languages): one REPL lifecycle contract for every language (8d3849c43)
+- fix(gateway): let a managed daemon die when nothing is watching it (7b1c56db8)
+- fix(language-surface): refuse a bare string where repl options belong (15104751e)
+- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
+- docs(config): point whole-store writers at update-machine-config! (5d3859cdb)
+- test(posix-shim): dispose the sandboxes this suite builds for itself (526305a13)
+- fix(companion): paint the stored palette on the first frame (9da688df8)
+- test(network-guard): close the Engine with the sandbox it belongs to (7d8173d24)
+- test(config): cover removed_providers in the exhaustive config fixture (89ac152c2)
+- feat(providers): make deleting a provider actually delete it (e058c8981)
+- test(python): give a sandbox the lifetime of the test that needs it (b79dee16b)
+- fix(gateway): say why a provider cannot be deleted instead of silently refusing (b839b72c9)
+- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
+- docs(cli): describe ls's tree string where the sandbox reads it (831eeb49e)
+- fix(gateway): let /projects/overview and /projects/:pid coexist (525f69c7b)
+- feat(companion): paint project counts from the gateway's own overview (21375640d)
+- feat(cli): render ls as one compact tree string (e192628bd)
+- fix(companion): inset every panel verb instead of running it full bleed (6f15c5ec3)
+- chore(python): format _outside.py the way ruff 0.16.3 does (d8b5815db)
+- fix(companion): match the notification verb to the panel action box (12ba1ba0a)
+- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- docs(gateway): correct the remote-target claims to what the code does (f5c63b4a9)
+- feat(companion): fork a session from its own slide, whole or at a turn (f6c426551)
+- fix(gateway): store settings without folding the config tiers (8aba1aa52)
+- fix(python): cross a live view's first op on a freshly booted machine (a075a41c8)
+- feat(extensions): watch a GitHub Actions run in one live view (c682f1321)
+- fix(companion): open the projects mark on the inventory, not the browser (c2e5d4122)
+- fix(loop): keep a failed block's printed output on the wire (f1e879210)
+- docs(cli): name the remote gateway flags in help, not only in the docs (f10f05930)
+- fix(gateway): unbox the log page window and drop two dead test bindings (4821af913)
+- fix(sandbox): repair the PIL envelope arity, and stop repeating the scope (10aeef006)
+- feat(sandbox): a shim declares what it lends the guest, and gets the lifetime free (fb58b8fe7)
+- fix(sandbox): tie a guest's host objects to the session that opened them (1a7ba8f4c)
+- docs(test): name the double-registration trap in the shared sandbox (b4dee14d6)
+- refactor(loop): delete the child-env plumbing sub_loop was the only user of (bb918bd7e)
+- fix(python): one GraalPy Engine per session, not one per process (66bff4fd3)
+- refactor(harness): drop the agent() verb and every sub_loop caller (2bafa1de5)
+- docs(release): record the TestFlight build testers now have (4f59e0df3)
+- refactor(human-input): stop publishing what only the sink itself calls (f03e0ddb8)
+- fix(human-input): serve a settled view's record, and file it on a stop (3fc614cb1)
+- feat(human-input): settle a finished live view into an artifact (b943593a5)
+- fix(contract): freeze the live materializer the TUI channel reads (cb1cd2208)
+- refactor(gateway): serve on Jetty 12 core, drop the ee9 servlet layer (d122fd9df)
+- docs(gateway): name the commands a remote target does not redirect (556fc2202)
+- feat(gateway): drive a remote gateway from the command line (8574bea26)
+- test(gateway): pin that a leaving gateway publishes held patches (fa732df29)
+- refactor(gateway): delete unread live surface, flush patches on stop (e4010ffa5)
+- feat(human-input): arrange a live view with the form's own groups (4269ec1a5)
+- fix(companion): read the armed pull-to-search band (1d9620dbf)
+- fix(companion): load the session list behind an open transcript (687b121e9)
+- fix(companion): keep the turn either side of the reader laid out (5b21f1ce9)
+- test(tui): show the aside band whole and pin is_aside outside Vis (f36b60e4a)
+- feat(tui): fill the band, paint inline markdown, and stand a node aside (2dc4e63c0)
+- feat(human-input): let a human stop any live view, with a note (898b43f77)
+- feat(companion): watch and stop a live view from the phone (10ca1f34d)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-channel-tui
+- feat(tui): clarify response footer controls (e9a90f4cb)
+- fix(tui): anchor finished live runs (a614c9029)
+- feat(tui): minimize active live views (a94cc8278)
+- fix(tui): expand and focus live CI jobs (6f5d67865)
+- fix(tui): copy short thinking blocks independently (27bf4deae)
+- fix(tui): apply settings through gateway (0d4114f6e)
+- refactor(shell): name the merged pty stream out (879c79cb9)
+- fix(tui): paint live views raised in the serve daemon (c0ceb78bb)
+- feat(config): declare a non-secret literal in environment: (a50b09c86)
+- fix(tui): paint a recording's transcript as a quotation, not code (ac9e2bde2)
+- fix(tui): wrap a recording's transcript on words, not columns (2132830f7)
+- feat(tui): fold a recording's transcript under the turn that carried it (e8b8c9e73)
+- fix(tui): let the wheel own every row the live band paints (8ae7c4067)
+- fix(tui): say which live view the running row is showing (f03c36211)
+- fix(tui): isolate a dropped recording path like a dropped picture (6587b6a7a)
+- feat(providers): let an extension declare a MANAGED provider (95a29c152)
+- fix(tui): read an OPTION in the band, and wrap over-wide headings (c57466fb0)
+- fix(tui): measure dialog widths in lanterna columns, not chars (dfa919688)
+- fix(tui): file a finished run as a transcript row, not band furniture (e379b3b6a)
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- fix(gateway): store settings without folding the config tiers (8aba1aa52)
+- docs(cli): name the remote gateway flags in help, not only in the docs (f10f05930)
+- feat(human-input): settle a finished live view into an artifact (b943593a5)
+- refactor(gateway): delete unread live surface, flush patches on stop (e4010ffa5)
+- feat(human-input): arrange a live view with the form's own groups (4269ec1a5)
+- test(tui): show the aside band whole and pin is_aside outside Vis (f36b60e4a)
+- feat(tui): fill the band, paint inline markdown, and stand a node aside (2dc4e63c0)
+- feat(human-input): let a human stop any live view, with a note (898b43f77)
+- feat(companion): watch and stop a live view from the phone (10ca1f34d)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-foundation-bridge
+- docs(cli): one shape for a tool's doc page, cross-validated against the handlers (9ebe5f56f)
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-foundation-search
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-foundation-voice
+- feat(gateway): transcribe an attached recording into the model's manifest (898ca2ebd)
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-language-clojure
+- fix(cli): find parent tests for nested sources (a2d6ae373)
+- fix(cli): consume parinferish closer relocation (e2cd4f701)
+- refactor(cli): drop the duplicate by-cwd view from tool results (86a35379d)
+- feat(cli): run_tests takes deps.edn aliases for the clean-JVM run (a92be52fd)
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- fix(languages): one REPL lifecycle contract for every language (8d3849c43)
+- fix(language-surface): refuse a bare string where repl options belong (15104751e)
+- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
+- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
+- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-language-python
+- fix(extensions): isolate live views from test runs (3c64395a9)
+- refactor(cli): drop the duplicate by-cwd view from tool results (86a35379d)
+- fix(python): one spelling, runner, for the test backend on every surface (4719ef96d)
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- fix(languages): read a failed REPL start the same way in every language (2b2ed346c)
+- fix(languages): one REPL lifecycle contract for every language (8d3849c43)
+- test(languages): read pack test counts by their contract names (aae6e5046)
+- fix(language-surface): refuse a bare string where repl options belong (15104751e)
+- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
+- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
+- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-language-typescript-bun
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- fix(languages): read a failed REPL start the same way in every language (2b2ed346c)
+- fix(languages): one REPL lifecycle contract for every language (8d3849c43)
+- test(languages): read pack test counts by their contract names (aae6e5046)
+- fix(language-surface): refuse a bare string where repl options belong (15104751e)
+- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
+- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
+- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-persistance-sqlite
+- fix(live): harden GitHub watches and name NDJSON (089547073)
+- fix(gateway): count every successful session fold (71e3b7335)
+- feat(gateway): transcribe an attached recording into the model's manifest (898ca2ebd)
+- fix(human-input): file a late close onto its iteration, not a dead block (682665bff)
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- fix(gateway): count folds from the turn ctx ledger (2afd2a92c)
+- refactor(harness): drop the agent() verb and every sub_loop caller (2bafa1de5)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-alibaba
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-anthropic
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-github-copilot
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-openai-codex
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-opencode-go
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-openrouter
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-standard
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+#### com.blockether/vis-provider-zai
+- style(repo): format every namespace with the canonical formatter (211f49894)
+- feat(cli): open live views from a Python extension (d59111718)
+
+
+
 ### Changed
 
 - feat(live,extensions): `LiveView.close(model_result=…)` can now return one compact semantic string to the model while preserving the complete structured verdict, final picture, and focus snapshots exclusively for human-facing close events and the durable artifact. GitHub Actions watches use this path, so the model receives only their optimized one-line outcome instead of the full jobs, steps, and log structure.
@@ -5339,7 +5870,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.40...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.41...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -5372,3 +5903,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.38]: https://github.com/Blockether/vis/releases/tag/v0.1.38
 [v0.1.39]: https://github.com/Blockether/vis/releases/tag/v0.1.39
 [v0.1.40]: https://github.com/Blockether/vis/releases/tag/v0.1.40
+[v0.1.41]: https://github.com/Blockether/vis/releases/tag/v0.1.41
