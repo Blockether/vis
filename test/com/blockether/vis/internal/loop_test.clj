@@ -216,6 +216,137 @@
       (expect (nil? (#'lp/copilot-llm-headers {:provider :anthropic-coding-plan} "agent")))))
 
 (defdescribe
+  codex-stateful-session-test
+  (it
+    "sends only the new canonical suffix over one sticky Codex session"
+    (let [session-atom
+          (atom nil)
+
+          history
+          (atom [])
+
+          opened
+          (atom 0)
+
+          turns
+          (atom [])
+
+          closed
+          (atom [])
+
+          environment
+          {:router ::router :llm-session-atom session-atom}
+
+          resolved
+          {:provider :openai-codex :name "gpt-5.6"}
+
+          system
+          {:role "system" :content "stable"}
+
+          user
+          {:role "user" :content "act"}
+
+          assistant
+          {:role "assistant" :content [{:type "tool_use" :id "call-1"}]}
+
+          result
+          {:role "user" :content [{:type "tool_result" :tool_use_id "call-1"}]}]
+
+      (with-redefs [svar/open-session
+                    (fn [router opts]
+                      (expect (= ::router router))
+                      (expect (nil? (:messages opts)))
+                      (swap! opened inc)
+                      ::session)
+
+                    svar/session-history
+                    (fn [_]
+                      @history)
+
+                    svar/ask!
+                    (fn [session opts]
+                      (swap! turns conj [session (:messages opts)])
+                      (reset! history (into @history (concat (:messages opts) [assistant])))
+                      {:stop-reason :tool-calls :assistant-message assistant})
+
+                    svar/close-session!
+                    (fn [session]
+                      (swap! closed conj session))]
+
+        (#'lp/ask-code-with-session! environment resolved {:messages [system user]})
+        (#'lp/ask-code-with-session!
+         environment
+         resolved
+         {:messages [system user assistant result]})
+        (expect (= 1 @opened))
+        (expect (= [[::session [system user]] [::session [result]]] @turns))
+        (expect (= [] @closed)))))
+  (it
+    "replays on a fresh Codex session when canonical history diverges"
+    (let [session-atom
+          (atom {:key [:openai-codex "gpt-5.6"] :session ::stale})
+
+          opened
+          (atom [])
+
+          closed
+          (atom [])
+
+          sent
+          (atom nil)
+
+          messages
+          [{:role "system" :content "rebased"} {:role "user" :content "continue"}]]
+
+      (with-redefs [svar/session-history
+                    (fn [_]
+                      [{:role "system" :content "old"}])
+
+                    svar/open-session
+                    (fn [_ opts]
+                      (swap! opened conj opts)
+                      ::fresh)
+
+                    svar/close-session!
+                    (fn [session]
+                      (swap! closed conj session))
+
+                    svar/ask!
+                    (fn [session opts]
+                      (reset! sent [session (:messages opts)])
+                      {:stop-reason :end})]
+
+        (#'lp/ask-code-with-session!
+         {:router ::router :llm-session-atom session-atom}
+         {:provider :openai-codex :name "gpt-5.6"}
+         {:messages messages})
+        (expect (= [::stale] @closed))
+        (expect (= 1 (count @opened)))
+        (expect (= [::fresh messages] @sent)))))
+  (it "closes the sticky Codex session before a non-Codex call"
+      (let [session-atom
+            (atom {:key [:openai-codex "gpt-5.6"] :session ::session})
+
+            closed
+            (atom [])]
+
+        (with-redefs [svar/close-session!
+                      (fn [session]
+                        (swap! closed conj session))
+
+                      svar/ask-code!
+                      (fn [router opts]
+                        [router opts])]
+
+          (expect (= [::router {:messages []}]
+                     (#'lp/ask-code-with-session!
+                      {:router ::router :llm-session-atom session-atom}
+                      {:provider :anthropic :name "claude"}
+                      {:messages []})))
+          (expect (= [::session] @closed))
+          (expect (nil? @session-atom))))))
+
+(defdescribe
   environment-lifecycle-test
   (it "closes the GraalPy context when disposing an environment"
       (let [environment

@@ -4459,6 +4459,98 @@
                    :msg "file-descriptor pressure — GC reclaimed leaked handles"})
         freed))))
 
+(defn- close-llm-session!
+  "Close and forget an environment-owned stateful provider session."
+  [session-atom]
+  (when-let [session (:session @session-atom)]
+    (try (svar/close-session! session)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::llm-session-close-failed
+                      :data {:error (ex-message t)}
+                      :msg "Could not close the stateful provider session"}))))
+  (reset! session-atom nil))
+
+(defn- session-message-suffix
+  "Return the unsent suffix when history is an exact prefix, else nil."
+  [history messages]
+  (let [history
+        (vec history)
+
+        messages
+        (vec messages)
+
+        n
+        (count history)]
+
+    (when (and (<= n (count messages)) (= history (subvec messages 0 n))) (subvec messages n))))
+
+(defn- ask-code-with-session!
+  "Use one Codex Responses session per env/model; other providers stay one-shot."
+  [environment resolved-model ask-opts]
+  (let [provider
+        (:provider resolved-model)
+
+        model
+        (:name resolved-model)
+
+        session-atom
+        (:llm-session-atom environment)]
+
+    (if (and (= :openai-codex provider) session-atom)
+      (locking session-atom
+        (let [session-key
+              [provider model]
+
+              current
+              @session-atom
+
+              current
+              (when (= session-key (:key current)) current)
+
+              _
+              (when (and @session-atom (nil? current)) (close-llm-session! session-atom))
+
+              session
+              (or (:session current)
+                  (svar/open-session (:router environment)
+                                     (-> ask-opts
+                                         (dissoc :messages)
+                                         (assoc :routing {:provider provider :model model}))))
+
+              _
+              (when-not current (reset! session-atom {:key session-key :session session}))
+
+              messages
+              (vec (:messages ask-opts))
+
+              suffix
+              (session-message-suffix (svar/session-history session) messages)
+
+              session
+              (if (some? suffix)
+                session
+                (do
+                  ;; A resumed/compacted transcript diverged from the local cursor.
+                  ;; Start a fresh server chain and replay its canonical full input.
+                  (close-llm-session! session-atom)
+                  (let [fresh (svar/open-session (:router environment)
+                                                 (-> ask-opts
+                                                     (dissoc :messages)
+                                                     (assoc :routing {:provider provider
+                                                                      :model model})))]
+                    (reset! session-atom {:key session-key :session fresh})
+                    fresh)))
+
+              turn-messages
+              (or suffix messages)]
+
+          (svar/ask! session (assoc ask-opts :messages turn-messages))))
+      (do (when (and session-atom @session-atom)
+            (locking session-atom (close-llm-session! session-atom)))
+          (svar/ask-code! (:router environment)
+                          (update ask-opts :messages apply-cache-breakpoints))))))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -4628,7 +4720,7 @@
                      :tool-choice :auto
                      ;; two prompt-cache breakpoints: frozen system prefix
                      ;; + moving recency (transcript). See apply-cache-breakpoints.
-                     :messages (apply-cache-breakpoints messages)
+                     :messages (vec messages)
                      :routing sticky-routing
                      :check-context? true
                      :preserved-thinking? true
@@ -4695,7 +4787,7 @@
                                                             :iteration iteration-position)]
                            ;; Svar is the single owner of provider classification and retries.
                            ;; Once this call returns or throws, Vis must not issue it again.
-                           (svar/ask-code! (:router environment) ask-opts))
+                           (ask-code-with-session! environment resolved-model ask-opts))
           ask-result (prepend-routing-trace ask-result-raw
                                             (into (vec @empty-reply-resend-events)
                                                   @refusal-fallback-events))
@@ -9829,6 +9921,8 @@
   (when-let [tok (:repl-sandbox-token environment)]
     (gateway-sandbox/unregister-session! tok))
   (process-jail/unregister-session-jail! (:session-id environment))
+  (when-let [session-atom (:llm-session-atom environment)]
+    (locking session-atom (close-llm-session! session-atom)))
   ;; BEFORE the context goes: the session's helper-source memo outlives both the
   ;; context and the engine, and nothing else ever drops it (see
   ;; `env-python/forget-session-defs!`).
@@ -10374,6 +10468,9 @@
                   ;; `:lru` after eval.
                   :def-resolve-lru-atom (atom {})
                   :router router
+                  ;; Codex owns one explicit Responses WebSocket/cursor per Vis environment.
+                  ;; The socket opens lazily on the first Codex iteration and is closed with env.
+                  :llm-session-atom (atom nil)
                   :session-title-atom session-title-atom
                   :extensions (atom [])
                   :active-extensions (atom []))]
