@@ -28,17 +28,17 @@ describe('Menu parts', () => {
   });
 
   describe('MenuHeading', () => {
-    it('names what the rows act on, in the app’s one accent band', () => {
+    it('names what the rows act on in the black title band', () => {
       const html = renderToStaticMarkup(<MenuHeading>studio-mbp</MenuHeading>);
 
-      expect(html).toContain('bg-accent');
-      expect(html).toContain('text-accent-foreground');
+      expect(html).toContain('bg-dialog-title');
+      expect(html).toContain('text-dialog-title-foreground');
       expect(html).toContain('uppercase');
       expect(html).toContain('studio-mbp');
     });
 
-    // A treatment that shouts once is a barcode when it is charged twice.
-    it('spends the accent once: a second band in the same menu is quiet', () => {
+    // Subordinate sections stay quiet beneath the primary title band.
+    it('keeps a second band in the same menu quiet', () => {
       const html = renderToStaticMarkup(<MenuHeading tone="quiet">Or a draft</MenuHeading>);
 
       expect(html).not.toContain('bg-accent');
@@ -59,7 +59,7 @@ describe('Menu parts', () => {
         </MenuBack>,
       );
 
-      expect(html).toContain('bg-accent');
+      expect(html).toContain('bg-dialog-title');
       expect(html).toContain('<button');
       expect(html).toContain('aria-label="Back to actions for tower"');
       expect(html).toContain('min-h-11');
