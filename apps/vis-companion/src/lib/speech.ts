@@ -1,5 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { getSpeechPrefs } from "./storage";
+import { wavePeaks } from "./waveform";
 import type { SpeechPrefs } from "./types";
 
 interface AndroidSpeechPlugin {
@@ -89,6 +90,27 @@ export interface GatewaySpeaker {
 }
 
 /**
+ * WHAT THE SCREEN LEARNS WHILE THE MACHINE SPEAKS.
+ *
+ * The device route can say nothing at all - Web Speech and Android TTS hand out no
+ * buffer - so this is optional on purpose: a listener that hears nothing keeps its
+ * own estimate, and the block draws no shape it cannot prove.
+ */
+export interface SpokenTrack {
+  /** Real peaks of the audio that is playing, loudest bar normalised to 1. */
+  peaks: number[];
+  /** Its real length in seconds, measured by the player, not counted from words. */
+  duration: number;
+}
+
+export interface SpeechListener {
+  onTrack?(track: SpokenTrack): void;
+  onProgress?(seconds: number): void;
+}
+
+/** Enough bars for a phone-width rail, and cheap to read from a reply-sized WAV. */
+const WAVE_BARS = 240;
+/**
  * WHERE a reply is spoken: nowhere, on this device, or on the machine that answered.
  *
  * `speak(text)` is unchanged for every call site - the choice is a stored preference
@@ -128,12 +150,12 @@ class SpeechOutput {
     return this.prefs;
   }
 
-  async speak(text: string): Promise<void> {
+  async speak(text: string, listener?: SpeechListener): Promise<void> {
     const prefs = await this.settings();
     if (prefs.route === "gateway" && this.gateway) {
       try {
         const audio = await this.gateway.speak(text, prefs.gatewayVoice);
-        await this.play(audio);
+        await this.play(audio, listener);
         return;
       } catch (cause) {
         this.notice?.(
@@ -155,7 +177,7 @@ class SpeechOutput {
   }
 
   /** Play the machine's audio, and let go of the object URL whatever happens. */
-  private play(audio: Blob): Promise<void> {
+  private play(audio: Blob, listener?: SpeechListener): Promise<void> {
     if (typeof Audio === "undefined" || typeof URL.createObjectURL !== "function") {
       return Promise.reject(
         new Error("This device cannot play the audio the machine sent."),
@@ -164,6 +186,19 @@ class SpeechOutput {
     const url = URL.createObjectURL(audio);
     const element = new Audio(url);
     this.playing = element;
+    // The shape and the clock both come from THESE bytes: the peaks are read off the
+    // audio that is about to play and the position is the player's own `currentTime`,
+    // so nothing the reader sees is inferred from the length of the text.
+    const measured = audio
+      .arrayBuffer()
+      .then((bytes) => wavePeaks(bytes, WAVE_BARS))
+      .catch(() => [] as number[]);
+    element.onloadedmetadata = () => {
+      const duration = element.duration;
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      void measured.then((peaks) => listener?.onTrack?.({ peaks, duration }));
+    };
+    element.ontimeupdate = () => listener?.onProgress?.(element.currentTime);
     const done = () => {
       if (this.playing === element) this.playing = null;
       URL.revokeObjectURL(url);

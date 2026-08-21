@@ -39,7 +39,7 @@ const count = (html: string, pattern: RegExp) =>
   (html.match(pattern) ?? []).length;
 
 describe("spoken transcript", () => {
-  it("opens as a justified audio rail with a seekable position", () => {
+  it("opens as a justified transcript under a waveform you can seek", () => {
     const html = renderToStaticMarkup(
       <ContentBlockView
         block={{
@@ -51,7 +51,7 @@ describe("spoken transcript", () => {
     );
 
     expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain('type="range"');
+    expect(html).toContain('role="slider"');
     expect(html).toContain('aria-label="Speech position"');
     expect(html).toContain("text-justify");
     expect(html).toContain('lang="en"');
@@ -84,24 +84,54 @@ describe("spoken transcript", () => {
     }
   });
 
-  // Reported as "suwak audio powinien być na górze": the rail sat under a second
-  // control band instead of leading the block's body, right under the one header.
-  it("leads the body with the seek rail and nothing else", () => {
+  // Reported as "waveform i play etc jest w headerze ... oczywiście można sobie to
+  // rozwinąć i zobaczyć wersję tekstową": the seek control stood in the body, so the
+  // reply could not be played without its text on screen, and the row that opens that
+  // text never said what it opens.
+  it("plays from the header and keeps only the named transcript in the body", () => {
     const view = render(<SpeechBlock text="Listen again." />);
     try {
-      const rail = view.getByRole("slider", { name: "Speech position" });
+      const wave = view.getByRole("slider", { name: "Speech position" });
       const header = view
-        .getByRole("button", { name: /Spoken version/ })
+        .getByRole("button", { name: /Transcript/ })
         .closest("[data-speech-header]");
-      const body = header?.nextElementSibling;
 
-      expect(body?.contains(rail)).toBe(true);
-      // Every control the block has is in the header, so the rail leads the body.
+      expect(header?.contains(wave)).toBe(true);
+      expect(header?.contains(view.getByRole("button", { name: "Play" }))).toBe(true);
+
+      const body = header?.nextElementSibling;
+      expect(body?.querySelector("[role='slider']")).toBeNull();
       expect(body?.querySelector("button")).toBeNull();
-      expect(
-        rail.compareDocumentPosition(view.container.querySelector("p")!) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
+      expect(body?.querySelector("p")?.textContent).toBe("Listen again.");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("keeps the wave and the transport when the transcript is collapsed", () => {
+    const view = render(<SpeechBlock text="Listen again." />);
+    try {
+      fireEvent.click(view.getByRole("button", { name: /Transcript/ }));
+
+      expect(view.container.querySelector("p")).toBeNull();
+      expect(view.getByRole("slider", { name: "Speech position" })).not.toBeNull();
+      expect(view.getByRole("button", { name: "Play" })).not.toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("draws a flat rule until real samples exist, and never a made-up shape", () => {
+    const view = render(<SpeechBlock text="Nothing has been synthesised yet." />);
+    try {
+      const bars = [
+        ...view
+          .getByRole("slider", { name: "Speech position" })
+          .querySelectorAll("rect"),
+      ].map((bar) => bar.getAttribute("height"));
+
+      expect(bars.length).toBeGreaterThan(0);
+      expect(new Set(bars).size).toBe(1);
     } finally {
       view.unmount();
     }
@@ -118,13 +148,11 @@ describe("spoken transcript", () => {
       html.indexOf("</button>"),
     );
 
-    expect(disclosure.indexOf("<svg")).toBeLessThan(
-      disclosure.indexOf("Spoken version"),
-    );
+    expect(disclosure.indexOf("<svg")).toBeLessThan(disclosure.indexOf("Transcript"));
     expect(disclosure).toContain("rotate-90");
   });
 
-  it("restarts speech at the position selected on the rail", async () => {
+  it("restarts speech at the position pressed on the wave", async () => {
     const calls: string[] = [];
     let finish: () => void = () => undefined;
     const pending = new Promise<void>((resolve) => {
@@ -141,10 +169,10 @@ describe("spoken transcript", () => {
       fireEvent.click(view.getByRole("button", { name: "Play" }));
       expect(calls).toEqual(["one two three four five six"]);
 
-      const rail = view.getByRole("slider", { name: "Speech position" });
-      fireEvent.pointerDown(rail);
-      fireEvent.change(rail, { target: { value: "0.5" } });
-      fireEvent.pointerUp(rail);
+      const wave = view.getByRole("slider", { name: "Speech position" });
+      wave.getBoundingClientRect = () =>
+        ({ left: 0, width: 100 }) as unknown as DOMRect;
+      fireEvent.pointerDown(wave, { clientX: 50 });
 
       await waitFor(() => expect(calls.at(-1)).toBe("four five six"));
       expect(stop).toHaveBeenCalled();

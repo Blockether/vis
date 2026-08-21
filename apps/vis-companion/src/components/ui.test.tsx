@@ -81,6 +81,7 @@ import {
   Slider,
   Spinner,
   UnreadBadge,
+  Waveform,
 } from "./ui";
 import { MenuHeading } from "./Menu";
 
@@ -3388,6 +3389,55 @@ describe("Slider", () => {
       if (source.includes('type="range"')) rolled.push(path);
     }
     expect(rolled).toEqual([]);
+  });
+});
+
+// Reported as "nie możemy mieć tego audio controls z takim sexy waveformem ... z
+// rzeczywistym": the spoken reply's position was a bare rule, so a reply's own shape
+// — where it is loud, where it pauses — was thrown away before it reached the reader.
+describe("Waveform", () => {
+  const loud = [0.2, 0.4, 0.8, 1];
+  const html = (props: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      <Waveform
+        peaks={loud}
+        value={0}
+        label="Speech position"
+        onSeek={() => undefined}
+        {...props}
+      />,
+    );
+
+  it("is one seekable position, named and readable by a screen reader", () => {
+    const face = html({ value: 0.5 });
+
+    expect(face).toContain('role="slider"');
+    expect(face).toContain('aria-label="Speech position"');
+    expect(face).toContain('aria-valuenow="0.5"');
+  });
+
+  it("draws the samples it was given, and paints only the part already played", () => {
+    const face = html({ value: 0.5 });
+    const bars = [...face.matchAll(/height="(\d+)"/g)].map((bar) => Number(bar[1]));
+
+    expect(bars).toHaveLength(loud.length);
+    expect(bars[0]).toBeLessThan(bars[3]);
+    expect((face.match(/fill-accent/g) ?? []).length).toBe(2);
+    expect((face.match(/fill-edge/g) ?? []).length).toBe(2);
+  });
+
+  it("falls back to a flat rule when nothing has been measured", () => {
+    const bars = [...html({ peaks: [] }).matchAll(/height="(\d+)"/g)].map(
+      (bar) => bar[1],
+    );
+
+    expect(bars.length).toBeGreaterThan(0);
+    expect(new Set(bars).size).toBe(1);
+  });
+
+  it("stands in a row a finger can hit, tight only under a cursor", () => {
+    expect(html()).toContain("min-h-11");
+    expect(html()).toContain("mouse:min-h-6");
   });
 });
 // Regression, user report ("some of the X are a different X than the dialog ones, and

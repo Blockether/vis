@@ -791,6 +791,125 @@ export function Slider({
 }
 
 /**
+ * THE SHAPE OF A SPOKEN REPLY, and there is only one of it.
+ *
+ * `Slider` asks where along a run; this says what the run IS, because a voice has a
+ * shape and a bare rail throws it away. Every bar is a real sample of the audio that
+ * is playing (`lib/waveform.ts`) - when nothing has been synthesised yet there are no
+ * bars and the control is a flat rule, since a wiggle nobody measured is a lie about
+ * a recording. The FACE is 20px of bars; the TARGET is the row they stand in, because
+ * a finger cannot hit a 2px bar and only a cursor earns the tight rhythm.
+ */
+const WAVE_BOX = 40;
+const WAVE_PITCH = 3;
+const WAVE_BAR = 2;
+const WAVE_FLOOR = 2;
+const WAVE_STEP = 0.05;
+const WAVE_FLAT = 64;
+/** A bar and its gap in CSS pixels: the face keeps this rhythm at any width. */
+const WAVE_ROOM = 3;
+
+/** The loudest sample of each group: a narrower rail loses BARS, never peaks. */
+const cutTo = (source: number[], count: number) =>
+  Array.from({ length: count }, (_, index) => {
+    const from = Math.floor((index * source.length) / count);
+    const to = Math.max(from + 1, Math.floor(((index + 1) * source.length) / count));
+    let peak = 0;
+    for (let at = from; at < to; at += 1) peak = Math.max(peak, source[at]);
+    return peak;
+  });
+
+export function Waveform({
+  peaks,
+  value,
+  label,
+  onSeek,
+  className = '',
+}: {
+  peaks: number[];
+  value: number;
+  label: string;
+  onSeek: (value: number) => void;
+  className?: string;
+}) {
+  // A wave keeps its RHYTHM at every width: the bars are re-cut to the room the
+  // header actually gives them, so one reply is fine bars on a 320px phone and fine
+  // bars on a 1440px band, never a dozen slabs stretched across it.
+  const [room, setRoom] = useState(0);
+  const frame = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const node = frame.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(([entry]) => setRoom(entry.contentRect.width));
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, []);
+  const source = peaks.length ? peaks : new Array<number>(WAVE_FLAT).fill(0);
+  const fits = room > 0 ? Math.max(8, Math.floor(room / WAVE_ROOM)) : source.length;
+  const bars = fits >= source.length ? source : cutTo(source, fits);
+  const played = value * bars.length;
+  const clamp = (next: number) => onSeek(Math.max(0, Math.min(1, next)));
+  const seekAt = (event: PointerEvent<HTMLSpanElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    if (box.width <= 0) return;
+    clamp((event.clientX - box.left) / box.width);
+  };
+  return (
+    <span
+      className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}
+    >
+      <span
+        ref={frame}
+        role="slider"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={1}
+        aria-valuenow={Math.round(value * 1000) / 1000}
+        tabIndex={0}
+        className="flex h-5 w-full min-w-0 cursor-pointer touch-none items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          seekAt(event);
+        }}
+        onPointerUp={(event) =>
+          event.currentTarget.releasePointerCapture?.(event.pointerId)
+        }
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') clamp(value + WAVE_STEP);
+          else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown')
+            clamp(value - WAVE_STEP);
+          else if (event.key === 'Home') onSeek(0);
+          else if (event.key === 'End') onSeek(1);
+          else return;
+          event.preventDefault();
+        }}
+      >
+        <svg
+          viewBox={`0 0 ${bars.length * WAVE_PITCH} ${WAVE_BOX}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          className="h-full w-full"
+        >
+          {bars.map((peak, index) => {
+            const height = Math.max(WAVE_FLOOR, Math.round(peak * WAVE_BOX));
+            return (
+              <rect
+                key={index}
+                x={index * WAVE_PITCH}
+                y={(WAVE_BOX - height) / 2}
+                width={WAVE_BAR}
+                height={height}
+                rx={1}
+                className={index < played ? 'fill-accent' : 'fill-edge'}
+              />
+            );
+          })}
+        </svg>
+      </span>
+    </span>
+  );
+}
+/**
  * THE WAY BACK, and there is only one of it.
  *
  * A full-screen surface that stands ON another one — a session over its list —

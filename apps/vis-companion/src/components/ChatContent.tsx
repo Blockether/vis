@@ -36,8 +36,8 @@ import {
   LoadMore,
   PROSE,
   PROSE_RAGGED,
-  Slider,
   Spinner,
+  Waveform,
 } from "./ui";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-clojure";
@@ -69,6 +69,7 @@ import type {
 } from "../lib/types";
 import type { GatewayClient } from "../lib/gateway";
 import { speechOutput } from "../lib/speech";
+import type { SpokenTrack } from "../lib/speech";
 import { ExpandableImage } from "./ImageViewer";
 import {
   mediaContentClass,
@@ -2503,15 +2504,22 @@ const speechFrom = (text: string, position: number) => {
 };
 
 export function SpeechBlock({ text }: { text: string }) {
-  const duration = speechDuration(text);
   const [open, setOpen] = useState(true);
   const [speaking, setSpeaking] = useState(false);
   const [position, setPosition] = useState(0);
+  const [track, setTrack] = useState<SpokenTrack | null>(null);
   const [error, setError] = useState<string | null>(null);
   const positionRef = useRef(0);
   const runRef = useRef(0);
   const startedAtRef = useRef(0);
-  const resumeAfterSeekRef = useRef(false);
+  const fromRef = useRef(0);
+  const measuredRef = useRef(false);
+  // A measured reply says how long it is; a reply nobody has synthesised yet is
+  // counted from its own words, which is a guess and is replaced the moment the
+  // machine hands over audio.
+  const duration = track?.duration ?? speechDuration(text);
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
 
   const rememberPosition = (next: number) => {
     const clamped = Math.max(0, Math.min(1, next));
@@ -2532,12 +2540,26 @@ export function SpeechBlock({ text }: { text: string }) {
       const run = runRef.current + 1;
       runRef.current = run;
       speechOutput.stop();
+      fromRef.current = from;
+      measuredRef.current = false;
       rememberPosition(from);
-      startedAtRef.current = performance.now() - from * duration * 1000;
+      startedAtRef.current = performance.now() - from * durationRef.current * 1000;
       setError(null);
       setSpeaking(true);
       void speechOutput
-        .speak(spoken)
+        .speak(spoken, {
+          // Only a run that speaks the WHOLE reply may draw the whole reply: audio for
+          // a tail is the shape of that tail, and the bars are a claim about samples.
+          onTrack: (measured) => {
+            if (runRef.current !== run || from > 0) return;
+            setTrack(measured);
+          },
+          onProgress: (seconds) => {
+            if (runRef.current !== run) return;
+            measuredRef.current = true;
+            rememberPosition(fromRef.current + seconds / durationRef.current);
+          },
+        })
         .then(() => {
           if (runRef.current === run) rememberPosition(1);
         })
@@ -2548,12 +2570,15 @@ export function SpeechBlock({ text }: { text: string }) {
           if (runRef.current === run) setSpeaking(false);
         });
     },
-    [duration, text],
+    [text],
   );
 
   useEffect(() => {
     if (!speaking) return;
     const timer = window.setInterval(() => {
+      // The device engine reports nothing, so the position is estimated until real
+      // audio starts reporting its own clock - and then never again.
+      if (measuredRef.current) return;
       rememberPosition(
         Math.min(0.995, (performance.now() - startedAtRef.current) / (duration * 1000)),
       );
@@ -2563,37 +2588,41 @@ export function SpeechBlock({ text }: { text: string }) {
 
   useEffect(() => () => stop(), [stop]);
 
-  const beginSeek = () => {
-    resumeAfterSeekRef.current = resumeAfterSeekRef.current || speaking;
-    if (speaking) stop();
-  };
-  const finishSeek = () => {
-    if (!resumeAfterSeekRef.current) return;
-    resumeAfterSeekRef.current = false;
-    play(positionRef.current);
+  const seek = (next: number) => {
+    rememberPosition(next);
+    if (speaking) play(next);
   };
   const language = /[ąćęłńóśźż]/i.test(text) ? "pl" : "en";
 
   return (
     <section className="my-2 border border-accent bg-panel">
-      {/* ONE band, and the transport rides in it. The block used to stack its own
-          name on one amber surface and a worded Play/Pause on a second one, which
-          read as two headers for a single spoken reply. */}
+      {/* ONE band, and everything the reader can PRESS rides in it: the wave is the
+          reply itself, so it stands where the reply is played, and the text below is
+          what the disclosure is named after. */}
       <div
         data-speech-header
-        className="flex min-h-12 items-center pl-2.5 mouse:min-h-9"
+        className="flex min-h-12 items-center gap-2 pl-2.5 mouse:min-h-9"
       >
-        <Disclosure
-          isOpen={open}
-          tone="step"
+        <span className="flex shrink-0">
+          <Disclosure
+            isOpen={open}
+            tone="step"
+            onClick={() => setOpen((was) => !was)}
+          >
+            Transcript
+          </Disclosure>
+        </span>
+        <Waveform
           className="flex-1"
-          onClick={() => setOpen((was) => !was)}
-        >
-          <span className="min-w-0 flex-1 truncate">Spoken version</span>
-          <span className="shrink-0 font-normal tabular-nums text-dialog-hint">
-            {speechTime(position * duration)} / {speechTime(duration)}
-          </span>
-        </Disclosure>
+          peaks={track?.peaks ?? []}
+          value={position}
+          label="Speech position"
+          onSeek={seek}
+        />
+        <span className="shrink-0 font-mono text-chip tabular-nums text-dialog-hint">
+          {speechTime(position * duration)}
+          <span className="hidden sm:inline"> / {speechTime(duration)}</span>
+        </span>
         <IconButton
           label={speaking ? "Pause" : "Play"}
           variant="quiet"
@@ -2609,26 +2638,9 @@ export function SpeechBlock({ text }: { text: string }) {
       </div>
       {open && (
         <div className="border-t border-edge">
-          {/* The rail LEADS the body: it belongs to the header above it, not to
-              the transcript, so nothing stands between the two. */}
-          <div className="px-2.5">
-            <Slider
-              min="0"
-              max="1"
-              step="0.001"
-              value={position}
-              aria-label="Speech position"
-              onPointerDown={beginSeek}
-              onPointerUp={finishSeek}
-              onPointerCancel={finishSeek}
-              onKeyDown={beginSeek}
-              onKeyUp={finishSeek}
-              onChange={(event) => rememberPosition(event.target.valueAsNumber)}
-            />
-          </div>
           <p
             lang={language}
-            className={`${PROSE} px-2.5 pb-3 text-body text-dialog-foreground`}
+            className={`${PROSE} px-2.5 py-2.5 text-body text-dialog-foreground`}
           >
             {text}
           </p>
