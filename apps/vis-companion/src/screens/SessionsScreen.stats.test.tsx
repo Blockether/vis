@@ -63,6 +63,13 @@ describe("the expanded session card", () => {
     expect(screen.queryByText(/python_execution/)).toBeNull();
   });
 
+  it("uses the compact type step for usage values, including cache", async () => {
+    await open();
+    const cacheValue = await screen.findByText("77%");
+    expect(cacheValue.classList.contains("text-chip")).toBe(true);
+    expect(cacheValue.classList.contains("text-meta")).toBe(false);
+  });
+
   it("leaves no warn-coloured value behind on the card", async () => {
     const view = await open();
     await screen.findByText("Cost");

@@ -3464,7 +3464,7 @@ function Stat({ label, value }: { label: string; value: string }) {
       <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
         {label}
       </dt>
-      <dd className="truncate font-mono text-meta font-bold tabular-nums text-white">{value}</dd>
+      <dd className="truncate font-mono text-chip font-bold tabular-nums text-white">{value}</dd>
     </div>
   );
 }
