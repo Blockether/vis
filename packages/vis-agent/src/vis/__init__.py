@@ -1306,8 +1306,19 @@ class LiveView:
 
     # -- ending ---------------------------------------------------------------
 
-    def close(self, reason=None, summary=None, error=None, artifact_id=None):
+    def close(
+        self,
+        reason=None,
+        summary=None,
+        error=None,
+        artifact_id=None,
+        focus_snapshots=None,
+    ):
         """End the view and answer the verdict the model reads.
+
+        ``focus_snapshots`` are finished pictures keyed by a focusable table and
+        its selected rows. They are sealed only into the artifact record, so a
+        reopened run can still switch rows without keeping its extension alive.
 
         Closing twice is a no-op answering the first verdict: a `finally` that
         closes what an interrupt already closed must not overwrite the reason
@@ -1324,6 +1335,7 @@ class LiveView:
             "summary": summary,
             "error": error,
             "artifact_id": artifact_id,
+            "focus_snapshots": focus_snapshots,
         }
         answer = self._settle(
             self._call(

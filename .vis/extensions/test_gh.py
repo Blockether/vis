@@ -269,7 +269,10 @@ def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
         "▶ Waiting for this job to start",
         "· GitHub publishes the raw job log when this job ends",
     ]
-    assert recorder.asked == [("95742028770", gh.LOG_TAIL_LINES)]
+    assert recorder.asked[0] == ("95742028770", gh.LOG_TAIL_LINES)
+    assert {job_id for job_id, _lines in recorder.asked} == {
+        str(job["databaseId"]) for job in fixture("run-final.json")["jobs"]
+    }
 
 
 def test_the_settled_pane_is_one_photograph(watched):
@@ -282,7 +285,13 @@ def test_the_settled_pane_is_one_photograph(watched):
     assert any(op["op"] == "clear" for op in written)
     assert lines[0] == "── tests / vis-agent + vis-contract (PyPI packages) · log"
     assert lines[1:] == failing_log()
-    assert recorder.asked[-1] == ("95742028770", gh.LOG_TAIL_LINES)
+    assert ("95742028770", gh.LOG_TAIL_LINES) in recorder.asked
+    snapshots = recorder.said[-1]["ending"]["focus_snapshots"]
+    assert [one["focused_ids"] for one in snapshots] == [
+        [str(job["databaseId"])] for job in fixture("run-final.json")["jobs"]
+    ]
+    assert node(snapshots[0]["view"], "jobs")["focused_ids"] == ["95742028721"]
+    assert node(snapshots[-1]["view"], "output")["lines"][0].endswith(" · log")
 
 
 def test_a_log_is_asked_of_the_job_not_of_the_run(monkeypatch):
@@ -360,7 +369,10 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
         "── lint / clj-kondo · log",
         f"log for {selected}",
     ]
-    assert asked == [(selected, gh.LOG_TAIL_LINES)]
+    assert asked[0] == (selected, gh.LOG_TAIL_LINES)
+    assert {job_id for job_id, _lines in asked} == {
+        str(job["databaseId"]) for job in fixture("run-final.json")["jobs"]
+    }
 
 
 def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recorder):
@@ -404,7 +416,10 @@ def test_the_picture_is_the_one_the_human_watched(watched):
 def test_the_ops_are_the_ones_the_engine_replays(watched):
     recorder, _ = watched
 
-    assert recorder.ops() == fixture("ops.json")
+    actual = recorder.ops()
+    # Archive-only focus pictures do not change the live operation golden.
+    actual[-1]["ending"].pop("focus_snapshots")
+    assert actual == fixture("ops.json")
 
 
 def test_a_stop_answers_the_picture_the_human_left(recorder):

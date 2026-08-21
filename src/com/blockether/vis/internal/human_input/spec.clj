@@ -320,6 +320,10 @@
    reads WHO cut it, and why, before it reads the picture."
   #{:view-id :is-completed :reason :is-from-human :note :view :elided :summary :artifact-id :error})
 
+(def live-focus-snapshot-bytes
+  "Maximum serialized archive-only focus pictures in one live record trailer."
+  1000000)
+
 (def live-artifact-media-type
   "The media type a settled live view carries. Its bytes are the view's RECORD —
    the append-only NDJSON `human-input.live-sink` has been writing since `open` —

@@ -37,8 +37,8 @@ import { ListRow, overlayLayer, OverlayScreen } from "./ui";
 /** Under this, the whole record is folded patch by patch — the honest replay. */
 export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
 
-/** How much of each END of a longer record is read: one line is far less than this. */
-export const LIVE_RECORD_EDGE = 128_000;
+/** One bounded archive-focus trailer plus the ordinary final view. */
+export const LIVE_RECORD_EDGE = 1_250_000;
 
 /**
  * The engine's closed `live-reasons`, in the words a person uses for them. An
@@ -120,16 +120,19 @@ export function LiveArtifact({
   chrome: (parts: { subtitle: string; body: ReactNode }) => ReactNode;
 }) {
   const [record, setRecord] = useState<LiveRecord | null>(null);
+  const [shown, setShown] = useState<LiveRecord["view"] | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
     setRecord(null);
+    setShown(null);
     setFailed(false);
     readLiveRecord(url)
       .then((next) => {
         if (!alive) return;
         setRecord(next);
+        setShown(next?.view ?? null);
         setFailed(next === null);
       })
       .catch(() => {
@@ -140,11 +143,18 @@ export function LiveArtifact({
     };
   }, [url]);
 
-  const body = record ? (
+  const body = record && shown ? (
     <div className="min-h-0 flex-1 overflow-y-auto p-3">
       <LiveViewPanel
-        view={record.view}
+        view={shown}
         isSettled
+        onFocus={(nodeId, itemIds) => {
+          const wanted = itemIds.join("\u0000");
+          const snapshot = record.focus_snapshots?.find(
+            (one) => one.node_id === nodeId && one.focused_ids.join("\u0000") === wanted,
+          );
+          if (snapshot) setShown(snapshot.view);
+        }}
         // The log is NOT in what was read: every page comes from the record on
         // the gateway, which is why a run that logged 100 000 lines opens here at
         // all. The view id is the record's own, so a page names the same file.

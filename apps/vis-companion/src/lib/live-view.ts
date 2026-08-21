@@ -846,6 +846,12 @@ export function staleLiveViews(views: LiveView[]): LiveView[] {
  * An unreadable line ENDS the fold instead of voiding it — a run killed mid-write
  * still shows everything it managed to record.
  */
+export interface LiveFocusSnapshot {
+  node_id: string;
+  focused_ids: string[];
+  view: LiveView;
+}
+
 export interface LiveRecord {
   view: LiveView;
   /** How it ended, in the engine's own word — `completed`, `interrupted`, `failed`. */
@@ -854,6 +860,8 @@ export interface LiveRecord {
   is_completed?: boolean;
   /** The comment the human left with a stop, when they left one. */
   note?: string;
+  /** Finished pictures explicitly sealed for rows of a focusable table. */
+  focus_snapshots?: LiveFocusSnapshot[];
   /** When the record was sealed, epoch ms. */
   ended_at?: number;
 }
@@ -883,10 +891,27 @@ export function liveRecordFromText(source: string): LiveRecord | null {
       // The verdict states the reason; `is_completed` is the engine's own answer
       // to "did it finish", and a stop carries the note the human typed into it.
       view = liveViewFromWire(result.view) ?? view;
+      const focusSnapshots = Array.isArray(result.focus_snapshots)
+        ? result.focus_snapshots
+            .map(record)
+            .filter((snapshot): snapshot is Record<string, unknown> => snapshot !== null)
+            .map((snapshot) => {
+              const snapshotView = liveViewFromWire(snapshot.view);
+              const nodeId = text(snapshot.node_id);
+              const ids = Array.isArray(snapshot.focused_ids)
+                ? snapshot.focused_ids.map(text).filter((id) => id !== '')
+                : [];
+              return snapshotView && nodeId && ids.length > 0
+                ? { node_id: nodeId, focused_ids: ids, view: snapshotView }
+                : null;
+            })
+            .filter((snapshot): snapshot is LiveFocusSnapshot => snapshot !== null)
+        : [];
       sealed = {
         reason: optionalText(result.reason),
         is_completed: result.is_completed === true,
         note: optionalText(result.note),
+        focus_snapshots: focusSnapshots,
         ended_at: optionalNumber(frame.at),
       };
     }

@@ -1674,9 +1674,10 @@
    record, never claimed by whoever is ending it. So is the human's own stop:
    `:is-from-human` and `:note` are ENGINE stamps too, because no run gets to
    claim a person ended it."
-  (wire-keys (reduce disj
-                     hi-spec/live-result-keys
-                     #{:view-id :is-completed :view :elided :is-from-human :note})))
+  (conj (wire-keys (reduce disj
+                           hi-spec/live-result-keys
+                           #{:view-id :is-completed :view :elided :is-from-human :note}))
+        :focus-snapshots))
 
 (defn- live-entry
   "The pending entry of live view `view-id`, or nil when no live view is open
@@ -1942,9 +1943,9 @@
    interrupt already closed is a no-op rather than a second verdict.
 
    `ending` says how it ended: `:reason` (`completed` by default), `:summary`,
-   `:error`, `:artifact-id`. `human` is the person who stopped it — `{:note …}`,
-   which only [[interrupt-live!]] passes, because a run does not get to claim a
-   human ended it.
+   `:error`, `:artifact-id`, and optional archive-only `:focus-snapshots`. `human`
+   is the person who stopped it — `{:note …}`, which only [[interrupt-live!]]
+   passes, because a run does not get to claim a human ended it.
 
    The close SETTLES the view: the record it has been writing since `open` becomes
    an artifact this session owns, and its id rides back in the verdict — so the
@@ -1961,7 +1962,28 @@
      ;; it, so the verdict renders the picture the record already ends with.
      (let [cell (:view entry)]
        (locking cell
-         (let [verdict (live-result @cell ending human invalid-live-view!)
+         (let [snapshots (mapv (fn [snapshot]
+                                 (let [node-id (trimmed (pick* snapshot :node-id))
+                                       focused-ids (mapv str (or (pick* snapshot :focused-ids) []))
+                                       snapshot-view (pick* snapshot :view)]
+
+                                   (when-not (and node-id (seq focused-ids) (map? snapshot-view))
+                                     (invalid-live-view!
+                                       "each focus snapshot needs node_id, focused_ids and view"))
+                                   (when-let [why (hi-spec/live-view-error snapshot-view)]
+                                     (invalid-live-view! (str "invalid focus snapshot: " why)))
+                                   {:node-id node-id :focused-ids focused-ids :view snapshot-view}))
+                               (or (pick* ending :focus-snapshots) []))
+               _ (when (> (count snapshots) 500)
+                   (invalid-live-view! "an artifact holds at most 500 focus snapshots"))
+               _ (when (> (count (.getBytes (wire/json-str snapshots)
+                                            java.nio.charset.StandardCharsets/UTF_8))
+                          (long hi-spec/live-focus-snapshot-bytes))
+                   (invalid-live-view! "focus snapshots exceed the 1000000-byte artifact limit"))
+               verdict (live-result @cell
+                                    (dissoc ending :focus-snapshots :focus_snapshots)
+                                    human
+                                    invalid-live-view!)
                ;; Built BEFORE the registry drops the view, so a refusal leaves the
                ;; view open and nameable rather than stranding whoever is holding it;
                ;; REGISTERED after, inside the branch that won the close, so a second
@@ -1996,7 +2018,12 @@
                ;; view stops being watched.
                (when-let [release (:wall-hold entry)]
                  (release))
-               (live-sink/close! (:file entry) result)
+               ;; Focus snapshots belong only to the durable record. They are not
+               ;; copied into the model verdict or broadcast close event.
+               (live-sink/close! (:file entry)
+                                 (cond-> result
+                                   (seq snapshots)
+                                   (assoc :focus-snapshots snapshots)))
                (deliver (:promise entry) result)
                ;; `:session-id` rides on every live event for the same reason it
                ;; rides on a form's close: by the time this one is published the

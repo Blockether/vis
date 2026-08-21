@@ -625,6 +625,33 @@ def _show_focus_logs(view, shape, log_of, cache, lines, clear=True):
     view["output"].write(*_focus_log_lines(shape, log_of, cache, lines))
 
 
+def _archive_focus_snapshots(view, payload, log_of, cache):
+    """Finished pictures for every job, without rewriting the live surface.
+
+    The artifact owns these after the watcher exits. They are ordinary live-view
+    pictures, so the Companion can switch a focusable table locally while no
+    extension process remains to answer a click.
+    """
+    base = view.state()
+    jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
+    snapshots = []
+    for index, job in enumerate(jobs):
+        job_id = _job_id(job, index)
+        shape = run_shape(payload, focus_ids=[job_id], now=_wall_time())
+        picture = json.loads(json.dumps(base))
+        nodes = {node["id"]: node for node in picture.get("nodes") or []}
+        nodes["run"].update(
+            text=shape["headline"], tone=shape["tone"], detail=shape["detail"]
+        )
+        nodes["jobs"]["focused_ids"] = [job_id]
+        nodes["steps"]["steps"] = [dict(step) for step in shape["steps"]]
+        lines = _focus_log_lines(shape, log_of, cache, LOG_TAIL_LINES)
+        nodes["output"]["lines"] = lines
+        nodes["output"]["total_lines"] = len(lines)
+        snapshots.append({"node_id": "jobs", "focused_ids": [job_id], "view": picture})
+    return snapshots
+
+
 def _sync_surface_focus(view, payload, shape, manual_focus, log_of, cache, shown_focus):
     """Apply a surface selection from shared state without waiting for GitHub to answer."""
     selected = _focused_ids_from_state(view.state())
@@ -745,15 +772,25 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
             # The human stopped watching. The view already holds its verdict, `close` answers
             # it, and `shape` is the last poll that reached them.
             pass
+        focus_snapshots = (
+            _archive_focus_snapshots(view, payload, log_of, log_cache)
+            if shape["is_over"]
+            else []
+        )
         if terminal_failure:
             return view.close(
                 reason="failed",
                 summary=_summary(shape, superseded, terminal_failure),
                 error=terminal_failure,
+                focus_snapshots=focus_snapshots,
             )
         if superseded:
-            return view.close(reason="superseded", summary=_summary(shape, superseded))
-        return view.close(summary=_summary(shape))
+            return view.close(
+                reason="superseded",
+                summary=_summary(shape, superseded),
+                focus_snapshots=focus_snapshots,
+            )
+        return view.close(summary=_summary(shape), focus_snapshots=focus_snapshots)
 
 
 def gh_watch_run(run=None, repo=None):

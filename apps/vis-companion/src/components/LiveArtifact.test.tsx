@@ -202,6 +202,52 @@ describe('the settled run in the transcript', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a finished
+  // focusable job table became a photograph, so another job could not be inspected.
+  it('lets a finished focusable table switch among the pictures sealed with it', async () => {
+    const jobs = {
+      id: 'jobs',
+      type: 'table',
+      columns: [{ id: 'job', label: 'Job', align: 'left' }],
+      rows: [
+        { id: 'linux', cells: ['Linux'], tone: 'error' },
+        { id: 'macos', cells: ['macOS'], tone: 'ok' },
+      ],
+      max_rows: 10,
+      order: 'insertion',
+      is_focusable: true,
+      focused_ids: ['linux'],
+    };
+    const linux = { ...fixture, nodes: [jobs, { id: 'steps', type: 'steps', steps: [{ id: 'fail', label: 'Tests failed', tone: 'error' }] }] };
+    const macos = { ...fixture, nodes: [{ ...jobs, focused_ids: ['macos'] }, { id: 'steps', type: 'steps', steps: [{ id: 'pass', label: 'Tests passed', tone: 'ok' }] }] };
+    serve(
+      [
+        openLine,
+        closeLine({
+          reason: 'completed',
+          is_completed: true,
+          view: linux,
+          focus_snapshots: [
+            { node_id: 'jobs', focused_ids: ['linux'], view: linux },
+            { node_id: 'jobs', focused_ids: ['macos'], view: macos },
+          ],
+        }),
+      ].join('\n'),
+    );
+    render(
+      <LiveArtifact
+        client={client()}
+        sid="s1"
+        url="blob:record"
+        chrome={({ body }) => <div>{body}</div>}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('Tests failed')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Focus macOS' }));
+    expect(screen.getByText('Tests passed')).toBeTruthy();
+    expect(screen.queryByText('Tests failed')).toBeNull();
+  });
+
   it('opens the picture the run ended on, and nothing about it can be pressed', async () => {
     serve(
       [openLine, closeLine({ reason: 'interrupted', note: 'enough', view: sealed })].join('\n'),

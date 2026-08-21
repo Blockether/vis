@@ -825,7 +825,7 @@ host call per window rather than one per iteration. Every read (`view.state()`,
 `view.is_interrupted`) and `view.close(...)` flush first, so nothing you wrote is
 ever behind what you read.
 
-`view.close(reason=…, summary=…, error=…, artifact_id=…)` ends the view and
+`view.close(reason=…, summary=…, error=…, artifact_id=…, focus_snapshots=…)` ends the view and
 answers **the verdict, as data**: `is_completed`, the `reason` it ended,
 `is_from_human` with the `note` when a person stopped it, the finished picture
 (`view`, plus `elided` counts for anything a budget cut), and the `summary` the
@@ -835,6 +835,15 @@ closes what an interrupt already closed cannot overwrite the reason the human
 chose. Used as a context manager, the view closes itself, and an exception
 inside closes it `failed` with the error rather than leaving a spinner up
 forever.
+
+A finished artifact has no extension process left to answer a focusable-table
+click. When archived rows must remain inspectable, `focus_snapshots` seals the
+finite alternatives into the artifact: each item is `{"node_id": "jobs",
+"focused_ids": ["job-id"], "view": view_picture}`. The host accepts at most 500
+snapshots and 1 MiB of serialized snapshot data. They are artifact-only — not
+broadcast while live and not included in the model verdict — so extensions
+should produce them only from the final provider state. The surface then switches
+pictures locally when a finished row is selected.
 
 Outside Vis — `python -c`, a unit test, CI — a live view still works: the
 transcript goes to stderr, the state is materialized truthfully (the same

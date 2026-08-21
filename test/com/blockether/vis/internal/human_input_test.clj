@@ -1721,6 +1721,49 @@
                        (count (live-sink/read-range (live-sink/view-file (:session-id spec) view-id)
                                                     0
                                                     10)))))))))
+  ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: finished
+  ;; focusable rows lost their alternate detail pictures when the live writer exited.
+  (it
+    "seals focus snapshots into the artifact record but not the model verdict"
+    (recorded
+      (fn []
+        (let [spec
+              (live-spec {:id "jobs"
+                          :type "table"
+                          :columns [{:id "job" :label "Job"}]
+                          :rows [{:id "linux" :cells ["Linux"]}]
+                          :is-focusable true
+                          :focused-ids ["linux"]})
+
+              view
+              (hi/open-live! spec)
+
+              view-id
+              (:id view)
+
+              snapshot
+              {:node-id "jobs" :focused-ids ["linux"] :view view}
+
+              result
+              (hi/close-live! view-id {:focus-snapshots [snapshot]})
+
+              trailer
+              (:result (last (live-sink/read-range (live-sink/view-file (:session-id spec) view-id)
+                                                   0
+                                                   10)))]
+
+          (expect (nil? (:focus-snapshots result)))
+          (expect (= ["linux"]
+                     (-> trailer
+                         :focus-snapshots
+                         first
+                         :focused-ids)))
+          (expect (= view-id
+                     (-> trailer
+                         :focus-snapshots
+                         first
+                         :view
+                         :id)))))))
   (it "refuses to mount a view that names no session"
       (recorded (fn []
                   (expect (re-find #"names no session"

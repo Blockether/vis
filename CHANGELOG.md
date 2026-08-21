@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- fix(live,companion,extensions): finished live artifacts now retain a bounded picture for every row of a focusable table. Reopened GitHub runs can switch jobs locally to inspect each job's final steps and log after the watcher process has exited; these archive-only pictures stay out of the model verdict and live close broadcast.
+
 - refactor(extensions): the GitHub live view no longer renders a run-wide Activity feed that duplicated job states and selected-job steps. The job table remains the run overview, while selecting a row gives that job's steps and log; provider retries remain visible in the run status.
 
 - refactor(extensions): live-view extension tests now use the generic `vis.testing.LiveRecorder` library harness for isolated open/patch/state/focus/close materialization and exact view-golden comparison. GitHub tests retain only GitHub polling, fixtures and projections instead of owning a private copy of generic live-host behavior.
