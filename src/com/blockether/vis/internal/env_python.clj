@@ -3370,31 +3370,12 @@
 
 (defn- syntax-guard-op-error
   "Build the model-facing exception for a filesystem write tree-sitter rejected."
-  [^Context ctx code {:keys [path language reason line column node-type]}]
-  (let [message (str "Python write failed: tree-sitter rejected "
-                     (pr-str path)
-                     " (language="
-                     language
-                     ", reason="
-                     reason
-                     ", line="
-                     line
-                     ", column="
-                     column
-                     (when node-type (str ", node=" node-type))
-                     "). The original file was left unchanged. "
-                     "Use patch(...) for guarded code edits.")]
-    (note-block-failure! ctx code message)
-    {:message message
-     :data (cond-> {:phase :python/syntax-guard :path path :language language :reason reason}
-             (some? line)
-             (assoc :line line)
-
-             (some? column)
-             (assoc :column column)
-
-             (some? node-type)
-             (assoc :node-type node-type))}))
+  [^Context ctx code {:keys [message] :as rejection}]
+  (note-block-failure! ctx code message)
+  {:message message
+   :data (-> rejection
+             (dissoc :message)
+             (assoc :phase :python/syntax-guard))})
 
 (defn- run-async-program
   "Run the program as ONE driven coroutine. `__vis_run_async__` AST-wraps it in
