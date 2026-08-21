@@ -4245,74 +4245,56 @@
                (catch Throwable _ nil)))))
 
 (defn- patch-parse-gate
-  "The consistency check, run AFTER splicing and BEFORE writing. Answers
-   `{:content <what to write> :clause <status clause>}`, or raises when the edit
-   would break a file that parsed clean.
-
-     1. supported language    -> re-parse the new content with tree-sitter;
-     2. new errors, old clean -> ask `balance/rebalance` for a delimiter repair of
-                                 the WHOLE spliced file, confined to `spans` — the
-                                 lines THIS call wrote — with `original`, the text
-                                 this edit replaced, as the evidence for WHERE a
-                                 delimiter it dropped belongs. A confined, delimiters-only
-                                 repair is written and NAMED on the status line;
-                                 anything else REFUSES and says why the repair was
-                                 rejected, because a repair that reaches outside the
-                                 edit is guessing at code nobody here wrote;
-     3. already broken        -> WRITE, and say it is still broken (you must be
-                                 able to repair a broken file);
-     4. no grammar            -> no gate, no clause."
+  "Run the shared parse transition check after splicing and before writing. `patch`
+   alone may repair delimiters, confined to the lines this call changed; raw writers
+   consume the same verdict without changing their candidate bytes."
   [rel lang ^String original ^String updated span-label spans]
-  (if-not lang
-    {:content updated :clause ""}
-    (let [clean?
-          (fn [^String s]
-            (empty? (parse/error-nodes lang s)))
+  (let [{:keys [status after]} (parse/transition-verdict lang original updated)]
+    (case status
+      :unguarded
+      {:content updated :clause ""}
 
-          after
-          (parse/error-nodes lang updated)]
+      :clean
+      {:content updated :clause "  parse: clean"}
 
-      (if (empty? after)
-        {:content updated :clause "  parse: clean"}
-        (let [before
-              (parse/error-nodes lang original)
+      :still-broken
+      {:content updated :clause (str "  parse: still broken at line " (:line (first after)))}
 
-              e
-              (first after)]
+      :introduced-error
+      (let [clean? (fn [^String s]
+                     (empty? (parse/error-nodes lang s)))
+            e (first after)
+            repair (balance/rebalance {:balancer (language-balancer lang)
+                                       :parses-clean? clean?
+                                       :source updated
+                                       :spans spans
+                                       :original original})]
 
-          (if (seq before)
-            {:content updated :clause (str "  parse: still broken at line " (:line e))}
-            (let [repair (balance/rebalance {:balancer (language-balancer lang)
-                                             :parses-clean? clean?
-                                             :source updated
-                                             :spans spans
-                                             :original original})]
-              (if (:ok? repair)
-                {:content (:content repair)
-                 :clause
-                 (str "  parse: clean (delimiters repaired: " (str/join ", " (:notes repair)) ")")}
-                (patch-refusal!
-                  rel
-                  {:reason :parse-broken :error-line (:line e)}
-                  (into
-                    [(str "  " rel "  " span-label)
-                     (str "  "
-                          (name lang)
-                          ": "
-                          (if (:missing? e) "MISSING" "ERROR")
-                          " node at line "
-                          (:line e)
-                          ", col "
-                          (:col e)
-                          (when-let [t (some-> (:text e)
-                                               str
-                                               str/trim
-                                               not-empty)]
-                            (str " — near `" (subs t 0 (min 60 (count t))) "`")))
-                     "  the file parsed clean before this edit, so the replacement introduced it."]
-                    (when-let [why (:why repair)]
-                      [(str "  " why " — re-read the region and fix the replacement.")]))
-                  "patch refused — the edit would not parse; nothing was written.")))))))))
+        (if (:ok? repair)
+          {:content (:content repair)
+           :clause
+           (str "  parse: clean (delimiters repaired: " (str/join ", " (:notes repair)) ")")}
+          (patch-refusal!
+            rel
+            {:reason :parse-broken :error-line (:line e)}
+            (into [(str "  " rel "  " span-label)
+                   (str "  "
+                        (name lang)
+                        ": "
+                        (if (:missing? e) "MISSING" "ERROR")
+                        " node at line "
+                        (:line e)
+                        ", col "
+                        (:col e)
+                        (when-let [t (some-> (:text e)
+                                             str
+                                             str/trim
+                                             not-empty)]
+                          (str " — near `" (subs t 0 (min 60 (count t))) "`")))
+                   "  the file parsed clean before this edit, so the replacement introduced it."]
+                  (when-let [why (:why repair)]
+                    [(str "  " why " — re-read the region and fix the replacement.")]))
+            "patch refused — the edit would not parse; nothing was written."))))))
 
 (defn- patch-status-line
   "The one status line every successful patch answers with: what was written, how
@@ -4553,8 +4535,7 @@
         ;; was broken. `parse/code-languages` is the set where a parse error means
         ;; something; vimdoc, markdown and csv are not in it.
         lang
-        (let [l (parse/detect-language rel)]
-          (when (contains? parse/code-languages l) l))
+        (parse/guarded-language rel)
 
         ;; Where each edit ENDED UP: walk the spans in file order carrying the line
         ;; delta every earlier edit already applied, so every anchor reported below is

@@ -164,7 +164,52 @@
         (expect (str/includes? (.asString ^org.graalvm.polyglot.Value
                                           (ev "__import__(\"json\").dumps({\"ok\":1})"))
                                "ok"))
-        (finally (.close ctx true))))))
+        (finally (.close ctx true)))))
+  (it
+    "commits valid pathlib writes and atomically blocks broken ones"
+    (let [root
+          (tmp-root)
+
+          target
+          (str root "/guarded.clj")
+
+          original
+          "(defn guarded [] :ok)\n"
+
+          changed
+          "(defn guarded [] :changed)\n"
+
+          fs
+          (sfs/confined-filesystem (fn []
+                                     [root]))
+
+          io
+          (-> (IOAccess/newBuilder)
+              (.fileSystem fs)
+              (.build))
+
+          ctx
+          (-> (Context/newBuilder (into-array String ["python"]))
+              (.allowIO io)
+              (.allowAllAccess false)
+              (.build))]
+
+      (spit target original)
+      (try (.eval ctx
+                  "python"
+                  (str "from pathlib import Path; Path("
+                       (pr-str target)
+                       ").write_text("
+                       (pr-str changed)
+                       ")"))
+           (expect (= changed (slurp target)))
+           ;; GraalPy currently swallows a SeekableByteChannel close IOException. The
+           ;; filesystem still rejects the staged candidate and preserves the target.
+           (.eval ctx
+                  "python"
+                  (str "from pathlib import Path; Path(" (pr-str target) ").write_text(chr(41))"))
+           (expect (= changed (slurp target)))
+           (finally (.close ctx true))))))
 
 (defn- write-channel!
   "Open `path` for write through `fs`, write `s`, close — driving the outbox tap."
@@ -176,6 +221,56 @@
                             (make-array FileAttribute 0))]
     (.write ch (ByteBuffer/wrap (.getBytes s)))
     (.close ch)))
+
+(defdescribe
+  syntax-guarded-write-channel-test
+  (it "surfaces the parse refusal and leaves an existing file byte-for-byte unchanged"
+      (let [root
+            (tmp-root)
+
+            target
+            (p (str root "/direct.clj"))
+
+            original
+            "(def direct :ok)\n"
+
+            _
+            (spit (str target) original)
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))
+
+            ch
+            (.newByteChannel fs
+                             target
+                             #{StandardOpenOption/WRITE StandardOpenOption/TRUNCATE_EXISTING}
+                             (make-array FileAttribute 0))]
+
+        (.write ch (ByteBuffer/wrap (.getBytes ")")))
+        (let [message (try (.close ch) nil (catch java.io.IOException e (ex-message e)))]
+          (expect (str/includes? message "[vis:syntax_guard]"))
+          (expect (= original (slurp (str target)))))))
+  (it "does not create a new guarded file when its candidate is broken"
+      (let [root
+            (tmp-root)
+
+            target
+            (p (str root "/new.clj"))
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))
+
+            ch
+            (.newByteChannel fs
+                             target
+                             #{StandardOpenOption/WRITE StandardOpenOption/CREATE_NEW}
+                             (make-array FileAttribute 0))]
+
+        (.write ch (ByteBuffer/wrap (.getBytes ")")))
+        (expect (try (.close ch) false (catch java.io.IOException _ true)))
+        (expect (not (Files/exists target (make-array java.nio.file.LinkOption 0)))))))
 
 (defdescribe
   outbox-tap-test

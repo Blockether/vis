@@ -68,7 +68,19 @@
   #{"clojure" "python" "rust" "javascript" "typescript" "tsx" "java" "kotlin" "go" "ruby" "c" "cpp"
     "csharp" "php" "scala" "swift" "dart" "zig" "lua" "bash" "elixir" "haskell" "ocaml"
     "ocaml_interface" "elm" "julia" "r" "perl" "vim" "groovy" "nix" "hcl" "terraform" "graphql"
-    "svelte" "vue" "json" "yaml" "toml"})
+    "svelte" "vue" "json" "yaml" "toml" "ada" "bicep" "c3" "cairo" "capnp" "clarity" "commonlisp"
+    "crystal" "cuda" "cue" "d" "dhall" "elisp" "erlang" "fish" "fortran" "fsharp" "gdscript" "gleam"
+    "glsl" "haxe" "hlsl" "json5" "jsonnet" "kdl" "matlab" "nim" "objc" "odin" "pascal" "pkl"
+    "powershell" "prisma" "proto" "purescript" "racket" "rego" "rescript" "ron" "scheme" "solidity"
+    "starlark" "systemverilog" "tcl" "thrift" "typespec" "v" "verilog" "vhdl" "wat" "wgsl" "zsh"})
+(defn guarded-language
+  "The detected language for `path` when Vis treats its parse errors as real syntax
+   failures, otherwise nil. This is the single policy boundary shared by `patch` and
+   sandboxed Python writers; broad language detection alone must never gate prose."
+  [path]
+  (let [lang (detect-language (str path))]
+    (when (contains? code-languages lang) lang)))
+
 
 (defn- utf8 ^bytes [^String s] (.getBytes s StandardCharsets/UTF_8))
 
@@ -209,6 +221,24 @@
         (finally (.close tree)))
       (persistent! acc))
     []))
+
+(defn transition-verdict
+  "Compare `original` and `candidate` under `lang`. Returns a plain-data verdict:
+   `:clean`, `:still-broken`, or `:introduced-error`, with parser rows when relevant.
+   A pre-existing broken file remains writable so a caller can repair it. Callers own
+   policy beyond this verdict: `patch` may attempt an explicit delimiter repair while
+   raw writers must either preserve the exact candidate or refuse it."
+  [lang ^String original ^String candidate]
+  (if-not lang
+    {:status :unguarded :language nil :before [] :after []}
+    (let [after (error-nodes lang candidate)]
+      (if (empty? after)
+        {:status :clean :language lang :before [] :after []}
+        (let [before (error-nodes lang original)]
+          {:status (if (seq before) :still-broken :introduced-error)
+           :language lang
+           :before before
+           :after after})))))
 
 (defn top-level-nodes
   "The NAMED direct children of the parse root of `source` (read as `lang`), in

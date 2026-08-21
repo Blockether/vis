@@ -25,11 +25,13 @@
    and tested for a future capture feature; today only `attach` records artifacts.
 
    Empty/zero roots ⇒ DENY everything (fail closed)."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.editing.parse :as parse])
   (:import [org.graalvm.polyglot.io FileSystem]
            [java.io IOException]
            [java.nio.channels SeekableByteChannel]
-           [java.nio.file Path Paths Files LinkOption StandardOpenOption]))
+           [java.nio.file Path Paths Files LinkOption StandardOpenOption StandardCopyOption]
+           [java.nio.charset StandardCharsets]))
 
 (def ^:private ^"[Ljava.nio.file.LinkOption;" no-link-opts (make-array LinkOption 0))
 
@@ -195,6 +197,104 @@
         (.close inner)
         (try (when (and on-close (.get wrote?)) (on-close path)) (catch Throwable _ nil))))))
 
+(defn- atomic-replace!
+  "Commit a staged file beside its target without exposing a partial candidate."
+  [^Path stage ^Path target]
+  (Files/move stage
+              target
+              (into-array java.nio.file.CopyOption
+                          [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING])))
+
+(defn- guarded-write-channel
+  "Stage a write-capable channel for a guarded code file. The original target remains
+   untouched until close, when the shared tree-sitter transition verdict either permits
+   one atomic replacement or raises IOException. Raw writes are never repaired."
+  ^SeekableByteChannel [^FileSystem delegate ^Path requested opts lang on-close]
+  (let [exists?
+        (Files/exists requested no-link-opts)
+
+        create?
+        (or (.contains ^java.util.Set opts StandardOpenOption/CREATE)
+            (.contains ^java.util.Set opts StandardOpenOption/CREATE_NEW))
+
+        create-new?
+        (.contains ^java.util.Set opts StandardOpenOption/CREATE_NEW)]
+
+    (when (and exists? create-new?)
+      (throw (java.nio.file.FileAlreadyExistsException. (str requested))))
+    (when (and (not exists?) (not create?))
+      (throw (java.nio.file.NoSuchFileException. (str requested))))
+    (let [^Path target
+          (if exists? (.toRealPath requested no-link-opts) (real-path requested))
+
+          ^Path stage
+          (Files/createTempFile (.getParent target)
+                                ".vis-write-"
+                                ".tmp"
+                                (make-array java.nio.file.attribute.FileAttribute 0))
+
+          original
+          (if exists? (Files/readString target StandardCharsets/UTF_8) "")
+
+          changed?
+          (java.util.concurrent.atomic.AtomicBoolean.
+            (or (not exists?) (.contains ^java.util.Set opts StandardOpenOption/TRUNCATE_EXISTING)))
+
+          closed?
+          (java.util.concurrent.atomic.AtomicBoolean. false)]
+
+      (try
+        (when exists?
+          (Files/copy target
+                      stage
+                      ^"[Ljava.nio.file.CopyOption;"
+                      (into-array java.nio.file.CopyOption
+                                  [StandardCopyOption/REPLACE_EXISTING
+                                   StandardCopyOption/COPY_ATTRIBUTES])))
+        (let [stage-opts
+              (-> (set opts)
+                  (disj StandardOpenOption/CREATE
+                        StandardOpenOption/CREATE_NEW
+                        StandardOpenOption/DELETE_ON_CLOSE)
+                  (conj StandardOpenOption/WRITE))
+
+              ^SeekableByteChannel inner
+              (.newByteChannel delegate
+                               stage
+                               stage-opts
+                               (make-array java.nio.file.attribute.FileAttribute 0))]
+
+          (proxy [SeekableByteChannel] []
+            (read [dst] (.read inner dst))
+            (write [src] (.set changed? true) (.write inner src))
+            (position ([] (.position inner)) ([n] (.position inner (long n)) this))
+            (truncate [n] (.set changed? true) (.truncate inner (long n)) this)
+            (size [] (.size inner))
+            (isOpen [] (and (not (.get closed?)) (.isOpen inner)))
+            (close []
+              (when (.compareAndSet closed? false true)
+                (try (.close inner)
+                     (when (.get changed?)
+                       (let [candidate
+                             (Files/readString stage StandardCharsets/UTF_8)
+
+                             {:keys [status after]}
+                             (parse/transition-verdict lang original candidate)]
+
+                         (when (= :introduced-error status)
+                           (let [e (first after)]
+                             (throw (IOException. (str "[vis:syntax_guard] language="
+                                                       lang
+                                                       " reason=introduced_parse_error line="
+                                                       (:line e)
+                                                       " col="
+                                                       (:col e)
+                                                       " hint=use_patch_for_guarded_code_edits")))))
+                         (atomic-replace! stage target)
+                         (try (when on-close (on-close requested)) (catch Throwable _ nil))))
+                     (finally (Files/deleteIfExists stage)))))))
+        (catch Throwable t (Files/deleteIfExists stage) (throw t))))))
+
 (defn confined-filesystem
   "A GraalPy `FileSystem` confined to the filesystem roots returned by `roots-fn`
    (a 0-arg fn → seq of root path strings). Delegates real I/O to the default FS
@@ -255,15 +355,6 @@
              (let [^Path cp
                    (c (if (write-opts? opts) "file-write" "file-read") p)
 
-                   ch
-                   (.newByteChannel d cp opts attrs)
-
-                   ;; DORMANT (`on-close` is nil — the engine wires no outbox):
-                   ;; tap a WRITE opened under the OUTBOX *or* any system temp
-                   ;; root (/tmp, $TMPDIR) so that, once the sandbox CLOSED the
-                   ;; file, it streamed to the DB as a
-                   ;; `session_iteration_attachment`. Retired in favour of
-                   ;; `attach`; see `mpl-capture/incidental-capture-enabled?`.
                    tap?
                    (and on-close
                         (write-opts? opts)
@@ -271,9 +362,18 @@
                           (or (and outbox-real (.startsWith rp outbox-real))
                               (some (fn [^Path tr]
                                       (.startsWith rp tr))
-                                    @temp-roots))))]
+                                    @temp-roots))))
 
-               (if tap? (tap-write-channel ch cp on-close) ch)))
+                   close-fn
+                   (when tap? on-close)
+
+                   lang
+                   (when (write-opts? opts) (parse/guarded-language (str cp)))]
+
+               (if lang
+                 (guarded-write-channel d cp opts lang close-fn)
+                 (let [ch (.newByteChannel d cp opts attrs)]
+                   (if tap? (tap-write-channel ch cp on-close) ch)))))
            (newDirectoryStream [dir filt] (.newDirectoryStream d (c "file-read" dir) filt))
            (createDirectory [dir attrs] (.createDirectory d (c "file-write" dir) attrs))
            (delete [p] (.delete d (c "file-write" p)))
