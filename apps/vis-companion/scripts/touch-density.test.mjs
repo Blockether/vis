@@ -175,10 +175,10 @@ describe('type scale', () => {
     ]);
   });
 
-  it('reads the scale and the overrides it refuses', () => {
-    expect(typeSteps('--text-chip: 9px;\n--text-chip--line-height: 14px;')[0]).toEqual({
+  it('keeps the smallest type step compact and refuses overrides', () => {
+    expect(typeSteps(readFileSync(join(src, 'index.css'), 'utf8'))[0]).toEqual({
       name: 'text-chip',
-      size: 9,
+      size: 8,
       lineHeight: 14,
     });
     expect(overridesLeading('<p className="text-chip leading-snug" />')).toEqual(['leading-snug']);

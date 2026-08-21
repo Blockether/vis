@@ -42,7 +42,7 @@
 @theme {
   --text-*: initial;
 
-  --text-chip: 9px;
+  --text-chip: 8px;
   --text-chip--line-height: 14px;
   --text-meta: 10px;
   --text-meta--line-height: 16px;
