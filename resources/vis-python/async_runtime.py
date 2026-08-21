@@ -963,6 +963,22 @@ class __VisResult__(__VisDict__):
     pass
 
 
+class __VisShellLogs__:
+    # The handle's log reader is callable as documented, but also tolerates the common
+    # `sh.logs[-120:]` guess by reading a page and slicing its text. It is deliberately
+    # private: `logs(...)` remains the only advertised shape.
+    __slots__ = ("__vis_shell__",)
+
+    def __init__(self, __vis_shell__):
+        self.__vis_shell__ = __vis_shell__
+
+    def __call__(self, offset=None, lines=None, limit=None, **aliases):
+        return self.__vis_shell__.__vis_logs__(offset, lines, limit, **aliases)
+
+    def __getitem__(self, __vis_key__):
+        return self.__vis_shell__.__vis_logs__()[__vis_key__]
+
+
 class __VisShell__(__VisResult__):
     # A SHELL RESULT IS A LIVE HANDLE. Every answer from the shell family (`shell`
     # itself, and each handle op) comes back as this dict-with-METHODS, so a process
@@ -991,6 +1007,16 @@ class __VisShell__(__VisResult__):
             # the prompt block say — a handle is just where it is met next.
             raise RuntimeError(globals()["__vis_process_surface__"]["off"])
         return __vis_settle__(fn(__vis_args__))
+
+    @property
+    def stdout(self):
+        # Quiet compatibility alias for the guess Python process APIs invite. Keep it
+        # out of the result map and docs: `out` remains the canonical result field.
+        return self["out"]
+
+    @property
+    def logs(self):
+        return __VisShellLogs__(self)
 
     __vis_logs_aliases__ = {
         "n": "lines",
@@ -1023,7 +1049,7 @@ class __VisShell__(__VisResult__):
             )
         return __vis_spec__
 
-    def logs(self, offset=None, lines=None, limit=None, **aliases):
+    def __vis_logs__(self, offset=None, lines=None, limit=None, **aliases):
         # Read the log and return NOW — nothing blocks on the caller's behalf.
         # A NEGATIVE offset is the last n LINES (`sh.logs(-50)`), the same
         # reading `cat(path, -50)` has; a positive one is a byte cursor.

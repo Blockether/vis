@@ -1782,6 +1782,23 @@
                               "tail = page[-4000:]\n"
                               "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij']"))))
              (finally (resources/stop-all! sid)))))
+  ;; Session report d12b41e4-757e-449b-86d9-e2a761d01dca: process-style
+  ;; `.stdout` and data-style `.logs[-n:]` guesses both failed before revealing `out`.
+  (it "quietly accepts process-style output aliases without changing the result map"
+      (let [sid
+            (str "py-shell-output-aliases-" (System/nanoTime))
+
+            c
+            (py-ctx {:session-id sid})]
+
+        (try (expect (= [true true true true]
+                        (py c
+                            (str
+                              "sh = __vis_settle__(shell('printf abcdefghij', {'id':'aliases'}))\n"
+                              "waited = sh.wait(30)\n"
+                              "[waited.stdout == waited['out'], 'stdout' not in waited,"
+                              " waited.logs[-4:] == 'ghij', callable(waited.logs)]"))))
+             (finally (resources/stop-all! sid)))))
   (it
     "walks ready log windows with `next(page)` and a bounded `page.pages()` iterator"
     (let [sid
