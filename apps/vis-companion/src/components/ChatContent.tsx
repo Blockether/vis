@@ -85,6 +85,11 @@ import {
   mediaSummary,
 } from "./Media";
 
+// An inline formatting context inherits its paragraph's justification. Code is an
+// atomic value instead: its own box keeps authored spaces natural while still
+// wrapping multi-word commands within a narrow transcript column.
+const INLINE_CODE_CLASS =
+  "mx-px inline-block max-w-full rounded-none bg-result-path px-0.5 py-px text-left font-mono font-medium text-result-path-foreground";
 // Transcript nodes the stream appends rise + fade in instead of popping into
 // place. A keyframe animation (see `--animate-transcript-*` in index.css) plays
 // exactly once — on the element's first paint after insertion — so a re-render
@@ -589,7 +594,7 @@ export const Markdown = memo(function Markdown({
             </blockquote>
           ),
           code: ({ children: inline }) => (
-            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground break-all">
+            <code className={`${INLINE_CODE_CLASS} break-all`}>
               {inline}
             </code>
           ),
@@ -1106,12 +1111,10 @@ export const InlineMarkdown = memo(function InlineMarkdown({
         ),
         em: ({ children: content }) => <em>{content}</em>,
         del: ({ children: content }) => <del>{content}</del>,
-        // No size of its own: a code span reads at the size of the line it
-        // interrupts, in a summary row and in a live view's table cell alike.
+        // The code span inherits the line's font size while its own inline box
+        // keeps paragraph justification out of the authored value.
         code: ({ children: code }) => (
-          <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground">
-            {code}
-          </code>
+          <code className={INLINE_CODE_CLASS}>{code}</code>
         ),
       }}
     >

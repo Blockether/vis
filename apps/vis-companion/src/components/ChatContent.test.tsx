@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   AssistantMessage,
   AttachmentRail,
+  InlineMarkdown,
   Markdown,
   ThinkingBand,
   UserMessage,
@@ -610,12 +611,22 @@ describe("a markdown table", () => {
     expect(text(markup)).toContain("manifest.edn");
   });
 
-  it("leaves running prose breaking at every character, where the justifier needs it", () => {
-    const markup = renderToStaticMarkup(
-      <Markdown>{"A path `src/components/ChatContent.tsx` in a paragraph."}</Markdown>,
+  // A code span inside justified prose inherited the paragraph alignment, stretching
+  // spaces in release commands and identifiers into wide gaps.
+  it("keeps code spans ragged inside justified prose", () => {
+    const markdown = renderToStaticMarkup(
+      <Markdown>{"Release `update version files for v0.7.126, bump next dev version`."}</Markdown>,
     );
-    expect(/<p class="[^"]*text-justify/.test(markup)).toBe(true);
-    expect(/<code class="[^"]*break-all/.test(markup)).toBe(true);
+    const inline = renderToStaticMarkup(
+      <InlineMarkdown>{"Run `update version files` now"}</InlineMarkdown>,
+    );
+
+    for (const markup of [markdown, inline]) {
+      expect(/<code class="[^"]*inline-block/.test(markup)).toBe(true);
+      expect(/<code class="[^"]*text-left/.test(markup)).toBe(true);
+    }
+    expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(true);
+    expect(/<code class="[^"]*break-all/.test(markdown)).toBe(true);
   });
 });
 // Reported from a phone: a message was sent, the session title updated, and the
