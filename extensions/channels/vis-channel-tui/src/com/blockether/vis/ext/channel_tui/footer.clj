@@ -604,14 +604,9 @@
                               (str ws-root))))]
 
     (cond-> (vec git-spans)
-      codex-fast?
-      (conj {:text "fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})
-
-      ;; ── LEFT ──────────────────────────────────────────────────────────────
-      ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
-      ;; (`:tui.builtin.model/footer`).
+      ;; Response controls read reasoning → verbosity → fast, matching Companion.
       reasoning?
-      (conj {:text (str "reasoning: " (name reasoning-level))
+      (conj {:text (str "◇ " (name reasoning-level))
              :fg t/footer-fg-muted
              :bold? false
              :region :left
@@ -626,7 +621,7 @@
              :priority 5})
 
       verbosity?
-      (conj {:text (str "verbosity: " (name verbosity))
+      (conj {:text (str "≡ " (name verbosity))
              :fg t/footer-fg-muted
              :bold? false
              :region :left
@@ -638,7 +633,10 @@
              :fg t/footer-fg-muted
              :bold? false
              :region :left
-             :priority 5})))
+             :priority 5})
+
+      codex-fast?
+      (conj {:text "» fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})))
   ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
   ;; The bubble's `progress->text` already carries live activity, and
   ;; user-facing cancellation feedback is emitted as a host notification.
@@ -650,7 +648,8 @@
 )
 
 (defn- build-usage-segments
-  "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared."
+  "Right-side cumulative session usage. Cache reads `↺ 4.1k`, matching the
+   Companion footer; token and cost math remains canonical."
   [{:keys [messages]}]
   (let [{:keys [tokens cost]}
         (session-usage messages)
@@ -659,7 +658,8 @@
         tokens
 
         tok-text
-        (when toks (fmt/meta-tokens toks))
+        (some-> (when toks (fmt/meta-tokens toks))
+                (str/replace #"\s+\(cached\s+([^)]+)\)" " ↺ $1"))
 
         cost-text
         (fmt/meta-cost cost)]

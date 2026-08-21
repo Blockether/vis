@@ -14,7 +14,7 @@ const toggle = (id: string, label: string, value: string, choices: string[]) => 
 });
 
 describe("composer response controls", () => {
-  it("keeps verbosity beside fast mode for a Codex session and cycles it", async () => {
+  it("orders reasoning, verbosity, then fast mode and cycles verbosity", async () => {
     const user = userEvent.setup();
     const reasoning = toggle("reasoning_level", "Reasoning effort", "balanced", [
       "low",
@@ -39,12 +39,16 @@ describe("composer response controls", () => {
       },
     });
 
-    expect(await screen.findByRole("button", { name: /fast mode — off/i })).toBeInTheDocument();
+    const fastButton = await screen.findByRole("button", { name: /fast mode — off/i });
     const verbosityButton = await screen.findByRole("button", {
       name: /verbosity — low, tap for the next level/i,
     });
-    expect(screen.getByRole("button", { name: /reasoning effort — balanced/i })).toBeInTheDocument();
-
+    const reasoningButton = screen.getByRole("button", { name: /reasoning effort — balanced/i });
+    expect(reasoningButton).toHaveTextContent("◇ balanced");
+    expect(verbosityButton).toHaveTextContent("≡ low");
+    expect(fastButton).toHaveTextContent("» standard");
+    expect(reasoningButton.compareDocumentPosition(verbosityButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(verbosityButton.compareDocumentPosition(fastButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(verbosityButton);
 
     expect(setSetting).toHaveBeenCalledWith("verbosity", "cycle");

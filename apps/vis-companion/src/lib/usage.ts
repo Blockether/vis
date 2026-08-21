@@ -4,7 +4,7 @@ import type { TranscriptTurn } from './types';
  * Session usage math, mirroring the TUI footer's `session-usage`
  * (`channel_tui/footer.clj`) and the canonical `meta-tokens` / `meta-cost`
  * renderers in `internal/format.clj`, so the companion's composer strip and the
- * TUI's footer can never drift in shape: tokens read `11.5k→35 (cached 4.1k)`
+ * TUI's footer can never drift in shape: tokens read `11.5k→35 ↺ 4.1k`
  * and cost reads `~$0.0070`.
  */
 
@@ -36,14 +36,14 @@ export function humanizeCount(value: number): string {
 }
 
 /**
- * `11.5k→35`, with ` (cached 4.1k)` only when cached input is positive. Null for
+ * `11.5k→35`, with ` ↺ 4.1k` only when cached input is positive. Null for
  * a zero-usage turn so a failed provider call never renders a bare `0→0`.
  */
 export function formatTokens({ input, output, cached }: { input?: number; output?: number; cached?: number }): string | null {
   const inTok = input ?? 0;
   const outTok = output ?? 0;
   if (inTok <= 0 && outTok <= 0) return null;
-  const cache = cached && cached > 0 ? ` (cached ${humanizeCount(cached)})` : '';
+  const cache = cached && cached > 0 ? ` ↺ ${humanizeCount(cached)}` : '';
   return `${humanizeCount(inTok)}→${humanizeCount(outTok)}${cache}`;
 }
 

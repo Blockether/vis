@@ -6110,6 +6110,49 @@ export function SessionScreen({
               {modelPref?.model ?? defaultPref?.model ?? "model"}
             </MetaButton>
 
+            {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
+              <>
+                <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
+                <MetaButton
+                  className="shrink-0"
+                  onMouseDown={keepKeyboard}
+                  onClick={() => void cycleReasoning()}
+                  disabled={reasoningBusy}
+                  aria-busy={reasoningBusy}
+                  aria-live="polite"
+                  aria-label={`${reasoning.label} — ${reasoningLevel}, tap for the next level`}
+                  title={`${reasoning.label}: ${reasoningLevel} — tap to cycle`}
+                >
+                  <span aria-hidden="true">◇ </span>
+                  <span
+                    key={reasoningLevel}
+                    className="inline-block animate-chip-swap motion-reduce:animate-none"
+                  >
+                    {reasoningLevel}
+                  </span>
+                </MetaButton>
+              </>
+            )}
+
+            {verbosityAvailable && (verbosity.choices?.length ?? 0) > 0 && (
+              <>
+                <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
+                <MetaButton
+                  className="shrink-0"
+                  onMouseDown={keepKeyboard}
+                  onClick={() => void cycleVerbosity()}
+                  disabled={verbosityBusy}
+                  aria-busy={verbosityBusy}
+                  aria-live="polite"
+                  aria-label={`${verbosity.label} — ${verbosity.value}, tap for the next level`}
+                  title={`${verbosity.label}: ${verbosity.value} — tap to cycle`}
+                >
+                  <span aria-hidden="true">≡ </span>
+                  {verbosity.value}
+                </MetaButton>
+              </>
+            )}
+
             {codexFastAvailable && (
               <>
                 <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
@@ -6123,57 +6166,8 @@ export function SessionScreen({
                   aria-label={`Fast mode — ${codexFast.enabled ? "on" : "off"}`}
                   title={`Fast mode: ${codexFast.enabled ? "on" : "off"}`}
                 >
+                  <span aria-hidden="true">» </span>
                   {codexFast.enabled ? "fast" : "standard"}
-                </MetaButton>
-              </>
-            )}
-
-            {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="h-2.5 w-px shrink-0 bg-dialog-edge"
-                />
-                <MetaButton
-                  className="shrink-0"
-                  onMouseDown={keepKeyboard}
-                  onClick={() => void cycleReasoning()}
-                  disabled={reasoningBusy}
-                  aria-busy={reasoningBusy}
-                  aria-live="polite"
-                  aria-label={`${reasoning.label} — ${reasoningLevel}, tap for the next level`}
-                  title={`${reasoning.label}: ${reasoningLevel} — tap to cycle`}
-                >
-                  {/* Re-keyed on every change so the span REMOUNTS and the swap
-                    keyframe replays; a transition on a persistent node cannot
-                    animate a text swap at all. */}
-                  <span
-                    key={reasoningLevel}
-                    className="inline-block animate-chip-swap motion-reduce:animate-none"
-                  >
-                    {reasoningLevel}
-                  </span>
-                </MetaButton>
-              </>
-            )}
-
-            {verbosityAvailable && (verbosity.choices?.length ?? 0) > 0 && (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="h-2.5 w-px shrink-0 bg-dialog-edge"
-                />
-                <MetaButton
-                  className="shrink-0"
-                  onMouseDown={keepKeyboard}
-                  onClick={() => void cycleVerbosity()}
-                  disabled={verbosityBusy}
-                  aria-busy={verbosityBusy}
-                  aria-live="polite"
-                  aria-label={`${verbosity.label} — ${verbosity.value}, tap for the next level`}
-                  title={`${verbosity.label}: ${verbosity.value} — tap to cycle`}
-                >
-                  {verbosity.value}
                 </MetaButton>
               </>
             )}

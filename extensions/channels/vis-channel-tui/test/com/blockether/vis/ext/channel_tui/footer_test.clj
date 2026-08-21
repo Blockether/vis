@@ -480,11 +480,11 @@
                          (fn []
                            {:name "gpt-4o" :provider :openai :reasoning? false})}
           (fn []
-            ;; Right region: bare in→out token counts and the running session
-            ;; price (`~$` = approximate — rounded display, not billed-to-cent).
-            (expect (= ["100→20" "~$0.0042"]
-                       (->> (build-limits-segments {:messages [{:tokens {"input" 100 "output" 20}
-                                                                :cost {"total_cost" 0.0042}}]
+            ;; Right region: cache uses the compact shared mark instead of prose.
+            (expect (= ["100→20 ↺ 60" "~$0.0042"]
+                       (->> (build-limits-segments {:messages
+                                                    [{:tokens {"input" 100 "output" 20 "cached" 60}
+                                                      :cost {"total_cost" 0.0042}}]
                                                     :settings {}}
                                                    0)
                             (filter #(= :right (:region %)))
@@ -502,7 +502,7 @@
                                                                :provider provider})}
                  (fn []
                    (let [texts (mapv :text (build-segments {:messages [] :settings {}} 0))]
-                     (expect (= visible? (boolean (some #{"fast"} texts))))))))
+                     (expect (= visible? (boolean (some #{"» fast"} texts))))))))
              (finally (vis/toggle-reset-to-default! "codex_fast_mode")))))
   (it "hides the verbosity knob when the session's model rejects the field"
       ;; Regression: the chip was gated on the provider being `:openai-codex`, so a
@@ -519,7 +519,7 @@
                                                                    :model "claude-opus-4-8"}}
                                              0)
                              (mapv :text))]
-              (expect (not-any? #(str/starts-with? % "verbosity:") texts)))))))
+              (expect (not-any? #(str/starts-with? % "≡ ") texts)))))))
   (it "shows the verbosity knob whenever svar stamped a verbosity style"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/session-model-info (fn [_]
@@ -533,7 +533,7 @@
                                                                    :model "gpt-5.6-sol"}}
                                              0)
                              (mapv :text))]
-              (expect (some #(= "verbosity: high" %) texts)))))))
+              (expect (some #(= "≡ high" %) texts)))))))
   (it "reads capability off the SESSION's model, not the global router default"
       ;; Regression: opening a GitHub Copilot session offered no way to change
       ;; reasoning, because the footer asked the router's DEFAULT model instead
@@ -554,8 +554,7 @@
                                                                    :model "gpt-5.6-sol"}}
                                              0)
                              (mapv :text))]
-              (expect (some #(= "reasoning: deep" %) texts))
-              (expect (some #(= "verbosity: medium" %) texts)))))))
+              (expect (= ["◇ deep" "≡ medium"] (filterv #{"◇ deep" "≡ medium"} texts))))))))
   (it "resolves the SESSION's model, falling back to the router root without a pick"
       ;; The plumbing under the chips: the same GitHub Copilot provider serves an
       ;; Anthropic wire for Claude and a Responses wire for GPT, so asking the
