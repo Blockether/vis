@@ -267,6 +267,7 @@
                                                   "VIS_SYSTEM_CA_CERT" (.getAbsolutePath ca-bundle)}
                                                  ["help"])]
           (expect (zero? exit) output)
+          (expect (not (str/includes? output "JAVA_TOOL_OPTIONS=-Djavax.net.ssl")) output)
           (expect (str/includes? output
                                  (str "-Djavax.net.ssl.trustStore=" (.getAbsolutePath trust-store)))
                   output)
@@ -306,7 +307,7 @@
            (.setExecutable wrapper true false)
            (doseq [[name body] [["java" "#!/bin/sh\necho '    java.vendor.version = OpenJDK' >&2\n"]
                                 ["clojure"
-                                 (str "#!/bin/sh\n"
+                                 (str "#!/bin/sh\n" "printf 'ARGS=%s\n' \"$*\"\n"
                                       "printf 'JAVA_TOOL_OPTIONS=%s\n' \"${JAVA_TOOL_OPTIONS:-}\"\n"
                                       "printf 'SSL_CERT_FILE=%s\n' \"${SSL_CERT_FILE:-}\"\n")]]]
              (let [file (io/file fake-path name)]
@@ -325,6 +326,7 @@
                                "VIS_SYSTEM_CA_CERT" (.getAbsolutePath ca-bundle)}
                               ["help"])]
              (expect (zero? exit) output)
+             (expect (not (str/includes? output "JAVA_TOOL_OPTIONS=-Djavax.net.ssl")) output)
              (expect (str/includes? output
                                     (str "-Djavax.net.ssl.trustStore="
                                          (.getAbsolutePath trust-store)))

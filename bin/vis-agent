@@ -467,9 +467,10 @@ trust_property_is_configured() {
 }
 
 configure_system_trust() {
-  local runtime="$1" store="" store_type="" store_password="changeit" ca_bundle="" java_opts=""
+  local runtime="$1" store="" store_type="" store_password="changeit" ca_bundle=""
   local explicit_ca_bundle="${VIS_SYSTEM_CA_CERT:-}"
   trust_native_args=()
+  trust_jvm_args=()
   refresh_wsl_windows_ca_bundle
 
   if [[ -n "${VIS_SYSTEM_TRUSTSTORE:-}" && ! -r "$VIS_SYSTEM_TRUSTSTORE" ]]; then
@@ -499,13 +500,12 @@ configure_system_trust() {
   fi
 
   if [[ -n "$store" ]]; then
-    java_opts="-Djavax.net.ssl.trustStore=$store -Djavax.net.ssl.trustStoreType=$store_type -Djavax.net.ssl.trustStorePassword=$store_password"
-    export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }$java_opts"
-    if [[ "$runtime" = native ]]; then
-      trust_native_args=("-Djavax.net.ssl.trustStore=$store"
-                         "-Djavax.net.ssl.trustStoreType=$store_type"
-                         "-Djavax.net.ssl.trustStorePassword=$store_password")
-    fi
+    trust_native_args=("-Djavax.net.ssl.trustStore=$store"
+                       "-Djavax.net.ssl.trustStoreType=$store_type"
+                       "-Djavax.net.ssl.trustStorePassword=$store_password")
+    trust_jvm_args=("-J-Djavax.net.ssl.trustStore=$store"
+                    "-J-Djavax.net.ssl.trustStoreType=$store_type"
+                    "-J-Djavax.net.ssl.trustStorePassword=$store_password")
     measure_log "system Java trust enabled from $store"
   fi
 
@@ -1183,7 +1183,7 @@ measure_log "exec cold clojure -M:vis from $source_root"
 ensure_compatible_jvm_runtime || exit 1
 cd "$source_root"
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
 else
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} -M:vis "$@"
 fi
